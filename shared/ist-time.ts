@@ -16,7 +16,17 @@ function instant(value: InstantInput): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const raw = String(value).trim().replace(" ", "T");
   // PostgreSQL timestamp-without-time-zone values in this app are UTC.
-  const normalized = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(raw) ? raw : `${raw}Z`;
+  // PostgreSQL TIMESTAMPTZ values returned by raw Drizzle queries can use a
+  // shortened offset such as "+00" or "-05". JavaScript rejects that offset
+  // once the timestamp has an ISO "T", so expand it before parsing. Do this
+  // only for timestamp values so a calendar date like "2026-08-21" remains
+  // untouched.
+  const withFullOffset = raw.includes("T")
+    ? raw.replace(/([+-]\d{2})$/, "$1:00")
+    : raw;
+  const normalized = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(withFullOffset)
+    ? withFullOffset
+    : `${withFullOffset}Z`;
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
 }

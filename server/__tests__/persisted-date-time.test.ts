@@ -7,6 +7,12 @@ describe("formatPersistedDateTimeIST", () => {
       .toBe("19 Aug 2026, 09:15:42 PM IST");
   });
 
+  it("renders the Student Portal receipt timestamp returned by the captured Razorpay attempt", () => {
+    // This is the raw TIMESTAMPTZ shape returned by the Student Receipt query.
+    expect(formatPersistedDateTimeIST("2026-08-21 23:14:01+00"))
+      .toBe("22 Aug 2026, 04:44:01 AM IST");
+  });
+
   it("uses the IST date when a UTC timestamp crosses midnight", () => {
     expect(formatPersistedDateTimeIST("2026-08-18T20:00:01.000Z"))
       .toBe("19 Aug 2026, 01:30:01 AM IST");
