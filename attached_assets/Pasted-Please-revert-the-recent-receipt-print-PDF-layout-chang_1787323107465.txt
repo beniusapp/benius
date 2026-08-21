@@ -1,0 +1,67 @@
+Please revert the recent receipt print/PDF layout changes that reduced the text size and spacing.
+
+The current PDF receipt text has become too small, and I do not want this compact version.
+
+What I want
+
+Please restore the receipt print/PDF layout to the previous version before the recent one-page/adaptive-pagination optimization changes.
+
+Specifically:
+
+- Restore the previous font sizes.
+- Restore the previous line heights.
+- Restore the previous card padding.
+- Restore the previous section spacing.
+- Restore the previous amount/price font size.
+- Restore the previous header spacing.
+- Restore the previous table/field spacing.
+- Restore the previous signature spacing.
+- Restore the previous footer spacing.
+- Restore the previous overall visual proportions.
+
+The receipt should be comfortable to read and professionally sized, exactly like it was before the recent aggressive print optimization.
+
+IMPORTANT
+
+Do NOT:
+
+- Redesign the receipt.
+- Remove any receipt data.
+- Hide any fields.
+- Change the receipt content.
+- Change the receipt screen/browser version.
+- Change the invoice.
+- Change the receipt data fetching.
+- Change the receipt renderer architecture.
+- Change the "?print=1" functionality.
+- Create a new PDF system.
+- Change anything unrelated to the recent print-layout optimization.
+
+About pagination
+
+Do not force the receipt to fit onto one page by making the text tiny.
+
+The correct behavior should be:
+
+Normal receipt → readable professional size → preferably 1 page when it naturally fits.
+
+If a receipt contains a lot of data:
+
+Allow it to continue onto page 2 rather than shrinking the entire receipt to an unreadable size.
+
+Most important
+
+I want the previous readable receipt sizing restored.
+
+Please inspect your recent changes and revert only the print CSS/layout changes that made the text smaller.
+
+After reverting, verify that:
+
+1. The receipt text is back to the previous comfortable size.
+2. The receipt design is unchanged.
+3. All existing data is still present.
+4. Chrome Print / Save as PDF still works.
+5. "?print=1" still automatically opens the print dialog.
+6. No unrelated files or functionality are modified.
+
+Do not make any further compacting changes after the revert.
