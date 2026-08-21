@@ -518,7 +518,7 @@ export function renderReceiptHtml(data: ReceiptData): string {
 
 @page {
   size: A4 portrait;
-  margin: 14mm 14mm 12mm 14mm;
+  margin: 8mm;
 }
 
 body {
@@ -549,9 +549,95 @@ body {
 }
 
 @media print {
-  body { background: #fff; padding: 0; }
+  body { background: #fff; padding: 0; font-size: 10px; line-height: 1.35; }
   .page { padding: 0; box-shadow: none; max-width: 100%; }
   .no-print { display: none !important; }
+
+  /* ── Header ── */
+  .receipt-header { padding-bottom: 10px; margin-bottom: 10px; gap: 12px; }
+  .school-logo { max-width: 48px; max-height: 48px; }
+  .school-logo-initials { width: 44px; height: 44px; font-size: 16px; }
+  .school-name { font-size: 13px; margin-bottom: 2px; }
+  .school-addr-line { font-size: 9.5px; line-height: 1.3; }
+  .school-contact { font-size: 9px; margin-top: 1px; }
+  .school-affiliation { font-size: 9px; margin-top: 1px; }
+  .doc-title { font-size: 12px; letter-spacing: 1px; margin-bottom: 3px; }
+  .doc-session { font-size: 9px; margin-bottom: 5px; }
+  .status-badge { font-size: 8.5px; padding: 2px 7px; }
+
+  /* ── ID strip ── */
+  .receipt-id-strip { margin-bottom: 10px; }
+  .id-cell { padding: 7px 10px; }
+  .id-cell-label { font-size: 8px; margin-bottom: 1px; }
+  .id-cell-value { font-size: 10.5px; }
+  .id-cell-value.primary { font-size: 11px; }
+
+  /* ── Two-column layout ── */
+  .two-col { gap: 10px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+
+  /* ── Cards ── */
+  .card { padding: 9px 11px; margin-bottom: 9px; border-radius: 5px; break-inside: avoid; page-break-inside: avoid; }
+
+  /* ── Section headers ── */
+  .section-header { font-size: 8px; margin-bottom: 6px; padding-bottom: 3px; }
+
+  /* ── Student name ── */
+  .student-name-line { font-size: 12px; margin-bottom: 5px; }
+
+  /* ── Field rows ── */
+  .field-grid { gap: 2px; }
+  .field-row { font-size: 10px; padding: 1px 0; }
+  .field-label { font-size: 9.5px; min-width: 108px; }
+  .field-value { font-size: 10px; }
+  .field-value.mono { font-size: 9.5px; }
+
+  /* ── Payment summary (navy card) ── */
+  .amount-display { padding: 4px 0 7px; }
+  .amount-label { font-size: 9px; }
+  .amount-figure { font-size: 26px; letter-spacing: -0.5px; }
+  .amount-words { font-size: 9px; margin-top: 2px; }
+  .payment-meta-grid { margin-top: 8px; padding-top: 8px; gap: 5px 10px; }
+  .pm-label { font-size: 8.5px; }
+  .pm-value { font-size: 11px; }
+
+  /* ── Breakdown table ── */
+  .breakdown-table { font-size: 10px; }
+  .breakdown-table thead th { font-size: 8px; padding: 4px 6px; }
+  .breakdown-table tbody td { padding: 4px 6px; }
+  .breakdown-table tr.total-row td { padding-top: 5px; font-size: 10.5px; }
+
+  /* ── Denomination table ── */
+  .denomination-wrap { margin-bottom: 8px; }
+  .denomination-label { font-size: 8px; margin-bottom: 3px; }
+  .denomination-table { font-size: 10px; }
+  .denomination-table th { font-size: 8px; padding: 3px 6px; }
+  .denomination-table td { padding: 3px 6px; }
+
+  /* ── Verification grid ── */
+  .v-label { font-size: 8.5px; }
+  .v-value { font-size: 9.5px; }
+  .v-value.mono { font-size: 9px; }
+
+  /* ── Notes ── */
+  .note-text { font-size: 10px; line-height: 1.4; }
+
+  /* ── Signature ── */
+  .sig-area { padding-top: 8px; margin-top: 0; margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
+  .sig-img { max-height: 40px; max-width: 140px; margin-bottom: 3px; }
+  .sig-placeholder { height: 40px; }
+  .sig-line { margin: 4px auto 3px; }
+  .sig-label { font-size: 8.5px; }
+  .sig-name { font-size: 9px; margin-top: 1px; }
+  .sig-school { font-size: 8.5px; }
+
+  /* ── Footer ── */
+  .receipt-footer { padding-top: 6px; break-inside: avoid; page-break-inside: avoid; }
+  .footer-disclaimer { font-size: 8.5px; }
+  .footer-meta { font-size: 8.5px; }
+
+  /* ── Receipt ID strip & header: no breaks ── */
+  .receipt-id-strip { break-inside: avoid; page-break-inside: avoid; }
+  .receipt-header { break-inside: avoid; page-break-inside: avoid; }
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */

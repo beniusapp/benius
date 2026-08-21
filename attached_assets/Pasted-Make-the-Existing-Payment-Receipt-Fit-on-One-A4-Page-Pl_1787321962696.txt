@@ -1,0 +1,400 @@
+Make the Existing Payment Receipt Fit on One A4 Page
+
+Please make a targeted print/PDF layout optimization to the existing Payment Receipt.
+
+Objective
+
+The current Payment Receipt opens correctly through the existing:
+
+Receipt → browser print dialog → Save as PDF
+
+flow, but the receipt currently occupies 2 pages.
+
+I want the same receipt, same design, same data, and same functionality to fit cleanly and professionally on ONE A4 portrait page whenever the content is within normal limits.
+
+VERY IMPORTANT
+
+Do NOT redesign the receipt.
+
+Do not create a new receipt template.
+
+Do not change the existing receipt data structure, backend logic, API routes, payment logic, invoice logic, or receipt-generation mechanism.
+
+The current receipt is already working correctly. Only optimize its print/PDF layout so it fits on one A4 page.
+
+---
+
+1. Preserve the existing receipt exactly
+
+Keep all existing sections and information, including:
+
+- School logo
+- School name and address
+- Contact information
+- Affiliation/GST information
+- "PAYMENT RECEIPT" heading
+- Academic Session
+- Payment Received badge
+- Payment method badge
+- Invoice No.
+- Receipt No.
+- Payment Date & Time
+- Payment Mode
+- Payment Status
+- Student Information
+- Student name
+- Student ID / DSID
+- Roll Number
+- Class & Section
+- Parent / Guardian
+- Phone
+- Email
+- Academic Session
+- Payment Summary
+- Amount Received
+- Amount in words
+- Invoice No.
+- Receipt No.
+- Payment Mode
+- Academic Session
+- Fee Details
+- Fee Name
+- Fee Type
+- Invoice Number
+- Fee Period
+- Academic Year
+- Due Date
+- Fee components
+- Component amounts
+- Total Fee
+- Payment-method-specific details
+- Online/Razorpay transaction details
+- Payment ID
+- Order ID
+- Payment Gateway
+- Payment Mode
+- Transaction Status
+- Application Recorded
+- Transaction Verification
+- UPI Transaction ID
+- DD Number
+- DD Date
+- Branch
+- Bank Transfer details where applicable
+- Processed By
+- Notes
+- Authorized Signature
+- Footer/disclaimer
+
+Nothing should be removed merely to make it fit on one page.
+
+---
+
+2. Optimize ONLY the print/PDF layout
+
+The receipt already uses the browser's native print mechanism.
+
+Keep this flow unchanged:
+
+Receipt button
+→ window.open(receipt URL with ?print=1)
+→ receipt HTML opens
+→ window.print()
+→ Chrome Print / Save as PDF
+
+Do NOT introduce:
+
+- PDFKit
+- Puppeteer
+- Playwright
+- a new PDF endpoint
+- a separate PDF button
+- a separate PDF renderer
+- server-side PDF generation
+
+The existing HTML receipt should remain the source for printing.
+
+---
+
+3. A4 print configuration
+
+For the print version, make the page explicitly:
+
+@page {
+  size: A4 portrait;
+  margin: 8mm;
+}
+
+Use a compact but professional print layout.
+
+The target should be approximately:
+
+A4: 210mm × 297mm
+
+with the entire receipt fitting inside the printable area.
+
+---
+
+4. Reduce unnecessary vertical spacing
+
+The current receipt has too much vertical whitespace.
+
+For "@media print", carefully reduce:
+
+- section margins
+- section padding
+- gaps between cards
+- header spacing
+- table row height
+- line-height
+- excessive empty areas
+- spacing around the signature
+- footer spacing
+
+Do this proportionally.
+
+Do not make the receipt look cramped.
+
+The goal is:
+
+«Compact, clean, professional school-finance receipt — not tiny text.»
+
+---
+
+5. Preserve the existing visual design
+
+Keep the current:
+
+- colors
+- navy sections
+- borders
+- cards
+- typography hierarchy
+- badges
+- tables
+- alignment
+- logo placement
+- signature placement
+- overall structure
+
+Do not redesign the UI.
+
+Only make the print version more compact.
+
+The browser screen version should remain unchanged unless a change is absolutely required for print behavior.
+
+---
+
+6. Make better use of horizontal space
+
+Where the existing design already uses two-column layouts, preserve them.
+
+For example:
+
+Student Information       Payment Summary
+
+should remain side-by-side.
+
+Similarly, payment/transaction information should use the available page width efficiently rather than unnecessarily stacking vertically.
+
+Do not change the information architecture.
+
+---
+
+7. Prevent unnecessary page breaks
+
+Add appropriate print CSS such as:
+
+break-inside: avoid;
+page-break-inside: avoid;
+
+for important sections.
+
+However, do not blindly apply "break-inside: avoid" to the entire receipt, because that can cause the browser to push large sections to another page.
+
+Apply it intelligently to:
+
+- section cards
+- payment summary
+- fee details
+- transaction details
+- notes
+- signature block
+
+The receipt should flow naturally within the single A4 page.
+
+---
+
+8. Optimize typography only as much as necessary
+
+Do NOT drastically shrink everything.
+
+Use a sensible print scale.
+
+For example, if necessary:
+
+- Main body: approximately 8–9pt
+- Labels: approximately 6.5–7.5pt
+- Values: approximately 7–9pt
+- Section headings: approximately 7–8pt
+- Main receipt title: approximately 14–16pt
+
+These are guidelines, not mandatory values.
+
+Use the existing typography as the baseline and reduce only where necessary.
+
+The receipt must remain easily readable when printed.
+
+---
+
+9. Optimize payment-method-specific sections
+
+The receipt supports multiple payment methods.
+
+Test the print layout for at least:
+
+1. Cash
+2. UPI / QR
+3. Online / Razorpay
+4. Demand Draft
+5. Cheque
+6. Bank Transfer / NEFT / RTGS / IMPS / Wire Transfer
+
+Do not remove payment-specific fields.
+
+Instead, compact the relevant section so the receipt still fits on one page.
+
+---
+
+10. Important: Do not clip or hide content
+
+Do NOT use techniques such as:
+
+overflow: hidden;
+height: fixed-value;
+max-height: fixed-value;
+
+if they can cause receipt information to disappear.
+
+Do NOT position content outside the printable area.
+
+Do NOT hide fields simply because they are difficult to fit.
+
+Do NOT truncate transaction IDs, payment IDs, order IDs, notes, or other important data unless the existing UI already intentionally does so.
+
+Every piece of existing receipt data must remain available.
+
+---
+
+11. Keep the signature and footer on the same page
+
+The current second page contains items such as:
+
+- payment details continuation
+- notes
+- authorized signature
+- footer
+
+These should be brought onto the first page by reducing unnecessary spacing and optimizing the layout.
+
+The authorized signature should remain visually separated and professional.
+
+The footer should remain at the bottom of the receipt.
+
+---
+
+12. Do not modify backend/data logic
+
+Do not change:
+
+- database schema
+- receipt data
+- payment records
+- invoice records
+- payment APIs
+- receipt APIs
+- payment calculations
+- invoice calculations
+- receipt numbering
+- payment IDs
+- transaction IDs
+- payment status
+- payment methods
+- academic session logic
+- tenant isolation
+- authentication
+- authorization
+
+This is strictly a print-layout optimization task.
+
+---
+
+13. Test the actual Chrome Save-as-PDF flow
+
+Do not consider the task complete merely because the browser preview looks smaller.
+
+Actually verify:
+
+Ledger
+→ Receipt
+→ receipt opens
+→ Chrome print dialog
+→ Save as PDF
+
+Verify the generated PDF preview.
+
+Test multiple receipt types, especially:
+
+Cash receipt
+
+UPI receipt
+
+Online/Razorpay receipt
+
+Demand Draft receipt
+
+The result should show:
+
+1/1
+
+instead of:
+
+1/2
+
+for normal receipts.
+
+---
+
+14. Acceptance criteria
+
+The task is complete only when all of the following are true:
+
+- [ ] Receipt button behavior remains unchanged.
+- [ ] "?print=1" behavior remains unchanged.
+- [ ] Chrome automatically opens the print dialog.
+- [ ] Print size is A4 portrait.
+- [ ] Normal receipts fit on exactly one page.
+- [ ] No receipt data is removed.
+- [ ] No important fields are hidden.
+- [ ] No content is clipped.
+- [ ] No important text becomes unreadably small.
+- [ ] Existing receipt design is preserved.
+- [ ] School logo remains correct.
+- [ ] Authorized signature remains visible.
+- [ ] Footer remains visible.
+- [ ] Payment-specific sections remain complete.
+- [ ] Cash receipts work.
+- [ ] UPI receipts work.
+- [ ] Razorpay/online receipts work.
+- [ ] Demand Draft receipts work.
+- [ ] Existing invoice printing remains completely untouched.
+- [ ] Screen/browser version of the receipt remains unchanged as much as possible.
+- [ ] No new PDF library or PDF endpoint is introduced.
+
+Final goal
+
+The final experience should be:
+
+Click Receipt → Chrome Print opens → Save as PDF → one clean, professional A4 payment receipt containing all existing information.
+
+Do not make unrelated changes. First inspect the existing "receipt-renderer.ts" and current print CSS, then make the smallest possible targeted changes required to achieve the one-page A4 result.
