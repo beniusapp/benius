@@ -3426,18 +3426,39 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           // fall back to the fee-record (AF) receipt for Add Fee entries.
                           const offlinePayment = (paymentsByFeeRecordId.get(rec.id) ?? [])
                             .find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
+                          // Best available payment record for PDF (payment record ID required by PDF endpoint)
+                          const anyPayment = offlinePayment ?? (paymentsByFeeRecordId.get(rec.id) ?? [])[0] ?? null;
+                          const pdfUrl = anyPayment
+                            ? `/api/admin/fees/payments/${anyPayment.id}/receipt/pdf`
+                            : `/api/admin/fees/${rec.id}/receipt/pdf`;
+                          const pdfFilename = rec.receiptNumber ? `Receipt-${rec.receiptNumber}.pdf` : "Receipt.pdf";
                           return (
-                            <Button size="sm" variant="ghost"
-                              onClick={() => window.open(
-                                offlinePayment
-                                  ? `/api/admin/fees/payments/${offlinePayment.id}/receipt`
-                                  : `/api/admin/fees/${rec.id}/receipt`,
-                                "_blank",
-                              )}
-                              className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1"
-                              title={`Print receipt ${rec.invoiceNumber ?? rec.receiptNumber ?? ""}`}>
-                              <Receipt className="w-3 h-3" /> Receipt
-                            </Button>
+                            <>
+                              <Button size="sm" variant="ghost"
+                                onClick={() => window.open(
+                                  offlinePayment
+                                    ? `/api/admin/fees/payments/${offlinePayment.id}/receipt`
+                                    : `/api/admin/fees/${rec.id}/receipt`,
+                                  "_blank",
+                                )}
+                                className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1"
+                                title={`Open receipt ${rec.receiptNumber ?? ""}`}>
+                                <Receipt className="w-3 h-3" /> Receipt
+                              </Button>
+                              <Button size="sm" variant="ghost"
+                                onClick={() => {
+                                  const a = document.createElement("a");
+                                  a.href = pdfUrl;
+                                  a.download = pdfFilename;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                }}
+                                className="h-7 px-2 text-xs text-violet-400 hover:bg-violet-900/30 gap-1"
+                                title={`Download receipt PDF: ${pdfFilename}`}>
+                                <Download className="w-3 h-3" /> PDF
+                              </Button>
+                            </>
                           );
                         })() : (
                           <Button size="sm" variant="ghost"
@@ -3484,21 +3505,37 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                 )}
                                 {rec.status === "Paid" && (() => {
                                   const offPay = (paymentsByFeeRecordId.get(rec.id) ?? []).find(p => p.cashierNotes !== "Auto-recorded from Add Fee Record");
-                                  if (offPay) return (
-                                    <Button size="sm" variant="ghost"
-                                      onClick={() => window.open(`/api/admin/fees/payments/${offPay.id}/receipt`, "_blank")}
-                                      className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
-                                      <Receipt className="w-3 h-3" /> Receipt
-                                    </Button>
+                                  const anyPay = offPay ?? (paymentsByFeeRecordId.get(rec.id) ?? [])[0] ?? null;
+                                  const receiptHtmlUrl = offPay
+                                    ? `/api/admin/fees/payments/${offPay.id}/receipt`
+                                    : `/api/admin/fees/${rec.id}/receipt`;
+                                  const receiptPdfUrl = anyPay
+                                    ? `/api/admin/fees/payments/${anyPay.id}/receipt/pdf`
+                                    : `/api/admin/fees/${rec.id}/receipt/pdf`;
+                                  const pdfFilename = rec.receiptNumber ? `Receipt-${rec.receiptNumber}.pdf` : "Receipt.pdf";
+                                  return (
+                                    <>
+                                      <Button size="sm" variant="ghost"
+                                        onClick={() => window.open(receiptHtmlUrl, "_blank")}
+                                        className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1"
+                                        title={`Open receipt ${rec.receiptNumber ?? ""}`}>
+                                        <Receipt className="w-3 h-3" /> Receipt
+                                      </Button>
+                                      <Button size="sm" variant="ghost"
+                                        onClick={() => {
+                                          const a = document.createElement("a");
+                                          a.href = receiptPdfUrl;
+                                          a.download = pdfFilename;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          document.body.removeChild(a);
+                                        }}
+                                        className="h-7 px-2 text-xs text-violet-400 hover:bg-violet-900/30 gap-1"
+                                        title={`Download receipt PDF: ${pdfFilename}`}>
+                                        <Download className="w-3 h-3" /> PDF
+                                      </Button>
+                                    </>
                                   );
-                                  if (rec.status === "Paid") return (
-                                    <Button size="sm" variant="ghost"
-                                      onClick={() => window.open(`/api/admin/fees/${rec.id}/receipt`, "_blank")}
-                                      className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-900/30 gap-1">
-                                      <Receipt className="w-3 h-3" /> Receipt
-                                    </Button>
-                                  );
-                                  return null;
                                 })()}
                               </div>
                             </div>
