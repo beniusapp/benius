@@ -1,0 +1,310 @@
+Task: Explain the Existing Ledger Export/Report Functions — No Code Changes
+
+I want you to inspect the existing Fees & Payments → Ledger & Transactions module and explain exactly what these three actions currently do:
+
+1. Ledger PDF
+2. Tx Report PDF
+3. Export Ledger
+
+IMPORTANT
+
+Do NOT modify, refactor, rename, remove, or add anything.
+
+This is an investigation/documentation task only.
+
+I want to understand the current implementation before deciding whether any changes are required.
+
+---
+
+1. Ledger PDF
+
+Inspect the complete implementation behind the "Ledger PDF" button.
+
+Explain in detail:
+
+- What happens when the admin clicks it?
+- Which frontend function/handler is called?
+- Which backend API/route is called, if any?
+- What data is included in the PDF?
+- Is the PDF generated from:
+  - currently visible page only,
+  - all filtered records,
+  - all records,
+  - selected records,
+  - or another scope?
+- Does it respect:
+  - search
+  - status filter
+  - class filter
+  - fee name filter
+  - fee type filter
+  - academic session
+  - selected records
+  - "Select all matching"
+  - excluded records
+- Does pagination affect the PDF?
+- Does it fetch additional records from the server?
+- Does it generate the PDF on the frontend or backend?
+- What columns/fields appear in the PDF?
+- Does it include payment information?
+- Does it include invoice number and receipt number?
+- Does it include student information?
+- Does it include fee period and frequency?
+- Does it include totals?
+- Does it include paid/due/overdue status?
+- Does it include payment method?
+- Does it include payment date?
+- Does it include failed payment attempts?
+- Does it include any notes or technical fields?
+- Is the PDF intended to be a financial ledger, a student fee report, or something else?
+
+Show me the exact data flow.
+
+---
+
+2. Tx Report PDF
+
+Now inspect the "Tx Report PDF" button.
+
+Explain exactly what "Tx" means in the current implementation.
+
+Determine whether it means:
+
+- Transaction Report
+- Payment Transaction Report
+- another type of report
+
+Explain:
+
+- What happens when the button is clicked?
+- Which frontend handler/function is used?
+- Which backend API/route is called?
+- What database tables/models are queried?
+- What records are included?
+- Is it based on "fee_records", payment records, Razorpay transactions, webhook events, or another source?
+- Does it include only successful transactions?
+- Does it include failed payment attempts?
+- Does it include cancelled checkout attempts?
+- Does it include refunds?
+- Does it include offline payments?
+- Does it include cash/bank transfer/UPI/portal payment/demand draft?
+- Does it include invoice records that are still due?
+- Does pagination affect it?
+- Does it respect the current filters?
+- Does it respect selected rows?
+- Does it respect "Select all matching"?
+- Does it include records from all pages?
+- What exact fields/columns are included?
+- Does it include Payment ID?
+- Order ID?
+- Invoice number?
+- Receipt number?
+- Auth code?
+- Payment method?
+- Payment status?
+- Failure reason?
+- Payment date/time?
+- Student details?
+- Fee details?
+- Academic session?
+
+Most importantly, explain the business purpose of this report.
+
+For example:
+
+«Is this supposed to be a financial transaction report showing actual payment activity, rather than a list of invoices?»
+
+Do not assume. Determine this from the actual code and database implementation.
+
+---
+
+3. Export Ledger
+
+Now inspect the "Export Ledger" button.
+
+Explain:
+
+- What file format does it generate?
+  - CSV
+  - Excel
+  - XLSX
+  - something else
+- What happens when clicked?
+- Which frontend function is called?
+- Which backend endpoint is called?
+- What data source is used?
+- Does it export:
+  - current page,
+  - all filtered records,
+  - selected records,
+  - all matching records?
+- Does it respect search and filters?
+- Does it respect academic session?
+- Does it respect Select All Matching?
+- Does it respect excluded IDs?
+- Does it include all pages?
+- What exact columns are exported?
+- What is the purpose of this export compared with Ledger PDF?
+- Is it intended for:
+  - accounting,
+  - Excel analysis,
+  - reconciliation,
+  - school records,
+  - audit,
+  - administrative use?
+
+---
+
+4. Compare All Three
+
+After inspecting the implementation, give me a clear comparison table:
+
+Feature| Ledger PDF| Tx Report PDF| Export Ledger
+Primary purpose| | | 
+Data source| | | 
+Includes invoices| | | 
+Includes payments| | | 
+Includes failed attempts| | | 
+Includes refunds| | | 
+Includes due records| | | 
+Includes student details| | | 
+Includes invoice number| | | 
+Includes receipt number| | | 
+Includes payment ID| | | 
+Includes order ID| | | 
+Includes payment method| | | 
+Includes failure reason| | | 
+Includes fee period| | | 
+Includes frequency| | | 
+Includes academic session| | | 
+Respects filters| | | 
+Respects pagination| | | 
+All matching records| | | 
+Selected records| | | 
+Output format| | | 
+Main business purpose| | | 
+
+---
+
+5. Important: Determine the Selection Scope
+
+Because we recently implemented the following selection model:
+
+selectedIds
+selectAllMatching
+excludedIds
+
+verify exactly how each of these three actions behaves with selection.
+
+Test/trace these scenarios from the code:
+
+Scenario A
+
+Select 3 individual records on Page 1.
+
+Then click Ledger PDF.
+
+What exactly gets exported?
+
+Scenario B
+
+Select 2 records on Page 1 and 2 records on Page 2.
+
+Then click Export Ledger.
+
+Does it export all 4?
+
+Scenario C
+
+Click "Select All" on the current page.
+
+Then click "Select all X matching records."
+
+What exactly gets exported?
+
+Scenario D
+
+Select all matching records and exclude 2 students.
+
+What exactly gets exported?
+
+Does it export:
+
+all matching records EXCEPT excludedIds
+
+or something else?
+
+Scenario E
+
+Apply search/filter.
+
+Then export.
+
+Does the export contain only the filtered dataset?
+
+Scenario F
+
+Go to Page 2 and export.
+
+Does pagination change the exported dataset?
+
+---
+
+6. Check for Duplication or Overlap
+
+Also determine whether Ledger PDF, Tx Report PDF, and Export Ledger currently have overlapping functionality.
+
+Tell me whether any two of them are effectively generating the same information in different formats.
+
+If they are different, clearly explain the difference.
+
+If one is redundant or poorly named, point that out — but do not change it.
+
+---
+
+7. Show the Actual Implementation
+
+For each of the three actions, provide:
+
+1. Frontend button location/component
+2. Frontend handler/function name
+3. API endpoint, if applicable
+4. Backend function/controller
+5. Database query/table/model used
+6. PDF/export generation library or mechanism
+7. Filtering logic
+8. Selection logic
+9. Pagination behavior
+10. Final output structure
+
+Include relevant file names and line numbers wherever possible.
+
+---
+
+8. Final Business Explanation
+
+Finally, explain this in simple terms as if you were explaining it to a school administrator:
+
+Ledger PDF
+
+"What is this document actually meant for?"
+
+Tx Report PDF
+
+"What is this document actually meant for?"
+
+Export Ledger
+
+"What is this export actually meant for?"
+
+And explain the difference between:
+
+Invoice → Ledger → Transaction → Receipt → Export/Report
+
+if those concepts are represented separately in the current system.
+
+Again:
+
+DO NOT CHANGE ANY CODE.
+
+Only inspect the existing implementation and give me a complete technical + business explanation.
