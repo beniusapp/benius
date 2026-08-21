@@ -319,7 +319,7 @@ function buildReportPdf(
       const chGroups: Record<string, number> = {};
       for (const ch of data.paymentChannels) {
         const m   = String(ch.payment_method ?? "Other");
-        const cat = ["Online","Razorpay","UPI","Card","NetBanking"].includes(m) ? "Online"
+        const cat = ["Portal Payment","Online","Razorpay","UPI","Card","NetBanking"].includes(m) ? "Portal Payment"
                   : m === "Cash" ? "Cash"
                   : ["Cheque","DD","BankTransfer","DemandDraft","Bank Transfer"].includes(m) ? "Cheque/Bank" : m;
         chGroups[cat] = (chGroups[cat] ?? 0) + Number(ch.amount);

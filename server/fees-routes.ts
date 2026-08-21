@@ -20,6 +20,7 @@ import {
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
+import { isPortalPayment, normalizePaymentMethod } from "@shared/payment-method";
 import {
   isValidOfflineCorrectionDate,
   normalizeOptionalOfflineCorrectionDate,
@@ -699,7 +700,10 @@ export function registerFeesRoutes(app: Express) {
         summary: { grossBilled, netCollected, outstanding, collectionRate, totalDiscounts: 0, totalLatePenalties },
         timeSeries:      tsRow.rows,
         classWise:       cwRow.rows,
-        paymentChannels: chRow.rows,
+        paymentChannels: chRow.rows.map((r: any) => ({
+          ...r,
+          payment_method: normalizePaymentMethod(r.payment_method) ?? r.payment_method,
+        })),
         feeCategories:   catRow.rows,
         aging:           agRow.rows,
       });
@@ -1609,8 +1613,8 @@ export function registerFeesRoutes(app: Express) {
       `);
       const payment = paymentResult.rows[0] as any;
       if (!payment) return;
-      if (payment.payment_method === "Online") {
-        correctionError = "Online payment details are managed by the gateway and cannot be edited here.";
+      if (isPortalPayment(payment.payment_method)) {
+        correctionError = "Portal payments are managed by the gateway and cannot be edited here.";
         return;
       }
 
@@ -2340,7 +2344,7 @@ export function registerFeesRoutes(app: Express) {
                 sessionId: activeSession?.id ?? null,
                 feeRecordId,
                 studentId: Number(feeRec.student_id),
-                paymentMethod: "Online",
+                paymentMethod: "Portal Payment",
                 referenceNumber: payment.id,        // pay_XXXX
                 receivedDate: todayInIST(now),
                 amount: Number(feeRec.amount) + lateFeeFromNotes,
@@ -3263,7 +3267,7 @@ export function registerFeesRoutes(app: Express) {
               sessionId: activeSession?.id ?? null,
               feeRecordId,
               studentId: Number(feeRec.student_id),
-              paymentMethod: "Online",
+              paymentMethod: "Portal Payment",
               paymentMode: verifiedPayment.method ?? null,
               referenceNumber: razorpay_payment_id,
               receivedDate: todayInIST(now),
@@ -4232,11 +4236,15 @@ export function registerFeesRoutes(app: Express) {
       const paymentSections = payRows.length === 0
         ? `<tr><td colspan="2" class="na">No payment records for this fee.</td></tr>`
         : payRows.map((pr: any, idx: number) => {
-            const isOn = pr.payment_method === "Online";
+            // isPortalPayment recognises both the legacy "Online" stored value and the
+            // canonical "Portal Payment" value so migrated and un-migrated records both
+            // display the Razorpay detail block correctly.
+            const isOn = isPortalPayment(pr.payment_method) || Boolean(pr.razorpay_payment_id);
+            const methodDisplayLabel = normalizePaymentMethod(pr.payment_method) ?? pr.payment_method;
             return `
             <tr style="background:#f8fafc;">
               <td colspan="2" style="font-weight:700;color:#0891b2;font-size:12px;border-top:2px solid #e2e8f0;">
-                Payment ${payRows.length > 1 ? `#${idx+1} of ${payRows.length}` : ""} — ${esc(pr.payment_method)} — ${fmtInr(Number(pr.amount))}
+                Payment ${payRows.length > 1 ? `#${idx+1} of ${payRows.length}` : ""} — ${esc(methodDisplayLabel)} — ${fmtInr(Number(pr.amount))}
                 <span style="float:right;color:#64748b;font-weight:400;">${fmtDt(pr.received_date ?? pr.created_at)}</span>
               </td>
             </tr>
@@ -4706,7 +4714,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           receiptNumber: feeRow.receipt_number ?? payRow?.receipt_number ?? null,
           amount: Number(payRow?.amount ?? feeRow.amount ?? 0),
           lateFeePaid: Number(payRow?.late_fee_paid ?? 0),
-          paymentMethod: payRow?.payment_method ?? "Online",
+          paymentMethod: normalizePaymentMethod(payRow?.payment_method ?? "Portal Payment") ?? "Portal Payment",
           receivedDate: payRow?.received_date ? String(payRow.received_date).slice(0, 10) : (feeRow.paid_date ? String(feeRow.paid_date).slice(0, 10) : todayInIST()),
           paymentDateTimeIST: formatInstantIST(paymentInstant),
           cashierNotes: payRow?.cashier_notes ?? null,
@@ -4947,7 +4955,7 @@ td:last-child{font-weight:600;word-break:break-all;}
       esc(r.notes),
       esc(r.amount_paid),
       esc(r.outstanding),
-      esc(r.payment_method),
+      esc(normalizePaymentMethod(r.payment_method) ?? r.payment_method),
       esc(r.reference_number),
     ].join(","));
 

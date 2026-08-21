@@ -17,6 +17,7 @@
 
 import PDFDocument from "pdfkit";
 import { LedgerFilters } from "../shared/ledger-filters";
+import { normalizePaymentMethod } from "@shared/payment-method";
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
@@ -387,7 +388,7 @@ export function getCellLines(row: TxRow, key: string): string[] {
         ? row.fee_type : "";
       return ft ? [fn, ft] : [fn];
     }
-    case "method":        return [s(row.payment_method)];
+    case "method":        return [s(normalizePaymentMethod(row.payment_method) ?? row.payment_method)];
     case "transaction_at": {
       const value = fmtDateTime(row.transaction_at);
       if (value === EM) return [EM];

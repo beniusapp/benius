@@ -606,7 +606,7 @@ app.use((req, res, next) => {
       fr.id                   AS fee_record_id,
       fr.student_id,
       fr.session_id,
-      'Online'                AS payment_method,
+      'Portal Payment'        AS payment_method,
       COALESCE(fr.razorpay_order_id, 'reconstructed') AS reference_number,
       fr.razorpay_order_id,
       COALESCE(fr.paid_date::date, CURRENT_DATE) AS received_date,

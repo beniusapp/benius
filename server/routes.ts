@@ -5277,10 +5277,15 @@ export async function registerRoutes(
     // Gateway enrichment stays authoritative for Razorpay. Offline payments use
     // the recorded method from payment_records, never a generic attempt label.
     const prMethodRaw = (pr?.payment_method ?? "") as string;
-    const isGatewayPayment = Boolean(pa?.razorpay_payment_id) || prMethodRaw === "Online";
+    // isGatewayPayment: true when payment originated from the Student Portal /
+    // Razorpay.  Checks both the current canonical label ("Portal Payment") and
+    // the legacy stored value ("Online") so un-migrated records behave correctly.
+    const isGatewayPayment = Boolean(pa?.razorpay_payment_id)
+      || prMethodRaw === "Online"
+      || prMethodRaw === "Portal Payment";
     const offlineMethodDesc = formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
     let methodDesc = isGatewayPayment
-      ? ((pa?.payment_method as string | null) || "Online Transfer")
+      ? ((pa?.payment_method as string | null) || "Portal Payment")
       : offlineMethodDesc;
     if (isGatewayPayment && pa?.payment_method === "card") {
       const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);

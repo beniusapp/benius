@@ -10,6 +10,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { sanitizePaymentPayload } from "./payment-attempt-history";
 import { todayInIST } from "@shared/ist-time";
+import { isPortalPayment } from "@shared/payment-method";
 
 export const REFUND_REASON_CODES = [
   "duplicate_payment",
@@ -164,7 +165,7 @@ export async function getRefundEligibility(schoolId: number, paymentRecordId: nu
   if (!context) return null;
   const summary = await getSummary(db, schoolId, paymentRecordId, context.capturedAmountPaise);
   let ineligibleReason: string | null = null;
-  if (context.paymentMethod !== "Online") ineligibleReason = "Only Razorpay online payments can be refunded here.";
+  if (!isPortalPayment(context.paymentMethod)) ineligibleReason = "Only Razorpay portal payments can be refunded here.";
   else if (!context.razorpayPaymentId) ineligibleReason = "This online payment has no Razorpay payment ID.";
   else if (!["captured", null].includes(context.gatewayStatus)) ineligibleReason = "This payment is not captured.";
   else if (summary.currentlyRefundablePaise <= 0) ineligibleReason = "This payment has no refundable amount remaining.";
@@ -290,7 +291,7 @@ export async function reserveRefundRequest(input: {
     if (!context) throw new Error("Payment record not found.");
     const summary = await getSummary(tx, input.schoolId, input.paymentRecordId, context.capturedAmountPaise);
     if (existing) return { refund: existing, summary, idempotent: true, context };
-    if (context.paymentMethod !== "Online" || !context.razorpayPaymentId) throw new Error("Only captured Razorpay online payments can be refunded.");
+    if (!isPortalPayment(context.paymentMethod) || !context.razorpayPaymentId) throw new Error("Only captured Razorpay portal payments can be refunded.");
     if (!["captured", null].includes(context.gatewayStatus)) throw new Error("This payment is not captured.");
     if (input.amountPaise > summary.currentlyRefundablePaise) throw new Error("Refund amount exceeds the currently refundable amount.");
 
@@ -460,7 +461,7 @@ export async function reconcileRefundWebhook(input: {
       const paymentRow = (await tx.execute(sql`
         SELECT id FROM payment_records
         WHERE school_id = ${input.schoolId}
-          AND payment_method = 'Online'
+          AND payment_method IN ('Online', 'Portal Payment')
           AND razorpay_payment_id = ${razorpayPaymentId}
         LIMIT 2
       `)).rows as any[];

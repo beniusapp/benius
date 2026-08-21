@@ -88,7 +88,7 @@ function buildMethodDesc(
   prMethodRaw: string,
 ): string {
   const offlineLabel = formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
-  if (!paMethod && prMethodRaw === "Online") return "Online Transfer";
+  if (!paMethod && (prMethodRaw === "Online" || prMethodRaw === "Portal Payment")) return "Portal Payment";
   if (!paMethod) return offlineLabel;
   if (paMethod === "card") {
     const parts = [paExtra?.card_network, paExtra?.card_last4 ? `•••• ${paExtra.card_last4}` : null].filter(Boolean);
@@ -661,8 +661,12 @@ describe("Payment method priority: payment_attempts over payment_records", () =>
     expect(buildMethodDesc(null, null, "Cash")).toBe("Offline (Cash)");
   });
 
-  it("Offline Online (no pa): maps to 'Online Transfer'", () => {
-    expect(buildMethodDesc(null, null, "Online")).toBe("Online Transfer");
+  it("Portal payment — stored as legacy 'Online', no pa: maps to 'Portal Payment'", () => {
+    expect(buildMethodDesc(null, null, "Online")).toBe("Portal Payment");
+  });
+
+  it("Portal payment — stored as canonical 'Portal Payment', no pa: maps to 'Portal Payment'", () => {
+    expect(buildMethodDesc(null, null, "Portal Payment")).toBe("Portal Payment");
   });
 });
 

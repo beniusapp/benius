@@ -154,7 +154,10 @@ function sectionHeader(title: string): string {
 
 function paymentMethodLabel(method: string): string {
   const m: Record<string, string> = {
-    Online: "Online Payment",
+    // Both the current canonical value and the legacy stored value map to the
+    // same business-facing label so historical receipts show "Portal Payment".
+    "Portal Payment": "Portal Payment",
+    Online: "Portal Payment",
     Cash: "Cash",
     BankTransfer: "Bank Transfer",
     Cheque: "Cheque",
@@ -182,8 +185,8 @@ function paymentModeLabel(mode: string | null): string {
 }
 
 function statusBadge(method: string): string {
-  const isOnline = method === "Online";
-  return isOnline ? "ONLINE PAYMENT" : "OFFLINE PAYMENT";
+  const isPortal = method === "Online" || method === "Portal Payment";
+  return isPortal ? "PORTAL PAYMENT" : "OFFLINE PAYMENT";
 }
 
 function roleLabel(role: string | null): string {
@@ -243,7 +246,7 @@ function amountInWords(amount: number): string {
 export function renderReceiptHtml(data: ReceiptData): string {
   const { school, student, fee, payment, signature, academicSessionLabel, generatedAtIST } = data;
 
-  const isOnline = payment.paymentMethod === "Online";
+  const isOnline = payment.paymentMethod === "Online" || payment.paymentMethod === "Portal Payment";
   const isCash = payment.paymentMethod === "Cash";
   const isDemandDraft = payment.paymentMethod === "DemandDraft";
   const isCheque = payment.paymentMethod === "Cheque";

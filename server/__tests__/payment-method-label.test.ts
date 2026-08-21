@@ -8,7 +8,8 @@ describe("ledgerPaymentMethodLabel", () => {
     ["BankTransfer", "Bank Transfer"],
     ["DemandDraft", "Demand Draft"],
     ["UpiQr", "UPI / QR"],
-    ["Online", "Portal Payment"],
+    ["Online", "Portal Payment"],          // legacy stored value
+    ["Portal Payment", "Portal Payment"],  // canonical stored value (post-migration)
   ])("maps %s to %s", (storedMethod, expectedLabel) => {
     expect(ledgerPaymentMethodLabel(storedMethod)).toBe(expectedLabel);
   });

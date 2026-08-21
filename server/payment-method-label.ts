@@ -4,6 +4,9 @@ const LEDGER_PAYMENT_METHOD_LABELS: Record<string, string> = {
   BankTransfer: "Bank Transfer",
   DemandDraft: "Demand Draft",
   UpiQr: "UPI / QR",
+  // Both the current canonical value and the legacy stored value map to the
+  // same business label so migrated and un-migrated records display consistently.
+  "Portal Payment": "Portal Payment",
   Online: "Portal Payment",
 };
 

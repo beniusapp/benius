@@ -2,6 +2,9 @@
  * server/ledger-filter-sql.ts
  *
  * Reusable Drizzle SQL predicate builder for the fee ledger.
+ */
+import { expandPaymentMethodFilter } from "@shared/payment-method";
+/**
  *
  * Accepts a LedgerFilters object and a mapping of logical field names to the
  * SQL column expressions used in the specific query. Returns a Drizzle SQL
@@ -196,11 +199,14 @@ export function buildLedgerFilterPredicates(
   }
 
   // ── Payment method (exact, OR) ───────────────────────────────────────────
+  // expandPaymentMethodFilter ensures that filtering for "Portal Payment" also
+  // matches any legacy "Online" rows still present in the DB, and vice-versa.
   if (filters.paymentMethods.length && fields.paymentMethod) {
-    if (filters.paymentMethods.length === 1) {
-      predicates.push(sql`${fields.paymentMethod} = ${filters.paymentMethods[0]}`);
+    const expanded = expandPaymentMethodFilter(filters.paymentMethods);
+    if (expanded.length === 1) {
+      predicates.push(sql`${fields.paymentMethod} = ${expanded[0]}`);
     } else {
-      predicates.push(buildAnyOf(fields.paymentMethod, filters.paymentMethods));
+      predicates.push(buildAnyOf(fields.paymentMethod, expanded));
     }
   }
 

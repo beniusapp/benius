@@ -21,7 +21,7 @@ import { formatOfflinePaymentMethod } from "../../shared/offline-payment-method"
 function methodDesc(paMethod: string | null | undefined, prMethodRaw: string): string {
   // Gateway methods remain gateway-specific; every known offline record uses
   // the shared receipt/history display contract.
-  if (prMethodRaw === "Online") return paMethod ?? "Online Transfer";
+  if (prMethodRaw === "Online" || prMethodRaw === "Portal Payment") return paMethod ?? "Portal Payment";
   return formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
 }
 

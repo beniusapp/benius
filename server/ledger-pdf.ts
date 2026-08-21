@@ -16,6 +16,7 @@
 import PDFDocument from "pdfkit";
 import https from "https";
 import http from "http";
+import { normalizePaymentMethod } from "@shared/payment-method";
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
@@ -307,7 +308,7 @@ function getCellText(row: LedgerRow, key: string): string {
     case "paid_date":        return fmtDate(row.paid_date);
     case "amount_paid":      return row.amount_paid ? fmtINR(Number(row.amount_paid)) : EM;
     case "outstanding":      return row.outstanding  ? fmtINR(Number(row.outstanding))  : EM;
-    case "payment_method":   return safe(row.payment_method);
+    case "payment_method":   return safe(normalizePaymentMethod(row.payment_method) ?? row.payment_method);
     case "reference_number": return safe(row.reference_number);
     default:                 return EM;
   }

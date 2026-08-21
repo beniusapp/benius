@@ -5,6 +5,9 @@
  *
  * Produces one normalized TxRow per payment_attempt projection plus fallback
  * payment_record rows not already represented by a payment_attempt.
+ */
+import { normalizePaymentMethod } from "@shared/payment-method";
+/**
  *
  * Key design decisions
  * ────────────────────
@@ -419,7 +422,27 @@ export async function buildTransactionRows(
     );
 
     // Method / reference coalesce with linked payment record + attempt fields.
-    const paymentMethod = row.payment_method ?? row.pr_payment_method ?? null;
+    //
+    // Business channel vs. payment instrument:
+    //   pr.payment_method  ("Portal Payment" / "Cash" / etc.) = the authoritative
+    //     business-facing channel written when the payment was recorded.
+    //   pa.payment_method  ("card" / "upi" / "netbanking" / etc.) = the underlying
+    //     Razorpay instrument, useful for technical detail but NOT the channel.
+    //
+    // A portal attempt is identified by either:
+    //   (a) its linked payment_record carrying the canonical channel value
+    //       ("Portal Payment" or legacy "Online"), OR
+    //   (b) the attempt itself having a razorpay_payment_id — the authoritative
+    //       Razorpay origin signal, present even for failed/cancelled attempts
+    //       that have no linked payment_records row.
+    //
+    // In both cases the business-facing Method must be "Portal Payment"; the
+    // Razorpay instrument is retained only for secondary detail display.
+    const prMethodNormalized = normalizePaymentMethod(row.pr_payment_method) ?? null;
+    const isPortalAttempt = prMethodNormalized === "Portal Payment" || Boolean(row.razorpay_payment_id);
+    const paymentMethod = isPortalAttempt
+      ? "Portal Payment"
+      : normalizePaymentMethod(row.payment_method ?? row.pr_payment_method) ?? null;
     const reference = row.pr_reference_number
       ?? row.bank_rrn
       ?? row.bank_auth_code

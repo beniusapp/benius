@@ -898,7 +898,9 @@ function StatusChip({ status }: { status: string }) {
   );
 }
 
-function PaymentMethodBadge({ method }: { method: string | null }) {
+function PaymentMethodBadge({ method: rawMethod }: { method: string | null }) {
+  // Normalize the legacy "Online" stored value to its canonical display label.
+  const method = rawMethod === "Online" ? "Portal Payment" : rawMethod;
   const variants: Record<string, { cls: string; icon?: React.ReactNode }> = {
     Cash: {
       cls: "bg-emerald-500/10 text-emerald-300 border-emerald-500/25",
@@ -2327,7 +2329,7 @@ ${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : 
               <option value="BankTransfer">Bank Transfer</option>
               <option value="DemandDraft">Demand Draft</option>
               <option value="UpiQr">UPI/QR</option>
-              <option value="Online">Online</option>
+              <option value="Portal Payment">Portal Payment</option>
             </select>
             {isFiltered && (
               <button
@@ -3462,7 +3464,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                       <span className="inline-flex items-center gap-0.5">{h}{field && <HeaderFilter label={h} field={field as keyof LedgerFilters} toField={field === "amountMin" ? "amountMax" : field === "dueDateFrom" ? "dueDateTo" : field === "paidDateFrom" ? "paidDateTo" : undefined} filters={filters} setFilters={setFilters} kind={kind} options={(field === "feePeriods" ? (ledgerFilterOptions?.feePeriods ?? []) : (
                         field === "classes" ? (ledgerFilterOptions?.classes ?? classes) : field === "feeNames" ? (ledgerFilterOptions?.feeNames ?? allFeeNames) : field === "feeTypes" ? (ledgerFilterOptions?.feeTypes ?? allFeeTypes) :
                         field === "sections" ? (ledgerFilterOptions?.sections ?? [...new Set(feeRecords.map(r => r.student?.section).filter(Boolean) as string[])].sort()) :
-                        field === "statuses" ? (ledgerFilterOptions?.statuses ?? ["Due","Paid","Overdue"]) : field === "paymentMethods" ? (ledgerFilterOptions?.paymentMethods ?? ["Online","Cash","Cheque","BankTransfer","DemandDraft","UpiQr"]) :
+                        field === "statuses" ? (ledgerFilterOptions?.statuses ?? ["Due","Paid","Overdue"]) : field === "paymentMethods" ? (ledgerFilterOptions?.paymentMethods ?? ["Portal Payment","Cash","Cheque","BankTransfer","DemandDraft","UpiQr"]) :
                         field === "frequencies" ? (ledgerFilterOptions?.frequencies ?? ["monthly","quarterly","annual","one-time"]) : field === "academicYears" ? (ledgerFilterOptions?.academicYears ?? [...new Set(feeRecords.map(r => r.academicYear).filter(Boolean) as string[])].sort()) : []
                       )).map(option => typeof option === "string" ? ({ value: option, label: field === "paymentMethods" ? ({ Online: "Portal Payment", BankTransfer: "Bank Transfer", DemandDraft: "Demand Draft", UpiQr: "UPI / QR" }[option] ?? option) : option }) : option)} />}</span>
                     </th>
@@ -3736,7 +3738,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                       <span className="font-mono text-cyan-300">{fmt(pay.amount)}</span>
                                       <span className="ml-auto text-white/30">{pay.createdAt ? fmtDateTimeIST(pay.createdAt) : fmtDate(pay.receivedDate)}</span>
                                     </div>
-                                    {pay.paymentMethod === "Online" ? (
+                                    {(pay.paymentMethod === "Online" || pay.paymentMethod === "Portal Payment") ? (
                                       <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1.5">
                                           <TxnDetailRow label="Payment Method" value="Portal Payment" />

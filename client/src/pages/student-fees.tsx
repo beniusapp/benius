@@ -2088,7 +2088,7 @@ export default function StudentFees() {
                                   {isPaid && attempt.receiptNumber?.startsWith("ON") && (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold"
                                       style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
-                                      <Sparkles className="w-2.5 h-2.5" /> Online
+                                      <Sparkles className="w-2.5 h-2.5" /> Portal Payment
                                     </span>
                                   )}
                                   {/* Payment mode chip — UPI, Card ···4242, Netbanking · HDFC, etc. */}
