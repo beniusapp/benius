@@ -2836,14 +2836,43 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const downloadLedgerPdf = useCallback(async () => {
     setIsDownloadingLedgerPdf(true);
     try {
-      const params = new URLSearchParams();
-      if (search.trim())               params.set("search",  search.trim());
-      if (statusFilter !== "all")      params.set("status",  statusFilter);
-      if (classFilter  !== "all")      params.set("class",   classFilter);
-      if (feeNameFilter !== "all")     params.set("feeName", feeNameFilter);
-      if (feeTypeFilter !== "all")     params.set("feeType", feeTypeFilter);
-      const url = `/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`;
-      const r = await sessionFetch(url);
+      // Selection-aware: use POST when any selection is active so that IDs are
+      // sent in the request body (avoids URL-length limits and is more secure).
+      // With no selection, fall back to the simple GET path (no change in behavior).
+      const hasSelection = selectAllMatching || selectedIds.size > 0;
+
+      let r: Response;
+      if (hasSelection) {
+        // Build the body — filters + selection scope.
+        const body: Record<string, unknown> = {
+          selectAllMatching,
+          // Individual mode: send the explicit IDs.
+          // All-matching mode: selectedIds are irrelevant; send empty array.
+          selectedIds: selectAllMatching ? [] : [...selectedIds],
+          // Exclusions apply only in all-matching mode.
+          excludedIds: selectAllMatching ? [...excludedIds] : [],
+        };
+        if (search.trim())           body.search  = search.trim();
+        if (statusFilter !== "all")  body.status  = statusFilter;
+        if (classFilter  !== "all")  body.class   = classFilter;
+        if (feeNameFilter !== "all") body.feeName = feeNameFilter;
+        if (feeTypeFilter !== "all") body.feeType = feeTypeFilter;
+        r = await sessionFetch("/api/admin/fees/ledger/pdf", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify(body),
+        });
+      } else {
+        // No selection — GET with toolbar filters, same as before.
+        const params = new URLSearchParams();
+        if (search.trim())               params.set("search",  search.trim());
+        if (statusFilter !== "all")      params.set("status",  statusFilter);
+        if (classFilter  !== "all")      params.set("class",   classFilter);
+        if (feeNameFilter !== "all")     params.set("feeName", feeNameFilter);
+        if (feeTypeFilter !== "all")     params.set("feeType", feeTypeFilter);
+        r = await sessionFetch(`/api/admin/fees/ledger/pdf${params.size ? "?" + params.toString() : ""}`);
+      }
+
       if (!r.ok) {
         const err = await r.json().catch(() => ({ message: "Download failed" }));
         toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
@@ -2862,7 +2891,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     } finally {
       setIsDownloadingLedgerPdf(false);
     }
-  }, [sessionFetch, toast, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter]);
+  }, [sessionFetch, toast, search, statusFilter, classFilter, feeNameFilter, feeTypeFilter,
+      selectedIds, selectAllMatching, excludedIds]);
 
   const downloadTransactionPdf = useCallback(async () => {
     setIsDownloadingTxPdf(true);

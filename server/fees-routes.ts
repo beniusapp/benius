@@ -5001,6 +5001,150 @@ td:last-child{font-weight:600;word-break:break-all;}
     }
   });
 
+  // ── School-wide Ledger — PDF download (POST — selection-aware) ────────────
+  // Accepts the same filters as the GET endpoint plus:
+  //   selectAllMatching: boolean  — true = all matching records (minus excludedIds)
+  //   selectedIds: number[]       — explicit invoice IDs (when selectAllMatching = false)
+  //   excludedIds: number[]       — IDs to carve out when selectAllMatching = true
+  //
+  // Security: school_id + session are always enforced server-side regardless of
+  // what IDs the browser sends. All existing filters also remain active.
+  app.post("/api/admin/fees/ledger/pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const {
+      search:   searchQ,
+      status:   statusFilter,
+      class:    classFilter,
+      feeType:  feeTypeFilter,
+      feeName:  feeNameFilter,
+      dateFrom, dateTo,
+      selectAllMatching: rawSelectAll,
+      selectedIds:       rawSelectedIds,
+      excludedIds:       rawExcludedIds,
+    } = req.body as {
+      search?: string; status?: string; class?: string;
+      feeType?: string; feeName?: string; dateFrom?: string; dateTo?: string;
+      selectAllMatching?: boolean; selectedIds?: number[]; excludedIds?: number[];
+    };
+
+    // Sanitize — only accept valid integer arrays; ignore anything else.
+    const selectAllMatching = rawSelectAll === true;
+    const selectedIds = Array.isArray(rawSelectedIds)
+      ? rawSelectedIds.filter(x => Number.isInteger(x) && x > 0)
+      : [];
+    const excludedIds = Array.isArray(rawExcludedIds)
+      ? rawExcludedIds.filter(x => Number.isInteger(x) && x > 0)
+      : [];
+
+    try {
+      const rows = await db.execute(sql`
+        SELECT
+          fr.invoice_number    AS invoice_number,
+          fr.receipt_number    AS receipt_number,
+          s.name               AS student_name,
+          s.digital_student_id AS student_id,
+          s.class              AS class,
+          s.section            AS section,
+          COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
+          fr.fee_type          AS fee_type,
+          fr.frequency         AS frequency,
+          fr.amount            AS invoice_amount,
+          COALESCE(p.total_paid, 0)::int                          AS amount_paid,
+          GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
+          fr.status            AS status,
+          fr.due_date          AS due_date,
+          fr.paid_date         AS paid_date,
+          fr.academic_year     AS academic_year,
+          p.last_method        AS payment_method,
+          p.last_reference     AS reference_number,
+          fr.notes             AS notes,
+          fr.fee_period_start  AS fee_period_start,
+          fr.fee_period_end    AS fee_period_end
+        FROM fee_records fr
+        LEFT JOIN students s ON s.id = fr.student_id
+        LEFT JOIN fee_structures fs ON fs.fee_type = fr.fee_type AND fs.school_id = fr.school_id
+        LEFT JOIN (
+          SELECT
+            fee_record_id,
+            SUM(amount)::int AS total_paid,
+            CASE
+              WHEN COUNT(DISTINCT payment_method) > 1 THEN 'Multiple'
+              ELSE (array_agg(payment_method  ORDER BY created_at DESC))[1]
+            END AS last_method,
+            (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
+          FROM payment_records
+          WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
+          GROUP BY fee_record_id
+        ) p ON p.fee_record_id = fr.id
+        WHERE fr.school_id = ${schoolId}
+          ${sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``}
+          ${searchQ     ? sql`AND (s.name ILIKE ${"%" + searchQ + "%"} OR s.digital_student_id ILIKE ${"%" + searchQ + "%"})` : sql``}
+          ${statusFilter && statusFilter !== "all" ? sql`AND fr.status = ${statusFilter}` : sql``}
+          ${dateFrom    ? sql`AND fr.due_date >= ${dateFrom}` : sql``}
+          ${dateTo      ? sql`AND fr.due_date <= ${dateTo}`   : sql``}
+          ${classFilter    && classFilter !== "all"   ? sql`AND s.class = ${classFilter}`   : sql``}
+          ${feeTypeFilter  && feeTypeFilter !== "all" ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
+          ${feeNameFilter  && feeNameFilter !== "all" ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
+          ${!selectAllMatching && selectedIds.length > 0 ? sql`AND fr.id = ANY(${selectedIds})` : sql``}
+          ${selectAllMatching  && excludedIds.length  > 0 ? sql`AND fr.id != ALL(${excludedIds})` : sql``}
+        ORDER BY s.class, s.name, fr.due_date
+      `);
+
+      const schoolRow = (await db.execute(sql`
+        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
+        FROM schools WHERE id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+
+      let sessionLabel: string | null = null;
+      if (sessionFilter) {
+        const sess = (await db.execute(sql`
+          SELECT session_name FROM academic_sessions WHERE id = ${sessionFilter} LIMIT 1
+        `)).rows[0] as any;
+        sessionLabel = sess?.session_name ?? null;
+      }
+
+      const logoRelUrl = schoolRow?.logo_url ?? null;
+      const logoUrl = logoRelUrl
+        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
+        : null;
+
+      const pdfBuffer = await renderLedgerPdf({
+        school: {
+          name: schoolRow?.name ?? "School", logoUrl,
+          addressLine1: schoolRow?.address_line1 ?? null,
+          addressLine2: schoolRow?.address_line2 ?? null,
+          city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
+          pinCode: schoolRow?.pin_code ?? null,
+          phone: schoolRow?.phone ?? null, email: schoolRow?.email ?? null,
+        },
+        sessionLabel,
+        filters: {
+          search:   searchQ   || undefined,
+          status:   (statusFilter && statusFilter !== "all") ? statusFilter : undefined,
+          class:    (classFilter  && classFilter  !== "all") ? classFilter  : undefined,
+          feeName:  (feeNameFilter && feeNameFilter !== "all") ? feeNameFilter : undefined,
+          feeType:  (feeTypeFilter && feeTypeFilter !== "all") ? feeTypeFilter : undefined,
+          dateFrom: dateFrom || undefined,
+          dateTo:   dateTo   || undefined,
+        },
+        rows: (rows.rows as any[]) as LedgerRow[],
+        generatedAtIST: formatInstantIST(new Date()),
+      });
+
+      const sessionTag = sessionLabel ? sessionLabel.replace(/[^a-zA-Z0-9-]/g, "-") : todayInIST();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="Fee-Ledger-${sessionTag}.pdf"`);
+      res.send(pdfBuffer);
+    } catch (err) {
+      console.error("[ledger-pdf-post]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
   // ── School-wide Transaction History — PDF download ────────────────────────
   app.get("/api/admin/fees/payments/report/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
