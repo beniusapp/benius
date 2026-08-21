@@ -1,0 +1,63 @@
+Please remove the Notes column only from the Ledger & Transactions table UI.
+
+Current situation
+
+The Notes column in:
+
+Fees & Payments → Ledger & Transactions
+
+currently shows "—" for the records because the existing "fee_records.notes" values are NULL.
+
+The investigation confirmed that there is no data-loss bug. The Notes field is simply not being used/populated for these ledger records.
+
+Required change
+
+Remove the Notes column completely from the Ledger & Transactions table.
+
+This means:
+
+- Remove the Notes column header.
+- Remove the Notes cell from every ledger row.
+- Remove the "rec.notes || "—"" rendering from this table.
+- Reclaim the horizontal space used by the Notes column.
+- Adjust column widths if necessary so the remaining columns use the available space properly.
+
+IMPORTANT — Do NOT delete Notes from the system
+
+Do NOT:
+
+- Drop/remove "fee_records.notes" from the database.
+- Remove Notes from the invoice creation form.
+- Remove Notes from invoice generation logic.
+- Remove Notes from receipts.
+- Remove Notes from any existing API/database schema.
+- Remove Notes from any other module.
+- Change the existing invoice or receipt design.
+- Change payment functionality.
+- Change the Ledger data/API unnecessarily.
+
+The requirement is UI-only for the Ledger & Transactions table.
+
+After removing the column
+
+Use the recovered horizontal space to improve the readability of the remaining important columns.
+
+The Ledger should clearly prioritize:
+
+Fee Name | Fee Type | Amount | Due Date | Status | Payment Method | Paid On | Academic Year | Actions
+
+Do not introduce another unnecessary column just to fill the space.
+
+Verification
+
+After making the change:
+
+1. Open Fees & Payments → Ledger & Transactions.
+2. Confirm the Notes column is completely gone.
+3. Confirm all existing ledger records still appear.
+4. Confirm Paid and Due records are unaffected.
+5. Confirm Receipt/Invoice buttons still work.
+6. Confirm no database schema or payment logic was changed.
+7. Confirm the Notes field still exists and works wherever it is currently used outside this table.
+
+This is a small UI cleanup only. Do not make any unrelated changes.

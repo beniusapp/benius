@@ -3290,8 +3290,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   {selectedIds.size > 0 && canRecord && !isArchiveMode && (
                     <th className="px-3 py-3 w-8" />
                   )}
-                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Notes","Actions"].map((h, i) => (
-                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 || i === 15 ? "text-right" : i >= 9 && i <= 13 ? "text-center" : "text-left"}`}>{h}</th>
+                  {["Invoice No.","Receipt No.","Student","DSID","Class","Section","Fee Name","Fee Type","Amount","Due Date","Status","Payment Method","Paid On","Acad. Year","Actions"].map((h, i) => (
+                    <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 8 || i === 14 ? "text-right" : i >= 9 && i <= 13 ? "text-center" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -3376,7 +3376,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     </td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{fmtDate(rec.paidDate)}</td>
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
-                    <td className="px-4 py-3 text-left text-white/50 text-xs max-w-[100px] truncate" title={rec.notes ?? ""}>{rec.notes || "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {(() => {
