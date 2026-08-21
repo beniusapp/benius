@@ -1,0 +1,166 @@
+Final Ledger PDF Rendering Fix — Targeted Correction Only
+
+I have reviewed the actual generated Ledger PDF, not just the source code.
+
+The current version is much better, but there are still several visible rendering issues. Do not rewrite the entire implementation again. Make only the targeted corrections below.
+
+1. Fix Payment Method rendering — REQUIRED
+
+The Payment Method column is still incorrectly breaking normal words.
+
+Current examples in the generated PDF:
+
+- "DemandDra" + "ft"
+- "BankTransfe" + "r"
+
+These must render as:
+
+- Demand Draft
+- Bank Transfer
+
+Requirements:
+
+- Never split a normal word in the middle.
+- Multi-word values must wrap only at spaces.
+- "Bank Transfer" should preferably remain on one line.
+- "Demand Draft" should preferably remain on one line.
+- Only genuinely long unbroken values such as payment/reference IDs may use character-level fallback wrapping.
+
+Do not fix this by changing the actual database values. This is a PDF rendering/layout issue.
+
+2. Fix the Reference No. column
+
+The Reference No. column is too narrow.
+
+Examples currently appear as:
+
+"pay_TS9NVJ"
+"aygHcXKJ"
+
+and:
+
+"pay_TRiqss"
+"OstiMeRU"
+
+Long references are allowed to wrap, but increase the Reference No. column width slightly so normal references have more room.
+
+Take the required width from short columns such as Class, Frequency, Status, etc. Do not increase the total table width.
+
+Long unbroken IDs may still wrap at character boundaries when absolutely necessary.
+
+3. Fix the Totals section — REQUIRED
+
+The current generated PDF still has a broken total:
+
+"₹2,17,10"
+"0"
+
+This means the totals are still being constrained by the narrow table columns.
+
+Do not put the three totals inside the narrow Amount/Paid/Outstanding table cells.
+
+Use this exact structure:
+
+Navy bar:
+
+"TOTALS"
+
+Then below the bar, use a clean stacked summary:
+
+"Total Invoiced:       ₹3,31,500"
+
+"Total Paid:           ₹2,17,100"
+
+"Total Outstanding:    ₹1,14,400"
+
+Requirements:
+
+- Each amount must have sufficient dedicated width.
+- Amounts must never wrap.
+- Use "lineBreak: false" for the amount values.
+- Right-align the amounts.
+- The totals must always be visible.
+- If the totals block does not fit on the current page, move the entire totals block to the next page.
+- Never clip, overlap, or silently omit totals.
+
+4. Fix the table headers
+
+The actual generated PDF still contains:
+
+- "Cls"
+- "Frequenc" / "y"
+- "Outstdg."
+
+Change them to:
+
+- Class
+- Frequency
+- Outstanding
+
+Do not abbreviate these unnecessarily.
+
+5. Preserve all existing functionality
+
+Do NOT modify:
+
+- "server/fees-routes.ts"
+- GET "/api/admin/fees/ledger/pdf"
+- POST "/api/admin/fees/ledger/pdf"
+- SQL queries
+- Payment aggregation
+- Amount Paid calculation
+- Outstanding calculation
+- Status calculation
+- Search/filter behavior
+- Pagination/export scope
+- "selectedIds"
+- "selectAllMatching"
+- "excludedIds"
+- "fees-manager.tsx"
+- Tx Report PDF
+- Export Ledger
+- Database schema
+- Any unrelated module
+
+Only modify the Ledger PDF rendering implementation, primarily:
+
+"server/ledger-pdf.ts"
+
+6. Important: verify the ACTUAL PDF
+
+Do not report success merely because the TypeScript compiles or the width assertion passes.
+
+After making the changes:
+
+1. Restart the server/workflow.
+2. Generate a fresh Ledger PDF.
+3. Open the actual generated PDF.
+4. Visually inspect both pages.
+5. Specifically verify:
+   - "Bank Transfer" is not split as "BankTransfe / r".
+   - "Demand Draft" is not split as "DemandDra / ft".
+   - Reference numbers are readable.
+   - "Frequency" header is completely visible.
+   - "Class" header is completely visible.
+   - "Outstanding" header is completely visible.
+   - "₹2,17,100" stays on one line.
+   - All three totals are visible.
+   - No text overlaps.
+   - No text is clipped.
+   - No row is split incorrectly.
+   - Page 2 remains clean.
+
+7. Final verification report
+
+After visually checking the newly generated PDF, report:
+
+- Exact file changed.
+- Exact rendering issues fixed.
+- Final column widths.
+- Confirmation that "Bank Transfer" and "Demand Draft" render correctly.
+- Confirmation that totals never wrap.
+- Confirmation that the three headers are corrected.
+- Confirmation that both PDF pages were visually inspected.
+- Confirmation that no other files or business logic were changed.
+
+Do not make additional design changes. This is a targeted final rendering correction.

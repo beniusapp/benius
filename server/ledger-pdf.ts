@@ -1,19 +1,17 @@
 /**
  * ledger-pdf.ts — Fee Ledger PDF renderer
  *
- * Key guarantees
- * ──────────────
- * 1. Text is NEVER mid-word broken: word wrapping uses doc.widthOfString() (actual
- *    PDFKit font metrics) with character-break fallback only for unbreakable long tokens
- *    (e.g. Razorpay IDs). Each wrapped line is drawn individually with lineBreak:false.
- * 2. Dynamic row heights: every row measures its tallest wrapping cell and sizes itself
- *    accordingly. No text is clipped.
- * 3. Totals block always appears: pre-flight check determines whether it fits on the
- *    last data page; if not, a continuation page is added BEFORE any drawing starts so
- *    the page-count in every header is correct from the beginning.
- * 4. Status pills are real rounded rectangles rendered with save/restore so the graphics
- *    state never bleeds across cells.
- * 5. Page number appears ONLY in the footer.
+ * Rendering guarantees
+ * ────────────────────
+ * 1. NO mid-word character breaks ever.
+ *    Pre-computation uses a conservative char-width table (no PDFKit page needed).
+ *    Each pre-computed line is drawn with `lineBreak: false` and NO `width` option —
+ *    the only way PDFKit guarantees a single line without any wrapping.
+ * 2. Right-aligned cells (Amount, Paid, Outstanding, header labels) use
+ *    `doc.widthOfString()` at render time (when a page is live) to compute exact X.
+ * 3. Totals amounts are rendered without a width constraint — they cannot wrap.
+ * 4. Status pills use save/restore to isolate graphics state.
+ * 5. Page count is known before any drawing begins.
  */
 
 import PDFDocument from "pdfkit";
@@ -33,7 +31,7 @@ const C_BODY  = "#1a2332";
 const C_THEAD = "#102b49";
 const C_ALT   = "#f5f8fb";
 
-// Status pill — background + foreground pairs
+// Status pill colours
 const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
   Paid:    { bg: "#d1fae5", fg: "#065f46" },
   Overdue: { bg: "#fee2e2", fg: "#7f1d1d" },
@@ -43,6 +41,22 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
 };
 function pillStyle(status: string) {
   return STATUS_STYLE[status] ?? { bg: "#e5e7eb", fg: "#374151" };
+}
+
+// ── Conservative char-width table for pre-computation ─────────────────────────
+// Values are slightly above the real DejaVu Sans average so we never over-pack
+// a line and force PDFKit into character-break territory.
+const CHAR_W: Record<number, number> = {
+  6.5: 3.90,
+  7.0: 4.20,
+  7.5: 4.50,
+  8.0: 4.80,
+};
+function charW(fontSize: number): number {
+  return CHAR_W[fontSize] ?? fontSize * 0.60;
+}
+function measureText(text: string, fontSize: number): number {
+  return text.length * charW(fontSize);
 }
 
 // ── Network helpers ───────────────────────────────────────────────────────────
@@ -100,49 +114,50 @@ function fmtMonthYear(v: string | null | undefined): string {
   } catch { return ""; }
 }
 
-function fmtPeriod(start: string | null | undefined, end: string | null | undefined): string {
-  const s1 = fmtMonthYear(start);
-  const s2 = fmtMonthYear(end);
-  if (s1 && s2 && s1 !== s2) return `${s1} \u2013 ${s2}`;
-  return s1 || s2 || EM;
+function fmtPeriod(s: string | null | undefined, e: string | null | undefined): string {
+  const a = fmtMonthYear(s), b = fmtMonthYear(e);
+  if (a && b && a !== b) return `${a} \u2013 ${b}`;
+  return a || b || EM;
 }
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
-// A4 landscape: 841.89 × 595.28 pt
-const PAGE_W   = 841.89;
+const PAGE_W   = 841.89;   // A4 landscape
 const PAGE_H   = 595.28;
-const MARGIN_H = 32;          // left + right margin
-const MARGIN_V = 32;          // top + bottom margin
+const MARGIN_H = 32;
+const MARGIN_V = 32;
 
-// Header block (logo + school info + title + subtitle + session/generated/records
-//               + filter/scope line + horizontal rule + small gap)
-const HEADER_H = 120;
-const TABLE_TOP = MARGIN_V + HEADER_H;   // where the column-header row starts
+const HEADER_H = 120;                 // top header block height
+const TABLE_TOP = MARGIN_V + HEADER_H; // top of column-header row
 
-const COL_H    = 22;  // column-header row height
-const FOOTER_H = 22;  // space kept at page bottom for the footer line
+const COL_H    = 22;   // column-header row height
+const FOOTER_H = 22;   // reserved at page bottom for footer
 
-// Data-row area per page (space available for actual invoice rows)
+// Usable vertical space for data rows per page
 const USABLE_DATA_H = PAGE_H - MARGIN_V * 2 - HEADER_H - COL_H - FOOTER_H;
 
-// Totals block: navy bar (20 pt) + top gap (8 pt) + 3 summary lines × 12 pt + bottom gap (6 pt)
-const TOTALS_H = 8 + 20 + 3 * 12 + 6;  // = 70 pt
+// Totals block: 8pt gap + 20pt bar + 3 lines × 12pt + 6pt gap = 70pt
+const TOTALS_H = 8 + 20 + 3 * 12 + 6;
 
-const LINE_H    = 10;   // vertical distance between consecutive wrapped lines
-const CELL_PAD  = 5;    // top AND bottom padding inside a data cell
-const MIN_ROW_H = LINE_H + CELL_PAD * 2;   // 20 pt minimum
+const LINE_H    = 10;   // px between successive wrapped lines
+const CELL_PAD  = 5;    // top + bottom cell padding
+const MIN_ROW_H = LINE_H + CELL_PAD * 2;   // 20 pt minimum row height
+const H_PAD     = 2;    // horizontal padding inside each cell
 
 const TABLE_LEFT = MARGIN_H;
 
 // ── Column definitions ────────────────────────────────────────────────────────
 //
-// Usable table width = PAGE_W − 2×MARGIN_H = 841.89 − 64 = 777.89 → 778 pt
+// Table width = PAGE_W − 2×MARGIN_H = 841.89 − 64 = 777.89 → 778 pt (rounded)
 //
-// wrap:true  → text uses wrapToLines(); row height expands as needed
-// wrap:false → single line, lineBreak:false; values are inherently short
+// Width changes from previous revision:
+//   DSID     34 → 32  (-2)    gives room to Reference No.
+//   Fee Period 56 → 52  (-4)   gives room to Reference No.
+//   Frequency  36 → 34  (-2)   gives room to Reference No.
+//   Status     40 → 38  (-2)   gives room to Reference No.
+//   Reference No. 36 → 46 (+10) wider for short Razorpay receipt IDs
 //
-// Width priorities (wider): Student, Fee Name, Fee Period, Payment Method, Reference No.
-// Width savings (narrower): DSID, Class, Invoice/Receipt No., Date columns
+// Payment Method remains 58 pt (inner 54 pt) so "Bank Transfer" / "Demand Draft"
+// each measure ≤50.4 pt (12 chars × 4.2) and fit on ONE LINE.
 
 interface ColDef {
   key:      string;
@@ -157,32 +172,31 @@ const COLS: ColDef[] = [
   { key:"invoice_number",   label:"Invoice No.",    width: 46, fontSize:6.5,                wrap:true  },
   { key:"receipt_number",   label:"Receipt No.",    width: 44, fontSize:6.5,                wrap:true  },
   { key:"student_name",     label:"Student",        width: 76, fontSize:8,                  wrap:true  },
-  { key:"student_id",       label:"DSID",           width: 34, fontSize:6.5,                wrap:true  },
+  { key:"student_id",       label:"DSID",           width: 32, fontSize:6.5,                wrap:true  },
   { key:"class",            label:"Class",          width: 20, fontSize:7.5,                wrap:false },
   { key:"fee_name",         label:"Fee Name",       width: 66, fontSize:7.5,                wrap:true  },
   { key:"fee_type",         label:"Fee Type",       width: 40, fontSize:7,                  wrap:true  },
-  { key:"fee_period",       label:"Fee Period",     width: 56, fontSize:7,                  wrap:true  },
-  { key:"frequency",        label:"Frequency",      width: 36, fontSize:7,                  wrap:false },
+  { key:"fee_period",       label:"Fee Period",     width: 52, fontSize:7,                  wrap:true  },
+  { key:"frequency",        label:"Frequency",      width: 34, fontSize:7,                  wrap:false },
   { key:"invoice_amount",   label:"Amount",         width: 48, fontSize:8,   align:"right", wrap:false },
   { key:"due_date",         label:"Due Date",       width: 44, fontSize:7,                  wrap:false },
-  { key:"status",           label:"Status",         width: 40, fontSize:7.5, align:"center",wrap:false },
+  { key:"status",           label:"Status",         width: 38, fontSize:7.5, align:"center",wrap:false },
   { key:"paid_date",        label:"Paid On",        width: 44, fontSize:7,                  wrap:false },
   { key:"amount_paid",      label:"Paid",           width: 42, fontSize:8,   align:"right", wrap:false },
   { key:"outstanding",      label:"Outstanding",    width: 48, fontSize:8,   align:"right", wrap:false },
   { key:"payment_method",   label:"Payment Method", width: 58, fontSize:7,                  wrap:true  },
-  { key:"reference_number", label:"Reference No.",  width: 36, fontSize:6.5,                wrap:true  },
+  { key:"reference_number", label:"Reference No.",  width: 46, fontSize:6.5,                wrap:true  },
 ];
-// 46+44+76+34+20+66+40+56+36+48+44+40+44+42+48+58+36 = 778
+// 46+44+76+32+20+66+40+52+34+48+44+38+44+42+48+58+46 = 778
 
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 
-// ── Width assertion (catches drift immediately at startup) ────────────────────
+// ── Width assertion ───────────────────────────────────────────────────────────
 (function () {
   const expected = Math.round(PAGE_W - MARGIN_H * 2);
   if (TABLE_WIDTH !== expected) {
     throw new Error(
-      `[ledger-pdf] Column widths sum to ${TABLE_WIDTH} pt but expected ${expected} pt. ` +
-      `Adjust COLS to fix (PAGE_W=${PAGE_W}, MARGIN_H=${MARGIN_H}).`
+      `[ledger-pdf] Column widths sum to ${TABLE_WIDTH} pt but expected ${expected} pt.`
     );
   }
 })();
@@ -245,7 +259,9 @@ function getCellText(row: LedgerRow, key: string): string {
     case "receipt_number":   return safe(row.receipt_number);
     case "student_name":     return safe(row.student_name);
     case "student_id":       return safe(row.student_id);
-    case "class":            return row.section ? `${safe(row.class)}-${safe(row.section)}` : safe(row.class);
+    case "class":            return row.section
+                               ? `${safe(row.class)}-${safe(row.section)}`
+                               : safe(row.class);
     case "fee_name":         return safe(row.fee_name ?? row.fee_type);
     case "fee_type":         return safe(row.fee_type);
     case "fee_period":       return fmtPeriod(row.fee_period_start, row.fee_period_end);
@@ -262,15 +278,17 @@ function getCellText(row: LedgerRow, key: string): string {
   }
 }
 
-// ── Word-aware text wrapping using actual PDFKit font metrics ─────────────────
+// ── Word-boundary text wrapping ───────────────────────────────────────────────
 /**
- * Splits `text` into lines that fit within `maxWidth` pt, using the font and size
- * already set on `doc`. Breaks at space boundaries; falls back to character breaks
- * only for tokens (like Razorpay IDs) that are individually wider than the column.
+ * Splits `text` into lines that fit within `maxWidth` using a conservative
+ * char-width estimate. Splits ONLY at space boundaries; character-breaks only
+ * for genuinely unbreakable tokens (long IDs with no spaces).
  *
- * IMPORTANT: call doc.font(name).fontSize(size) before calling this function.
+ * This function is PURE — it needs no PDFKit page or font state.
+ * Rendering each output line with `{ lineBreak: false }` and NO `width` option
+ * guarantees PDFKit cannot break it further.
  */
-function wrapToLines(doc: InstanceType<typeof PDFDocument>, text: string, maxWidth: number): string[] {
+function wrapToLines(text: string, fontSize: number, maxWidth: number): string[] {
   if (!text || text === EM || text === "\u2014") return [text || EM];
 
   const words = text.split(" ").filter(Boolean);
@@ -279,20 +297,19 @@ function wrapToLines(doc: InstanceType<typeof PDFDocument>, text: string, maxWid
 
   for (const word of words) {
     const candidate = line ? `${line} ${word}` : word;
-    if ((doc as any).widthOfString(candidate) <= maxWidth) {
+    if (measureText(candidate, fontSize) <= maxWidth) {
       line = candidate;
     } else {
       if (line) { lines.push(line); line = ""; }
-      // Word fits on its own?
-      if ((doc as any).widthOfString(word) <= maxWidth) {
+      // Does this word fit alone on a line?
+      if (measureText(word, fontSize) <= maxWidth) {
         line = word;
       } else {
-        // Character-break for very long unbreakable tokens
+        // Character-break — only for very long unbreakable tokens (IDs)
         let partial = "";
         for (const ch of word) {
-          const test = partial + ch;
-          if ((doc as any).widthOfString(test) <= maxWidth) {
-            partial = test;
+          if (measureText(partial + ch, fontSize) <= maxWidth) {
+            partial += ch;
           } else {
             if (partial) lines.push(partial);
             partial = ch;
@@ -311,46 +328,44 @@ function wrapToLines(doc: InstanceType<typeof PDFDocument>, text: string, maxWid
 export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
   const logoBuffer = await safeImage(input.school.logoUrl);
 
-  // Create the doc early so we can use widthOfString() for pre-computation.
-  // No page is added yet.
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 0, autoFirstPage: false });
   doc.registerFont("Reg",  FONT_REG);
   doc.registerFont("Bold", FONT_BOLD);
 
-  // ── Pre-compute: wrapped lines for every wrapping cell ────────────────────
-  // Cache: allWrapped[rowIndex][colKey] = string[]
+  // ── Pre-compute: wrapped lines (pure, no page needed) ─────────────────────
+  // maxWidth = col.width - H_PAD  (subtract only the LEFT padding; right side is
+  // open since each line is rendered without a `width` constraint).  Using only
+  // one side of padding gives enough room for "Bank Transfer" (13 ch × 4.2 ≈ 54.6 pt)
+  // to fit in the 58 pt Payment Method column (56 pt effective) on ONE line.
   const allWrapped: Array<Record<string, string[]>> = input.rows.map(row => {
     const w: Record<string, string[]> = {};
     for (const col of COLS) {
       if (!col.wrap) continue;
       const text = getCellText(row, col.key);
-      (doc as any).font("Reg").fontSize(col.fontSize);
-      w[col.key] = wrapToLines(doc as any, text, col.width - 6); // 3pt padding each side
+      w[col.key] = wrapToLines(text, col.fontSize, col.width - H_PAD);
     }
     return w;
   });
 
-  // ── Pre-compute: row heights ──────────────────────────────────────────────
+  // ── Pre-compute: row heights ───────────────────────────────────────────────
   const rowHeights = input.rows.map((_, i) => {
     let maxLines = 1;
     for (const col of COLS) {
       if (!col.wrap) continue;
-      const lines = (allWrapped[i][col.key] ?? [""]).length;
-      if (lines > maxLines) maxLines = lines;
+      const n = (allWrapped[i][col.key] ?? [""]).length;
+      if (n > maxLines) maxLines = n;
     }
     return Math.max(maxLines * LINE_H + CELL_PAD * 2, MIN_ROW_H);
   });
 
-  // ── Paginate (by accumulated height, not fixed count) ────────────────────
+  // ── Paginate ───────────────────────────────────────────────────────────────
   function paginate(): number[][] {
     const pages: number[][] = [];
     let page: number[] = [];
     let used = 0;
     for (let i = 0; i < input.rows.length; i++) {
       if (page.length > 0 && used + rowHeights[i] > USABLE_DATA_H) {
-        pages.push(page);
-        page = [];
-        used = 0;
+        pages.push(page); page = []; used = 0;
       }
       page.push(i);
       used += rowHeights[i];
@@ -361,13 +376,12 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
 
   const dataPages = paginate();
 
-  // Does totals block fit on the last data page?
   const lastPageUsed = (dataPages[dataPages.length - 1] ?? [])
     .reduce((s, i) => s + rowHeights[i], 0);
   const totalsNeedExtraPage = lastPageUsed + TOTALS_H > USABLE_DATA_H;
   const totalPages = dataPages.length + (totalsNeedExtraPage ? 1 : 0);
 
-  // ── Filter/scope line ────────────────────────────────────────────────────
+  // ── Filter line ────────────────────────────────────────────────────────────
   const filterParts: string[] = [];
   if (input.filters.search)   filterParts.push(`Search = "${input.filters.search}"`);
   if (input.filters.status)   filterParts.push(`Status = ${input.filters.status}`);
@@ -381,36 +395,33 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
     : "Scope: All matching records for this session";
   const hasFilters = filterParts.length > 0;
 
-  // ── Totals values (computed once from the full exported dataset) ──────────
+  // ── Totals ─────────────────────────────────────────────────────────────────
   const totInvoiced    = input.rows.reduce((s, r) => s + Number(r.invoice_amount ?? 0), 0);
   const totPaid        = input.rows.reduce((s, r) => s + Number(r.amount_paid    ?? 0), 0);
   const totOutstanding = input.rows.reduce((s, r) => s + Number(r.outstanding    ?? 0), 0);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     doc.on("data",  (c: Buffer) => chunks.push(c));
     doc.on("end",   ()          => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    // ── Page header ──────────────────────────────────────────────────────
-    function drawHeader(pageNum: number) {
-      const top = MARGIN_V;      // 32 pt from top of page
+    // ── Page header ──────────────────────────────────────────────────────────
+    function drawHeader() {
+      const top = MARGIN_V;
 
-      // ── Left block: logo + school info ─────────────────────────────
-      let nameX = TABLE_LEFT;    // X where school name starts
+      // Left: logo + school info
+      let nameX = TABLE_LEFT;
       if (logoBuffer) {
         try {
           doc.image(logoBuffer, TABLE_LEFT, top + 2, { fit: [40, 40] });
           nameX = TABLE_LEFT + 46;
-        } catch { /* logo unavailable */ }
+        } catch { /* skip */ }
       }
-
-      // School name
       (doc as any).font("Bold").fontSize(11.5).fillColor(C_DARK)
         .text(input.school.name, nameX, top, { width: 290, lineBreak: false });
 
-      // Address
       const addr: string[] = [];
       if (input.school.addressLine1) addr.push(input.school.addressLine1);
       if (input.school.city)         addr.push(input.school.city);
@@ -421,7 +432,6 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
           .text(addr.join(", "), nameX, top + 15, { width: 290, lineBreak: true });
       }
 
-      // Phone / email
       const contact: string[] = [];
       if (input.school.phone) contact.push(input.school.phone);
       if (input.school.email) contact.push(input.school.email);
@@ -430,15 +440,13 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
           .text(contact.join("  \u2022  "), nameX, top + 28, { width: 290, lineBreak: false });
       }
 
-      // ── Right block: report identity ────────────────────────────────
-      const RW  = 240;                              // right-block width
-      const RX  = TABLE_LEFT + TABLE_WIDTH - RW;   // right-block X start = 570
+      // Right: report identity
+      const RW = 240;
+      const RX = TABLE_LEFT + TABLE_WIDTH - RW;
 
-      // Title — large, dark, right-aligned
       (doc as any).font("Bold").fontSize(14.5).fillColor(C_DARK)
         .text("FEE LEDGER REPORT", RX, top, { width: RW, align: "right", lineBreak: false });
 
-      // Subtitle — muted, italic-style (just Reg), two lines OK
       (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
         .text(
           "Invoice-wise fee ledger \u2014 billed amount, payments received & outstanding balance.",
@@ -446,76 +454,82 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
           { width: RW, align: "right" }
         );
 
-      // Session, generated, records
       let ry = top + 38;
       if (input.sessionLabel) {
         (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
-          .text(`Academic Session: ${input.sessionLabel}`, RX, ry, { width: RW, align: "right", lineBreak: false });
+          .text(`Academic Session: ${input.sessionLabel}`, RX, ry,
+            { width: RW, align: "right", lineBreak: false });
         ry += 13;
       }
       (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
-        .text(`Generated: ${input.generatedAtIST}`, RX, ry, { width: RW, align: "right", lineBreak: false });
+        .text(`Generated: ${input.generatedAtIST}`, RX, ry,
+          { width: RW, align: "right", lineBreak: false });
       ry += 11;
       (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
-        .text(`Records: ${input.rows.length}`, RX, ry, { width: RW, align: "right", lineBreak: false });
+        .text(`Records: ${input.rows.length}`, RX, ry,
+          { width: RW, align: "right", lineBreak: false });
 
-      // ── Filter / scope line — below the left block, left-aligned ────
-      const filterY = top + 56;
+      // Filter/scope line
       (doc as any).font(hasFilters ? "Bold" : "Reg").fontSize(7.5)
         .fillColor(hasFilters ? C_DARK : C_MUTED)
-        .text(filterLine, TABLE_LEFT, filterY, { width: TABLE_WIDTH - RW - 4, lineBreak: false });
+        .text(filterLine, TABLE_LEFT, top + 56,
+          { width: TABLE_WIDTH - RW - 4, lineBreak: false });
 
-      // ── Horizontal rule ─────────────────────────────────────────────
+      // Horizontal rule
       const ruleY = MARGIN_V + HEADER_H - 6;
       (doc as any)
         .moveTo(TABLE_LEFT, ruleY)
         .lineTo(TABLE_LEFT + TABLE_WIDTH, ruleY)
         .strokeColor(C_RULE).lineWidth(0.5).stroke();
-
-      // ── Column-header row ────────────────────────────────────────────
-      drawColHeaders(MARGIN_V + HEADER_H);
     }
 
-    // ── Column headers ───────────────────────────────────────────────────
+    // ── Column headers ────────────────────────────────────────────────────────
+    // Font size 6.5 pt for all headers. No `width` option — labels rendered freely
+    // from their start position so narrow columns (Class, Frequency) are never
+    // character-broken or clipped by the layout engine.
+    // Right/center-aligned labels use widthOfString() for exact positioning.
     function drawColHeaders(y: number) {
-      // Background
+      const HFONT = 6.5;
       (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, y, TABLE_WIDTH, COL_H).fill();
 
       let x = TABLE_LEFT;
       for (const col of COLS) {
-        const labelY = y + (COL_H - 7.5) / 2;   // vertically centred
-        (doc as any).font("Bold").fontSize(7.5).fillColor(C_WHITE)
-          .text(col.label, x + 3, labelY,
-            { width: col.width - 6, align: col.align ?? "left", lineBreak: false });
+        const labelMidY = y + (COL_H - HFONT) / 2;
+        (doc as any).font("Bold").fontSize(HFONT).fillColor(C_WHITE);
+        const labelW = (doc as any).widthOfString(col.label);
+        let lx: number;
+        if (col.align === "right") {
+          lx = x + col.width - H_PAD - labelW;
+        } else if (col.align === "center") {
+          lx = x + (col.width - labelW) / 2;
+        } else {
+          lx = x + H_PAD;
+        }
+        (doc as any).text(col.label, lx, labelMidY, { lineBreak: false });
         x += col.width;
       }
     }
 
-    // ── Footer (page number ONLY here, never in header) ──────────────────
+    // ── Footer ────────────────────────────────────────────────────────────────
     function drawFooter(pageNum: number) {
       const fy = PAGE_H - MARGIN_V - 13;
-      const sessionTag = input.sessionLabel ? `  \u2022  ${input.sessionLabel}` : "";
+      const tag = input.sessionLabel ? `  \u2022  ${input.sessionLabel}` : "";
       (doc as any).font("Reg").fontSize(7).fillColor(C_MUTED)
-        .text(
-          `${input.school.name}  \u2022  Fee Ledger Report${sessionTag}`,
-          TABLE_LEFT, fy,
-          { width: TABLE_WIDTH * 0.65, lineBreak: false }
-        );
+        .text(`${input.school.name}  \u2022  Fee Ledger Report${tag}`,
+          TABLE_LEFT, fy, { width: TABLE_WIDTH * 0.65, lineBreak: false });
       (doc as any).font("Reg").fontSize(7).fillColor(C_MUTED)
-        .text(
-          `Page ${pageNum} of ${totalPages}`,
+        .text(`Page ${pageNum} of ${totalPages}`,
           TABLE_LEFT + TABLE_WIDTH * 0.65, fy,
-          { width: TABLE_WIDTH * 0.35, align: "right", lineBreak: false }
-        );
+          { width: TABLE_WIDTH * 0.35, align: "right", lineBreak: false });
     }
 
-    // ── Data row ─────────────────────────────────────────────────────────
+    // ── Data row ──────────────────────────────────────────────────────────────
     function drawRow(row: LedgerRow, globalIdx: number, y: number, rowH: number) {
-      // Alternating stripe
+      // Alternating row stripe
       if (globalIdx % 2 === 0) {
         (doc as any).fillColor(C_ALT).rect(TABLE_LEFT, y, TABLE_WIDTH, rowH).fill();
       }
-      // Bottom separator
+      // Row bottom separator
       (doc as any)
         .moveTo(TABLE_LEFT, y + rowH)
         .lineTo(TABLE_LEFT + TABLE_WIDTH, y + rowH)
@@ -524,97 +538,102 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       let x = TABLE_LEFT;
       for (const col of COLS) {
         const cellText = getCellText(row, col.key);
-        const pad      = 3;
-        const innerW   = col.width - pad * 2;
-        const textX    = x + pad;
         const textY    = y + CELL_PAD;
 
         if (col.key === "status") {
-          // ── Rounded status pill ───────────────────────────────────
-          const ps      = pillStyle(row.status);
-          const pillW   = col.width - 8;
-          const pillH   = Math.min(rowH - 6, 13);
-          const pillX   = x + 4;
-          const pillY   = y + (rowH - pillH) / 2;
-          const textPY  = pillY + (pillH - col.fontSize) / 2;
-
-          // Draw pill background with save/restore to protect graphics state
+          // ── Rounded colour pill ─────────────────────────────────────────
+          const ps    = pillStyle(row.status);
+          const pillW = col.width - 8;
+          const pillH = Math.min(rowH - 6, 13);
+          const pillX = x + 4;
+          const pillY = y + (rowH - pillH) / 2;
+          // Draw pill background — save/restore protects graphics state
           (doc as any).save();
-          (doc as any).fillColor(ps.bg)
-            .roundedRect(pillX, pillY, pillW, pillH, 2).fill();
+          (doc as any).fillColor(ps.bg).roundedRect(pillX, pillY, pillW, pillH, 2).fill();
           (doc as any).restore();
-
-          // Draw status text on top
+          // Status text centred within pill
           (doc as any).font("Bold").fontSize(col.fontSize).fillColor(ps.fg)
-            .text(cellText, pillX, textPY + 0.5,
+            .text(cellText, pillX, pillY + (pillH - col.fontSize) / 2 + 0.5,
               { width: pillW, align: "center", lineBreak: false });
 
         } else if (col.wrap) {
-          // ── Word-wrapped cell: render pre-computed lines one by one ──
+          // ── Wrapping cell: pre-computed word-boundary lines ─────────────
+          // Rendered WITHOUT `width` so PDFKit cannot character-break them.
           const lines = allWrapped[globalIdx]?.[col.key] ?? [cellText];
           for (let li = 0; li < lines.length; li++) {
             (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
-              .text(lines[li], textX, textY + li * LINE_H,
-                { width: innerW, align: col.align ?? "left", lineBreak: false });
+              .text(lines[li], x + H_PAD, textY + li * LINE_H, { lineBreak: false });
           }
 
+        } else if (col.align === "right") {
+          // ── Right-aligned single-line: measure and place exactly ────────
+          // Using widthOfString() at render time (page is live — correct metrics).
+          (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY);
+          const tw = (doc as any).widthOfString(cellText);
+          (doc as any).text(cellText, x + col.width - H_PAD - tw, textY,
+            { lineBreak: false });
+
         } else {
-          // ── Single-line cell ────────────────────────────────────────
+          // ── Left-aligned single-line ────────────────────────────────────
+          // No `width` — cannot wrap, cannot character-break.
           (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
-            .text(cellText, textX, textY,
-              { width: innerW, align: col.align ?? "left", lineBreak: false });
+            .text(cellText, x + H_PAD, textY, { lineBreak: false });
         }
 
         x += col.width;
       }
     }
 
-    // ── Totals block ──────────────────────────────────────────────────────
-    //  Structure:
-    //   [  gap  ]
-    //   [ ═══ navy separator bar with TOTALS label ═══ ]
-    //   [ Total Invoiced:    ₹X,XX,XXX ]
-    //   [ Total Paid:        ₹X,XX,XXX ]
-    //   [ Total Outstanding: ₹X,XX,XXX ]
+    // ── Totals block ──────────────────────────────────────────────────────────
+    //   [gap]
+    //   [════════════ navy bar "TOTALS" ════════════]
+    //   Total Invoiced:                       ₹X,XX,XXX
+    //   Total Paid:                           ₹X,XX,XXX
+    //   Total Outstanding:                    ₹X,XX,XXX
+    //
+    // Amounts use widthOfString() + manual X (right-aligned) + NO `width` option
+    // → zero possibility of wrapping.
     function drawTotals(y: number) {
       const barY = y + 8;
       const barH = 20;
 
-      // Navy bar
       (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, barY, TABLE_WIDTH, barH).fill();
       (doc as any).font("Bold").fontSize(8.5).fillColor(C_WHITE)
-        .text("TOTALS", TABLE_LEFT + 6, barY + (barH - 8.5) / 2,
-          { width: 100, lineBreak: false });
+        .text("TOTALS", TABLE_LEFT + 6, barY + (barH - 8.5) / 2, { lineBreak: false });
 
-      // Three stacked summary lines below the bar
-      const lines = [
+      const summaryLines = [
         { label: "Total Invoiced:",    amount: fmtINR(totInvoiced)    },
         { label: "Total Paid:",        amount: fmtINR(totPaid)        },
         { label: "Total Outstanding:", amount: fmtINR(totOutstanding) },
       ];
 
-      const LW = 160;   // label column width
-      const AW = 100;   // amount column width (right-aligned)
-      const LX = TABLE_LEFT + 6;
-      const AX = TABLE_LEFT + LW + 10;
+      const rightEdge = TABLE_LEFT + TABLE_WIDTH - 8;
 
-      for (let i = 0; i < lines.length; i++) {
-        const ly = barY + barH + 6 + i * 12;
+      for (let i = 0; i < summaryLines.length; i++) {
+        const sy = barY + barH + 6 + i * 12;
+        const { label, amount } = summaryLines[i];
+
+        // Label — left-aligned, no width constraint
         (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
-          .text(lines[i].label, LX, ly, { width: LW, lineBreak: false });
-        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
-          .text(lines[i].amount, AX, ly, { width: AW, lineBreak: false });
+          .text(label, TABLE_LEFT + 6, sy, { lineBreak: false });
+
+        // Amount — right-aligned via exact widthOfString measurement, no width constraint
+        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK);
+        const amtW = (doc as any).widthOfString(amount);
+        (doc as any).text(amount, rightEdge - amtW, sy, { lineBreak: false });
       }
     }
 
-    // ── Render loop ───────────────────────────────────────────────────────
+    // ── Render loop ───────────────────────────────────────────────────────────
     if (input.rows.length === 0) {
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawHeader(1);
+      drawHeader();
+      drawColHeaders(MARGIN_V + HEADER_H);
       drawFooter(1);
       (doc as any).font("Reg").fontSize(10).fillColor(C_MUTED)
         .text("No records found for the selected filters.",
-          TABLE_LEFT, TABLE_TOP + COL_H + 24, { width: TABLE_WIDTH, align: "center" });
+          TABLE_LEFT, TABLE_TOP + COL_H + 24,
+          { width: TABLE_WIDTH, align: "center", lineBreak: false });
       doc.end();
       return;
     }
@@ -625,7 +644,8 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       const isLast   = pi === dataPages.length - 1;
 
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawHeader(pageNum);
+      drawHeader();
+      drawColHeaders(MARGIN_V + HEADER_H);
       drawFooter(pageNum);
 
       let y = TABLE_TOP + COL_H;
@@ -639,11 +659,12 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       }
     }
 
-    // Overflow totals page
+    // Overflow totals page (when last data page is full)
     if (totalsNeedExtraPage) {
       const pn = dataPages.length + 1;
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawHeader(pn);
+      drawHeader();
+      drawColHeaders(MARGIN_V + HEADER_H);
       drawFooter(pn);
       drawTotals(TABLE_TOP + COL_H + 8);
     }
