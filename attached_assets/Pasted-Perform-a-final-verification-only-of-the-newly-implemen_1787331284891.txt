@@ -1,0 +1,162 @@
+Perform a final verification only of the newly implemented multi-page selection system in Fees & Payments → Ledger & Transactions.
+
+Do NOT make unnecessary UI, design, database, pagination, or business-logic changes.
+
+The implementation already uses:
+
+- "selectedIds" for normal individual selection
+- "selectAllMatching" for global selection
+- "excludedIds" for exceptions when Select All Matching is active
+
+Do not replace this architecture unless a genuine bug is discovered.
+
+Test 1 — Individual selection across pages
+
+1. On Page 1, select 2–3 specific students.
+2. Navigate to Page 2.
+3. Confirm the previously selected students remain selected.
+4. Select another student on Page 2.
+5. Confirm the selected count increases correctly.
+6. Return to Page 1.
+7. Confirm the original selections are still checked.
+
+Test 2 — Search + selection persistence
+
+1. Search for Student A.
+2. Select Student A.
+3. Change the search to Student B.
+4. Select Student B.
+5. Clear the search.
+6. Confirm both Student A and Student B remain selected.
+
+Selection must be based on unique record IDs, not row position or page number.
+
+Test 3 — Select All current page
+
+1. Go to a page containing multiple records.
+2. Click the header Select All checkbox.
+3. Confirm only the records on the current page are selected.
+4. Navigate to another page.
+5. Confirm records on the new page are NOT selected automatically.
+6. Return to the previous page and confirm its selections remain.
+
+Test 4 — Select All Matching
+
+1. Apply a search/filter that produces a known number of matching records.
+2. Click Select All.
+3. Use the displayed Select All Matching Records option.
+4. Confirm the selection count represents the COMPLETE matching dataset, not just the current page.
+
+Example:
+
+If 3,000 records match:
+
+«3,000 Selected»
+
+Do NOT load all 3,000 records into the browser merely to represent this selection.
+
+Test 5 — Exclusion in Select All Matching mode
+
+This is the most important test.
+
+1. Select All Matching.
+2. Navigate to another page.
+3. Uncheck exactly one student.
+4. Confirm:
+   - "selectAllMatching" remains active.
+   - The student is added to "excludedIds".
+   - Other pages remain selected.
+   - The selection does NOT collapse to the current page.
+   - The selected count decreases by exactly 1.
+
+Example:
+
+«3,000 selected
+Uncheck 1 → 2,999 selected»
+
+5. Navigate to several other pages and confirm their records remain selected.
+6. Return to the page containing the excluded student and confirm only that student is unchecked.
+
+Test 6 — Exclude multiple students
+
+With Select All Matching still active:
+
+1. Uncheck 3 different students from different pages.
+2. Confirm:
+
+«3,000 → 2,999 → 2,998 → 2,997»
+
+3. Confirm all other matching records remain selected.
+
+Test 7 — Re-check an excluded student
+
+1. In Select All Matching mode, uncheck a student.
+2. Confirm the student's ID appears in the exclusion state.
+3. Check that student again.
+4. Confirm their ID is removed from "excludedIds".
+5. Confirm the selected count increases again.
+
+Example:
+
+«3,000 → 2,999 → 3,000»
+
+Test 8 — Header checkbox in Select All Matching mode
+
+When Select All Matching is active:
+
+1. Uncheck the current-page header checkbox.
+2. Confirm all currently visible page IDs are added to "excludedIds".
+3. Confirm other pages remain selected.
+4. Re-check the header checkbox.
+5. Confirm those page IDs are removed from "excludedIds".
+
+Do NOT exit Select All Matching mode.
+
+Test 9 — Clear Selection
+
+After using both normal selection and Select All Matching:
+
+1. Click Clear.
+2. Confirm:
+   - "selectedIds" is empty.
+   - "excludedIds" is empty.
+   - "selectAllMatching" is false.
+   - Selected count becomes 0.
+   - All visible checkboxes become unchecked.
+3. Navigate between pages and confirm no previous selection returns.
+
+Test 10 — Filters/search after Select All Matching
+
+Verify that changing search/filter criteria does not silently produce an incorrect selection scope.
+
+If the current implementation requires resetting or explicitly reconfirming Select All Matching when the query/filter changes, make that behavior clear to the user rather than silently applying the old selection scope to a different dataset.
+
+Performance verification
+
+Verify that the system remains scalable for 3,000+ records:
+
+- Keep server-side pagination.
+- Keep server-side search/filtering.
+- Do not render thousands of rows simultaneously.
+- Do not materialize thousands of full record objects into frontend state.
+- Select All Matching must use the existing scalable selection/exclusion model.
+- Bulk actions must receive/process the correct selection scope.
+
+Final acceptance criteria
+
+Do not report the task as complete unless all of the following are confirmed:
+
+- Individual selections persist across pages.
+- Individual selections persist across search/filter changes.
+- Select All current page works correctly.
+- Select All Matching works across ALL matching pages.
+- "excludedIds" works correctly.
+- Re-checking an excluded record restores its selection.
+- Selected count is accurate.
+- Clear completely resets selection.
+- Pagination remains intact.
+- Existing bulk actions continue to work.
+- No large client-side dataset is unnecessarily loaded.
+- No unrelated UI or business logic was changed.
+
+If all tests pass, report the exact test results and confirm the implementation is ready. If any test fails, fix only that specific issue and retest it before reporting completion.
