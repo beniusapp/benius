@@ -275,16 +275,21 @@ function assertSchoolOwnership(entitySchoolId: number, sessionSchoolId: number):
  *   Validates the session against the database.  If the referenced session is
  *   archived (is_active = false for that school), the request is aborted with
  *   403 so historical data can never be accidentally overwritten through the UI.
+ *   The transaction-report POST is an explicit read-only export transport and
+ *   is exempt so archived-session invoice selections can still be downloaded.
  *
  * Fails open on any database error so that a middleware issue never blocks
  * legitimate traffic.
  */
-async function checkSessionContext(
+export async function checkSessionContext(
   req: import("express").Request,
   res: import("express").Response,
   next: import("express").NextFunction
 ) {
   const rawHeader = req.headers["x-view-session-id"];
+  const isReadOnlyTransactionExport =
+    req.method === "POST" &&
+    req.path === "/api/admin/fees/payments/report/pdf";
 
   // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
   // This allows any downstream route handler — GET or mutation — to read
@@ -301,6 +306,7 @@ async function checkSessionContext(
   // it immediately before it reaches any route handler.
   if (
     MUTATION_METHODS.has(req.method) &&
+    !isReadOnlyTransactionExport &&
     (req as any).viewSessionId &&
     req.session?.schoolId
   ) {

@@ -43,7 +43,11 @@ import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import { renderInvoicePdf } from "./invoice-pdf";
 
 import { renderLedgerPdf, type LedgerRow } from "./ledger-pdf";
-import { renderTransactionPdf, type TxRow } from "./transaction-pdf";
+import { renderTransactionPdf } from "./transaction-pdf";
+import {
+  buildTransactionRows,
+  type TxSelectionParams,
+} from "./transaction-report-data";
 import {
   getRefundEligibility,
   markRefundReconciliationRequired,
@@ -5261,6 +5265,83 @@ td:last-child{font-weight:600;word-break:break-all;}
   });
 
   // ── School-wide Transaction History — PDF download ────────────────────────
+  // GET  — no-selection export: filters from query string.
+  // POST — selection-aware export: filters + selection from request body.
+  //
+  // Both routes share buildTransactionRows() from transaction-report-data.ts.
+  // The invoice population is resolved server-side by fr.session_id; we never
+  // constrain payment_attempts.session_id or payment_records.session_id.
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Shared PDF render + response helper for both GET and POST handlers. */
+  async function sendTransactionPdf(
+    req: any,
+    res: any,
+    schoolId: number,
+    sessionFilter: number | null,
+    txFilters: ReturnType<typeof normalizeLedgerFiltersFromQuery>,
+    selection?: TxSelectionParams,
+    selectionLabel?: string,
+  ): Promise<void> {
+    const txRows = await buildTransactionRows(schoolId, sessionFilter, txFilters, selection);
+
+    const schoolRow = (await db.execute(sql`
+      SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
+      FROM schools WHERE id = ${schoolId} LIMIT 1
+    `)).rows[0] as any;
+
+    let sessionLabel: string | null = null;
+    if (sessionFilter) {
+      const sess = (await db.execute(sql`
+        SELECT session_name FROM academic_sessions
+        WHERE id = ${sessionFilter} AND school_id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+      sessionLabel = sess?.session_name ?? null;
+    }
+
+    // School logos are uploaded beneath the local uploads/ directory. Read the
+    // file directly instead of constructing an HTTP URL from the request Host
+    // header, which would turn PDF rendering into a server-side request target.
+    const logoRelUrl = typeof schoolRow?.logo_url === "string"
+      ? schoolRow.logo_url
+      : null;
+    let logoData: Buffer | null = null;
+    if (logoRelUrl?.startsWith("/uploads/")) {
+      const uploadsRoot = path.resolve(process.cwd(), "uploads");
+      const logoPath = path.resolve(process.cwd(), `.${logoRelUrl}`);
+      if (logoPath.startsWith(`${uploadsRoot}${path.sep}`)) {
+        try {
+          logoData = await fs.promises.readFile(logoPath);
+        } catch {
+          logoData = null;
+        }
+      }
+    }
+
+    const pdfBuffer = await renderTransactionPdf({
+      school: {
+        name: schoolRow?.name ?? "School",
+        logoUrl: null,
+        logoData,
+        addressLine1: schoolRow?.address_line1 ?? null,
+        addressLine2: schoolRow?.address_line2 ?? null,
+        city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
+        pinCode: schoolRow?.pin_code ?? null,
+        phone: schoolRow?.phone ?? null, email: schoolRow?.email ?? null,
+      },
+      sessionLabel,
+      filters: txFilters,
+      selectionLabel: selectionLabel ?? null,
+      rows: txRows,
+      generatedAtIST: formatInstantIST(new Date()),
+    });
+
+    const sessionTag = sessionLabel ? sessionLabel.replace(/[^a-zA-Z0-9-]/g, "-") : todayInIST();
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="Payment-Transaction-Report-${sessionTag}.pdf"`);
+    res.send(pdfBuffer);
+  }
+
   app.get("/api/admin/fees/payments/report/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
@@ -5268,151 +5349,96 @@ td:last-child{font-weight:600;word-break:break-all;}
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
 
     // Normalize all ledger filters from query (same contract as ledger endpoints).
-    // The tx report filters payment rows through joined fee/student fields so
-    // it represents transactions belonging to the same filtered invoice population.
     const txFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
 
-    // Transaction-specific filters (payment method on the payment record, date range on received_date).
-    // These are separate from the invoice-population filters above.
-    const txMethodFilter = req.query.method ? String(req.query.method) : undefined;
-    const txDateFrom     = req.query.dateFrom ? String(req.query.dateFrom) : undefined;
-    const txDateTo       = req.query.dateTo   ? String(req.query.dateTo)   : undefined;
-
     try {
-      // Invoice-population predicates — applied to the joined fr/s fields.
-      // The canonical paymentMethod / referenceNumber ledger filters resolve
-      // against the fee record's LATEST non-auto-recorded payment (lp alias),
-      // NOT the individual pr row, so we return ALL transaction rows belonging
-      // to the matching invoice population rather than only the rows whose own
-      // method/reference happen to match. Transaction-specific method/date
-      // filters (below) still narrow the pr rows directly.
-      const txInvoiceFields: LedgerFilterFields = {
-        invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
-        receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
-        studentName:    sql`COALESCE(s.name, '')`,
-        dsid:           sql`COALESCE(s.digital_student_id, '')`,
-        class:          sql`s.class`,
-        section:        sql`s.section`,
-        feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
-        feeType:        sql`fr.fee_type`,
-        feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
-        frequency:      sql`fr.frequency`,
-        status:         sql`fr.status`,
-        academicYear:   sql`fr.academic_year`,
-        amount:         sql`fr.amount`,
-        dueDate:        sql`fr.due_date`,
-        paidDate:       sql`fr.paid_date`,
-        // canonical filters resolve against the fee record's latest payment
-        referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
-        paymentMethod:   sql`lp.raw_payment_method`,
-      };
-      const txInvoicePreds = buildLedgerFilterPredicates(txFilters, txInvoiceFields);
-      // Canonical Ledger scope is defined by the invoice's session. A payment
-      // row may retain a different historical session stamp, but every payment
-      // for an in-scope invoice still belongs in the transaction report.
-      const txSessionPredicate = buildLedgerInvoiceSessionPredicate(sessionFilter);
-      const txSessionCond = txSessionPredicate
-        ? sql`AND ${txSessionPredicate}`
-        : sql``;
-      const txExtraWhere = txInvoicePreds.length > 0
-        ? sql`AND ${sql.join(txInvoicePreds, sql` AND `)}`
-        : sql``;
-
-      // structure → deterministic first fee-structure name (no one-to-many duplication)
-      // lp        → the joined fee record's latest NON-auto-recorded payment,
-      //             used only for canonical paymentMethod/referenceNumber predicates
-      const rows = await db.execute(sql`
-        SELECT
-          pr.id,
-          s.name               AS student_name,
-          s.digital_student_id AS student_id,
-          fr.invoice_number    AS invoice_number,
-          pr.receipt_number    AS receipt_number,
-          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
-          fr.fee_type          AS fee_type,
-          pr.payment_method,
-          pr.received_date,
-          pr.created_at,
-          pr.amount,
-          pr.late_fee_paid,
-          pr.gateway_status,
-          pr.razorpay_payment_id,
-          pr.razorpay_order_id,
-          pr.reference_number
-        FROM payment_records pr
-        LEFT JOIN students s ON s.id = pr.student_id AND s.school_id = pr.school_id
-        LEFT JOIN fee_records fr ON fr.id = pr.fee_record_id AND fr.school_id = pr.school_id
-        LEFT JOIN LATERAL (
-          SELECT fs.name AS fee_name
-          FROM fee_structures fs
-          WHERE fs.school_id = fr.school_id
-            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
-          ORDER BY fs.id ASC
-          LIMIT 1
-        ) structure ON true
-        LEFT JOIN LATERAL (
-          SELECT pr2.payment_method AS raw_payment_method,
-                 pr2.reference_number AS raw_reference_number
-          FROM payment_records pr2
-          WHERE pr2.school_id = fr.school_id
-            AND pr2.fee_record_id = fr.id
-            AND (pr2.cashier_notes IS NULL OR pr2.cashier_notes <> 'Auto-recorded from Add Fee Record')
-          ORDER BY pr2.created_at DESC, pr2.id DESC
-          LIMIT 1
-        ) lp ON true
-        WHERE pr.school_id = ${schoolId}
-          ${txSessionCond}
-          ${txExtraWhere}
-          ${txMethodFilter ? sql`AND pr.payment_method = ${txMethodFilter}` : sql``}
-          ${txDateFrom ? sql`AND pr.received_date >= ${txDateFrom}` : sql``}
-          ${txDateTo   ? sql`AND pr.received_date <= ${txDateTo}`   : sql``}
-        ORDER BY pr.created_at DESC
-      `);
-
-      const schoolRow = (await db.execute(sql`
-        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code, phone, email
-        FROM schools WHERE id = ${schoolId} LIMIT 1
-      `)).rows[0] as any;
-
-      let sessionLabel: string | null = null;
-      if (sessionFilter) {
-        const sess = (await db.execute(sql`
-          SELECT session_name FROM academic_sessions WHERE id = ${sessionFilter} LIMIT 1
-        `)).rows[0] as any;
-        sessionLabel = sess?.session_name ?? null;
-      }
-
-      const logoRelUrl = schoolRow?.logo_url ?? null;
-      const logoUrl = logoRelUrl
-        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
-        : null;
-
-      const pdfBuffer = await renderTransactionPdf({
-        school: {
-          name: schoolRow?.name ?? "School", logoUrl,
-          addressLine1: schoolRow?.address_line1 ?? null,
-          addressLine2: schoolRow?.address_line2 ?? null,
-          city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
-          pinCode: schoolRow?.pin_code ?? null,
-          phone: schoolRow?.phone ?? null, email: schoolRow?.email ?? null,
-        },
-        sessionLabel,
-        filters: {
-          search:   txFilters.search || undefined,
-          method:   txMethodFilter   || undefined,
-          dateFrom: txDateFrom       || undefined,
-          dateTo:   txDateTo         || undefined,
-        },
-        rows: (rows.rows as any[]) as TxRow[],
-        generatedAtIST: formatInstantIST(new Date()),
-      });
-
-      const sessionTag = sessionLabel ? sessionLabel.replace(/[^a-zA-Z0-9-]/g, "-") : todayInIST();
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename="Payment-Transaction-Report-${sessionTag}.pdf"`);
-      res.send(pdfBuffer);
+      await sendTransactionPdf(req, res, schoolId, sessionFilter, txFilters);
     } catch (err) {
       console.error("[transaction-pdf]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── School-wide Transaction History — PDF download (POST — selection-aware) ─
+  // Accepts the same filters as the GET endpoint plus:
+  //   selectAllMatching: boolean  — true = all matching records (minus excludedIds)
+  //   selectedIds: number[]       — explicit fee_record IDs (when selectAllMatching = false)
+  //   excludedIds: number[]       — IDs to carve out when selectAllMatching = true
+  //
+  // Security: school_id + session are always enforced server-side. All invoice
+  // filters also remain active. The selection is applied to fee_record IDs
+  // inside the invoice population — the browser cannot export rows outside the
+  // authenticated school/session scope.
+  app.post("/api/admin/fees/payments/report/pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    // Extract selection predicates from body
+    const body = req.body as Record<string, unknown>;
+    const rawSelectAll   = body.selectAllMatching;
+    const rawSelectedIds = body.selectedIds;
+    const rawExcludedIds = body.excludedIds;
+
+    // ── Strict validation ─────────────────────────────────────────────────────
+    // selectAllMatching, when present, must be a boolean.
+    if (rawSelectAll !== undefined && typeof rawSelectAll !== "boolean") {
+      return res.status(400).json({ message: "selectAllMatching must be a boolean." });
+    }
+    const selectAllMatching = rawSelectAll === true;
+
+    // selectedIds / excludedIds, when present, must be arrays of positive integers.
+    // Any non-array, or an array with a non-positive/non-integer entry, is a 400 —
+    // never silently coerced (a malformed explicit selection must not export all).
+    const validateIdArray = (v: unknown, field: string): number[] | { error: string } => {
+      if (v === undefined || v === null) return [];
+      if (!Array.isArray(v)) return { error: `${field} must be an array of positive integers.` };
+      for (const x of v) {
+        if (!Number.isInteger(x) || (x as number) <= 0) {
+          return { error: `${field} must contain only positive integers.` };
+        }
+      }
+      // Deduplicate while preserving order.
+      return Array.from(new Set(v as number[]));
+    };
+
+    const selectedIdsResult = validateIdArray(rawSelectedIds, "selectedIds");
+    if (!Array.isArray(selectedIdsResult)) {
+      return res.status(400).json({ message: selectedIdsResult.error });
+    }
+    const excludedIdsResult = validateIdArray(rawExcludedIds, "excludedIds");
+    if (!Array.isArray(excludedIdsResult)) {
+      return res.status(400).json({ message: excludedIdsResult.error });
+    }
+    const selectedIds = selectedIdsResult;
+    const excludedIds = excludedIdsResult;
+
+    // Explicit mode (selectAllMatching=false) with no selected IDs is an error —
+    // returning an empty 200 PDF would be misleading.
+    if (!selectAllMatching && selectedIds.length === 0) {
+      return res.status(400).json({
+        message: "Explicit selection requires at least one selected invoice ID.",
+      });
+    }
+
+    const selection: TxSelectionParams = { selectAllMatching, selectedIds, excludedIds };
+
+    // Build a human-readable selection label for the PDF header
+    let selectionLabel: string | undefined;
+    if (!selectAllMatching && selectedIds.length > 0) {
+      selectionLabel = `${selectedIds.length} selected invoice${selectedIds.length !== 1 ? "s" : ""}`;
+    } else if (selectAllMatching && excludedIds.length > 0) {
+      selectionLabel = `All matching (${excludedIds.length} excluded)`;
+    }
+
+    // Normalize all ledger filters from body (POST body, same old-singular-field compat).
+    const txFilters = normalizeLedgerFiltersFromBody(body);
+
+    try {
+      await sendTransactionPdf(req, res, schoolId, sessionFilter, txFilters, selection, selectionLabel);
+    } catch (err) {
+      console.error("[transaction-pdf-post]", err);
       res.status(500).json({ message: String(err) });
     }
   });

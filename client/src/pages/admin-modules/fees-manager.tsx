@@ -2853,8 +2853,27 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const downloadTransactionPdf = useCallback(async () => {
     setIsDownloadingTxPdf(true);
     try {
-      const params = ledgerFiltersToSearchParams(filters);
-      const r = await sessionFetch(`/api/admin/fees/payments/report/pdf?${params.toString()}`);
+      const hasSelection = selectAllMatching || selectedIds.size > 0;
+      let r: Response;
+
+      if (hasSelection) {
+        r = await sessionFetch("/api/admin/fees/payments/report/pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...ledgerFiltersToBody(filters),
+            selectAllMatching,
+            selectedIds: selectAllMatching ? [] : [...selectedIds],
+            excludedIds: selectAllMatching ? [...excludedIds] : [],
+          }),
+        });
+      } else {
+        const params = ledgerFiltersToSearchParams(filters);
+        r = await sessionFetch(
+          `/api/admin/fees/payments/report/pdf${params.size ? "?" + params.toString() : ""}`,
+        );
+      }
+
       if (!r.ok) {
         const err = await r.json().catch(() => ({ message: "Download failed" }));
         toast({ title: "PDF download failed", description: err.message, variant: "destructive" });
@@ -2873,7 +2892,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     } finally {
       setIsDownloadingTxPdf(false);
     }
-  }, [toast, filters]);
+  }, [toast, filters, selectedIds, selectAllMatching, excludedIds]);
 
   // Failed payment counts — per-fee-record badge showing how many payment_failed audit entries exist
   const { data: failedCounts = {} } = useQuery<Record<number, { count: number; lastError: string | null }>>({
@@ -3303,7 +3322,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
             Ledger PDF
           </Button>
           <Button size="sm" variant="outline" onClick={downloadTransactionPdf} disabled={isDownloadingTxPdf}
-            title="Download all payment transactions for this session as a PDF"
+            title="Download transactions for the current filtered or selected invoice scope"
             className="border-blue-700 text-blue-400 hover:bg-blue-900/30 gap-1">
             {isDownloadingTxPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
             Tx Report PDF
