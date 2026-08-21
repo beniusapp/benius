@@ -5040,6 +5040,16 @@ td:last-child{font-weight:600;word-break:break-all;}
       ? rawExcludedIds.filter(x => Number.isInteger(x) && x > 0)
       : [];
 
+    // PostgreSQL's ANY/ALL operators require a PostgreSQL array expression on
+    // the right-hand side. IDs above are validated positive integers before
+    // constructing the project's existing typed ARRAY[...]::int[] expression.
+    const selectedIdsArray = selectedIds.length
+      ? sql.raw(`ARRAY[${selectedIds.join(",")}]::int[]`)
+      : null;
+    const excludedIdsArray = excludedIds.length
+      ? sql.raw(`ARRAY[${excludedIds.join(",")}]::int[]`)
+      : null;
+
     try {
       const rows = await db.execute(sql`
         SELECT
@@ -5089,8 +5099,8 @@ td:last-child{font-weight:600;word-break:break-all;}
           ${classFilter    && classFilter !== "all"   ? sql`AND s.class = ${classFilter}`   : sql``}
           ${feeTypeFilter  && feeTypeFilter !== "all" ? sql`AND fr.fee_type = ${feeTypeFilter}` : sql``}
           ${feeNameFilter  && feeNameFilter !== "all" ? sql`AND COALESCE(fr.fee_name, fs.name, fr.fee_type) = ${feeNameFilter}` : sql``}
-          ${!selectAllMatching && selectedIds.length > 0 ? sql`AND fr.id = ANY(${selectedIds})` : sql``}
-          ${selectAllMatching  && excludedIds.length  > 0 ? sql`AND fr.id != ALL(${excludedIds})` : sql``}
+          ${!selectAllMatching && selectedIdsArray ? sql`AND fr.id = ANY(${selectedIdsArray})` : sql``}
+          ${selectAllMatching  && excludedIdsArray ? sql`AND fr.id != ALL(${excludedIdsArray})` : sql``}
         ORDER BY s.class, s.name, fr.due_date
       `);
 
