@@ -1,55 +1,51 @@
 /**
- * ledger-pdf.ts
- * Professional A4-landscape Fee Ledger PDF using PDFKit.
+ * ledger-pdf.ts — Fee Ledger PDF renderer
  *
- * Design principles
- * ─────────────────
- * • Dynamic row heights — rows expand to fit wrapped content; no text ever clips.
- * • Status colour pills (green / amber / red / blue / grey).
- * • Two-pass layout: widths and page breaks are computed before any drawing begins
- *   so page counts are exact, including a possible overflow page for the totals block.
- * • Totals always appear — if they don't fit on the last data page they move to a
- *   fresh continuation page.
- * • Page number appears only in the footer (never duplicated in the header).
- * • DejaVu Sans throughout for reliable ₹ glyph rendering.
+ * Key guarantees
+ * ──────────────
+ * 1. Text is NEVER mid-word broken: word wrapping uses doc.widthOfString() (actual
+ *    PDFKit font metrics) with character-break fallback only for unbreakable long tokens
+ *    (e.g. Razorpay IDs). Each wrapped line is drawn individually with lineBreak:false.
+ * 2. Dynamic row heights: every row measures its tallest wrapping cell and sizes itself
+ *    accordingly. No text is clipped.
+ * 3. Totals block always appears: pre-flight check determines whether it fits on the
+ *    last data page; if not, a continuation page is added BEFORE any drawing starts so
+ *    the page-count in every header is correct from the beginning.
+ * 4. Status pills are real rounded rectangles rendered with save/restore so the graphics
+ *    state never bleeds across cells.
+ * 5. Page number appears ONLY in the footer.
  */
 
 import PDFDocument from "pdfkit";
 import https from "https";
 import http from "http";
 
-// ── Font paths ────────────────────────────────────────────────────────────────
+// ── Fonts ─────────────────────────────────────────────────────────────────────
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 const FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C_DARK  = "#102b49";
-const C_MUTED = "#627386";
+const C_MUTED = "#5a6e80";
 const C_RULE  = "#d9e1e8";
 const C_WHITE = "#ffffff";
 const C_BODY  = "#1a2332";
 const C_THEAD = "#102b49";
-const C_ALT   = "#f7f9fb";   // very-light blue-grey stripe
+const C_ALT   = "#f5f8fb";
 
-// Status pill colours (background / foreground text)
-const STATUS_BG: Record<string, string> = {
-  Paid:    "#dcfce7",
-  Overdue: "#fee2e2",
-  Due:     "#fef9c3",
-  Partial: "#dbeafe",
-  Waived:  "#f3f4f6",
+// Status pill — background + foreground pairs
+const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
+  Paid:    { bg: "#d1fae5", fg: "#065f46" },
+  Overdue: { bg: "#fee2e2", fg: "#7f1d1d" },
+  Due:     { bg: "#fef3c7", fg: "#78350f" },
+  Partial: { bg: "#dbeafe", fg: "#1e40af" },
+  Waived:  { bg: "#e5e7eb", fg: "#374151" },
 };
-const STATUS_FG: Record<string, string> = {
-  Paid:    "#14532d",
-  Overdue: "#7f1d1d",
-  Due:     "#78350f",
-  Partial: "#1e3a8a",
-  Waived:  "#374151",
-};
-const statusBg = (s: string) => STATUS_BG[s] ?? "#f3f4f6";
-const statusFg = (s: string) => STATUS_FG[s] ?? "#374151";
+function pillStyle(status: string) {
+  return STATUS_STYLE[status] ?? { bg: "#e5e7eb", fg: "#374151" };
+}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Network helpers ───────────────────────────────────────────────────────────
 function fetchBuffer(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
@@ -66,31 +62,30 @@ async function safeImage(url: string | null): Promise<Buffer | null> {
   try { return await fetchBuffer(url); } catch { return null; }
 }
 
-/** INR whole-rupee formatting: ₹1,00,000 */
+// ── Formatters ────────────────────────────────────────────────────────────────
+const EM = "\u2014";
+
 function fmtINR(n: number): string {
   return "\u20B9" + new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(Math.round(n));
 }
 
-/** "22 Apr 2027" — consistent Indian readable date */
 function fmtDate(v: string | null | undefined): string {
-  if (!v) return "\u2014";
+  if (!v) return EM;
   try {
     const d = /^\d{4}-\d{2}-\d{2}/.test(String(v))
       ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
       : new Date(String(v));
-    if (isNaN(d.getTime())) return "\u2014";
+    if (isNaN(d.getTime())) return EM;
     return d.toLocaleDateString("en-IN", {
       timeZone: "UTC", day: "2-digit", month: "short", year: "numeric",
     });
-  } catch { return "\u2014"; }
+  } catch { return EM; }
 }
 
-/** Safe string — returns em dash for null / empty */
-function s(v: unknown): string {
-  if (v == null || v === "") return "\u2014";
+function safe(v: unknown): string {
+  if (v == null || v === "") return EM;
   return String(v);
 }
 
@@ -108,85 +103,86 @@ function fmtMonthYear(v: string | null | undefined): string {
 function fmtPeriod(start: string | null | undefined, end: string | null | undefined): string {
   const s1 = fmtMonthYear(start);
   const s2 = fmtMonthYear(end);
-  if (s1 && s2 && s1 !== s2) return `${s1} – ${s2}`;
-  return s1 || s2 || "\u2014";
+  if (s1 && s2 && s1 !== s2) return `${s1} \u2013 ${s2}`;
+  return s1 || s2 || EM;
 }
 
 // ── Page geometry ─────────────────────────────────────────────────────────────
-const PAGE_W   = 841.89;   // A4 landscape width  (pt)
-const PAGE_H   = 595.28;   // A4 landscape height (pt)
-const MARGIN_H = 32;       // left / right margin
-const MARGIN_V = 32;       // top / bottom margin
+// A4 landscape: 841.89 × 595.28 pt
+const PAGE_W   = 841.89;
+const PAGE_H   = 595.28;
+const MARGIN_H = 32;          // left + right margin
+const MARGIN_V = 32;          // top + bottom margin
 
-// Header block: logo + school info + report title + subtitle + session/generated/records
-// + filter/scope line + ruled separator
-const HEADER_H = 118;
-const TABLE_TOP = MARGIN_V + HEADER_H;   // top of the column-header row
+// Header block (logo + school info + title + subtitle + session/generated/records
+//               + filter/scope line + horizontal rule + small gap)
+const HEADER_H = 120;
+const TABLE_TOP = MARGIN_V + HEADER_H;   // where the column-header row starts
 
-const COL_H    = 22;    // column-header row height (pt)
-const FOOTER_H = 20;    // space reserved at bottom for footer text
+const COL_H    = 22;  // column-header row height
+const FOOTER_H = 22;  // space kept at page bottom for the footer line
 
-// Available height for data rows on any page
+// Data-row area per page (space available for actual invoice rows)
 const USABLE_DATA_H = PAGE_H - MARGIN_V * 2 - HEADER_H - COL_H - FOOTER_H;
 
-// Typography
-const LINE_H    = 9;    // pt per wrapped text line
-const CELL_PAD  = 5;    // vertical padding (top AND bottom) inside a cell
-const MIN_ROW_H = LINE_H + CELL_PAD * 2;  // 19 pt minimum row height
+// Totals block: navy bar (20 pt) + top gap (8 pt) + 3 summary lines × 12 pt + bottom gap (6 pt)
+const TOTALS_H = 8 + 20 + 3 * 12 + 6;  // = 70 pt
+
+const LINE_H    = 10;   // vertical distance between consecutive wrapped lines
+const CELL_PAD  = 5;    // top AND bottom padding inside a data cell
+const MIN_ROW_H = LINE_H + CELL_PAD * 2;   // 20 pt minimum
+
+const TABLE_LEFT = MARGIN_H;
 
 // ── Column definitions ────────────────────────────────────────────────────────
 //
-// Usable table width = PAGE_W − 2 × MARGIN_H = 841.89 − 64 = 777.89 ≈ 778 pt
+// Usable table width = PAGE_W − 2×MARGIN_H = 841.89 − 64 = 777.89 → 778 pt
 //
-// Priority columns (wider):  Student, Fee Name, Fee Period, Payment Method, Reference No.
-// Narrow identifiers:        Invoice No., Receipt No., DSID
-// Short values (not padded): Status, Amount, Paid, Outstanding, Due Date, Paid On
+// wrap:true  → text uses wrapToLines(); row height expands as needed
+// wrap:false → single line, lineBreak:false; values are inherently short
 //
-// wrap: true  → PDFKit lineBreak allowed; row height expands to fit
-// wrap: false → single line, lineBreak disabled (values are short and predictable)
+// Width priorities (wider): Student, Fee Name, Fee Period, Payment Method, Reference No.
+// Width savings (narrower): DSID, Class, Invoice/Receipt No., Date columns
 
 interface ColDef {
   key:      string;
   label:    string;
-  width:    number;   // pt
-  fontSize: number;   // pt
+  width:    number;
+  fontSize: number;
   align?:   "right" | "center";
   wrap:     boolean;
 }
 
 const COLS: ColDef[] = [
-  // key                 label              width  fs    align     wrap
-  { key:"invoice_number",  label:"Invoice No.",    width: 48, fontSize:6.5,                wrap:true  },
-  { key:"receipt_number",  label:"Receipt No.",    width: 46, fontSize:6.5,                wrap:true  },
-  { key:"student_name",    label:"Student",        width: 76, fontSize:8,                  wrap:true  },
-  { key:"student_id",      label:"DSID",           width: 36, fontSize:6.5,                wrap:true  },
-  { key:"class",           label:"Class",          width: 22, fontSize:7.5,                wrap:false },
-  { key:"fee_name",        label:"Fee Name",       width: 66, fontSize:7.5,                wrap:true  },
-  { key:"fee_type",        label:"Fee Type",       width: 40, fontSize:7,                  wrap:true  },
-  { key:"fee_period",      label:"Fee Period",     width: 56, fontSize:7,                  wrap:true  },
-  { key:"frequency",       label:"Frequency",      width: 36, fontSize:7,                  wrap:false },
-  { key:"invoice_amount",  label:"Amount",         width: 48, fontSize:8,   align:"right", wrap:false },
-  { key:"due_date",        label:"Due Date",       width: 46, fontSize:7,                  wrap:false },
-  { key:"status",          label:"Status",         width: 40, fontSize:7.5, align:"center",wrap:false },
-  { key:"paid_date",       label:"Paid On",        width: 46, fontSize:7,                  wrap:false },
-  { key:"amount_paid",     label:"Paid",           width: 44, fontSize:8,   align:"right", wrap:false },
-  { key:"outstanding",     label:"Outstanding",    width: 48, fontSize:8,   align:"right", wrap:false },
-  { key:"payment_method",  label:"Payment Method", width: 48, fontSize:7,                  wrap:true  },
-  { key:"reference_number",label:"Reference No.",  width: 32, fontSize:6.5,                wrap:true  },
+  { key:"invoice_number",   label:"Invoice No.",    width: 46, fontSize:6.5,                wrap:true  },
+  { key:"receipt_number",   label:"Receipt No.",    width: 44, fontSize:6.5,                wrap:true  },
+  { key:"student_name",     label:"Student",        width: 76, fontSize:8,                  wrap:true  },
+  { key:"student_id",       label:"DSID",           width: 34, fontSize:6.5,                wrap:true  },
+  { key:"class",            label:"Class",          width: 20, fontSize:7.5,                wrap:false },
+  { key:"fee_name",         label:"Fee Name",       width: 66, fontSize:7.5,                wrap:true  },
+  { key:"fee_type",         label:"Fee Type",       width: 40, fontSize:7,                  wrap:true  },
+  { key:"fee_period",       label:"Fee Period",     width: 56, fontSize:7,                  wrap:true  },
+  { key:"frequency",        label:"Frequency",      width: 36, fontSize:7,                  wrap:false },
+  { key:"invoice_amount",   label:"Amount",         width: 48, fontSize:8,   align:"right", wrap:false },
+  { key:"due_date",         label:"Due Date",       width: 44, fontSize:7,                  wrap:false },
+  { key:"status",           label:"Status",         width: 40, fontSize:7.5, align:"center",wrap:false },
+  { key:"paid_date",        label:"Paid On",        width: 44, fontSize:7,                  wrap:false },
+  { key:"amount_paid",      label:"Paid",           width: 42, fontSize:8,   align:"right", wrap:false },
+  { key:"outstanding",      label:"Outstanding",    width: 48, fontSize:8,   align:"right", wrap:false },
+  { key:"payment_method",   label:"Payment Method", width: 58, fontSize:7,                  wrap:true  },
+  { key:"reference_number", label:"Reference No.",  width: 36, fontSize:6.5,                wrap:true  },
 ];
-// 48+46+76+36+22+66+40+56+36+48+46+40+46+44+48+48+32 = 778
+// 46+44+76+34+20+66+40+56+36+48+44+40+44+42+48+58+36 = 778
 
-const TABLE_WIDTH = COLS.reduce((sum, c) => sum + c.width, 0);
-const TABLE_LEFT  = MARGIN_H;
+const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 
-// ── Development-time assertion ────────────────────────────────────────────────
-// Catches accidental column-width drift immediately.
-(function assertTableWidth() {
-  const expected = Math.round(PAGE_W - MARGIN_H * 2);   // 778 pt
+// ── Width assertion (catches drift immediately at startup) ────────────────────
+(function () {
+  const expected = Math.round(PAGE_W - MARGIN_H * 2);
   if (TABLE_WIDTH !== expected) {
     throw new Error(
-      `[ledger-pdf] Column widths sum to ${TABLE_WIDTH} pt but expected ${expected} pt ` +
-      `(PAGE_W ${PAGE_W} − 2 × MARGIN_H ${MARGIN_H}). Adjust COLS widths to fix.`
+      `[ledger-pdf] Column widths sum to ${TABLE_WIDTH} pt but expected ${expected} pt. ` +
+      `Adjust COLS to fix (PAGE_W=${PAGE_W}, MARGIN_H=${MARGIN_H}).`
     );
   }
 })();
@@ -230,142 +226,148 @@ export interface LedgerPdfInput {
   };
   sessionLabel:   string | null;
   filters: {
-    search?:    string;
-    status?:    string;
-    class?:     string;
-    feeName?:   string;
-    feeType?:   string;
-    dateFrom?:  string;
-    dateTo?:    string;
+    search?:   string;
+    status?:   string;
+    class?:    string;
+    feeName?:  string;
+    feeType?:  string;
+    dateFrom?: string;
+    dateTo?:   string;
   };
   rows:           LedgerRow[];
   generatedAtIST: string;
 }
 
-// ── Cell text resolver ────────────────────────────────────────────────────────
+// ── Cell text ─────────────────────────────────────────────────────────────────
 function getCellText(row: LedgerRow, key: string): string {
   switch (key) {
-    case "invoice_number":
-      return s(row.invoice_number);
-    case "receipt_number":
-      return s(row.receipt_number);
-    case "student_name":
-      return s(row.student_name);
-    case "student_id":
-      return s(row.student_id);
-    case "class":
-      return row.section ? `${s(row.class)}-${s(row.section)}` : s(row.class);
-    case "fee_name":
-      return s(row.fee_name ?? row.fee_type);
-    case "fee_type":
-      return s(row.fee_type);
-    case "fee_period":
-      return fmtPeriod(row.fee_period_start, row.fee_period_end);
-    case "frequency":
-      return s(row.frequency);
-    case "invoice_amount":
-      return fmtINR(Number(row.invoice_amount ?? 0));
-    case "due_date":
-      return fmtDate(row.due_date);
-    case "status":
-      return s(row.status);
-    case "paid_date":
-      return fmtDate(row.paid_date);
-    case "amount_paid":
-      return row.amount_paid ? fmtINR(Number(row.amount_paid)) : "\u2014";
-    case "outstanding":
-      return row.outstanding  ? fmtINR(Number(row.outstanding))  : "\u2014";
-    case "payment_method":
-      return s(row.payment_method);
-    case "reference_number":
-      return s(row.reference_number);
-    default:
-      return "\u2014";
+    case "invoice_number":   return safe(row.invoice_number);
+    case "receipt_number":   return safe(row.receipt_number);
+    case "student_name":     return safe(row.student_name);
+    case "student_id":       return safe(row.student_id);
+    case "class":            return row.section ? `${safe(row.class)}-${safe(row.section)}` : safe(row.class);
+    case "fee_name":         return safe(row.fee_name ?? row.fee_type);
+    case "fee_type":         return safe(row.fee_type);
+    case "fee_period":       return fmtPeriod(row.fee_period_start, row.fee_period_end);
+    case "frequency":        return safe(row.frequency);
+    case "invoice_amount":   return fmtINR(Number(row.invoice_amount ?? 0));
+    case "due_date":         return fmtDate(row.due_date);
+    case "status":           return safe(row.status);
+    case "paid_date":        return fmtDate(row.paid_date);
+    case "amount_paid":      return row.amount_paid ? fmtINR(Number(row.amount_paid)) : EM;
+    case "outstanding":      return row.outstanding  ? fmtINR(Number(row.outstanding))  : EM;
+    case "payment_method":   return safe(row.payment_method);
+    case "reference_number": return safe(row.reference_number);
+    default:                 return EM;
   }
 }
 
-// ── Row-height pre-computation ────────────────────────────────────────────────
+// ── Word-aware text wrapping using actual PDFKit font metrics ─────────────────
 /**
- * Estimate how many lines a piece of text needs inside `innerWidth` pt at `fontSize` pt.
- * Uses DejaVu Sans average character width ≈ fontSize × 0.54.
- * Handles long unbreakable tokens (e.g. Razorpay IDs) by treating them as
- * consecutive overflows.
+ * Splits `text` into lines that fit within `maxWidth` pt, using the font and size
+ * already set on `doc`. Breaks at space boundaries; falls back to character breaks
+ * only for tokens (like Razorpay IDs) that are individually wider than the column.
+ *
+ * IMPORTANT: call doc.font(name).fontSize(size) before calling this function.
  */
-function countLines(text: string, innerWidth: number, fontSize: number): number {
-  if (!text || text === "\u2014" || text === "—") return 1;
-  const charsPerLine = Math.max(1, Math.floor(innerWidth / (fontSize * 0.54)));
-  let lines = 1;
-  let col   = 0;
-  for (const word of text.split(/\s+/)) {
-    if (!word) continue;
-    const wlen = word.length;
-    if (col === 0) {
-      col = wlen;
-    } else if (col + 1 + wlen <= charsPerLine) {
-      col += 1 + wlen;
+function wrapToLines(doc: InstanceType<typeof PDFDocument>, text: string, maxWidth: number): string[] {
+  if (!text || text === EM || text === "\u2014") return [text || EM];
+
+  const words = text.split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if ((doc as any).widthOfString(candidate) <= maxWidth) {
+      line = candidate;
     } else {
-      lines++;
-      col = wlen;
-    }
-    // Long unbreakable token — spills across multiple lines
-    while (col > charsPerLine) {
-      lines++;
-      col -= charsPerLine;
+      if (line) { lines.push(line); line = ""; }
+      // Word fits on its own?
+      if ((doc as any).widthOfString(word) <= maxWidth) {
+        line = word;
+      } else {
+        // Character-break for very long unbreakable tokens
+        let partial = "";
+        for (const ch of word) {
+          const test = partial + ch;
+          if ((doc as any).widthOfString(test) <= maxWidth) {
+            partial = test;
+          } else {
+            if (partial) lines.push(partial);
+            partial = ch;
+          }
+        }
+        line = partial;
+      }
     }
   }
-  return Math.max(1, lines);
+
+  if (line) lines.push(line);
+  return lines.length ? lines : [EM];
 }
 
-function computeRowH(row: LedgerRow): number {
-  let maxLines = 1;
-  for (const col of COLS) {
-    if (!col.wrap) continue;
-    const text   = getCellText(row, col.key);
-    const innerW = col.width - 6;   // 3 pt left + 3 pt right padding
-    const lines  = countLines(text, innerW, col.fontSize);
-    if (lines > maxLines) maxLines = lines;
-  }
-  return Math.max(maxLines * LINE_H + CELL_PAD * 2, MIN_ROW_H);
-}
-
-// ── Pagination ────────────────────────────────────────────────────────────────
-/** Returns an array of pages; each page is an array of row indices. */
-function paginate(rows: LedgerRow[], heights: number[]): number[][] {
-  const pages: number[][] = [];
-  let page: number[] = [];
-  let used = 0;
-  for (let i = 0; i < rows.length; i++) {
-    if (page.length > 0 && used + heights[i] > USABLE_DATA_H) {
-      pages.push(page);
-      page = [];
-      used = 0;
-    }
-    page.push(i);
-    used += heights[i];
-  }
-  if (page.length > 0 || pages.length === 0) pages.push(page);
-  return pages;
-}
-
-// ── Main renderer ─────────────────────────────────────────────────────────────
+// ── Main export ───────────────────────────────────────────────────────────────
 export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
   const logoBuffer = await safeImage(input.school.logoUrl);
 
-  // ── Pre-compute layout ─────────────────────────────────────────────────────
-  const rowHeights  = input.rows.map(computeRowH);
-  const dataPages   = paginate(input.rows, rowHeights);
+  // Create the doc early so we can use widthOfString() for pre-computation.
+  // No page is added yet.
+  const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 0, autoFirstPage: false });
+  doc.registerFont("Reg",  FONT_REG);
+  doc.registerFont("Bold", FONT_BOLD);
 
-  // Totals block height: navy bar (22 pt) + three summary text lines (~24 pt) + gap
-  const TOTALS_H = 22 + 28;
+  // ── Pre-compute: wrapped lines for every wrapping cell ────────────────────
+  // Cache: allWrapped[rowIndex][colKey] = string[]
+  const allWrapped: Array<Record<string, string[]>> = input.rows.map(row => {
+    const w: Record<string, string[]> = {};
+    for (const col of COLS) {
+      if (!col.wrap) continue;
+      const text = getCellText(row, col.key);
+      (doc as any).font("Reg").fontSize(col.fontSize);
+      w[col.key] = wrapToLines(doc as any, text, col.width - 6); // 3pt padding each side
+    }
+    return w;
+  });
 
-  // Does the totals block fit on the last data page?
-  const lastDataPageRows = dataPages[dataPages.length - 1] ?? [];
-  const lastDataPageUsed = lastDataPageRows.reduce((sum, i) => sum + rowHeights[i], 0);
-  const totalsNeedExtraPage = (lastDataPageUsed + 8 + TOTALS_H) > USABLE_DATA_H;
+  // ── Pre-compute: row heights ──────────────────────────────────────────────
+  const rowHeights = input.rows.map((_, i) => {
+    let maxLines = 1;
+    for (const col of COLS) {
+      if (!col.wrap) continue;
+      const lines = (allWrapped[i][col.key] ?? [""]).length;
+      if (lines > maxLines) maxLines = lines;
+    }
+    return Math.max(maxLines * LINE_H + CELL_PAD * 2, MIN_ROW_H);
+  });
 
+  // ── Paginate (by accumulated height, not fixed count) ────────────────────
+  function paginate(): number[][] {
+    const pages: number[][] = [];
+    let page: number[] = [];
+    let used = 0;
+    for (let i = 0; i < input.rows.length; i++) {
+      if (page.length > 0 && used + rowHeights[i] > USABLE_DATA_H) {
+        pages.push(page);
+        page = [];
+        used = 0;
+      }
+      page.push(i);
+      used += rowHeights[i];
+    }
+    if (page.length > 0 || pages.length === 0) pages.push(page);
+    return pages;
+  }
+
+  const dataPages = paginate();
+
+  // Does totals block fit on the last data page?
+  const lastPageUsed = (dataPages[dataPages.length - 1] ?? [])
+    .reduce((s, i) => s + rowHeights[i], 0);
+  const totalsNeedExtraPage = lastPageUsed + TOTALS_H > USABLE_DATA_H;
   const totalPages = dataPages.length + (totalsNeedExtraPage ? 1 : 0);
 
-  // ── Filter/scope summary line (computed once) ──────────────────────────────
+  // ── Filter/scope line ────────────────────────────────────────────────────
   const filterParts: string[] = [];
   if (input.filters.search)   filterParts.push(`Search = "${input.filters.search}"`);
   if (input.filters.status)   filterParts.push(`Status = ${input.filters.status}`);
@@ -374,183 +376,191 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
   if (input.filters.feeType)  filterParts.push(`Fee Type = ${input.filters.feeType}`);
   if (input.filters.dateFrom) filterParts.push(`From ${fmtDate(input.filters.dateFrom)}`);
   if (input.filters.dateTo)   filterParts.push(`To ${fmtDate(input.filters.dateTo)}`);
-
   const filterLine = filterParts.length
-    ? `Filters: ${filterParts.join("  |  ")}`
+    ? `Filters: ${filterParts.join("  \u00b7  ")}`
     : "Scope: All matching records for this session";
-
   const hasFilters = filterParts.length > 0;
 
-  // ── Totals summary values (computed once from the full dataset) ────────────
-  const totalInvoiced    = input.rows.reduce((t, r) => t + Number(r.invoice_amount ?? 0), 0);
-  const totalPaid        = input.rows.reduce((t, r) => t + Number(r.amount_paid    ?? 0), 0);
-  const totalOutstanding = input.rows.reduce((t, r) => t + Number(r.outstanding    ?? 0), 0);
+  // ── Totals values (computed once from the full exported dataset) ──────────
+  const totInvoiced    = input.rows.reduce((s, r) => s + Number(r.invoice_amount ?? 0), 0);
+  const totPaid        = input.rows.reduce((s, r) => s + Number(r.amount_paid    ?? 0), 0);
+  const totOutstanding = input.rows.reduce((s, r) => s + Number(r.outstanding    ?? 0), 0);
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 0, autoFirstPage: false });
-    doc.registerFont("Reg",  FONT_REG);
-    doc.registerFont("Bold", FONT_BOLD);
-
     const chunks: Buffer[] = [];
     doc.on("data",  (c: Buffer) => chunks.push(c));
     doc.on("end",   ()          => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    // ── drawPageHeader ─────────────────────────────────────────────────────
-    function drawPageHeader(pageNum: number) {
-      const top = MARGIN_V;
+    // ── Page header ──────────────────────────────────────────────────────
+    function drawHeader(pageNum: number) {
+      const top = MARGIN_V;      // 32 pt from top of page
 
-      // Logo (top-left)
-      let infoX = TABLE_LEFT;
+      // ── Left block: logo + school info ─────────────────────────────
+      let nameX = TABLE_LEFT;    // X where school name starts
       if (logoBuffer) {
         try {
-          doc.image(logoBuffer, TABLE_LEFT, top, { width: 44, height: 44, fit: [44, 44] });
-          infoX = TABLE_LEFT + 50;
+          doc.image(logoBuffer, TABLE_LEFT, top + 2, { fit: [40, 40] });
+          nameX = TABLE_LEFT + 46;
         } catch { /* logo unavailable */ }
       }
 
       // School name
-      doc.font("Bold").fontSize(12).fillColor(C_DARK)
-        .text(input.school.name, infoX, top, { width: 300, lineBreak: false });
+      (doc as any).font("Bold").fontSize(11.5).fillColor(C_DARK)
+        .text(input.school.name, nameX, top, { width: 290, lineBreak: false });
 
       // Address
-      const addrParts: string[] = [];
-      if (input.school.addressLine1) addrParts.push(input.school.addressLine1);
-      if (input.school.city)         addrParts.push(input.school.city);
-      if (input.school.state)        addrParts.push(input.school.state);
-      if (input.school.pinCode)      addrParts.push(input.school.pinCode);
-      if (addrParts.length) {
-        doc.font("Reg").fontSize(7.5).fillColor(C_MUTED)
-          .text(addrParts.join(", "), infoX, top + 15, { width: 300 });
+      const addr: string[] = [];
+      if (input.school.addressLine1) addr.push(input.school.addressLine1);
+      if (input.school.city)         addr.push(input.school.city);
+      if (input.school.state)        addr.push(input.school.state);
+      if (input.school.pinCode)      addr.push(input.school.pinCode);
+      if (addr.length) {
+        (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
+          .text(addr.join(", "), nameX, top + 15, { width: 290, lineBreak: true });
       }
 
-      // Contact
-      const contactParts: string[] = [];
-      if (input.school.phone) contactParts.push(input.school.phone);
-      if (input.school.email) contactParts.push(input.school.email);
-      if (contactParts.length) {
-        doc.font("Reg").fontSize(7.5).fillColor(C_MUTED)
-          .text(contactParts.join("  \u2022  "), infoX, top + 27, { width: 300 });
+      // Phone / email
+      const contact: string[] = [];
+      if (input.school.phone) contact.push(input.school.phone);
+      if (input.school.email) contact.push(input.school.email);
+      if (contact.length) {
+        (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
+          .text(contact.join("  \u2022  "), nameX, top + 28, { width: 290, lineBreak: false });
       }
 
-      // ── Right block — report identity ──────────────────────────────────
-      const rightW = 232;
-      const rightX = TABLE_LEFT + TABLE_WIDTH - rightW;
+      // ── Right block: report identity ────────────────────────────────
+      const RW  = 240;                              // right-block width
+      const RX  = TABLE_LEFT + TABLE_WIDTH - RW;   // right-block X start = 570
 
-      // "FEE LEDGER REPORT"
-      doc.font("Bold").fontSize(15).fillColor(C_DARK)
-        .text("FEE LEDGER REPORT", rightX, top, { width: rightW, align: "right", lineBreak: false });
+      // Title — large, dark, right-aligned
+      (doc as any).font("Bold").fontSize(14.5).fillColor(C_DARK)
+        .text("FEE LEDGER REPORT", RX, top, { width: RW, align: "right", lineBreak: false });
 
-      // Subtitle
-      doc.font("Reg").fontSize(7).fillColor(C_MUTED)
+      // Subtitle — muted, italic-style (just Reg), two lines OK
+      (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
         .text(
-          "Invoice-wise fee ledger showing billed amount, payments received, and outstanding balance.",
-          rightX, top + 19,
-          { width: rightW, align: "right" }
+          "Invoice-wise fee ledger \u2014 billed amount, payments received & outstanding balance.",
+          RX, top + 20,
+          { width: RW, align: "right" }
         );
 
-      let metaY = top + 34;
+      // Session, generated, records
+      let ry = top + 38;
       if (input.sessionLabel) {
-        doc.font("Reg").fontSize(8).fillColor(C_DARK)
-          .text(`Academic Session: ${input.sessionLabel}`, rightX, metaY, { width: rightW, align: "right" });
-        metaY += 12;
+        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
+          .text(`Academic Session: ${input.sessionLabel}`, RX, ry, { width: RW, align: "right", lineBreak: false });
+        ry += 13;
       }
-      doc.font("Reg").fontSize(7.5).fillColor(C_MUTED)
-        .text(`Generated: ${input.generatedAtIST}`, rightX, metaY, { width: rightW, align: "right" });
-      metaY += 11;
-      doc.font("Reg").fontSize(7.5).fillColor(C_MUTED)
-        .text(
-          `Records: ${input.rows.length}`,
-          rightX, metaY,
-          { width: rightW, align: "right" }
-        );
+      (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
+        .text(`Generated: ${input.generatedAtIST}`, RX, ry, { width: RW, align: "right", lineBreak: false });
+      ry += 11;
+      (doc as any).font("Reg").fontSize(7.5).fillColor(C_MUTED)
+        .text(`Records: ${input.rows.length}`, RX, ry, { width: RW, align: "right", lineBreak: false });
 
-      // ── Filter / scope line (full width, below school block) ───────────
-      const filterY = top + 48;
-      doc.font(hasFilters ? "Bold" : "Reg")
-        .fontSize(7.5)
+      // ── Filter / scope line — below the left block, left-aligned ────
+      const filterY = top + 56;
+      (doc as any).font(hasFilters ? "Bold" : "Reg").fontSize(7.5)
         .fillColor(hasFilters ? C_DARK : C_MUTED)
-        .text(filterLine, TABLE_LEFT, filterY, { width: TABLE_WIDTH - rightW - 8 });
+        .text(filterLine, TABLE_LEFT, filterY, { width: TABLE_WIDTH - RW - 4, lineBreak: false });
 
-      // ── Horizontal rule ────────────────────────────────────────────────
-      const ruleY = MARGIN_V + HEADER_H - 5;
-      doc.moveTo(TABLE_LEFT, ruleY)
+      // ── Horizontal rule ─────────────────────────────────────────────
+      const ruleY = MARGIN_V + HEADER_H - 6;
+      (doc as any)
+        .moveTo(TABLE_LEFT, ruleY)
         .lineTo(TABLE_LEFT + TABLE_WIDTH, ruleY)
         .strokeColor(C_RULE).lineWidth(0.5).stroke();
 
-      // ── Column header row ──────────────────────────────────────────────
+      // ── Column-header row ────────────────────────────────────────────
       drawColHeaders(MARGIN_V + HEADER_H);
     }
 
-    // ── drawColHeaders ─────────────────────────────────────────────────────
+    // ── Column headers ───────────────────────────────────────────────────
     function drawColHeaders(y: number) {
-      // Dark background
-      doc.rect(TABLE_LEFT, y, TABLE_WIDTH, COL_H).fill(C_THEAD);
+      // Background
+      (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, y, TABLE_WIDTH, COL_H).fill();
 
       let x = TABLE_LEFT;
       for (const col of COLS) {
-        // Vertically centre the label in COL_H
-        const labelY = y + (COL_H - 7.5) / 2;
-        doc.font("Bold").fontSize(7.5).fillColor(C_WHITE)
+        const labelY = y + (COL_H - 7.5) / 2;   // vertically centred
+        (doc as any).font("Bold").fontSize(7.5).fillColor(C_WHITE)
           .text(col.label, x + 3, labelY,
             { width: col.width - 6, align: col.align ?? "left", lineBreak: false });
         x += col.width;
       }
     }
 
-    // ── drawFooter ─────────────────────────────────────────────────────────
-    // Page number appears ONLY here.
+    // ── Footer (page number ONLY here, never in header) ──────────────────
     function drawFooter(pageNum: number) {
-      const y = PAGE_H - MARGIN_V - 12;
-      const sessionSuffix = input.sessionLabel
-        ? `  \u2022  ${input.sessionLabel}` : "";
-      doc.font("Reg").fontSize(7).fillColor(C_MUTED)
+      const fy = PAGE_H - MARGIN_V - 13;
+      const sessionTag = input.sessionLabel ? `  \u2022  ${input.sessionLabel}` : "";
+      (doc as any).font("Reg").fontSize(7).fillColor(C_MUTED)
         .text(
-          `${input.school.name}  \u2022  Fee Ledger Report${sessionSuffix}`,
-          TABLE_LEFT, y,
-          { width: TABLE_WIDTH * 0.65 }
+          `${input.school.name}  \u2022  Fee Ledger Report${sessionTag}`,
+          TABLE_LEFT, fy,
+          { width: TABLE_WIDTH * 0.65, lineBreak: false }
         );
-      doc.font("Reg").fontSize(7).fillColor(C_MUTED)
+      (doc as any).font("Reg").fontSize(7).fillColor(C_MUTED)
         .text(
           `Page ${pageNum} of ${totalPages}`,
-          TABLE_LEFT + TABLE_WIDTH * 0.65, y,
-          { width: TABLE_WIDTH * 0.35, align: "right" }
+          TABLE_LEFT + TABLE_WIDTH * 0.65, fy,
+          { width: TABLE_WIDTH * 0.35, align: "right", lineBreak: false }
         );
     }
 
-    // ── drawDataRow ────────────────────────────────────────────────────────
-    function drawDataRow(row: LedgerRow, globalIdx: number, y: number, rowH: number) {
-      // Alternating row stripe
+    // ── Data row ─────────────────────────────────────────────────────────
+    function drawRow(row: LedgerRow, globalIdx: number, y: number, rowH: number) {
+      // Alternating stripe
       if (globalIdx % 2 === 0) {
-        doc.rect(TABLE_LEFT, y, TABLE_WIDTH, rowH).fill(C_ALT);
+        (doc as any).fillColor(C_ALT).rect(TABLE_LEFT, y, TABLE_WIDTH, rowH).fill();
       }
-      // Bottom border
-      doc.moveTo(TABLE_LEFT, y + rowH)
+      // Bottom separator
+      (doc as any)
+        .moveTo(TABLE_LEFT, y + rowH)
         .lineTo(TABLE_LEFT + TABLE_WIDTH, y + rowH)
         .strokeColor(C_RULE).lineWidth(0.25).stroke();
 
       let x = TABLE_LEFT;
       for (const col of COLS) {
         const cellText = getCellText(row, col.key);
-        const pad      = 3;           // horizontal padding each side
+        const pad      = 3;
         const innerW   = col.width - pad * 2;
         const textX    = x + pad;
         const textY    = y + CELL_PAD;
 
         if (col.key === "status") {
-          // Coloured pill
-          const pillH = Math.min(rowH - 6, 13);
-          const pillY = y + (rowH - pillH) / 2;
-          doc.roundedRect(x + 4, pillY, col.width - 8, pillH, 2).fill(statusBg(row.status));
-          doc.font("Bold").fontSize(col.fontSize).fillColor(statusFg(row.status))
-            .text(cellText, x + 4, pillY + (pillH - col.fontSize) / 2 + 0.5,
-              { width: col.width - 8, align: "center", lineBreak: false });
+          // ── Rounded status pill ───────────────────────────────────
+          const ps      = pillStyle(row.status);
+          const pillW   = col.width - 8;
+          const pillH   = Math.min(rowH - 6, 13);
+          const pillX   = x + 4;
+          const pillY   = y + (rowH - pillH) / 2;
+          const textPY  = pillY + (pillH - col.fontSize) / 2;
+
+          // Draw pill background with save/restore to protect graphics state
+          (doc as any).save();
+          (doc as any).fillColor(ps.bg)
+            .roundedRect(pillX, pillY, pillW, pillH, 2).fill();
+          (doc as any).restore();
+
+          // Draw status text on top
+          (doc as any).font("Bold").fontSize(col.fontSize).fillColor(ps.fg)
+            .text(cellText, pillX, textPY + 0.5,
+              { width: pillW, align: "center", lineBreak: false });
+
         } else if (col.wrap) {
-          doc.font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
-            .text(cellText, textX, textY,
-              { width: innerW, align: col.align ?? "left", lineBreak: true });
+          // ── Word-wrapped cell: render pre-computed lines one by one ──
+          const lines = allWrapped[globalIdx]?.[col.key] ?? [cellText];
+          for (let li = 0; li < lines.length; li++) {
+            (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
+              .text(lines[li], textX, textY + li * LINE_H,
+                { width: innerW, align: col.align ?? "left", lineBreak: false });
+          }
+
         } else {
-          doc.font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
+          // ── Single-line cell ────────────────────────────────────────
+          (doc as any).font("Reg").fontSize(col.fontSize).fillColor(C_BODY)
             .text(cellText, textX, textY,
               { width: innerW, align: col.align ?? "left", lineBreak: false });
         }
@@ -559,91 +569,83 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
       }
     }
 
-    // ── drawTotals ─────────────────────────────────────────────────────────
+    // ── Totals block ──────────────────────────────────────────────────────
+    //  Structure:
+    //   [  gap  ]
+    //   [ ═══ navy separator bar with TOTALS label ═══ ]
+    //   [ Total Invoiced:    ₹X,XX,XXX ]
+    //   [ Total Paid:        ₹X,XX,XXX ]
+    //   [ Total Outstanding: ₹X,XX,XXX ]
     function drawTotals(y: number) {
+      const barY = y + 8;
+      const barH = 20;
+
       // Navy bar
-      doc.rect(TABLE_LEFT, y, TABLE_WIDTH, 22).fill(C_THEAD);
+      (doc as any).fillColor(C_THEAD).rect(TABLE_LEFT, barY, TABLE_WIDTH, barH).fill();
+      (doc as any).font("Bold").fontSize(8.5).fillColor(C_WHITE)
+        .text("TOTALS", TABLE_LEFT + 6, barY + (barH - 8.5) / 2,
+          { width: 100, lineBreak: false });
 
-      // "TOTALS" label
-      doc.font("Bold").fontSize(8).fillColor(C_WHITE)
-        .text("TOTALS", TABLE_LEFT + 4, y + (22 - 8) / 2, { width: 80, lineBreak: false });
-
-      // Column-aligned figures inside the bar
-      let sx = TABLE_LEFT;
-      for (const col of COLS) {
-        let txt = "";
-        if (col.key === "invoice_amount") txt = fmtINR(totalInvoiced);
-        else if (col.key === "amount_paid")    txt = fmtINR(totalPaid);
-        else if (col.key === "outstanding")    txt = fmtINR(totalOutstanding);
-        if (txt) {
-          doc.font("Bold").fontSize(8).fillColor(C_WHITE)
-            .text(txt, sx + 2, y + (22 - 8) / 2,
-              { width: col.width - 4, align: "right", lineBreak: false });
-        }
-        sx += col.width;
-      }
-
-      // Plain-English three-line summary below the bar
-      const sy = y + 26;
-      const colW = TABLE_WIDTH / 3 - 8;
-      const positions = [TABLE_LEFT, TABLE_LEFT + TABLE_WIDTH / 3, TABLE_LEFT + (TABLE_WIDTH / 3) * 2];
-      const labels = [
-        `Total Invoiced:   ${fmtINR(totalInvoiced)}`,
-        `Total Paid:   ${fmtINR(totalPaid)}`,
-        `Total Outstanding:   ${fmtINR(totalOutstanding)}`,
+      // Three stacked summary lines below the bar
+      const lines = [
+        { label: "Total Invoiced:",    amount: fmtINR(totInvoiced)    },
+        { label: "Total Paid:",        amount: fmtINR(totPaid)        },
+        { label: "Total Outstanding:", amount: fmtINR(totOutstanding) },
       ];
-      for (let i = 0; i < 3; i++) {
-        doc.font("Bold").fontSize(8).fillColor(C_DARK)
-          .text(labels[i], positions[i], sy, { width: colW, lineBreak: false });
+
+      const LW = 160;   // label column width
+      const AW = 100;   // amount column width (right-aligned)
+      const LX = TABLE_LEFT + 6;
+      const AX = TABLE_LEFT + LW + 10;
+
+      for (let i = 0; i < lines.length; i++) {
+        const ly = barY + barH + 6 + i * 12;
+        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
+          .text(lines[i].label, LX, ly, { width: LW, lineBreak: false });
+        (doc as any).font("Bold").fontSize(8).fillColor(C_DARK)
+          .text(lines[i].amount, AX, ly, { width: AW, lineBreak: false });
       }
     }
 
-    // ── Render ─────────────────────────────────────────────────────────────
-
-    // Empty-report path
+    // ── Render loop ───────────────────────────────────────────────────────
     if (input.rows.length === 0) {
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawPageHeader(1);
+      drawHeader(1);
       drawFooter(1);
-      doc.font("Reg").fontSize(10).fillColor(C_MUTED)
+      (doc as any).font("Reg").fontSize(10).fillColor(C_MUTED)
         .text("No records found for the selected filters.",
           TABLE_LEFT, TABLE_TOP + COL_H + 24, { width: TABLE_WIDTH, align: "center" });
       doc.end();
       return;
     }
 
-    // Data pages
     for (let pi = 0; pi < dataPages.length; pi++) {
       const pageNum  = pi + 1;
       const pageRows = dataPages[pi];
       const isLast   = pi === dataPages.length - 1;
 
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawPageHeader(pageNum);
+      drawHeader(pageNum);
       drawFooter(pageNum);
 
       let y = TABLE_TOP + COL_H;
-      for (const rowIdx of pageRows) {
-        const row  = input.rows[rowIdx];
-        const rowH = rowHeights[rowIdx];
-        drawDataRow(row, rowIdx, y, rowH);
-        y += rowH;
+      for (const ri of pageRows) {
+        drawRow(input.rows[ri], ri, y, rowHeights[ri]);
+        y += rowHeights[ri];
       }
 
-      // Totals on this (last data) page, if they fit
       if (isLast && !totalsNeedExtraPage) {
-        drawTotals(y + 8);
+        drawTotals(y);
       }
     }
 
-    // Overflow totals page (when last data page is full)
+    // Overflow totals page
     if (totalsNeedExtraPage) {
-      const overflowPageNum = dataPages.length + 1;
+      const pn = dataPages.length + 1;
       doc.addPage({ size: "A4", layout: "landscape", margin: 0 });
-      drawPageHeader(overflowPageNum);
-      drawFooter(overflowPageNum);
-      // Totals sit right below the column-header row on the continuation page
-      drawTotals(TABLE_TOP + COL_H + 10);
+      drawHeader(pn);
+      drawFooter(pn);
+      drawTotals(TABLE_TOP + COL_H + 8);
     }
 
     doc.end();
