@@ -288,8 +288,10 @@ export async function checkSessionContext(
 ) {
   const rawHeader = req.headers["x-view-session-id"];
   const isReadOnlyTransactionExport =
-    req.method === "POST" &&
-    req.path === "/api/admin/fees/payments/report/pdf";
+    req.method === "POST" && (
+      req.path === "/api/admin/fees/payments/report/pdf" ||
+      req.path === "/api/admin/fees/export-ledger"
+    );
 
   // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
   // This allows any downstream route handler — GET or mutation — to read

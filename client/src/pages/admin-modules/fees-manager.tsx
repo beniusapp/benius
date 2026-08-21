@@ -2540,25 +2540,56 @@ interface ExportLedgerDialogProps {
   open: boolean;
   onClose: () => void;
   canonicalFilters: LedgerFilters;
+  selectedIds: Set<number>;
+  selectAllMatching: boolean;
+  excludedIds: Set<number>;
 }
 
-function ExportLedgerDialog({ open, onClose, canonicalFilters }: ExportLedgerDialogProps) {
+function ExportLedgerDialog({
+  open, onClose, canonicalFilters,
+  selectedIds, selectAllMatching, excludedIds,
+}: ExportLedgerDialogProps) {
   const { toast } = useToast();
   const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
-    if (!open) {
-      setIsDownloading(false);
-    }
+    if (!open) setIsDownloading(false);
   }, [open]);
+
+  const hasSelection = selectAllMatching || selectedIds.size > 0;
+  const effectiveCount = selectAllMatching
+    ? `all matching (excl. ${excludedIds.size})`
+    : selectedIds.size > 0
+      ? `${selectedIds.size} selected`
+      : "all matching";
 
   async function handleExport() {
     setIsDownloading(true);
     try {
-      const params = ledgerFiltersToSearchParams(canonicalFilters);
+      let r: Response;
 
-      const url = `/api/admin/fees/export-ledger${params.size ? "?" + params.toString() : ""}`;
-      const r = await sessionFetch(url);
+      if (hasSelection) {
+        // Selection active — POST so IDs stay in the body (avoids URL length limits).
+        r = await sessionFetch("/api/admin/fees/export-ledger", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            ...ledgerFiltersToBody(canonicalFilters),
+            selectAllMatching,
+            // Explicit mode: send picked IDs. All-matching mode: IDs are irrelevant.
+            selectedIds: selectAllMatching ? [] : [...selectedIds],
+            // Exclusions only apply in all-matching mode.
+            excludedIds: selectAllMatching ? [...excludedIds] : [],
+          }),
+        });
+      } else {
+        // No selection — GET with canonical filter query params (unchanged behaviour).
+        const params = ledgerFiltersToSearchParams(canonicalFilters);
+        r = await sessionFetch(
+          `/api/admin/fees/export-ledger${params.size ? "?" + params.toString() : ""}`,
+        );
+      }
+
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error((body as any).message ?? "Export failed");
@@ -2593,7 +2624,10 @@ function ExportLedgerDialog({ open, onClose, canonicalFilters }: ExportLedgerDia
 
         <div className="space-y-4">
           <p className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-sm text-white/60">
-            This CSV will use the {countActiveLedgerFilters(canonicalFilters)} active ledger filter{countActiveLedgerFilters(canonicalFilters) === 1 ? "" : "s"} currently applied to the table.
+            {hasSelection
+              ? <>Exporting <span className="text-white/80 font-medium">{effectiveCount}</span> record{selectedIds.size === 1 && !selectAllMatching ? "" : "s"} with {countActiveLedgerFilters(canonicalFilters)} active filter{countActiveLedgerFilters(canonicalFilters) === 1 ? "" : "s"}.</>
+              : <>This CSV will use the {countActiveLedgerFilters(canonicalFilters)} active ledger filter{countActiveLedgerFilters(canonicalFilters) === 1 ? "" : "s"} currently applied to the table.</>
+            }
           </p>
 
           <div className="flex gap-2 justify-end pt-1">
@@ -4047,6 +4081,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         open={showExportLedger}
         onClose={() => setShowExportLedger(false)}
         canonicalFilters={filters}
+        selectedIds={selectedIds}
+        selectAllMatching={selectAllMatching}
+        excludedIds={excludedIds}
       />
       <NotificationHistoryModal
         open={showNotifModal}

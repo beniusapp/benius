@@ -69,6 +69,7 @@ import {
   buildLedgerInvoiceSessionPredicate,
   type LedgerFilterFields,
 } from "./ledger-filter-sql";
+import { feePeriodLabel } from "./fee-period";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -4777,66 +4778,86 @@ td:last-child{font-weight:600;word-break:break-all;}
     }
   });
 
-  // ── School-wide Ledger Export (CSV) ──────────────────────────────────────
-  app.get("/api/admin/fees/export-ledger", async (req, res) => {
-    if (!adminGuard(req, res)) return;
-    const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
-
-    // Normalize all ledger filters from query string.
-    const csvFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
-
-    const csvFilterFields: LedgerFilterFields = {
-      invoiceNumber:  sql`COALESCE(fr.invoice_number, '')`,
-      receiptNumber:  sql`COALESCE(fr.receipt_number, '')`,
-      studentName:    sql`COALESCE(s.name, '')`,
-      dsid:           sql`COALESCE(s.digital_student_id, '')`,
-      class:          sql`s.class`,
-      section:        sql`s.section`,
-      feeName:        sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
-      feeType:        sql`fr.fee_type`,
+  // ── School-wide Ledger Export (CSV) — GET (filter-only) + POST (selection-aware) ─
+  //
+  // Shared query helper — both GET and POST routes call this.
+  //
+  // The filter map, session condition, and tenant guards are identical for both
+  // routes. The only difference is the optional selection restriction applied
+  // after the base predicates: either an explicit IN-list or an exclusion list.
+  //
+  // IDs in selectedIds/excludedIds MUST be pre-validated positive integers by
+  // the caller before they reach sql.raw(); the POST handler enforces this.
+  async function runLedgerCsvQuery(
+    schoolId: number,
+    sessionFilter: number | null,
+    csvFilters: ReturnType<typeof normalizeLedgerFiltersFromQuery>,
+    selection?: { selectAllMatching: boolean; selectedIds: number[]; excludedIds: number[] },
+  ): Promise<any[]> {
+    const fieldMap: LedgerFilterFields = {
+      invoiceNumber:     sql`COALESCE(fr.invoice_number, '')`,
+      receiptNumber:     sql`COALESCE(fr.receipt_number, '')`,
+      studentName:       sql`COALESCE(s.name, '')`,
+      dsid:              sql`COALESCE(s.digital_student_id, '')`,
+      class:             sql`s.class`,
+      section:           sql`s.section`,
+      feeName:           sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+      feeType:           sql`fr.fee_type`,
       feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
-      frequency:      sql`fr.frequency`,
-      status:         sql`fr.status`,
-      paymentMethod:  sql`lp.raw_payment_method`,
-      academicYear:   sql`fr.academic_year`,
-      amount:         sql`fr.amount`,
-      dueDate:        sql`fr.due_date`,
-      paidDate:       sql`fr.paid_date`,
-      referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
+      frequency:         sql`fr.frequency`,
+      status:            sql`fr.status`,
+      paymentMethod:     sql`lp.raw_payment_method`,
+      academicYear:      sql`fr.academic_year`,
+      amount:            sql`fr.amount`,
+      dueDate:           sql`fr.due_date`,
+      paidDate:          sql`fr.paid_date`,
+      referenceNumber:   sql`COALESCE(lp.raw_reference_number, '')`,
     };
 
-    const csvFilterPredicates = buildLedgerFilterPredicates(csvFilters, csvFilterFields);
-    const csvSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
-    const csvExtraWhere = csvFilterPredicates.length > 0
-      ? sql`AND ${sql.join(csvFilterPredicates, sql` AND `)}`
+    const predicates   = buildLedgerFilterPredicates(csvFilters, fieldMap);
+    const sessionCond  = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+    const extraWhere   = predicates.length > 0
+      ? sql`AND ${sql.join(predicates, sql` AND `)}`
       : sql``;
+
+    const { selectAllMatching = false, selectedIds = [], excludedIds = [] } = selection ?? {};
+    // IDs are pre-validated positive integers — sql.raw is safe here.
+    const selectedArr = selectedIds.length
+      ? sql.raw(`ARRAY[${selectedIds.join(",")}]::int[]`) : null;
+    const excludedArr = excludedIds.length
+      ? sql.raw(`ARRAY[${excludedIds.join(",")}]::int[]`) : null;
+    const selCond1 = !selectAllMatching && selectedArr
+      ? sql`AND fr.id = ANY(${selectedArr})` : sql``;
+    const selCond2 =  selectAllMatching && excludedArr
+      ? sql`AND fr.id != ALL(${excludedArr})` : sql``;
 
     // One row per fee record; amounts in rupees. Always scoped to the viewed session.
     //   structure → deterministic first fee-structure name (no one-to-many duplication)
-    //   p         → aggregated payments for total_paid / outstanding (UNCHANGED)
+    //   p         → aggregated payments for total_paid / outstanding
     //   lp        → latest NON-auto-recorded payment for method/reference display + filter
-    const rows = await db.execute(sql`
+    const result = await db.execute(sql`
       SELECT
-        s.name              AS student_name,
+        fr.invoice_number    AS invoice_number,
+        fr.receipt_number    AS receipt_number,
+        s.name               AS student_name,
         s.digital_student_id AS student_id,
-        s.class             AS class,
-        s.section           AS section,
+        s.class              AS class,
+        s.section            AS section,
         COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
-        fr.fee_type         AS fee_type,
-        fr.amount           AS invoice_amount,
-        COALESCE(p.total_paid, 0)::int  AS amount_paid,
+        fr.fee_type          AS fee_type,
+        fr.frequency         AS frequency,
+        fr.amount            AS invoice_amount,
+        COALESCE(p.total_paid, 0)::int                          AS amount_paid,
         GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
-        fr.status           AS status,
-        fr.due_date         AS due_date,
-        fr.paid_date        AS paid_date,
-        fr.academic_year    AS academic_year,
+        fr.status            AS status,
+        fr.due_date          AS due_date,
+        fr.paid_date         AS paid_date,
+        fr.academic_year     AS academic_year,
         lp.raw_payment_method    AS payment_method,
         lp.raw_reference_number  AS reference_number,
-        fr.receipt_number   AS receipt_number,
-        fr.notes            AS notes,
-        fr.id               AS fee_record_id
+        fr.notes             AS notes,
+        fr.fee_period_start  AS fee_period_start,
+        fr.fee_period_end    AS fee_period_end
       FROM fee_records fr
       LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
       LEFT JOIN LATERAL (
@@ -4857,52 +4878,58 @@ td:last-child{font-weight:600;word-break:break-all;}
         GROUP BY fee_record_id
       ) p ON p.fee_record_id = fr.id
       LEFT JOIN LATERAL (
-        SELECT pr.payment_method AS raw_payment_method,
+        SELECT pr.payment_method    AS raw_payment_method,
                pr.reference_number AS raw_reference_number
         FROM payment_records pr
-        WHERE pr.school_id = fr.school_id
+        WHERE pr.school_id    = fr.school_id
           AND pr.fee_record_id = fr.id
           AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
         ORDER BY pr.created_at DESC, pr.id DESC
         LIMIT 1
       ) lp ON true
       WHERE fr.school_id = ${schoolId}
-        ${csvSessionCond}
-        ${csvExtraWhere}
+        ${sessionCond}
+        ${extraWhere}
+        ${selCond1}
+        ${selCond2}
       ORDER BY s.class, s.name, fr.due_date
     `);
+    return result.rows as any[];
+  }
 
+  /** Shared CSV formatter — identical columns for GET and POST. */
+  function buildLedgerCsvBuffer(rows: any[]): string {
     const esc = (v: string | null | undefined) => {
       const s = v == null ? "" : String(v);
-      // Wrap in quotes; double internal quotes
       return `"${s.replace(/"/g, '""')}"`;
     };
-
-    const fmtDateLocal = (d: string | null | undefined) => {
+    const fmtDate = (d: string | null | undefined) => {
       if (!d) return "";
-      try { return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
-      catch { return String(d); }
+      try {
+        return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      } catch { return String(d); }
     };
 
-    // Columns match ledger display order exactly, then extra financial columns appended.
-    // Ledger order: Receipt No. | Student | Class | Section | Fee Name | Fee Type | Amount | Due Date | Status | Paid On | Acad. Year | Notes
+    // 20 columns — aligns with Ledger PDF order, adds Invoice No., Fee Period, Frequency.
     const headers = [
+      "Invoice No.",
       "Receipt No.",
       "Student Name", "Student ID",
       "Class", "Section",
       "Fee Name", "Fee Type",
+      "Fee Period", "Frequency",
       "Amount (₹)",
       "Due Date",
       "Status",
       "Paid On",
       "Acad. Year",
       "Notes",
-      // Extra financial detail (not in ledger view but useful for accountants)
       "Amount Paid (₹)", "Outstanding (₹)",
       "Payment Method", "Reference No.",
     ];
 
-    const dataRows = (rows.rows as any[]).map(r => [
+    const dataRows = rows.map(r => [
+      esc(r.invoice_number),
       esc(r.receipt_number),
       esc(r.student_name),
       esc(r.student_id),
@@ -4910,10 +4937,12 @@ td:last-child{font-weight:600;word-break:break-all;}
       esc(r.section),
       esc(r.fee_name),
       esc(r.fee_type),
+      esc(feePeriodLabel(r.fee_period_start, r.fee_period_end, r.academic_year)),
+      esc(r.frequency),
       esc(r.invoice_amount),
-      esc(fmtDateLocal(r.due_date)),
+      esc(fmtDate(r.due_date)),
       esc(r.status),
-      esc(fmtDateLocal(r.paid_date)),
+      esc(fmtDate(r.paid_date)),
       esc(r.academic_year),
       esc(r.notes),
       esc(r.amount_paid),
@@ -4922,13 +4951,77 @@ td:last-child{font-weight:600;word-break:break-all;}
       esc(r.reference_number),
     ].join(","));
 
-    const csv = [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
-    const dateTag = todayInIST();
+    return [headers.map(h => `"${h}"`).join(","), ...dataRows].join("\r\n");
+  }
 
+  /** Set CSV response headers and send body (BOM for Excel UTF-8). */
+  function sendLedgerCsvResponse(res: any, csv: string) {
+    const dateTag = todayInIST();
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="payment-ledger-${dateTag}.csv"`);
-    // BOM for Excel UTF-8 detection
     res.send("\uFEFF" + csv);
+  }
+
+  // GET — no selection; all filters come from query string.
+  app.get("/api/admin/fees/export-ledger", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId    = req.session.schoolId!;
+    const viewSessId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const csvFilters  = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
+    try {
+      const rows = await runLedgerCsvQuery(schoolId, sessionFilter, csvFilters);
+      sendLedgerCsvResponse(res, buildLedgerCsvBuffer(rows));
+    } catch (err) {
+      console.error("[export-ledger-get]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // POST — selection-aware export. Accepts the same canonical LedgerFilters
+  // (flat in the body, same shape as Ledger PDF POST) plus selection fields:
+  //   selectAllMatching: boolean
+  //   selectedIds:       number[]  — explicit invoice IDs (when selectAllMatching = false)
+  //   excludedIds:       number[]  — IDs to skip     (when selectAllMatching = true)
+  //
+  // Security: schoolId + session always come from the server session; selection
+  // fields are an additional restriction, never a bypass for tenant/session guards.
+  // The archived-session write guard is exempted for this route in checkSessionContext
+  // (same as Ledger PDF POST and Transaction Report PDF POST).
+  app.post("/api/admin/fees/export-ledger", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const schoolId    = req.session.schoolId!;
+    const viewSessId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+
+    const {
+      selectAllMatching: rawSelectAll,
+      selectedIds:       rawSelectedIds,
+      excludedIds:       rawExcludedIds,
+    } = req.body as {
+      selectAllMatching?: boolean; selectedIds?: number[]; excludedIds?: number[];
+    };
+
+    // Sanitize — accept only valid positive integers; ignore anything else.
+    const selectAllMatching = rawSelectAll === true;
+    const selectedIds = Array.isArray(rawSelectedIds)
+      ? rawSelectedIds.filter(x => Number.isInteger(x) && x > 0)
+      : [];
+    const excludedIds = Array.isArray(rawExcludedIds)
+      ? rawExcludedIds.filter(x => Number.isInteger(x) && x > 0)
+      : [];
+
+    const csvFilters = normalizeLedgerFiltersFromBody(req.body as Record<string, unknown>);
+    try {
+      const rows = await runLedgerCsvQuery(
+        schoolId, sessionFilter, csvFilters,
+        { selectAllMatching, selectedIds, excludedIds },
+      );
+      sendLedgerCsvResponse(res, buildLedgerCsvBuffer(rows));
+    } catch (err) {
+      console.error("[export-ledger-post]", err);
+      res.status(500).json({ message: String(err) });
+    }
   });
 
   // ── School-wide Ledger — PDF download ────────────────────────────────────
