@@ -549,102 +549,97 @@ body {
 }
 
 @media print {
-  /* Base */
-  body { background: #fff; padding: 0; font-size: 9.5px; line-height: 1.28; }
-  .page { padding: 0; box-shadow: none; max-width: 100%; }
+  /* ── Base — explicit 198mm width anchors Chrome to A4 printable width ── */
+  html { font-size: 9px; }
+  body { background: #fff; padding: 0; font-size: 9px; line-height: 1.22; width: 198mm; }
+  .page { padding: 0; box-shadow: none; max-width: 100%; width: 100%; }
   .no-print { display: none !important; }
 
   /* ── Header ── */
-  .receipt-header {
-    padding-bottom: 8px; margin-bottom: 8px; gap: 10px;
-    /* no break-inside here — header is small enough */
-  }
-  .school-logo { max-width: 44px; max-height: 44px; }
-  .school-logo-initials { width: 40px; height: 40px; font-size: 14px; }
-  .school-name { font-size: 12.5px; margin-bottom: 1px; }
-  .school-addr-line { font-size: 9px; line-height: 1.25; }
-  .school-contact { font-size: 8.5px; margin-top: 1px; }
-  .school-affiliation { font-size: 8.5px; margin-top: 1px; }
-  .doc-title { font-size: 11.5px; letter-spacing: 1px; margin-bottom: 2px; }
-  .doc-session { font-size: 8.5px; margin-bottom: 4px; }
-  .status-badge { font-size: 8px; padding: 2px 6px; }
+  .receipt-header { padding-bottom: 7px; margin-bottom: 7px; gap: 9px;
+                    break-inside: avoid; page-break-inside: avoid; }
+  .school-logo { max-width: 40px; max-height: 40px; }
+  .school-logo-initials { width: 37px; height: 37px; font-size: 13px; }
+  .school-name { font-size: 12px; margin-bottom: 1px; }
+  .school-addr-line { font-size: 8.5px; line-height: 1.2; }
+  .school-contact { font-size: 8px; margin-top: 0; }
+  .school-affiliation { font-size: 8px; margin-top: 0; }
+  .doc-title { font-size: 11px; letter-spacing: 0.8px; margin-bottom: 2px; }
+  .doc-session { font-size: 8px; margin-bottom: 3px; }
+  .status-badge { font-size: 7.5px; padding: 1px 5px; }
 
   /* ── ID strip ── */
-  .receipt-id-strip { margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
-  .id-cell { padding: 6px 8px; }
-  .id-cell-label { font-size: 7.5px; margin-bottom: 1px; }
-  .id-cell-value { font-size: 10px; }
-  .id-cell-value.primary { font-size: 10.5px; }
+  .receipt-id-strip { margin-bottom: 6px; break-inside: avoid; page-break-inside: avoid; }
+  .id-cell { padding: 5px 7px; }
+  .id-cell-label { font-size: 7px; margin-bottom: 0; }
+  .id-cell-value { font-size: 9.5px; }
+  .id-cell-value.primary { font-size: 10px; }
 
-  /* ── Two-column layout — NO break-inside to allow natural flow ── */
-  .two-col { gap: 8px; margin-bottom: 8px; }
+  /* ── Two-column — no break-inside, let Chrome flow naturally ── */
+  .two-col { gap: 6px; margin-bottom: 6px; }
 
-  /* ── Cards — NO break-inside: avoid; letting Chrome flow naturally
-       prevents the browser from pushing a card near the bottom to page 2 ── */
-  .card { padding: 7px 9px; margin-bottom: 7px; border-radius: 4px; }
+  /* ── Cards — no break-inside; natural flow prevents entire card jumping to page 2 ── */
+  .card { padding: 5px 7px; margin-bottom: 5px; border-radius: 3px; }
 
   /* ── Section headers ── */
-  .section-header { font-size: 7.5px; margin-bottom: 4px; padding-bottom: 2px; }
+  .section-header { font-size: 7px; margin-bottom: 3px; padding-bottom: 2px; }
 
   /* ── Student name ── */
-  .student-name-line { font-size: 11.5px; margin-bottom: 4px; }
+  .student-name-line { font-size: 11px; margin-bottom: 3px; }
 
   /* ── Field rows ── */
-  .field-grid { gap: 1px; }
-  .field-row { font-size: 9.5px; padding: 0.5px 0; }
-  .field-label { font-size: 9px; min-width: 104px; }
-  .field-value { font-size: 9.5px; }
-  .field-value.mono { font-size: 9px; }
+  .field-grid { gap: 0; }
+  .field-row { font-size: 9px; padding: 0; line-height: 1.28; }
+  .field-label { font-size: 8.5px; min-width: 100px; }
+  .field-value { font-size: 9px; }
+  .field-value.mono { font-size: 8.5px; }
 
   /* ── Payment summary (navy card) ── */
-  .amount-display { padding: 3px 0 5px; }
-  .amount-label { font-size: 8.5px; }
-  .amount-figure { font-size: 22px; letter-spacing: -0.5px; line-height: 1.1; }
-  .amount-words { font-size: 8.5px; margin-top: 2px; }
-  .payment-meta-grid { margin-top: 6px; padding-top: 6px; gap: 4px 8px; }
-  .pm-label { font-size: 8px; }
-  .pm-value { font-size: 10.5px; }
+  .amount-display { padding: 2px 0 4px; }
+  .amount-label { font-size: 8px; }
+  .amount-figure { font-size: 20px; letter-spacing: -0.5px; line-height: 1.05; }
+  .amount-words { font-size: 8px; margin-top: 1px; }
+  .payment-meta-grid { margin-top: 5px; padding-top: 5px; gap: 3px 8px; }
+  .pm-label { font-size: 7.5px; }
+  .pm-value { font-size: 10px; }
 
   /* ── Breakdown table ── */
-  .breakdown-table { font-size: 9.5px; }
-  .breakdown-table thead th { font-size: 7.5px; padding: 3px 5px; }
-  .breakdown-table tbody td { padding: 3px 5px; }
-  .breakdown-table tr.total-row td { padding-top: 4px; font-size: 10px; }
+  .breakdown-table { font-size: 9px; }
+  .breakdown-table thead th { font-size: 7px; padding: 2px 5px; }
+  .breakdown-table tbody td { padding: 2px 5px; }
+  .breakdown-table tr.total-row td { padding-top: 3px; font-size: 9.5px; }
 
   /* ── Denomination table ── */
-  .denomination-wrap { margin-bottom: 6px; }
-  .denomination-label { font-size: 7.5px; margin-bottom: 2px; }
-  .denomination-table { font-size: 9.5px; }
-  .denomination-table th { font-size: 7.5px; padding: 2px 5px; }
+  .denomination-wrap { margin-bottom: 5px; }
+  .denomination-label { font-size: 7px; margin-bottom: 2px; }
+  .denomination-table { font-size: 9px; }
+  .denomination-table th { font-size: 7px; padding: 2px 5px; }
   .denomination-table td { padding: 2px 5px; }
 
   /* ── Verification grid ── */
-  .verification-grid { gap: 3px 12px; }
-  .v-pair { padding: 2px 0; }
-  .v-label { font-size: 8px; }
-  .v-value { font-size: 9px; }
-  .v-value.mono { font-size: 8.5px; }
+  .verification-grid { gap: 2px 10px; }
+  .v-pair { padding: 1px 0; }
+  .v-label { font-size: 7.5px; }
+  .v-value { font-size: 8.5px; }
+  .v-value.mono { font-size: 8px; }
 
   /* ── Notes ── */
-  .notes-card { }
-  .note-text { font-size: 9.5px; line-height: 1.35; }
+  .note-text { font-size: 9px; line-height: 1.28; }
 
   /* ── Signature — keep together ── */
-  .sig-area {
-    padding-top: 6px; margin-top: 0; margin-bottom: 6px;
-    break-inside: avoid; page-break-inside: avoid;
-  }
-  .sig-img { max-height: 36px; max-width: 130px; margin-bottom: 2px; }
-  .sig-placeholder { height: 36px; }
+  .sig-area { padding-top: 5px; margin-top: 0; margin-bottom: 4px;
+               break-inside: avoid; page-break-inside: avoid; }
+  .sig-img { max-height: 30px; max-width: 110px; margin-bottom: 2px; }
+  .sig-placeholder { height: 30px; }
   .sig-line { margin: 3px auto 2px; }
-  .sig-label { font-size: 8px; }
-  .sig-name { font-size: 8.5px; margin-top: 1px; }
-  .sig-school { font-size: 8px; }
+  .sig-label { font-size: 7.5px; }
+  .sig-name { font-size: 8px; margin-top: 0; }
+  .sig-school { font-size: 7.5px; }
 
   /* ── Footer — keep together ── */
-  .receipt-footer { padding-top: 5px; break-inside: avoid; page-break-inside: avoid; }
-  .footer-disclaimer { font-size: 8px; }
-  .footer-meta { font-size: 8px; }
+  .receipt-footer { padding-top: 4px; break-inside: avoid; page-break-inside: avoid; }
+  .footer-disclaimer { font-size: 7.5px; }
+  .footer-meta { font-size: 7.5px; }
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */

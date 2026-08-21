@@ -1,0 +1,195 @@
+Final Requirement — Receipt MUST Render as 1/1
+
+The receipt is still considered NOT FIXED until the actual Chrome Save as PDF preview shows 1/1 page.
+
+The latest CSS changes have been applied, but do not report success based only on source-code checks, HTTP 200 responses, or the HTML/browser view.
+
+Goal
+
+For all normal receipt types:
+
+- UPI / QR
+- Online Payment / Razorpay
+- Cash
+- Demand Draft
+- Bank Transfer
+
+the actual flow must be:
+
+Click Receipt → Chrome Print/Save as PDF → Preview = 1/1
+
+Important — Do NOT change the design or data
+
+Keep the existing receipt design exactly as it is.
+
+Do NOT:
+
+- remove any section
+- hide any field
+- truncate any text
+- remove transaction details
+- remove Transaction Verification
+- remove Notes
+- remove the authorized signature
+- remove the footer
+- change the screen/non-print version
+- create a new PDF-generation system
+- introduce a PDF library
+- change the receipt data structure
+
+Only optimize the print-only CSS/layout required to fit the existing complete receipt onto one A4 page.
+
+1. Verify A4 is actually being used
+
+The print CSS must explicitly contain:
+
+@page {
+  size: A4 portrait;
+  margin: 6mm;
+}
+
+Do not rely on the browser default paper size.
+
+However, also verify the actual Chrome print preview.
+
+If Chrome still displays:
+
+Paper size: Letter
+
+investigate why the browser is not respecting the A4 print CSS and correct the print configuration/CSS so the generated receipt is intended for A4 portrait.
+
+2. Inspect the actual remaining overflow
+
+Do not blindly reduce everything further.
+
+Open the receipt through the real production flow:
+
+Receipt button → new tab → automatic print → Chrome Save as PDF
+
+Then inspect which content moves to page 2.
+
+Known cases:
+
+UPI / QR
+
+The remaining overflow is approximately:
+
+- Notes
+- Authorized Signature
+- Footer
+
+These must fit on page 1.
+
+Online / Razorpay
+
+The remaining overflow is approximately:
+
+- Transaction Verification
+- Authorized Signature
+- Footer
+
+These must fit on page 1.
+
+Cash, Demand Draft and Bank Transfer must also be checked independently.
+
+3. Further optimize ONLY print CSS
+
+If there is still overflow, make another targeted print-only optimization.
+
+You may reduce:
+
+- vertical padding
+- top/bottom margins
+- section gaps
+- line heights
+- header spacing
+- card spacing
+- field spacing
+- signature spacing
+- footer spacing
+- unnecessary print-only whitespace
+
+You may also slightly reduce print-only font sizes where necessary, while keeping the receipt professional and readable.
+
+Do NOT make horizontal/layout changes that alter the existing visual design unnecessarily.
+
+Do NOT modify the normal screen CSS.
+
+Every new adjustment must be inside:
+
+@media print {
+  ...
+}
+
+4. Important Chrome pagination rule
+
+Do not use "break-inside: avoid" on large ".card" or ".two-col" containers if it causes Chrome to push the entire section onto page 2.
+
+Large containers must be allowed to flow naturally when necessary.
+
+Only keep "break-inside: avoid" for small elements that genuinely need to stay together, such as:
+
+- authorized signature block
+- footer
+- small header/ID areas
+
+5. Do not assume the fix works
+
+After making the changes:
+
+1. Restart/reload the application if necessary.
+2. Open a real receipt from the Ledger & Transactions page.
+3. Trigger the Receipt button.
+4. Wait for Chrome's print dialog.
+5. Select Save as PDF.
+6. Check the actual preview page counter.
+
+The required result is:
+
+1/1
+
+Not:
+
+1/2
+
+Not:
+
+2/2
+
+Not "the HTML looks like one page."
+
+6. Test every receipt type
+
+Perform the actual Chrome print-preview test for:
+
+Receipt Type| Required Result
+UPI / QR| 1/1
+Online / Razorpay| 1/1
+Cash| 1/1
+Demand Draft| 1/1
+Bank Transfer| 1/1
+
+If any one of these still shows 1/2, the task is NOT complete.
+
+7. Final response requirement
+
+Do not say:
+
+«"The fix is complete"»
+
+just because CSS checks pass.
+
+Only report completion after verifying the actual Chrome Save as PDF preview.
+
+Your final verification should explicitly state:
+
+- Paper size verified: A4 Portrait
+- UPI: 1/1
+- Online/Razorpay: 1/1
+- Cash: 1/1
+- Demand Draft: 1/1
+- Bank Transfer: 1/1
+- Screen version unchanged: Yes
+- Receipt data unchanged: Yes
+
+If you cannot access/interact with the actual Chrome print preview from the development environment, say so clearly and ask me to perform the final visual verification rather than falsely reporting success.
