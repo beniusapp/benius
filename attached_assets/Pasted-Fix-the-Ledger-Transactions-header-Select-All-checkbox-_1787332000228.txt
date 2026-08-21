@@ -1,0 +1,196 @@
+Fix the Ledger & Transactions header Select All checkbox behavior.
+
+I found a specific bug in the current selection implementation.
+
+Current problem
+
+When I click the checkbox beside the Invoice No. header:
+
+- All records on the current page become selected. This works correctly.
+- However, when I click the same header checkbox again to deselect the current page, the entire checkbox/selection UI disappears instead of simply unchecking the invoices.
+
+This is incorrect.
+
+Required behavior
+
+The header checkbox must behave as a true current-page Select All / Deselect All control.
+
+Scenario 1 — Select current page
+
+If the current page contains 20 records:
+
+Click header checkbox
+→ all 20 current-page records become selected
+→ all 20 row checkboxes remain visible and checked
+→ selection mode remains active
+
+Scenario 2 — Deselect current page
+
+Now click the same header checkbox again:
+
+Click header checkbox
+→ all 20 current-page records become unchecked
+→ row checkboxes remain visible
+→ selection mode should NOT unexpectedly disappear
+
+Most importantly:
+
+Do NOT interpret clicking the header checkbox to deselect the current page as "Clear Selection".
+
+The header checkbox only controls the records currently displayed on that page.
+
+Selection state rules
+
+When "selectAllMatching === false":
+
+If the header checkbox is checked:
+
+selectedIds = existing selectedIds + currentPageIds
+
+If the header checkbox is unchecked:
+
+selectedIds = existing selectedIds - currentPageIds
+
+Do NOT replace the entire "selectedIds" Set.
+
+Do NOT call the same logic as the toolbar Clear button.
+
+Important distinction
+
+There are three different actions:
+
+Header checkbox
+
+Controls only the current page.
+
+Select current page
+Deselect current page
+
+Individual row checkbox
+
+Controls only that individual invoice/student record.
+
+Clear button
+
+Completely clears selection:
+
+selectedIds = empty
+selectAllMatching = false
+excludedIds = empty
+
+Only the Clear action should completely exit selection mode.
+
+Pagination requirement
+
+Selection must continue to persist across pages.
+
+Example:
+
+Page 1:
+Select all 20
+→ selectedIds = 20
+
+Page 2:
+Select all 9
+→ selectedIds = 29
+
+Return Page 1:
+→ all 20 remain checked
+
+Page 2:
+→ all 9 remain checked
+
+Page 2 header checkbox:
+Uncheck
+→ only Page 2's 9 records are removed
+→ Page 1's 20 selections remain
+
+Header checkbox state
+
+When "selectAllMatching === false", calculate the header checkbox state from the current page only.
+
+0 current-page records selected
+→ unchecked
+
+Some current-page records selected
+→ indeterminate
+
+All current-page records selected
+→ checked
+
+Do not base this on the global "selectedIds.size".
+
+Select All Matching must remain separate
+
+Do NOT break the existing:
+
+selectAllMatching
+excludedIds
+
+architecture.
+
+When Select All Matching is active, the existing exclusion behavior must remain intact.
+
+Critical fix
+
+Inspect the current code for logic similar to:
+
+if (!e.target.checked) {
+    setSelectedIds(...)
+    setSelectAllMatching(false)
+}
+
+or any logic that causes:
+
+selectedIds.size === 0
+→ selection UI disappears
+
+Do not automatically hide/remove the row checkboxes merely because the current page has been deselected.
+
+The UI should only completely exit selection mode when the user explicitly clicks Clear Selection.
+
+Do not change
+
+Do NOT change:
+
+- table design
+- columns
+- pagination
+- server-side pagination
+- search
+- filters
+- individual row selection
+- Select All Matching
+- excludedIds architecture
+- bulk actions
+- API
+- database
+- existing styling
+
+This is a targeted selection-state bug fix only.
+
+Mandatory verification
+
+Test exactly this sequence:
+
+1. Open Page 1
+2. Click header checkbox
+3. Confirm all current-page rows are checked
+4. Click header checkbox again
+5. Confirm every current-page row becomes unchecked
+6. Confirm the row checkbox column/UI does not unexpectedly disappear
+7. Go to Page 2
+8. Select all Page 2 rows
+9. Return to Page 1
+10. Confirm Page 1 is still unchecked
+11. Return to Page 2
+12. Confirm Page 2 remains selected
+13. Uncheck Page 2 header
+14. Confirm Page 2 becomes completely unchecked
+15. Confirm Page 1 remains unaffected
+16. Click Clear
+17. Confirm all selection state is completely cleared
+
+Do not consider the task complete until this exact behavior is verified in the actual UI.
+
+Do not redesign anything. Fix only the selection-state behavior.

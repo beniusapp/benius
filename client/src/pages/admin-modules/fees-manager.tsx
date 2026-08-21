@@ -2661,9 +2661,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   // All-matching mode (selectAllMatching=true): every record matching current filters
   //   is selected EXCEPT those in excludedIds. This lets the user deselect individual
   //   rows without losing selections on unseen pages.
-  const [selectedIds,      setSelectedIds]      = useState<Set<number>>(new Set());
-  const [selectAllMatching, setSelectAllMatching] = useState(false);
-  const [excludedIds,      setExcludedIds]      = useState<Set<number>>(new Set());
+  const [selectedIds,        setSelectedIds]        = useState<Set<number>>(new Set());
+  const [selectAllMatching,  setSelectAllMatching]  = useState(false);
+  const [excludedIds,        setExcludedIds]        = useState<Set<number>>(new Set());
+  // selectionModeActive: true once the user enters selection mode; only the explicit
+  // Clear action sets it back to false. Prevents the checkbox column from disappearing
+  // merely because selectedIds.size hits 0 (e.g. after deselecting the current page).
+  const [selectionModeActive, setSelectionModeActive] = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [notifStudentId, setNotifStudentId] = useState<number | null>(null);
   const [notifStudentName, setNotifStudentName] = useState<string | null>(null);
@@ -3164,7 +3168,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const filtered = feeRecords;
 
   // ── Selection derived state ───────────────────────────────────────────────
-  const inSelectionMode = (selectedIds.size > 0 || selectAllMatching) && canRecord && !isArchiveMode;
+  const inSelectionMode = selectionModeActive && canRecord && !isArchiveMode;
   const currentPageIds  = filtered.map(r => r.id);
 
   // isRowSelected: in "all matching" mode a row is selected unless explicitly excluded.
@@ -3243,14 +3247,14 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         <div className="flex gap-2 ml-auto items-center">
           {canRecord && !isArchiveMode && !inSelectionMode && filtered.length > 0 && (
             <button
-              onClick={() => setSelectedIds(new Set(filtered.map(r => r.id)))}
+              onClick={() => { setSelectionModeActive(true); setSelectedIds(new Set(filtered.map(r => r.id))); }}
               className="text-xs text-white/40 hover:text-cyan-400 transition-colors underline underline-offset-2">
               Select all
             </button>
           )}
           {inSelectionMode && (
             <button
-              onClick={() => { setSelectedIds(new Set()); setSelectAllMatching(false); setExcludedIds(new Set()); }}
+              onClick={() => { setSelectedIds(new Set()); setSelectAllMatching(false); setExcludedIds(new Set()); setSelectionModeActive(false); }}
               className="text-xs text-white/40 hover:text-white/70 transition-colors underline underline-offset-2">
               Clear
             </button>
@@ -3376,7 +3380,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                             <>All <span className="font-semibold">{ledgerTotal.toLocaleString()}</span> matching records are selected.</>
                           )}{" "}
                           <button
-                            onClick={() => { setSelectAllMatching(false); setSelectedIds(new Set()); setExcludedIds(new Set()); }}
+                            onClick={() => { setSelectAllMatching(false); setSelectedIds(new Set()); setExcludedIds(new Set()); setSelectionModeActive(false); }}
                             className="underline hover:text-white transition-colors">
                             Clear selection
                           </button>
@@ -3944,7 +3948,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         <span className="text-white/30">
           <span className="text-white/50 font-semibold">{filtered.length}</span> of <span className="text-white/50 font-semibold">{ledgerTotal}</span> records
         </span>
-        {(selectedIds.size > 0 || selectAllMatching) && (
+        {selectionModeActive && (
           <>
             <span className="text-white/20">·</span>
             <span className="text-red-400/80"><span className="font-semibold">{effectiveSelectedCount.toLocaleString()}</span> selected</span>
