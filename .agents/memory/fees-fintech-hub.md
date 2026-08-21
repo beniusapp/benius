@@ -57,6 +57,23 @@ High-value payment re-auth: amounts ≥ ₹10 000 require a second PIN confirmat
 
 **Test coverage:** `server/__tests__/late-fee-engine.test.ts` (27 pure unit tests, all pass in isolation); `server/__tests__/late-fee-integration.test.ts` (8 tests, 1 unit guard passes in isolation, 7 DB tests pass in full `npm test` suite — same as all other DB integration tests).
 
+## PDF Downloads for Invoices and Receipts
+
+**Generators:** `server/invoice-pdf.ts` (invoice) and `server/receipt-pdf.ts` (receipt) — pure PDFKit, no headless browser.
+
+**Font:** DejaVu Sans at `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf` + Bold variant — registered per-document; supports ₹ (U+20B9).
+
+**Endpoints:**
+- `GET /api/admin/fees/payments/:id/receipt/pdf` → `Receipt-{receiptNo}.pdf`
+- `GET /api/admin/fees/:id/receipt/pdf` → `Receipt-{receiptNo}.pdf` (fee-record route)
+- `GET /api/admin/fees/:id/invoice/pdf` → `Invoice-{invoiceNo}.pdf`
+
+All return `Content-Type: application/pdf`, `Content-Disposition: attachment`. Receipt filename uses `receipt_number` (never the DB id).
+
+**Cash denomination integrity:** Both HTML and PDF receipt endpoints (all 4) block generation with HTTP 400 when `SUM(denomination × quantity) ≠ payment.amount` within ±₹0.01.
+
+**Why DejaVu:** Helvetica (PDFKit default) has no ₹ glyph. DejaVu Sans ships on the host OS and is registered per-doc via `doc.registerFont()`.
+
 ## Manual Invoice Metadata Snapshots
 
 Manual one-student invoices must not create or mutate a fee structure. Their fee name, frequency, and late-fee configuration are stored on the invoice record alongside the immutable component breakdown. All later display, late-fee, and payment calculations prefer these invoice snapshots and fall back to fee-structure values only for legacy/structure-backed rows.
