@@ -38,7 +38,8 @@ import {
 } from "./structure-invoice-service";
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
 import { renderInvoiceDocument } from "./invoice-document";
-import { formatDateOnly, todayInIST } from "@shared/ist-time";
+import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
+import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import {
   getRefundEligibility,
   markRefundReconciliationRequired,
@@ -3559,161 +3560,191 @@ export function registerFeesRoutes(app: Express) {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
 
-    const payments = await storage.getPaymentRecordsBySchool(schoolId);
-    const payment = payments.find(p => p.id === id);
-    if (!payment) return res.status(404).json({ message: "Payment record not found" });
+    try {
+      // ── Fetch payment record with all Razorpay / metadata columns ──────────
+      const payRow = (await db.execute(sql`
+        SELECT pr.*,
+               u.email AS recorded_by_name
+        FROM payment_records pr
+        LEFT JOIN users u ON u.id = pr.recorded_by
+        WHERE pr.id = ${id} AND pr.school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      if (!payRow) return res.status(404).json({ message: "Payment record not found" });
 
-    const student = await storage.getStudentById(payment.studentId);
-    if (!student || student.schoolId !== schoolId) {
-      return res.status(404).json({ message: "Student not found" });
+      // ── Full school data ────────────────────────────────────────────────────
+      const schoolRow = (await db.execute(sql`
+        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code,
+               phone, email, affiliation_number, gstin
+        FROM schools WHERE id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Student data ────────────────────────────────────────────────────────
+      const studentRow = (await db.execute(sql`
+        SELECT name, digital_student_id, class, section, roll_number,
+               guardian_name, phone, email
+        FROM students WHERE id = ${payRow.student_id} AND school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      if (!studentRow) return res.status(404).json({ message: "Student not found" });
+
+      // ── Fee record (linked) ─────────────────────────────────────────────────
+      let feeRow: any = null;
+      if (payRow.fee_record_id) {
+        feeRow = (await db.execute(sql`
+          SELECT fee_type, fee_name, invoice_number, academic_year, fee_period_start,
+                 fee_period_end, due_date, amount, late_fee_amount, breakdown_snapshot,
+                 notes, session_id
+          FROM fee_records
+          WHERE id = ${payRow.fee_record_id} AND school_id = ${schoolId}
+          LIMIT 1
+        `)).rows[0] as any;
+      }
+
+      // ── Offline payment details sidecar ────────────────────────────────────
+      const odRow = (await db.execute(sql`
+        SELECT transaction_time, instrument_status, transfer_mode, transaction_reference,
+               receiving_bank, receiver_upi_id, payee_name, payable_at, collection_location,
+               deposit_date, deposit_bank, deposit_reference, return_date, return_reason
+        FROM offline_payment_details
+        WHERE school_id = ${schoolId} AND payment_record_id = ${id}
+        LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Provider timestamps from payment_attempts ───────────────────────────
+      const attemptRow = (await db.execute(sql`
+        SELECT rzp_created_at, rzp_captured_at, payment_method AS rzp_method,
+               card_network
+        FROM payment_attempts
+        WHERE school_id = ${schoolId}
+          AND razorpay_payment_id = ${payRow.razorpay_payment_id ?? ""}
+        ORDER BY created_at DESC LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Academic session label ─────────────────────────────────────────────
+      let sessionLabel: string | null = null;
+      const sessionId = feeRow?.session_id ?? payRow.session_id ?? null;
+      if (sessionId) {
+        const sess = (await db.execute(sql`
+          SELECT name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+        `)).rows[0] as any;
+        sessionLabel = sess?.name ?? null;
+      }
+
+      // ── Signature ──────────────────────────────────────────────────────────
+      const sigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+      const sigRelUrl = sigMeta?.processedSignatureUrl ?? sigMeta?.originalSignatureUrl ?? sigMeta?.fileUrl ?? null;
+      const sigUrl = sigRelUrl
+        ? (/^https?:\/\//i.test(sigRelUrl) ? sigRelUrl : `${req.protocol}://${req.get("host")}${sigRelUrl}`)
+        : null;
+      const signatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
+      const signatoryName: string | null =
+        (typeof signatoryMeta === "string" && signatoryMeta.trim()) ? signatoryMeta.trim()
+        : (typeof signatoryMeta?.name === "string" && signatoryMeta.name.trim()) ? signatoryMeta.name.trim()
+        : null;
+
+      // ── Resolve school logo absolute URL ───────────────────────────────────
+      const logoRelUrl = schoolRow?.logo_url ?? null;
+      const logoUrl = logoRelUrl
+        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
+        : null;
+
+      // ── Build ReceiptData ──────────────────────────────────────────────────
+      const receiptData: ReceiptData = {
+        school: {
+          name: schoolRow?.name ?? "School",
+          logoUrl,
+          addressLine1: schoolRow?.address_line1 ?? null,
+          addressLine2: schoolRow?.address_line2 ?? null,
+          city: schoolRow?.city ?? null,
+          state: schoolRow?.state ?? null,
+          pinCode: schoolRow?.pin_code ?? null,
+          phone: schoolRow?.phone ?? null,
+          email: schoolRow?.email ?? null,
+          affiliationNumber: schoolRow?.affiliation_number ?? null,
+          gstin: schoolRow?.gstin ?? null,
+        },
+        student: {
+          name: studentRow.name,
+          digitalStudentId: studentRow.digital_student_id,
+          rollNumber: studentRow.roll_number ?? null,
+          class: studentRow.class,
+          section: studentRow.section,
+          guardianName: studentRow.guardian_name ?? null,
+          phone: studentRow.phone ?? null,
+          email: studentRow.email ?? null,
+        },
+        fee: {
+          feeType: feeRow?.fee_type ?? payRow.payment_method,
+          feeName: feeRow?.fee_name ?? feeRow?.fee_type ?? null,
+          invoiceNumber: feeRow?.invoice_number ?? null,
+          academicYear: feeRow?.academic_year ?? null,
+          feePeriodStart: feeRow?.fee_period_start
+            ? formatDateOnly(feeRow.fee_period_start) : null,
+          feePeriodEnd: feeRow?.fee_period_end
+            ? formatDateOnly(feeRow.fee_period_end) : null,
+          dueDate: feeRow?.due_date ? formatDateOnly(String(feeRow.due_date).slice(0, 10)) : null,
+          amount: feeRow ? Number(feeRow.amount ?? 0) : Number(payRow.amount ?? 0),
+          lateFeeAmount: feeRow ? Number(feeRow.late_fee_amount ?? 0) : Number(payRow.late_fee_paid ?? 0),
+          breakdown: Array.isArray(feeRow?.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
+          notes: feeRow?.notes ?? null,
+        },
+        payment: {
+          receiptNumber: payRow.receipt_number ?? null,
+          amount: Number(payRow.amount ?? 0),
+          lateFeePaid: Number(payRow.late_fee_paid ?? 0),
+          paymentMethod: payRow.payment_method ?? "Cash",
+          receivedDate: payRow.received_date ? String(payRow.received_date).slice(0, 10) : todayInIST(),
+          paymentDateTimeIST: formatInstantIST(payRow.created_at),
+          cashierNotes: payRow.cashier_notes ?? null,
+          // Online
+          razorpayPaymentId: payRow.razorpay_payment_id ?? null,
+          razorpayOrderId: payRow.razorpay_order_id ?? null,
+          paymentMode: payRow.payment_mode ?? null,
+          bankName: payRow.bank_name ?? null,
+          cardLast4: payRow.card_last4 ?? null,
+          cardNetwork: attemptRow?.rzp_method === "card" ? (attemptRow?.card_network ?? null) : null,
+          vpa: payRow.vpa ?? null,
+          payerName: payRow.payer_name ?? null,
+          payerEmail: payRow.payer_email ?? null,
+          payerContact: payRow.payer_contact ?? null,
+          gatewayStatus: payRow.gateway_status ?? null,
+          providerCreatedIST: attemptRow?.rzp_created_at ? formatInstantIST(attemptRow.rzp_created_at) : null,
+          providerCapturedIST: attemptRow?.rzp_captured_at ? formatInstantIST(attemptRow.rzp_captured_at) : null,
+          // Offline
+          denominationBreakdown: payRow.denomination_breakdown ?? null,
+          referenceNumber: payRow.reference_number ?? null,
+          offlineDetail: odRow ? {
+            transactionTime: odRow.transaction_time ?? null,
+            instrumentStatus: odRow.instrument_status ?? null,
+            transferMode: odRow.transfer_mode ?? null,
+            transactionReference: odRow.transaction_reference ?? null,
+            receivingBank: odRow.receiving_bank ?? null,
+            receiverUpiId: odRow.receiver_upi_id ?? null,
+            payeeName: odRow.payee_name ?? null,
+            payableAt: odRow.payable_at ?? null,
+            collectionLocation: odRow.collection_location ?? null,
+            depositDate: odRow.deposit_date ?? null,
+            depositBank: odRow.deposit_bank ?? null,
+            depositReference: odRow.deposit_reference ?? null,
+            returnDate: odRow.return_date ?? null,
+            returnReason: odRow.return_reason ?? null,
+          } : null,
+          recordedByName: payRow.recorded_by_name ?? null,
+        },
+        signature: { imageUrl: sigUrl, signatoryName },
+        academicSessionLabel: sessionLabel,
+        generatedAtIST: formatInstantIST(new Date()),
+      };
+
+      const html = renderReceiptHtml(receiptData);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="payment-receipt-${id}.html"`);
+      res.send(html);
+    } catch (err) {
+      console.error("[payment receipt]", err);
+      res.status(500).json({ message: String(err) });
     }
-
-    let feeType: string | null = null;
-    let feeInvoiceNumber: string | null = null;
-    if (payment.feeRecordId) {
-      const recs = await storage.getFeeRecordsByStudent(payment.studentId, schoolId);
-      const feeRec = recs.find(r => r.id === payment.feeRecordId);
-      feeType = feeRec?.feeType ?? null;
-      feeInvoiceNumber = feeRec?.invoiceNumber ?? null;
-    }
-
-    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
-    const esc = (s: string | null | undefined) =>
-      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-
-    // ── Authorized signature (tenant-scoped) ────────────────────────────────
-    const prSigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
-    const prSigRelUrl =
-      prSigMeta?.processedSignatureUrl ??
-      prSigMeta?.originalSignatureUrl ??
-      prSigMeta?.fileUrl ?? null;
-    const prSigUrl = prSigRelUrl
-      ? (/^https?:\/\//i.test(prSigRelUrl)
-        ? prSigRelUrl
-        : `${req.protocol}://${req.get("host")}${prSigRelUrl}`)
-      : null;
-    const prSignatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
-    const prSignatoryName: string | null =
-      (typeof prSignatoryMeta === "string" && prSignatoryMeta.trim())
-        ? prSignatoryMeta.trim()
-        : (typeof prSignatoryMeta?.name === "string" && prSignatoryMeta.name.trim())
-          ? prSignatoryMeta.name.trim()
-          : null;
-
-    const paymentDateTime = formatPersistedDateTimeIST(payment.createdAt);
-    const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(payment.amount);
-    const schoolName = esc(school?.name ?? "School");
-    const methodLabel =
-      formatOfflinePaymentMethod(payment.paymentMethod)
-      ?? (payment.paymentMethod === "Online" ? "Online Transfer" : payment.paymentMethod || "—");
-    const detailResult = await db.execute(sql`
-      SELECT transaction_time, instrument_status, transfer_mode, transaction_reference,
-             receiving_bank, receiver_upi_id, payee_name, payable_at, collection_location,
-             deposit_date, deposit_bank, deposit_reference, return_date, return_reason
-      FROM offline_payment_details
-      WHERE school_id = ${schoolId} AND payment_record_id = ${payment.id}
-      LIMIT 1
-    `);
-    const detail = (detailResult.rows[0] ?? null) as any;
-    const detailRows = offlinePaymentDetailRows(payment.paymentMethod, detail && {
-      transactionTime: detail.transaction_time,
-      instrumentStatus: detail.instrument_status,
-      transferMode: detail.transfer_mode,
-      transactionReference: detail.transaction_reference,
-      receivingBank: detail.receiving_bank,
-      receiverUpiId: detail.receiver_upi_id,
-      payeeName: detail.payee_name,
-      payableAt: detail.payable_at,
-      collectionLocation: detail.collection_location,
-      depositDate: detail.deposit_date,
-      depositBank: detail.deposit_bank,
-      depositReference: detail.deposit_reference,
-      returnDate: detail.return_date,
-      returnReason: detail.return_reason,
-    }, {
-      referenceNumber: payment.referenceNumber,
-      instrumentDate: (payment as any).chequeDate,
-      bankName: (payment as any).bankName,
-      branchName: (payment as any).branchName,
-      payerName: (payment as any).payerName,
-      payerUpiId: (payment as any).vpa,
-    });
-    const cashBreakdown = (payment as any).denominationBreakdown as Record<string, number> | null;
-    const cashRows = payment.paymentMethod === "Cash" && cashBreakdown
-      ? Object.entries(cashBreakdown)
-        .filter(([denom, quantity]) => Number(quantity) > 0)
-        .sort(([a], [b]) => Number(b) - Number(a))
-        .map(([denom, quantity]) => `<tr><td>Cash denomination</td><td>${esc(`₹${denom} × ${quantity}`)}</td></tr>`)
-        .join("")
-      : "";
-    const detailHtml = detailRows
-      .map(row => `<tr><td>${esc(row.label)}</td><td>${esc(row.value)}</td></tr>`)
-      .join("");
-
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Payment Receipt</title>
-<style>
-  body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#1e293b;background:#fff;}
-  .receipt{max-width:580px;margin:auto;border:2px solid #06b6d4;border-radius:12px;padding:32px;}
-  .header{text-align:center;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px;}
-  .header h1{margin:0 0 4px;font-size:22px;color:#0891b2;}
-  .header p{margin:0;font-size:13px;color:#64748b;}
-  .badge{display:inline-block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:20px;padding:4px 14px;font-weight:700;font-size:13px;margin-bottom:16px;}
-  table{width:100%;border-collapse:collapse;margin-top:8px;}
-  td{padding:9px 6px;font-size:14px;border-bottom:1px solid #f1f5f9;}
-  td:first-child{color:#64748b;width:45%;}
-  td:last-child{font-weight:600;}
-  .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
-  .sig-row{display:flex;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;}
-  .sig-box{text-align:center;min-width:140px;}
-  .sig-img{max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto 6px;}
-  .sig-space{height:48px;}
-  .sig-line{width:140px;border-top:1.5px solid #475569;margin:6px auto 4px;}
-  .sig-lbl{font-size:11px;font-weight:700;color:#334155;margin:0;}
-  .sig-name{font-size:10px;color:#334155;margin:2px 0 0;}
-  .sig-school{font-size:9px;color:#94a3b8;margin:2px 0 0;}
-  .footer{margin-top:16px;text-align:center;font-size:11px;color:#94a3b8;}
-  @media print{body{padding:0;}button{display:none;}}
-</style></head><body>
-<div class="receipt">
-  <div class="header"><h1>${schoolName}</h1><p>Offline Payment Receipt</p></div>
-  <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; PAYMENT RECEIVED</span></div>
-  <table>
-    <tr><td>Invoice No.</td><td>${esc(feeInvoiceNumber ?? "—")}</td></tr>
-    <tr><td>Receipt No.</td><td>${esc((payment as any).receiptNumber ?? `PAY-${payment.id}`)}</td></tr>
-    <tr><td>Student Name</td><td>${esc(student.name)}</td></tr>
-    <tr><td>Student ID</td><td>${esc(student.digitalStudentId)}</td></tr>
-    <tr><td>Parent / Guardian</td><td>${esc(student.guardianName ?? "—")}</td></tr>
-    <tr><td>Student Phone</td><td>${esc(student.phone ?? "—")}</td></tr>
-    <tr><td>Class / Section</td><td>${esc(student.class)} / ${esc(student.section)}</td></tr>
-    ${feeType ? `<tr><td>Fee Type</td><td>${esc(feeType)}</td></tr>` : ""}
-    <tr><td>Payment Method</td><td>${esc(methodLabel)}</td></tr>
-    ${detailHtml}${cashRows}
-    <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
-    ${payment.cashierNotes ? `<tr><td>Notes</td><td>${esc(payment.cashierNotes)}</td></tr>` : ""}
-    <tr class="amount-row"><td>Amount Received</td><td>${amountStr}</td></tr>
-  </table>
-  <div class="sig-row">
-    <div class="sig-box">
-      ${prSigUrl
-        ? `<img class="sig-img" src="${esc(prSigUrl)}" alt="Authorized Signature">`
-        : `<div class="sig-space"></div>`}
-      <div class="sig-line"></div>
-      <p class="sig-lbl">Authorized Signatory</p>
-      ${prSignatoryName ? `<p class="sig-name">${esc(prSignatoryName)}</p>` : ""}
-      <p class="sig-school">${schoolName}</p>
-    </div>
-  </div>
-  <div class="footer">
-    <p>Computer-generated receipt. No physical signature is required where a digital signature is configured.</p>
-    <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
-  </div>
-</div>
-<script>window.print();</script>
-</body></html>`;
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Content-Disposition", `inline; filename="payment-receipt-${payment.id}.html"`);
-    res.send(html);
   });
 
   // ── Transaction Detail — JSON (for accordion in Ledger) ─────────────────
@@ -4415,140 +4446,187 @@ td:last-child{font-weight:600;word-break:break-all;}
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
 
-    const recs = await db.execute(sql`
-      SELECT fr.*, s.name AS student_name, s.digital_student_id, s.class, s.section,
-             s.guardian_name, s.phone AS student_phone
-      FROM fee_records fr
-      JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
-      WHERE fr.id = ${id} AND fr.school_id = ${schoolId}
-      LIMIT 1
-    `);
-    const row = recs.rows[0] as any;
-    if (!row) return res.status(404).json({ message: "Fee record not found" });
-    if (row.status !== "Paid") {
-      return res.status(400).json({ message: "Receipt only available for paid records" });
+    try {
+      // ── Fee record + student ────────────────────────────────────────────────
+      const feeRow = (await db.execute(sql`
+        SELECT fr.*, s.name AS student_name, s.digital_student_id,
+               s.class AS student_class, s.section AS student_section,
+               s.roll_number, s.guardian_name, s.phone AS student_phone,
+               s.email AS student_email
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        WHERE fr.id = ${id} AND fr.school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      if (!feeRow) return res.status(404).json({ message: "Fee record not found" });
+      if (feeRow.status !== "Paid") {
+        return res.status(400).json({ message: "Receipt only available for paid records" });
+      }
+
+      // ── Full school data ────────────────────────────────────────────────────
+      const schoolRow = (await db.execute(sql`
+        SELECT name, logo_url, address_line1, address_line2, city, state, pin_code,
+               phone, email, affiliation_number, gstin
+        FROM schools WHERE id = ${schoolId} LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Primary payment record (most recent, for amount + method) ──────────
+      const payRow = (await db.execute(sql`
+        SELECT pr.*, u.email AS recorded_by_name
+        FROM payment_records pr
+        LEFT JOIN users u ON u.id = pr.recorded_by
+        WHERE pr.fee_record_id = ${id} AND pr.school_id = ${schoolId}
+        ORDER BY pr.created_at DESC
+        LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Provider timestamps from captured payment_attempt ──────────────────
+      const attemptRow = (await db.execute(sql`
+        SELECT pa.rzp_created_at, pa.rzp_captured_at,
+               pa.payment_method AS rzp_method, pa.card_network
+        FROM payment_attempts pa
+        WHERE pa.fee_record_id = ${id}
+          AND pa.school_id = ${schoolId}
+          AND pa.outcome = 'captured'
+        ORDER BY pa.created_at DESC
+        LIMIT 1
+      `)).rows[0] as any;
+
+      // ── Offline payment details sidecar ────────────────────────────────────
+      const odRow = payRow ? (await db.execute(sql`
+        SELECT transaction_time, instrument_status, transfer_mode, transaction_reference,
+               receiving_bank, receiver_upi_id, payee_name, payable_at, collection_location,
+               deposit_date, deposit_bank, deposit_reference, return_date, return_reason
+        FROM offline_payment_details
+        WHERE school_id = ${schoolId} AND payment_record_id = ${payRow.id}
+        LIMIT 1
+      `)).rows[0] as any : null;
+
+      // ── Academic session label ─────────────────────────────────────────────
+      let sessionLabel: string | null = null;
+      const sessionId = feeRow.session_id ?? null;
+      if (sessionId) {
+        const sess = (await db.execute(sql`
+          SELECT name FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
+        `)).rows[0] as any;
+        sessionLabel = sess?.name ?? null;
+      }
+
+      // ── Signature ──────────────────────────────────────────────────────────
+      const sigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
+      const sigRelUrl = sigMeta?.processedSignatureUrl ?? sigMeta?.originalSignatureUrl ?? sigMeta?.fileUrl ?? null;
+      const sigUrl = sigRelUrl
+        ? (/^https?:\/\//i.test(sigRelUrl) ? sigRelUrl : `${req.protocol}://${req.get("host")}${sigRelUrl}`)
+        : null;
+      const signatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
+      const signatoryName: string | null =
+        (typeof signatoryMeta === "string" && signatoryMeta.trim()) ? signatoryMeta.trim()
+        : (typeof signatoryMeta?.name === "string" && signatoryMeta.name.trim()) ? signatoryMeta.name.trim()
+        : null;
+
+      // ── School logo absolute URL ───────────────────────────────────────────
+      const logoRelUrl = schoolRow?.logo_url ?? null;
+      const logoUrl = logoRelUrl
+        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
+        : null;
+
+      // ── Payment datetime — prefer provider capture, then payment record ────
+      const paymentInstant = attemptRow?.rzp_captured_at ?? payRow?.created_at ?? null;
+
+      // ── Build ReceiptData ──────────────────────────────────────────────────
+      const receiptData: ReceiptData = {
+        school: {
+          name: schoolRow?.name ?? "School",
+          logoUrl,
+          addressLine1: schoolRow?.address_line1 ?? null,
+          addressLine2: schoolRow?.address_line2 ?? null,
+          city: schoolRow?.city ?? null,
+          state: schoolRow?.state ?? null,
+          pinCode: schoolRow?.pin_code ?? null,
+          phone: schoolRow?.phone ?? null,
+          email: schoolRow?.email ?? null,
+          affiliationNumber: schoolRow?.affiliation_number ?? null,
+          gstin: schoolRow?.gstin ?? null,
+        },
+        student: {
+          name: feeRow.student_name,
+          digitalStudentId: feeRow.digital_student_id,
+          rollNumber: feeRow.roll_number ?? null,
+          class: feeRow.student_class,
+          section: feeRow.student_section,
+          guardianName: feeRow.guardian_name ?? null,
+          phone: feeRow.student_phone ?? null,
+          email: feeRow.student_email ?? null,
+        },
+        fee: {
+          feeType: feeRow.fee_type,
+          feeName: feeRow.fee_name ?? feeRow.fee_type,
+          invoiceNumber: feeRow.invoice_number ?? null,
+          academicYear: feeRow.academic_year ?? null,
+          feePeriodStart: feeRow.fee_period_start ? formatDateOnly(String(feeRow.fee_period_start).slice(0, 10)) : null,
+          feePeriodEnd: feeRow.fee_period_end ? formatDateOnly(String(feeRow.fee_period_end).slice(0, 10)) : null,
+          dueDate: feeRow.due_date ? formatDateOnly(String(feeRow.due_date).slice(0, 10)) : null,
+          amount: Number(feeRow.amount ?? 0),
+          lateFeeAmount: Number(feeRow.late_fee_amount ?? 0),
+          breakdown: Array.isArray(feeRow.breakdown_snapshot) ? feeRow.breakdown_snapshot : [],
+          notes: feeRow.notes ?? null,
+        },
+        payment: {
+          receiptNumber: feeRow.receipt_number ?? payRow?.receipt_number ?? null,
+          amount: Number(payRow?.amount ?? feeRow.amount ?? 0),
+          lateFeePaid: Number(payRow?.late_fee_paid ?? 0),
+          paymentMethod: payRow?.payment_method ?? "Online",
+          receivedDate: payRow?.received_date ? String(payRow.received_date).slice(0, 10) : (feeRow.paid_date ? String(feeRow.paid_date).slice(0, 10) : todayInIST()),
+          paymentDateTimeIST: formatInstantIST(paymentInstant),
+          cashierNotes: payRow?.cashier_notes ?? null,
+          // Online
+          razorpayPaymentId: payRow?.razorpay_payment_id ?? null,
+          razorpayOrderId: payRow?.razorpay_order_id ?? null,
+          paymentMode: payRow?.payment_mode ?? null,
+          bankName: payRow?.bank_name ?? null,
+          cardLast4: payRow?.card_last4 ?? null,
+          cardNetwork: attemptRow?.card_network ?? null,
+          vpa: payRow?.vpa ?? null,
+          payerName: payRow?.payer_name ?? null,
+          payerEmail: payRow?.payer_email ?? null,
+          payerContact: payRow?.payer_contact ?? null,
+          gatewayStatus: payRow?.gateway_status ?? null,
+          providerCreatedIST: attemptRow?.rzp_created_at ? formatInstantIST(attemptRow.rzp_created_at) : null,
+          providerCapturedIST: attemptRow?.rzp_captured_at ? formatInstantIST(attemptRow.rzp_captured_at) : null,
+          // Offline
+          denominationBreakdown: payRow?.denomination_breakdown ?? null,
+          referenceNumber: payRow?.reference_number ?? null,
+          offlineDetail: odRow ? {
+            transactionTime: odRow.transaction_time ?? null,
+            instrumentStatus: odRow.instrument_status ?? null,
+            transferMode: odRow.transfer_mode ?? null,
+            transactionReference: odRow.transaction_reference ?? null,
+            receivingBank: odRow.receiving_bank ?? null,
+            receiverUpiId: odRow.receiver_upi_id ?? null,
+            payeeName: odRow.payee_name ?? null,
+            payableAt: odRow.payable_at ?? null,
+            collectionLocation: odRow.collection_location ?? null,
+            depositDate: odRow.deposit_date ?? null,
+            depositBank: odRow.deposit_bank ?? null,
+            depositReference: odRow.deposit_reference ?? null,
+            returnDate: odRow.return_date ?? null,
+            returnReason: odRow.return_reason ?? null,
+          } : null,
+          recordedByName: payRow?.recorded_by_name ?? null,
+        },
+        signature: { imageUrl: sigUrl, signatoryName },
+        academicSessionLabel: sessionLabel,
+        generatedAtIST: formatInstantIST(new Date()),
+      };
+
+      const html = renderReceiptHtml(receiptData);
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="fee-receipt-${id}.html"`);
+      res.send(html);
+    } catch (err) {
+      console.error("[fee receipt]", err);
+      res.status(500).json({ message: String(err) });
     }
-
-    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, schoolId));
-    const esc = (s: string | null | undefined) =>
-      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-
-    // ── Authorized signature (tenant-scoped) ────────────────────────────────
-    const frSigMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_receipt_signature") as any;
-    const frSigRelUrl =
-      frSigMeta?.processedSignatureUrl ??
-      frSigMeta?.originalSignatureUrl ??
-      frSigMeta?.fileUrl ?? null;
-    const frSigUrl = frSigRelUrl
-      ? (/^https?:\/\//i.test(frSigRelUrl)
-        ? frSigRelUrl
-        : `${req.protocol}://${req.get("host")}${frSigRelUrl}`)
-      : null;
-    const frSignatoryMeta = await storage.getSchoolMetadataRaw(schoolId, "fee_signatory_name") as any;
-    const frSignatoryName: string | null =
-      (typeof frSignatoryMeta === "string" && frSignatoryMeta.trim())
-        ? frSignatoryMeta.trim()
-        : (typeof frSignatoryMeta?.name === "string" && frSignatoryMeta.name.trim())
-          ? frSignatoryMeta.name.trim()
-          : null;
-
-    const paymentTimestampResult = await db.execute(sql`
-      SELECT COALESCE(
-        (
-          SELECT pa.rzp_captured_at
-          FROM payment_attempts pa
-          WHERE pa.fee_record_id = ${id}
-            AND pa.school_id = ${schoolId}
-            AND pa.outcome = 'captured'
-          ORDER BY pa.created_at DESC
-          LIMIT 1
-        ),
-        (
-          SELECT pr.created_at
-          FROM payment_records pr
-          WHERE pr.fee_record_id = ${id}
-            AND pr.school_id = ${schoolId}
-          ORDER BY pr.created_at DESC
-          LIMIT 1
-        )
-      ) AS payment_at
-    `);
-    const paymentDateTime = formatPersistedDateTimeIST(
-      (paymentTimestampResult.rows[0] as any)?.payment_at ?? null,
-    );
-    const dueDateStr = row.due_date
-      ? new Date(row.due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })
-      : "—";
-    const amountStr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(row.amount);
-    const schoolName = esc(school?.name ?? "School");
-    const invoiceNo = esc(row.invoice_number ?? "—");
-    const receiptNo = esc(row.receipt_number ?? "—");
-
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Fee Receipt</title>
-<style>
-  body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#1e293b;background:#fff;}
-  .receipt{max-width:580px;margin:auto;border:2px solid #06b6d4;border-radius:12px;padding:32px;}
-  .header{text-align:center;border-bottom:2px solid #e2e8f0;padding-bottom:20px;margin-bottom:20px;}
-  .header h1{margin:0 0 4px;font-size:22px;color:#0891b2;}
-  .header p{margin:0;font-size:13px;color:#64748b;}
-  .badge{display:inline-block;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:20px;padding:4px 14px;font-weight:700;font-size:13px;margin-bottom:16px;}
-  table{width:100%;border-collapse:collapse;margin-top:8px;}
-  td{padding:9px 6px;font-size:14px;border-bottom:1px solid #f1f5f9;}
-  td:first-child{color:#64748b;width:45%;}
-  td:last-child{font-weight:600;}
-  .amount-row td:last-child{font-size:18px;font-weight:800;color:#0891b2;}
-  .sig-row{display:flex;justify-content:flex-end;margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;}
-  .sig-box{text-align:center;min-width:140px;}
-  .sig-img{max-height:48px;max-width:160px;object-fit:contain;display:block;margin:0 auto 6px;}
-  .sig-space{height:48px;}
-  .sig-line{width:140px;border-top:1.5px solid #475569;margin:6px auto 4px;}
-  .sig-lbl{font-size:11px;font-weight:700;color:#334155;margin:0;}
-  .sig-name{font-size:10px;color:#334155;margin:2px 0 0;}
-  .sig-school{font-size:9px;color:#94a3b8;margin:2px 0 0;}
-  .footer{margin-top:16px;text-align:center;font-size:11px;color:#94a3b8;}
-  @media print{body{padding:0;}button{display:none;}}
-</style></head><body>
-<div class="receipt">
-  <div class="header"><h1>${schoolName}</h1><p>Fee Payment Receipt</p></div>
-  <div style="text-align:center;margin-bottom:16px;"><span class="badge">&#10003; FEE RECORDED</span></div>
-  <table>
-    <tr><td>Invoice No.</td><td>${invoiceNo}</td></tr>
-    <tr><td>Receipt No.</td><td>${receiptNo}</td></tr>
-    <tr><td>Student Name</td><td>${esc(row.student_name)}</td></tr>
-    <tr><td>Student ID</td><td>${esc(row.digital_student_id)}</td></tr>
-    <tr><td>Parent / Guardian</td><td>${esc(row.guardian_name ?? "—")}</td></tr>
-    <tr><td>Student Phone</td><td>${esc(row.student_phone ?? "—")}</td></tr>
-    <tr><td>Class / Section</td><td>${esc(row.class)} / ${esc(row.section)}</td></tr>
-    <tr><td>Fee Type</td><td>${esc(row.fee_type)}</td></tr>
-    <tr><td>Academic Year</td><td>${esc(row.academic_year ?? "—")}</td></tr>
-    <tr><td>Status</td><td>${esc(row.status)}</td></tr>
-    ${row.due_date ? `<tr><td>Due Date</td><td>${dueDateStr}</td></tr>` : ""}
-    <tr><td>Payment Date &amp; Time</td><td>${paymentDateTime}</td></tr>
-    ${row.notes ? `<tr><td>Notes</td><td>${esc(row.notes)}</td></tr>` : ""}
-    <tr class="amount-row"><td>Amount</td><td>${amountStr}</td></tr>
-  </table>
-  <div class="sig-row">
-    <div class="sig-box">
-      ${frSigUrl
-        ? `<img class="sig-img" src="${esc(frSigUrl)}" alt="Authorized Signature">`
-        : `<div class="sig-space"></div>`}
-      <div class="sig-line"></div>
-      <p class="sig-lbl">Authorized Signatory</p>
-      ${frSignatoryName ? `<p class="sig-name">${esc(frSignatoryName)}</p>` : ""}
-      <p class="sig-school">${schoolName}</p>
-    </div>
-  </div>
-  <div class="footer">
-    <p>Computer-generated receipt. No physical signature is required where a digital signature is configured.</p>
-    <p>&#169; ${new Date().getFullYear()} BENIUS &middot; ${schoolName}</p>
-  </div>
-</div>
-<script>window.print();</script>
-</body></html>`;
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Content-Disposition", `inline; filename="fee-receipt-${id}.html"`);
-    res.send(html);
   });
 
   // ── School-wide Ledger Export (CSV) ──────────────────────────────────────

@@ -1,0 +1,819 @@
+Redesign Ledger & Transaction Payment Receipt — Premium Professional Receipt
+
+I want to completely redesign the payment receipt/document generated from:
+
+Admin Portal → Fees / Ledger → Transaction Details → Receipt / Download PDF
+
+I have reviewed the current receipt and it is too simple and looks like a basic generated document. The attached screenshots show the current design.
+
+The new receipt must look like a premium, modern, professional school ERP financial receipt suitable for giving to parents, students, auditors, and school administration.
+
+Do NOT just change colors or fonts. Redesign the information hierarchy, spacing, sections, typography, alignment, and visual structure while preserving all existing financial data and forensic accuracy.
+
+---
+
+1. Most important rule — DO NOT CHANGE FINANCIAL DATA
+
+This is a UI/document redesign.
+
+Do not change:
+
+- invoice number
+- receipt number
+- payment amount
+- payment date/time
+- payment ID
+- order ID
+- authorization information
+- student information
+- fee information
+- payment status
+- payment method
+- transaction identifiers
+- existing receipt numbering logic
+- invoice/payment relationships
+- academic session
+- database values
+
+Do not create fake values.
+
+Use the actual data already available from the transaction.
+
+---
+
+2. Overall design direction
+
+The receipt should feel similar to a professionally designed:
+
+- modern school fee receipt
+- banking transaction receipt
+- premium SaaS financial document
+- professional accounting document
+
+It should NOT look like:
+
+- a plain HTML table
+- an old-fashioned government form
+- a basic browser print page
+- a simple list of labels and values
+
+Use:
+
+- clean typography
+- excellent whitespace
+- strong visual hierarchy
+- subtle borders
+- subtle section backgrounds
+- rounded cards where appropriate
+- clear status badge
+- professional alignment
+- strong amount presentation
+- consistent spacing
+- school branding
+- modern but restrained design
+
+Avoid excessive decoration.
+
+The document must remain professional and printable.
+
+---
+
+3. Page format
+
+Use a professional A4 portrait document by default.
+
+The receipt should print cleanly on:
+
+- A4
+- standard office printers
+- PDF
+- browser print
+- mobile "Save as PDF"
+
+Avoid relying on Letter size.
+
+The content must fit naturally within one page for normal transactions.
+
+If a transaction contains unusually large amounts of metadata, allow a second page rather than shrinking the text to an unreadable size.
+
+---
+
+4. Header / school branding
+
+Create a premium header.
+
+Top section should contain:
+
+Left side
+
+School logo, if configured.
+
+Center / main area
+
+School Name
+
+Below it:
+
+School Address
+City / State / PIN
+Phone
+Official Email
+Affiliation Number, if configured
+
+Do not display fields that are unavailable.
+
+Right side
+
+A strong document title:
+
+PAYMENT RECEIPT
+
+Below:
+
+Academic Session: 2026–2027
+
+And a prominent status badge:
+
+✓ PAYMENT RECEIVED
+
+For an online payment, use:
+
+ONLINE PAYMENT
+
+For offline payment:
+
+OFFLINE PAYMENT
+
+The status must come from the actual transaction state.
+
+---
+
+5. Receipt identification section
+
+Immediately below the header, create a clean "Receipt Information" card.
+
+Display:
+
+Field| Value
+Invoice No.| Actual invoice number
+Receipt No.| Actual receipt number
+Receipt Date| IST date
+Payment Date & Time| IST date + time
+Academic Session| Actual session
+Transaction Status| Actual status
+
+Make Invoice No. and Receipt No. visually prominent.
+
+Do not confuse:
+
+Invoice Number ≠ Receipt Number
+
+They are separate identifiers.
+
+---
+
+6. Student information section
+
+Create a dedicated section:
+
+STUDENT INFORMATION
+
+Use a modern two-column layout.
+
+Display where available:
+
+- Student Name
+- Student ID / DSID
+- Admission Number
+- Class
+- Section
+- Parent / Guardian Name
+- Student Phone
+- Academic Session
+
+Do not display empty fields.
+
+The student name should have stronger typography than ordinary fields.
+
+---
+
+7. Fee / invoice information
+
+Create another dedicated card:
+
+FEE DETAILS
+
+Display:
+
+- Fee Type
+- Fee Description
+- Invoice Number
+- Fee Period
+- Due Date
+- Original Invoice Amount
+- Amount Paid in this Transaction
+- Previous Amount Paid, if applicable
+- Remaining Balance, if available
+
+For multiple fee components, show them as a proper itemized table.
+
+Example:
+
+Description| Amount
+Tuition Fee| ₹2,000
+Examination Fee| ₹500
+Late Fee| ₹100
+Total| ₹2,600
+
+Do not invent components that are not present in the actual invoice.
+
+---
+
+8. PAYMENT SUMMARY — make this visually prominent
+
+This should be one of the strongest sections of the receipt.
+
+Create a clean summary card.
+
+For example:
+
+PAYMENT SUMMARY
+
+Amount Received
+
+₹2,600
+
+Then show:
+
+Payment Status: PAID
+
+Payment Method: Online / Cash / Bank Transfer / etc.
+
+For online transactions, clearly distinguish:
+
+Gross Amount Paid: ₹2,600
+
+Do not calculate or display net/refunded amounts unless the existing system has authoritative refund data.
+
+Do not introduce refund functionality as part of this redesign.
+
+---
+
+9. Online payment details
+
+For Razorpay/online payments, create a dedicated section:
+
+ONLINE TRANSACTION DETAILS
+
+Display available fields:
+
+- Payment ID
+- Order ID
+- Receipt No.
+- Payment Gateway
+- Payment Method
+- Transaction Status
+- Authorization Code, if available
+- Provider Reference / ARN, if available
+- Provider Created Time
+- Captured Time, if available
+
+Example:
+
+Razorpay Payment ID
+"pay_xxxxxxxxx"
+
+Razorpay Order ID
+"order_xxxxxxxxx"
+
+Important:
+
+Do NOT unnecessarily expose sensitive payment instrument information such as:
+
+- card number
+- CVV
+- bank credentials
+- UPI credentials
+- API secrets
+- webhook secrets
+
+Only display safe transaction identifiers already intended for receipt/audit use.
+
+---
+
+10. Offline payment details
+
+For offline transactions, show a separate section based on the actual payment method.
+
+For Cash:
+
+- Payment Method: Cash
+- Cash Denominations, if recorded
+- Amount Received
+- Collected By
+- Collection Date & Time
+- Notes
+
+For Bank Transfer:
+
+- Payment Method
+- Bank Reference / UTR
+- Transfer Date
+- Amount
+- Verified By
+- Verification Date
+
+For Cheque:
+
+- Cheque Number
+- Bank
+- Cheque Date
+- Amount
+- Deposit Date
+- Clearance Status
+
+Only show fields that actually exist for the transaction.
+
+Do not show blank sections.
+
+---
+
+11. Cash denomination design
+
+The current receipt shows:
+
+₹500 × 20
+₹200 × 12
+₹100 × 1
+
+Do not display these as repeated generic rows.
+
+Instead create a clean denomination table:
+
+Denomination| Quantity| Total
+₹500| 20| ₹10,000
+₹200| 12| ₹2,400
+₹100| 1| ₹100
+| Total| ₹12,500
+
+The denomination total must be validated against the actual amount received.
+
+Do not change the existing financial data.
+
+---
+
+12. Notes
+
+If an Admin note exists, show it in a dedicated:
+
+NOTES
+
+section.
+
+Do not mix internal technical information into the Notes field.
+
+For example, do not show:
+
+"Razorpay payment ID: pay_xxx"
+
+inside Notes if the payment ID already has its own dedicated field.
+
+Keep financial information structured.
+
+---
+
+13. Verification / forensic information
+
+The receipt should contain a compact professional section called:
+
+TRANSACTION VERIFICATION
+
+This is especially important for online payments.
+
+Show safe fields where available:
+
+- Payment verification status
+- Payment ID
+- Order ID
+- Transaction status
+- Provider
+- Provider timestamp
+- Application recorded timestamp
+- Verification/reference status
+
+However, keep this section visually secondary.
+
+The normal parent/student receipt should remain easy to understand.
+
+Do not expose raw webhook payloads or internal processing history on the normal receipt.
+
+Those belong in the Admin transaction-detail forensic interface.
+
+---
+
+14. Timestamp requirement — VERY IMPORTANT
+
+All school-facing dates and times must be displayed in:
+
+Asia/Kolkata (IST)
+
+Example:
+
+20 Aug 2026, 08:22:41 PM IST
+
+Do not use browser-local timezone.
+
+Do not use device timezone.
+
+Do not manually add "+05:30".
+
+Use the centralized IST formatting utilities already established in the project.
+
+Provider timestamps and application timestamps must remain separate facts.
+
+For example:
+
+Payment captured:
+20 Aug 2026, 08:22:41 PM IST
+
+Application recorded:
+20 Aug 2026, 08:22:43 PM IST
+
+Do not merge them if the system has both.
+
+---
+
+15. Receipt status design
+
+Create a visually strong status badge.
+
+Examples:
+
+✓ PAYMENT RECEIVED
+
+✓ PAID
+
+PROCESSING
+
+FAILED
+
+Use the actual transaction status.
+
+Do not show "PAID" merely because a payment attempt exists.
+
+The status must reflect the authoritative financial state.
+
+---
+
+16. Signature section
+
+Keep the authorized-signatory area from the current receipt but redesign it professionally.
+
+If a digital signature is configured:
+
+Show:
+
+Authorized Signatory
+
+School Name
+
+Signature image
+
+If no digital signature exists:
+
+Show a clean signature placeholder/line.
+
+Keep the existing legal/computer-generated disclaimer where required.
+
+Do not claim a physical signature exists when it does not.
+
+---
+
+17. Footer
+
+Create a professional footer.
+
+Include:
+
+School Name
+
+School contact information if appropriate
+
+"Computer-generated receipt. No physical signature is required when digitally generated."
+
+And:
+
+Generated on: [IST timestamp]
+
+The generated timestamp must also use Asia/Kolkata.
+
+Optionally include:
+
+Receipt reference / document identifier
+
+Do not add fake legal language.
+
+---
+
+18. QR code — only if useful and supported
+
+If the existing system has a reliable receipt verification URL/identifier, consider adding a small QR code in the footer.
+
+The QR should point only to a safe verification page.
+
+Do NOT put sensitive student/payment information directly inside the QR code.
+
+If no secure verification endpoint currently exists, do not invent one as part of this redesign.
+
+---
+
+19. Different payment types
+
+The same receipt design system should support:
+
+Online payment
+
+Show:
+
+- Payment ID
+- Order ID
+- Gateway
+- Payment method
+- transaction status
+- provider reference where available
+
+Cash
+
+Show:
+
+- cash denomination
+- collector
+- amount received
+- notes
+
+Bank transfer
+
+Show:
+
+- bank reference/UTR
+- transfer details
+- verification details
+
+Cheque
+
+Show:
+
+- cheque number
+- bank
+- cheque date
+- clearance status
+
+The layout should adapt automatically.
+
+Do not create a completely different visual design for every payment type.
+
+Use the same premium receipt framework with payment-specific sections.
+
+---
+
+20. Admin Ledger vs Student receipt
+
+Important:
+
+The Admin Ledger transaction detail can contain more technical/forensic information.
+
+The Student/Parent receipt should remain clean and understandable.
+
+Admin can see:
+
+- webhook evidence
+- verification state
+- provider timestamps
+- processing history
+- technical identifiers
+- reconciliation information
+
+Student/Parent should see:
+
+- payment
+- invoice
+- receipt
+- amount
+- date/time
+- payment method
+- safe transaction reference
+- status
+
+Do not expose internal forensic information unnecessarily to students.
+
+---
+
+21. Do not duplicate information
+
+The current receipt has several rows that make it look like a raw database dump.
+
+Avoid this.
+
+For example, instead of:
+
+Payment Method
+Reference
+Payment Date
+Notes
+Razorpay payment ID
+Amount
+
+Create structured sections:
+
+PAYMENT SUMMARY
+
+₹650
+
+Online Payment
+
+TRANSACTION DETAILS
+
+Payment ID: pay_xxxxx
+Order ID: order_xxxxx
+Reference: xxxxx
+Payment Date: 20 Aug 2026, 08:22:41 PM IST
+
+This will look significantly more professional.
+
+---
+
+22. Visual hierarchy
+
+Use a hierarchy similar to:
+
+School branding
+↓
+PAYMENT RECEIPT
+↓
+PAID / PAYMENT RECEIVED
+↓
+₹ Amount
+↓
+Receipt + Invoice identification
+↓
+Student information
+↓
+Fee details
+↓
+Payment details
+↓
+Verification details
+↓
+Notes
+↓
+Signature
+↓
+Footer
+
+The amount and status should be immediately visible.
+
+---
+
+23. Typography
+
+Use a modern professional font already supported by the application/PDF generation system.
+
+Use:
+
+- strong heading weight
+- medium labels
+- readable values
+- larger amount typography
+- smaller secondary metadata
+
+Avoid excessive bold text.
+
+Maintain excellent readability when printed.
+
+---
+
+24. Color system
+
+Use the school's configured branding color where available.
+
+If school branding is unavailable, use a restrained professional palette.
+
+Do NOT make the receipt overly colorful.
+
+Recommended approach:
+
+- primary school color for header accents
+- subtle neutral backgrounds
+- dark text
+- green only for successful payment status
+- red only for failed/error status
+- subtle borders
+
+The receipt should look premium rather than decorative.
+
+---
+
+25. Responsive/mobile PDF preview
+
+The receipt must remain visually correct when:
+
+- viewed in browser
+- printed
+- saved as PDF from Android
+- saved as PDF from desktop
+- opened on mobile
+- opened on desktop
+
+The PDF preview shown in the current screenshots should not have excessive empty space or make the receipt appear like a tiny document surrounded by large blank margins.
+
+Optimize the printable page dimensions and content scaling.
+
+---
+
+26. Critical financial integrity
+
+This redesign must be presentation-only.
+
+Do NOT:
+
+- change database calculations
+- change invoice numbers
+- change receipt numbers
+- change payment amounts
+- change payment statuses
+- change payment IDs
+- change invoice relationships
+- change payment lifecycle
+- introduce refund logic
+- introduce new financial calculations
+- alter historical records
+
+The existing backend remains the source of truth.
+
+---
+
+27. Reuse existing architecture
+
+Before implementing, inspect the existing:
+
+- receipt generator
+- PDF generator
+- transaction detail API
+- payment record model
+- fee record model
+- offline payment model
+- online payment model
+- school profile/logo data
+- signature configuration
+- IST date/time utilities
+- invoice/receipt numbering
+- Admin Ledger transaction detail
+
+Do not create a parallel receipt system if an existing generator can be upgraded.
+
+Prefer extending/refactoring the existing receipt component.
+
+---
+
+28. Acceptance criteria
+
+Do not consider this complete merely because the receipt looks nicer.
+
+Verify:
+
+- Every existing important field is preserved.
+- No financial values changed.
+- Invoice number remains correct.
+- Receipt number remains correct.
+- Online payment IDs remain correct.
+- Offline payment information remains correct.
+- Student information remains correct.
+- Cash denominations remain correct.
+- Payment amount remains correct.
+- Payment status remains correct.
+- All displayed timestamps are IST.
+- Date-only values are not shifted.
+- PDF prints correctly on A4.
+- Mobile PDF preview is clean.
+- Desktop PDF is clean.
+- Online and offline receipts use the same professional design system.
+- Missing fields are hidden rather than showing empty rows.
+- No sensitive payment data is exposed.
+- Admin forensic information remains available in the Admin transaction detail.
+- Student-facing receipt does not expose internal forensic information.
+- Existing receipt numbering and financial logic remain untouched.
+- Existing payment/fee tests continue to pass.
+
+Final requirement
+
+Please first inspect the current receipt generation implementation and all data available to the transaction-detail endpoint.
+
+Then redesign the receipt around the existing data.
+
+Do not remove any useful existing information simply to make the receipt look cleaner.
+
+The goal is:
+
+Modern + Premium + Professional + Complete + Financially Accurate + Print-ready + IST-correct.
+
+Do not implement refund functionality as part of this task.
