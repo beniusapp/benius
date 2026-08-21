@@ -534,7 +534,8 @@ body {
   font-weight: 700;
   color: #111827;
   letter-spacing: -0.2px;
-  word-break: break-all;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .id-cell-value.primary {
   color: #1e3a5f;
