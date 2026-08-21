@@ -549,12 +549,14 @@ body {
 }
 
 @media print {
+  /* Base — 10px as floor; data values are bumped per-element below */
   body { background: #fff; padding: 0; font-size: 10px; line-height: 1.35; }
   .page { padding: 0; box-shadow: none; max-width: 100%; }
   .no-print { display: none !important; }
 
-  /* ── Header ── */
-  .receipt-header { padding-bottom: 10px; margin-bottom: 10px; gap: 12px; }
+  /* ── Header — kept compact ── */
+  .receipt-header { padding-bottom: 8px; margin-bottom: 8px; gap: 12px;
+                    break-inside: avoid; page-break-inside: avoid; }
   .school-logo { max-width: 48px; max-height: 48px; }
   .school-logo-initials { width: 44px; height: 44px; font-size: 16px; }
   .school-name { font-size: 13px; margin-bottom: 2px; }
@@ -562,67 +564,67 @@ body {
   .school-contact { font-size: 9px; margin-top: 1px; }
   .school-affiliation { font-size: 9px; margin-top: 1px; }
   .doc-title { font-size: 12px; letter-spacing: 1px; margin-bottom: 3px; }
-  .doc-session { font-size: 9px; margin-bottom: 5px; }
+  .doc-session { font-size: 9px; margin-bottom: 4px; }
   .status-badge { font-size: 8.5px; padding: 2px 7px; }
 
-  /* ── ID strip ── */
-  .receipt-id-strip { margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
-  .id-cell { padding: 7px 10px; }
+  /* ── ID strip — compact, no reduction to value readability ── */
+  .receipt-id-strip { margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
+  .id-cell { padding: 6px 9px; }
   .id-cell-label { font-size: 8px; margin-bottom: 1px; }
   .id-cell-value { font-size: 10.5px; }
   .id-cell-value.primary { font-size: 11px; }
 
   /* ── Two-column layout ── */
-  .two-col { gap: 10px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; }
+  .two-col { gap: 8px; margin-bottom: 8px; break-inside: avoid; page-break-inside: avoid; }
 
-  /* ── Cards ── */
-  .card { padding: 9px 11px; margin-bottom: 9px; border-radius: 5px; break-inside: avoid; page-break-inside: avoid; }
+  /* ── Cards — slightly tighter padding to recover space for larger text ── */
+  .card { padding: 8px 10px; margin-bottom: 8px; border-radius: 5px; break-inside: avoid; page-break-inside: avoid; }
 
-  /* ── Section headers ── */
-  .section-header { font-size: 8px; margin-bottom: 6px; padding-bottom: 3px; }
+  /* ── Section headers — compact labels, not data ── */
+  .section-header { font-size: 8px; margin-bottom: 5px; padding-bottom: 3px; }
 
   /* ── Student name ── */
-  .student-name-line { font-size: 12px; margin-bottom: 5px; }
+  .student-name-line { font-size: 12px; margin-bottom: 4px; }
 
-  /* ── Field rows ── */
-  .field-grid { gap: 2px; }
-  .field-row { font-size: 10px; padding: 1px 0; }
-  .field-label { font-size: 9.5px; min-width: 108px; }
-  .field-value { font-size: 10px; }
-  .field-value.mono { font-size: 9.5px; }
+  /* ── Field rows — values bumped to 11px, labels at 10px ── */
+  .field-grid { gap: 1px; }
+  .field-row { font-size: 11px; padding: 0.5px 0; }
+  .field-label { font-size: 10px; min-width: 110px; }
+  .field-value { font-size: 11px; }
+  .field-value.mono { font-size: 10.5px; }
 
   /* ── Payment summary (navy card) ── */
-  .amount-display { padding: 4px 0 7px; }
+  .amount-display { padding: 4px 0 6px; }
   .amount-label { font-size: 9px; }
   .amount-figure { font-size: 26px; letter-spacing: -0.5px; }
   .amount-words { font-size: 9px; margin-top: 2px; }
-  .payment-meta-grid { margin-top: 8px; padding-top: 8px; gap: 5px 10px; }
-  .pm-label { font-size: 8.5px; }
-  .pm-value { font-size: 11px; }
+  .payment-meta-grid { margin-top: 7px; padding-top: 7px; gap: 4px 10px; }
+  .pm-label { font-size: 9px; }
+  .pm-value { font-size: 12px; }
 
-  /* ── Breakdown table ── */
-  .breakdown-table { font-size: 10px; }
-  .breakdown-table thead th { font-size: 8px; padding: 4px 6px; }
-  .breakdown-table tbody td { padding: 4px 6px; }
-  .breakdown-table tr.total-row td { padding-top: 5px; font-size: 10.5px; }
+  /* ── Breakdown table — data at 11px, headers compact ── */
+  .breakdown-table { font-size: 11px; }
+  .breakdown-table thead th { font-size: 8.5px; padding: 3px 6px; }
+  .breakdown-table tbody td { padding: 3px 6px; }
+  .breakdown-table tr.total-row td { padding-top: 4px; font-size: 11px; }
 
   /* ── Denomination table ── */
-  .denomination-wrap { margin-bottom: 8px; }
+  .denomination-wrap { margin-bottom: 7px; }
   .denomination-label { font-size: 8px; margin-bottom: 3px; }
-  .denomination-table { font-size: 10px; }
-  .denomination-table th { font-size: 8px; padding: 3px 6px; }
+  .denomination-table { font-size: 11px; }
+  .denomination-table th { font-size: 8.5px; padding: 3px 6px; }
   .denomination-table td { padding: 3px 6px; }
 
-  /* ── Verification grid ── */
-  .v-label { font-size: 8.5px; }
-  .v-value { font-size: 9.5px; }
-  .v-value.mono { font-size: 9px; }
+  /* ── Verification grid — IDs and statuses are important data ── */
+  .v-label { font-size: 9px; }
+  .v-value { font-size: 11px; }
+  .v-value.mono { font-size: 10.5px; }
 
   /* ── Notes ── */
-  .note-text { font-size: 10px; line-height: 1.4; }
+  .note-text { font-size: 11px; line-height: 1.4; }
 
-  /* ── Signature ── */
-  .sig-area { padding-top: 8px; margin-top: 0; margin-bottom: 8px;
+  /* ── Signature — compact but readable ── */
+  .sig-area { padding-top: 7px; margin-top: 0; margin-bottom: 7px;
                break-inside: avoid; page-break-inside: avoid; }
   .sig-img { max-height: 40px; max-width: 140px; margin-bottom: 3px; }
   .sig-placeholder { height: 40px; }
@@ -631,13 +633,10 @@ body {
   .sig-name { font-size: 9px; margin-top: 1px; }
   .sig-school { font-size: 8.5px; }
 
-  /* ── Footer ── */
-  .receipt-footer { padding-top: 6px; break-inside: avoid; page-break-inside: avoid; }
+  /* ── Footer — legal/meta text can stay small ── */
+  .receipt-footer { padding-top: 5px; break-inside: avoid; page-break-inside: avoid; }
   .footer-disclaimer { font-size: 8.5px; }
   .footer-meta { font-size: 8.5px; }
-
-  /* ── Keep small anchoring sections together ── */
-  .receipt-header { break-inside: avoid; page-break-inside: avoid; }
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
