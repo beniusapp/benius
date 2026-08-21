@@ -73,6 +73,26 @@ function s(v: unknown): string {
   return String(v);
 }
 
+function fmtMonthYear(v: string | null | undefined): string {
+  if (!v) return "";
+  try {
+    const d = /^\d{4}-\d{2}-\d{2}/.test(String(v))
+      ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
+      : new Date(String(v));
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" });
+  } catch { return ""; }
+}
+
+function fmtPeriod(start: string | null | undefined, end: string | null | undefined): string {
+  const s1 = fmtMonthYear(start);
+  const s2 = fmtMonthYear(end);
+  if (s1 && s2 && s1 !== s2) return `${s1} – ${s2}`;
+  if (s1) return s1;
+  if (s2) return s2;
+  return "—";
+}
+
 export interface LedgerRow {
   invoice_number:  string | null;
   receipt_number:  string | null;
@@ -82,6 +102,7 @@ export interface LedgerRow {
   section:         string | null;
   fee_name:        string | null;
   fee_type:        string | null;
+  frequency:       string | null;
   invoice_amount:  number;
   amount_paid:     number;
   outstanding:     number;
@@ -123,23 +144,27 @@ export interface LedgerPdfInput {
 }
 
 // ── Column layout (A4 landscape: 841.89 × 595.28 pt, margins 36pt each side)
-// Usable width ≈ 770pt
+// Usable width ≈ 770pt  (17 columns)
 const COLS: { key: string; label: string; width: number; align?: "right" | "center" }[] = [
-  { key: "invoice_number",  label: "Invoice No.",  width: 62 },
-  { key: "receipt_number",  label: "Receipt No.",  width: 58 },
-  { key: "student_name",    label: "Student",      width: 100 },
-  { key: "student_id",      label: "DSID",         width: 50 },
-  { key: "class",           label: "Cls",          width: 30 },
-  { key: "fee_name",        label: "Fee Name",     width: 85 },
-  { key: "fee_type",        label: "Fee Type",     width: 62 },
-  { key: "invoice_amount",  label: "Amount",       width: 55, align: "right" },
-  { key: "due_date",        label: "Due Date",     width: 55 },
-  { key: "status",          label: "Status",       width: 50, align: "center" },
-  { key: "paid_date",       label: "Paid On",      width: 55 },
-  { key: "amount_paid",     label: "Paid",         width: 52, align: "right" },
-  { key: "outstanding",     label: "Outstanding",  width: 56, align: "right" },
+  { key: "invoice_number",  label: "Invoice No.",  width: 48 },
+  { key: "receipt_number",  label: "Receipt No.",  width: 46 },
+  { key: "student_name",    label: "Student",      width: 65 },
+  { key: "student_id",      label: "DSID",         width: 36 },
+  { key: "class",           label: "Cls",          width: 26 },
+  { key: "fee_name",        label: "Fee Name",     width: 58 },
+  { key: "fee_type",        label: "Fee Type",     width: 44 },
+  { key: "fee_period",      label: "Fee Period",   width: 58 },
+  { key: "frequency",       label: "Frequency",    width: 44 },
+  { key: "invoice_amount",  label: "Amount",       width: 45, align: "right" },
+  { key: "due_date",        label: "Due Date",     width: 43 },
+  { key: "status",          label: "Status",       width: 40, align: "center" },
+  { key: "paid_date",       label: "Paid On",      width: 42 },
+  { key: "amount_paid",     label: "Paid",         width: 42, align: "right" },
+  { key: "outstanding",     label: "Outstdg.",     width: 44, align: "right" },
+  { key: "payment_method",  label: "Method",       width: 45 },
+  { key: "reference_number",label: "Reference",    width: 44 },
 ];
-// Sum check: 62+58+100+50+30+85+62+55+55+50+55+52+56 = 770
+// Sum: 48+46+65+36+26+58+44+58+44+45+43+40+42+42+44+45+44 = 770
 const TABLE_WIDTH = COLS.reduce((s, c) => s + c.width, 0);
 
 const PAGE_W = 841.89;
@@ -320,6 +345,8 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
             case "class":           cellText = row.section ? `${s(row.class)}-${s(row.section)}` : s(row.class); break;
             case "fee_name":        cellText = s(row.fee_name ?? row.fee_type); break;
             case "fee_type":        cellText = s(row.fee_type); break;
+            case "fee_period":      cellText = fmtPeriod(row.fee_period_start, row.fee_period_end); break;
+            case "frequency":       cellText = s(row.frequency); break;
             case "invoice_amount":  cellText = fmtINR(Number(row.invoice_amount ?? 0)); break;
             case "due_date":        cellText = fmtDate(row.due_date); break;
             case "status":
@@ -329,6 +356,8 @@ export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
             case "paid_date":       cellText = fmtDate(row.paid_date); break;
             case "amount_paid":     cellText = row.amount_paid ? fmtINR(Number(row.amount_paid)) : "—"; break;
             case "outstanding":     cellText = row.outstanding  ? fmtINR(Number(row.outstanding))  : "—"; break;
+            case "payment_method":  cellText = s(row.payment_method); break;
+            case "reference_number":cellText = s(row.reference_number); break;
             default: cellText = "—";
           }
 

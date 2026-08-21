@@ -1,0 +1,527 @@
+Task: Correct and Finalize the Ledger PDF
+
+We are working only on the Fees & Payments → Ledger & Transactions → Ledger PDF functionality.
+
+Do not modify Tx Report PDF, Export Ledger, selection UI, pagination, or any unrelated module.
+
+First inspect the current implementation and then make only the changes described below.
+
+---
+
+1. Purpose of Ledger PDF
+
+The Ledger PDF must be the school's official invoice/fee ledger report.
+
+It should represent the current financial position of each invoice/fee record:
+
+- Who the invoice belongs to
+- What fee it is
+- Which academic session it belongs to
+- Fee period
+- Frequency
+- Invoice amount
+- Due date
+- Current status
+- Amount paid
+- Outstanding amount
+- Receipt/payment information where applicable
+
+One row in the Ledger PDF should represent one invoice/fee record, NOT one payment transaction.
+
+Do not turn this PDF into a payment transaction report.
+
+---
+
+2. Keep the Existing Filter Scope
+
+The Ledger PDF must continue to respect the filters currently available in the main Ledger & Transactions toolbar:
+
+- Search
+- Status
+- Class
+- Fee Name
+- Fee Type
+- Academic Session / viewSessionId
+
+The PDF must contain all records matching those filters across all pages.
+
+Pagination must NOT limit the PDF.
+
+For example:
+
+Page 1 = records 1–20
+Page 2 = records 21–40
+Page 3 = records 41–60
+
+If 60 records match the current filters, Ledger PDF should contain all 60.
+
+Do not fetch only the currently visible page.
+
+---
+
+3. Add the Missing Fee Period and Frequency
+
+The current implementation already queries these fields but does not render them.
+
+They MUST now appear in the Ledger PDF.
+
+Add:
+
+- Fee Period
+- Frequency
+
+Place them logically near Fee Name / Fee Type.
+
+Recommended column order:
+
+Invoice No.
+Receipt No.
+Student
+DSID
+Class
+Section
+Fee Name
+Fee Type
+Fee Period
+Frequency
+Amount
+Due Date
+Status
+Paid On
+Amount Paid
+Outstanding
+Payment Method
+Reference No.
+
+If the existing PDF layout becomes too crowded, use a sensible A4 landscape layout with appropriate column widths and text wrapping. Do not remove important financial fields merely to fit the page.
+
+---
+
+4. Invoice Number Must Be Permanent
+
+Use:
+
+fee_records.invoice_number
+
+for Invoice No.
+
+Do NOT use receipt_number as the invoice number.
+
+Invoice No. and Receipt No. are separate concepts:
+
+Invoice No. = invoice/demand identifier
+Receipt No. = payment/receipt identifier
+
+Never overwrite or substitute one for the other.
+
+---
+
+5. Payment Information
+
+Because this is an invoice-centric ledger, payment information should be shown as a summary for that invoice.
+
+For each invoice:
+
+Amount
+
+Use the invoice amount:
+
+fee_records.amount
+
+Amount Paid
+
+Use the total of all relevant payment records belonging to that invoice.
+
+Do NOT use only the latest payment amount.
+
+For example:
+
+Invoice = ₹10,000
+
+Payment 1 = ₹4,000
+Payment 2 = ₹3,000
+Payment 3 = ₹3,000
+
+Amount Paid = ₹10,000
+Outstanding = ₹0
+
+Outstanding
+
+Calculate safely:
+
+MAX(invoice_amount - total_paid, 0)
+
+Do not allow negative outstanding amounts.
+
+---
+
+6. Payment Method and Reference
+
+If an invoice has multiple payment records, do not falsely imply that one payment method represents the entire payment history.
+
+If the existing implementation only has an aggregated/latest payment method and reference, inspect whether it is appropriate to display it.
+
+Prefer:
+
+- Payment Method = "Multiple" when multiple different payment methods were used
+- Otherwise show the actual payment method
+
+For Reference No., use the appropriate available reference associated with the payment summary.
+
+Do not invent values.
+
+---
+
+7. Status
+
+Display the actual invoice status:
+
+- Paid
+- Due
+- Overdue
+- Partial
+- Waived
+
+Keep the existing status logic unless inspection reveals a clear bug.
+
+The PDF should not derive invoice status merely from whether a payment exists.
+
+The invoice's authoritative status should remain the invoice/fee record status.
+
+---
+
+8. Paid On
+
+For a fully paid invoice, show the appropriate payment/paid date.
+
+If there are multiple payments, use the date on which the invoice became fully paid if that information is available.
+
+Do not simply use the date of an arbitrary payment.
+
+If the current data model does not have enough information to determine this reliably, preserve the existing "paid_date" behavior rather than inventing logic.
+
+---
+
+9. Academic Session
+
+The Ledger PDF must always be scoped to the currently selected/viewed academic session.
+
+Use the existing:
+
+viewSessionId
+
+session mechanism.
+
+Do not mix invoices from different academic sessions.
+
+The PDF header should clearly show the academic session.
+
+---
+
+10. School Information
+
+Keep the existing professional PDF header containing:
+
+- School logo
+- School name
+- School address
+- Contact information where already available
+- Academic session
+- Report title
+- Generation date/time
+
+Do not remove the existing branding.
+
+---
+
+11. Totals
+
+At the end of the report, retain totals for:
+
+Total Amount Invoiced
+Total Amount Paid
+Total Outstanding
+
+These totals must be calculated from the records included in THIS PDF after applying the current filters.
+
+Example:
+
+If the filter is:
+
+Class = 6
+Status = Overdue
+
+then the totals must represent only those matching invoices.
+
+Do not calculate totals from the entire school's ledger.
+
+---
+
+12. Selection Behavior — IMPORTANT
+
+For now, do not change the Ledger PDF to use selectedIds, selectAllMatching, or excludedIds.
+
+Keep the current Ledger PDF behavior:
+
+Current toolbar filters
+        ↓
+ALL matching records across all pages
+        ↓
+Ledger PDF
+
+Selection is a separate concern that we will address later.
+
+Therefore:
+
+- "selectedIds" → ignored
+- "selectAllMatching" → ignored
+- "excludedIds" → ignored
+- pagination → ignored
+
+Do NOT introduce selection-dependent export behavior in this task.
+
+---
+
+13. Filters Must Match the Main Ledger
+
+The PDF filters must correspond exactly to the current Ledger toolbar.
+
+Verify:
+
+Search
+Status
+Class
+Fee Name
+Fee Type
+Academic Session
+
+If a filter is empty:
+
+empty = no restriction
+
+Do not accidentally treat an empty filter as a restrictive value.
+
+Search should continue to support relevant student identifiers such as:
+
+- Student name
+- DSID
+
+Preserve the existing behavior unless there is a bug.
+
+---
+
+14. Do NOT Include Technical/Internal Fields
+
+The Ledger PDF is for administrators/accounting/audit use.
+
+Do not expose unnecessary internal database fields.
+
+Do not add:
+
+- database IDs
+- internal UUIDs
+- webhook IDs
+- raw JSON
+- internal technical status fields
+- API/debug information
+
+Only include meaningful financial/student information.
+
+---
+
+15. Verify the Existing Database Relationships
+
+Before implementing, inspect how these are related:
+
+fee_records
+students
+fee_structures
+payment_records
+academic_sessions
+schools
+
+Do not change the database schema.
+
+Use the existing relationships.
+
+Do not create duplicate payment rows in the Ledger PDF.
+
+Remember:
+
+One invoice = one Ledger row.
+
+Even if that invoice has:
+
+Payment 1
+Payment 2
+Payment 3
+
+the Ledger PDF must still contain only one row for that invoice, with the payment amounts appropriately summarized.
+
+---
+
+16. PDF Layout
+
+Maintain:
+
+- A4 landscape
+- readable font sizes
+- proper column widths
+- text wrapping
+- repeating table header on new pages
+- professional school report appearance
+- totals at the end
+- no clipped financial values
+
+The PDF must remain usable when there are hundreds or thousands of records.
+
+Do not put all information into tiny unreadable columns just to fit one page.
+
+Use sensible multi-line wrapping where necessary.
+
+---
+
+17. Important Validation Tests
+
+After implementation, test at least these cases.
+
+Test 1 — All records
+
+No filters.
+
+Expected:
+
+All invoices in the current academic session are included.
+
+---
+
+Test 2 — Status filter
+
+Select:
+
+Status = Overdue
+
+Expected:
+
+Only overdue invoices appear.
+
+Totals correspond only to overdue invoices.
+
+---
+
+Test 3 — Class filter
+
+Select a specific class.
+
+Expected:
+
+Only invoices belonging to that class appear.
+
+---
+
+Test 4 — Search
+
+Search for a specific student or DSID.
+
+Expected:
+
+Only matching records appear.
+
+---
+
+Test 5 — Multiple pages
+
+Have more records than the page size.
+
+Example:
+
+Page size = 20
+Matching records = 75
+
+Expected:
+
+Ledger PDF contains all 75 records.
+
+---
+
+Test 6 — Multiple payments for one invoice
+
+Example:
+
+Invoice = ₹10,000
+
+Payment 1 = ₹4,000
+Payment 2 = ₹6,000
+
+Expected:
+
+One invoice row:
+
+Amount = ₹10,000
+Amount Paid = ₹10,000
+Outstanding = ₹0
+
+NOT two Ledger rows.
+
+---
+
+Test 7 — Partial payment
+
+Example:
+
+Invoice = ₹10,000
+Paid = ₹4,000
+
+Expected:
+
+Amount = ₹10,000
+Amount Paid = ₹4,000
+Outstanding = ₹6,000
+Status = Partial
+
+Use the existing authoritative status if the application already stores it.
+
+---
+
+Test 8 — Fee Period and Frequency
+
+Verify that these are actually visible in the generated PDF.
+
+Examples:
+
+Fee Period: April–June 2027
+Frequency: Quarterly
+
+and:
+
+Fee Period: August 2027
+Frequency: Monthly
+
+---
+
+18. Final Verification Report
+
+After implementation, do NOT just say "done".
+
+Report:
+
+1. Files changed
+2. Functions changed
+3. API changes
+4. Database query changes
+5. PDF column changes
+6. Filter behavior
+7. Pagination behavior
+8. Payment aggregation behavior
+9. Whether selection state was untouched
+10. Tests performed and their results
+
+Also explicitly confirm:
+
+«"Tx Report PDF and Export Ledger were not modified."»
+
+And:
+
+«"selectedIds, selectAllMatching, and excludedIds were not modified."»
+
+Do not make any changes outside the Ledger PDF scope.

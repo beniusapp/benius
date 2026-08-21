@@ -4909,6 +4909,7 @@ td:last-child{font-weight:600;word-break:break-all;}
           s.section            AS section,
           COALESCE(fr.fee_name, fs.name, fr.fee_type) AS fee_name,
           fr.fee_type          AS fee_type,
+          fr.frequency         AS frequency,
           fr.amount            AS invoice_amount,
           COALESCE(p.total_paid, 0)::int                          AS amount_paid,
           GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
@@ -4928,7 +4929,10 @@ td:last-child{font-weight:600;word-break:break-all;}
           SELECT
             fee_record_id,
             SUM(amount)::int AS total_paid,
-            (array_agg(payment_method  ORDER BY created_at DESC))[1] AS last_method,
+            CASE
+              WHEN COUNT(DISTINCT payment_method) > 1 THEN 'Multiple'
+              ELSE (array_agg(payment_method  ORDER BY created_at DESC))[1]
+            END AS last_method,
             (array_agg(reference_number ORDER BY created_at DESC))[1] AS last_reference
           FROM payment_records
           WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
