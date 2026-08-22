@@ -1,0 +1,418 @@
+Objective
+
+Redesign the Fees & Payments → Audit Log to be simple, human-readable, secure, and useful for school administrators.
+
+Do not turn the Audit Log into a duplicate of Payment Attempts, Webhook Events, or the Full Transaction Detail PDF. Those systems already contain the technical payment evidence.
+
+The Audit Log should be the human-readable operational history of everything important that happens inside Fees & Payments.
+
+1. What every audit entry must clearly show
+
+Every entry should contain:
+
+- Date & Time — displayed accurately in IST
+- Who — actual person or system
+- Role — Principal / Teacher / Non-Teaching Staff / System / Razorpay
+- User/Staff ID — the authenticated internal ID of the person who performed the action
+- Action — simple human-readable action name
+- Affected record — Invoice / Fee Structure / Payment / Refund / Settings etc.
+- Student — when applicable
+- Amount — when applicable
+- Description — short, human-readable explanation of what happened
+
+Example:
+
+«22 Aug 2026, 10:30 AM IST
+Who: Rahul Sharma
+Role: Teacher
+ID: TCH-0024
+Action: Invoice Created
+Student: student3mis
+Amount: ₹650
+Description: Created invoice INV-0093 for Math Book fee.»
+
+The administrator should immediately understand the event without needing technical knowledge.
+
+---
+
+2. Invoice / Fee Structure actions MUST be audited
+
+Every important action in Fee Structures / Generate Invoices must create an audit entry.
+
+At minimum:
+
+Fee Structure
+
+- Fee structure created
+- Fee structure updated
+- Fee structure deleted
+- Fee structure activated/deactivated, if applicable
+
+Invoice Generation
+
+- Invoice generated individually
+- Bulk invoices generated
+- Invoice generation failed, where appropriate
+- Invoice deleted
+- Invoice updated
+- Invoice status changed manually
+- Any other operation that creates, modifies, or deletes invoices
+
+Example:
+
+«Action: Fee Structure Created
+Who: Principal
+ID: PRN-0001
+Description: Created “Annual Tuition Fee” structure for Academic Session 2027–2028.»
+
+For bulk generation:
+
+«Action: Invoices Generated
+Who: Principal
+ID: PRN-0001
+Description: Generated 126 invoices for Academic Session 2027–2028.»
+
+---
+
+3. Ledger & Transactions MUST be audited
+
+Any administrative action performed from Ledger & Transactions must be recorded.
+
+Especially:
+
+- Add Invoice
+- Edit Invoice
+- Delete Invoice
+- Record Offline Payment
+- Correct offline payment details
+- Cancel/reverse a transaction where supported
+- Refund request
+- Any manual financial correction
+- Any deletion
+- Any other action that changes financial records
+
+Example:
+
+«Action: Invoice Created
+Who: Amit Das
+Role: Non-Teaching Staff
+ID: NTS-0017
+Student: student3mis
+Invoice: INV-0093
+Amount: ₹650
+Description: Manually created Math Book invoice.»
+
+---
+
+4. IMPORTANT: Every deletion must be audited
+
+This is mandatory.
+
+Anything deleted anywhere inside Fees & Payments must create an audit entry BEFORE/AS part of the deletion transaction.
+
+This includes:
+
+- Fee structures
+- Invoices
+- Bulk-generated invoices
+- Payment-related records where deletion is permitted
+- Fee configurations
+- Any other deletable Fees & Payments entity
+
+A deletion entry must preserve enough information to understand what was deleted.
+
+Example:
+
+«Action: Invoice Deleted
+Who: Rahul Sharma
+Role: Teacher
+ID: TCH-0024
+Invoice: INV-0093
+Student: student3mis
+Amount: ₹650
+Description: Deleted invoice “Math Book” for student3mis.»
+
+Do not physically delete the corresponding audit entry.
+
+If the application currently allows deletion of financial records that should actually be retained for accounting/audit purposes, flag that separately before changing the behavior. Do not silently alter business rules.
+
+---
+
+5. Role and identity must be reliable
+
+Do not show only:
+
+«System»
+
+when a real authenticated staff member performed the action.
+
+Resolve the authenticated user to:
+
+- Principal
+- Teacher
+- Non-Teaching Staff
+
+and show their internal user/staff ID.
+
+For example:
+
+Who: Priya Sharma
+Role: Teacher
+ID: TCH-0042
+
+For automated operations:
+
+Who: System
+Role: System
+ID: SYSTEM
+
+For Razorpay-originated events:
+
+Who: Razorpay
+Role: Payment Gateway
+ID: RAZORPAY
+
+Never guess the actor.
+
+If the authenticated user's role or ID cannot be resolved, show Unknown Actor rather than incorrectly attributing the action to another person.
+
+---
+
+6. Keep payment events simple
+
+Do not duplicate all technical payment/webhook information in Audit Log.
+
+Keep only useful human-readable events such as:
+
+- Payment successful
+- Payment failed
+- Payment cancelled
+- Payment authorized
+- Refund requested
+- Refund processed
+- Refund failed
+- Dispute opened/updated/resolved
+
+Technical details such as:
+
+- Webhook payloads
+- HMAC signatures
+- Raw gateway responses
+- API enrichment details
+- Internal correlation IDs
+- Idempotency keys
+- Card/VPA details
+- Sensitive payer information
+
+must remain in the appropriate secure payment/audit systems and must not be displayed in the normal Audit Log.
+
+The Full Transaction Detail/PDF remains responsible for detailed payment investigation.
+
+---
+
+7. Keep the UI simple
+
+The Audit Log table should contain only:
+
+Column
+Date & Time
+Who
+Role
+ID
+Action
+Student / Record
+Description
+
+Do not expose raw IP addresses in the normal UI.
+
+Do not expose raw gateway data.
+
+Do not expose unnecessary technical database fields.
+
+Use simple action labels such as:
+
+- Created
+- Updated
+- Deleted
+- Invoice Generated
+- Payment Received
+- Payment Failed
+- Payment Cancelled
+- Refund Requested
+- Refund Processed
+- Refund Failed
+- Payment Corrected
+- Settings Changed
+
+---
+
+8. "What changed" for edits
+
+For important updates, make the description human-readable.
+
+Instead of:
+
+«UPDATE fee_records SET...»
+
+show:
+
+«Updated Invoice INV-0093 — changed amount from ₹600 to ₹650.»
+
+For multiple changes:
+
+«Updated Fee Structure — changed amount from ₹5,000 to ₹5,500 and frequency from Monthly to Quarterly.»
+
+Do not expose raw SQL or technical object dumps.
+
+---
+
+9. Security and tenant isolation
+
+This is critical.
+
+Every audit record and every audit-log query must be strictly scoped to the authenticated school/tenant.
+
+Never allow one school to see another school's audit entries.
+
+The API must derive "schoolId" from the authenticated session, not from a user-supplied request parameter.
+
+Also:
+
+- Prevent unauthorized users from accessing the Audit Log API.
+- Respect the existing role/permission system.
+- Do not expose sensitive payment data.
+- Escape/sanitize all user-controlled values before rendering them.
+- Prevent stored XSS through student names, invoice names, notes, descriptions, staff names, etc.
+- Do not expose raw database fields unnecessarily.
+- Do not expose IP addresses in the standard Audit Log UI.
+- Do not expose passwords, secrets, signatures, tokens, raw webhook payloads, card information, CVV, or credentials.
+
+---
+
+10. Audit integrity
+
+Audit entries should be treated as append-only records.
+
+Normal application users must never be able to:
+
+- Edit an audit entry
+- Delete an audit entry
+- Rewrite its actor
+- Rewrite its timestamp
+- Rewrite its description
+
+If possible within the existing architecture, enforce this at the database/application layer rather than relying only on UI restrictions.
+
+Most importantly:
+
+The business operation and its audit entry should be transactionally consistent.
+
+For example, if an invoice is successfully deleted, the deletion audit record must also be persisted. Do not silently swallow audit-write failures for important financial operations.
+
+---
+
+11. Fix the current action filter
+
+The current action dropdown contains stale actions and misses real actions.
+
+Replace it with the actual actions generated by the current implementation.
+
+Do not hardcode obsolete actions such as "waiver" or "status_change" unless they actually have active writers.
+
+The filter should reflect the real audit events.
+
+---
+
+12. Stable ordering
+
+Audit entries must be ordered deterministically:
+
+1. "created_at DESC"
+2. Audit record ID DESC
+
+This prevents entries with identical timestamps from moving between pages.
+
+---
+
+13. Academic session
+
+Keep the Audit Log primarily school-wide, because administrators need to see the complete history of what happened.
+
+However, if the existing architecture already has "session_id" available, allow filtering by Academic Session as an optional filter.
+
+Do not hide historical audit records simply because the administrator changes the active academic session.
+
+---
+
+14. Final acceptance test
+
+After implementation, test all of these actions and verify that an audit entry appears:
+
+Fee Structures
+
+- Create fee structure
+- Edit fee structure
+- Delete fee structure
+
+Invoice Generation
+
+- Generate one invoice
+- Generate bulk invoices
+- Edit invoice
+- Delete invoice
+
+Ledger & Transactions
+
+- Manually Add Invoice
+- Record Offline Payment
+- Correct offline payment details
+- Delete any permitted financial record
+- Refund
+- Payment correction
+
+Online Payments
+
+- Successful payment
+- Failed payment
+- Cancelled payment
+- Authorized payment
+- Refund requested
+- Refund processed
+- Refund failed
+
+Identity
+
+Test the same operation using:
+
+- Principal
+- Teacher
+- Non-Teaching Staff
+
+Confirm that the Audit Log correctly shows:
+
+Who + Role + ID
+
+and never incorrectly displays a real staff action as "System".
+
+Security tests
+
+Verify:
+
+- Tenant isolation
+- Unauthorized API access is rejected
+- Audit entries cannot be modified/deleted by normal users
+- XSS payloads are safely escaped
+- Sensitive gateway/payment data is not exposed
+- Search does not accidentally return raw sensitive database fields
+
+Final requirement
+
+Do not add unnecessary technical information merely because it exists in the database.
+
+The final Audit Log should be:
+
+Simple → Human-readable → Complete for important Fees & Payments actions → Actor-aware → Secure → Tenant-scoped → Append-only.
+
+The Full Transaction Detail/PDF remains the place for deep payment investigation and gateway evidence.
+
+Before finishing, provide a concise implementation summary and a test report showing that every create, update, and delete operation across Fees & Payments is properly represented in the Audit Log.
