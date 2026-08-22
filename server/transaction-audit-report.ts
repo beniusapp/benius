@@ -482,6 +482,58 @@ function authoritativePaidInstant(
   return instants.at(-1) ?? null;
 }
 
+function isClientVerificationAttempt(attempt: PaymentAttempt): boolean {
+  const source = attempt.source.toLowerCase();
+  const event = attempt.webhookEvent?.toLowerCase() ?? "";
+  return source.includes("client") || event === "verify" || event.includes("client.verify");
+}
+
+function renderClientVerification(attempt: PaymentAttempt): string {
+  if (!isClientVerificationAttempt(attempt)) return "None recorded";
+  if (attempt.webhookVerified == null) return "Result unavailable";
+  const result = attempt.webhookVerified
+    ? badge("Verified", "badge-green")
+    : badge("Not verified", "badge-red");
+  return `${result} <span class="na">Client callback verification; not webhook evidence.</span>`;
+}
+
+function canonicalGatewayEventType(eventType: string): string {
+  const normalized = eventType.toLowerCase();
+  if (normalized.includes("captur") || normalized.includes("payment_paid")) return "captured";
+  if (normalized.includes("authoriz")) return "authorized";
+  if (normalized.includes("fail")) return "failed";
+  if (normalized.includes("refund") && normalized.includes("process")) return "refund_processed";
+  if (normalized.includes("refund") && (normalized.includes("initiat") || normalized.includes("request"))) {
+    return "refund_initiated";
+  }
+  if (normalized.includes("creat")) return "created";
+  return normalized.replace(/[^a-z0-9]+/g, "_");
+}
+
+function hasLiveAttemptEvent(attempt: PaymentAttempt, eventType: string): boolean {
+  const canonical = canonicalGatewayEventType(eventType);
+  return attempt.events.some(
+    (event) =>
+      !event.historical
+      && canonicalGatewayEventType(event.eventType) === canonical,
+  );
+}
+
+function attemptEventSourceType(event: AttemptEvent): string {
+  if (event.historical) return "migrated/historical";
+  if (event.webhookEventId != null || event.source.toLowerCase().includes("webhook")) {
+    return "actual webhook-linked event";
+  }
+  if (event.source.toLowerCase().includes("client")) return "actual client-recorded event";
+  if (
+    event.source.toLowerCase().includes("provider")
+    || event.source.toLowerCase().includes("api")
+  ) {
+    return "actual provider-recorded event";
+  }
+  return "recorded event";
+}
+
 function badge(text: string, cls: string): string {
   return `<span class="badge ${cls}">${esc(text)}</span>`;
 }
@@ -527,6 +579,8 @@ interface TimelineEvent {
   detail?: string;
   badge?: string;
   badgeCls?: string;
+  sourceType?: string;
+  sourceTypeCls?: string;
 }
 
 function renderTimeline(events: TimelineEvent[]): string {
@@ -540,7 +594,7 @@ function renderTimeline(events: TimelineEvent[]): string {
           <div class="tl-dot"></div>
           <div class="tl-body">
             <div class="tl-time">${fmtInstant(e.ts)}</div>
-            <div class="tl-label">${esc(e.label)}${e.badge ? ` ${badge(e.badge, e.badgeCls ?? "badge-gray")}` : ""}</div>
+            <div class="tl-label">${esc(e.label)}${e.badge ? ` ${badge(e.badge, e.badgeCls ?? "badge-gray")}` : ""}${e.sourceType ? ` ${badge(e.sourceType, e.sourceTypeCls ?? "badge-gray")}` : ""}</div>
             ${e.detail ? `<div class="tl-detail">${esc(e.detail)}</div>` : ""}
           </div>
         </div>`,
@@ -599,7 +653,7 @@ function renderSection1(detail: TransactionAuditDetail): string {
     "Paid Date & Time (authoritative)",
     paidInstant ? fmtInstant(paidInstant) : "Unavailable",
   );
-  html += row("Paid Date (calendar field)", fmtDate(feeRecord.paidDate));
+  html += row("Database Paid Date (date-only)", fmtDate(feeRecord.paidDate));
   html += closeSection();
   return html;
 }
@@ -633,7 +687,7 @@ function renderSection2(detail: TransactionAuditDetail): string {
     "Paid Date & Time (authoritative)",
     paidInstant ? fmtInstant(paidInstant) : "Unavailable",
   );
-  html += row("Paid Date (calendar field)", fmtDate(feeRecord.paidDate));
+  html += row("Database Paid Date (date-only)", fmtDate(feeRecord.paidDate));
   html += row("Status", statusBadge(feeRecord.status));
   html += row("Created At", fmtInstant(feeRecord.createdAt));
   html += row("Created By", val(feeRecord.createdByName ?? feeRecord.createdBy));
@@ -740,7 +794,10 @@ function renderSection4(detail: TransactionAuditDetail): string {
       );
       html += row("Payment Method", val(p.paymentMethod));
       html += row("Receipt Number", val(p.receiptNumber));
-      html += row("Invoice Number", val(p.invoiceNumber));
+      html += row(
+        "Invoice Number",
+        val(p.invoiceNumber ?? detail.feeRecord.invoiceNumber),
+      );
       html += row("Payment Record Created At", fmtInstant(p.createdAt));
       html += row("Recorded By", val(p.recordedByName));
 
@@ -1000,14 +1057,9 @@ function renderSection6(detail: TransactionAuditDetail): string {
       );
       html += row("Refund Initiated At", fmtInstant(attempt.refundInitiatedAt));
       html += row("Refund Processed At", fmtInstant(attempt.refundProcessedAt));
-      html += row("Webhook Event", val(attempt.webhookEvent));
-      html += row("Webhook Received At", fmtInstant(attempt.webhookReceivedAt));
-      html += row(
-        "Webhook Verified",
-        attempt.webhookVerified == null
-          ? "Unavailable"
-          : attempt.webhookVerified ? "Yes" : "No",
-      );
+      html += row("Source Event Marker", val(attempt.webhookEvent));
+      html += row("Source Event Recorded At", fmtInstant(attempt.webhookReceivedAt));
+      html += row("Client Verification", renderClientVerification(attempt));
       html += row("API Synced At", fmtInstant(attempt.apiSyncedAt));
       html += row("API Enrichment Status", val(attempt.apiEnrichmentStatus));
       html += row("API Enrichment Error", val(attempt.apiEnrichmentError));
@@ -1021,7 +1073,7 @@ function renderSection6(detail: TransactionAuditDetail): string {
           const displayTime = ev.providerOccurredAt ?? ev.occurredAt ?? ev.recordedAt;
           html += `<tr>
             <td class="lbl">${fmtInstant(displayTime)}<br>
-              <small>${esc(ev.source)}${ev.historical ? " · historical" : ""}</small>
+              <small>${esc(ev.source)} · ${esc(attemptEventSourceType(ev))}</small>
             </td>
             <td class="val">
               <strong>${esc(ev.eventType)}</strong>
@@ -1051,15 +1103,19 @@ function renderSection7(detail: TransactionAuditDetail): string {
     detail?: string;
     badge?: string;
     badgeCls?: string;
+    sourceType?: string;
+    sourceTypeCls?: string;
   }
 
   const events: RawEvent[] = [];
+  const actualWebhookIds = new Set(detail.webhookEvents.map((event) => event.id));
 
   // Fee record created
   events.push({
     ts: detail.feeRecord.createdAt,
     label: "Fee record created",
     detail: `Invoice: ${detail.feeRecord.invoiceNumber ?? "—"}`,
+    sourceType: "system record",
   });
 
   // Payment records
@@ -1071,6 +1127,7 @@ function renderSection7(detail: TransactionAuditDetail): string {
       detail: p.receiptNumber ? `Receipt: ${p.receiptNumber}` : undefined,
       badge: p.gatewayStatus ?? undefined,
       badgeCls: p.gatewayStatus ? "badge-green" : undefined,
+      sourceType: "system record",
     });
   }
 
@@ -1082,61 +1139,80 @@ function renderSection7(detail: TransactionAuditDetail): string {
       detail: attempt.razorpayOrderId ? `order: ${attempt.razorpayOrderId}` : undefined,
       badge: attempt.outcome,
       badgeCls: attempt.outcome === "captured" ? "badge-green" : "badge-gray",
+      sourceType: "system record",
     });
-    if (attempt.rzpCreatedAt) {
+    if (attempt.rzpCreatedAt && !hasLiveAttemptEvent(attempt, "payment.created")) {
       events.push({
         ts: attempt.rzpCreatedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: provider payment created`,
         detail: attempt.razorpayPaymentId
           ? `pay: ${attempt.razorpayPaymentId}`
           : undefined,
+        sourceType: "system-derived",
       });
     }
-    if (attempt.rzpAuthorizedAt) {
+    if (attempt.rzpAuthorizedAt && !hasLiveAttemptEvent(attempt, "payment.authorized")) {
       events.push({
         ts: attempt.rzpAuthorizedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: payment authorized`,
         badge: "authorized",
         badgeCls: "badge-blue",
+        sourceType: "system-derived",
       });
     }
-    if (attempt.rzpCapturedAt) {
+    if (attempt.rzpCapturedAt && !hasLiveAttemptEvent(attempt, "payment.captured")) {
       events.push({
         ts: attempt.rzpCapturedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: payment captured`,
         badge: "captured",
         badgeCls: "badge-green",
+        sourceType: "system-derived",
       });
     }
-    if (attempt.rzpFailedAt) {
+    if (attempt.rzpFailedAt && !hasLiveAttemptEvent(attempt, "payment.failed")) {
       events.push({
         ts: attempt.rzpFailedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: payment failed`,
         detail: attempt.errorDescription ?? attempt.errorCode ?? undefined,
         badge: "failed",
         badgeCls: "badge-red",
+        sourceType: "system-derived",
       });
     }
-    if (attempt.refundInitiatedAt) {
+    if (
+      attempt.refundInitiatedAt
+      && !hasLiveAttemptEvent(attempt, "refund.initiated")
+    ) {
       events.push({
         ts: attempt.refundInitiatedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: refund initiated`,
         detail: attempt.refundId ? `refund: ${attempt.refundId}` : undefined,
         badge: attempt.refundStatus ?? "initiated",
         badgeCls: "badge-amber",
+        sourceType: "system-derived",
       });
     }
-    if (attempt.refundProcessedAt) {
+    if (
+      attempt.refundProcessedAt
+      && !hasLiveAttemptEvent(attempt, "refund.processed")
+    ) {
       events.push({
         ts: attempt.refundProcessedAt,
         label: `Attempt ${attempt.attemptNumber ?? "?"}: refund processed`,
         detail: attempt.refundId ? `refund: ${attempt.refundId}` : undefined,
         badge: "processed",
         badgeCls: "badge-green",
+        sourceType: "system-derived",
       });
     }
 
     for (const ev of attempt.events) {
+      if (
+        ev.webhookEventId != null
+        && actualWebhookIds.has(ev.webhookEventId)
+      ) {
+        continue;
+      }
       const ts = ev.providerOccurredAt ?? ev.occurredAt ?? ev.recordedAt;
       events.push({
         ts,
@@ -1144,6 +1220,8 @@ function renderSection7(detail: TransactionAuditDetail): string {
         detail: ev.razorpayPaymentId ? `pay: ${ev.razorpayPaymentId}` : undefined,
         badge: ev.outcome ?? undefined,
         badgeCls: ev.outcome === "captured" ? "badge-green" : ev.outcome === "failed" ? "badge-red" : "badge-gray",
+        sourceType: attemptEventSourceType(ev),
+        sourceTypeCls: ev.historical ? "badge-amber" : "badge-gray",
       });
     }
   }
@@ -1157,6 +1235,8 @@ function renderSection7(detail: TransactionAuditDetail): string {
       detail: wh.razorpayPaymentId ? `pay: ${wh.razorpayPaymentId}` : wh.razorpayOrderId ? `order: ${wh.razorpayOrderId}` : undefined,
       badge: wh.processingStatus,
       badgeCls: wh.processingStatus === "processed" ? "badge-green" : "badge-amber",
+      sourceType: "actual webhook",
+      sourceTypeCls: "badge-blue",
     });
   }
 
@@ -1167,6 +1247,7 @@ function renderSection7(detail: TransactionAuditDetail): string {
       label: `Refund requested — ${fmtPaise(refund.requestedAmountPaise)}`,
       badge: refund.localStatus,
       badgeCls: refund.localStatus === "processed" ? "badge-green" : "badge-amber",
+      sourceType: "system record",
     });
     if (refund.providerProcessedAt) {
       events.push({
@@ -1174,6 +1255,7 @@ function renderSection7(detail: TransactionAuditDetail): string {
         label: `Refund processed — ${fmtPaise(refund.processedAmountPaise ?? refund.requestedAmountPaise)}`,
         badge: "processed",
         badgeCls: "badge-green",
+        sourceType: "system-derived",
       });
     }
     for (const rev of refund.events ?? []) {
@@ -1183,6 +1265,7 @@ function renderSection7(detail: TransactionAuditDetail): string {
         label: `Refund event: ${rev.eventType}`,
         badge: rev.localStatus ?? undefined,
         badgeCls: rev.localStatus === "processed" ? "badge-green" : "badge-amber",
+        sourceType: "recorded event",
       });
     }
   }
@@ -1193,6 +1276,7 @@ function renderSection7(detail: TransactionAuditDetail): string {
       ts: ae.createdAt,
       label: `Audit: ${ae.action}`,
       detail: ae.description ?? undefined,
+      sourceType: "audit record",
     });
   }
 
@@ -1207,6 +1291,8 @@ function renderSection7(detail: TransactionAuditDetail): string {
       detail: e.detail,
       badge: e.badge,
       badgeCls: e.badgeCls,
+      sourceType: e.sourceType,
+      sourceTypeCls: e.sourceTypeCls,
     })),
   );
   html += `</div>`;
@@ -1335,22 +1421,13 @@ function renderSection10(detail: TransactionAuditDetail): string {
   let html = `<div class="section">${sectionHeader(10, `Verification & Webhook Status (${webhookEvents.length} webhook event${webhookEvents.length !== 1 ? "s" : ""})`)}<table>`;
 
   if (detail.paymentAttempts.length > 0) {
-    html += `<tr><td colspan="2" class="subsection-hdr">Attempt Verification & API Enrichment</td></tr>`;
+    html += `<tr><td colspan="2" class="subsection-hdr">Client Verification & API Enrichment</td></tr>`;
     for (const attempt of detail.paymentAttempts) {
       html += `<tr class="payment-header"><td colspan="2" class="payment-hdr-cell">
         Attempt ${attempt.attemptNumber ?? "—"} (ID: ${attempt.id})
       </td></tr>`;
       html += row("Source", val(attempt.source));
-      html += row(
-        "Webhook Verified",
-        attempt.webhookVerified == null
-          ? "Unavailable"
-          : attempt.webhookVerified
-            ? badge("Verified", "badge-green")
-            : badge("Not verified", "badge-red"),
-      );
-      html += row("Webhook Event", val(attempt.webhookEvent));
-      html += row("Webhook Received At", fmtInstant(attempt.webhookReceivedAt));
+      html += row("Client Verification", renderClientVerification(attempt));
       html += row("API Enrichment Status", val(attempt.apiEnrichmentStatus));
       html += row("API Synced At", fmtInstant(attempt.apiSyncedAt));
       html += row("API Enrichment Error", val(attempt.apiEnrichmentError));
@@ -1358,8 +1435,23 @@ function renderSection10(detail: TransactionAuditDetail): string {
   }
 
   if (webhookEvents.length === 0) {
-    html += noDataRow("No webhook events found for this fee record.");
+    html += `<tr><td colspan="2" class="subsection-hdr">Actual Webhook Evidence</td></tr>`;
+    html += row("Webhook Events", "None recorded");
+    html += row("Webhook Received", "No actual webhook event recorded");
+    html += row(
+      "Webhook Signature Verification",
+      "Not applicable — no webhook event recorded",
+    );
+    html += row(
+      "Webhook Processing",
+      "Not applicable — no webhook event recorded",
+    );
   } else {
+    html += `<tr><td colspan="2" class="subsection-hdr">Actual Webhook Evidence</td></tr>`;
+    html += row(
+      "Webhook Events",
+      `${webhookEvents.length} actual event${webhookEvents.length === 1 ? "" : "s"} recorded`,
+    );
     for (const wh of webhookEvents) {
       const ts = wh.providerOccurredAt ?? wh.receivedAt;
       html += `<tr class="payment-header"><td colspan="2" class="payment-hdr-cell">
@@ -1372,12 +1464,23 @@ function renderSection10(detail: TransactionAuditDetail): string {
       html += row("Razorpay Payment ID", val(wh.razorpayPaymentId));
       html += row("Razorpay Order ID", val(wh.razorpayOrderId));
       html += row("Razorpay Refund ID", val(wh.razorpayRefundId));
-      html += row("Signature Verified", wh.signatureVerified ? badge("Verified", "badge-green") : badge("NOT Verified", "badge-red"));
-      html += row("Verification Status", statusBadge(wh.verificationStatus));
-      html += row("Processing Status", statusBadge(wh.processingStatus));
-      html += row("Processing Error", val(wh.processingError));
+      html += row(
+        "Webhook Received",
+        `${badge("Received", "badge-blue")} · ${fmtInstant(wh.receivedAt)}`,
+      );
+      html += row(
+        "Webhook Signature Verification",
+        wh.signatureVerified
+          ? badge("Verified", "badge-green")
+          : badge("NOT Verified", "badge-red"),
+      );
+      html += row(
+        "Webhook Verification Record Status",
+        statusBadge(wh.verificationStatus),
+      );
+      html += row("Webhook Processing", statusBadge(wh.processingStatus));
+      html += row("Webhook Processing Error", val(wh.processingError));
       html += row("Provider Occurred At", fmtInstant(wh.providerOccurredAt));
-      html += row("Received At", fmtInstant(wh.receivedAt));
       html += row("Last Received At", fmtInstant(wh.lastReceivedAt));
       html += row("Processed At", wh.processedAt ? fmtInstant(wh.processedAt) : "Unavailable");
       html += row("Delivery Count", val(wh.deliveryCount));
@@ -1409,11 +1512,13 @@ function renderSection11(detail: TransactionAuditDetail): string {
   interface AuditItem {
     ts: InstantValue;
     source: string;
+    sourceType: string;
     label: string;
     detail?: string;
   }
 
   const items: AuditItem[] = [];
+  const actualWebhookIds = new Set(detail.webhookEvents.map((event) => event.id));
 
   items.push({
     ts: detail.feeRecord.createdAt,
@@ -1421,6 +1526,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
       ?? (detail.feeRecord.createdBy != null
         ? `User ${detail.feeRecord.createdBy}`
         : "System"),
+    sourceType: "system record",
     label: "Invoice created",
     detail: detail.feeRecord.invoiceNumber
       ? `Invoice: ${detail.feeRecord.invoiceNumber}`
@@ -1431,6 +1537,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
     items.push({
       ts: payment.createdAt,
       source: payment.recordedByName ?? "System",
+      sourceType: "system record",
       label: `Payment record created (${payment.paymentMethod})`,
       detail: `${fmtINR(payment.amount)}${
         payment.receiptNumber ? ` · receipt ${payment.receiptNumber}` : ""
@@ -1440,6 +1547,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
       items.push({
         ts: correction.createdAt,
         source: correction.changedByName ?? "System",
+        sourceType: "correction record",
         label: `Offline payment detail corrected (payment ${payment.id})`,
         detail: correction.reason,
       });
@@ -1451,6 +1559,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
     items.push({
       ts: ae.createdAt,
       source: ae.actorName ? `${ae.actorName} (ID: ${ae.actorId ?? "?"})` : "System",
+      sourceType: "audit record",
       label: ae.action,
       detail: ae.description ?? undefined,
       // ipAddress: NEVER rendered
@@ -1462,21 +1571,55 @@ function renderSection11(detail: TransactionAuditDetail): string {
     const directEvents: Array<{
       ts: InstantValue;
       label: string;
+      eventType: string;
     }> = [
-      { ts: attempt.rzpCreatedAt, label: "Provider payment created" },
-      { ts: attempt.rzpAuthorizedAt, label: "Payment authorized" },
-      { ts: attempt.rzpCapturedAt, label: "Payment captured" },
-      { ts: attempt.rzpFailedAt, label: "Payment failed" },
-      { ts: attempt.refundInitiatedAt, label: "Refund initiated" },
-      { ts: attempt.refundProcessedAt, label: "Refund processed" },
-      { ts: attempt.webhookReceivedAt, label: "Webhook received" },
-      { ts: attempt.apiSyncedAt, label: "Provider API enrichment synced" },
+      {
+        ts: attempt.rzpCreatedAt,
+        label: "Provider payment created",
+        eventType: "payment.created",
+      },
+      {
+        ts: attempt.rzpAuthorizedAt,
+        label: "Payment authorized",
+        eventType: "payment.authorized",
+      },
+      {
+        ts: attempt.rzpCapturedAt,
+        label: "Payment captured",
+        eventType: "payment.captured",
+      },
+      {
+        ts: attempt.rzpFailedAt,
+        label: "Payment failed",
+        eventType: "payment.failed",
+      },
+      {
+        ts: attempt.refundInitiatedAt,
+        label: "Refund initiated",
+        eventType: "refund.initiated",
+      },
+      {
+        ts: attempt.refundProcessedAt,
+        label: "Refund processed",
+        eventType: "refund.processed",
+      },
+      {
+        ts: attempt.apiSyncedAt,
+        label: "Provider API enrichment synced",
+        eventType: "api.enrichment.synced",
+      },
     ];
     for (const directEvent of directEvents) {
-      if (!directEvent.ts) continue;
+      if (
+        !directEvent.ts
+        || hasLiveAttemptEvent(attempt, directEvent.eventType)
+      ) {
+        continue;
+      }
       items.push({
         ts: directEvent.ts,
         source: attempt.source,
+        sourceType: "system-derived",
         label: `[Attempt ${attempt.attemptNumber ?? "?"}] ${directEvent.label}`,
         detail: attempt.razorpayPaymentId
           ? `pay: ${attempt.razorpayPaymentId}`
@@ -1484,10 +1627,17 @@ function renderSection11(detail: TransactionAuditDetail): string {
       });
     }
     for (const ev of attempt.events) {
+      if (
+        ev.webhookEventId != null
+        && actualWebhookIds.has(ev.webhookEventId)
+      ) {
+        continue;
+      }
       const ts = ev.providerOccurredAt ?? ev.occurredAt ?? ev.recordedAt;
       items.push({
         ts,
         source: ev.source,
+        sourceType: attemptEventSourceType(ev),
         label: `[Attempt ${attempt.attemptNumber ?? "?"}] ${ev.eventType}`,
         detail: ev.razorpayPaymentId ? `pay: ${ev.razorpayPaymentId}` : undefined,
       });
@@ -1499,6 +1649,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
     items.push({
       ts: refund.requestedAt,
       source: refund.origin ?? "system",
+      sourceType: "system record",
       label: `[Refund ${refund.id}] requested`,
       detail: `${fmtPaise(refund.requestedAmountPaise)} · ${refund.localStatus}`,
     });
@@ -1506,6 +1657,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
       items.push({
         ts: refund.providerProcessedAt,
         source: "provider",
+        sourceType: "system-derived",
         label: `[Refund ${refund.id}] provider processing completed`,
         detail: refund.processedAmountPaise != null
           ? fmtPaise(refund.processedAmountPaise)
@@ -1517,6 +1669,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
       items.push({
         ts,
         source: rev.source,
+        sourceType: "recorded event",
         label: `[Refund ${refund.id}] ${rev.eventType}`,
         detail: rev.razorpayRefundId ? `refund_id: ${rev.razorpayRefundId}` : undefined,
       });
@@ -1528,6 +1681,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
     items.push({
       ts: webhook.providerOccurredAt ?? webhook.receivedAt,
       source: "Razorpay webhook",
+      sourceType: "actual webhook",
       label: webhook.eventType,
       detail: `${webhook.verificationStatus} · ${webhook.processingStatus}`,
     });
@@ -1537,6 +1691,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
     items.push({
       ts: pe.createdAt,
       source: "webhook-processor",
+      sourceType: "system processing",
       label: `Webhook processing: ${pe.status}`,
       detail: pe.error ?? undefined,
     });
@@ -1551,7 +1706,7 @@ function renderSection11(detail: TransactionAuditDetail): string {
   } else {
     for (const item of items) {
       html += `<tr>
-        <td class="lbl">${fmtInstant(item.ts)}<br><small>${esc(item.source)}</small></td>
+        <td class="lbl">${fmtInstant(item.ts)}<br><small>${esc(item.source)} · ${esc(item.sourceType)}</small></td>
         <td class="val"><strong>${esc(item.label)}</strong>${item.detail ? `<br><small>${esc(item.detail)}</small>` : ""}</td>
       </tr>`;
     }

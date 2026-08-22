@@ -1195,3 +1195,176 @@ describe("renderTransactionAuditHtml — school identity", () => {
     expect(html).toContain("&lt;iframe srcdoc=&quot;GSTIN_XSS&quot;&gt;");
   });
 });
+
+// ─── 21. Final audit clarity corrections ─────────────────────────────────────
+
+describe("renderTransactionAuditHtml — final audit clarity corrections", () => {
+  it("does not claim webhook verification when no actual webhook event exists", () => {
+    const attempt = makeAttempt({
+      source: "client",
+      webhookEvent: "verify",
+      webhookReceivedAt: "2024-07-10T10:30:00Z",
+      webhookVerified: true,
+    });
+    const html = renderTransactionAuditHtml(makeDetail({
+      paymentAttempts: [attempt],
+      webhookEvents: [],
+      webhookProcessingEvents: [],
+    }));
+    const section = html.slice(
+      html.indexOf("Verification &amp; Webhook Status"),
+      html.indexOf("Complete Audit Timeline"),
+    );
+
+    expect(section).toContain("Client Verification");
+    expect(section).toContain("Client callback verification; not webhook evidence.");
+    expect(section).toContain("Webhook Events");
+    expect(section).toContain("None recorded");
+    expect(section).toContain("Webhook Signature Verification");
+    expect(section).toContain("Not applicable — no webhook event recorded");
+    expect(section).not.toContain("Webhook Verified");
+  });
+
+  it("reports received, signature, and processing evidence only from an actual webhook record", () => {
+    const webhookEvent = {
+      id: 77,
+      providerEventId: "evt_ACTUAL_77",
+      eventType: "payment.captured",
+      razorpayPaymentId: "pay_ABC123",
+      razorpayOrderId: "order_XYZ789",
+      razorpayRefundId: null,
+      razorpayDisputeId: null,
+      signatureVerified: true,
+      verificationStatus: "verified",
+      processingStatus: "processed",
+      processingError: null,
+      providerOccurredAt: "2024-07-10T10:29:00Z",
+      resolutionSource: "payment_id",
+      resolutionStatus: "resolved",
+      resolutionReason: null,
+      receivedAt: "2024-07-10T10:30:00Z",
+      lastReceivedAt: "2024-07-10T10:30:00Z",
+      processedAt: "2024-07-10T10:31:00Z",
+      deliveryCount: 1,
+    };
+    const attempt = makeAttempt({
+      events: [{
+        id: 70,
+        eventType: "payment.captured",
+        outcome: "captured",
+        source: "webhook",
+        razorpayPaymentId: "pay_ABC123",
+        razorpayOrderId: "order_XYZ789",
+        refundId: null,
+        disputeId: null,
+        amountPaise: 520000,
+        providerOccurredAt: "2024-07-10T10:29:00Z",
+        occurredAt: "2024-07-10T10:30:00Z",
+        recordedAt: "2024-07-10T10:30:01Z",
+        historical: false,
+        webhookEventId: 77,
+      }],
+    });
+    const html = renderTransactionAuditHtml(makeDetail({
+      paymentAttempts: [attempt],
+      webhookEvents: [webhookEvent],
+    }));
+    const verification = html.slice(
+      html.indexOf("Verification &amp; Webhook Status"),
+      html.indexOf("Complete Audit Timeline"),
+    );
+    const lifecycle = html.slice(
+      html.indexOf("Payment Lifecycle Timeline"),
+      html.indexOf("Refund &amp; Reversal Details"),
+    );
+
+    expect(verification).toContain("1 actual event recorded");
+    expect(verification).toContain("Webhook Received");
+    expect(verification).toContain("Webhook Signature Verification");
+    expect(verification).toContain("Webhook Processing");
+    expect(verification).toContain("evt_ACTUAL_77");
+    expect(lifecycle.match(/Webhook: payment\.captured/g)).toHaveLength(1);
+    expect(lifecycle).not.toContain("actual webhook-linked event");
+  });
+
+  it("labels the date-only paid field without changing the authoritative IST timestamp", () => {
+    const html = renderTransactionAuditHtml(makeDetail({
+      paymentAttempts: [
+        makeAttempt({ rzpCapturedAt: "2024-07-10T10:30:00Z" }),
+      ],
+    }));
+
+    expect(html).toContain("Paid Date &amp; Time (authoritative)");
+    expect(html).toContain("Database Paid Date (date-only)");
+    expect(html).not.toContain("Paid Date (calendar field)");
+    expect(html).toContain("IST");
+  });
+
+  it("uses the linked fee invoice number in Payment Details when the payment row lacks one", () => {
+    const payment = makePayment({ invoiceNumber: null });
+    const html = renderTransactionAuditHtml(makeDetail({
+      feeRecord: makeFeeRecord({ invoiceNumber: "INV-LINKED-0087" }),
+      payment,
+      payments: [payment],
+    }));
+    const section = html.slice(
+      html.indexOf("Payment Details"),
+      html.indexOf("Razorpay / Gateway Details"),
+    );
+
+    expect(section).toContain("INV-LINKED-0087");
+    expect(section).not.toMatch(/Invoice Number<\/td><td class="val">Unavailable/);
+  });
+
+  it("marks historical events and suppresses duplicate live gateway projections", () => {
+    const attempt = makeAttempt({
+      rzpCapturedAt: "2024-07-10T10:29:00Z",
+      events: [
+        {
+          id: 10,
+          eventType: "payment.captured",
+          outcome: "captured",
+          source: "provider_api",
+          razorpayPaymentId: "pay_ABC123",
+          razorpayOrderId: "order_XYZ789",
+          refundId: null,
+          disputeId: null,
+          amountPaise: 520000,
+          providerOccurredAt: "2024-07-10T10:29:00Z",
+          occurredAt: "2024-07-10T10:29:00Z",
+          recordedAt: "2024-07-10T10:29:01Z",
+          historical: false,
+          webhookEventId: null,
+        },
+        {
+          id: 11,
+          eventType: "payment.authorized",
+          outcome: "authorized",
+          source: "migration",
+          razorpayPaymentId: "pay_ABC123",
+          razorpayOrderId: "order_XYZ789",
+          refundId: null,
+          disputeId: null,
+          amountPaise: 520000,
+          providerOccurredAt: "2024-07-10T10:28:00Z",
+          occurredAt: "2024-07-10T10:28:00Z",
+          recordedAt: "2024-07-10T10:28:01Z",
+          historical: true,
+          webhookEventId: null,
+        },
+      ],
+    });
+    const html = renderTransactionAuditHtml(makeDetail({
+      paymentAttempts: [attempt],
+    }));
+    const lifecycle = html.slice(
+      html.indexOf("Payment Lifecycle Timeline"),
+      html.indexOf("Refund &amp; Reversal Details"),
+    );
+
+    expect(lifecycle).toContain("actual provider-recorded event");
+    expect(lifecycle).toContain("migrated/historical");
+    expect(lifecycle).toContain("payment.captured");
+    expect(lifecycle).not.toContain("Attempt 1: payment captured");
+  });
+});

@@ -468,6 +468,7 @@ export async function loadTransactionDetailData(
       referenceNumber: row.reference_number ?? null,
       cashierNotes: row.cashier_notes ?? null,
       receiptNumber: row.receipt_number ?? null,
+      invoiceNumber: feeRow.invoice_number ?? null,
       razorpayPaymentId: row.razorpay_payment_id ?? null,
       razorpayOrderId: row.razorpay_order_id ?? null,
       razorpaySignature: row.razorpay_signature ?? null,

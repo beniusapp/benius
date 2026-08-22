@@ -1,0 +1,74 @@
+Implement only the final corrections below to the Full Detail PDF. Do not redesign or remove anything that is already working.
+
+The current PDF is good and the authoritative payment date/time is now correctly showing in IST. Keep all existing functionality.
+
+Fix these 3 issues:
+
+1. Webhook information consistency
+
+- Do not show “Webhook Verified: Verified” if there are 0 actual webhook events.
+- Clearly distinguish:
+  - Client verification
+  - Webhook received
+  - Webhook signature verification
+  - Webhook processing
+- If no webhook event exists, show something like:
+  Webhook Events: None recorded
+  and do not claim webhook verification.
+- Do not invent or derive a webhook event when none exists.
+
+2. Paid Date clarity
+   Currently the PDF can show:
+
+- Authoritative Paid Date & Time: 22 Aug 2026, 04:52:20 AM IST
+- Paid Date (calendar field): 21 Aug 2026
+
+Keep the authoritative IST timestamp.
+
+Rename the date-only field to:
+Database Paid Date (date-only)
+
+This makes it clear that the two values are different representations and avoids confusing the user.
+
+3. Invoice Number
+   Inside Payment Details, do not show:
+   Invoice Number: Unavailable
+
+The invoice is already known (for example INV-0087).
+
+Display the actual linked invoice number whenever available.
+
+Additional audit clarity:
+
+- Clearly label timeline events as actual, system-derived, migrated/historical, or other source types where applicable.
+- Do not make migrated/historical events look like new live gateway events.
+- Do not duplicate the same gateway event unless the source/event identity genuinely differs.
+
+Security requirements remain unchanged:
+
+- Never expose Razorpay secrets, webhook secrets, HMAC signatures, CVV, full card numbers, raw webhook payloads, raw gateway responses, or other sensitive credentials.
+- Keep card/email/phone information appropriately masked.
+- Do not expose unnecessary IP addresses or internal security/correlation data.
+
+Do not change database schema or migrations unless absolutely required. Prefer existing authoritative data.
+
+After implementation:
+
+1. Run TypeScript/type checks.
+2. Run all existing payment/report tests.
+3. Add/update focused regression tests for the three fixes above.
+4. Generate the Full Detail PDF for the same test payment.
+5. Verify the PDF manually.
+
+Final acceptance criteria:
+
+- Authoritative Payment Date & Time remains correctly shown in IST.
+- No contradictory webhook status.
+- No false “Verified” status when no webhook exists.
+- Correct Invoice Number appears in Payment Details.
+- Date-only paid field is clearly labelled.
+- Historical/migrated events are clearly distinguished.
+- No sensitive information is exposed.
+- All tests pass.
+
+Do not make unrelated changes.
