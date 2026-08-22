@@ -336,7 +336,7 @@ function renderSummarySection(ctx: Ctx): void {
 
   drawKpiRow(ctx, [
     {
-      label: "Gross Billed",
+      label: "Due This Period",
       value: fmtINR(s.billed),
       color: C_MUTED,
       subvalue: c
@@ -386,8 +386,9 @@ function renderSummarySection(ctx: Ctx): void {
     { label: "Outstanding", value: fmtINR(s.outstanding), color: C_RED },
     {
       label: "Collection Efficiency",
-      value: `${s.collectionEfficiency.toFixed(1)}%`,
-      color: s.collectionEfficiency >= 80 ? C_GREEN
+      value: s.collectionEfficiency == null ? "N/A" : `${s.collectionEfficiency.toFixed(1)}%`,
+      color: s.collectionEfficiency == null ? C_MUTED
+           : s.collectionEfficiency >= 80 ? C_GREEN
            : s.collectionEfficiency >= 50 ? C_ACCENT : C_RED,
     },
   ]);
@@ -403,6 +404,15 @@ function renderSummarySection(ctx: Ctx): void {
     { label: "Overdue Amount", value: fmtINR(s.overdueAmount),       color: "#f97316" },
     { label: "Transactions",   value: String(s.transactionCount),    color: C_MUTED   },
   ]);
+
+  ctx.y += 4;
+  ctx.doc.font(FONT_REG).fontSize(7).fillColor(C_MUTED).text(
+    "Due This Period uses invoice due dates. Collections use payment received dates; efficiency is N/A when no invoices are due.",
+    MARGIN_H,
+    ctx.y,
+    { width: CONTENT_W },
+  );
+  ctx.y += 16;
 
   if (s.totalLatePenalties > 0) {
     ctx.y += 4;
@@ -422,7 +432,7 @@ function renderTrendSection(ctx: Ctx): void {
   drawSectionTitle(ctx, "Collection Trend");
 
   const colW = [80, (CONTENT_W - 80) / 3, (CONTENT_W - 80) / 3, (CONTENT_W - 80) / 3];
-  drawTableHeader(ctx, ["Period", "Billed", "Collected", "Net Collected"], colW);
+  drawTableHeader(ctx, ["Period", "Due This Period", "Collected", "Net Collected"], colW);
   trend.forEach((pt, i) => {
     drawTableRow(
       ctx,
@@ -509,7 +519,7 @@ function renderClassesSection(ctx: Ctx): void {
     (CONTENT_W - 80) / 4,
     (CONTENT_W - 80) / 4,
   ];
-  drawTableHeader(ctx, ["Class / Section", "Billed", "Collected", "Outstanding", "Efficiency"], w);
+  drawTableHeader(ctx, ["Class / Section", "Due This Period", "Collected", "Outstanding", "Efficiency"], w);
   cw.forEach((r, i) => {
     const eff = r.billed > 0 ? `${Math.round((r.grossCollected / r.billed) * 100)}%` : "\u2014";
     drawTableRow(
@@ -529,7 +539,7 @@ function renderCategoriesSection(ctx: Ctx): void {
   drawSectionTitle(ctx, "Fee Categories");
   // Give the label column more room; numeric cols are narrow but sufficient
   const w = [CONTENT_W * 0.45, CONTENT_W * 0.18, CONTENT_W * 0.18, CONTENT_W * 0.19];
-  drawTableHeader(ctx, ["Fee Type", "Billed", "Collected", "Refunds"], w);
+  drawTableHeader(ctx, ["Fee Type", "Due This Period", "Collected", "Refunds"], w);
   cats.forEach((r, i) => {
     drawTableRow(
       ctx,

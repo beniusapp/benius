@@ -237,8 +237,8 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function pct(value: number, billed: number): number {
-  return billed > 0 ? Math.round((value / billed) * 1000) / 10 : 0;
+function pct(value: number, billed: number): number | null {
+  return billed > 0 ? Math.round((value / billed) * 1000) / 10 : null;
 }
 
 function pdfAmount(value: number): string {
@@ -1083,13 +1083,13 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
           if (section === "summary" || section === "complete") {
             expect(pdfText).toMatch(/Executive Summary/i);
             assertPdfSequence(pdfText, `${range.name}/${section}: billed and gross`, [
-              "Gross Billed", "Gross Collected", "₹", pdfAmount(expected.summary.billed), "₹", pdfAmount(expected.summary.grossCollected),
+              "Due This Period", "Gross Collected", "₹", pdfAmount(expected.summary.billed), "₹", pdfAmount(expected.summary.grossCollected),
             ]);
             assertPdfSequence(pdfText, `${range.name}/${section}: net and refunds`, [
               "Net Collected (after refunds)", "Refunds", "₹", pdfAmount(expected.summary.netCollected), "₹", pdfAmount(expected.summary.refunds),
             ]);
             assertPdfSequence(pdfText, `${range.name}/${section}: outstanding and efficiency`, [
-              "Outstanding", "Collection Efficiency", "₹", pdfAmount(expected.summary.outstanding), `${expected.summary.collectionEfficiency.toFixed(1)}%`,
+              "Outstanding", "Collection Efficiency", "₹", pdfAmount(expected.summary.outstanding), expected.summary.collectionEfficiency == null ? "N/A" : `${expected.summary.collectionEfficiency.toFixed(1)}%`,
             ]);
             assertPdfSequence(pdfText, `${range.name}/${section}: online and offline`, [
               "Online Collected", "Offline Collected", "₹", pdfAmount(expected.summary.onlineCollected), "₹", pdfAmount(expected.summary.offlineCollected),
@@ -1137,7 +1137,7 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
 
           if (section === "categories" || section === "complete") {
             assertPdfSequence(pdfText, `${range.name}/${section}: category table headers`, [
-              "Fee Type", "Billed", "Collected", "Refunds",
+              "Fee Type", "Due This Period", "Collected", "Refunds",
             ]);
             for (const row of expected.feeCategories) {
               assertPdfSequence(pdfText, `${range.name}/${section}: category ${row.feeType}`, [

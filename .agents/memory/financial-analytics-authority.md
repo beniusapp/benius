@@ -14,3 +14,9 @@ For successful-payment calendar ranges, `payment_records.received_date` is autho
 **Why:** Split payments can span dates, and historical gateway paths allowed the invoice projection to drift by one calendar day from the persisted payment record. Using the projection for Ledger filtering made Analytics and Ledger disagree even though the booked payment data was correct.
 
 **How to apply:** Keep gateway capture writes on one Asia/Kolkata date for both records, but treat the payment record as the reporting source. Preserve lifecycle attempts in transaction reports only as explicitly labeled non-revenue rows, and date-scope each displayed attempt or fallback payment independently.
+
+Due-period demand and collections intentionally use different date authorities. Name invoice demand “Due This Period” (fee record due date) rather than a generic “Billed”; name collections from successful payment record received dates. Collection efficiency is Net Collected ÷ Due This Period and is not applicable (`null` in the canonical dataset, `N/A` in presentation) when no invoices are due in the selected range.
+
+**Why:** A payment can be received before or after its invoice due date. Showing paid receipts beside zero due-period demand is valid, but displaying a numeric 0% efficiency falsely suggests failed collection rather than an absent denominator.
+
+**How to apply:** Return the accounting basis with analytics API data and keep dashboard labels, PDF labels, trend/class/category headings, and report-copy aligned with it. Do not relabel receipts as due-period demand or backfill historical dates to make the two date populations appear to match.

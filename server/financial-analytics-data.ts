@@ -84,7 +84,8 @@ export interface FinancialSummary {
   refunds: number;
   netCollected: number;
   outstanding: number;
-  collectionEfficiency: number;
+  /** Net collected ÷ invoices due in the selected period; null when no invoice is due. */
+  collectionEfficiency: number | null;
   onlineCollected: number;
   offlineCollected: number;
   overdueAmount: number;
@@ -172,10 +173,41 @@ export interface FilterInfo {
   comparison: DateRange | null;
 }
 
+/**
+ * Explicitly documents the record and date authority for every headline
+ * metric. Consumers must not infer that receipts and due-period demand share
+ * the same date basis.
+ */
+export interface FinancialAnalyticsAccountingBasis {
+  timezone: "Asia/Kolkata";
+  billed: {
+    label: "Due this period";
+    recordAuthority: "fee_records";
+    dateAuthority: "due_date";
+    description: string;
+  };
+  grossCollected: {
+    label: "Gross collected";
+    recordAuthority: "payment_records";
+    dateAuthority: "received_date";
+    description: string;
+  };
+  refunds: {
+    label: "Processed refunds";
+    recordAuthority: "refunds";
+    dateAuthority: "provider_processed_at_or_updated_at";
+    description: string;
+  };
+  netCollected: { label: "Net collected"; description: string };
+  outstanding: { label: "Outstanding"; description: string };
+  collectionEfficiency: { label: "Collection efficiency"; description: string };
+}
+
 export interface FinancialAnalyticsResult {
   generatedAt: string;
   sessionInfo: SessionInfo;
   filter: FilterInfo;
+  accountingBasis: FinancialAnalyticsAccountingBasis;
   summary: FinancialSummary;
   comparison: ComparisonSummary | null;
   trend: TrendPoint[];
@@ -186,6 +218,40 @@ export interface FinancialAnalyticsResult {
   aging: AgingBucket[];
   cashDenominations: CashDenominations;
 }
+
+const FINANCIAL_ANALYTICS_ACCOUNTING_BASIS: FinancialAnalyticsAccountingBasis = {
+  timezone: "Asia/Kolkata",
+  billed: {
+    label: "Due this period",
+    recordAuthority: "fee_records",
+    dateAuthority: "due_date",
+    description: "Invoices whose due date falls in the selected IST date range.",
+  },
+  grossCollected: {
+    label: "Gross collected",
+    recordAuthority: "payment_records",
+    dateAuthority: "received_date",
+    description: "Successful recorded payments received in the selected IST date range.",
+  },
+  refunds: {
+    label: "Processed refunds",
+    recordAuthority: "refunds",
+    dateAuthority: "provider_processed_at_or_updated_at",
+    description: "Processed refunds dated by provider processing time, or update time when the provider time is unavailable, in the selected IST date range.",
+  },
+  netCollected: {
+    label: "Net collected",
+    description: "Gross collected less processed refunds for the selected IST date range.",
+  },
+  outstanding: {
+    label: "Outstanding",
+    description: "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments and processed refunds.",
+  },
+  collectionEfficiency: {
+    label: "Collection efficiency",
+    description: "Net collected divided by due-this-period demand; not applicable when no invoices are due in the selected range.",
+  },
+};
 
 // ── Validation ─────────────────────────────────────────────────────────────────
 
@@ -886,7 +952,7 @@ export async function buildFinancialAnalytics(
 
   const collectionEfficiency = totalBilled > 0
     ? Math.round((netCollected / totalBilled) * 1000) / 10
-    : 0;
+    : null;
 
   // ── Online/offline status counts ──────────────────────────────────────────────
   // payment_attempts (online statuses, deduplicated by razorpay_payment_id)
@@ -1108,6 +1174,7 @@ export async function buildFinancialAnalytics(
     generatedAt: new Date().toISOString(),
     sessionInfo,
     filter,
+    accountingBasis: FINANCIAL_ANALYTICS_ACCOUNTING_BASIS,
     summary,
     comparison,
     trend,

@@ -28,7 +28,8 @@
  * 20.  Class-wise and fee-category attribution.
  * 21.  Aging: overdue invoices bucketed correctly.
  * 22.  Outstanding uses lifetime payments (not just period payments).
- * 23.  Collection efficiency: correct calculation, no silent cap at 100.
+ * 23.  Collection efficiency: correct calculation, no silent cap at 100,
+ *      and N/A semantics when no invoices are due in the selected range.
  * 24.  Trend granularity: 24h / 7d / 12m.
  * 25.  Hourly trend billed parity: sum across buckets = summary.billed.
  * 26.  Response contract: all required top-level fields present.
@@ -1451,13 +1452,43 @@ describe("buildFinancialAnalytics — collection efficiency", () => {
     expect(r.summary.collectionEfficiency).toBe(100);
   });
 
-  it("returns 0 when nothing is billed", async () => {
+  it("returns null when no invoices are due, instead of a misleading 0%", async () => {
     fixture = await createFixture();
     const r = await buildFinancialAnalytics({
       schoolId: fixture.schoolId, sessionId: fixture.sessionId,
       preset: "custom", customStart: "2024-07-01", customEnd: "2024-07-31",
     });
-    expect(r.summary.collectionEfficiency).toBe(0);
+    expect(r.summary.collectionEfficiency).toBeNull();
+  });
+
+  it("keeps a receipt paid before its due date in collections while due-period demand remains zero", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId, sessionId } = fixture;
+    const [invoice] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId,
+      feeType: "Annual Tuition", amount: 12000, dueDate: "2025-01-15", status: "Paid",
+    }).returning();
+    await db.insert(paymentRecords).values({
+      schoolId, studentId, feeRecordId: invoice.id, sessionId,
+      paymentMethod: "Portal Payment", receivedDate: "2024-06-15", amount: 12000,
+      razorpayPaymentId: `pay_${uid()}`,
+    });
+
+    const r = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2024-06-15", customEnd: "2024-06-15",
+    });
+
+    expect(r.summary.billed).toBe(0);
+    expect(r.summary.grossCollected).toBe(12000);
+    expect(r.summary.netCollected).toBe(12000);
+    expect(r.summary.collectionEfficiency).toBeNull();
+    expect(r.classWise).toEqual(expect.arrayContaining([
+      expect.objectContaining({ billed: 0, grossCollected: 12000, netCollected: 12000 }),
+    ]));
+    expect(r.feeCategories).toEqual(expect.arrayContaining([
+      expect.objectContaining({ feeType: "Annual Tuition", billed: 0, grossCollected: 12000 }),
+    ]));
   });
 });
 
@@ -1546,6 +1577,7 @@ describe("buildFinancialAnalytics — response contract", () => {
     expect(r).toHaveProperty("generatedAt");
     expect(r).toHaveProperty("sessionInfo");
     expect(r).toHaveProperty("filter");
+    expect(r).toHaveProperty("accountingBasis");
     expect(r).toHaveProperty("summary");
     expect(r).toHaveProperty("comparison");
     expect(r).toHaveProperty("trend");
@@ -1561,6 +1593,12 @@ describe("buildFinancialAnalytics — response contract", () => {
     expect(r.sessionInfo.endDate).toBe("2025-03-31");
     expect(r.filter.timezone).toBe("Asia/Kolkata");
     expect(r.filter.preset).toBe("academic_year");
+    expect(r.accountingBasis).toMatchObject({
+      timezone: "Asia/Kolkata",
+      billed: { label: "Due this period", recordAuthority: "fee_records", dateAuthority: "due_date" },
+      grossCollected: { label: "Gross collected", recordAuthority: "payment_records", dateAuthority: "received_date" },
+      refunds: { label: "Processed refunds", recordAuthority: "refunds" },
+    });
 
     const s = r.summary;
     for (const key of [

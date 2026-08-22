@@ -53,6 +53,15 @@ const BASE_DATA: FinancialAnalyticsResult = {
     timezone:   "Asia/Kolkata",
     comparison: null,
   },
+  accountingBasis: {
+    timezone: "Asia/Kolkata",
+    billed: { label: "Due this period", recordAuthority: "fee_records", dateAuthority: "due_date", description: "Invoices whose due date falls in the selected IST date range." },
+    grossCollected: { label: "Gross collected", recordAuthority: "payment_records", dateAuthority: "received_date", description: "Successful recorded payments received in the selected IST date range." },
+    refunds: { label: "Processed refunds", recordAuthority: "refunds", dateAuthority: "provider_processed_at_or_updated_at", description: "Processed refunds in the selected IST date range." },
+    netCollected: { label: "Net collected", description: "Gross collected less processed refunds." },
+    outstanding: { label: "Outstanding", description: "Lifetime unpaid balance of invoices due in range." },
+    collectionEfficiency: { label: "Collection efficiency", description: "N/A when no invoices are due." },
+  },
   summary: {
     billed:               1250000,
     grossCollected:        980000,
