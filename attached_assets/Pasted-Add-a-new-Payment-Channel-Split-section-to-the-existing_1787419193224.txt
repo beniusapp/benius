@@ -1,0 +1,51 @@
+Add a new Payment Channel Split section to the existing Financial Analytics.
+
+It must work correctly for every analytics range:
+
+- Today
+- This Week
+- This Month
+- Academic Year
+- Custom Date Range
+
+Requirements
+
+1. Show the actual collected amount grouped by payment channel/method, such as:
+   
+   - Portal Payment
+   - Cash
+   - Cheque
+   - Bank Transfer
+   - Demand Draft
+   - UPI/QR
+   - Any other payment method actually supported by the system.
+
+2. The data must come from the same authoritative backend dataset/API used by Financial Analytics. Do NOT calculate or reconstruct the values independently on the frontend.
+
+3. When the selected range changes, the Payment Channel Split must recalculate for that exact range using the same IST date boundaries as the rest of Financial Analytics.
+
+4. Critical reconciliation rule: the sum of all payment-channel amounts must exactly reconcile with the applicable collected-revenue total for that selected period.
+
+5. Verify this independently for:
+   
+   - Today
+   - This Week
+   - This Month
+   - Academic Year
+   - Multiple Custom ranges, including midnight/date-boundary cases.
+
+6. Use the actual successful/recorded payment transactions only. Do not include failed, cancelled, pending, or other non-collected payment attempts.
+
+7. Follow the application's India-only IST timezone authority. Do not use browser/local/UTC calendar dates that can shift transactions into another day.
+
+8. Make the section responsive and consistent with the existing dark ERP Financial Analytics design on desktop and mobile.
+
+9. Add backend/API, UI, and PDF/report coverage where applicable.
+
+10. Add automated reconciliation tests proving that:
+    Payment Channel Split Total = Financial Analytics Collected Total
+    for every supported date range.
+
+Do not change any existing correct financial values or accounting logic. First inspect the current Financial Analytics contract and payment-method data model, then implement the Payment Channel Split using the existing authoritative source.
+
+After implementation, thoroughly verify that there is zero mismatch between Payment Channel Split, Financial Analytics totals, Ledger/Transactions, and PDF reports for all five range types.
