@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -6507,6 +6507,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const [scheduleTime, setScheduleTime] = useState("09:00");
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [sendingNow, setSendingNow] = useState(false);
+  const scheduleFormHydrated = useRef(false);
   const handlePresetChange = (next: AnalyticsPreset) => {
     if (next === "custom") {
       setStartDate("");
@@ -6543,11 +6544,12 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     queryKey: ["/api/admin/fees/report-schedule"], queryFn: async () => { const r = await sessionFetch("/api/admin/fees/report-schedule"); if (!r.ok) throw new Error("Schedule unavailable"); return r.json(); }, staleTime: 60_000,
   });
   useEffect(() => {
-    if (!scheduleData) return;
+    if (!scheduleData || scheduleFormHydrated.current) return;
     setScheduleEnabled(scheduleData.enabled);
     setRecipients(scheduleData.recipients ?? []);
     setScheduleDay(scheduleData.dayOfMonth ?? 1);
     setScheduleTime(scheduleData.sendTime ?? "09:00");
+    scheduleFormHydrated.current = true;
   }, [scheduleData]);
 
   const fmtMoney = (v: unknown) => formatIndianRupees(Number(v ?? 0));
