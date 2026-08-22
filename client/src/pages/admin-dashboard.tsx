@@ -1791,7 +1791,7 @@ export default function AdminDashboard() {
 
       {/* ══════════ STICKY GLASS NAVBAR ══════════ */}
       <header
-        className="sticky top-0 z-50 border-b"
+        className="sticky top-0 z-50 overflow-x-hidden border-b"
         style={{
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
@@ -1801,8 +1801,8 @@ export default function AdminDashboard() {
         }}
         data-testid="admin-navbar"
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center gap-2 sm:gap-3">
+        <div className="mx-auto flex min-w-0 max-w-7xl items-center justify-between gap-2 px-4 py-3 sm:gap-4 sm:px-6">
+          <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-3">
             {/* Mobile hamburger / sidebar toggle */}
             <button
               onClick={toggleAdminNavigation}
@@ -1827,13 +1827,13 @@ export default function AdminDashboard() {
             >
               <GraduationCap className="w-5 h-5 text-white" />
             </div>
-            <div className="leading-tight min-w-0">
+            <div className="hidden min-w-0 leading-tight sm:block">
               <h1 className="text-base font-extrabold text-white tracking-tight" data-testid="text-dashboard-title">BENIUS</h1>
               <p className="text-[10px] text-white/35 leading-none font-medium truncate" data-testid="text-school-name">{me.schoolName}</p>
             </div>
           </div>
 
-          <div className="flex-1 flex justify-center">
+          <div className="flex min-w-0 flex-1 justify-center">
             <SessionSwitcher
               sessions={sessions}
               selected={selectedViewSession}
@@ -1842,7 +1842,7 @@ export default function AdminDashboard() {
             />
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             {/* Initials avatar — taps to open profile */}
             <button
               onClick={() => setShowProfile(true)}

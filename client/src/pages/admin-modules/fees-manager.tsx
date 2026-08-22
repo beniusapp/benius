@@ -6441,115 +6441,6 @@ const AGING_BUCKETS = [
   { key: "90+",   label: "90+ Days",   color: "#9b1c1c", risk: "Critical", dot: "bg-red-900"    },
 ] as const;
 
-const CHANNEL_COLORS = ["#06b6d4", "#10b981", "#8b5cf6", "#f59e0b", "#64748b"];
-
-interface TSRow { period: string; period_date: string; billed: number; collected: number; }
-
-const MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-/** Parse "YYYY-MM-DD..." safely to a local Date (ignores time/tz suffix). */
-function parseLocalDate(s: string): Date {
-  const [y, m, d] = s.slice(0, 10).split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
-/**
- * Quarterly view — fully multi-tenant aware.
- * Always renders exactly 4 quarters anchored to the session's own start month.
- * Works for any academic calendar:
- *   June start  → Q1=Jun–Aug, Q2=Sep–Nov, Q3=Dec–Feb, Q4=Mar–May
- *   January start → Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec
- *   April start → Q1=Apr–Jun, Q2=Jul–Sep, Q3=Oct–Dec, Q4=Jan–Mar
- *
- * Data that falls outside the session's date range (advance payments, backdated
- * entries) is clamped into the nearest boundary quarter so it is always visible
- * rather than silently discarded.
- */
-function aggregateToQuarterly(rows: TSRow[], sessionStartDate: string, _sessionEndDate: string): TSRow[] {
-  const start     = parseLocalDate(sessionStartDate);
-  const startMon  = start.getMonth();
-  const startYear = start.getFullYear();
-
-  // Build 4-quarter skeleton aligned to the session's start month
-  const skeleton: TSRow[] = [0, 1, 2, 3].map(qi => {
-    const absMonth = startMon + qi * 3;
-    const calMonth = absMonth % 12;
-    const calYear  = startYear + Math.floor(absMonth / 12);
-    const m1 = MONTH_ABBR[(startMon + qi * 3    ) % 12];
-    const m2 = MONTH_ABBR[(startMon + qi * 3 + 2) % 12];
-    return {
-      period:      `Q${qi + 1} ${m1}–${m2}`,
-      period_date: new Date(calYear, calMonth, 1).toISOString(),
-      billed:      0,
-      collected:   0,
-    };
-  });
-  const map = new Map<string, TSRow>(skeleton.map(r => [r.period, { ...r }]));
-
-  for (const r of rows) {
-    const d = parseLocalDate(r.period_date);
-    // Months offset from session start (can be negative for pre-session data)
-    const monthsFromStart = (d.getFullYear() - startYear) * 12 + d.getMonth() - startMon;
-    // Clamp: pre-session data → Q1, post-session data → Q4
-    const clamped = Math.max(0, Math.min(11, monthsFromStart));
-    const qi  = Math.floor(clamped / 3);
-    const key = skeleton[qi]?.period;
-    if (!key) continue;
-    const ex = map.get(key)!;
-    map.set(key, { ...ex, billed: ex.billed + r.billed, collected: ex.collected + r.collected });
-  }
-  return skeleton.map(s => map.get(s.period)!);
-}
-
-/**
- * YTD — shows every month from the effective start to the effective end as a
- * full skeleton. The effective range is the union of the session date range and
- * the actual data date range, so payments collected before the session's
- * official start (advance fees, backdated entries) are always visible.
- * Months with no data show ₹0 billed / ₹0 collected.
- */
-function buildYTD(rows: TSRow[], sessionStartDate: string, sessionEndDate: string): TSRow[] {
-  const sessionStart = parseLocalDate(sessionStartDate);
-  const sessionEnd   = parseLocalDate(sessionEndDate);
-
-  // Extend to cover actual data dates
-  const allDates      = rows.map(r => parseLocalDate(r.period_date));
-  const dataMin       = allDates.length > 0 ? allDates.reduce((a, b) => (a < b ? a : b)) : sessionStart;
-  const dataMax       = allDates.length > 0 ? allDates.reduce((a, b) => (a > b ? a : b)) : sessionEnd;
-  const effectiveStart = dataMin < sessionStart ? dataMin : sessionStart;
-  const effectiveEnd   = dataMax > sessionEnd   ? dataMax : sessionEnd;
-
-  const startMon = effectiveStart.getMonth();
-  const startY   = effectiveStart.getFullYear();
-  const totalMonths =
-    (effectiveEnd.getFullYear() - startY) * 12 + effectiveEnd.getMonth() - startMon + 1;
-
-  const skeleton: TSRow[] = Array.from({ length: totalMonths }, (_, i) => {
-    const absMonth = startMon + i;
-    const calMonth = absMonth % 12;
-    const calYear  = startY + Math.floor(absMonth / 12);
-    return {
-      period:      `${MONTH_ABBR[calMonth]} '${String(calYear).slice(2)}`,
-      period_date: new Date(calYear, calMonth, 1).toISOString(),
-      billed:      0,
-      collected:   0,
-    };
-  });
-
-  // Index existing rows by YYYY-MM
-  const dataMap = new Map<string, { billed: number; collected: number }>();
-  for (const r of rows) {
-    const key = r.period_date.slice(0, 7);
-    const ex  = dataMap.get(key) ?? { billed: 0, collected: 0 };
-    dataMap.set(key, { billed: ex.billed + r.billed, collected: ex.collected + r.collected });
-  }
-
-  return skeleton.map(s => {
-    const data = dataMap.get(s.period_date.slice(0, 7));
-    return data ? { ...s, ...data } : s;
-  });
-}
-
 const CustomTooltipStyle = {
   contentStyle: { background: "#0A1628", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 },
   labelStyle:   { color: "rgba(255,255,255,0.7)" },
@@ -6567,822 +6458,130 @@ interface AgingStudent {
   days_overdue: number;
 }
 
+type AnalyticsPreset = "today" | "this_week" | "this_month" | "academic_year" | "custom";
+type AnalyticsComparison = { billedChange?: number | null; grossCollectedChange?: number | null; refundsChange?: number | null; netCollectedChange?: number | null } | null;
+type AnalyticsData = {
+  generatedAt?: string;
+  sessionInfo?: { id?: number; sessionName?: string; startDate?: string; endDate?: string };
+  filter?: { preset?: AnalyticsPreset; startDate?: string; endDate?: string; label?: string; timezone?: string; comparison?: unknown };
+  comparison?: AnalyticsComparison;
+  summary?: Record<string, number>;
+  trend?: Array<{ key: string; label: string; startDate: string; billed: number; grossCollected: number; refunds: number; netCollected: number }>;
+  online?: AnalyticsChannel;
+  offline?: AnalyticsChannel;
+  classWise?: Array<Record<string, string | number>>;
+  feeCategories?: Array<Record<string, string | number>>;
+  aging?: Array<{ bucket: string; count: number; amount: number }>;
+  cashDenominations?: { cashCollected: number; cashPaymentCount: number; withBreakdownCount: number; withoutBreakdownCount: number; documentedAmount: number; denominations: Array<{ denomination: number; quantity: number; total: number }> };
+};
+type AnalyticsChannel = { grossCollected: number; refunds: number; netCollected: number; transactionCount: number; averageTransaction: number; statuses: Array<{ status: string; count: number; amount: number }>; methods: Array<{ method: string; count: number; amount: number }> };
+
 function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const { selectedSession } = useSessionView();
-  const [period, setPeriod] = useState<"monthly" | "quarterly" | "ytd">("monthly");
-  const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
-  const [exportingPdf, setExportingPdf] = useState(false);
-
-  // ── Report Schedule state ───────────────────────────────────────────────
   const { toast } = useToast();
+  const [preset, setPresetState] = useState<AnalyticsPreset>("academic_year");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [recipientInput, setRecipientInput] = useState("");
   const [recipients, setRecipients] = useState<string[]>([]);
-  const [sendingNow, setSendingNow] = useState(false);
+  const [recipientInput, setRecipientInput] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
-
-  const { data: scheduleData, refetch: refetchSchedule } = useQuery<{ enabled: boolean; recipients: string[]; lastSentAt: string | null }>({
-    queryKey: ["/api/admin/fees/report-schedule"],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/admin/fees/report-schedule");
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
-    },
-    staleTime: 60_000,
-  });
-
-  // Sync local state when remote data arrives
+  const [sendingNow, setSendingNow] = useState(false);
+  const handlePresetChange = (next: AnalyticsPreset) => {
+    if (next === "custom") {
+      setStartDate("");
+      setEndDate("");
+    }
+    setPresetState(next);
+  };
+  const setPreset = handlePresetChange;
+  const sessionStart = selectedSession?.startDate?.slice(0, 10) ?? "";
+  const sessionEnd = selectedSession?.endDate?.slice(0, 10) ?? "";
   useEffect(() => {
-    if (!scheduleData) return;
-    setScheduleEnabled(scheduleData.enabled);
-    setRecipients(scheduleData.recipients ?? []);
-  }, [scheduleData]);
+    if (preset === "academic_year") { setStartDate(sessionStart); setEndDate(sessionEnd); }
+  }, [preset, sessionStart, sessionEnd]);
 
-  function addRecipient() {
+  const params = useMemo(() => {
+    const p = new URLSearchParams({ preset });
+    if (preset === "custom") { if (startDate) p.set("startDate", startDate); if (endDate) p.set("endDate", endDate); }
+    return p.toString();
+  }, [preset, startDate, endDate]);
+  const { data, isLoading, isFetching, error, refetch } = useQuery<AnalyticsData>({
+    queryKey: ["/api/fees/analytics", viewSessionId, preset, startDate, endDate],
+    queryFn: async () => { const r = await sessionFetch(`/api/fees/analytics?${params}`); const body = await r.json().catch(() => null); if (!r.ok) throw new Error(body?.message ?? body?.error ?? "Analytics request failed"); return body; },
+    enabled: preset !== "custom" || (!!startDate && !!endDate && startDate <= endDate),
+    staleTime: 0, refetchOnMount: "always",
+  });
+  const { data: scheduleData, refetch: refetchSchedule } = useQuery<{ enabled: boolean; recipients: string[] }>({
+    queryKey: ["/api/admin/fees/report-schedule"], queryFn: async () => { const r = await sessionFetch("/api/admin/fees/report-schedule"); if (!r.ok) throw new Error("Schedule unavailable"); return r.json(); }, staleTime: 60_000,
+  });
+  useEffect(() => { if (scheduleData) { setScheduleEnabled(scheduleData.enabled); setRecipients(scheduleData.recipients ?? []); } }, [scheduleData]);
+
+  const fmtMoney = (v: unknown) => formatIndianRupees(Number(v ?? 0));
+  const s = data?.summary ?? {};
+  const agingData = useMemo(() => AGING_BUCKETS.map(b => ({ ...b, ...(data?.aging?.find(a => a.bucket === b.key) ?? { count: 0, amount: 0 }) })), [data]);
+  const addRecipient = () => {
     const email = recipientInput.trim().toLowerCase();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
-      return;
-    }
-    if (recipients.includes(email)) {
-      toast({ title: "Already added", description: "This email is already in the list.", variant: "destructive" });
-      return;
-    }
-    if (recipients.length >= 20) {
-      toast({ title: "Limit reached", description: "Maximum 20 recipients allowed.", variant: "destructive" });
-      return;
-    }
-    setRecipients(prev => [...prev, email]);
-    setRecipientInput("");
-  }
-
-  async function saveSchedule() {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || recipients.includes(email) || recipients.length >= 20) { toast({ title: "Recipient not added", description: "Enter a unique valid email address (up to 20).", variant: "destructive" }); return; }
+    setRecipients(r => [...r, email]); setRecipientInput("");
+  };
+  const saveSchedule = async () => {
     setSavingSchedule(true);
-    try {
-      const r = await sessionFetch("/api/admin/fees/report-schedule", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: scheduleEnabled, recipients }),
-      });
-      if (!r.ok) {
-        const d = await r.json();
-        throw new Error(d.message ?? "Failed to save");
-      }
-      await refetchSchedule();
-      toast({ title: "Schedule saved", description: "Monthly report schedule updated successfully." });
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally {
-      setSavingSchedule(false);
-    }
-  }
-
-  async function sendNow() {
-    if (recipients.length === 0) {
-      toast({ title: "No recipients", description: "Add at least one email recipient before sending.", variant: "destructive" });
-      return;
-    }
+    try { const r = await sessionFetch("/api/admin/fees/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: scheduleEnabled, recipients }) }); const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not save schedule"); await refetchSchedule(); toast({ title: "Schedule saved" }); } catch (e) { toast({ title: "Schedule failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSavingSchedule(false); }
+  };
+  const sendNow = async () => {
+    if (!recipients.length) { toast({ title: "No recipients", description: "Add a recipient before sending.", variant: "destructive" }); return; }
     setSendingNow(true);
     try {
-      // Persist the current recipient list so the server uses the latest;
-      // we intentionally omit `enabled` here so clicking Send Now never
-      // accidentally changes the scheduled-run toggle as a side effect.
-      const saveR = await sessionFetch("/api/admin/fees/report-schedule", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipients }),
-      });
-      if (!saveR.ok) {
-        const d = await saveR.json();
-        throw new Error(d.message ?? "Failed to save recipients");
-      }
-      // The send-now endpoint ignores the `enabled` flag (forceEnabled=true server-side)
+      const save = await sessionFetch("/api/admin/fees/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipients }) });
+      const saveBody = await save.json().catch(() => ({}));
+      if (!save.ok) throw new Error(saveBody.message ?? saveBody.error ?? "Could not save recipients");
       const r = await sessionFetch("/api/admin/fees/report-schedule/send-now", { method: "POST" });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.message ?? "Failed to send");
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not send report");
       await refetchSchedule();
-      toast({
-        title: `Report sent to ${d.sent} recipient${d.sent !== 1 ? "s" : ""}`,
-        description: d.errors?.length ? `Errors: ${d.errors.join("; ")}` : "The PDF report has been delivered. Check your inbox.",
-      });
-    } catch (e: any) {
-      toast({ title: "Send failed", description: e.message, variant: "destructive" });
-    } finally {
-      setSendingNow(false);
-    }
-  }
-
-  const { data: raw, isLoading, error } = useQuery<any>({
-    queryKey: ["/api/fees/analytics", viewSessionId],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/fees/analytics");
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
-    },
-    staleTime: 0,           // always fetch fresh — analytics must show live data
-    refetchOnMount: "always",
-  });
-
-  const { data: meData } = useQuery<{ schoolName?: string }>({
-    queryKey: ["/api/me"],
-    staleTime: 300_000,
-  });
-
-  // ── PDF Export ─────────────────────────────────────────────────────────────
-  function handleExportPdf() {
-    if (!raw) return;
-    setExportingPdf(true);
+      toast({ title: "Report sent", description: body.sent != null ? `Delivered to ${body.sent} recipient${body.sent === 1 ? "" : "s"}.` : undefined });
+    } catch (e) { toast({ title: "Send failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSendingNow(false); }
+  };
+  const downloadPdf = async (section: string) => {
+    setExporting(section);
     try {
-      // ── HTML escape helper — applied to every non-numeric text value ──────
-      const esc = (v: unknown): string =>
-        String(v ?? "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-
-      const schoolName   = esc(meData?.schoolName ?? "School");
-      const sessionLabel = esc(selectedSession?.sessionName ?? "All Sessions");
-      const periodLabel  = period === "quarterly" ? "Quarterly" : period === "ytd" ? "Year-to-Date" : "Monthly (Last 12)";
-      const exportedAt   = esc(formatDateTimeIST(new Date()));
-
-      const s          = raw?.summary ?? {};
-      const classWise: any[] = raw?.classWise ?? [];
-      const channels:  any[] = raw?.paymentChannels ?? [];
-      const categories: any[] = raw?.feeCategories ?? [];
-      const aging:     any[] = raw?.aging ?? [];
-
-      // Use the already-computed, period-filtered time series (respects Monthly/Quarterly/YTD mode)
-      const tsSeries = timeSeriesData;
-
-      // Channel grouping (mirrors the chart logic)
-      const chGroups: Record<string, number> = {};
-      for (const ch of channels) {
-        const m   = String(ch.payment_method ?? "Other");
-        const cat = ["Online","Razorpay","UPI","Card","NetBanking"].includes(m) ? "Online"
-                  : m === "Cash" ? "Cash"
-                  : ["Cheque","DD","Bank Transfer"].includes(m) ? "Cheque" : m;
-        chGroups[cat] = (chGroups[cat] ?? 0) + Number(ch.amount);
-      }
-      const chTotal = Object.values(chGroups).reduce((a, b) => a + b, 0);
-
-      const fmtINR = (n: number) =>
-        new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-
-      // Aging bucket metadata — keys are fixed constants, safe to use without escaping
-      const agingBucketMeta: Record<string, { label: string; risk: string }> = {
-        "1-30":  { label: "1\u201330 Days",  risk: "Low Risk"      },
-        "31-60": { label: "31\u201360 Days", risk: "Medium Risk"   },
-        "61-90": { label: "61\u201390 Days", risk: "High Risk"     },
-        "90+":   { label: "90+ Days",        risk: "Critical Risk" },
-      };
-
-      const classWiseTotals = classWise.reduce(
-        (acc, r) => ({ billed: acc.billed + Number(r.billed), collected: acc.collected + Number(r.collected), outstanding: acc.outstanding + Number(r.outstanding) }),
-        { billed: 0, collected: 0, outstanding: 0 },
-      );
-
-      // Build the report by constructing safe HTML — all user/DB-sourced text goes through esc()
-      const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<title>Financial Analytics Report &#8212; ${schoolName}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; color: #1a1a2e; background: #fff; }
-  @page { margin: 15mm 12mm; size: A4 portrait; }
-  .page-break { page-break-before: always; }
-
-  /* Header */
-  .report-header { border-bottom: 3px solid #0e7490; padding-bottom: 12px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: flex-end; }
-  .report-title { font-size: 20px; font-weight: 800; color: #0e7490; letter-spacing: -0.5px; }
-  .report-subtitle { font-size: 11px; color: #64748b; margin-top: 2px; }
-  .report-meta { text-align: right; font-size: 10px; color: #64748b; line-height: 1.6; }
-  .session-pill { display: inline-block; background: #e0f2fe; color: #0369a1; border-radius: 12px; padding: 2px 10px; font-weight: 700; font-size: 10px; }
-
-  /* KPI cards */
-  .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
-  .kpi-card { border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; }
-  .kpi-label { font-size: 9.5px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-  .kpi-value { font-size: 18px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px; }
-  .kpi-card.gold   { border-color: #d97706; background: #fffbeb; }
-  .kpi-card.gold .kpi-value { color: #b45309; }
-  .kpi-card.red    { border-color: #ef4444; background: #fef2f2; }
-  .kpi-card.red .kpi-value  { color: #dc2626; }
-  .kpi-card.green  { border-color: #10b981; background: #f0fdf4; }
-  .kpi-card.green .kpi-value { color: #059669; }
-  .kpi-card.purple { border-color: #8b5cf6; background: #f5f3ff; }
-  .kpi-card.purple .kpi-value { color: #7c3aed; }
-  .kpi-card.amber  { border-color: #f59e0b; background: #fffbeb; }
-  .kpi-card.amber .kpi-value  { color: #d97706; }
-
-  /* Section headings */
-  .section { margin-bottom: 18px; }
-  .section-title { font-size: 12px; font-weight: 700; color: #0e7490; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1.5px solid #e0f2fe; text-transform: uppercase; letter-spacing: 0.5px; }
-  .section-sub { font-size: 9px; color: #94a3b8; margin-left: 6px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-
-  /* Tables */
-  table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-  thead tr { background: #f1f5f9; }
-  th { padding: 6px 8px; text-align: left; font-weight: 700; color: #475569; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.4px; }
-  th.right, td.right { text-align: right; }
-  td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; color: #1e293b; }
-  tr:last-child td { border-bottom: none; }
-  tfoot td { font-weight: 700; border-top: 1.5px solid #cbd5e1; padding-top: 7px; }
-  .pct { color: #64748b; font-size: 9px; margin-left: 4px; }
-  .green-val { color: #059669; font-weight: 700; }
-  .red-val   { color: #dc2626; font-weight: 600; }
-
-  /* Two-column layout */
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
-
-  /* Channel list */
-  .channel-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #f1f5f9; }
-  .channel-bar { height: 6px; background: #0e7490; border-radius: 3px; margin-top: 3px; }
-
-  /* Aging grid */
-  .aging-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  .aging-card { border-radius: 8px; padding: 12px; border: 1.5px solid; }
-  .aging-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-  .aging-amount { font-size: 16px; font-weight: 800; }
-  .aging-meta { font-size: 9px; margin-top: 4px; }
-  .bucket-low      { border-color: #f59e0b; background: #fffbeb; color: #92400e; }
-  .bucket-medium   { border-color: #f97316; background: #fff7ed; color: #9a3412; }
-  .bucket-high     { border-color: #ef4444; background: #fef2f2; color: #991b1b; }
-  .bucket-critical { border-color: #9b1c1c; background: #fef2f2; color: #7f1d1d; }
-
-  /* Time-series progress bar */
-  .ts-bar-wrap { width: 80px; background: #f1f5f9; border-radius: 3px; overflow: hidden; display: inline-block; height: 7px; vertical-align: middle; margin-left: 4px; }
-  .ts-bar-fill { height: 100%; border-radius: 3px; }
-
-  /* Footer */
-  .report-footer { margin-top: 24px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 9px; color: #94a3b8; display: flex; justify-content: space-between; }
-</style>
-</head>
-<body>
-
-<!-- ── Header ── -->
-<div class="report-header">
-  <div>
-    <div class="report-title">Financial Analytics Report</div>
-    <div class="report-subtitle">${schoolName} &nbsp;&middot;&nbsp; <span class="session-pill">${sessionLabel}</span></div>
-    <div style="margin-top:4px;font-size:9.5px;color:#0369a1;font-weight:600;">&#128197; Period View: ${esc(periodLabel)}</div>
-  </div>
-  <div class="report-meta">
-    <div>Exported on ${exportedAt}</div>
-    <div>Powered by Benius</div>
-  </div>
-</div>
-
-<!-- ── KPI Cards ── -->
-<div class="section">
-  <div class="section-title">Executive Summary</div>
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-label">Gross Billed Demand</div>
-      <div class="kpi-value">${fmtINR(Number(s.grossBilled ?? 0))}</div>
+      const r = await sessionFetch(`/api/fees/analytics/pdf?${params}&section=${section}`);
+      if (!r.ok) { const body = await r.json().catch(() => ({})); throw new Error(body.message ?? body.error ?? "PDF unavailable"); }
+      const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `financial-analytics-${preset}-${section}-${todayInIST()}.pdf`; a.style.display = "none"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { toast({ title: "Download failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setExporting(null); }
+  };
+  const DownloadButton = ({ section = "summary" }: { section?: string }) => <button type="button" onClick={() => downloadPdf(section)} disabled={!!exporting} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-cyan-300/70 hover:bg-cyan-300/10 hover:text-cyan-200 disabled:opacity-40" aria-label={`Download ${section} PDF`}><Download className="h-3 w-3" />{exporting === section ? "Preparing" : "PDF"}</button>;
+  const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => <section className={`min-w-0 rounded-xl border border-white/10 bg-[#17263d] p-4 shadow-[0_10px_28px_rgba(0,0,0,.12)] ${className}`}>{children}</section>;
+  const comparison = data?.comparison ?? null;
+  const changeFor = (key: string) => {
+    const field = key === "billed" ? "billedChange" : key === "grossCollected" ? "grossCollectedChange" : key === "refunds" ? "refundsChange" : key === "netCollected" ? "netCollectedChange" : null;
+    return field ? comparison?.[field] ?? null : null;
+  };
+  const moneyMetric = (label: string, key: string, tone: string) => { const change = changeFor(key); return <div className={`rounded-lg border p-3 ${tone}`}><div className="text-[10px] uppercase tracking-[.14em] text-white/45">{label}</div><div className="mt-1 text-lg font-bold tabular-nums text-white">{fmtMoney(s[key])}</div>{change != null && <div className={`mt-1 text-[10px] tabular-nums ${change >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{change >= 0 ? "+" : ""}{change}% prior period</div>}</div>; };
+  const statusLabel = (status: string) => status.toLowerCase().split(/[_-]+/).map(word => word ? word[0].toUpperCase() + word.slice(1) : "").join(" ");
+  const invalidCustom = preset === "custom" && (!startDate || !endDate || startDate > endDate);
+  if (invalidCustom) return <div className="rounded-xl border border-cyan-300/15 bg-[#132238] p-4 text-white"><div className="flex flex-wrap items-center gap-2"><select value={preset} onChange={e => setPreset(e.target.value as AnalyticsPreset)} className="rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs"><option value="today">Today</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="academic_year">Academic Year</option><option value="custom">Custom</option></select><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} aria-label="Start date" className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" /><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} aria-label="End date" className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" /></div><p className="mt-2 text-[11px] text-amber-200/80">Choose both dates; start date must be on or before end date.</p></div>;
+  if (isLoading) return <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 animate-pulse rounded-xl bg-white/5" />)}</div>;
+  if (error || !data) return <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-6 text-center text-sm text-red-200"><p>Financial analytics could not be loaded.</p>{error instanceof Error && <p className="mt-1 text-xs text-red-200/70">{error.message}</p>}<button onClick={() => refetch()} className="mt-3 rounded-md bg-red-300/15 px-3 py-2 text-xs font-semibold hover:bg-red-300/25">Retry</button></div>;
+  const filterLabel = data.filter?.label ?? `${data.filter?.startDate ?? ""} – ${data.filter?.endDate ?? ""}`;
+  return <div className="min-w-0 space-y-4 text-white">
+    <div className="flex flex-col gap-3 rounded-xl border border-cyan-300/15 bg-[#132238] p-4 lg:flex-row lg:items-end lg:justify-between">
+      <div><div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[11px] font-semibold uppercase tracking-[.18em] text-cyan-200/70">Financial cockpit</span><span className="rounded bg-white/10 px-2 py-0.5 text-[10px] text-white/60">{data.sessionInfo?.sessionName ?? selectedSession?.sessionName ?? "Active session"}</span></div><h2 className="mt-2 text-xl font-bold tracking-tight">Collections & receivables</h2><p className="mt-1 text-xs text-white/45">{filterLabel} · {data.filter?.timezone ?? "IST"} · Updated {data.generatedAt ? formatDateTimeIST(new Date(data.generatedAt)) : "—"}</p></div>
+      <div><div className="flex flex-wrap items-center gap-2"><select value={preset} onChange={e => setPreset(e.target.value as AnalyticsPreset)} className="rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs text-white"><option value="today">Today</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="academic_year">Academic Year</option><option value="custom">Custom</option></select>{preset === "custom" && <><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} max={endDate || undefined} className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" aria-label="Start date" /><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" aria-label="End date" /></>}<button onClick={() => refetch()} className="inline-flex items-center gap-2 rounded-md border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/10" aria-label="Refresh analytics"><Loader2 className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />Refresh</button><DownloadButton section="complete" /></div>{invalidCustom && <p className="mt-2 text-[11px] text-amber-200/80">Choose both dates; start date must be on or before end date.</p>}</div>
     </div>
-    <div class="kpi-card gold">
-      <div class="kpi-label">Net Collected Revenue</div>
-      <div class="kpi-value">${fmtINR(Number(s.netCollected ?? 0))}</div>
-    </div>
-    <div class="kpi-card red">
-      <div class="kpi-label">Outstanding Deficit</div>
-      <div class="kpi-value">${fmtINR(Number(s.outstanding ?? 0))}</div>
-    </div>
-    <div class="kpi-card green">
-      <div class="kpi-label">Collection Efficiency</div>
-      <div class="kpi-value">${Number(s.collectionRate ?? 0)}%</div>
-    </div>
-    <div class="kpi-card purple">
-      <div class="kpi-label">Discounts &amp; Concessions</div>
-      <div class="kpi-value">${fmtINR(Number(s.totalDiscounts ?? 0))}</div>
-    </div>
-    <div class="kpi-card amber">
-      <div class="kpi-label">Late Penalties Collected</div>
-      <div class="kpi-value">${fmtINR(Number(s.totalLatePenalties ?? 0))}</div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Time Series (active period view) ── -->
-${tsSeries.length > 0 ? `
-<div class="section">
-  <div class="section-title">Revenue Collection Trend <span class="section-sub">${esc(periodLabel)}</span></div>
-  <table>
-    <thead>
-      <tr>
-        <th>Period</th>
-        <th class="right">Billed</th>
-        <th class="right">Collected</th>
-        <th class="right">Collection %</th>
-        <th>Progress</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${tsSeries.map(r => {
-        const b = Number(r.billed), c = Number(r.collected);
-        const pct = b > 0 ? Math.round((c / b) * 100) : 0;
-        const barW = Math.min(pct, 100);
-        return `<tr>
-          <td>${esc(r.period)}</td>
-          <td class="right">${fmtINR(b)}</td>
-          <td class="right green-val">${fmtINR(c)}</td>
-          <td class="right">${pct}%</td>
-          <td><div class="ts-bar-wrap"><div class="ts-bar-fill" style="width:${barW}%;background:#0e7490"></div></div></td>
-        </tr>`;
-      }).join("")}
-    </tbody>
-    <tfoot>
-      <tr>
-        <td>Total</td>
-        <td class="right">${fmtINR(tsSeries.reduce((a, r) => a + Number(r.billed), 0))}</td>
-        <td class="right green-val">${fmtINR(tsSeries.reduce((a, r) => a + Number(r.collected), 0))}</td>
-        <td class="right">&#8212;</td>
-        <td></td>
-      </tr>
-    </tfoot>
-  </table>
-</div>
-` : ""}
-
-<!-- ── Class-wise + Channel ── -->
-<div class="two-col">
-
-  <!-- Class-Wise -->
-  <div class="section" style="margin-bottom:0">
-    <div class="section-title">Class-Wise Breakdown</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Class</th>
-          <th class="right">Billed</th>
-          <th class="right">Collected</th>
-          <th class="right">Outstanding</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${classWise.map(row => {
-          const b = Number(row.billed), c = Number(row.collected), o = Number(row.outstanding);
-          const pct = b > 0 ? Math.round((c / b) * 100) : 0;
-          return `<tr>
-            <td>Class ${esc(row.class)}<span class="pct">${pct}%</span></td>
-            <td class="right">${fmtINR(b)}</td>
-            <td class="right green-val">${fmtINR(c)}</td>
-            <td class="right red-val">${fmtINR(o)}</td>
-          </tr>`;
-        }).join("") || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:12px">No class data</td></tr>'}
-      </tbody>
-      ${classWise.length > 0 ? `<tfoot>
-        <tr>
-          <td>Total</td>
-          <td class="right">${fmtINR(classWiseTotals.billed)}</td>
-          <td class="right green-val">${fmtINR(classWiseTotals.collected)}</td>
-          <td class="right red-val">${fmtINR(classWiseTotals.outstanding)}</td>
-        </tr>
-      </tfoot>` : ""}
-    </table>
-  </div>
-
-  <!-- Payment Channel -->
-  <div class="section" style="margin-bottom:0">
-    <div class="section-title">Payment Channel Split</div>
-    ${Object.entries(chGroups).length === 0
-      ? '<p style="color:#94a3b8;font-size:10px;padding:12px 0">No payment data available</p>'
-      : Object.entries(chGroups).map(([name, val]) => {
-          const pct = chTotal > 0 ? Math.round((val / chTotal) * 100) : 0;
-          return `<div class="channel-row">
-            <div>
-              <span style="font-weight:600">${esc(name)}</span>
-              <span class="pct">${pct}%</span>
-            </div>
-            <span class="green-val">${fmtINR(val)}</span>
-          </div>
-          <div class="channel-bar" style="width:${pct}%"></div>`;
-        }).join("")
-    }
-    ${chTotal > 0 ? `<div class="channel-row" style="margin-top:8px;border-top:1.5px solid #cbd5e1;padding-top:6px">
-      <span style="font-weight:700">Total</span>
-      <span style="font-weight:700">${fmtINR(chTotal)}</span>
-    </div>` : ""}
-  </div>
-</div>
-
-<!-- ── Fee Categories ── -->
-${categories.length > 0 ? `
-<div class="section">
-  <div class="section-title">Fee Category Breakdown</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Fee Category</th>
-        <th class="right">Billed</th>
-        <th class="right">Collected</th>
-        <th class="right">Collection %</th>
-        <th class="right">Outstanding</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${categories.map(r => {
-        const b = Number(r.billed), c = Number(r.collected), o = Math.max(b - c, 0);
-        const pct = b > 0 ? Math.round((c / b) * 100) : 0;
-        return `<tr>
-          <td>${esc(r.fee_type)}</td>
-          <td class="right">${fmtINR(b)}</td>
-          <td class="right green-val">${fmtINR(c)}</td>
-          <td class="right">${pct}%</td>
-          <td class="right red-val">${fmtINR(o)}</td>
-        </tr>`;
-      }).join("")}
-    </tbody>
-  </table>
-</div>
-` : ""}
-
-<!-- ── AR Aging ── -->
-<div class="section">
-  <div class="section-title">Accounts Receivable Aging</div>
-  <div class="aging-grid">
-    ${(["1-30","31-60","61-90","90+"] as const).map(key => {
-      const meta = agingBucketMeta[key];
-      const row  = aging.find((a: any) => a.bucket === key);
-      const amount = Number(row?.amount ?? 0);
-      const count  = Number(row?.count  ?? 0);
-      const riskCls = key === "1-30" ? "bucket-low" : key === "31-60" ? "bucket-medium" : key === "61-90" ? "bucket-high" : "bucket-critical";
-      // meta.label and meta.risk are hardcoded literals — no escaping needed
-      return `<div class="aging-card ${riskCls}">
-        <div class="aging-label">${meta.label}</div>
-        <div class="aging-amount">${fmtINR(amount)}</div>
-        <div class="aging-meta">${count} invoice${count !== 1 ? "s" : ""} &nbsp;&middot;&nbsp; ${meta.risk}</div>
-      </div>`;
-    }).join("")}
-  </div>
-</div>
-
-<!-- ── Footer ── -->
-<div class="report-footer">
-  <span>${schoolName} &nbsp;&middot;&nbsp; ${sessionLabel}</span>
-  <span>Generated ${exportedAt} &nbsp;&middot;&nbsp; Benius School Management</span>
-</div>
-
-<script>window.onload = function() { window.print(); };<\/script>
-</body>
-</html>`;
-
-      const w = window.open("", "_blank");
-      if (w) {
-        w.document.write(html);
-        w.document.close();
-      }
-    } finally {
-      setExportingPdf(false);
-    }
-  }
-
-  // Time-series aggregation
-  const timeSeriesData = useMemo<TSRow[]>(() => {
-    if (!raw?.timeSeries) return [];
-    const rows: TSRow[] = (raw.timeSeries as any[]).map(r => ({
-      period:      r.period,
-      period_date: r.period_date,
-      billed:      Number(r.billed),
-      collected:   Number(r.collected),
-    }));
-
-    // Use the session's own start/end dates for period boundaries.
-    // Fall back to a rolling 12-month window anchored on today if missing.
-    const now = new Date();
-    const fallbackStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-    const sessionStart: string = raw?.sessionInfo?.startDate ?? `${fallbackStartYear}-04-01`;
-    const sessionEnd:   string = raw?.sessionInfo?.endDate   ?? `${fallbackStartYear + 1}-03-31`;
-
-    if (period === "quarterly") return aggregateToQuarterly(rows, sessionStart, sessionEnd);
-    if (period === "ytd")       return buildYTD(rows, sessionStart, sessionEnd);
-
-    // Monthly: return all rows the backend sent — they are already session-scoped,
-    // so no additional date cutoff is needed. Sorted ascending by the backend.
-    return rows;
-  }, [raw, period]);
-
-  // Payment channel grouping
-  const channelData = useMemo(() => {
-    if (!raw?.paymentChannels) return [];
-    const groups: Record<string, number> = {};
-    for (const ch of raw.paymentChannels as any[]) {
-      const m   = String(ch.payment_method ?? "Other");
-      const cat = ["Online", "Razorpay", "UPI", "Card", "NetBanking"].includes(m) ? "Online"
-                : m === "Cash" ? "Cash"
-                : ["Cheque", "DD", "Bank Transfer"].includes(m) ? "Cheque"
-                : m;
-      groups[cat] = (groups[cat] ?? 0) + Number(ch.amount);
-    }
-    return Object.entries(groups).filter(([, v]) => v > 0).map(([name, value]) => ({ name, value }));
-  }, [raw]);
-
-  // Aging with guaranteed 4 buckets
-  const agingData = useMemo(() => {
-    const map = Object.fromEntries(((raw?.aging ?? []) as any[]).map((a: any) => [a.bucket, a]));
-    return AGING_BUCKETS.map(b => ({
-      ...b,
-      count:  Number(map[b.key]?.count  ?? 0),
-      amount: Number(map[b.key]?.amount ?? 0),
-    }));
-  }, [raw]);
-
-  const totalAging = agingData.reduce((s, r) => s + r.amount, 0);
-  const feeCategories = ((raw?.feeCategories ?? []) as any[]).map(r => ({
-    fee_type: r.fee_type, billed: Number(r.billed), collected: Number(r.collected),
-  }));
-
-  if (isLoading) return (
-    <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-    </div>
-  );
-  if (error) return (
-    <div className="rounded-xl border border-red-700/40 bg-red-900/10 p-6 text-center text-sm text-red-400">
-      Failed to load analytics data. Please refresh and try again.
-    </div>
-  );
-
-  const s = raw?.summary ?? {};
-
-  const execCards = [
-    { label: "Gross Billed Demand",      value: fmt(s.grossBilled ?? 0),        Icon: FileText,     ib: "border-white/10 bg-white/5",              ic: "text-white/50"    },
-    { label: "Net Collected Revenue",    value: fmt(s.netCollected ?? 0),       Icon: DollarSign,   ib: "border-[#D4AF37]/30 bg-[#D4AF37]/5",      ic: "text-[#D4AF37]"  },
-    { label: "Outstanding Deficit",      value: fmt(s.outstanding ?? 0),        Icon: TrendingDown, ib: "border-red-500/30 bg-red-500/5",           ic: "text-red-400"    },
-    { label: "Collection Efficiency",    value: `${s.collectionRate ?? 0}%`,    Icon: TrendingUp,   ib: "border-emerald-500/30 bg-emerald-500/5",   ic: "text-emerald-400"},
-    { label: "Discounts & Concessions",  value: fmt(s.totalDiscounts ?? 0),     Icon: Banknote,     ib: "border-purple-500/30 bg-purple-500/5",     ic: "text-purple-400" },
-    { label: "Late Penalties Collected", value: fmt(s.totalLatePenalties ?? 0), Icon: AlertTriangle,ib: "border-amber-500/30 bg-amber-500/5",       ic: "text-amber-400"  },
-  ];
-
-  return (
-    <div className="space-y-5">
-
-      {/* Session label + Export PDF */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs">
-          {selectedSession && (
-            <>
-              <span className="text-white/40">Showing data for</span>
-              <span className="px-2 py-0.5 rounded-full font-semibold bg-cyan-900/30 text-cyan-400 border border-cyan-700/30">
-                {selectedSession.sessionName}
-              </span>
-            </>
-          )}
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={exportingPdf || isLoading || !!error}
-          onClick={handleExportPdf}
-          className="h-7 px-3 text-xs border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white gap-1.5 flex-shrink-0"
-        >
-          {exportingPdf
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <Download className="w-3.5 h-3.5" />}
-          Export PDF
-        </Button>
-      </div>
-
-      {/* ── Executive Summary Cards ──────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        {execCards.map(({ label, value, Icon, ib, ic }) => (
-          <div key={label} className={`rounded-xl border ${ib} p-4 flex items-center gap-3`}>
-            <div className={`p-2 rounded-lg bg-white/5 ${ic} flex-shrink-0`}><Icon className="w-5 h-5" /></div>
-            <div className="min-w-0">
-              <p className="text-white/50 text-xs mb-0.5 leading-tight">{label}</p>
-              <p className="text-white font-bold text-lg leading-none tabular-nums truncate">{value}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Revenue Collection Trend ─────────────────────────────────── */}
-      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h3 className="text-white font-semibold text-sm">Revenue Collection Trend</h3>
-            <p className="text-white/40 text-xs">Billed demand vs collected revenue by period</p>
-          </div>
-          <div className="flex gap-0.5 p-0.5 bg-black/20 rounded-lg border border-white/10">
-            {(["monthly", "quarterly", "ytd"] as const).map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${period === p ? "bg-cyan-600 text-white" : "text-white/40 hover:text-white"}`}>
-                {p === "monthly" ? "Monthly" : p === "quarterly" ? "Quarterly" : "YTD"}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {timeSeriesData.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-white/25 text-sm">
-            No collection data for this period
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={timeSeriesData} barGap={2} barCategoryGap="28%">
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="period" tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`}
-                tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} width={52} />
-              <Tooltip {...CustomTooltipStyle}
-                formatter={(v: number, name: string) => [fmt(v), name === "billed" ? "Billed" : "Collected"]} />
-              <Legend formatter={v => v === "billed" ? "Billed" : "Collected"}
-                wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
-              <Bar dataKey="billed"    name="billed"    fill="rgba(255,255,255,0.08)" radius={[4,4,0,0]} />
-              <Bar dataKey="collected" name="collected" fill="#06b6d4"                radius={[4,4,0,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ── Class-Wise Table + Payment Channel Pie ───────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-        {/* Class-Wise */}
-        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
-          <h3 className="text-white font-semibold text-sm">Class-Wise Breakdown</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-white/10 text-white/40 uppercase tracking-widest text-[10px]">
-                  <th className="pb-2 text-left font-semibold">Class</th>
-                  <th className="pb-2 text-right font-semibold">Billed</th>
-                  <th className="pb-2 text-right font-semibold">Collected</th>
-                  <th className="pb-2 text-right font-semibold">Outstanding</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {((raw?.classWise ?? []) as any[]).map((row: any) => {
-                  const billed = Number(row.billed), collected = Number(row.collected), out = Number(row.outstanding);
-                  const pct = billed > 0 ? Math.round((collected / billed) * 100) : 0;
-                  return (
-                    <tr key={row.class} className="hover:bg-white/[0.03] transition-colors">
-                      <td className="py-2 text-white font-medium">
-                        Class {row.class}
-                        <span className="ml-1.5 text-[10px] text-white/30">{pct}%</span>
-                      </td>
-                      <td className="py-2 text-right text-white/50 tabular-nums">{fmt(billed)}</td>
-                      <td className="py-2 text-right text-emerald-400 tabular-nums font-semibold">{fmt(collected)}</td>
-                      <td className="py-2 text-right text-red-400 tabular-nums">{fmt(out)}</td>
-                    </tr>
-                  );
-                })}
-                {((raw?.classWise ?? []) as any[]).length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="py-10 text-center text-white/25">No class data available</td>
-                  </tr>
-                )}
-              </tbody>
-              {((raw?.classWise ?? []) as any[]).length > 0 && (
-                <tfoot className="border-t border-white/10">
-                  <tr className="text-xs font-bold">
-                    <td className="pt-2 text-white/60">Total</td>
-                    <td className="pt-2 text-right text-white/60 tabular-nums">
-                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.billed), 0))}
-                    </td>
-                    <td className="pt-2 text-right text-emerald-400 tabular-nums">
-                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.collected), 0))}
-                    </td>
-                    <td className="pt-2 text-right text-red-400 tabular-nums">
-                      {fmt((raw?.classWise as any[]).reduce((s: number, r: any) => s + Number(r.outstanding), 0))}
-                    </td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </div>
-
-        {/* Payment Channel Pie */}
-        <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-3">
-          <h3 className="text-white font-semibold text-sm">Payment Channel Split</h3>
-          {channelData.length === 0 ? (
-            <div className="h-52 flex items-center justify-center text-white/25 text-sm">No payment data yet</div>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={channelData} cx="50%" cy="50%" innerRadius={54} outerRadius={80}
-                    dataKey="value" paddingAngle={3} stroke="none">
-                    {channelData.map((_, i) => (
-                      <Cell key={i} fill={CHANNEL_COLORS[i % CHANNEL_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip {...CustomTooltipStyle} formatter={(v: number) => [fmt(v), "Amount"]} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex flex-wrap gap-3 justify-center">
-                {channelData.map((d, i) => {
-                  const total = channelData.reduce((s, c) => s + c.value, 0);
-                  const pct   = total > 0 ? Math.round((d.value / total) * 100) : 0;
-                  return (
-                    <div key={d.name} className="flex items-center gap-1.5 text-xs text-white/60">
-                      <div className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={{ background: CHANNEL_COLORS[i % CHANNEL_COLORS.length] }} />
-                      <span>{d.name}</span>
-                      <span className="text-white/30">{pct}%</span>
-                      <span className="text-white/40 tabular-nums">{fmt(d.value)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* ── Fee Category Breakdown (horizontal bars) ─────────────────── */}
-      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
-        <h3 className="text-white font-semibold text-sm">Fee Category Breakdown</h3>
-        {feeCategories.length === 0 ? (
-          <div className="h-40 flex items-center justify-center text-white/25 text-sm">No fee category data</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={Math.max(160, feeCategories.length * 44)}>
-            <BarChart data={feeCategories} layout="vertical" margin={{ left: 8, right: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
-              <XAxis type="number" tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`}
-                tick={{ fill: "rgba(255,255,255,0.4)", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="fee_type" width={110}
-                tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip {...CustomTooltipStyle}
-                formatter={(v: number, name: string) => [fmt(v), name === "billed" ? "Billed" : "Collected"]} />
-              <Legend formatter={v => v === "billed" ? "Billed" : "Collected"}
-                wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
-              <Bar dataKey="billed"    name="billed"    fill="rgba(255,255,255,0.08)" radius={[0,4,4,0]} />
-              <Bar dataKey="collected" name="collected" fill="#10b981"                radius={[0,4,4,0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* ── AR Aging Analysis ────────────────────────────────────────── */}
-      <div className="rounded-xl border border-white/10 bg-[#1A2942] p-5 space-y-4">
-        <div>
-          <h3 className="text-white font-semibold text-sm">Accounts Receivable Aging</h3>
-          <p className="text-white/40 text-xs">Outstanding balance by days overdue — click any bucket to see which students are responsible</p>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {agingData.map(bucket => (
-            <button
-              key={bucket.key}
-              onClick={() => bucket.count > 0 ? setSelectedBucket(bucket) : undefined}
-              disabled={bucket.count === 0}
-              className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2.5 text-left transition-all duration-150 disabled:opacity-50 disabled:cursor-default enabled:cursor-pointer enabled:hover:bg-black/40 enabled:hover:scale-[1.02] group"
-              style={{ borderColor: `${bucket.color}30` }}
-            >
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${bucket.dot}`} />
-                <span className="text-white/60 text-xs font-semibold leading-none">{bucket.label}</span>
-                {bucket.count > 0 && (
-                  <Users className="w-3 h-3 ml-auto text-white/20 group-hover:text-white/50 transition-colors" />
-                )}
-              </div>
-              <p className="text-white font-black text-xl tabular-nums leading-none">{fmt(bucket.amount)}</p>
-              <div className="flex items-center justify-between">
-                <span className="text-white/30 text-xs">{bucket.count} invoice{bucket.count !== 1 ? "s" : ""}</span>
-                {totalAging > 0 && (
-                  <span className="text-xs font-bold" style={{ color: bucket.color }}>
-                    {Math.round((bucket.amount / totalAging) * 100)}%
-                  </span>
-                )}
-              </div>
-              {totalAging > 0 && (
-                <div className="w-full bg-white/5 rounded-full h-1">
-                  <div className="h-1 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.round((bucket.amount / totalAging) * 100)}%`, background: bucket.color }} />
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <span className="inline-block text-[10px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider"
-                  style={{ color: bucket.color, background: `${bucket.color}22` }}>
-                  {bucket.risk} Risk
-                </span>
-                {bucket.count > 0 && (
-                  <span className="text-[10px] text-white/30 group-hover:text-white/60 transition-colors font-medium">
-                    View →
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-        {totalAging === 0 && (
-          <p className="text-center text-white/25 text-sm py-4">No overdue receivables — all current ✓</p>
-        )}
-      </div>
-
-      {/* ── Aging Defaulters Drawer ───────────────────────────────────── */}
-      <AgingDefaultersDrawer
-        bucket={selectedBucket}
-        onClose={() => setSelectedBucket(null)}
-      />
-
-    </div>
-  );
+    <div><div className="mb-2 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Executive summary</h3><p className="text-[11px] text-white/40">Demand, collections, and receivables at a glance</p></div><DownloadButton section="summary" /></div><div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">{moneyMetric("Billed", "billed", "border-white/10 bg-white/[.03]")}{moneyMetric("Gross collected", "grossCollected", "border-cyan-300/20 bg-cyan-300/[.04]")}{moneyMetric("Refunds", "refunds", "border-amber-300/20 bg-amber-300/[.04]")}{moneyMetric("Net collected", "netCollected", "border-emerald-300/20 bg-emerald-300/[.04]")}{moneyMetric("Outstanding", "outstanding", "border-rose-300/20 bg-rose-300/[.04]")}{<div className="rounded-lg border border-indigo-300/20 bg-indigo-300/[.04] p-3"><div className="text-[10px] uppercase tracking-[.14em] text-white/45">Efficiency</div><div className="mt-1 text-lg font-bold tabular-nums text-white">{Number(s.collectionEfficiency ?? 0)}%</div></div>}{moneyMetric("Online collection", "onlineCollected", "border-cyan-300/20 bg-cyan-300/[.04]")}{moneyMetric("Offline collection", "offlineCollected", "border-amber-300/20 bg-amber-300/[.04]")}{moneyMetric("Overdue amount", "overdueAmount", "border-rose-300/20 bg-rose-300/[.04]")}</div></div>
+    <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]"><Card><div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Collection trend</h3><p className="text-[11px] text-white/40">Server-reported periods; no client-side aggregation</p></div><DownloadButton section="trend" /></div>{data.trend?.length ? <ResponsiveContainer width="100%" height={240}><BarChart data={data.trend}><CartesianGrid stroke="rgba(255,255,255,.06)" vertical={false} /><XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,.5)", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tickFormatter={v => `₹${Math.round(v/1000)}k`} tick={{ fill: "rgba(255,255,255,.4)", fontSize: 10 }} axisLine={false} tickLine={false} width={42} /><Tooltip {...CustomTooltipStyle} formatter={(v: number, n: string) => [fmtMoney(v), n === "billed" ? "Billed" : "Net collected"]} /><Bar dataKey="billed" fill="rgba(255,255,255,.14)" radius={[3,3,0,0]} /><Bar dataKey="netCollected" fill="#2dd4bf" radius={[3,3,0,0]} /></BarChart></ResponsiveContainer> : <div className="flex h-60 items-center justify-center text-sm text-white/35">No trend data for this range.</div>}</Card>
+      <Card><div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Payment channels</h3><p className="text-[11px] text-white/40">Revenue and transaction flow</p></div><DownloadButton section="channels" /></div>{(["online","offline"] as const).map((key, i) => { const c = data[key]; return <div key={key} className={`rounded-lg border p-3 ${i ? "mt-3 border-amber-300/15 bg-amber-300/[.03]" : "border-cyan-300/15 bg-cyan-300/[.03]"}`}><div className="flex justify-between"><span className="text-xs font-semibold">{i ? "Offline" : "Online / Portal"}</span><span className="text-sm font-bold text-emerald-300">{fmtMoney(c?.netCollected)}</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-white/45 sm:grid-cols-4"><span>Gross<br/><b className="text-white/75">{fmtMoney(c?.grossCollected)}</b></span><span>Refunds<br/><b className="text-white/75">{fmtMoney(c?.refunds)}</b></span><span>Transactions<br/><b className="text-white/75">{c?.transactionCount ?? 0}</b></span><span>Average transaction<br/><b className="text-white/75">{fmtMoney(c?.averageTransaction)}</b></span></div><div className="mt-3 flex flex-wrap gap-1.5">{(c?.methods ?? []).map(m => <span key={m.method} className="rounded bg-white/10 px-2 py-1 text-[10px] text-white/70">{m.method} · {m.count}</span>)}</div>{key === "online" && <div className="mt-3 border-t border-white/10 pt-2"><p className="text-[10px] uppercase tracking-wider text-white/35">Portal lifecycle · not revenue</p><div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">{(c?.statuses ?? []).map(st => <span key={st.status} className="text-[10px] text-white/55">{statusLabel(st.status)}: <b className="text-white/80">{st.count}</b></span>)}</div></div>}</div>})}</Card></div>
+    <div className="grid gap-4 lg:grid-cols-2"><Card><div className="mb-3 flex justify-between"><h3 className="text-sm font-semibold">Class performance</h3><DownloadButton section="classes" /></div><div className="overflow-x-auto"><table className="w-full min-w-[520px] text-xs"><thead className="text-[10px] uppercase tracking-wider text-white/35"><tr><th className="pb-2 text-left">Class</th><th className="pb-2 text-right">Billed</th><th className="pb-2 text-right">Collected</th><th className="pb-2 text-right">Refunds</th><th className="pb-2 text-right">Outstanding</th></tr></thead><tbody className="divide-y divide-white/5">{(data.classWise ?? []).map((r, i) => <tr key={String(r.class ?? i)} className="hover:bg-white/[.03]"><td className="py-2">{String(r.class ?? "—")}</td><td className="py-2 text-right tabular-nums text-white/60">{fmtMoney(r.billed)}</td><td className="py-2 text-right tabular-nums text-emerald-300">{fmtMoney(r.grossCollected ?? r.netCollected)}</td><td className="py-2 text-right tabular-nums text-amber-200">{fmtMoney(r.refunds)}</td><td className="py-2 text-right tabular-nums text-rose-300">{fmtMoney(r.outstanding)}</td></tr>)}</tbody></table>{!data.classWise?.length && <p className="py-10 text-center text-xs text-white/35">No class data in this range.</p>}</div></Card>
+      <Card><div className="mb-3 flex justify-between"><h3 className="text-sm font-semibold">Fee categories</h3><DownloadButton section="categories" /></div><div className="space-y-3">{(data.feeCategories ?? []).map((r, i) => <div key={String(r.feeType ?? r.fee_type ?? i)}><div className="flex justify-between text-xs"><span>{String(r.feeType ?? r.fee_type ?? "Unlabelled")}</span><span className="tabular-nums text-emerald-300">{fmtMoney(r.netCollected ?? r.grossCollected)}</span></div><div className="mt-1 grid grid-cols-3 gap-2 text-[10px] text-white/40"><span>Billed {fmtMoney(r.billed)}</span><span>Refunds {fmtMoney(r.refunds)}</span><span>Due {fmtMoney(r.outstanding)}</span></div></div>)}</div>{!data.feeCategories?.length && <p className="py-10 text-center text-xs text-white/35">No category data in this range.</p>}</Card></div>
+    <Card><div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Receivables aging</h3><p className="text-[11px] text-white/40">Select a bucket to inspect responsible students</p></div><DownloadButton section="aging" /></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{agingData.map(b => <button key={b.key} onClick={() => b.count > 0 && setSelectedBucket(b)} disabled={!b.count} className="rounded-lg border p-3 text-left transition-colors hover:bg-white/[.05] disabled:cursor-default disabled:opacity-50" style={{ borderColor: `${b.color}45` }}><div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: b.color }}>{b.label}</div><div className="mt-2 text-lg font-bold tabular-nums">{fmtMoney(b.amount)}</div><div className="mt-1 text-[10px] text-white/40">{b.count} invoices · {b.risk} risk</div></button>)}</div>{agingData.every(b => !b.count) && <p className="py-5 text-center text-xs text-white/35">No overdue receivables in this range.</p>}</Card>
+    <Card><div className="mb-3 flex justify-between"><div><h3 className="text-sm font-semibold">Cash denomination coverage</h3><p className="text-[11px] text-white/40">Documented cash breakdown versus cash collected</p></div><DownloadButton section="cash" /></div>{data.cashDenominations?.cashPaymentCount ? <div className="grid gap-4 md:grid-cols-[1fr_1.5fr]"><div className="grid grid-cols-2 gap-2 text-xs">{[["Cash collected",fmtMoney(data.cashDenominations.cashCollected)],["Cash payments",data.cashDenominations.cashPaymentCount],["With breakdown",data.cashDenominations.withBreakdownCount],["Without breakdown",data.cashDenominations.withoutBreakdownCount]].map(([l,v]) => <div key={String(l)} className="rounded bg-white/[.04] p-2"><span className="block text-[10px] text-white/40">{l}</span><b>{v}</b></div>)}</div><div className="overflow-x-auto"><table className="w-full min-w-[360px] text-xs"><thead className="text-[10px] text-white/40"><tr><th className="text-left">Denomination</th><th className="text-right">Quantity</th><th className="text-right">Documented total</th></tr></thead><tbody>{(data.cashDenominations.denominations ?? []).map(d => <tr key={d.denomination} className="border-t border-white/5"><td className="py-2">₹{d.denomination}</td><td className="py-2 text-right">{d.quantity}</td><td className="py-2 text-right">{fmtMoney(d.total)}</td></tr>)}</tbody></table></div></div> : <div className="rounded-lg border border-dashed border-amber-300/20 bg-amber-300/[.03] p-5 text-center text-xs text-amber-100/70">No cash denomination data is available for this range. Cash may be recorded without a breakdown.</div>}</Card>
+    <AgingDefaultersDrawer bucket={selectedBucket} startDate={data.filter?.startDate} endDate={data.filter?.endDate} onClose={() => setSelectedBucket(null)} />
+    <Card><div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"><div><h3 className="text-sm font-semibold">Monthly report schedule</h3><p className="mt-1 text-xs text-white/40">Send the complete financial report to accounts automatically.</p></div><div className="flex items-center gap-3"><Switch checked={scheduleEnabled} onCheckedChange={setScheduleEnabled} /><span className="text-xs text-white/60">{scheduleEnabled ? "Enabled" : "Disabled"}</span></div></div><div className="mt-4 flex flex-col gap-2 sm:flex-row"><input value={recipientInput} onChange={e => setRecipientInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addRecipient()} placeholder="accounts@school.org" className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs" /><button onClick={addRecipient} className="rounded-md bg-cyan-400/15 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/25">Add recipient</button></div><div className="mt-2 flex flex-wrap gap-2">{recipients.map(email => <button key={email} onClick={() => setRecipients(r => r.filter(x => x !== email))} className="rounded bg-white/10 px-2 py-1 text-[10px] text-white/70 hover:bg-rose-400/20">{email} ×</button>)}</div><div className="mt-4 flex gap-2"><button onClick={saveSchedule} disabled={savingSchedule} className="rounded-md bg-cyan-400 px-3 py-2 text-xs font-bold text-[#082032] hover:bg-cyan-300 disabled:opacity-50">{savingSchedule ? "Saving…" : "Save schedule"}</button><button onClick={sendNow} disabled={sendingNow} className="rounded-md border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/10">{sendingNow ? "Sending…" : "Send now"}</button></div></Card>
+  </div>;
 }
 
 type Tab = "ledger" | "structures" | "reminders" | "external" | "audit" | "analytics";
@@ -7440,7 +6639,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   });
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 max-w-full space-y-5 overflow-x-hidden">
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="p-2.5 rounded-xl bg-cyan-900/30 border border-cyan-700/40">
@@ -7462,7 +6661,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       </div>
 
       {/* Tab nav */}
-      <div className="flex gap-1 p-1 bg-[#1A2942] rounded-xl border border-white/10 overflow-x-auto">
+      <div className="flex min-w-0 max-w-full gap-1 overflow-x-auto rounded-xl border border-white/10 bg-[#1A2942] p-1">
         {TABS.map(({ id, label, Icon }) => {
           const active = activeTab === id;
           return (
@@ -7636,9 +6835,13 @@ function NotificationHistoryModal({ open, onClose, studentId, studentName }: Not
 
 function AgingDefaultersDrawer({
   bucket,
+  startDate,
+  endDate,
   onClose,
 }: {
   bucket: (typeof AGING_BUCKETS)[number] | null;
+  startDate?: string;
+  endDate?: string;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -7653,14 +6856,17 @@ function AgingDefaultersDrawer({
   }, [bucket?.key]);
 
   const { data: students = [], isLoading } = useQuery<AgingStudent[]>({
-    queryKey: ["/api/fees/analytics/aging-students", bucket?.key],
+    queryKey: ["/api/fees/analytics/aging-students", bucket?.key, startDate, endDate],
     queryFn: async () => {
       if (!bucket) return [];
-      const r = await sessionFetch(`/api/fees/analytics/aging-students?bucket=${encodeURIComponent(bucket.key)}`);
+      const params = new URLSearchParams({ bucket: bucket.key });
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+      const r = await sessionFetch(`/api/fees/analytics/aging-students?${params.toString()}`);
       if (!r.ok) throw new Error("Failed to load defaulters");
       return r.json();
     },
-    enabled: !!bucket,
+    enabled: !!bucket && !!startDate && !!endDate,
     staleTime: 30_000,
   });
 

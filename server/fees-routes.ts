@@ -43,6 +43,17 @@ import { renderInvoiceDocument } from "./invoice-document";
 import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
 import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import { renderInvoicePdf } from "./invoice-pdf";
+import {
+  buildFinancialAnalytics,
+  isValidDate,
+  daysBetween,
+  todayIST,
+  type FinancialPreset,
+} from "./financial-analytics-data";
+import {
+  renderFinancialAnalyticsPdf,
+  type ReportSection,
+} from "./financial-analytics-pdf";
 
 import { renderLedgerPdf, type LedgerRow } from "./ledger-pdf";
 import { renderTransactionPdf } from "./transaction-pdf";
@@ -569,199 +580,172 @@ export function registerFeesRoutes(app: Express) {
     res.json(summary);
   });
 
+  // ── Financial Analytics — canonical service integration ──────────────────
+  // Preset + custom-range query validation shared by the JSON and PDF routes.
+  const ANALYTICS_PRESETS: readonly FinancialPreset[] = [
+    "today", "this_week", "this_month", "academic_year", "custom",
+  ] as const;
+
+  /** A single scalar query param, or null if absent. Arrays are rejected. */
+  function scalarQueryParam(value: unknown): string | null | undefined {
+    if (value === undefined || value === null) return null;
+    if (Array.isArray(value)) return undefined; // signal "reject: array"
+    if (typeof value !== "string") return undefined; // reject non-scalar
+    return value;
+  }
+
+  /**
+   * Validates the analytics request: resolves the school + selected session and
+   * parses/validates the preset and custom date range. Returns either a
+   * `{ ok: true, ... }` payload of validated build inputs, or `{ ok: false }`
+   * with a status/message the caller should send. Date params on non-custom
+   * presets are ignored (not rejected).
+   */
+  async function resolveAnalyticsRequest(req: any): Promise<
+    | { ok: true; schoolId: number; sessionId: number; preset: FinancialPreset; customStart?: string; customEnd?: string }
+    | { ok: false; status: number; message: string }
+  > {
+    const schoolId = req.session.schoolId as number;
+    const viewSessionId: number | null = req.viewSessionId ?? null;
+    const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (!sessionId) {
+      return { ok: false, status: 409, message: "No academic session selected or active. Select a session before viewing financial analytics." };
+    }
+
+    const rawPreset = req.query.preset;
+    if (Array.isArray(rawPreset)) {
+      return { ok: false, status: 400, message: "preset must be a single value." };
+    }
+    const preset: FinancialPreset = rawPreset === undefined || rawPreset === null || rawPreset === ""
+      ? "academic_year"
+      : (rawPreset as FinancialPreset);
+    if (!ANALYTICS_PRESETS.includes(preset)) {
+      return { ok: false, status: 400, message: `preset must be one of: ${ANALYTICS_PRESETS.join(", ")}.` };
+    }
+
+    if (preset !== "custom") {
+      // Date params are ignored on non-custom presets.
+      return { ok: true, schoolId, sessionId, preset };
+    }
+
+    const startDate = scalarQueryParam(req.query.startDate);
+    const endDate = scalarQueryParam(req.query.endDate);
+    if (startDate === undefined || endDate === undefined) {
+      return { ok: false, status: 400, message: "startDate and endDate must be single YYYY-MM-DD values." };
+    }
+    if (!startDate || !endDate) {
+      return { ok: false, status: 400, message: "startDate and endDate are required for the custom preset." };
+    }
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
+      return { ok: false, status: 400, message: "startDate and endDate must be valid YYYY-MM-DD calendar dates." };
+    }
+    if (startDate > endDate) {
+      return { ok: false, status: 400, message: "startDate must be on or before endDate." };
+    }
+    return { ok: true, schoolId, sessionId, preset, customStart: startDate, customEnd: endDate };
+  }
+
+  /**
+   * Maps a buildFinancialAnalytics error to an HTTP status. Session ownership
+   * misses → 404; known filter/date validation → 400; everything else → 500
+   * (logged server-side, sanitized to the client).
+   */
+  function analyticsErrorResponse(err: any, res: any): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/not found for school/i.test(msg)) {
+      res.status(404).json({ message: "Selected session not found for this school." });
+      return;
+    }
+    if (
+      /required for custom preset/i.test(msg) ||
+      /Invalid date format/i.test(msg) ||
+      /must be <=/i.test(msg) ||
+      /may not exceed 5 years/i.test(msg)
+    ) {
+      res.status(400).json({ message: msg });
+      return;
+    }
+    console.error("[fees/analytics]", err);
+    res.status(500).json({ message: "Failed to build financial analytics." });
+  }
+
   // ── GET /api/fees/analytics ──────────────────────────────────────────────
   app.get("/api/fees/analytics", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const resolved = await resolveAnalyticsRequest(req);
+    if (!resolved.ok) {
+      return res.status(resolved.status).json({ message: resolved.message });
+    }
+    try {
+      const data = await buildFinancialAnalytics({
+        schoolId: resolved.schoolId,
+        sessionId: resolved.sessionId,
+        preset: resolved.preset,
+        customStart: resolved.customStart,
+        customEnd: resolved.customEnd,
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json(data);
+    } catch (err: any) {
+      analyticsErrorResponse(err, res);
+    }
+  });
 
-    // ── Fetch session boundaries first — used for time-series date range ──
-    let sessionInfo: { startDate: string; endDate: string; sessionName: string } | null = null;
-    if (sessionId) {
-      const sesRow = await db.execute(sql`
-        SELECT start_date, end_date, session_name
-        FROM academic_sessions WHERE id = ${sessionId} LIMIT 1
-      `);
-      const s = sesRow.rows[0] as any;
-      if (s) {
-        sessionInfo = {
-          startDate:   String(s.start_date).slice(0, 10),
-          endDate:     String(s.end_date).slice(0, 10),
-          sessionName: String(s.session_name),
-        };
-      }
+  // ── GET /api/fees/analytics/pdf ──────────────────────────────────────────
+  const ANALYTICS_SECTIONS: readonly ReportSection[] = [
+    "complete", "summary", "trend", "channels", "classes", "categories", "aging", "cash",
+  ] as const;
+
+  app.get("/api/fees/analytics/pdf", async (req, res) => {
+    if (!adminGuard(req, res)) return;
+    const resolved = await resolveAnalyticsRequest(req);
+    if (!resolved.ok) {
+      return res.status(resolved.status).json({ message: resolved.message });
     }
 
-    // NOTE: We do NOT filter the time-series by received_date/due_date against
-    // the session's date boundaries. Payments can legitimately arrive before a
-    // session's official start (advance payments, test data, admin backdating).
-    // Session scoping is already enforced by the fee_record join (sfFR / sfFR2).
-    // Without a session we fall back to a 36-month rolling window so the query
-    // stays bounded even across all-school unscoped calls.
-    const tsDateMC = sessionId
-      ? sql``
-      : sql` AND pr.received_date::date >= CURRENT_DATE - INTERVAL '36 months'`;
-    const tsDateMB = sessionId
-      ? sql``
-      : sql` AND fr.due_date::date >= CURRENT_DATE - INTERVAL '36 months'`;
-
-    // Session filter on fee_records (fr alias)
-    const sfFR  = sessionId ? sql` AND fr.session_id  = ${sessionId}` : sql``;
-    // Session filter on fee_records (fr2 alias) — used in payment joins
-    const sfFR2 = sessionId ? sql` AND fr2.session_id = ${sessionId}` : sql``;
-
-    // Shared sub-query: payments aggregated per fee record (all sessions —
-    // outer query controls session scope via fee_records filter).
-    const paidSub = (sid: number) => sql`
-      SELECT fee_record_id,
-        SUM(amount)::int       AS paid,
-        SUM(late_fee_paid)::int AS late_fees
-      FROM payment_records
-      WHERE school_id = ${sid} AND fee_record_id IS NOT NULL
-      GROUP BY fee_record_id`;
+    const rawSection = req.query.section;
+    if (Array.isArray(rawSection)) {
+      return res.status(400).json({ message: "section must be a single value." });
+    }
+    const section: ReportSection = rawSection === undefined || rawSection === null || rawSection === ""
+      ? "complete"
+      : (rawSection as ReportSection);
+    if (!ANALYTICS_SECTIONS.includes(section)) {
+      return res.status(400).json({ message: `section must be one of: ${ANALYTICS_SECTIONS.join(", ")}.` });
+    }
 
     try {
-      const [billedRow, payRow, outRow, tsRow, cwRow, chRow, catRow, agRow] = await Promise.all([
-        // ── 1a. Gross billed (base + accrued late fees) ───────────────────
-        db.execute(sql`
-          SELECT COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int AS gross_billed
-          FROM fee_records fr
-          WHERE fr.school_id = ${schoolId}${sfFR}
-        `),
-        // ── 1b. Payment totals — filter by fee_record's session, NOT by
-        //        the session stamped on the payment row (which can be wrong
-        //        when simulate-pay stamps the active session on old records).
-        db.execute(sql`
-          SELECT
-            COALESCE(SUM(p.paid),      0)::int AS total_collected,
-            COALESCE(SUM(p.late_fees), 0)::int AS total_late_fees
-          FROM fee_records fr
-          JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId}${sfFR}
-        `),
-        // ── 1c. Outstanding ───────────────────────────────────────────────
-        db.execute(sql`
-          SELECT COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid,0), 0)), 0)::int AS outstanding
-          FROM fee_records fr
-          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId}
-            AND fr.status IN ('Due','Overdue')${sfFR}
-        `),
-        // ── 2. Time-series — bounded by session start/end dates so every
-        //        school's full academic year is always covered regardless of
-        //        when the query runs. Client slices/aggregates for each view.
-        db.execute(sql`
-          WITH mc AS (
-            SELECT DATE_TRUNC('month', pr.received_date::date) AS pd,
-                   COALESCE(SUM(pr.amount), 0)::int AS collected
-            FROM payment_records pr
-            JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
-            WHERE pr.school_id = ${schoolId}
-              AND pr.received_date IS NOT NULL
-              ${tsDateMC}
-              AND fr2.school_id = ${schoolId}${sfFR2}
-            GROUP BY pd
-          ),
-          mb AS (
-            SELECT DATE_TRUNC('month', fr.due_date::date) AS pd,
-                   COALESCE(SUM(fr.amount), 0)::int AS billed
-            FROM fee_records fr
-            WHERE fr.school_id = ${schoolId}
-              AND fr.due_date IS NOT NULL
-              ${tsDateMB}
-              ${sfFR}
-            GROUP BY pd
-          )
-          SELECT
-            TO_CHAR(COALESCE(mc.pd, mb.pd), 'Mon ''YY') AS period,
-            COALESCE(mc.pd, mb.pd)                        AS period_date,
-            COALESCE(mc.collected, 0)                     AS collected,
-            COALESCE(mb.billed, 0)                        AS billed
-          FROM mc FULL OUTER JOIN mb ON mc.pd = mb.pd
-          ORDER BY period_date ASC
-        `),
-        // ── 3. Class-wise breakdown — outstanding includes late_fee_amount
-        db.execute(sql`
-          SELECT s.class,
-            COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int                                          AS billed,
-            COALESCE(SUM(COALESCE(p.paid, 0)), 0)::int                                                     AS collected,
-            COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)), 0)::int       AS outstanding
-          FROM fee_records fr
-          JOIN students s ON s.id = fr.student_id
-          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId}${sfFR}
-          GROUP BY s.class
-          ORDER BY CASE WHEN s.class ~ '^[0-9]+$' THEN s.class::int ELSE 999 END, s.class
-        `),
-        // ── 4. Payment channel — session-scoped via fee_record join
-        db.execute(sql`
-          SELECT pr.payment_method,
-            COUNT(*)::int                   AS count,
-            COALESCE(SUM(pr.amount), 0)::int AS amount
-          FROM payment_records pr
-          JOIN fee_records fr2 ON fr2.id = pr.fee_record_id
-          WHERE pr.school_id = ${schoolId}
-            AND fr2.school_id = ${schoolId}${sfFR2}
-          GROUP BY pr.payment_method
-          ORDER BY amount DESC
-        `),
-        // ── 5. Fee category ───────────────────────────────────────────────
-        db.execute(sql`
-          SELECT fr.fee_type,
-            COALESCE(SUM(fr.amount + fr.late_fee_amount), 0)::int AS billed,
-            COALESCE(SUM(COALESCE(p.paid, 0)), 0)::int            AS collected
-          FROM fee_records fr
-          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId}${sfFR}
-          GROUP BY fr.fee_type ORDER BY billed DESC LIMIT 10
-        `),
-        // ── 6. AR Aging ───────────────────────────────────────────────────
-        db.execute(sql`
-          SELECT
-            CASE
-              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 1  AND 30 THEN '1-30'
-              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 31 AND 60 THEN '31-60'
-              WHEN CURRENT_DATE - fr.due_date::date BETWEEN 61 AND 90 THEN '61-90'
-              WHEN CURRENT_DATE - fr.due_date::date > 90              THEN '90+'
-            END AS bucket,
-            COUNT(*)::int AS count,
-            COALESCE(SUM(GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)), 0)::int AS amount
-          FROM fee_records fr
-          LEFT JOIN (${paidSub(schoolId)}) p ON p.fee_record_id = fr.id
-          WHERE fr.school_id = ${schoolId}
-            AND fr.status IN ('Due','Overdue')
-            AND fr.due_date IS NOT NULL
-            AND CURRENT_DATE > fr.due_date::date
-            ${sfFR}
-          GROUP BY bucket
-        `),
-      ]);
-
-      const grossBilled        = Number(billedRow.rows[0]?.gross_billed     ?? 0);
-      const netCollected       = Number(payRow.rows[0]?.total_collected      ?? 0);
-      const totalLatePenalties = Number(payRow.rows[0]?.total_late_fees      ?? 0);
-      const outstanding        = Number(outRow.rows[0]?.outstanding          ?? 0);
-      // Cap at 100 % — over-collection (advance payments) shows as 100 %
-      const collectionRate     = grossBilled > 0
-        ? Math.min(100, Math.round((netCollected / grossBilled) * 100))
-        : 0;
-
-      res.json({
-        sessionInfo,
-        summary: { grossBilled, netCollected, outstanding, collectionRate, totalDiscounts: 0, totalLatePenalties },
-        timeSeries:      tsRow.rows,
-        classWise:       cwRow.rows,
-        paymentChannels: chRow.rows.map((r: any) => ({
-          ...r,
-          payment_method: normalizePaymentMethod(r.payment_method) ?? r.payment_method,
-        })),
-        feeCategories:   catRow.rows,
-        aging:           agRow.rows,
+      const data = await buildFinancialAnalytics({
+        schoolId: resolved.schoolId,
+        sessionId: resolved.sessionId,
+        preset: resolved.preset,
+        customStart: resolved.customStart,
+        customEnd: resolved.customEnd,
       });
+
+      // Tenant-scoped school name lookup.
+      const [schoolRow] = await db
+        .select({ name: schools.name })
+        .from(schools)
+        .where(eq(schools.id, resolved.schoolId))
+        .limit(1);
+      const schoolName = schoolRow?.name ?? "School";
+
+      const pdf = await renderFinancialAnalyticsPdf({
+        data,
+        school: { name: schoolName },
+        section,
+      });
+
+      const safeSlug = (s: string) => s.replace(/[^0-9A-Za-z._-]+/g, "_");
+      const filename = `financial-analytics-${safeSlug(data.filter.startDate)}-${safeSlug(data.filter.endDate)}-${safeSlug(section)}.pdf`;
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(pdf);
     } catch (err: any) {
-      console.error("[fees/analytics]", err);
-      res.status(500).json({ message: String(err) });
+      analyticsErrorResponse(err, res);
     }
   });
 
@@ -5903,55 +5887,113 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/fees/analytics/aging-students", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const bucket = req.query.bucket as string;
 
+    const bucket = req.query.bucket;
     const allowed = ["1-30", "31-60", "61-90", "90+"];
-    if (!bucket || !allowed.includes(bucket)) {
+    if (typeof bucket !== "string" || !allowed.includes(bucket)) {
       return res.status(400).json({ message: "bucket must be one of: 1-30, 31-60, 61-90, 90+" });
     }
 
+    // ── Scalar date-range validation (matches canonical custom-range rules) ──
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
+    if (typeof startDate !== "string" || typeof endDate !== "string") {
+      return res.status(400).json({ message: "startDate and endDate must be single YYYY-MM-DD values." });
+    }
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
+      return res.status(400).json({ message: "startDate and endDate must be valid YYYY-MM-DD calendar dates." });
+    }
+    if (startDate > endDate) {
+      return res.status(400).json({ message: "startDate must be on or before endDate." });
+    }
+    // Max five years (inclusive day count), mirroring the canonical service.
+    if (daysBetween(startDate, endDate) + 1 > 5 * 366) {
+      return res.status(400).json({ message: "Date range may not exceed 5 years." });
+    }
+
+    // ── Require a selected/active session; validate tenant ownership ─────────
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
-    const sfFR = sessionId ? sql` AND fr.session_id = ${sessionId}` : sql``;
+    if (!sessionId) {
+      return res.status(409).json({ message: "No academic session selected or active." });
+    }
 
+    const today = todayIST(); // IST calendar date, matches canonical overdue basis
+
+    // Bucket → days-overdue window, relative to `today` (IST), not DB CURRENT_DATE.
     let bucketCondition: ReturnType<typeof sql>;
-    if (bucket === "1-30")  bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 1 AND 30`;
-    else if (bucket === "31-60") bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 31 AND 60`;
-    else if (bucket === "61-90") bucketCondition = sql`CURRENT_DATE - fr.due_date::date BETWEEN 61 AND 90`;
-    else                         bucketCondition = sql`CURRENT_DATE - fr.due_date::date > 90`;
+    if (bucket === "1-30")       bucketCondition = sql`(${today}::date - fr.due_date::date) BETWEEN 1 AND 30`;
+    else if (bucket === "31-60") bucketCondition = sql`(${today}::date - fr.due_date::date) BETWEEN 31 AND 60`;
+    else if (bucket === "61-90") bucketCondition = sql`(${today}::date - fr.due_date::date) BETWEEN 61 AND 90`;
+    else                         bucketCondition = sql`(${today}::date - fr.due_date::date) > 90`;
 
     try {
+      // Validate session ownership; every query is constrained through
+      // session_id + school_id below regardless.
+      const sesRow = await db.execute(sql`
+        SELECT id FROM academic_sessions
+        WHERE id = ${sessionId} AND school_id = ${schoolId} LIMIT 1
+      `);
+      if (sesRow.rows.length === 0) {
+        return res.status(404).json({ message: "Selected session not found for this school." });
+      }
+
+      // Canonical aging population:
+      //  - fee_records whose due_date is within [startDate, endDate], selected
+      //    session, selected school
+      //  - lifetime successful payments (school-scoped subquery)
+      //  - lifetime processed refunds added back into the unpaid balance
+      //  - overdue relative to `today` (IST); no reliance on fr.status
+      //  - outstanding = GREATEST(billed - lifetime_paid + lifetime_refunds, 0)
       const result = await db.execute(sql`
         SELECT
-          fr.id                                                                          AS fee_record_id,
+          fr.id                                                                       AS fee_record_id,
           fr.student_id,
-          s.name                                                                         AS student_name,
+          s.name                                                                      AS student_name,
           s.class,
           s.section,
           fr.fee_type,
           fr.due_date,
-          GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0), 0)::int        AS amount,
-          (CURRENT_DATE - fr.due_date::date)::int                                       AS days_overdue
+          GREATEST(
+            fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0) + COALESCE(rf.refunded, 0),
+            0
+          )::int                                                                      AS amount,
+          (${today}::date - fr.due_date::date)::int                                   AS days_overdue
         FROM fee_records fr
-        JOIN students s ON s.id = fr.student_id
+        JOIN students s ON s.id = fr.student_id AND s.school_id = ${schoolId}
         LEFT JOIN (
           SELECT fee_record_id, SUM(amount)::int AS paid
           FROM payment_records
           WHERE school_id = ${schoolId} AND fee_record_id IS NOT NULL
           GROUP BY fee_record_id
         ) p ON p.fee_record_id = fr.id
+        LEFT JOIN (
+          SELECT fee_record_id,
+                 (SUM(COALESCE(processed_amount_paise, requested_amount_paise)) / 100.0) AS refunded
+          FROM refunds
+          WHERE school_id = ${schoolId}
+            AND local_status = 'processed'
+            AND fee_record_id IS NOT NULL
+          GROUP BY fee_record_id
+        ) rf ON rf.fee_record_id = fr.id
         WHERE fr.school_id = ${schoolId}
-          AND fr.status IN ('Due', 'Overdue')
+          AND fr.session_id = ${sessionId}
           AND fr.due_date IS NOT NULL
+          AND fr.due_date >= ${startDate}
+          AND fr.due_date <= ${endDate}
+          AND fr.due_date::date < ${today}::date
           AND ${bucketCondition}
-          ${sfFR}
+          AND GREATEST(
+                fr.amount + fr.late_fee_amount - COALESCE(p.paid, 0) + COALESCE(rf.refunded, 0),
+                0
+              ) > 0
         ORDER BY amount DESC
         LIMIT 200
       `);
       res.json(result.rows);
     } catch (err: any) {
       console.error("[fees/aging-students]", err);
-      res.status(500).json({ message: String(err) });
+      res.status(500).json({ message: "Failed to load aging defaulters." });
     }
   });
 
