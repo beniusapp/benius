@@ -1,0 +1,257 @@
+I want a final, extremely strict accuracy verification of Financial Analytics.
+
+My requirement is that every financial number shown in:
+
+1. Financial Analytics dashboard
+2. Financial Analytics API
+3. Financial Analytics PDF
+
+must be 100% consistent with the authoritative underlying financial records.
+
+Do NOT simply test that the analytics code returns what its own calculation function expects.
+
+Build an INDEPENDENT reconciliation/oracle for testing.
+
+1. Independent financial reconciliation
+
+Read the authoritative database records directly and independently calculate the expected values for:
+
+- Gross Collected
+- Online/Portal Payments
+- Offline Payments
+- Cash
+- UPI/QR
+- Cheque
+- Bank Transfer
+- Other offline methods
+- Invoice/billed amounts
+- Outstanding/due amounts
+- Overdue amounts
+- Payment counts
+- Invoice counts
+- Refund amounts, if applicable
+- Payment Channel Split
+- Fee Category breakdown
+- Class/section breakdown
+- Aging buckets
+- Cash denomination breakdown
+- Trends
+- Any other number displayed in Financial Analytics
+
+The independent oracle MUST NOT import or reuse the production Financial Analytics calculation functions.
+
+Otherwise the same bug could exist in both the calculation and the test.
+
+2. Verify every supported date range
+
+Run the reconciliation independently for:
+
+- Today
+- This Week
+- This Month
+- Current Academic Session
+- Custom Date Range
+
+Also test exact boundaries:
+
+- 00:00:00 IST
+- 23:59:59 IST
+- Previous day
+- Next day
+- Month boundary
+- Year boundary
+- Academic-session boundary
+
+All date filtering must follow Asia/Kolkata (IST).
+
+3. Verify payment channels
+
+For every supported period, independently calculate:
+
+Total collected
+
+Online/Portal collected
++
+Offline collected
+
+Then verify every individual offline method separately.
+
+For example:
+
+Cash today must independently equal the sum of today's qualifying cash payments.
+
+If Cash Denomination is supported, verify:
+
+₹500 count × ₹500
++
+₹200 count × ₹200
++
+₹100 count × ₹100
++
+etc.
+
+must exactly equal the reported cash amount.
+
+4. Verify payment lifecycle rules
+
+Explicitly verify that:
+
+- Failed payments are not counted as collected money.
+- Cancelled payments are not counted as collected money.
+- Duplicate payment attempts are not double-counted.
+- Successful payments are counted exactly once.
+- Only the correct payment lifecycle state contributes to collection.
+- Refunds are handled according to the application's defined accounting policy.
+- Online and offline payments are never accidentally mixed.
+- Payments from another school/tenant are never included.
+- Payments outside the selected date range are never included.
+
+5. API verification
+
+For every tested range:
+
+Calculate the expected result independently from the database.
+
+Then call the real authenticated Financial Analytics API.
+
+Compare EVERY numeric field, count, percentage, date range, channel value, category value, aging value and trend value.
+
+Do not only compare the headline cards.
+
+The test must fail if even one value differs.
+
+6. UI verification
+
+For each range:
+
+- Today
+- Week
+- Month
+- Academic Session
+- Custom
+
+compare the numbers displayed on the actual Financial Analytics screen against the authenticated API response.
+
+Verify every card, table, breakdown and chart.
+
+7. PDF verification
+
+This is extremely important.
+
+For every supported range:
+
+1. Generate the actual production Financial Analytics PDF.
+2. Extract/read the PDF content.
+3. Compare EVERY financial value in the PDF against the independently calculated expected values.
+4. Compare the PDF against the authenticated API response.
+5. Verify:
+   - Gross collected
+   - Online
+   - Offline
+   - Cash
+   - Payment methods
+   - Counts
+   - Categories
+   - Classes
+   - Aging
+   - Trends
+   - Percentages
+   - Date range
+   - Academic session
+   - Any other displayed financial number
+
+Do not verify only that the PDF successfully downloads.
+
+The PDF's actual numbers must be reconciled.
+
+8. Deliberately create test data
+
+Create isolated temporary test data containing known values for:
+
+- Online payment
+- Cash payment
+- Other offline methods
+- Failed payment
+- Cancelled payment
+- Multiple invoices
+- Multiple payments
+- Refund scenario if supported
+- Payments exactly at midnight IST
+- Payments exactly at the end of the day
+- Payments just outside the selected range
+- Another academic session
+- Another school/tenant
+
+Then independently calculate the expected results and compare them through the entire pipeline.
+
+The test data must be isolated and completely removed afterward.
+
+9. Tenant isolation
+
+Verify that School A's Financial Analytics can NEVER include:
+
+- School B payments
+- School B invoices
+- School B refunds
+- School B students
+- School B financial records
+
+Test this explicitly.
+
+10. No timezone ambiguity
+
+The entire Fees & Payments Financial Analytics pipeline must use the application's established IST authority.
+
+Verify that the same result is produced regardless of the server/browser machine timezone.
+
+Test under:
+
+- UTC
+- Asia/Kolkata
+- America/Los_Angeles
+- UTC+14
+
+The financial result must remain correct according to IST business dates.
+
+11. Final acceptance requirement
+
+Do NOT tell me "the analytics look correct."
+
+Give me a formal reconciliation report containing:
+
+- Number of ranges tested
+- Number of financial fields tested
+- Number of database records included
+- Number of database records excluded
+- Online total
+- Offline total
+- Gross total
+- Every payment-channel total
+- Every breakdown total
+- Every PDF section verified
+- Number of API-vs-oracle mismatches
+- Number of UI-vs-API mismatches
+- Number of PDF-vs-API mismatches
+- Number of tenant-isolation failures
+- Number of timezone failures
+- Number of boundary-date failures
+
+Expected result:
+
+DATABASE → INDEPENDENT ORACLE → API → UI → PDF
+
+must reconcile with ZERO unexplained differences.
+
+If ANY mismatch is found, DO NOT mark the task complete.
+
+Find the root cause, fix it, and rerun the complete reconciliation.
+
+Do not make unrelated UI or architectural changes.
+
+At the end, clearly report:
+
+PASS / FAIL
+
+and explain exactly what was independently verified.
+
+I want evidence-based verification, not an assumption that the numbers are correct.

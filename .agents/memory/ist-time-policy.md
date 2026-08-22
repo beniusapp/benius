@@ -14,3 +14,9 @@ Raw Drizzle queries can serialize PostgreSQL `TIMESTAMPTZ` values with shortened
 **Why:** Replacing the database string's space with `T` while retaining a shortened offset produces an invalid JavaScript date even though the persisted timestamp is valid.
 
 **How to apply:** Normalize shortened offsets centrally before constructing a `Date`; preserve full offsets, `Z`, `Date` instances, and the existing UTC convention for timezone-free persisted timestamps.
+
+`payment_records.created_at` is a UTC-naive PostgreSQL timestamp used for IST hourly financial trends. Application database connections must set their session timezone to UTC, and controlled fixtures must write explicit UTC-naive timestamp strings rather than JavaScript `Date` values.
+
+**Why:** A naïve timestamp serialized from a `Date` adopts the Node host timezone. If it is then interpreted as UTC by the IST analytics query, hourly payment trends shift even though totals remain unchanged.
+
+**How to apply:** Let normal payment inserts use the UTC-pinned database default. For direct writes, convert the intended instant to a UTC wall-clock timestamp before storage; derive analytics buckets in SQL as UTC → Asia/Kolkata, never by re-parsing the naïve value in JavaScript.

@@ -118,7 +118,7 @@ type RawPayment = {
   razorpay_payment_id: string | null;
   payment_mode: string | null;
   received_date: string;
-  created_at: string;
+  created_hour_ist: number;
   denomination_breakdown: Record<string, unknown> | null;
 };
 
@@ -126,6 +126,9 @@ type IndependentLedger = {
   summary: FinancialAnalyticsResult["summary"];
   online: Pick<FinancialAnalyticsResult["online"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
   offline: Pick<FinancialAnalyticsResult["offline"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
+  onlineMethods: FinancialAnalyticsResult["online"]["methods"];
+  offlineMethods: FinancialAnalyticsResult["offline"]["methods"];
+  offlineStatuses: Record<string, { count: number; amount: number }>;
   paymentChannelSplit: FinancialAnalyticsResult["paymentChannelSplit"];
   classWise: FinancialAnalyticsResult["classWise"];
   feeCategories: FinancialAnalyticsResult["feeCategories"];
@@ -142,6 +145,10 @@ function uid(): string {
 
 function istInstant(date: string, time = "12:00:00"): string {
   return new Date(`${date}T${time}+05:30`).toISOString();
+}
+
+function utcNaiveTimestamp(instant: string): string {
+  return new Date(instant).toISOString().slice(0, 19).replace("T", " ");
 }
 
 function auditTodayIST(): string {
@@ -243,6 +250,16 @@ function startOfWeek(date: string): string {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function countNumericLeaves(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return 1;
+  if (Array.isArray(value)) return value.reduce((count, item) => count + countNumericLeaves(item), 0);
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>)
+      .reduce((count, item) => count + countNumericLeaves(item), 0);
+  }
+  return 0;
 }
 
 function pct(value: number, billed: number): number | null {
@@ -394,7 +411,10 @@ async function createFixture(): Promise<Fixture> {
       paymentMode: input.mode,
       gatewayStatus: input.rzp ? "captured" : undefined,
       denominationBreakdown: input.denomination,
-      createdAt: new Date(istInstant(input.date, input.hour ?? "12:00:00")),
+      // payment_records.created_at stores a UTC-naive wall-clock timestamp.
+      // Avoid process-local Date serialization so this fixture stays identical
+      // when the test process runs outside UTC.
+      createdAt: sql`${utcNaiveTimestamp(istInstant(input.date, input.hour ?? "12:00:00"))}::timestamp`,
     }).returning();
     return row;
   }
@@ -473,6 +493,8 @@ async function createFixture(): Promise<Fixture> {
   await attempt("cancelled", "cancelled", `pay_far_${marker}_cancelled`, 7_000, istInstant(today, "12:20:00"));
   await attempt("pending", "pending", null, 8_000, istInstant(today, "12:30:00"));
   await attempt("authorized", "authorized", `pay_far_${marker}_authorized`, 9_000, istInstant(today, "12:40:00"));
+  await attempt("refunded", "refunded", `pay_far_${marker}_refunded`, 4_000, istInstant(today, "12:45:00"));
+  await attempt("partially_refunded", "partially-refunded", `pay_far_${marker}_partial_refund`, 2_500, istInstant(today, "12:46:00"));
   await attempt(
     "failed",
     "failed-outside-today",
@@ -601,11 +623,10 @@ function groupedRows(
   }));
 }
 
-function trendKey(preset: FinancialPreset, startDate: string, endDate: string, date: string, createdAt?: string): string {
+function trendKey(preset: FinancialPreset, startDate: string, endDate: string, date: string, createdHourIST?: number): string {
   if (preset === "today") {
-    if (!createdAt) return "00";
-    const instant = new Date(createdAt);
-    return String(new Date(instant.getTime() + 330 * 60_000).getUTCHours()).padStart(2, "0");
+    if (!Number.isInteger(createdHourIST)) return "00";
+    return String(createdHourIST).padStart(2, "0");
   }
   if (preset === "academic_year" || auditDaysBetween(startDate, endDate) + 1 > 62) return date.slice(0, 7);
   return date;
@@ -658,7 +679,9 @@ async function independentLedger(
       pr.razorpay_payment_id,
       pr.payment_mode,
       to_char(pr.received_date, 'YYYY-MM-DD') AS received_date,
-      pr.created_at,
+       EXTRACT(HOUR FROM
+         (pr.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
+       )::int AS created_hour_ist,
       pr.denomination_breakdown
     FROM payment_records pr
     JOIN fee_records fr ON fr.id = pr.fee_record_id
@@ -674,7 +697,7 @@ async function independentLedger(
     id: Number(row.id),
     amount: Number(row.amount),
     late_fee_paid: Number(row.late_fee_paid),
-    created_at: new Date(row.created_at).toISOString(),
+    created_hour_ist: Number(row.created_hour_ist),
   }));
 
   const billed = invoices.reduce((sum, row) => sum + row.amount + row.late_fee_amount, 0);
@@ -720,6 +743,24 @@ async function independentLedger(
       }))
       .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method)),
   } satisfies FinancialAnalyticsResult["paymentChannelSplit"];
+  const methodRows = (rows: RawPayment[]) => {
+    const methods = new Map<string, { count: number; amount: number }>();
+    for (const row of rows) {
+      const method = auditChannelMethod(row);
+      const current = methods.get(method) ?? { count: 0, amount: 0 };
+      current.count += 1;
+      current.amount += row.amount;
+      methods.set(method, current);
+    }
+    return [...methods.entries()]
+      .map(([method, value]) => ({ method, ...value }))
+      .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
+  };
+  const onlineMethods = methodRows(onlinePayments);
+  const offlineMethods = methodRows(offlinePayments);
+  const offlineStatuses = Object.fromEntries(
+    offlineMethods.map((row) => [row.method, { count: row.count, amount: row.amount }]),
+  );
 
   const cashRows = payments.filter((row) => row.payment_method.trim().toLowerCase() === "cash");
   const denominationMap = new Map<number, number>();
@@ -766,7 +807,7 @@ async function independentLedger(
     trend(key).billed += row.amount + row.late_fee_amount;
   }
   for (const row of payments) {
-    const key = trendKey(preset, startDate, endDate, row.received_date, row.created_at);
+    const key = trendKey(preset, startDate, endDate, row.received_date, row.created_hour_ist);
     trend(key).grossCollected += row.amount;
   }
   for (const value of trendByKey.values()) value.netCollected = value.grossCollected;
@@ -786,6 +827,9 @@ async function independentLedger(
     },
     online: channel(onlinePayments),
     offline: channel(offlinePayments),
+    onlineMethods,
+    offlineMethods,
+    offlineStatuses,
     paymentChannelSplit,
     classWise: groupedRows(invoices, payments, "student_class") as FinancialAnalyticsResult["classWise"],
     feeCategories: groupedRows(invoices, payments, "fee_type") as FinancialAnalyticsResult["feeCategories"],
@@ -804,6 +848,107 @@ async function independentLedger(
     sourceCounts: { invoices: invoices.length, payments: payments.length },
     paymentInvoiceNumbers: [...new Set(payments.map((row) => row.invoice_number))].sort(),
   };
+}
+
+/**
+ * Independently derives portal lifecycle status totals from raw attempt rows.
+ * These operational values must never alter the payment_records collection
+ * authority checked by the ledger oracle.
+ */
+async function independentPortalLifecycle(
+  fixture: Fixture,
+  startDate: string,
+  endDate: string,
+): Promise<Record<string, { count: number; amount: number }>> {
+  const result = await db.execute(sql`
+    SELECT
+      pa.id AS attempt_id,
+      pa.outcome,
+      pa.amount_paise,
+      pa.razorpay_payment_id,
+      pa.rzp_captured_at,
+      pa.rzp_authorized_at,
+      pa.rzp_failed_at,
+      pa.created_at,
+      pa.updated_at,
+      TO_CHAR((
+        CASE pa.outcome
+          WHEN 'captured'           THEN COALESCE(pa.rzp_captured_at, pa.created_at)
+          WHEN 'authorized'         THEN COALESCE(pa.rzp_authorized_at, pa.created_at)
+          WHEN 'failed'             THEN COALESCE(pa.rzp_failed_at, pa.created_at)
+          WHEN 'refunded'           THEN COALESCE(pa.updated_at, pa.created_at)
+          WHEN 'partially_refunded' THEN COALESCE(pa.updated_at, pa.created_at)
+          ELSE pa.created_at
+        END
+      ) AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS status_date
+    FROM payment_attempts pa
+    JOIN fee_records fr ON fr.id = pa.fee_record_id
+                      AND fr.school_id = ${fixture.schoolId}
+                      AND fr.session_id = ${fixture.sessionId}
+    WHERE pa.school_id = ${fixture.schoolId}
+  `);
+
+  const statuses: Record<string, { count: number; amount: number }> = {};
+  const seenRazorpayPaymentIds = new Set<string>();
+  const seenAttemptIds = new Set<number>();
+  for (const row of result.rows as any[]) {
+    const razorpayPaymentId = row.razorpay_payment_id ? String(row.razorpay_payment_id) : null;
+    const attemptId = Number(row.attempt_id);
+    if (razorpayPaymentId) {
+      if (seenRazorpayPaymentIds.has(razorpayPaymentId)) continue;
+      seenRazorpayPaymentIds.add(razorpayPaymentId);
+    } else {
+      if (seenAttemptIds.has(attemptId)) continue;
+      seenAttemptIds.add(attemptId);
+    }
+    const outcome = String(row.outcome ?? "pending");
+    const status = outcome === "captured" || outcome === "refunded" || outcome === "partially_refunded"
+      || outcome === "failed" || outcome === "cancelled" || outcome === "authorized"
+      ? outcome
+      : "pending";
+    const date = String(row.status_date);
+    if (date < startDate || date > endDate) continue;
+    const existing = statuses[status] ?? { count: 0, amount: 0 };
+    existing.count += 1;
+    existing.amount += Number(row.amount_paise ?? 0) / 100;
+    statuses[status] = existing;
+  }
+
+  // Legacy successful portal records without a linked payment_attempt are
+  // exposed as captured lifecycle entries. The EXISTS check deliberately spans
+  // all dates, preventing an attempt outside this range from creating a
+  // duplicate fallback entry.
+  const payments = await db.execute(sql`
+    SELECT
+      pr.id,
+      pr.amount,
+      pr.payment_method,
+      pr.razorpay_payment_id,
+      EXISTS (
+        SELECT 1
+        FROM payment_attempts pa
+        WHERE pa.school_id = ${fixture.schoolId}
+          AND pr.razorpay_payment_id IS NOT NULL
+          AND pa.razorpay_payment_id = pr.razorpay_payment_id
+      ) AS has_payment_attempt
+    FROM payment_records pr
+    JOIN fee_records fr ON fr.id = pr.fee_record_id
+                      AND fr.school_id = ${fixture.schoolId}
+                      AND fr.session_id = ${fixture.sessionId}
+    WHERE pr.school_id = ${fixture.schoolId}
+      AND pr.received_date >= ${startDate}
+      AND pr.received_date <= ${endDate}
+  `);
+  for (const row of payments.rows as any[]) {
+    const paymentMethod = String(row.payment_method ?? "").trim().toLowerCase();
+    const isOnline = Boolean(row.razorpay_payment_id) || paymentMethod === "portal payment";
+    if (!isOnline || row.has_payment_attempt === true) continue;
+    const captured = statuses.captured ?? { count: 0, amount: 0 };
+    captured.count += 1;
+    captured.amount += Number(row.amount ?? 0);
+    statuses.captured = captured;
+  }
+  return statuses;
 }
 
 const describeReconciliation = RECONCILIATION_WRITE_OPT_IN ? describe.sequential : describe.skip;
@@ -878,6 +1023,11 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
         customStart: range.customStart,
         customEnd: range.customEnd,
       });
+      const expectedLifecycle = await independentPortalLifecycle(
+        fixture,
+        period.startDate,
+        period.endDate,
+      );
       expect(service.filter.startDate, `${range.name}: independently resolved start`).toBe(period.startDate);
       expect(service.filter.endDate, `${range.name}: independently resolved end`).toBe(period.endDate);
 
@@ -914,6 +1064,22 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
       expect(service.feeCategories, `${range.name}: category attribution`).toEqual(expected.feeCategories);
       expect(service.aging, `${range.name}: aging`).toEqual(expected.aging);
       expect(service.cashDenominations, `${range.name}: denominations`).toEqual(expected.cashDenominations);
+      expect(service.online.methods, `${range.name}: online payment methods`).toEqual(expected.onlineMethods);
+      expect(service.offline.methods, `${range.name}: offline payment methods`).toEqual(expected.offlineMethods);
+      expect(
+        Object.fromEntries(service.offline.statuses.map((row) => [row.status, {
+          count: row.count,
+          amount: row.amount,
+        }])),
+        `${range.name}: offline payment statuses`,
+      ).toEqual(expected.offlineStatuses);
+      expect(
+        Object.fromEntries(service.online.statuses.map((row) => [row.status, {
+          count: row.count,
+          amount: row.amount,
+        }])),
+        `${range.name}: lifecycle rows from raw attempts and legacy portal records`,
+      ).toEqual(expectedLifecycle);
 
       for (const point of service.trend) {
         expect(
@@ -1051,13 +1217,31 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
             ]);
             const onlineSectionStart = pdfText.search(/Online Channel/i);
             const offlineSectionStart = pdfText.search(/Offline Channel/i);
-            const lifecycleSectionStart = pdfText.search(/Portal Payment Lifecycle\s*\/\s*Payment Attempts/i);
+            const lifecycleHeading = /P\s*o\s*r\s*t\s*a\s*l\s*P\s*a\s*y\s*m\s*e\s*n\s*t\s*L\s*i\s*f\s*e\s*c\s*y\s*c\s*l\s*e\s*\/\s*P\s*a\s*y\s*m\s*e\s*n\s*t\s*A\s*t\s*t\s*e\s*m\s*p\s*t\s*s/i;
+            const lifecycleTableHeaders = /P\s*o\s*r\s*t\s*a\s*l\s*O\s*u\s*t\s*c\s*o\s*m\s*e|R\s*e\s*q\s*u\s*e\s*s\s*t\s*e\s*d\s*A\s*m\s*o\s*u\s*n\s*t/i;
+            const lifecycleSectionStart = pdfText.search(lifecycleHeading);
             if (service.online.statuses.length > 0) {
               expect(lifecycleSectionStart, `${range.name}/${section}: lifecycle has its own operational section`).toBeGreaterThan(offlineSectionStart);
               const onlineChannelText = pdfText.slice(onlineSectionStart, offlineSectionStart);
               const offlineChannelText = pdfText.slice(offlineSectionStart, lifecycleSectionStart);
-              expect(onlineChannelText, `${range.name}/${section}: online revenue section excludes attempt table`).not.toMatch(/Portal Outcome|Requested Amount/i);
-              expect(offlineChannelText, `${range.name}/${section}: offline revenue section excludes attempt table`).not.toMatch(/Portal Outcome|Requested Amount/i);
+              expect(onlineChannelText, `${range.name}/${section}: online revenue section excludes attempt table`).not.toMatch(lifecycleTableHeaders);
+              expect(offlineChannelText, `${range.name}/${section}: offline revenue section excludes attempt table`).not.toMatch(lifecycleTableHeaders);
+              for (const [status, values] of Object.entries(expectedLifecycle)) {
+                assertPdfSequence(pdfText, `${range.name}/${section}: lifecycle ${status}`, [
+                  status,
+                  values.count,
+                  "₹",
+                  pdfAmount(values.amount),
+                ]);
+              }
+              for (const method of [...expected.onlineMethods, ...expected.offlineMethods]) {
+                assertPdfSequence(pdfText, `${range.name}/${section}: method ${method.method}`, [
+                  method.method,
+                  method.count,
+                  "₹",
+                  pdfAmount(method.amount),
+                ]);
+              }
             } else {
               expect(lifecycleSectionStart, `${range.name}/${section}: no lifecycle table without attempts`).toBe(-1);
             }
@@ -1124,6 +1308,7 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
       auditRows.push({
         range: range.name,
         dates: `${period.startDate}..${period.endDate}`,
+        numericFields: countNumericLeaves(service),
         invoices: expected.sourceCounts.invoices,
         payments: expected.sourceCounts.payments,
         billed: expected.summary.billed,
@@ -1143,13 +1328,7 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
     expect(Object.fromEntries(today.online.statuses.map((row) => [row.status, {
       count: row.count,
       amount: row.amount,
-    }]))).toEqual({
-      captured: { count: 1, amount: 12_000 },
-      failed: { count: 1, amount: 6_000 },
-      cancelled: { count: 1, amount: 7_000 },
-      pending: { count: 1, amount: 8_000 },
-      authorized: { count: 1, amount: 9_000 },
-    });
+    }]))).toEqual(await independentPortalLifecycle(fixture, today.filter.startDate, today.filter.endDate));
 
     console.table(auditRows);
   }, 60_000);
