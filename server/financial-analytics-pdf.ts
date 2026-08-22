@@ -198,8 +198,11 @@ function ensureSpace(ctx: Ctx, needed: number): void {
 
 // ── Section title ─────────────────────────────────────────────────────────────
 
-function drawSectionTitle(ctx: Ctx, title: string): void {
-  ensureSpace(ctx, 30);
+function drawSectionTitle(ctx: Ctx, title: string, keepWith = 0): void {
+  // Keep a heading with the first meaningful block of its section. Without
+  // this reservation a heading could render at the page bottom while its KPI
+  // row or table header started on the following page.
+  ensureSpace(ctx, 30 + keepWith);
   ctx.doc.font(FONT_BOLD).fontSize(8).fillColor(C_MUTED)
      .text(title.toUpperCase(), MARGIN_H, ctx.y, { characterSpacing: 2, width: CONTENT_W, lineBreak: false });
   ctx.y += 13;
@@ -332,7 +335,7 @@ function renderSummarySection(ctx: Ctx): void {
   const s = ctx.data.summary;
   const c = ctx.data.comparison;
 
-  drawSectionTitle(ctx, "Executive Summary");
+  drawSectionTitle(ctx, "Executive Summary", 60);
 
   drawKpiRow(ctx, [
     {
@@ -419,7 +422,7 @@ function renderTrendSection(ctx: Ctx): void {
   const trend = ctx.data.trend;
   if (!trend.length) return;
 
-  drawSectionTitle(ctx, "Collection Trend");
+  drawSectionTitle(ctx, "Collection Trend", 40);
 
   const colW = [80, (CONTENT_W - 80) / 3, (CONTENT_W - 80) / 3, (CONTENT_W - 80) / 3];
   drawTableHeader(ctx, ["Period", "Due This Period", "Collected", "Net Collected"], colW);
@@ -437,7 +440,7 @@ function renderTrendSection(ctx: Ctx): void {
 function renderChannelsSection(ctx: Ctx): void {
   const { online, offline, paymentChannelSplit } = ctx.data;
 
-  drawSectionTitle(ctx, "Payment Channel Split");
+  drawSectionTitle(ctx, "Payment Channel Split", 78);
   drawKpiRow(ctx, [
     { label: "Total Collected", value: fmtINR(paymentChannelSplit.totalCollected), color: C_GREEN },
     { label: "Transactions", value: String(paymentChannelSplit.totalTransactions), color: C_MUTED },
@@ -468,7 +471,7 @@ function renderChannelsSection(ctx: Ctx): void {
   }
   ctx.y += 10;
 
-  drawSectionTitle(ctx, "Online Channel");
+  drawSectionTitle(ctx, "Online Channel", 118);
   drawKpiRow(ctx, [
     { label: "Gross Collected", value: fmtINR(online.grossCollected), color: C_CYAN  },
     { label: "Transactions",    value: String(online.transactionCount), color: C_MUTED },
@@ -478,26 +481,16 @@ function renderChannelsSection(ctx: Ctx): void {
   ]);
   ctx.y += 4;
 
-  if (online.statuses.length > 0) {
-    const sw = [CONTENT_W / 3, CONTENT_W / 3, CONTENT_W / 3];
-    drawTableHeader(ctx, ["Status", "Count", "Amount"], sw);
-    online.statuses.forEach((s, i) => {
-      drawTableRow(ctx, [s.status, String(s.count), fmtINR(s.amount)], sw, i % 2 === 0, [null, null, C_CYAN]);
-    });
-    ctx.y += 6;
-  }
-
   if (online.methods.length > 0) {
     const mw = [CONTENT_W / 3, CONTENT_W / 3, CONTENT_W / 3];
-    drawTableHeader(ctx, ["Payment Method", "Count", "Amount"], mw);
+    drawTableHeader(ctx, ["Successful Payment Method", "Transactions", "Collected"], mw);
     online.methods.forEach((m, i) => {
       drawTableRow(ctx, [m.method, String(m.count), fmtINR(m.amount)], mw, i % 2 === 0, [null, null, C_CYAN]);
     });
     ctx.y += 10;
   }
 
-  ensureSpace(ctx, 80);
-  drawSectionTitle(ctx, "Offline Channel");
+  drawSectionTitle(ctx, "Offline Channel", 118);
   drawKpiRow(ctx, [
     { label: "Gross Collected", value: fmtINR(offline.grossCollected), color: C_ACCENT },
     { label: "Transactions",    value: String(offline.transactionCount), color: C_MUTED },
@@ -507,20 +500,31 @@ function renderChannelsSection(ctx: Ctx): void {
   ]);
   ctx.y += 4;
 
-  if (offline.statuses.length > 0) {
-    const sw = [CONTENT_W / 3, CONTENT_W / 3, CONTENT_W / 3];
-    drawTableHeader(ctx, ["Status", "Count", "Amount"], sw);
-    offline.statuses.forEach((s, i) => {
-      drawTableRow(ctx, [s.status, String(s.count), fmtINR(s.amount)], sw, i % 2 === 0, [null, null, C_ACCENT]);
-    });
-    ctx.y += 6;
-  }
-
   if (offline.methods.length > 0) {
     const mw = [CONTENT_W / 3, CONTENT_W / 3, CONTENT_W / 3];
-    drawTableHeader(ctx, ["Payment Method", "Count", "Amount"], mw);
+    drawTableHeader(ctx, ["Successful Payment Method", "Transactions", "Collected"], mw);
     offline.methods.forEach((m, i) => {
       drawTableRow(ctx, [m.method, String(m.count), fmtINR(m.amount)], mw, i % 2 === 0, [null, null, C_ACCENT]);
+    });
+    ctx.y += 10;
+  }
+
+  // Payment attempts are operational portal-lifecycle information, not
+  // successful-payment revenue. Keeping them out of Online Channel prevents
+  // failed/cancelled attempt amounts from being read as channel collections.
+  if (online.statuses.length > 0) {
+    drawSectionTitle(ctx, "Portal Payment Lifecycle / Payment Attempts", 62);
+    ctx.doc.font(FONT_REG).fontSize(7).fillColor(C_MUTED).text(
+      "Portal gateway outcomes in the selected IST date range. These counts and requested amounts are operational only and do not reconcile to collected revenue.",
+      MARGIN_H,
+      ctx.y,
+      { width: CONTENT_W },
+    );
+    ctx.y += 26;
+    const sw = [CONTENT_W / 3, CONTENT_W / 3, CONTENT_W / 3];
+    drawTableHeader(ctx, ["Portal Outcome", "Attempts", "Requested Amount"], sw);
+    online.statuses.forEach((s, i) => {
+      drawTableRow(ctx, [s.status, String(s.count), fmtINR(s.amount)], sw, i % 2 === 0, [null, null, C_CYAN]);
     });
     ctx.y += 10;
   }
@@ -530,7 +534,7 @@ function renderClassesSection(ctx: Ctx): void {
   const cw = ctx.data.classWise;
   if (!cw.length) return;
 
-  drawSectionTitle(ctx, "Class-Wise Breakdown");
+  drawSectionTitle(ctx, "Class-Wise Breakdown", 40);
   const w = [
     80,
     (CONTENT_W - 80) / 4,
@@ -555,7 +559,7 @@ function renderCategoriesSection(ctx: Ctx): void {
   const cats = ctx.data.feeCategories;
   if (!cats.length) return;
 
-  drawSectionTitle(ctx, "Fee Categories");
+  drawSectionTitle(ctx, "Fee Categories", 40);
   // Give the label column more room; numeric cols are narrow but sufficient
   const w = [CONTENT_W * 0.50, CONTENT_W * 0.25, CONTENT_W * 0.25];
   drawTableHeader(ctx, ["Fee Type", "Due This Period", "Collected"], w);
@@ -573,7 +577,7 @@ function renderCategoriesSection(ctx: Ctx): void {
 function renderAgingSection(ctx: Ctx): void {
   const aging = ctx.data.aging;
 
-  drawSectionTitle(ctx, "Accounts Receivable Aging");
+  drawSectionTitle(ctx, "Accounts Receivable Aging", 40);
 
   const BUCKETS: Array<{ bucket: string; label: string; color: string }> = [
     { bucket: "1-30",  label: "1\u201330 Days",  color: "#fbbf24" },
@@ -600,7 +604,7 @@ function renderAgingSection(ctx: Ctx): void {
 function renderCashSection(ctx: Ctx): void {
   const cd = ctx.data.cashDenominations;
 
-  drawSectionTitle(ctx, "Cash Denomination Coverage");
+  drawSectionTitle(ctx, "Cash Denomination Coverage", 60);
 
   drawKpiRow(ctx, [
     { label: "Cash Collected",  value: fmtINR(cd.cashCollected),       color: C_ACCENT },

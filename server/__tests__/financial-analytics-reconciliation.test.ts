@@ -1049,6 +1049,18 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
               service.offline.transactionCount, "Net Collected",
               "₹", pdfAmount(service.offline.netCollected),
             ]);
+            const onlineSectionStart = pdfText.search(/Online Channel/i);
+            const offlineSectionStart = pdfText.search(/Offline Channel/i);
+            const lifecycleSectionStart = pdfText.search(/Portal Payment Lifecycle\s*\/\s*Payment Attempts/i);
+            if (service.online.statuses.length > 0) {
+              expect(lifecycleSectionStart, `${range.name}/${section}: lifecycle has its own operational section`).toBeGreaterThan(offlineSectionStart);
+              const onlineChannelText = pdfText.slice(onlineSectionStart, offlineSectionStart);
+              const offlineChannelText = pdfText.slice(offlineSectionStart, lifecycleSectionStart);
+              expect(onlineChannelText, `${range.name}/${section}: online revenue section excludes attempt table`).not.toMatch(/Portal Outcome|Requested Amount/i);
+              expect(offlineChannelText, `${range.name}/${section}: offline revenue section excludes attempt table`).not.toMatch(/Portal Outcome|Requested Amount/i);
+            } else {
+              expect(lifecycleSectionStart, `${range.name}/${section}: no lifecycle table without attempts`).toBe(-1);
+            }
           }
 
           if (section === "classes" || section === "complete") {
