@@ -16,6 +16,7 @@ import {
   sanitizePaymentPayload,
   updateAttemptEnrichmentState,
   updateWebhookDelivery,
+  webhookProviderEventId,
 } from "./payment-attempt-history";
 import { validateCapturedRazorpayPayment } from "./razorpay-verify-guard";
 import { getMultiInvoiceOfflinePaymentError } from "./offline-payment-request-guard";
@@ -76,6 +77,15 @@ import {
   type LedgerFilterFields,
 } from "./ledger-filter-sql";
 import { feePeriodLabel } from "./fee-period";
+import {
+  appendFeeAudit,
+  describeFeeAuditChanges,
+  RAZORPAY_FEE_AUDIT_ACTOR,
+  requestIpAddress,
+  resolveFeeAuditActor,
+  SYSTEM_FEE_AUDIT_ACTOR,
+  UNKNOWN_FEE_AUDIT_ACTOR,
+} from "./fee-audit";
 
 // ── Signature background removal ─────────────────────────────────────────────
 // Converts white/light-grey background to transparency.
@@ -488,34 +498,70 @@ export function registerFeesRoutes(app: Express) {
     description: string,
     studentId?: number | null,
   ) {
-    try {
-      const forwarded = req.headers["x-forwarded-for"] as string | undefined;
-      const ip = forwarded?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null;
-      // Fetch actor name lazily
-      let actorName: string | null = null;
-      if (req.session?.userId) {
-        const [u] = await db.select({ email: users.email }).from(users)
-          .where(eq(users.id, req.session.userId));
-        actorName = u?.email ?? `User #${req.session.userId}`;
-      }
-      await storage.appendFeeAuditLog({
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const studentResult = studentId
+      ? await db.select({ name: students.name }).from(students).where(and(
+          eq(students.id, studentId),
+          eq(students.schoolId, schoolId),
+        ))
+      : [];
+    const entityResult = entityType === "fee_record" && entityId
+      ? await db.select({
+          invoiceNumber: feeRecords.invoiceNumber,
+          feeType: feeRecords.feeType,
+          sessionId: feeRecords.sessionId,
+          amount: feeRecords.amount,
+        }).from(feeRecords).where(and(
+          eq(feeRecords.id, entityId),
+          eq(feeRecords.schoolId, schoolId),
+        ))
+      : [];
+    const entity = entityResult[0];
+    await appendFeeAudit({
+      schoolId,
+      actor,
+      action,
+      entityType,
+      entityId,
+      studentId: studentId ?? null,
+      studentName: studentResult[0]?.name ?? null,
+      sessionId: entity?.sessionId ?? (req as any).viewSessionId ?? null,
+      recordLabel: entity?.invoiceNumber ?? (entity?.feeType ? `${entity.feeType} invoice` : null),
+      amount: entity?.amount ?? null,
+      description,
+      ipAddress: requestIpAddress(req),
+    });
+  }
+
+  async function upsertExternalSettingsWithAudit(
+    req: any,
+    schoolId: number,
+    data: Parameters<typeof storage.upsertExternalPaymentSettings>[1],
+    entityType: string,
+    description: string,
+  ) {
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    return db.transaction(async tx => {
+      const updated = await storage.upsertExternalPaymentSettings(schoolId, data, tx);
+      await appendFeeAudit({
         schoolId,
-        actorId: req.session?.userId ?? null,
-        actorName,
-        ipAddress: ip,
-        action,
+        actor,
+        action: "settings_change",
         entityType,
-        entityId,
-        studentId: studentId ?? null,
-        description,
-      });
-    } catch {/* non-critical */ }
+        entityId: null,
+        recordLabel: "Fees & Payments settings",
+        description: description || "Fees & Payments settings saved.",
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return updated;
+    });
   }
 
   // ── GET /api/admin/fees/summary ───────────────────────────────────────────
   app.get("/api/admin/fees/summary", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
+    const actor = await resolveFeeAuditActor(req, schoolId);
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
     const summary = await storage.getFeeSummary(schoolId, sessionFilter);
@@ -801,8 +847,25 @@ export function registerFeesRoutes(app: Express) {
     const parsed = structureBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    const rec = await storage.createFeeStructure({ ...parsed.data, schoolId, createdBy: req.session.userId });
-    await appendAudit(req, schoolId, "create", "fee_structure", rec.id, `Created fee structure: ${rec.name} (₹${rec.amount})`);
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const rec = await db.transaction(async tx => {
+      const created = await storage.createFeeStructure(
+        { ...parsed.data, schoolId, createdBy: req.session.userId },
+        tx,
+      );
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "create",
+        entityType: "fee_structure",
+        entityId: created.id,
+        recordLabel: created.name,
+        amount: created.amount,
+        description: `Created fee structure "${created.name}" for ₹${Number(created.amount).toLocaleString("en-IN")} (${created.frequency}).`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return created;
+    });
     recalculateLateFees(schoolId).catch(() => {/* non-critical */});
     res.status(201).json(rec);
   });
@@ -815,119 +878,149 @@ export function registerFeesRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
 
-    // Read the current structure before updating so we can detect amount changes
-    const before = await storage.getFeeStructureById(id, schoolId);
-    if (!before) return res.status(404).json({ message: "Fee structure not found" });
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const result = await db.transaction(async tx => {
+      const [before] = await tx.select().from(feeStructures).where(and(
+        eq(feeStructures.id, id),
+        eq(feeStructures.schoolId, schoolId),
+      ));
+      if (!before) return null;
+      const updated = await storage.updateFeeStructure(id, schoolId, parsed.data, tx);
+      if (!updated) return null;
 
-    const updated = await storage.updateFeeStructure(id, schoolId, parsed.data);
-    if (!updated) return res.status(404).json({ message: "Fee structure not found" });
-
-    // Sync ALL snapshot fields on unpaid (Due / Overdue) fee records so the
-    // ledger always reflects the current structure data after any save.
-    const amountChanged     = parsed.data.amount        !== undefined && parsed.data.amount        !== before.amount;
-    const feeTypeChanged    = parsed.data.feeType       !== undefined && parsed.data.feeType       !== before.feeType;
-    const dueDayChanged     = parsed.data.dueDayOfMonth !== undefined && parsed.data.dueDayOfMonth !== null
-                              && parsed.data.dueDayOfMonth !== before.dueDayOfMonth;
-
-    let syncedCount = 0;
-
-    // 1. Sync amount + feeType in a single UPDATE
-    if (amountChanged || feeTypeChanged) {
-      const patch: Record<string, unknown> = {};
-      if (amountChanged)  patch.amount  = parsed.data.amount;
-      if (feeTypeChanged) patch.feeType = parsed.data.feeType;
-
-      const result = await db.update(feeRecords)
-        .set(patch as any)
-        .where(and(
+      const amountChanged = parsed.data.amount !== undefined && parsed.data.amount !== before.amount;
+      const feeTypeChanged = parsed.data.feeType !== undefined && parsed.data.feeType !== before.feeType;
+      const dueDayChanged = parsed.data.dueDayOfMonth !== undefined
+        && parsed.data.dueDayOfMonth !== null
+        && parsed.data.dueDayOfMonth !== before.dueDayOfMonth;
+      let syncedCount = 0;
+      if (amountChanged || feeTypeChanged) {
+        const patch: Record<string, unknown> = {};
+        if (amountChanged) patch.amount = parsed.data.amount;
+        if (feeTypeChanged) patch.feeType = parsed.data.feeType;
+        const synced = await tx.update(feeRecords).set(patch as any).where(and(
           eq(feeRecords.schoolId, schoolId),
-          eq(feeRecords.feeType, before.feeType),           // match by OLD feeType
-          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
-        ))
-        .returning({ id: feeRecords.id });
-      syncedCount = result.length;
-    }
-
-    // 2. Sync due date — replace the day component while keeping the existing
-    //    month + year.  LEAST(newDay, days_in_month) prevents invalid dates
-    //    e.g. day 31 in a 30-day month.
-    if (dueDayChanged) {
-      const newDay = parsed.data.dueDayOfMonth!;
-      // Use the (possibly already-updated) feeType when matching records
-      const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
-      const dueDateResult = await db.execute(sql`
-        UPDATE fee_records
-        SET due_date = MAKE_DATE(
-          EXTRACT(YEAR  FROM due_date)::int,
-          EXTRACT(MONTH FROM due_date)::int,
-          LEAST(
-            ${newDay}::int,
-            EXTRACT(DAY FROM (DATE_TRUNC('month', due_date) + INTERVAL '1 month' - INTERVAL '1 day'))::int
-          )
-        )
-        WHERE school_id   = ${schoolId}
-          AND fee_type    = ${matchFeeType}
-          AND status IN ('Due', 'Overdue')
-        RETURNING id
-      `);
-      // Avoid double-counting if amount/feeType was also changed in the same save
-      if (!amountChanged && !feeTypeChanged) {
-        syncedCount = (dueDateResult.rows ?? []).length;
+          eq(feeRecords.feeType, before.feeType),
+          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+        )).returning({ id: feeRecords.id });
+        syncedCount = synced.length;
       }
-    }
+      if (dueDayChanged) {
+        const newDay = parsed.data.dueDayOfMonth!;
+        const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
+        const dueDateResult = await tx.execute(sql`
+          UPDATE fee_records
+          SET due_date = MAKE_DATE(
+            EXTRACT(YEAR FROM due_date)::int,
+            EXTRACT(MONTH FROM due_date)::int,
+            LEAST(
+              ${newDay}::int,
+              EXTRACT(DAY FROM (DATE_TRUNC('month', due_date) + INTERVAL '1 month' - INTERVAL '1 day'))::int
+            )
+          )
+          WHERE school_id = ${schoolId}
+            AND fee_type = ${matchFeeType}
+            AND status IN ('Due', 'Overdue')
+          RETURNING id
+        `);
+        if (!amountChanged && !feeTypeChanged) syncedCount = dueDateResult.rows.length;
+      }
 
-    // 3. Void out-of-scope Due/Overdue records when applicableClasses narrows.
-    //    When a structure's class list is tightened, existing invoices for students
-    //    who no longer qualify must be removed so the ledger stays accurate.
-    let voidedCount = 0;
-    const newClasses: string[] | undefined = parsed.data.applicableClasses;
-    if (newClasses !== undefined && newClasses.length > 0) {
-      // Fetch all Due/Overdue records for this feeType in this school
-      const matchFeeTypeForVoid = feeTypeChanged ? parsed.data.feeType! : before.feeType;
-      const unpaidRecs = await db.select({ id: feeRecords.id, studentId: feeRecords.studentId })
-        .from(feeRecords)
-        .where(and(
-          eq(feeRecords.schoolId, schoolId),
-          eq(feeRecords.feeType, matchFeeTypeForVoid),
-          or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
-        ));
-      // Resolve each student's current class directly from the Student Registry
-      // (global, session-independent — the correct source of truth for current class).
-      if (unpaidRecs.length > 0) {
-        const activeStudents = await storage.getStudentsBySchool(schoolId);
-        const classMap = new Map(activeStudents.map(s => [s.id, s.class]));
-        const toVoid = unpaidRecs.filter(r => {
-          const cls = classMap.get(r.studentId);
-          return !cls || !newClasses.includes(cls);
-        });
-        if (toVoid.length > 0) {
-          const toVoidIds = toVoid.map(r => r.id);
-          await db.delete(feeRecords)
-            .where(and(
+      let voidedCount = 0;
+      const newClasses: string[] | undefined = parsed.data.applicableClasses;
+      if (newClasses !== undefined && newClasses.length > 0) {
+        const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
+        const unpaidRecs = await tx.select({
+          id: feeRecords.id,
+          studentId: feeRecords.studentId,
+          invoiceNumber: feeRecords.invoiceNumber,
+          feeType: feeRecords.feeType,
+          amount: feeRecords.amount,
+          sessionId: feeRecords.sessionId,
+        })
+          .from(feeRecords).where(and(
+            eq(feeRecords.schoolId, schoolId),
+            eq(feeRecords.feeType, matchFeeType),
+            or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+          ));
+        if (unpaidRecs.length > 0) {
+          const schoolStudents = await tx.select({ id: students.id, class: students.class, name: students.name })
+            .from(students).where(eq(students.schoolId, schoolId));
+          const classMap = new Map(schoolStudents.map(student => [student.id, student.class]));
+          const studentNameMap = new Map(schoolStudents.map(student => [student.id, student.name]));
+          const toVoidRecords = unpaidRecs
+            .filter(record => {
+              const className = classMap.get(record.studentId);
+              return !className || !newClasses.includes(className);
+            });
+          const toVoidIds = toVoidRecords.map(record => record.id);
+          if (toVoidIds.length > 0) {
+            const removed = await tx.delete(feeRecords).where(and(
               eq(feeRecords.schoolId, schoolId),
               sql`id = ANY(${sql.raw(`ARRAY[${toVoidIds.join(",")}]`)})`,
-              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
-            ));
-          voidedCount = toVoid.length;
+              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+            )).returning({ id: feeRecords.id });
+            voidedCount = removed.length;
+            const removedIds = new Set(removed.map(record => record.id));
+            for (const record of toVoidRecords.filter(candidate => removedIds.has(candidate.id))) {
+              const studentName = studentNameMap.get(record.studentId) ?? null;
+              await appendFeeAudit({
+                schoolId,
+                actor,
+                action: "delete",
+                entityType: "fee_record",
+                entityId: record.id,
+                studentId: record.studentId,
+                studentName,
+                sessionId: record.sessionId,
+                recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+                amount: record.amount,
+                description: `Deleted ${record.invoiceNumber ?? "invoice"} for ${studentName ?? "Unknown student"} because it no longer matched fee structure "${updated.name}".`,
+                ipAddress: requestIpAddress(req),
+              }, tx);
+            }
+          }
         }
       }
-    }
-
-    const syncParts: string[] = [];
-    if (amountChanged)  syncParts.push(`amount → ₹${parsed.data.amount}`);
-    if (feeTypeChanged) syncParts.push(`fee type → ${parsed.data.feeType}`);
-    if (dueDayChanged)  syncParts.push(`due day → ${parsed.data.dueDayOfMonth}th`);
-    if (voidedCount > 0) syncParts.push(`voided ${voidedCount} out-of-scope invoice(s)`);
-    const syncNote = (syncedCount > 0 || voidedCount > 0)
-      ? ` — ${syncParts.join("; ")}`
-      : "";
-    await appendAudit(req, schoolId, "update", "fee_structure", id,
-      `Updated fee structure: ${updated.name}${syncNote}`);
+      const changes = describeFeeAuditChanges(before as any, updated as any, {
+        name: { label: "name" },
+        feeType: { label: "fee type" },
+        amount: { label: "amount", format: value => `₹${Number(value ?? 0).toLocaleString("en-IN")}` },
+        frequency: { label: "frequency" },
+        dueDayOfMonth: { label: "due day" },
+        applicableClasses: {
+          label: "applicable classes",
+          format: value => Array.isArray(value) && value.length ? value.join(", ") : "all classes",
+        },
+      });
+      const impact = [
+        syncedCount > 0 ? `${syncedCount} unpaid invoices synchronized` : null,
+        voidedCount > 0 ? `${voidedCount} out-of-scope invoices deleted` : null,
+      ].filter(Boolean).join("; ");
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "update",
+        entityType: "fee_structure",
+        entityId: id,
+        recordLabel: updated.name,
+        amount: updated.amount,
+        description: `Updated fee structure "${updated.name}"${changes ? `: ${changes}` : ""}${impact ? `. ${impact}` : ""}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return { updated, syncedCount, voidedCount, changes: impact ? impact.split("; ") : [] };
+    });
+    if (!result) return res.status(404).json({ message: "Fee structure not found" });
 
     // Re-run late fee calculation for this school after any structure change
     recalculateLateFees(schoolId).catch(() => {/* non-critical */});
 
-    res.json({ ...updated, syncedInvoices: syncedCount, voidedInvoices: voidedCount, syncedFields: syncParts });
+    res.json({
+      ...result.updated,
+      syncedInvoices: result.syncedCount,
+      voidedInvoices: result.voidedCount,
+      syncedFields: result.changes,
+    });
   });
 
   app.delete("/api/admin/fees/structures/:id", async (req, res) => {
@@ -935,9 +1028,29 @@ export function registerFeesRoutes(app: Express) {
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const schoolId = req.session.schoolId!;
-    const deleted = await storage.deleteFeeStructure(id, schoolId);
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const deleted = await db.transaction(async tx => {
+      const [structure] = await tx.select().from(feeStructures).where(and(
+        eq(feeStructures.id, id),
+        eq(feeStructures.schoolId, schoolId),
+      ));
+      if (!structure) return false;
+      const removed = await storage.deleteFeeStructure(id, schoolId, tx);
+      if (!removed) return false;
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "delete",
+        entityType: "fee_structure",
+        entityId: id,
+        recordLabel: structure.name,
+        amount: structure.amount,
+        description: `Deleted fee structure "${structure.name}" (${structure.feeType}, ₹${Number(structure.amount).toLocaleString("en-IN")}).`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return true;
+    });
     if (!deleted) return res.status(404).json({ message: "Fee structure not found" });
-    await appendAudit(req, schoolId, "delete", "fee_structure", id, `Deleted fee structure #${id}`);
     res.json({ success: true });
   });
 
@@ -1102,9 +1215,10 @@ export function registerFeesRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
     const { idempotencyKey, ...paymentData } = parsed.data;
+    const actor = await resolveFeeAuditActor(req, schoolId);
 
     // Tenant ownership: verify studentId belongs to this school
-    const [studentCheck] = await db.select({ id: students.id })
+    const [studentCheck] = await db.select({ id: students.id, name: students.name })
       .from(students)
       .where(and(eq(students.id, paymentData.studentId), eq(students.schoolId, schoolId)));
     if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
@@ -1233,15 +1347,28 @@ export function registerFeesRoutes(app: Express) {
 
           results.push({ feeRecordId: step.invoiceId, amount: safeAllocation, receiptNumber: opReceipt, newStatus });
         }
+        if (results.length > 0) {
+          const totalAllocated = results.reduce((sum, result) => sum + result.amount, 0);
+          await appendFeeAudit({
+            schoolId,
+            actor,
+            action: "fifo_payment",
+            entityType: "payment_record",
+            entityId: null,
+            studentId: paymentData.studentId,
+            studentName: studentCheck.name,
+            sessionId: plan.every(step => step.sessionId === plan[0]?.sessionId)
+              ? plan[0]?.sessionId ?? null
+              : null,
+            recordLabel: `${results.length} invoices`,
+            amount: totalAllocated,
+            description: `Recorded ₹${totalAllocated.toLocaleString("en-IN")} by ${paymentData.paymentMethod} for ${studentCheck.name} across ${results.length} invoices. Receipts: ${results.map(result => result.receiptNumber).join(", ")}.`,
+            ipAddress: requestIpAddress(req),
+          }, tx);
+        }
       });
 
       const totalAllocated = results.reduce((s, r) => s + r.amount, 0);
-      const [fifoStu] = await db.select({ name: students.name }).from(students).where(eq(students.id, paymentData.studentId));
-      const fifoStuLabel = fifoStu?.name ?? `Student #${paymentData.studentId}`;
-      await appendAudit(req, schoolId, "fifo_payment", "payment_record", null,
-        `FIFO payment ₹${totalAllocated.toLocaleString("en-IN")} (${paymentData.paymentMethod}) allocated across ${results.length} invoice(s) for ${fifoStuLabel} — receipts: ${results.map(r => r.receiptNumber).join(", ")}`,
-        paymentData.studentId);
-
       return res.status(201).json({ fifo: true, allocations: results, totalAllocated, unallocated: remaining });
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -1562,16 +1689,33 @@ export function registerFeesRoutes(app: Express) {
           );
         }
       }
+      if (rec) {
+        const invoiceResult = await tx.execute(sql`
+          SELECT invoice_number, fee_type, session_id
+          FROM fee_records
+          WHERE id = ${paymentOnly.feeRecordId} AND school_id = ${schoolId}
+          LIMIT 1
+        `);
+        const invoice = invoiceResult.rows[0] as any;
+        await appendFeeAudit({
+          schoolId,
+          actor,
+          action: "payment",
+          entityType: "payment_record",
+          entityId: Number(rec.id),
+          studentId: paymentOnly.studentId,
+          studentName: studentCheck.name,
+          sessionId: invoice?.session_id ?? null,
+          recordLabel: opReceipt,
+          amount: paymentOnly.amount,
+          description: `Recorded ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} by ${paymentOnly.paymentMethod} for ${studentCheck.name} against ${invoice?.invoice_number ?? invoice?.fee_type ?? "invoice"}. Receipt ${opReceipt}.`,
+          ipAddress: requestIpAddress(req),
+        }, tx);
+      }
     });
     // ─────────────────────────────────────────────────────────────────────────
 
     // Resolve student name once for all payment audit entries below
-    const [paymentStu] = await db.select({ name: students.name, cls: students.class, section: students.section })
-      .from(students).where(eq(students.id, paymentOnly.studentId));
-    const paymentStuLabel = paymentStu
-      ? `${paymentStu.name} (${paymentStu.cls ?? ""}${paymentStu.section ? "-" + paymentStu.section : ""})`
-      : `Student #${paymentOnly.studentId}`;
-
     // TypeScript cannot track mutations to `let` variables that happen inside
     // async callbacks (the transaction lambda), so it infers `overpaymentBlock`
     // as the literal type `null` after the await, making the if-body unreachable.
@@ -1581,15 +1725,11 @@ export function registerFeesRoutes(app: Express) {
     if (overpaymentBlockSnap) {
       await appendAudit(
         req, schoolId, "blocked_payment", "payment_record", paymentOnly.feeRecordId ?? null,
-        `Blocked overpayment attempt: ₹${overpaymentBlockSnap.newAmount.toLocaleString("en-IN")} for ${paymentStuLabel} — invoice ₹${overpaymentBlockSnap.invoiceAmount.toLocaleString("en-IN")}, already paid ₹${overpaymentBlockSnap.totalAlreadyPaid.toLocaleString("en-IN")}`,
+        `Blocked overpayment attempt of ₹${overpaymentBlockSnap.newAmount.toLocaleString("en-IN")} for ${studentCheck.name}. Invoice total ₹${overpaymentBlockSnap.invoiceAmount.toLocaleString("en-IN")}; already paid ₹${overpaymentBlockSnap.totalAlreadyPaid.toLocaleString("en-IN")}.`,
         paymentOnly.studentId,
       );
       return res.status(400).json({ ...overpaymentBlockSnap, overpaymentGuard: true });
     }
-
-    await appendAudit(req, schoolId, "payment", "payment_record", rec?.id ?? null,
-      `Recorded ${paymentOnly.paymentMethod} ₹${Number(paymentOnly.amount).toLocaleString("en-IN")} for ${paymentStuLabel} — receipt ${opReceipt}`,
-      paymentOnly.studentId);
     res.status(201).json(rec);
   });
 
@@ -1608,6 +1748,7 @@ export function registerFeesRoutes(app: Express) {
     }
 
     const patch = parsed.data;
+    const actor = await resolveFeeAuditActor(req, schoolId);
     let response: any = null;
     let correctionError: string | null = null;
     await db.transaction(async (tx) => {
@@ -1711,14 +1852,29 @@ export function registerFeesRoutes(app: Express) {
           ${JSON.stringify(previous)}::jsonb, ${JSON.stringify(next)}::jsonb
         )
       `);
+      const studentResult = await tx.execute(sql`
+        SELECT name FROM students
+        WHERE id = ${Number(payment.student_id)} AND school_id = ${schoolId}
+        LIMIT 1
+      `);
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "offline_payment_corrected",
+        entityType: "payment_record",
+        entityId: paymentRecordId,
+        studentId: Number(payment.student_id),
+        studentName: (studentResult.rows[0] as any)?.name ?? null,
+        sessionId: payment.session_id ?? null,
+        recordLabel: payment.receipt_number ?? `Payment ${paymentRecordId}`,
+        amount: Number(payment.amount),
+        description: `Corrected offline payment accounting details for receipt ${payment.receipt_number ?? paymentRecordId}. Reason: ${patch.reason}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
       response = next;
     });
     if (correctionError) return res.status(400).json({ message: correctionError });
     if (!response) return res.status(404).json({ message: "Payment record not found" });
-    await appendAudit(
-      req, schoolId, "offline_payment_detail_corrected", "payment_record", paymentRecordId,
-      `Corrected offline payment accounting details: ${patch.reason}`,
-    );
     res.json({ message: "Offline payment details corrected and revision recorded.", details: response });
   });
 
@@ -1789,7 +1945,7 @@ export function registerFeesRoutes(app: Express) {
     const keySecret = parsed.data.razorpayKeySecret === "••••••••" ? undefined : (parsed.data.razorpayKeySecret || null);
     const webhookSecret = parsed.data.razorpayWebhookSecret === "••••••••" ? undefined : (parsed.data.razorpayWebhookSecret || null);
 
-    const updated = await storage.upsertExternalPaymentSettings(schoolId, {
+    const settingsPatch = {
       isEnabled: parsed.data.isEnabled,
       gatewayUrl: parsed.data.gatewayUrl || null,
       bannerMessage: parsed.data.bannerMessage || null,
@@ -1800,7 +1956,7 @@ export function registerFeesRoutes(app: Express) {
       ...(keySecret !== undefined ? { razorpayKeySecret: keySecret } : {}),
       ...(webhookSecret !== undefined ? { razorpayWebhookSecret: webhookSecret } : {}),
       razorpayMode: "live",
-    });
+    };
 
     const auditParts: string[] = [];
     auditParts.push(`External payment portal ${parsed.data.isEnabled ? "enabled" : "disabled"}`);
@@ -1813,7 +1969,9 @@ export function registerFeesRoutes(app: Express) {
     if (previous?.maxOvercollectionPercent !== parsed.data.maxOvercollectionPercent)
       auditParts.push(`Max over-collection cap: ${previous?.maxOvercollectionPercent ?? 150}% → ${parsed.data.maxOvercollectionPercent}%`);
 
-    await appendAudit(req, schoolId, "settings_change", "external_settings", null, auditParts.join("; "));
+    const updated = await upsertExternalSettingsWithAudit(
+      req, schoolId, settingsPatch, "external_settings", auditParts.join("; "),
+    );
     // Return with masked secrets
     res.json({
       ...updated,
@@ -1855,7 +2013,7 @@ export function registerFeesRoutes(app: Express) {
       return res.status(400).json({ message: "Webhook Secret is required. Copy it from Razorpay Dashboard → Webhooks → your webhook → Secret." });
     }
 
-    const updated = await storage.upsertExternalPaymentSettings(schoolId, {
+    const settingsPatch = {
       isEnabled:                previous?.isEnabled ?? false,
       gatewayUrl:               previous?.gatewayUrl ?? null,
       bannerMessage:            previous?.bannerMessage ?? null,
@@ -1866,7 +2024,7 @@ export function registerFeesRoutes(app: Express) {
       ...(keySecret     !== undefined ? { razorpayKeySecret:     keySecret }     : {}),
       ...(webhookSecret !== undefined ? { razorpayWebhookSecret: webhookSecret } : {}),
       razorpayMode: "live",
-    });
+    };
 
     const auditParts: string[] = [];
     if (parsed.data.razorpayEnabled !== (previous?.razorpayEnabled ?? false))
@@ -1876,8 +2034,9 @@ export function registerFeesRoutes(app: Express) {
     if (keySecret     !== undefined) auditParts.push("Razorpay Key Secret updated");
     if (webhookSecret !== undefined) auditParts.push("Razorpay Webhook Secret updated");
 
-    if (auditParts.length)
-      await appendAudit(req, schoolId, "settings_change", "razorpay_settings", null, auditParts.join("; "));
+    const updated = await upsertExternalSettingsWithAudit(
+      req, schoolId, settingsPatch, "razorpay_settings", auditParts.join("; "),
+    );
 
     res.json({
       ...updated,
@@ -1893,7 +2052,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
-    await storage.upsertExternalPaymentSettings(schoolId, {
+    const settingsPatch = {
       isEnabled:                previous?.isEnabled ?? false,
       gatewayUrl:               previous?.gatewayUrl ?? null,
       bannerMessage:            previous?.bannerMessage ?? null,
@@ -1904,10 +2063,14 @@ export function registerFeesRoutes(app: Express) {
       razorpayKeySecret: null,
       razorpayWebhookSecret: null,
       razorpayMode:     previous?.razorpayMode ?? "test",
-    });
-
-    await appendAudit(req, schoolId, "settings_change", "razorpay_settings", null,
-      "Razorpay credentials wiped — Key ID, Key Secret, and Webhook Secret removed");
+    };
+    await upsertExternalSettingsWithAudit(
+      req,
+      schoolId,
+      settingsPatch,
+      "razorpay_settings",
+      "Removed Razorpay credentials and disabled online payments.",
+    );
 
     res.json({ ok: true });
   });
@@ -1927,7 +2090,7 @@ export function registerFeesRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
-    const updated = await storage.upsertExternalPaymentSettings(schoolId, {
+    const settingsPatch = {
       // Preserve Razorpay fields from previous settings
       razorpayEnabled:          previous?.razorpayEnabled       ?? false,
       razorpayKeyId:            previous?.razorpayKeyId         ?? null,
@@ -1939,7 +2102,7 @@ export function registerFeesRoutes(app: Express) {
       gatewayUrl:               parsed.data.gatewayUrl    || null,
       bannerMessage:            parsed.data.bannerMessage  || null,
       maxOvercollectionPercent: parsed.data.maxOvercollectionPercent,
-    });
+    };
 
     const auditParts: string[] = [];
     if (parsed.data.isEnabled !== (previous?.isEnabled ?? false))
@@ -1949,8 +2112,9 @@ export function registerFeesRoutes(app: Express) {
     if (parsed.data.maxOvercollectionPercent !== (previous?.maxOvercollectionPercent ?? 150))
       auditParts.push(`Over-collection cap: ${parsed.data.maxOvercollectionPercent}%`);
 
-    if (auditParts.length)
-      await appendAudit(req, schoolId, "settings_change", "portal_settings", null, auditParts.join("; "));
+    const updated = await upsertExternalSettingsWithAudit(
+      req, schoolId, settingsPatch, "portal_settings", auditParts.join("; "),
+    );
 
     res.json({
       ...updated,
@@ -2268,17 +2432,46 @@ export function registerFeesRoutes(app: Express) {
         // Already paid? idempotent — 200 OK. Clear a matching stale lock left
         // by an earlier delivery without touching an unrelated replacement order.
         if (feeRec.status === "Paid") {
-          await db.execute(sql`
-            UPDATE fee_records
-            SET razorpay_order_id = NULL, razorpay_order_expires_at = NULL
-            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-              AND razorpay_order_id = ${payment.order_id ?? null}
-          `);
-          // A previous delivery may have committed the financial transaction
-          // just before an audit-table outage. Treat a signed duplicate as a
-          // reconciliation opportunity: rebuild the projection/event before
-          // reporting this delivery as processed. The lifecycle idempotency key
-          // makes this safe for ordinary Razorpay retries as well.
+          await db.transaction(async tx => {
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${feeRecordId})`);
+            await tx.execute(sql`
+              UPDATE fee_records
+              SET razorpay_order_id = NULL, razorpay_order_expires_at = NULL
+              WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+                AND razorpay_order_id = ${payment.order_id ?? null}
+            `);
+            const auditExists = await tx.execute(sql`
+              SELECT 1 FROM fee_audit_log
+              WHERE school_id = ${schoolId}
+                AND action = 'payment'
+                AND entity_type = 'fee_record'
+                AND entity_id = ${feeRecordId}
+              LIMIT 1
+            `);
+            if (auditExists.rows.length === 0) {
+              const studentResult = await tx.execute(sql`
+                SELECT name FROM students
+                WHERE id = ${Number(feeRec.student_id)} AND school_id = ${schoolId}
+                LIMIT 1
+              `);
+              await appendFeeAudit({
+                schoolId,
+                actor: RAZORPAY_FEE_AUDIT_ACTOR,
+                action: "payment",
+                entityType: "fee_record",
+                entityId: feeRecordId,
+                studentId: Number(feeRec.student_id),
+                studentName: (studentResult.rows[0] as any)?.name ?? null,
+                sessionId: feeRec.session_id ?? null,
+                recordLabel: feeRec.invoice_number ?? feeRec.receipt_number ?? `Invoice ${feeRecordId}`,
+                eventKey: payment.id ? `payment-captured:${payment.id}` : null,
+                amount: Number(feeRec.amount) + lateFeeFromNotes,
+                description: `Online payment captured for ${feeRec.invoice_number ?? "invoice"}. Receipt ${feeRec.receipt_number ?? "recorded"}.`,
+              }, tx);
+            }
+          });
+          // A signed duplicate also repairs the payment-attempt projection. The
+          // lifecycle idempotency key makes this safe for ordinary retries.
           const repairSession = await storage.getActiveSession(schoolId);
           const repairedAttemptId = await upsertPaymentAttempt({
             schoolId,
@@ -2388,6 +2581,25 @@ export function registerFeesRoutes(app: Express) {
               }
               throw insertErr; // always rethrow — rolls back the transaction
             }
+            const studentResult = await tx.execute(sql`
+              SELECT name FROM students
+              WHERE id = ${Number(feeRec.student_id)} AND school_id = ${schoolId}
+              LIMIT 1
+            `);
+            await appendFeeAudit({
+              schoolId,
+              actor: RAZORPAY_FEE_AUDIT_ACTOR,
+              action: "payment",
+              entityType: "fee_record",
+              entityId: feeRecordId,
+              studentId: Number(feeRec.student_id),
+              studentName: (studentResult.rows[0] as any)?.name ?? null,
+              sessionId: activeSession?.id ?? feeRec.session_id ?? null,
+              recordLabel: feeRec.invoice_number ?? receiptNumber,
+              eventKey: payment.id ? `payment-captured:${payment.id}` : null,
+              amount: Number(feeRec.amount) + lateFeeFromNotes,
+              description: `Online payment captured for ${feeRec.invoice_number ?? "invoice"}. Receipt ${receiptNumber}.`,
+            }, tx);
           });
         } catch (txErr: any) {
           if (idempotentDuplicate) {
@@ -2395,16 +2607,6 @@ export function registerFeesRoutes(app: Express) {
           }
           throw txErr; // non-idempotency error → outer catch → 500, Razorpay retries
         }
-
-        // Audit log — use correct schema columns (actor_id, description, student_id)
-        await db.execute(sql`
-          INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
-          VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, NULL,
-            ${Number(feeRec.student_id)},
-            ${"Online payment via Razorpay — " + payment.id + " — receipt " + receiptNumber},
-            ${now.toISOString()})
-        `);
-
         // Broadcast real-time update → admin dashboard refreshes instantly
         broadcastPaymentUpdate(schoolId, { feeRecordId, receiptNumber });
 
@@ -2543,7 +2745,6 @@ export function registerFeesRoutes(app: Express) {
           }
         }
 
-        const notesIncomplete = !feeRecordId || !studentIdResolved;
         const now = new Date();
 
         // Resolve the academic session for this fee record so the attempt is
@@ -2556,49 +2757,51 @@ export function registerFeesRoutes(app: Express) {
           webhookFeeSessionId = sessionRow?.session_id ?? null;
         }
 
-        const webhookRawJson = JSON.stringify(payment ?? {});
-        const webhookDesc =
-          "Razorpay payment failed — " + errCode + ": " + errDesc +
-          (payment.id ? " (" + payment.id + ")" : "") +
-          (fallbackUsed ? " [context recovered via order_id fallback]" : "") +
-          (notesIncomplete && !fallbackUsed ? " [incomplete notes — student/fee could not be identified]" : "");
-
-        await db.execute(sql`
-          INSERT INTO fee_audit_log (
-            school_id, action, entity_type, entity_id, actor_id, actor_name, student_id,
-            session_id, razorpay_payment_id, razorpay_order_id, amount, currency,
-            error_code, error_source, error_step, error_reason, payment_method,
-            raw_response, description, created_at
-          ) VALUES (
-            ${schoolId}, 'payment_failed', 'fee_record',
-            ${feeRecordId ?? null}, NULL, 'Razorpay Webhook', ${studentIdResolved},
-            ${webhookFeeSessionId},
-            ${payment.id        ?? null},
-            ${payment.order_id  ?? null},
-            ${payment.amount    ?? null},
-            ${payment.currency  ?? "INR"},
-            ${errCode !== "UNKNOWN" ? errCode : null},
-            ${payment.error_source ?? null},
-            ${payment.error_step   ?? null},
-            ${payment.error_reason ?? null},
-            ${payment.method       ?? null},
-            ${webhookRawJson}::jsonb,
-            ${webhookDesc},
-            ${now.toISOString()}
-          )
-        `);
-
-        // Clear the order lock so the student can retry immediately.
-        // A failed payment is definitively terminal — keeping razorpay_order_id
-        // on the fee record would block all future Pay Now attempts for this invoice.
+        // Clearing the retry lock and recording the operational event are one
+        // transaction. Payment-attempt details remain in their dedicated ledger.
+        await db.transaction(async tx => {
+          let invoiceNumber: string | null = null;
+          let studentName: string | null = null;
+          if (feeRecordId) {
+            const feeResult = await tx.execute(sql`
+              UPDATE fee_records
+              SET razorpay_order_id = NULL,
+                  razorpay_order_expires_at = NULL
+              WHERE id = ${feeRecordId} AND school_id = ${schoolId}
+                AND razorpay_order_id = ${payment.order_id ?? null}
+              RETURNING invoice_number
+            `);
+            invoiceNumber = (feeResult.rows[0] as any)?.invoice_number ?? null;
+          }
+          if (studentIdResolved) {
+            const studentResult = await tx.execute(sql`
+              SELECT name FROM students
+              WHERE id = ${studentIdResolved} AND school_id = ${schoolId}
+              LIMIT 1
+            `);
+            studentName = (studentResult.rows[0] as any)?.name ?? null;
+          }
+          await appendFeeAudit({
+            schoolId,
+            actor: RAZORPAY_FEE_AUDIT_ACTOR,
+            action: "payment_failed",
+            entityType: "fee_record",
+            entityId: feeRecordId,
+            studentId: studentIdResolved,
+            studentName,
+            sessionId: webhookFeeSessionId,
+            recordLabel: invoiceNumber,
+            eventKey: payment.id || payment.order_id
+              ? `payment-failed:${payment.id ?? payment.order_id}`
+              : null,
+            amount: payment.amount == null ? null : Math.round(Number(payment.amount) / 100),
+            currency: payment.currency ?? "INR",
+            description: feeRecordId
+              ? `Online payment failed for ${invoiceNumber ?? "the selected invoice"}. No payment was recorded, and checkout was reopened for retry.`
+              : "An online payment failed but could not be linked to a fee record. No payment was recorded.",
+          }, tx);
+        });
         if (feeRecordId) {
-          await db.execute(sql`
-            UPDATE fee_records
-            SET razorpay_order_id         = NULL,
-                razorpay_order_expires_at = NULL
-            WHERE id = ${feeRecordId} AND school_id = ${schoolId}
-              AND razorpay_order_id = ${payment.order_id ?? null}
-          `);
           console.log(`[razorpay webhook] Order lock cleared for fee #${feeRecordId} after payment failure`);
         }
 
@@ -2658,16 +2861,28 @@ export function registerFeesRoutes(app: Express) {
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
         const studentIdAu = notes.studentId  ? parseInt(notes.studentId)  : null;
         const now = new Date();
-        await db.execute(sql`
-          INSERT INTO fee_audit_log
-            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
-          VALUES (
-            ${schoolId}, 'payment_authorized', 'fee_record',
-            ${feeRecordId}, NULL, 'Razorpay Webhook', ${studentIdAu},
-            ${"Payment authorized (awaiting capture) — " + (payment.id ?? "unknown")},
-            ${now.toISOString()}
-          )
-        `);
+        const authorizedContext = (await db.execute(sql`
+          SELECT fr.invoice_number, fr.session_id, s.name AS student_name
+          FROM fee_records fr
+          LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+          WHERE fr.id = ${feeRecordId} AND fr.school_id = ${schoolId}
+          LIMIT 1
+        `)).rows[0] as any;
+        await appendFeeAudit({
+          schoolId,
+          actor: RAZORPAY_FEE_AUDIT_ACTOR,
+          action: "payment_authorized",
+          entityType: "fee_record",
+          entityId: feeRecordId,
+          studentId: studentIdAu,
+          studentName: authorizedContext?.student_name ?? null,
+          sessionId: authorizedContext?.session_id ?? null,
+          recordLabel: authorizedContext?.invoice_number ?? null,
+          eventKey: payment.id ? `payment-authorized:${payment.id}` : null,
+          amount: payment.amount == null ? null : Math.round(Number(payment.amount) / 100),
+          currency: payment.currency ?? "INR",
+          description: `Online payment authorized for ${authorizedContext?.invoice_number ?? "the selected invoice"} and awaiting capture.`,
+        });
         // Write to payment_attempts
         const authorizedAttemptId = await upsertPaymentAttempt({
           schoolId,
@@ -2739,25 +2954,10 @@ export function registerFeesRoutes(app: Express) {
           feeRecordId: rfFeeRecordId, resolutionSource: rfResolution,
           resolutionStatus: rfFeeRecordId != null ? "resolved" : "unresolved",
         });
-        const amtRs = (Number(refund.amount ?? 0) / 100).toFixed(2);
         const rfAction =
           event.event === "refund.created"   ? "refund_initiated" :
           event.event === "refund.processed" ? "refund_processed" :
           event.event === "refund.failed"    ? "refund_failed"    : "refund_updated";
-        const rfDesc =
-          event.event === "refund.created"      ? `Refund initiated — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
-          event.event === "refund.processed"    ? `Refund completed — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
-          event.event === "refund.failed"       ? `Refund failed — ₹${amtRs} — refund ID: ${refund.id ?? "?"} — payment: ${refPmtId ?? "?"}` :
-                                                  `Refund speed changed — refund ID: ${refund.id ?? "?"}`;
-        await db.execute(sql`
-          INSERT INTO fee_audit_log
-            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
-          VALUES (
-            ${schoolId}, ${rfAction}, 'fee_record',
-            ${rfFeeRecordId}, NULL, 'Razorpay Webhook', ${rfStudentId},
-            ${rfDesc}, ${now.toISOString()}
-          )
-        `);
         // The immutable refund ledger performs provider-ID-first reconciliation
         // and the net-paid invoice projection. payment_attempts remains a
         // compatibility projection/timeline and never becomes the refund
@@ -2770,6 +2970,40 @@ export function registerFeesRoutes(app: Express) {
           fallbackFeeRecordId: rfFeeRecordId,
           fallbackStudentId: rfStudentId,
           fallbackSessionId: rfSessionId,
+          afterReconcile: async (tx, context, state) => {
+            const existingAudit = await tx.execute(sql`
+              SELECT 1 FROM fee_audit_log
+              WHERE school_id = ${schoolId}
+                AND entity_type = 'refund'
+                AND entity_id = ${state.refundId}
+                AND action = ${state.action}
+              LIMIT 1
+            `);
+            if (existingAudit.rows.length > 0) return;
+            const amountRupees = Math.round(state.amountPaise / 100);
+            const description =
+              state.action === "refund_processed"
+                ? `Refund of ₹${(state.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} completed for ${context.invoiceNumber ?? "the selected invoice"}.`
+                : state.action === "refund_failed"
+                  ? `Refund of ₹${(state.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} could not be completed and requires review.`
+                  : state.action === "refund_speed_changed"
+                    ? `Refund processing was updated for ${context.invoiceNumber ?? "the selected invoice"}.`
+                    : `Refund of ₹${(state.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} was accepted for processing for ${context.invoiceNumber ?? "the selected invoice"}.`;
+            await appendFeeAudit({
+              schoolId,
+              actor: RAZORPAY_FEE_AUDIT_ACTOR,
+              action: state.action,
+              entityType: "refund",
+              entityId: state.refundId,
+              studentId: context.studentId,
+              studentName: context.studentName,
+              sessionId: context.sessionId,
+              recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+              eventKey: refund.id ? `refund:${refund.id}:${state.action}` : null,
+              amount: amountRupees,
+              description,
+            }, tx);
+          },
         });
         if (reconciledRefund.feeRecordId != null) {
           rfFeeRecordId = reconciledRefund.feeRecordId;
@@ -2825,7 +3059,6 @@ export function registerFeesRoutes(app: Express) {
           feeRecordId: disFeeId, resolutionSource: disResolution,
           resolutionStatus: disFeeId != null ? "resolved" : "unresolved",
         });
-        const disAmtRs  = (Number(dispute.amount ?? 0) / 100).toFixed(2);
         const disLabel: Record<string, string> = {
           "payment.dispute.created":         "Dispute raised by student",
           "payment.dispute.won":             "Dispute resolved — decided in our favour",
@@ -2838,16 +3071,30 @@ export function registerFeesRoutes(app: Express) {
           event.event === "payment.dispute.created"  ? "dispute_created" :
           event.event === "payment.dispute.won"      ? "dispute_won"     :
           event.event === "payment.dispute.lost"     ? "dispute_lost"    : "dispute_updated";
-        const disDesc = `${disLabel[event.event] ?? event.event} — ₹${disAmtRs} — dispute ID: ${dispute.id ?? "?"} — payment: ${disPmtId ?? "?"} — reason: ${dispute.reason_code ?? "unknown"}`;
-        await db.execute(sql`
-          INSERT INTO fee_audit_log
-            (school_id, action, entity_type, entity_id, actor_id, actor_name, student_id, description, created_at)
-          VALUES (
-            ${schoolId}, ${disAction}, 'fee_record',
-            ${disFeeId}, NULL, 'Razorpay Webhook', ${disStudId},
-            ${disDesc}, ${now.toISOString()}
-          )
-        `);
+        const disputeContext = (await db.execute(sql`
+          SELECT fr.invoice_number, fr.session_id, s.name AS student_name
+          FROM fee_records fr
+          LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+          WHERE fr.id = ${disFeeId} AND fr.school_id = ${schoolId}
+          LIMIT 1
+        `)).rows[0] as any;
+        await appendFeeAudit({
+          schoolId,
+          actor: RAZORPAY_FEE_AUDIT_ACTOR,
+          action: disAction,
+          entityType: "fee_record",
+          entityId: disFeeId,
+          studentId: disStudId,
+          studentName: disputeContext?.student_name ?? null,
+          sessionId: disputeContext?.session_id ?? disSessionId,
+          recordLabel: disputeContext?.invoice_number ?? null,
+          eventKey: dispute.id
+            ? `dispute:${dispute.id}:${disAction}`
+            : `razorpay-event:${webhookProviderEventId(bodyStr, event)}:${disAction}`,
+          amount: dispute.amount == null ? null : Math.round(Number(dispute.amount) / 100),
+          currency: dispute.currency ?? "INR",
+          description: `${disLabel[event.event] ?? "Payment dispute updated"}${disputeContext?.invoice_number ? ` for ${disputeContext.invoice_number}` : ""}.`,
+        });
         // Broadcast high-severity dispute events to admin dashboard
         if (event.event === "payment.dispute.created" || event.event === "payment.dispute.action_required" || event.event === "payment.dispute.lost") {
           // Notify admin dashboard — no receipt number for disputes, pass empty string
@@ -2932,87 +3179,68 @@ export function registerFeesRoutes(app: Express) {
         ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND razorpay_order_id = ${razorpayOrderId}`
         : sql`id = ${feeRecordId} AND school_id = ${schoolId}`;
 
-    await db.execute(sql`
-      UPDATE fee_records
-      SET razorpay_order_id         = NULL,
-          razorpay_order_expires_at = NULL
-      WHERE ${condition}
-        AND status IN ('Due', 'Overdue')
-    `);
-
-    // ── Write payment_failed / payment_cancelled audit log entry ─────────────
+    // ── Clear order lock; only voluntary cancellation is an operational event ─
     // isCancelled=true means the student voluntarily closed the checkout modal
     // (no payment was attempted); isCancelled=false means Razorpay reported a
     // real payment failure (card declined, gateway error, etc.).
-    // The webhook also writes payment_failed entries — two entries for one
-    // failure is acceptable; zero entries is not.
     const clientAction = isCancelled ? "payment_cancelled" : "payment_failed";
-    const now = new Date();
 
     // Resolve session_id and amount from the fee record for full audit trail
     let clientFeeSessionId: number | null = null;
     let clientFeeAmount: number | null = null;
-    if (feeRecordId) {
-      try {
-        const feeRow = (await db.execute(sql`
-          SELECT session_id, amount FROM fee_records WHERE id = ${feeRecordId} LIMIT 1
-        `)).rows[0] as any;
-        clientFeeSessionId = feeRow?.session_id ?? null;
-        clientFeeAmount    = feeRow?.amount     ?? null;
-      } catch { /* non-fatal */ }
-    }
-
-    const descParts: string[] = [
-      isCancelled
-        ? "Razorpay checkout cancelled (client-reported)"
-        : "Razorpay payment failed (client-reported)",
-    ];
-    if (errorCode)        descParts.push(`${errorCode}`);
-    if (errorDescription) descParts.push(`${errorDescription}`);
-    if (razorpayPaymentId) descParts.push(`(${razorpayPaymentId})`);
-    if (razorpayOrderId)   descParts.push(`[order: ${razorpayOrderId}]`);
-    const description = descParts.join(" — ").replace(/ — —/g, " —");
-
-    // Sanitise rawResponse before storing: drop any payer contact/email that
-    // the student may not have consented to persist server-side.
-    const safeRaw = rawResponse
-      ? JSON.stringify(
-          typeof rawResponse === "object"
-            ? { ...rawResponse, contact: undefined, email: undefined }
-            : rawResponse
-        )
-      : null;
-
-    try {
-      await db.execute(sql`
-        INSERT INTO fee_audit_log (
-          school_id, action, entity_type, entity_id, actor_id, actor_name, student_id,
-          session_id, razorpay_payment_id, razorpay_order_id, amount,
-          error_code, error_source, error_step, error_reason,
-          raw_response, description, created_at
-        ) VALUES (
-          ${schoolId}, ${clientAction}, 'fee_record', ${feeRecordId},
-          NULL, 'Razorpay (client)', ${studentId ?? null},
-          ${clientFeeSessionId},
-          ${razorpayPaymentId ?? null},
-          ${razorpayOrderId   ?? null},
-          ${clientFeeAmount   ?? null},
-          ${errorCode         ?? null},
-          ${errorSource       ?? null},
-          ${errorStep         ?? null},
-          ${errorReason       ?? null},
-          ${safeRaw}::jsonb,
-          ${description},
-          ${now.toISOString()}
-        )
+    await db.transaction(async tx => {
+      const updated = await tx.execute(sql`
+        UPDATE fee_records
+        SET razorpay_order_id = NULL,
+            razorpay_order_expires_at = NULL
+        WHERE ${condition}
+          AND status IN ('Due', 'Overdue')
+        RETURNING invoice_number, session_id, amount, student_id
       `);
-    } catch (auditErr) {
-      // Non-fatal — log but don't fail the response
-      console.warn("[clear-failed-order] audit log write failed:", auditErr);
-    }
+      const fee = updated.rows[0] as any;
+      clientFeeSessionId = fee?.session_id ?? null;
+      clientFeeAmount = fee?.amount == null ? null : Number(fee.amount);
+      if (!fee) return;
+      const studentResult = await tx.execute(sql`
+        SELECT name FROM students
+        WHERE id = ${Number(fee.student_id)} AND school_id = ${schoolId}
+        LIMIT 1
+      `);
+      const clientActor = req.session?.userRole === "admin"
+        ? await resolveFeeAuditActor(req, schoolId)
+        : {
+            ...UNKNOWN_FEE_AUDIT_ACTOR,
+            actorType: "student" as const,
+            actorName: "Student Portal",
+            actorRole: "Student",
+            actorIdentifier: `STU-${String(fee.student_id).padStart(4, "0")}`,
+          };
+      await appendFeeAudit({
+        schoolId,
+        actor: clientActor,
+        action: clientAction,
+        entityType: "fee_record",
+        entityId: feeRecordId,
+        studentId: Number(fee.student_id),
+        studentName: (studentResult.rows[0] as any)?.name ?? null,
+        sessionId: clientFeeSessionId,
+        recordLabel: fee.invoice_number ?? null,
+        eventKey: isCancelled
+          ? (razorpayOrderId ? `checkout-cancelled:${razorpayOrderId}` : null)
+          : (razorpayPaymentId || razorpayOrderId
+              ? `payment-failed:${razorpayPaymentId ?? razorpayOrderId}`
+              : null),
+        amount: clientFeeAmount,
+        description: isCancelled
+          ? `Online checkout was cancelled for ${fee.invoice_number ?? "the selected invoice"}. No payment was recorded.`
+          : `Online payment failed for ${fee.invoice_number ?? "the selected invoice"}. No payment was recorded, and checkout was reopened for retry.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+    });
 
     // Write to payment_attempts (non-fatal)
     const attemptOutcome = isCancelled ? "cancelled" : "failed";
+    const now = new Date();
     try {
       const clientAttemptId = await upsertPaymentAttempt({
       schoolId,
@@ -3308,6 +3536,26 @@ export function registerFeesRoutes(app: Express) {
             }
             throw insertErr; // always rethrow — rolls back the transaction
           }
+          const studentResult = await tx.execute(sql`
+            SELECT name FROM students
+            WHERE id = ${Number(feeRec.student_id)} AND school_id = ${schoolId}
+            LIMIT 1
+          `);
+          await appendFeeAudit({
+            schoolId,
+            actor: RAZORPAY_FEE_AUDIT_ACTOR,
+            action: "payment",
+            entityType: "fee_record",
+            entityId: feeRecordId,
+            studentId: Number(feeRec.student_id),
+            studentName: (studentResult.rows[0] as any)?.name ?? null,
+            sessionId: activeSession?.id ?? feeRec.session_id ?? null,
+            recordLabel: feeRec.invoice_number ?? receiptNumber,
+            eventKey: `payment-captured:${razorpay_payment_id}`,
+            amount: verifiedCapture.amountPaise / 100,
+            currency: verifiedPayment.currency ?? "INR",
+            description: `Online payment captured for ${feeRec.invoice_number ?? "invoice"}. Receipt ${receiptNumber}.`,
+          }, tx);
         });
       } catch (txErr: any) {
         if (idempotentDuplicate) {
@@ -3350,15 +3598,6 @@ export function registerFeesRoutes(app: Express) {
           `payment_mode will be NULL in History tab. Error: ${(metaErr as any)?.message ?? metaErr}`,
         );
       }
-
-      await db.execute(sql`
-        INSERT INTO fee_audit_log (school_id, action, entity_type, entity_id, actor_id, student_id, description, created_at)
-        VALUES (${schoolId}, 'payment', 'fee_record', ${feeRecordId}, NULL,
-          ${Number(feeRec.student_id)},
-          ${"Online payment via Razorpay — " + razorpay_payment_id + " — receipt " + receiptNumber + " (client-verified)"},
-          ${now.toISOString()})
-      `);
-
       // Record in payment_attempts — this is the primary write for the client-verify path.
       // The webhook (payment.captured) may arrive later and upsert the same row idempotently.
       const verifiedAttemptId = await upsertPaymentAttempt({
@@ -3453,14 +3692,27 @@ export function registerFeesRoutes(app: Express) {
 
   app.get("/api/admin/fees/audit-log", async (req, res) => {
     if (!adminGuard(req, res)) return;
-    const limit  = Math.min(parseInt((req.query.limit  as string) || "50", 10), 100);
-    const offset = parseInt((req.query.offset as string) || "0", 10);
-    const from   = (req.query.from   as string) || null;
-    const to     = (req.query.to     as string) || null;
-    const action = (req.query.action as string) || null;
-    const search = (req.query.search as string) || null;
-    const { entries, total } = await storage.getFeeAuditLog(req.session.schoolId!, limit, offset, from, to, action, search);
-    res.json({ entries, total, limit, offset });
+    const parsed = z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      offset: z.coerce.number().int().min(0).default(0),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      action: z.string().trim().min(1).max(50).regex(/^[A-Za-z0-9_-]+$/).optional(),
+      search: z.string().trim().max(100).optional(),
+      sessionId: z.coerce.number().int().positive().optional(),
+    }).safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid audit-log filters." });
+    const { limit, offset, from, to, action, search, sessionId } = parsed.data;
+    if (sessionId) {
+      const sessions = await storage.getAcademicSessions(req.session.schoolId!);
+      if (!sessions.some(session => session.id === sessionId)) {
+        return res.status(400).json({ message: "Session does not belong to this school." });
+      }
+    }
+    const result = await storage.getFeeAuditLog(
+      req.session.schoolId!, limit, offset, from, to, action, search, sessionId,
+    );
+    res.json({ ...result, limit, offset });
   });
 
   // ── Sessions list (convenience for fee invoice generation dropdown) ───────
@@ -3476,6 +3728,7 @@ export function registerFeesRoutes(app: Express) {
     const structureId = parseInt(req.params.id);
     if (isNaN(structureId)) return res.status(400).json({ message: "Invalid structure ID" });
     const schoolId = req.session.schoolId!;
+    const actor = await resolveFeeAuditActor(req, schoolId);
 
     const parsed = z.object({
       // feePeriodStart/feePeriodEnd: required for monthly/quarterly fees (admin picks the month).
@@ -3508,6 +3761,7 @@ export function registerFeesRoutes(app: Express) {
     // Invoice generation therefore reads directly from the registry (all active students)
     // rather than the session-enrollment table, ensuring no active student is ever skipped.
     const allActiveStudents = await storage.getStudentsBySchool(schoolId);
+    const studentNameById = new Map(allActiveStudents.map(student => [student.id, student.name]));
     const effectiveRoster = allActiveStudents
       .filter(s => isStudentEligibleForStructure(structure, s))
       .map(s => ({ studentId: s.id, className: s.class!, sectionName: s.section! }));
@@ -3524,6 +3778,24 @@ export function registerFeesRoutes(app: Express) {
         context: invoiceContext,
         studentId: enrollment.studentId,
         duplicateIndex,
+        createdBy: req.session.userId,
+        afterCreate: async (tx, record) => {
+          const studentName = studentNameById.get(enrollment.studentId) ?? null;
+          await appendFeeAudit({
+            schoolId,
+            actor,
+            action: "create",
+            entityType: "fee_record",
+            entityId: record.id,
+            studentId: enrollment.studentId,
+            studentName,
+            sessionId: record.sessionId,
+            recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+            amount: record.amount,
+            description: `Created ${record.invoiceNumber ?? "invoice"} for ${studentName ?? "Unknown student"} from fee structure "${structure.name}": ₹${Number(record.amount).toLocaleString("en-IN")}, due ${record.dueDate}.`,
+            ipAddress: requestIpAddress(req),
+          }, tx);
+        },
       });
       if (!result.created) {
         skipped++;
@@ -3544,13 +3816,36 @@ export function registerFeesRoutes(app: Express) {
       );
       if (outOfScopeRecs.length > 0) {
         const outIds = outOfScopeRecs.map(r => r.id);
-        await db.delete(feeRecords)
-          .where(and(
-            eq(feeRecords.schoolId, schoolId),
-            sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
-            or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue"))
-          ));
-        voided = outOfScopeRecs.length;
+        voided = await db.transaction(async tx => {
+          const removed = await tx.delete(feeRecords)
+            .where(and(
+              eq(feeRecords.schoolId, schoolId),
+              sql`id = ANY(${sql.raw(`ARRAY[${outIds.join(",")}]`)})`,
+              or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
+            ))
+            .returning({ id: feeRecords.id });
+          if (removed.length > 0) {
+            const removedIds = new Set(removed.map(record => record.id));
+            for (const record of outOfScopeRecs.filter(candidate => removedIds.has(candidate.id))) {
+              const studentName = studentNameById.get(record.studentId) ?? null;
+              await appendFeeAudit({
+                schoolId,
+                actor,
+                action: "delete",
+                entityType: "fee_record",
+                entityId: record.id,
+                studentId: record.studentId,
+                studentName,
+                sessionId: record.sessionId ?? sessionId,
+                recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+                amount: record.amount,
+                description: `Deleted ${record.invoiceNumber ?? "invoice"} for ${studentName ?? "Unknown student"} because it no longer matched fee structure "${structure.name}".`,
+                ipAddress: requestIpAddress(req),
+              }, tx);
+            }
+          }
+          return removed.length;
+        });
       }
     }
 
@@ -3559,8 +3854,6 @@ export function registerFeesRoutes(app: Express) {
       .set({ lastInvoicesGeneratedAt: new Date() })
       .where(eq(feeStructures.id, structureId));
 
-    await appendAudit(req, schoolId, "create", "fee_record", null,
-      `Generated invoices from "${structure.name}": ${created} created, ${skipped} already existed (skipped)${voided > 0 ? `, ${voided} out-of-scope voided` : ""}`);
     res.json({ created, synced: 0, skipped, voided, total: filtered.length });
   });
 
@@ -3830,17 +4123,56 @@ export function registerFeesRoutes(app: Express) {
       return res.status(400).json({ message: "A valid idempotency key is required." });
     }
     try {
+      const actor = await resolveFeeAuditActor(req, req.session.schoolId!);
       const forwarded = req.headers["x-forwarded-for"] as string | undefined;
       const reservation = await reserveRefundRequest({
         schoolId: req.session.schoolId!, paymentRecordId, amountPaise, reasonCode, reasonText, internalNote,
         idempotencyKey, requestedBy: req.session.userId!,
         requesterIp: forwarded?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null,
+        afterReserve: async (tx, context) => {
+          await appendFeeAudit({
+            schoolId: req.session.schoolId!,
+            actor,
+            action: "refund_requested",
+            entityType: "payment_record",
+            entityId: paymentRecordId,
+            studentId: context.studentId,
+            studentName: context.studentName,
+            sessionId: context.sessionId,
+            recordLabel: context.invoiceNumber ?? `Payment ${paymentRecordId}`,
+            amount: Math.round(amountPaise / 100),
+            description: `Requested a refund of ₹${(amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} for ${context.studentName} against ${context.invoiceNumber ?? "the selected payment"}. Reason: ${reasonCode.replaceAll("_", " ")}.`,
+            ipAddress: requestIpAddress(req),
+          }, tx);
+        },
       });
       if (reservation.idempotent) return res.json({ refund: reservation.refund, summary: reservation.summary, idempotent: true });
 
       const creds = await resolveRazorpayCredentials(req.session.schoolId!);
       if (!creds?.keySecret || !creds.enabled) {
-        await markRefundReconciliationRequired(req.session.schoolId!, Number(reservation.refund.id), new Error("Razorpay is not configured for this school."));
+        await markRefundReconciliationRequired(
+          req.session.schoolId!,
+          Number(reservation.refund.id),
+          new Error("Razorpay is not configured for this school."),
+          {
+            afterUpdate: async (tx, context, state) => {
+              await appendFeeAudit({
+                schoolId: req.session.schoolId!,
+                actor: SYSTEM_FEE_AUDIT_ACTOR,
+                action: state.action,
+                entityType: "refund",
+                entityId: state.refundId,
+                studentId: context.studentId,
+                studentName: context.studentName,
+                sessionId: context.sessionId,
+                recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+                eventKey: `refund:${state.refundId}:${state.action}`,
+                amount: Math.round(state.amountPaise / 100),
+                description: `Refund outcome for ${context.invoiceNumber ?? "the selected invoice"} could not be confirmed and requires reconciliation.`,
+              }, tx);
+            },
+          },
+        );
         return res.status(503).json({ message: "Refund is reserved but requires reconciliation because Razorpay is not configured.", refundId: reservation.refund.id });
       }
       try {
@@ -3852,15 +4184,98 @@ export function registerFeesRoutes(app: Express) {
           amount: amountPaise,
           speed: "normal",
         });
-        const refund = await recordRefundApiSubmission(req.session.schoolId!, Number(reservation.refund.id), providerRefund);
-        await appendAudit(req, req.session.schoolId!, "refund_requested", "payment_record", paymentRecordId,
-          `Razorpay refund requested: ₹${(amountPaise / 100).toFixed(2)} (${reasonCode}).`, reservation.context.studentId);
+        const refund = await recordRefundApiSubmission(
+          req.session.schoolId!,
+          Number(reservation.refund.id),
+          providerRefund,
+          {
+            afterSubmission: async (tx, context, state) => {
+              await appendFeeAudit({
+                schoolId: req.session.schoolId!,
+                actor: RAZORPAY_FEE_AUDIT_ACTOR,
+                action: state.action,
+                entityType: "refund",
+                entityId: state.refundId,
+                studentId: context.studentId,
+                studentName: context.studentName,
+                sessionId: context.sessionId,
+                recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+                eventKey: `refund:${state.refundId}:${state.action}`,
+                amount: Math.round(state.amountPaise / 100),
+                description: `Refund of ₹${(state.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} was accepted for processing for ${context.invoiceNumber ?? "the selected invoice"}.`,
+              }, tx);
+            },
+            afterSuperseded: async (tx, context, state) => {
+              await appendFeeAudit({
+                schoolId: req.session.schoolId!,
+                actor: SYSTEM_FEE_AUDIT_ACTOR,
+                action: state.action,
+                entityType: "refund",
+                entityId: state.refundId,
+                studentId: context.studentId,
+                studentName: context.studentName,
+                sessionId: context.sessionId,
+                recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+                eventKey: `refund:${state.refundId}:${state.action}`,
+                amount: Math.round(state.amountPaise / 100),
+                description: `Refund reservation for ${context.invoiceNumber ?? "the selected invoice"} was reconciled to an earlier payment-gateway update. No duplicate refund was created.`,
+              }, tx);
+            },
+          },
+        );
         return res.status(201).json({ refund, summary: reservation.summary, providerAcknowledged: true });
       } catch (providerError: any) {
         const ambiguous = ["ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(String(providerError?.code ?? ""))
           || !providerError?.response;
-        if (ambiguous) await markRefundReconciliationRequired(req.session.schoolId!, Number(reservation.refund.id), providerError);
-        else await markRefundProviderFailure(req.session.schoolId!, Number(reservation.refund.id), providerError);
+        if (ambiguous) {
+          await markRefundReconciliationRequired(
+            req.session.schoolId!,
+            Number(reservation.refund.id),
+            providerError,
+            {
+              afterUpdate: async (tx, context, state) => {
+                await appendFeeAudit({
+                  schoolId: req.session.schoolId!,
+                  actor: SYSTEM_FEE_AUDIT_ACTOR,
+                  action: state.action,
+                  entityType: "refund",
+                  entityId: state.refundId,
+                  studentId: context.studentId,
+                  studentName: context.studentName,
+                  sessionId: context.sessionId,
+                  recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+                  eventKey: `refund:${state.refundId}:${state.action}`,
+                  amount: Math.round(state.amountPaise / 100),
+                  description: `Refund outcome for ${context.invoiceNumber ?? "the selected invoice"} could not be confirmed and requires reconciliation.`,
+                }, tx);
+              },
+            },
+          );
+        } else {
+          await markRefundProviderFailure(
+            req.session.schoolId!,
+            Number(reservation.refund.id),
+            providerError,
+            {
+              afterFailure: async (tx, context, state) => {
+                await appendFeeAudit({
+                  schoolId: req.session.schoolId!,
+                  actor: RAZORPAY_FEE_AUDIT_ACTOR,
+                  action: state.action,
+                  entityType: "refund",
+                  entityId: state.refundId,
+                  studentId: context.studentId,
+                  studentName: context.studentName,
+                  sessionId: context.sessionId,
+                  recordLabel: context.invoiceNumber ?? `Payment ${context.paymentRecordId}`,
+                  eventKey: `refund:${state.refundId}:${state.action}`,
+                  amount: Math.round(state.amountPaise / 100),
+                  description: `Refund of ₹${(state.amountPaise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })} was rejected for ${context.invoiceNumber ?? "the selected invoice"}. No refund was marked complete.`,
+                }, tx);
+              },
+            },
+          );
+        }
         console.error("[refund create] provider request did not complete safely", providerError);
         return res.status(ambiguous ? 202 : 502).json({
           message: ambiguous
@@ -5120,6 +5535,7 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/backfill-receipts", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
+    const actor = await resolveFeeAuditActor(req, schoolId);
 
     let afCount = 0;
     let opCount = 0;
@@ -5214,6 +5630,18 @@ export function registerFeesRoutes(app: Express) {
           opCount++;
         }
       }
+      const afRange = afFirst && afLast ? (afFirst === afLast ? afFirst : `${afFirst}–${afLast}`) : null;
+      const opRange = opFirst && opLast ? (opFirst === opLast ? opFirst : `${opFirst}–${opLast}`) : null;
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "backfill_receipts",
+        entityType: "fee_record",
+        entityId: null,
+        recordLabel: "Receipt number backfill",
+        description: `Assigned invoice numbers to ${afCount} fee records${afRange ? ` (${afRange})` : ""} and receipt numbers to ${opCount} payment records${opRange ? ` (${opRange})` : ""}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
       // Transaction commits here → xact lock auto-released by PostgreSQL.
       // Because the sequence advances were also inside this transaction, a crash
       // before commit rolls back both the counter and the row updates — no gaps.
@@ -5233,12 +5661,6 @@ export function registerFeesRoutes(app: Express) {
     const opRange = opFirst && opLast
       ? (opFirst === opLast ? opFirst : `${opFirst}–${opLast}`)
       : null;
-
-    await appendAudit(
-      req, schoolId, "backfill_receipts", "fee_record", null,
-      `Receipt backfill complete: ${afCount} fee record(s) assigned AF numbers${afRange ? ` (${afRange})` : ""}, ${opCount} payment record(s) assigned OP numbers${opRange ? ` (${opRange})` : ""}`,
-    );
-
     res.json({
       success: true,
       feeRecordsUpdated: afCount,
@@ -5320,8 +5742,20 @@ export function registerFeesRoutes(app: Express) {
       mailtrapInboxId:   d.mailtrapInboxId ?? existing?.mailtrapInboxId ?? null,
     };
 
-    await storage.upsertNotificationConfig(schoolId, update);
-    await appendAudit(req, schoolId, "update_notification_config", "notification_config", null, `Notification config updated`);
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    await db.transaction(async tx => {
+      await storage.upsertNotificationConfig(schoolId, update, tx);
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "update_notification_config",
+        entityType: "notification_config",
+        entityId: null,
+        recordLabel: "Payment reminder settings",
+        description: `Updated payment reminder channels: SMS ${d.smsEnabled ? "enabled" : "disabled"}, WhatsApp ${d.waEnabled ? "enabled" : "disabled"}, email ${d.emailEnabled ? "enabled" : "disabled"}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+    });
     res.json({ ok: true });
   });
 
@@ -5472,26 +5906,39 @@ export function registerFeesRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
     const { templates } = parsed.data;
-    for (const t of templates) {
-      await db
-        .insert(dunningTemplates)
-        .values({
-          schoolId,
-          stage: t.stage,
-          channel: t.channel,
-          bodyText: t.bodyText,
-          subjectText: t.subjectText ?? null,
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: [dunningTemplates.schoolId, dunningTemplates.stage, dunningTemplates.channel],
-          set: {
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    await db.transaction(async tx => {
+      for (const t of templates) {
+        await tx
+          .insert(dunningTemplates)
+          .values({
+            schoolId,
+            stage: t.stage,
+            channel: t.channel,
             bodyText: t.bodyText,
             subjectText: t.subjectText ?? null,
             updatedAt: new Date(),
-          },
-        });
-    }
+          })
+          .onConflictDoUpdate({
+            target: [dunningTemplates.schoolId, dunningTemplates.stage, dunningTemplates.channel],
+            set: {
+              bodyText: t.bodyText,
+              subjectText: t.subjectText ?? null,
+              updatedAt: new Date(),
+            },
+          });
+      }
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "settings_change",
+        entityType: "dunning_templates",
+        entityId: null,
+        recordLabel: "Payment reminder templates",
+        description: `Updated ${templates.length} payment reminder template${templates.length === 1 ? "" : "s"}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+    });
     res.json({ ok: true });
   });
 
@@ -5697,6 +6144,26 @@ export function registerFeesRoutes(app: Express) {
     try {
       const { runDunningForSingleFee } = await import("./dunning");
       const result = await runDunningForSingleFee(schoolId, Number(feeRecordId));
+      const feeContext = (await db.execute(sql`
+        SELECT fr.invoice_number, fr.session_id, fr.student_id, s.name AS student_name
+        FROM fee_records fr
+        LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        WHERE fr.id = ${Number(feeRecordId)} AND fr.school_id = ${schoolId}
+        LIMIT 1
+      `)).rows[0] as any;
+      await appendFeeAudit({
+        schoolId,
+        actor: await resolveFeeAuditActor(req, schoolId),
+        action: "reminder_sent",
+        entityType: "fee_record",
+        entityId: Number(feeRecordId),
+        studentId: feeContext?.student_id == null ? null : Number(feeContext.student_id),
+        studentName: feeContext?.student_name ?? null,
+        sessionId: feeContext?.session_id ?? null,
+        recordLabel: feeContext?.invoice_number ?? null,
+        description: `Payment reminder run completed for ${feeContext?.invoice_number ?? "the selected invoice"}: ${result.sent.length} sent, ${result.failed.length + result.skipped.length} not sent.`,
+        ipAddress: requestIpAddress(req),
+      });
       res.json(result);
     } catch (err: any) {
       console.error("[fees/dunning-trigger]", err);
@@ -5880,15 +6347,27 @@ export function registerFeesRoutes(app: Express) {
     const parsed = reportScheduleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    await storage.upsertReportEmailSchedule(schoolId, {
-      enabled:    parsed.data.enabled,
-      recipients: parsed.data.recipients,
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    await db.transaction(async tx => {
+      await storage.upsertReportEmailSchedule(schoolId, {
+        enabled: parsed.data.enabled,
+        recipients: parsed.data.recipients,
+      }, tx);
+      const changes = [
+        parsed.data.enabled !== undefined ? `scheduled reports ${parsed.data.enabled ? "enabled" : "disabled"}` : null,
+        parsed.data.recipients !== undefined ? `${parsed.data.recipients.length} recipients configured` : null,
+      ].filter(Boolean).join("; ");
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "settings_change",
+        entityType: "report_schedule",
+        entityId: null,
+        recordLabel: "Finance report schedule",
+        description: `Updated finance report schedule${changes ? `: ${changes}` : ""}.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
     });
-    const auditParts: string[] = [];
-    if (parsed.data.enabled !== undefined) auditParts.push(`enabled: ${parsed.data.enabled}`);
-    if (parsed.data.recipients !== undefined) auditParts.push(`recipients: ${parsed.data.recipients.join(", ")}`);
-    await appendAudit(req, schoolId, "settings_change", "report_schedule", null,
-      `Report schedule updated — ${auditParts.join(", ") || "(no changes)"}`);
     res.json({ ok: true });
   });
 

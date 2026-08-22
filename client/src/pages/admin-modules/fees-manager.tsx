@@ -179,14 +179,20 @@ function preferredInvoicePeriod(options: InvoicePeriodOption[]): InvoicePeriodOp
 
 interface AuditLogEntry {
   id: number;
-  schoolId: number;
-  actorId: number | null;
   actorName: string | null;
-  ipAddress: string | null;
+  actorRole: string | null;
+  actorIdentifier: string | null;
   action: string;
+  actionLabel: string | null;
   entityType: string | null;
   entityId: number | null;
+  studentId: number | null;
+  studentName: string | null;
+  recordLabel: string | null;
   description: string | null;
+  amount: number | null;
+  currency: string | null;
+  sessionId: number | null;
   createdAt: string;
 }
 
@@ -6308,27 +6314,14 @@ function BackfillReceiptsSection() {
   );
 }
 
-const AUDIT_ACTION_OPTIONS = [
-  { value: "",               label: "All actions" },
-  { value: "create",         label: "create" },
-  { value: "update",         label: "update" },
-  { value: "delete",         label: "delete" },
-  { value: "payment",        label: "payment" },
-  { value: "settings_change",label: "settings_change" },
-  { value: "waiver",         label: "waiver" },
-  { value: "auto_invoice",   label: "auto_invoice" },
-  { value: "blocked_payment",label: "blocked_payment" },
-  { value: "payment_failed", label: "payment_failed" },
-  { value: "status_change",  label: "status_change" },
-];
-function AuditTab() {
+const AUDIT_ACTION_OPTIONS = [{ value: "", label: "All actions" }];
+function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
   const PAGE = 20;
   const [page, setPage] = useState(0);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate]     = useState("");
   const [actionFilter, setActionFilter] = useState("");
   const [searchTerm, setSearchTerm]     = useState("");
-  const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
   // Reset to page 0 when filters change
   const handleFromDate     = (v: string) => { setFromDate(v); setPage(0); };
@@ -6339,14 +6332,19 @@ function AuditTab() {
 
   const hasFilter = fromDate || toDate || actionFilter || searchTerm;
 
-  const { data, isLoading } = useQuery<{ entries: AuditLogEntry[]; total: number }>({
-    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter, searchTerm],
+  const { data, isLoading, isError, refetch } = useQuery<{
+    entries: AuditLogEntry[];
+    total: number;
+    actionOptions?: Array<{ value: string; label: string }>;
+  }>({
+    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter, searchTerm, viewSessionId],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
       if (fromDate)     params.set("from",   fromDate);
       if (toDate)       params.set("to",     toDate);
       if (actionFilter) params.set("action", actionFilter);
       if (searchTerm)   params.set("search", searchTerm);
+      if (viewSessionId) params.set("sessionId", String(viewSessionId));
       const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
@@ -6355,131 +6353,149 @@ function AuditTab() {
   });
 
   const totalPages = data ? Math.ceil(data.total / PAGE) : 0;
+  const actionOptions = useMemo(
+    () => [...AUDIT_ACTION_OPTIONS, ...(data?.actionOptions ?? []).filter(option => option.value)],
+    [data?.actionOptions],
+  );
+
+  const actionTone = (action: string) => {
+    if (action.includes("fail") || action.includes("block") || action === "delete") {
+      return "border-rose-200 bg-rose-50 text-rose-700";
+    }
+    if (action.includes("payment") || action.includes("create")) {
+      return "border-teal-200 bg-teal-50 text-teal-700";
+    }
+    if (action.includes("waiver") || action.includes("setting")) {
+      return "border-amber-200 bg-amber-50 text-amber-700";
+    }
+    return "border-slate-200 bg-slate-50 text-slate-700";
+  };
 
   return (
-    <div className="space-y-4">
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex items-center">
-          <Search className="absolute left-2.5 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+    <div className="space-y-4 text-slate-800">
+      <div className="rounded-xl border border-[#d8e1e0] bg-[#f8fbfa] p-4 shadow-[0_2px_12px_rgba(25,64,60,0.04)]">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#dcefeb] text-[#16756d]"><Shield className="h-4 w-4" /></div>
+              <h3 className="text-sm font-semibold tracking-tight text-[#173f3c]">Fees activity register</h3>
+            </div>
+            <p className="ml-9 mt-0.5 text-[11px] text-slate-500">A clear record of changes made to fee records and payments.</p>
+          </div>
+          <span className="hidden items-center gap-1.5 rounded-full border border-[#c9e1dc] bg-[#eef8f5] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#27766d] sm:flex">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#3b9b8c]" /> Register active
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="relative flex min-w-[210px] flex-1 items-center sm:flex-none">
+            <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search by student name…"
+            placeholder="Search student or record"
             value={searchTerm}
             onChange={e => handleSearchTerm(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-white text-xs placeholder:text-white/25 focus:outline-none focus:border-cyan-500/50 w-52"
+            className="h-8 w-full rounded-lg border border-[#d6e2df] bg-white pl-8 pr-3 text-xs text-slate-700 outline-none transition-shadow placeholder:text-slate-400 focus:border-[#62a99e] focus:ring-2 focus:ring-[#bde0d9]"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-white/40 text-xs whitespace-nowrap">From</label>
+        <label className="flex h-8 items-center gap-2 rounded-lg border border-[#d6e2df] bg-white px-2.5 text-[11px] text-slate-500">
+          From
           <input
             type="date"
             value={fromDate}
             onChange={e => handleFromDate(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+            className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:light]"
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-white/40 text-xs whitespace-nowrap">To</label>
+        </label>
+        <label className="flex h-8 items-center gap-2 rounded-lg border border-[#d6e2df] bg-white px-2.5 text-[11px] text-slate-500">
+          To
           <input
             type="date"
             value={toDate}
             onChange={e => handleToDate(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+            className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:light]"
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-white/40 text-xs whitespace-nowrap">Action</label>
+        </label>
+        <label className="flex h-8 items-center gap-2 rounded-lg border border-[#d6e2df] bg-white px-2.5 text-[11px] text-slate-500">
+          Action
           <select
             value={actionFilter}
             onChange={e => handleActionFilter(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+            className="max-w-[150px] bg-transparent text-xs text-slate-700 outline-none"
           >
-            {AUDIT_ACTION_OPTIONS.map(opt => (
+            {actionOptions.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-        </div>
+        </label>
         {hasFilter && (
           <button
             onClick={clearFilters}
-            className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 transition-colors">
+            className="h-8 rounded-lg px-2 text-xs font-medium text-[#27766d] underline-offset-2 transition-colors hover:bg-[#e5f3ef] hover:underline">
             Clear filters
           </button>
         )}
-        <p className="text-white/30 text-xs ml-auto">
-          {data ? `${data.total} entr${data.total !== 1 ? "ies" : "y"}${hasFilter ? " matching filter" : ""}` : "…"}
-        </p>
+        <p className="ml-auto text-[11px] tabular-nums text-slate-500">{data ? `${data.total} entr${data.total !== 1 ? "ies" : "y"}` : "Loading register…"}</p>
+      </div>
       </div>
 
-      {/* Pagination */}
-      <div className="flex items-center justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-2 text-white/50">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] text-slate-500">{hasFilter ? "Filtered view" : "Most recent activity first"} <span className="text-slate-400">· IST</span></p>
+        <div className="flex items-center gap-1.5">
+        <Button size="sm" variant="ghost" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="h-7 px-2 text-slate-500 hover:bg-[#e7f2ef] hover:text-[#27766d]">
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <span className="text-white/40 text-xs">{page + 1} / {totalPages || 1}</span>
-        <Button size="sm" variant="ghost" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="h-7 px-2 text-white/50">
+        <span className="min-w-[72px] text-center text-xs tabular-nums text-slate-500">{page + 1} / {totalPages || 1}</span>
+        <Button size="sm" variant="ghost" onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} className="h-7 px-2 text-slate-500 hover:bg-[#e7f2ef] hover:text-[#27766d]">
           <ChevronRight className="w-4 h-4" />
         </Button>
+        </div>
       </div>
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-16 text-white/40"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…</div>
+        <div className="overflow-hidden rounded-xl border border-[#d8e1e0] bg-white">
+          {[1, 2, 3, 4, 5].map(row => <div key={row} className="h-14 animate-pulse border-b border-[#edf2f1] bg-gradient-to-r from-[#f5f9f8] via-white to-[#f5f9f8]" />)}
+        </div>
+      ) : isError ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-12 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-7 w-7 text-rose-500" />
+          <p className="text-sm font-medium text-rose-800">The register could not be loaded.</p>
+          <button onClick={() => refetch()} className="mt-3 text-xs font-semibold text-rose-700 underline underline-offset-2">Try again</button>
+        </div>
       ) : !data?.entries.length ? (
-        <div className="text-center py-16 text-white/30">
-          <Shield className="w-12 h-12 mx-auto mb-3 opacity-20" />
-          <p className="text-sm">{hasFilter ? "No entries match the selected date range." : "No audit entries yet. Actions in this module will appear here."}</p>
+        <div className="rounded-xl border border-dashed border-[#cbded9] bg-[#f8fbfa] px-4 py-16 text-center">
+          <Shield className="mx-auto mb-3 h-10 w-10 text-[#8bbdb5]" />
+          <p className="text-sm font-medium text-[#315e59]">{hasFilter ? "No entries match these filters." : "No activity has been recorded yet."}</p>
+          <p className="mt-1 text-xs text-slate-500">{hasFilter ? "Try widening the date range or clearing a filter." : "Fee record changes will appear here as they happen."}</p>
         </div>
       ) : (
-        <div className="rounded-xl border border-white/10 overflow-hidden">
+        <div className="overflow-hidden rounded-xl border border-[#d8e1e0] bg-white shadow-[0_3px_16px_rgba(25,64,60,0.05)]">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[900px] text-sm">
               <thead>
-                <tr className="border-b border-white/10 bg-white/5">
-                  {["Timestamp","Actor","Action","Description","IP"].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-white/50 font-medium text-xs">{h}</th>
+                <tr className="border-b border-[#d8e1e0] bg-[#eef6f4]">
+                  {["Date & Time", "Who", "Role", "ID", "Action", "Student / Record", "Description"].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-[0.09em] text-[#52716d]">{h}</th>
                   ))}
-                  <th className="px-2 py-3 w-6" />
                 </tr>
               </thead>
               <tbody>
                 {data.entries.map(e => {
-                  const isExpanded = expandedRow === e.id;
-                  const hasDesc = !!e.description;
                   return (
-                    <React.Fragment key={e.id}>
-                      <tr
-                        onClick={() => hasDesc && setExpandedRow(isExpanded ? null : e.id)}
-                        className={`border-b transition-colors ${e.action === "payment_failed" ? "border-red-900/30" : "border-white/5"} ${hasDesc ? "cursor-pointer" : ""} ${isExpanded ? (e.action === "payment_failed" ? "bg-red-950/30" : "bg-white/5") : (e.action === "payment_failed" ? "bg-red-950/20 hover:bg-red-950/30" : "hover:bg-white/5")}`}
-                      >
-                        <td className="px-4 py-3 text-white/40 text-xs whitespace-nowrap">{fmtDateTime(e.createdAt)}</td>
-                        <td className="px-4 py-3 text-white/70 text-xs">{e.actorName ?? (e.actorId != null ? `#${e.actorId}` : "System")}</td>
-                        <td className="px-4 py-3"><ActionBadge action={e.action} /></td>
-                        <td className="px-4 py-3 text-white/60 text-xs max-w-xs truncate">{e.description ?? "—"}</td>
-                        <td className="px-4 py-3 text-white/30 text-xs font-mono">{e.ipAddress ?? "—"}</td>
-                        <td className="px-2 py-3 text-white/30">
-                          {hasDesc && (
-                            isExpanded
-                              ? <ChevronUp className="w-3.5 h-3.5" />
-                              : <ChevronDown className="w-3.5 h-3.5" />
-                          )}
-                        </td>
-                      </tr>
-                      {isExpanded && (
-                        <tr className="border-b border-white/5 bg-white/[0.03]">
-                          <td colSpan={6} className="px-4 py-3">
-                            <div className="flex flex-col gap-2">
-                              <p className="text-white/80 text-xs leading-relaxed whitespace-pre-wrap break-words">{e.description}</p>
-                              <div className="flex flex-wrap gap-4 mt-1 text-xs text-white/40">
-                                <span><span className="text-white/30">Actor: </span>{e.actorName ?? (e.actorId != null ? `#${e.actorId}` : "System")}</span>
-                                <span><span className="text-white/30">IP: </span>{e.ipAddress ?? "—"}</span>
-                                <span><span className="text-white/30">Time: </span>{fmtDateTime(e.createdAt)}</span>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
+                    <tr key={e.id} className="border-b border-[#edf2f1] transition-colors hover:bg-[#f4faf8]">
+                      <td className="whitespace-nowrap px-3 py-3 align-top text-[11px] tabular-nums text-slate-500">{fmtDateTime(e.createdAt)}</td>
+                      <td className="max-w-[150px] px-3 py-3 align-top">
+                        <div className="truncate text-xs font-semibold text-[#274b47]">{e.actorName ?? "School system"}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">{e.actorName ? "Recorded by staff" : "Automatic entry"}</div>
+                      </td>
+                      <td className="px-3 py-3 align-top text-xs text-slate-600">{e.actorRole ?? "—"}</td>
+                      <td className="px-3 py-3 align-top font-mono text-[11px] text-slate-500">{e.actorIdentifier ?? "—"}</td>
+                      <td className="px-3 py-3 align-top"><span className={`inline-flex rounded-md border px-2 py-1 text-[10px] font-bold capitalize ${actionTone(e.action)}`}>{e.actionLabel ?? e.action.replaceAll("_", " ")}</span></td>
+                      <td className="max-w-[190px] px-3 py-3 align-top">
+                        <div className="truncate text-xs font-medium text-[#315e59]">{e.studentName ?? "School-wide"}</div>
+                        <div className="mt-0.5 truncate text-[10px] text-slate-400">{e.recordLabel ?? e.entityType ?? "General register"}</div>
+                      </td>
+                      <td className="max-w-[280px] px-3 py-3 align-top text-xs leading-relaxed text-slate-600">{e.description ?? "No additional details recorded."}</td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -7542,7 +7558,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {activeTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
       {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
       {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "audit"      && <AuditTab />}
+      {activeTab === "audit"      && <AuditLogTab viewSessionId={viewSessionId} />}
     </div>
   );
 }

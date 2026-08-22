@@ -25,3 +25,4 @@
 - [Offline Payment Audit Integrity](offline-payment-audit-integrity.md) — method details are tenant-scoped sidecar data, corrections preserve immutable snapshots, and proof uploads wait for private storage.
 - [IST Time Policy](ist-time-policy.md) — school-facing instants format in Asia/Kolkata while DATE-only values remain calendar strings and existing stored timestamps retain UTC semantics.
 - [Transaction report authority](transaction-report-authority.md) — invoice scope is authoritative; attempts lead, unmatched payment records fall back, and only processed refunds affect money.
+- [Fees audit register contract](fees-audit-register.md) — snapshot-only identities, safe operational prose, atomic event writes, per-record deletion history, and cascade-only cleanup.

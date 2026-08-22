@@ -276,6 +276,7 @@ export async function reserveRefundRequest(input: {
   schoolId: number; paymentRecordId: number; amountPaise: number; reasonCode: RefundReasonCode;
   reasonText?: string | null; internalNote?: string | null; idempotencyKey: string;
   requestedBy: number; requesterIp?: string | null;
+  afterReserve?: (tx: any, context: RefundPaymentContext, refund: any) => Promise<void>;
 }): Promise<{ refund: any; summary: RefundFinancialSummary; idempotent: boolean; context: RefundPaymentContext }> {
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Refund amount must be a positive whole number of paise.");
   if (!REFUND_REASON_CODES.includes(input.reasonCode)) throw new Error("Choose a valid refund reason.");
@@ -318,6 +319,7 @@ export async function reserveRefundRequest(input: {
       payload: { reasonCode: input.reasonCode, reasonText: input.reasonText ?? null },
       occurredAt: new Date(),
     });
+    if (input.afterReserve) await input.afterReserve(tx, context, refund);
     return {
       refund,
       summary: { ...summary, reservedPaise: summary.reservedPaise + input.amountPaise, currentlyRefundablePaise: summary.currentlyRefundablePaise - input.amountPaise, paymentState: "refund_pending" },
@@ -331,6 +333,18 @@ export async function recordRefundApiSubmission(
   schoolId: number,
   refundId: number,
   providerRefund: any,
+  options?: {
+    afterSubmission?: (
+      tx: any,
+      context: RefundPaymentContext,
+      state: { action: "refund_created"; refundId: number; amountPaise: number },
+    ) => Promise<void>;
+    afterSuperseded?: (
+      tx: any,
+      context: RefundPaymentContext,
+      state: { action: "refund_superseded"; refundId: number; amountPaise: number },
+    ) => Promise<void>;
+  },
 ): Promise<any> {
   const result = await db.transaction(async tx => {
     const providerId = providerRefund?.id ?? null;
@@ -356,6 +370,15 @@ export async function recordRefundApiSubmission(
           razorpayRefundId: providerId, amountPaise: Number(retired.requested_amount_paise), source: "system",
           correlationKey: `api-webhook-race:${schoolId}:${refundId}:${providerId}`, payload: providerRefund, occurredAt: new Date(),
         });
+        if (retired && options?.afterSuperseded) {
+          const context = await findPaymentContext(tx, schoolId, Number(retired.payment_record_id));
+          if (!context) throw new Error("Refund payment context not found.");
+          await options.afterSuperseded(tx, context, {
+            action: "refund_superseded",
+            refundId,
+            amountPaise: Number(retired.requested_amount_paise),
+          });
+        }
         return webhookWinner;
       }
     }
@@ -392,12 +415,32 @@ export async function recordRefundApiSubmission(
       source: "system", correlationKey: `api:${schoolId}:${refundId}:${providerId ?? "without-id"}`,
       payload: providerRefund, providerOccurredAt: providerDate(providerRefund), occurredAt: new Date(),
     });
+    if (options?.afterSubmission) {
+      const context = await findPaymentContext(tx, schoolId, Number(current.payment_record_id));
+      if (!context) throw new Error("Refund payment context not found.");
+      await options.afterSubmission(tx, context, {
+        action: "refund_created",
+        refundId,
+        amountPaise: Number(providerRefund?.amount ?? current.requested_amount_paise),
+      });
+    }
     return stored;
   });
   return result;
 }
 
-export async function markRefundReconciliationRequired(schoolId: number, refundId: number, error: unknown): Promise<void> {
+export async function markRefundReconciliationRequired(
+  schoolId: number,
+  refundId: number,
+  error: unknown,
+  options?: {
+    afterUpdate?: (
+      tx: any,
+      context: RefundPaymentContext,
+      state: { action: "refund_reconciliation_required"; refundId: number; amountPaise: number },
+    ) => Promise<void>;
+  },
+): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await db.transaction(async tx => {
     const row = (await tx.execute(sql`
@@ -418,10 +461,30 @@ export async function markRefundReconciliationRequired(schoolId: number, refundI
       correlationKey: `reconciliation-required:${schoolId}:${refundId}:${row.updated_at}`,
       payload: { error: message }, occurredAt: new Date(),
     });
+    if (options?.afterUpdate) {
+      const context = await findPaymentContext(tx, schoolId, Number(row.payment_record_id));
+      if (!context) throw new Error("Refund payment context not found.");
+      await options.afterUpdate(tx, context, {
+        action: "refund_reconciliation_required",
+        refundId,
+        amountPaise: Number(row.requested_amount_paise),
+      });
+    }
   });
 }
 
-export async function markRefundProviderFailure(schoolId: number, refundId: number, error: unknown): Promise<void> {
+export async function markRefundProviderFailure(
+  schoolId: number,
+  refundId: number,
+  error: unknown,
+  options?: {
+    afterFailure?: (
+      tx: any,
+      context: RefundPaymentContext,
+      state: { action: "refund_failed"; refundId: number; amountPaise: number },
+    ) => Promise<void>;
+  },
+): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await db.transaction(async tx => {
     const row = (await tx.execute(sql`
@@ -436,12 +499,26 @@ export async function markRefundProviderFailure(schoolId: number, refundId: numb
       razorpayOrderId: row.razorpay_order_id, amountPaise: Number(row.requested_amount_paise), source: "system",
       correlationKey: `provider-rejected:${schoolId}:${refundId}`, payload: { error: message }, occurredAt: new Date(),
     });
+    if (options?.afterFailure) {
+      const context = await findPaymentContext(tx, schoolId, Number(row.payment_record_id));
+      if (!context) throw new Error("Refund payment context not found.");
+      await options.afterFailure(tx, context, {
+        action: "refund_failed",
+        refundId,
+        amountPaise: Number(row.requested_amount_paise),
+      });
+    }
   });
 }
 
 export async function reconcileRefundWebhook(input: {
   schoolId: number; refund: any; eventType: "refund.created" | "refund.processed" | "refund.failed" | "refund.speed_changed";
   webhookDeliveryId: number; fallbackFeeRecordId?: number | null; fallbackStudentId?: number | null; fallbackSessionId?: number | null;
+  afterReconcile?: (
+    tx: any,
+    context: RefundPaymentContext,
+    state: { action: string; localStatus: string; amountPaise: number; refundId: number },
+  ) => Promise<void>;
 }): Promise<{ refundId: number | null; feeRecordId: number | null; paymentRecordId: number | null; summary: RefundFinancialSummary | null }> {
   const razorpayRefundId = input.refund?.id ? String(input.refund.id) : null;
   const razorpayPaymentId = input.refund?.payment_id ? String(input.refund.payment_id) : null;
@@ -526,6 +603,14 @@ export async function reconcileRefundWebhook(input: {
       payload: input.refund, providerOccurredAt: providerDate(input.refund), occurredAt: new Date(),
     });
     const summary = await recalculateFinancialProjection(tx, context);
+    if (input.afterReconcile) {
+      await input.afterReconcile(tx, context, {
+        action: map.event,
+        localStatus: effectiveLocal,
+        amountPaise: amount,
+        refundId: Number(stored.id),
+      });
+    }
     return { refundId: Number(stored.id), feeRecordId: context.feeRecordId, paymentRecordId: context.paymentRecordId, summary };
   });
 }

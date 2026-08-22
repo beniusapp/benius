@@ -109,7 +109,7 @@ async function teardown(schoolId: number): Promise<void> {
   try {
     await client.query("BEGIN");
     await client.query("SET LOCAL app.payment_history_cleanup = 'on'");
-    await client.query("DELETE FROM fee_audit_log WHERE school_id = $1", [schoolId]);
+    await client.query("SET LOCAL app.fee_audit_cleanup = 'on'");
     await client.query("DELETE FROM schools WHERE id = $1", [schoolId]);
     await client.query("COMMIT");
   } catch (error) {

@@ -11,6 +11,8 @@ import { recalculateLateFees } from "./late-fee-engine";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
 import { formatTimeIST } from "../shared/ist-time";
+import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
+import { sql } from "drizzle-orm";
 
 const app = express();
 const httpServer = createServer(app);
@@ -573,6 +575,52 @@ app.use((req, res, next) => {
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_reason        VARCHAR(100);
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS payment_method      VARCHAR(50);
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS raw_response        JSONB;
+  `);
+
+  // ── Human-readable Fees operational audit ────────────────────────────────
+  // Snapshot actor/record labels so later profile edits or entity deletion
+  // cannot rewrite history. Ordinary application users cannot mutate rows.
+  await pool.query(`
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_teacher_id INTEGER REFERENCES teachers(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_staff_id INTEGER REFERENCES non_teaching_staff(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_type VARCHAR(30) NOT NULL DEFAULT 'legacy';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_role VARCHAR(80) NOT NULL DEFAULT 'Unknown';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_identifier VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_name TEXT;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS record_label TEXT;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS event_key VARCHAR(200);
+    UPDATE fee_audit_log SET currency = 'INR' WHERE currency IS NULL;
+    ALTER TABLE fee_audit_log ALTER COLUMN currency SET DEFAULT 'INR';
+    ALTER TABLE fee_audit_log ALTER COLUMN currency SET NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS fee_audit_school_timeline_idx
+      ON fee_audit_log(school_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS fee_audit_school_action_idx
+      ON fee_audit_log(school_id, action);
+    CREATE INDEX IF NOT EXISTS fee_audit_school_session_idx
+      ON fee_audit_log(school_id, session_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS fee_audit_school_event_key_uniq
+      ON fee_audit_log(school_id, event_key)
+      WHERE event_key IS NOT NULL;
+
+    CREATE OR REPLACE FUNCTION reject_fee_audit_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE'
+         AND current_setting('app.fee_audit_cleanup', true) = 'on'
+         AND pg_trigger_depth() > 1
+         AND NOT EXISTS (
+           SELECT 1 FROM schools WHERE id = OLD.school_id
+         ) THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'fee_audit_log is append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS fee_audit_log_append_only ON fee_audit_log;
+    CREATE TRIGGER fee_audit_log_append_only
+      BEFORE UPDATE OR DELETE ON fee_audit_log
+      FOR EACH ROW EXECUTE FUNCTION reject_fee_audit_mutation();
   `);
 
   // ── payment_records extended columns (Razorpay enrichment + payer info) ──
@@ -1247,21 +1295,30 @@ app.use((req, res, next) => {
       const allSchools = await storage.getSchools();
       let totalUpdated = 0;
       for (const school of allSchools) {
-        const updated = await storage.bulkUpdateOverdueFeeRecords(school.id);
+        const updated = await storage.bulkUpdateOverdueFeeRecords(school.id, async (tx, records) => {
+          for (const rec of records) {
+            const studentResult = await tx.execute(sql`
+              SELECT name FROM students
+              WHERE id = ${rec.studentId} AND school_id = ${school.id}
+              LIMIT 1
+            `);
+            await appendFeeAudit({
+              schoolId: school.id,
+              actor: SYSTEM_FEE_AUDIT_ACTOR,
+              action: "auto_overdue",
+              entityType: "fee_record",
+              entityId: rec.id,
+              studentId: rec.studentId,
+              studentName: (studentResult.rows[0] as any)?.name ?? null,
+              sessionId: rec.sessionId ?? null,
+              recordLabel: rec.invoiceNumber ?? null,
+              amount: Number(rec.amount),
+              description: `${rec.invoiceNumber ?? "Invoice"} was marked overdue because its due date passed.`,
+            }, tx);
+          }
+        });
         if (updated.length === 0) continue;
         totalUpdated += updated.length;
-        for (const rec of updated) {
-          await storage.appendFeeAuditLog({
-            schoolId: school.id,
-            actorId: null,
-            actorName: "System (auto)",
-            ipAddress: null,
-            action: "auto_overdue",
-            entityType: "fee_record",
-            entityId: rec.id,
-            description: `Fee record #${rec.id} (${rec.feeType}, ₹${rec.amount}) automatically marked Overdue — due date was ${rec.dueDate}`,
-          });
-        }
       }
       log(`Overdue sweep complete: ${totalUpdated} record(s) updated across ${allSchools.length} school(s)`, "cron");
 

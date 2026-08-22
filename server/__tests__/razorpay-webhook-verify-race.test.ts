@@ -113,8 +113,10 @@ async function createFixture(): Promise<Fixture> {
 }
 
 async function teardown(schoolId: number): Promise<void> {
-  await db.execute(sql`DELETE FROM fee_audit_log WHERE school_id = ${schoolId}`);
-  await db.delete(schools).where(eq(schools.id, schoolId));
+  await db.transaction(async tx => {
+    await tx.execute(sql`SELECT set_config('app.fee_audit_cleanup', 'on', true)`);
+    await tx.execute(sql`DELETE FROM schools WHERE id = ${schoolId}`);
+  });
 }
 
 /**

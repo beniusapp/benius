@@ -55,6 +55,7 @@ import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, lte, lt, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
+import { feeAuditActionLabel, safeFeeAuditDescription, safeFeeAuditRecordLabel } from "./fee-audit";
 
 function buildCalendarAudienceFilter(
   filter?: Array<{ cls: string; sec?: string }>
@@ -128,6 +129,7 @@ export class DatabaseStorage {
       // erasure path, so enable the database's transaction-local cascade guard
       // only for this controlled operation.
       await tx.execute(sql`SELECT set_config('app.payment_history_cleanup', 'on', true)`);
+      await tx.execute(sql`SELECT set_config('app.fee_audit_cleanup', 'on', true)`);
       const result = await tx.delete(schools).where(eq(schools.id, id)).returning();
       return result.length > 0;
     });
@@ -4657,6 +4659,7 @@ export class DatabaseStorage {
   async createInvoiceFeeRecordIfAbsent(input: {
     data: Omit<InsertFeeRecord, "invoiceNumber">;
     periodStart: string;
+    afterCreate?: (tx: any, record: FeeRecord) => Promise<void>;
   }): Promise<{ created: boolean; record: FeeRecord }> {
     const data = input.data;
     if (!data.sessionId) throw new Error("Invoices require an active session");
@@ -4698,6 +4701,7 @@ export class DatabaseStorage {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .values({ ...data, invoiceNumber } as any)
         .returning();
+      if (input.afterCreate) await input.afterCreate(tx, record);
       return { created: true, record };
     });
   }
@@ -4721,8 +4725,8 @@ export class DatabaseStorage {
   }
 
   // invoiceNumber is intentionally excluded: it is assigned once at creation and must never be overwritten.
-  async updateFeeRecord(id: number, schoolId: number, data: Omit<Partial<InsertFeeRecord>, "invoiceNumber">): Promise<FeeRecord | undefined> {
-    const [rec] = await db.update(feeRecords)
+  async updateFeeRecord(id: number, schoolId: number, data: Omit<Partial<InsertFeeRecord>, "invoiceNumber">, executor: any = db): Promise<FeeRecord | undefined> {
+    const [rec] = await executor.update(feeRecords)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .set(data as any)
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
@@ -4730,20 +4734,20 @@ export class DatabaseStorage {
     return rec || undefined;
   }
 
-  async deleteFeeRecord(id: number, schoolId: number): Promise<boolean> {
+  async deleteFeeRecord(id: number, schoolId: number, executor: any = db): Promise<boolean> {
     // Explicitly remove all dunning_log rows for this fee record before deleting
     // it.  The FK already has ON DELETE CASCADE so the DB would handle this
     // automatically, but we do it explicitly here so the deletion is logged at
     // the application level and so the intent is unambiguous if the FK
     // constraint is ever altered in the future.
-    const dunningDeleted = await db.delete(dunningLog)
+    const dunningDeleted = await executor.delete(dunningLog)
       .where(and(eq(dunningLog.feeRecordId, id), eq(dunningLog.schoolId, schoolId)))
       .returning({ id: dunningLog.id });
     if (dunningDeleted.length > 0) {
       console.log(`[fees] deleted ${dunningDeleted.length} dunning_log row(s) for fee_record #${id} (school ${schoolId})`);
     }
 
-    const result = await db.delete(feeRecords)
+    const result = await executor.delete(feeRecords)
       .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)))
       .returning();
     return result.length > 0;
@@ -4753,24 +4757,31 @@ export class DatabaseStorage {
    * Finds all "Due" fee records for a school whose due_date has already passed
    * and marks them "Overdue". Returns the updated records so callers can audit-log them.
    */
-  async bulkUpdateOverdueFeeRecords(schoolId: number): Promise<FeeRecord[]> {
-    return await db.update(feeRecords)
-      .set({ status: "Overdue" })
-      .where(
-        and(
-          eq(feeRecords.schoolId, schoolId),
-          eq(feeRecords.status, "Due"),
-          lt(feeRecords.dueDate, sql`CURRENT_DATE`),
+  async bulkUpdateOverdueFeeRecords(
+    schoolId: number,
+    afterUpdate?: (tx: any, records: FeeRecord[]) => Promise<void>,
+  ): Promise<FeeRecord[]> {
+    return db.transaction(async tx => {
+      const records = await tx.update(feeRecords)
+        .set({ status: "Overdue" })
+        .where(
+          and(
+            eq(feeRecords.schoolId, schoolId),
+            eq(feeRecords.status, "Due"),
+            lt(feeRecords.dueDate, sql`CURRENT_DATE`),
+          )
         )
-      )
-      .returning();
+        .returning();
+      if (afterUpdate && records.length > 0) await afterUpdate(tx, records);
+      return records;
+    });
   }
 
   // ===== FEE STRUCTURES =====
 
-  async createFeeStructure(data: InsertFeeStructure): Promise<FeeStructure> {
+  async createFeeStructure(data: InsertFeeStructure, executor: any = db): Promise<FeeStructure> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const [rec] = await db.insert(feeStructures).values(data as any).returning();
+    const [rec] = await executor.insert(feeStructures).values(data as any).returning();
     return rec;
   }
 
@@ -4780,8 +4791,8 @@ export class DatabaseStorage {
       .orderBy(feeStructures.name);
   }
 
-  async updateFeeStructure(id: number, schoolId: number, data: Partial<InsertFeeStructure>): Promise<FeeStructure | undefined> {
-    const [rec] = await db.update(feeStructures)
+  async updateFeeStructure(id: number, schoolId: number, data: Partial<InsertFeeStructure>, executor: any = db): Promise<FeeStructure | undefined> {
+    const [rec] = await executor.update(feeStructures)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .set(data as any)
       .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)))
@@ -4789,8 +4800,8 @@ export class DatabaseStorage {
     return rec || undefined;
   }
 
-  async deleteFeeStructure(id: number, schoolId: number): Promise<boolean> {
-    const result = await db.delete(feeStructures)
+  async deleteFeeStructure(id: number, schoolId: number, executor: any = db): Promise<boolean> {
+    const result = await executor.delete(feeStructures)
       .where(and(eq(feeStructures.id, id), eq(feeStructures.schoolId, schoolId)))
       .returning();
     return result.length > 0;
@@ -4916,7 +4927,11 @@ export class DatabaseStorage {
   async appendFeeAuditLog(entry: {
     schoolId: number; actorId?: number | null; actorName?: string | null;
     ipAddress?: string | null; action: string; entityType?: string | null;
-    entityId?: number | null; studentId?: number | null; description?: string | null;
+    entityId?: number | null; studentId?: number | null; studentName?: string | null;
+    sessionId?: number | null; recordLabel?: string | null; amount?: number | null;
+    eventKey?: string | null;
+    actorTeacherId?: number | null; actorStaffId?: number | null; actorType?: string;
+    actorRole?: string; actorIdentifier?: string; description?: string | null;
   }): Promise<FeeAuditLog> {
     const [rec] = await db.insert(feeAuditLog).values(entry as any).returning();
     return rec;
@@ -4930,70 +4945,121 @@ export class DatabaseStorage {
     to?: string | null,
     action?: string | null,
     search?: string | null,
-  ): Promise<{ entries: FeeAuditLog[]; total: number }> {
+    sessionId?: number | null,
+  ): Promise<{
+    entries: Array<{
+      id: number;
+      actorName: string;
+      actorRole: string;
+      actorIdentifier: string;
+      action: string;
+      actionLabel: string;
+      entityType: string | null;
+      entityId: number | null;
+      studentId: number | null;
+      studentName: string | null;
+      recordLabel: string | null;
+      amount: number | null;
+      currency: string;
+      sessionId: number | null;
+      description: string;
+      createdAt: Date | string;
+    }>;
+    total: number;
+    actionOptions: Array<{ value: string; label: string }>;
+  }> {
     const searchTrimmed = search?.trim() || null;
+    const searchPat = searchTrimmed ? `%${searchTrimmed}%` : null;
+    const fromClause = from
+      ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
+      : sql``;
+    const toClause = to
+      ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date <= ${to}::date`
+      : sql``;
+    const actionClause = action ? sql`AND fal.action = ${action}` : sql``;
+    const sessionClause = sessionId ? sql`AND fal.session_id = ${sessionId}` : sql``;
+    const searchClause = searchPat
+      ? sql`AND (
+          COALESCE(fal.actor_name, '') ILIKE ${searchPat}
+          OR COALESCE(fal.actor_identifier, '') ILIKE ${searchPat}
+          OR COALESCE(fal.student_name, '') ILIKE ${searchPat}
+          OR COALESCE(fal.record_label, '') ILIKE ${searchPat}
+          OR COALESCE(fal.description, '') ILIKE ${searchPat}
+        )`
+      : sql``;
 
-    if (searchTrimmed) {
-      // When a search term is present, LEFT JOIN students so we can match on the
-      // student's name (for entries with student_id set) as well as the description
-      // text (catches historical entries without a student_id, and non-student entries).
-      const searchPat = `%${searchTrimmed}%`;
-      const fromClause = from
-        ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
-        : sql``;
-      const toClause = to
-        ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date <= ${to}::date`
-        : sql``;
-      const actionClause = action ? sql`AND fal.action = ${action}` : sql``;
-
-      const countResult = await db.execute(sql`
+    const [countResult, rowsResult, actionResult] = await Promise.all([
+      db.execute(sql`
         SELECT COUNT(*)::int AS cnt
         FROM fee_audit_log fal
-        LEFT JOIN students s ON s.id = fal.student_id AND s.school_id = ${schoolId}
         WHERE fal.school_id = ${schoolId}
-          ${fromClause}
-          ${toClause}
-          ${actionClause}
-          AND (s.name ILIKE ${searchPat} OR fal.description ILIKE ${searchPat})
-      `);
-      const total = Number((countResult.rows[0] as any)?.cnt ?? 0);
-
-      const rowsResult = await db.execute(sql`
-        SELECT fal.*
+          ${fromClause} ${toClause} ${actionClause} ${sessionClause} ${searchClause}
+      `),
+      db.execute(sql`
+        SELECT
+          fal.id,
+          COALESCE(NULLIF(fal.actor_name, ''), 'Unknown Actor') AS actor_name,
+          COALESCE(NULLIF(fal.actor_role, ''), 'Unknown') AS actor_role,
+          COALESCE(NULLIF(fal.actor_identifier, ''), 'UNKNOWN') AS actor_identifier,
+          fal.action,
+          fal.entity_type,
+          fal.entity_id,
+          fal.student_id,
+          NULLIF(fal.student_name, '') AS student_name,
+          fal.record_label,
+          fal.amount,
+          COALESCE(fal.currency, 'INR') AS currency,
+          fal.session_id,
+          COALESCE(NULLIF(fal.description, ''), 'Activity recorded.') AS description,
+          fal.created_at
         FROM fee_audit_log fal
-        LEFT JOIN students s ON s.id = fal.student_id AND s.school_id = ${schoolId}
         WHERE fal.school_id = ${schoolId}
-          ${fromClause}
-          ${toClause}
-          ${actionClause}
-          AND (s.name ILIKE ${searchPat} OR fal.description ILIKE ${searchPat})
-        ORDER BY fal.created_at DESC
+          ${fromClause} ${toClause} ${actionClause} ${sessionClause} ${searchClause}
+        ORDER BY fal.created_at DESC, fal.id DESC
         LIMIT ${limit} OFFSET ${offset}
-      `);
+      `),
+      db.execute(sql`
+        SELECT DISTINCT action
+        FROM fee_audit_log
+        WHERE school_id = ${schoolId}
+        ORDER BY action
+      `),
+    ]);
 
-      const entries = rowsResult.rows as unknown as FeeAuditLog[];
-      return { entries, total };
-    }
-
-    // No search term — use the fast ORM path (no join needed)
-    const conditions: SQL[] = [eq(feeAuditLog.schoolId, schoolId)];
-    // Convert stored UTC timestamp to IST date inside PostgreSQL before comparing,
-    // so the user's selected calendar date (which is an IST date) is matched correctly.
-    if (from) conditions.push(
-      sql`(${feeAuditLog.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
-    );
-    if (to) conditions.push(
-      sql`(${feeAuditLog.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date <= ${to}::date`
-    );
-    if (action) conditions.push(eq(feeAuditLog.action, action));
-    const where = conditions.length === 1 ? conditions[0] : and(...conditions);
-    const [{ cnt }] = await db.select({ cnt: count() }).from(feeAuditLog).where(where);
-    const entries = await db.select().from(feeAuditLog)
-      .where(where)
-      .orderBy(desc(feeAuditLog.createdAt))
-      .limit(limit)
-      .offset(offset);
-    return { entries, total: Number(cnt) };
+    const entries = (rowsResult.rows as any[]).map((row) => {
+      const recordLabel = safeFeeAuditRecordLabel(row.record_label);
+      return {
+        id: Number(row.id),
+        actorName: String(row.actor_name),
+        actorRole: String(row.actor_role),
+        actorIdentifier: String(row.actor_identifier),
+        action: String(row.action),
+        actionLabel: feeAuditActionLabel(String(row.action), row.entity_type, row.entity_id),
+        entityType: row.entity_type ?? null,
+        entityId: row.entity_id == null ? null : Number(row.entity_id),
+        studentId: row.student_id == null ? null : Number(row.student_id),
+        studentName: row.student_name ?? null,
+        recordLabel,
+        amount: row.amount == null ? null : Number(row.amount),
+        currency: String(row.currency ?? "INR"),
+        sessionId: row.session_id == null ? null : Number(row.session_id),
+        description: safeFeeAuditDescription({
+          action: String(row.action),
+          description: row.description,
+          recordLabel,
+        }),
+        createdAt: row.created_at,
+      };
+    });
+    const actionOptions = (actionResult.rows as any[]).map((row) => ({
+      value: String(row.action),
+      label: feeAuditActionLabel(String(row.action)),
+    }));
+    return {
+      entries,
+      total: Number((countResult.rows[0] as any)?.cnt ?? 0),
+      actionOptions,
+    };
   }
 
   // ===== EXTERNAL PAYMENT SETTINGS =====
@@ -5007,8 +5073,8 @@ export class DatabaseStorage {
   async upsertExternalPaymentSettings(schoolId: number, data: {
     isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; maxOvercollectionPercent?: number; lastUpdatedBy?: number | null;
     razorpayEnabled?: boolean; razorpayKeyId?: string | null; razorpayKeySecret?: string | null; razorpayWebhookSecret?: string | null; razorpayMode?: string;
-  }): Promise<ExternalPaymentSettings> {
-    const [rec] = await db.insert(externalPaymentSettings)
+  }, executor: any = db): Promise<ExternalPaymentSettings> {
+    const [rec] = await executor.insert(externalPaymentSettings)
       .values({ schoolId, ...data, updatedAt: new Date() })
       .onConflictDoUpdate({
         target: externalPaymentSettings.schoolId,
@@ -5025,8 +5091,8 @@ export class DatabaseStorage {
     return rec || null;
   }
 
-  async upsertNotificationConfig(schoolId: number, data: Partial<Omit<NotificationConfig, "id" | "schoolId" | "updatedAt">>): Promise<NotificationConfig> {
-    const [rec] = await db.insert(notificationConfig)
+  async upsertNotificationConfig(schoolId: number, data: Partial<Omit<NotificationConfig, "id" | "schoolId" | "updatedAt">>, executor: any = db): Promise<NotificationConfig> {
+    const [rec] = await executor.insert(notificationConfig)
       .values({ schoolId, ...data, updatedAt: new Date() } as any)
       .onConflictDoUpdate({
         target: notificationConfig.schoolId,
@@ -5056,39 +5122,29 @@ export class DatabaseStorage {
     };
   }
 
-  async upsertReportEmailSchedule(schoolId: number, data: { enabled?: boolean; recipients?: string[]; lastSentAt?: Date; lastSentMonth?: string }): Promise<void> {
-    const fields: string[] = ["school_id", "updated_at"];
-    const values: any[] = [schoolId, new Date()];
-    let idx = 3;
-    const setClauses: string[] = ["updated_at = $2"];
-
-    if (data.enabled !== undefined) {
-      fields.push("enabled");
-      values.push(data.enabled);
-      setClauses.push(`enabled = $${idx++}`);
-    }
-    if (data.recipients !== undefined) {
-      fields.push("recipients");
-      values.push(data.recipients);
-      setClauses.push(`recipients = $${idx++}`);
-    }
-    if (data.lastSentAt !== undefined) {
-      fields.push("last_sent_at");
-      values.push(data.lastSentAt);
-      setClauses.push(`last_sent_at = $${idx++}`);
-    }
-    if (data.lastSentMonth !== undefined) {
-      fields.push("last_sent_month");
-      values.push(data.lastSentMonth);
-      setClauses.push(`last_sent_month = $${idx++}`);
-    }
-
-    const placeholders = fields.map((_, i) => `$${i + 1}`).join(", ");
-    await pool.query(
-      `INSERT INTO report_email_schedule (${fields.join(", ")}) VALUES (${placeholders})
-       ON CONFLICT (school_id) DO UPDATE SET ${setClauses.join(", ")}`,
-      values,
-    );
+  async upsertReportEmailSchedule(
+    schoolId: number,
+    data: { enabled?: boolean; recipients?: string[]; lastSentAt?: Date; lastSentMonth?: string },
+    executor: any = db,
+  ): Promise<void> {
+    await executor.execute(sql`
+      INSERT INTO report_email_schedule (
+        school_id, enabled, recipients, last_sent_at, last_sent_month, updated_at
+      ) VALUES (
+        ${schoolId}, ${data.enabled ?? false}, ${data.recipients ?? []}::text[],
+        ${data.lastSentAt ?? null}, ${data.lastSentMonth ?? null}, NOW()
+      )
+      ON CONFLICT (school_id) DO UPDATE SET
+        enabled = CASE WHEN ${data.enabled !== undefined}
+          THEN ${data.enabled ?? false} ELSE report_email_schedule.enabled END,
+        recipients = CASE WHEN ${data.recipients !== undefined}
+          THEN ${data.recipients ?? []}::text[] ELSE report_email_schedule.recipients END,
+        last_sent_at = CASE WHEN ${data.lastSentAt !== undefined}
+          THEN ${data.lastSentAt ?? null} ELSE report_email_schedule.last_sent_at END,
+        last_sent_month = CASE WHEN ${data.lastSentMonth !== undefined}
+          THEN ${data.lastSentMonth ?? null} ELSE report_email_schedule.last_sent_month END,
+        updated_at = NOW()
+    `);
   }
 
   /**

@@ -359,6 +359,7 @@ async function createInvoiceFromContext(input: {
   notes?: string | null;
   createdBy?: number | null;
   duplicateIndex?: InvoiceDuplicateIndex;
+  afterCreate?: (tx: any, record: ExistingFeeRecord) => Promise<void>;
 }): Promise<
   | { created: false; duplicate: ExistingFeeRecord }
   | { created: true; record: ExistingFeeRecord }
@@ -397,6 +398,7 @@ async function createInvoiceFromContext(input: {
       createdBy: input.createdBy ?? null,
     },
     periodStart: input.context.periodStart,
+    afterCreate: input.afterCreate,
   });
   if (!atomicResult.created) {
     return { created: false, duplicate: atomicResult.record };
@@ -416,6 +418,7 @@ export async function createStructureInvoice(input: {
   notes?: string | null;
   createdBy?: number | null;
   duplicateIndex?: InvoiceDuplicateIndex;
+  afterCreate?: (tx: any, record: ExistingFeeRecord) => Promise<void>;
 }): Promise<
   | { created: false; duplicate: ExistingFeeRecord }
   | { created: true; record: ExistingFeeRecord }
@@ -444,6 +447,7 @@ export async function createManualInvoice(input: {
   notes?: string | null;
   createdBy?: number | null;
   duplicateIndex?: InvoiceDuplicateIndex;
+  afterCreate?: (tx: any, record: ExistingFeeRecord) => Promise<void>;
 }): Promise<
   | { created: false; duplicate: ExistingFeeRecord }
   | { created: true; record: ExistingFeeRecord }

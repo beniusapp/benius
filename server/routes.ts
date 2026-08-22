@@ -45,6 +45,12 @@ import fs from "node:fs";
 import { dateOnlyParts, replaceCalendarYear, todayInIST } from "@shared/ist-time";
 import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
 import { buildLedgerFilterPredicates, filtersRequirePaymentJoin, type LedgerFilterFields } from "./ledger-filter-sql";
+import {
+  appendFeeAudit,
+  describeFeeAuditChanges,
+  requestIpAddress,
+  resolveFeeAuditActor,
+} from "./fee-audit";
 
 declare module "express-session" {
   interface SessionData {
@@ -4543,28 +4549,6 @@ export async function registerRoutes(
     res.json({ records, total, page: safePage, pageSize, totalPages });
   });
 
-  // ── Local audit helper for fee-record routes defined in this file ───────────
-  async function appendFeeRecordAudit(
-    req: any, schoolId: number, action: string, entityType: string,
-    entityId: number | null, description: string,
-    studentId?: number | null,
-  ) {
-    try {
-      const forwarded = req.headers["x-forwarded-for"] as string | undefined;
-      const ip = forwarded?.split(",")[0]?.trim() ?? req.socket?.remoteAddress ?? null;
-      let actorName: string | null = null;
-      if (req.session?.userId) {
-        const [u] = await db.select({ email: users.email }).from(users)
-          .where(eq(users.id, req.session.userId));
-        actorName = u?.email ?? `User #${req.session.userId}`;
-      }
-      await storage.appendFeeAuditLog({
-        schoolId, actorId: req.session?.userId ?? null, actorName, ipAddress: ip,
-        action, entityType, entityId, studentId: studentId ?? null, description,
-      });
-    } catch { /* non-critical */ }
-  }
-
   app.post("/api/admin/fees", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
@@ -4583,6 +4567,7 @@ export async function registerRoutes(
     if (studentError) return res.status(400).json({ message: studentError });
 
     try {
+      const actor = await resolveFeeAuditActor(req, schoolId);
       const invoiceContext = await prepareManualInvoiceContext({
         schoolId,
         feeName: parsed.data.feeName,
@@ -4599,6 +4584,22 @@ export async function registerRoutes(
         studentId: parsed.data.studentId,
         notes: parsed.data.notes,
         createdBy: req.session.userId,
+        afterCreate: async (tx, record) => {
+          await appendFeeAudit({
+            schoolId,
+            actor,
+            action: "create",
+            entityType: "fee_record",
+            entityId: record.id,
+            studentId: parsed.data.studentId,
+            studentName: studentCheck.name,
+            sessionId: record.sessionId,
+            recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+            amount: record.amount,
+            description: `Created ${record.invoiceNumber ?? "invoice"} for ${studentCheck.name}: ${record.feeName ?? record.feeType}, ₹${Number(record.amount).toLocaleString("en-IN")}, due ${record.dueDate}.`,
+            ipAddress: requestIpAddress(req),
+          }, tx);
+        },
       });
       if (!result.created) {
         return res.status(409).json({
@@ -4607,10 +4608,6 @@ export async function registerRoutes(
       }
 
       const rec = result.record;
-      const createStuLabel = `${studentCheck.name} (${studentCheck.class ?? ""}${studentCheck.section ? "-" + studentCheck.section : ""})`;
-      await appendFeeRecordAudit(req, schoolId, "create", "fee_record", rec.id,
-        `Added invoice ${rec.invoiceNumber ?? `#${rec.id}`}: ${rec.feeName ?? rec.feeType} ₹${rec.amount} for ${createStuLabel} (Due) — period ${invoiceContext.periodStart} to ${invoiceContext.periodEnd}`,
-        parsed.data.studentId);
       res.status(201).json(rec);
     } catch (error) {
       if (error instanceof InvoiceGenerationError) {
@@ -4640,21 +4637,50 @@ export async function registerRoutes(
       const today = todayInIST();
       patchData.dueDate = patchData.paidDate || today;
     }
-    // patchData.dueDate was guaranteed non-null by the block above (lines 4400-4402),
-    // but Zod infers it as string|null|undefined while InsertFeeRecord expects string|undefined.
-    const updated = await storage.updateFeeRecord(id, schoolId, patchData as Omit<Parameters<typeof storage.updateFeeRecord>[2], never>);
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const updated = await db.transaction(async tx => {
+      const [before] = await tx.select().from(feeRecords).where(and(
+        eq(feeRecords.id, id),
+        eq(feeRecords.schoolId, schoolId),
+      ));
+      if (!before) return null;
+      // patchData.dueDate is non-null after the guard above.
+      const rec = await storage.updateFeeRecord(
+        id, schoolId,
+        patchData as Omit<Parameters<typeof storage.updateFeeRecord>[2], never>,
+        tx,
+      );
+      if (!rec) return null;
+      const [student] = await tx.select({ name: students.name }).from(students).where(and(
+        eq(students.id, rec.studentId),
+        eq(students.schoolId, schoolId),
+      ));
+      const changeSummary = describeFeeAuditChanges(before as any, rec as any, {
+        feeName: { label: "fee name" },
+        feeType: { label: "fee type" },
+        amount: { label: "amount", format: value => `₹${Number(value ?? 0).toLocaleString("en-IN")}` },
+        dueDate: { label: "due date" },
+        status: { label: "status" },
+        paidDate: { label: "paid date" },
+        notes: { label: "notes", format: value => value ? "provided" : "none" },
+      });
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "update",
+        entityType: "fee_record",
+        entityId: id,
+        studentId: rec.studentId,
+        studentName: student?.name ?? null,
+        sessionId: rec.sessionId,
+        recordLabel: rec.invoiceNumber ?? `${rec.feeType} invoice`,
+        amount: rec.amount,
+        description: `Updated ${rec.invoiceNumber ?? "invoice"}${changeSummary ? `: ${changeSummary}.` : "."}`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return rec;
+    });
     if (!updated) return res.status(404).json({ message: "Fee record not found" });
-
-    // Resolve student name for a human-readable audit entry
-    const [updStudentInfo] = await db.select({ name: students.name, cls: students.class, section: students.section })
-      .from(students).where(eq(students.id, updated.studentId));
-    const updStudentLabel = updStudentInfo
-      ? `${updStudentInfo.name} (${updStudentInfo.cls ?? ""}${updStudentInfo.section ? "-" + updStudentInfo.section : ""})`
-      : `Student #${updated.studentId}`;
-    const changedFields = Object.keys(parsed.data).join(", ");
-    await appendFeeRecordAudit(req, schoolId, "update", "fee_record", id,
-      `Updated fee record: ${updStudentLabel} | ${updated.feeType} | ₹${Number(updated.amount).toLocaleString("en-IN")} — changed: ${changedFields}`,
-      updated.studentId);
     res.json(updated);
   });
 
@@ -4673,20 +4699,43 @@ export async function registerRoutes(
     if (!passwordOk)
       return res.status(403).json({ message: "Incorrect password. Deletion cancelled." });
 
-    // Fetch record details BEFORE deleting so the audit log shows human-readable info
-    const [feeDetail] = await db
-      .select({ feeType: feeRecords.feeType, amount: feeRecords.amount, studentId: feeRecords.studentId, studentName: students.name, studentClass: students.class, studentSection: students.section })
-      .from(feeRecords)
-      .leftJoin(students, eq(students.id, feeRecords.studentId))
-      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
-
-    const deleted = await storage.deleteFeeRecord(id, schoolId);
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const deleted = await db.transaction(async tx => {
+      const [feeDetail] = await tx
+        .select({
+          invoiceNumber: feeRecords.invoiceNumber,
+          feeType: feeRecords.feeType,
+          amount: feeRecords.amount,
+          studentId: feeRecords.studentId,
+          studentName: students.name,
+          sessionId: feeRecords.sessionId,
+        })
+        .from(feeRecords)
+        .leftJoin(students, and(
+          eq(students.id, feeRecords.studentId),
+          eq(students.schoolId, feeRecords.schoolId),
+        ))
+        .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+      if (!feeDetail) return false;
+      const removed = await storage.deleteFeeRecord(id, schoolId, tx);
+      if (!removed) return false;
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "delete",
+        entityType: "fee_record",
+        entityId: id,
+        studentId: feeDetail.studentId,
+        studentName: feeDetail.studentName,
+        sessionId: feeDetail.sessionId,
+        recordLabel: feeDetail.invoiceNumber ?? `${feeDetail.feeType} invoice`,
+        amount: feeDetail.amount,
+        description: `Deleted ${feeDetail.invoiceNumber ?? "invoice"} for ${feeDetail.studentName ?? "Unknown student"}: ${feeDetail.feeType}, ₹${Number(feeDetail.amount).toLocaleString("en-IN")}. Password confirmation was verified.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return true;
+    });
     if (!deleted) return res.status(404).json({ message: "Fee record not found" });
-
-    const humanDesc = feeDetail
-      ? `Deleted fee record: ${feeDetail.studentName ?? "Unknown student"} (${feeDetail.studentClass ?? ""}${feeDetail.studentSection ? "-" + feeDetail.studentSection : ""}) | ${feeDetail.feeType} | ₹${Number(feeDetail.amount).toLocaleString("en-IN")} — password-confirmed`
-      : `Deleted fee record #${id} — password-confirmed`;
-    await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", id, humanDesc, feeDetail?.studentId ?? null);
     res.json({ success: true });
   });
 
@@ -4707,35 +4756,51 @@ export async function registerRoutes(
     if (!passwordOk)
       return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
 
-    // Fetch details for all records BEFORE deleting so audit log is human-readable
     const numericIds = ids.map((r: any) => parseInt(String(r))).filter((n: number) => !isNaN(n));
-    const preDeleteDetails = numericIds.length > 0
-      ? await db
-          .select({ id: feeRecords.id, feeType: feeRecords.feeType, amount: feeRecords.amount, studentName: students.name })
-          .from(feeRecords)
-          .leftJoin(students, eq(students.id, feeRecords.studentId))
-          .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
-      : [];
 
-    // Delete each record; respect school isolation
     try {
-      let deleted = 0;
-      let notFound = 0;
-      for (const rawId of ids) {
-        const id = parseInt(String(rawId));
-        if (isNaN(id)) { notFound++; continue; }
-        const ok = await storage.deleteFeeRecord(id, schoolId);
-        if (ok) deleted++; else notFound++;
-      }
-      // Build human-readable summary: "Ravi Kumar (Annual Fee ₹20,000), Priya (Monthly Fee ₹2,000)"
-      const summaryLines = preDeleteDetails
-        .slice(0, 10)
-        .map(r => `${r.studentName ?? "Unknown"} — ${r.feeType} ₹${Number(r.amount).toLocaleString("en-IN")}`)
-        .join("; ");
-      const extraNote = preDeleteDetails.length > 10 ? ` … and ${preDeleteDetails.length - 10} more` : "";
-      await appendFeeRecordAudit(req, schoolId, "delete", "fee_record", null,
-        `Bulk-deleted ${deleted} fee record${deleted !== 1 ? "s" : ""}: ${summaryLines}${extraNote} — password-confirmed`);
-      res.json({ deleted, notFound });
+      const actor = await resolveFeeAuditActor(req, schoolId);
+      const result = await db.transaction(async tx => {
+        const details = numericIds.length > 0
+          ? await tx
+              .select({
+                id: feeRecords.id,
+                invoiceNumber: feeRecords.invoiceNumber,
+                feeType: feeRecords.feeType,
+                amount: feeRecords.amount,
+                 studentId: feeRecords.studentId,
+                studentName: students.name,
+                sessionId: feeRecords.sessionId,
+              })
+              .from(feeRecords)
+              .leftJoin(students, and(
+                eq(students.id, feeRecords.studentId),
+                eq(students.schoolId, feeRecords.schoolId),
+              ))
+              .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
+          : [];
+        let deleted = 0;
+        for (const record of details) {
+            if (!await storage.deleteFeeRecord(record.id, schoolId, tx)) continue;
+            deleted++;
+            await appendFeeAudit({
+              schoolId,
+              actor,
+              action: "delete",
+              entityType: "fee_record",
+              entityId: record.id,
+              studentId: record.studentId,
+              studentName: record.studentName,
+              sessionId: record.sessionId,
+              recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+              amount: record.amount,
+              description: `Deleted ${record.invoiceNumber ?? "invoice"} for ${record.studentName ?? "Unknown student"}: ${record.feeType}, ₹${Number(record.amount).toLocaleString("en-IN")}. Password confirmation was verified.`,
+              ipAddress: requestIpAddress(req),
+            }, tx);
+          }
+        return { deleted, notFound: ids.length - deleted };
+      });
+      res.json(result);
     } catch (e: any) {
       console.error("[bulk-delete] error:", e);
       res.status(500).json({ message: e?.message || "Deletion failed. Please try again." });
