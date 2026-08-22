@@ -6545,7 +6545,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     lastSentMonth?: string | null;
     latestDelivery?: { reportMonth: string; sent: number; failed: number; pending: number; lastAttemptAt: string | null; lastError: string | null } | null;
   }>({
-    queryKey: ["/api/admin/fees/report-schedule"], queryFn: async () => { const r = await sessionFetch("/api/admin/fees/report-schedule"); if (!r.ok) throw new Error("Schedule unavailable"); return r.json(); }, staleTime: 60_000,
+    queryKey: ["/api/admin/report-schedule"], queryFn: async () => { const r = await sessionFetch("/api/admin/report-schedule"); if (!r.ok) throw new Error("Schedule unavailable"); return r.json(); }, staleTime: 60_000,
   });
   useEffect(() => {
     if (!scheduleData || scheduleFormHydrated.current) return;
@@ -6571,16 +6571,16 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
       return;
     }
     setSavingSchedule(true);
-    try { const r = await sessionFetch("/api/admin/fees/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: scheduleEnabled, recipients, dayOfMonth: scheduleDay, sendTime: scheduleTime }) }); const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not save schedule"); await refetchSchedule(); toast({ title: "Schedule saved" }); } catch (e) { toast({ title: "Schedule failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSavingSchedule(false); }
+    try { const r = await sessionFetch("/api/admin/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: scheduleEnabled, recipients, dayOfMonth: scheduleDay, sendTime: scheduleTime }) }); const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not save schedule"); await refetchSchedule(); toast({ title: "Schedule saved" }); } catch (e) { toast({ title: "Schedule failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSavingSchedule(false); }
   };
   const sendNow = async () => {
     if (!recipients.length) { toast({ title: "No recipients", description: "Add a recipient before sending.", variant: "destructive" }); return; }
     setSendingNow(true);
     try {
-      const save = await sessionFetch("/api/admin/fees/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipients }) });
+      const save = await sessionFetch("/api/admin/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipients }) });
       const saveBody = await save.json().catch(() => ({}));
       if (!save.ok) throw new Error(saveBody.message ?? saveBody.error ?? "Could not save recipients");
-      const r = await sessionFetch("/api/admin/fees/report-schedule/send-now", { method: "POST" });
+      const r = await sessionFetch("/api/admin/report-schedule/send-now", { method: "POST" });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not send report");
       await refetchSchedule();

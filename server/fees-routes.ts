@@ -6247,7 +6247,7 @@ export function registerFeesRoutes(app: Express) {
 
   // ── Report Email Schedule ─────────────────────────────────────────────────
 
-  app.get("/api/admin/fees/report-schedule", async (req, res) => {
+  app.get("/api/admin/report-schedule", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const schedule = await storage.getReportEmailSchedule(schoolId);
@@ -6273,7 +6273,7 @@ export function registerFeesRoutes(app: Express) {
     sendTime:   z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a 24-hour time such as 09:00").optional(),
   });
 
-  app.patch("/api/admin/fees/report-schedule", async (req, res) => {
+  app.patch("/api/admin/report-schedule", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const parsed = reportScheduleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -6312,7 +6312,7 @@ export function registerFeesRoutes(app: Express) {
     res.json({ ok: true });
   });
 
-  app.post("/api/admin/fees/report-schedule/send-now", async (req, res) => {
+  app.post("/api/admin/report-schedule/send-now", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     try {
