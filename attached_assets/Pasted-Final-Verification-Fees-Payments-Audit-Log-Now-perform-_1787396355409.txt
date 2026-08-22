@@ -1,0 +1,196 @@
+Final Verification — Fees & Payments Audit Log
+
+Now perform a final end-to-end review of the Fees & Payments → Audit Log against the requirements below.
+
+Do NOT add unnecessary features. Keep the Audit Log simple, human-readable, and useful for a school administrator.
+
+1. Audit Log must clearly show
+
+For every important action:
+
+- Date & time in IST
+- Who performed it
+- Role: Principal / Teacher / Non-Teaching Staff / System
+- Their internal user/staff ID
+- Action
+- Short human-readable description
+- Related student/invoice/fee information when applicable
+
+Do NOT expose:
+
+- IP addresses
+- Razorpay HMAC/signatures
+- Raw webhook payloads
+- Raw gateway responses
+- Secrets/API keys
+- Full card information
+- Full UPI VPA
+- Unnecessary personal/payment data
+- Technical database information
+
+2. These Fees & Payments actions MUST create an Audit Log entry
+
+Fee Structure
+
+- Create/add fee structure
+- Edit/update fee structure
+- Delete fee structure
+
+Invoice Generation
+
+- Generate invoices
+- Bulk generate invoices
+- Edit invoice
+- Delete invoice
+- Bulk delete invoices
+- Any other invoice-generation mutation
+
+The audit description must make it obvious what happened.
+
+Example:
+
+"Principal (ID: ADM-001) generated 25 invoices for Academic Session 2027-2028."
+
+3. Ledger & Transactions
+
+When an administrator manually uses Add Invoice, it MUST create an Audit Log entry.
+
+Also audit:
+
+- Edit invoice
+- Delete invoice
+- Record offline payment
+- Correct offline payment details
+- Any deletion or modification performed from Ledger & Transactions
+
+4. Payment lifecycle
+
+Keep payment auditing useful but do NOT turn the Audit Log into a technical payment-debugging screen.
+
+Record important human-readable events such as:
+
+- Payment received
+- Payment failed
+- Payment cancelled
+- Refund requested
+- Refund processed
+- Refund failed
+- Payment correction
+
+Technical gateway evidence belongs in Transaction Details / payment records, not the normal Audit Log.
+
+5. DELETE ACTIONS — VERY IMPORTANT
+
+Search the entire Fees & Payments module and identify every operation that can delete something.
+
+Every successful deletion MUST create an audit entry.
+
+The audit entry must identify:
+
+- Who deleted it
+- Their role
+- Their ID
+- What was deleted
+- Relevant name/amount/invoice information
+- Date/time
+
+For bulk deletion, preserve enough information to understand exactly what was deleted. Do not create an audit record that merely says "Deleted records".
+
+6. Actor identity
+
+Do NOT guess the actor.
+
+Use the authenticated user identity.
+
+The Audit Log must distinguish:
+
+- Principal
+- Teacher
+- Non-Teaching Staff
+- System
+- Razorpay/Webhook where applicable
+
+Show the user's stable internal ID.
+
+Example:
+
+"Principal — ID: PRN-001"
+
+or
+
+"Teacher — ID: TCH-014"
+
+or
+
+"Non-Teaching Staff — ID: NTS-008"
+
+If the existing database uses another authoritative ID format, use that instead. Do not invent IDs.
+
+7. Keep the UI simple
+
+The normal Audit Log should contain only the information an administrator actually needs.
+
+Recommended columns:
+
+Time | Actor | Role/ID | Action | Description
+
+Keep filters simple and only show actions that actually exist.
+
+Remove stale/unnecessary filters and technical information.
+
+8. Security requirements
+
+Verify that:
+
+- Every read is strictly school/tenant scoped.
+- One school cannot see another school's audit records.
+- Existing Fees & Payments permissions are NOT expanded.
+- Audit entries cannot be edited/deleted through normal application APIs.
+- Important mutation + audit creation is atomic.
+- Failed mutations do not create misleading successful audit entries.
+- Audit search/API responses do not leak hidden technical or sensitive fields.
+- Stored user-controlled values are safely escaped/sanitized.
+- Legacy audit records remain readable without exposing sensitive data.
+
+9. Final testing
+
+Test at minimum:
+
+1. Add fee structure → audit entry
+2. Edit fee structure → audit entry
+3. Delete fee structure → audit entry
+4. Generate invoices → audit entry
+5. Add Invoice manually → audit entry
+6. Edit invoice → audit entry
+7. Delete invoice → audit entry
+8. Bulk delete invoices → audit entry
+9. Record offline payment → audit entry
+10. Payment failed → audit entry
+11. Payment cancelled → audit entry
+12. Refund → appropriate audit entry
+13. Different user roles → correct actor + role + ID
+14. Cross-tenant access → denied
+15. Audit API → no sensitive/technical leakage
+16. Pagination → stable ordering
+17. IST timestamps → correct
+
+Final response
+
+Do not just say "tests passed."
+
+Give me a concise final report containing:
+
+- What is now audited
+- What was intentionally removed from the Audit Log
+- Exact columns shown
+- Actor/role/ID behavior
+- All deletion paths verified
+- Security checks performed
+- Number of tests passed/failed
+- Any remaining gap, if one exists
+
+If everything matches this specification, state clearly:
+
+"Audit Log implementation fully matches the requested specification."
+
+Do not make unrelated changes.
