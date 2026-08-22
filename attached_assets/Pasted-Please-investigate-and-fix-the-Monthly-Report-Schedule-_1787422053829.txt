@@ -1,0 +1,99 @@
+Please investigate and fix the Monthly Report Schedule section at the bottom of Financial Analytics.
+
+I have two main concerns:
+
+1. The email field is not working
+
+In the current UI, I am unable to properly type/write the recipient email address.
+
+Please investigate why the email input is not accepting input and fix it.
+
+The administrator must be able to:
+
+- Enter a valid email address.
+- Add one or multiple recipients if supported.
+- Save the recipients successfully.
+- See the saved recipient(s) after refreshing the page.
+- Edit/remove recipients if that functionality is intended.
+
+2. I need to clearly understand the monthly automatic report
+
+Please inspect the actual backend/scheduler implementation and answer this question:
+
+If I enable “Monthly Report Schedule”, will the complete Financial Analytics report automatically be emailed to the provided email address every month?
+
+Do not just tell me what the UI appears to suggest. Verify the actual implementation end-to-end.
+
+I specifically need to know:
+
+- Is the monthly schedule actually connected to a real server-side scheduler/cron/job?
+- Does enabling the toggle actually create/activate that scheduled job?
+- Which day of every month will the report be sent?
+- At exactly what time will it be sent?
+- Which timezone is used? This application is India-based, so it MUST use IST (Asia/Kolkata).
+- What happens in months where the configured day does not exist, such as the 31st?
+- Is the report generated using the same Financial Analytics data and calculations shown in the UI?
+- Does it generate the complete financial report/PDF?
+- Is the report based on the previous month's data?
+- What exact date range does the monthly report cover?
+- Does it send automatically without anyone opening the application?
+- What happens if the server/application is restarted?
+- What happens if the scheduled job fails?
+- Is there any retry mechanism?
+- Is the email actually sent through a configured email provider, or is this currently only a UI placeholder?
+- Does “Send now” actually send a real email, and does it use the same report generation logic?
+
+3. Make the schedule behavior explicit in the UI
+
+I do not want an administrator to enable a toggle without knowing when the report will actually be sent.
+
+The UI should clearly display something like:
+
+Monthly Report: Enabled
+Recipients: accounts@school.org
+Schedule: 1st day of every month at 09:00 AM IST
+Report period: Previous calendar month
+
+However, do not hard-code these example values unless that is already the intended implementation. First inspect the existing scheduler configuration and determine the actual intended schedule.
+
+If the current system does not have a configurable day/time, add an appropriate Day of Month and Time (IST) configuration so the administrator can explicitly control the schedule.
+
+4. Important timezone requirement
+
+This entire feature must follow the application's established India/IST timezone policy.
+
+Use:
+
+Asia/Kolkata (IST)
+
+Do not allow the server's UTC/local timezone to silently determine the sending date or time.
+
+For example, if the administrator selects:
+
+1st of every month — 09:00 AM IST
+
+the report must be sent according to 09:00 AM Asia/Kolkata, regardless of where the server is hosted.
+
+5. Do not create duplicate scheduled jobs
+
+If an administrator saves the schedule multiple times or refreshes the page, it must NOT create multiple monthly jobs that send duplicate emails.
+
+There must be exactly one active schedule per school/tenant for this monthly report configuration.
+
+Also make the schedule fully tenant-isolated in this multi-tenant school application. One school's schedule must never send another school's financial report.
+
+6. Verify it end-to-end
+
+Please test the complete flow:
+
+Admin enables schedule → enters recipient → saves → schedule persists → scheduler recognizes it → report is generated → correct monthly date range is selected → PDF/report is generated → email is sent → correct recipient receives it.
+
+Also verify the Send Now function separately.
+
+If any part is currently only a frontend/UI placeholder, tell me explicitly and implement the missing backend functionality rather than making the UI appear functional.
+
+Finally, give me a clear answer:
+
+“Yes, automatic monthly email is fully functional” or “No, it is not currently fully functional”
+
+and state the exact scheduled day, time, timezone, and reporting period after inspecting the implementation.
