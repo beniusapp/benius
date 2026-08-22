@@ -1278,7 +1278,6 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
   isEnabled: boolean("is_enabled").notNull().default(false),
   gatewayUrl: text("gateway_url"),
   bannerMessage: text("banner_message"),
-  maxOvercollectionPercent: integer("max_overcollection_percent").notNull().default(150),
   lastUpdatedBy: integer("last_updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   // ── Razorpay gateway ──────────────────────────────────────────────────────

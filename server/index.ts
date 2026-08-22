@@ -383,11 +383,9 @@ app.use((req, res, next) => {
       is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
       gateway_url TEXT,
       banner_message TEXT,
-      max_overcollection_percent INTEGER NOT NULL DEFAULT 150,
       last_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
-    ALTER TABLE external_payment_settings ADD COLUMN IF NOT EXISTS max_overcollection_percent INTEGER NOT NULL DEFAULT 150;
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_amount INTEGER NOT NULL DEFAULT 0;
@@ -1260,6 +1258,12 @@ app.use((req, res, next) => {
   await assertNoSchemaDrift(pool);
 
   await registerRoutes(httpServer, app);
+
+  // API requests that did not match a registered route must not fall through
+  // to the SPA HTML shell.
+  app.use("/api/{*path}", (_req, res) => {
+    res.status(404).json({ message: "API endpoint not found" });
+  });
 
   // ===== HOURLY DUNNING JOB (SMS / WhatsApp / Email) =====
   // Runs at :05 past every hour. Idempotent — skips already-sent (fee, channel, stage) triplets.

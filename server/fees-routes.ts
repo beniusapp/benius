@@ -1433,7 +1433,7 @@ export function registerFeesRoutes(app: Express) {
       }
     }
 
-    // Generate a non-reusable OP receipt number BEFORE the transaction so
+    // Generate a non-reusable offline receipt number BEFORE the transaction so
     // the sequence counter is always consumed even if the transaction rolls
     // back (e.g. due to a server crash or DB error mid-payment).
     //
@@ -1448,30 +1448,24 @@ export function registerFeesRoutes(app: Express) {
     //     guard above and return the already-committed record; they never
     //     reach this line a second time.
     //
-    // CONSEQUENCE — GAPS IN OP NUMBERS ARE EXPECTED:
+    // CONSEQUENCE — GAPS IN OFFLINE RECEIPT NUMBERS ARE EXPECTED:
     //   If the DB transaction below rolls back after this point (network
-    //   drop, server restart, overpayment guard exit, etc.) the OP number
+    //   drop, server restart, payment validation exit, etc.) the receipt number
     //   is permanently consumed but never stored anywhere.  The next
     //   successful payment will carry the following number.  These gaps do
     //   NOT represent missing or duplicate payments — they are a deliberate
-    //   side-effect of the uniqueness guarantee.  Accountants auditing the
-    //   OP sequence should treat non-consecutive numbers as normal.
+    //   side-effect of the uniqueness guarantee. Accountants auditing the
+    //   offline receipt sequence should treat non-consecutive numbers as normal.
     const opReceipt = await storage.nextReceiptNumber(schoolId, "OF");
 
     // Destructure out fee-record-only fields before passing to createPaymentRecord
     const { feeNotes: _fn, ...paymentOnly } = paymentData;
 
-    // ── Atomic overpayment guard + payment insert (configurable soft cap) ─────
-    // The entire check-then-insert runs inside one DB transaction with a
-    // SELECT … FOR UPDATE row lock on the fee record.  A concurrent request for
-    // the same fee record will block at the lock until this transaction commits,
-    // guaranteeing the sum it reads is fully up-to-date and the cap cannot be
-    // breached by two near-simultaneous submissions.
-    const feesSettings = await storage.getExternalPaymentSettings(schoolId);
-    const configuredPercent = feesSettings?.maxOvercollectionPercent ?? 150;
-    const OVERPAYMENT_FACTOR = configuredPercent / 100;
+    // The validation and insert run inside one transaction with a SELECT … FOR
+    // UPDATE row lock. Concurrent submissions for the same invoice serialize,
+    // preserving the one-invoice, one-payment rule.
     let rec: any = null;
-    let overpaymentBlock: {
+    let paymentBlock: {
       message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number;
     } | null = null;
 
@@ -1506,7 +1500,7 @@ export function registerFeesRoutes(app: Express) {
 
           // Guard 1: invoice already Paid — no second payment, ever.
           if (lockedFee.status === "Paid") {
-            overpaymentBlock = {
+            paymentBlock = {
               message: "This invoice has already been paid in full. No additional payments can be recorded against it.",
               invoiceAmount: Number(lockedFee.amount),
               totalAlreadyPaid: Number(lockedFee.amount),
@@ -1528,7 +1522,7 @@ export function registerFeesRoutes(app: Express) {
 
           // Guard 2: payment must equal base + applicable late fee.
           if (paymentOnly.amount !== expectedTotal) {
-            overpaymentBlock = {
+            paymentBlock = {
               message: offlineLateFee > 0
                 ? `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount including late fee (₹${expectedTotal.toLocaleString("en-IN")} = ₹${Number(lockedFee.amount).toLocaleString("en-IN")} base + ₹${offlineLateFee.toLocaleString("en-IN")} late fee). Amounts below the full invoice total are not accepted.`
                 : `Payment amount (₹${paymentOnly.amount.toLocaleString("en-IN")}) must equal the full invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}). Amounts below the full invoice total are not accepted.`,
@@ -1539,24 +1533,6 @@ export function registerFeesRoutes(app: Express) {
             return;
           }
 
-          // ── Safety cap — secondary guard for any accumulated prior payments ───────
-          const sumResult = await tx.execute(
-            sql`SELECT COALESCE(SUM(amount), 0)::int AS existing_paid
-                FROM payment_records
-                WHERE fee_record_id = ${paymentOnly.feeRecordId}`,
-          );
-          const totalAlreadyPaid = Number((sumResult.rows[0] as any)?.existing_paid) || 0;
-          const cap = Math.round(expectedTotal * OVERPAYMENT_FACTOR);
-
-          if (totalAlreadyPaid + paymentOnly.amount > cap) {
-            overpaymentBlock = {
-              message: `This payment (₹${paymentOnly.amount.toLocaleString("en-IN")}) would bring the total collected to ₹${(totalAlreadyPaid + paymentOnly.amount).toLocaleString("en-IN")}, which exceeds the invoice amount (₹${Number(lockedFee.amount).toLocaleString("en-IN")}).`,
-              invoiceAmount: Number(lockedFee.amount),
-              totalAlreadyPaid,
-              newAmount: paymentOnly.amount,
-            };
-            return;
-          }
         }
       }
 
@@ -1718,18 +1694,18 @@ export function registerFeesRoutes(app: Express) {
 
     // Resolve student name once for all payment audit entries below
     // TypeScript cannot track mutations to `let` variables that happen inside
-    // async callbacks (the transaction lambda), so it infers `overpaymentBlock`
+    // async callbacks (the transaction lambda), so it infers `paymentBlock`
     // as the literal type `null` after the await, making the if-body unreachable.
     // Restore the declared union type with an explicit cast so the narrowing works.
-    type OverpaymentBlock = { message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number };
-    const overpaymentBlockSnap = overpaymentBlock as OverpaymentBlock | null;
-    if (overpaymentBlockSnap) {
+    type PaymentBlock = { message: string; invoiceAmount: number; totalAlreadyPaid: number; newAmount: number };
+    const paymentBlockSnap = paymentBlock as PaymentBlock | null;
+    if (paymentBlockSnap) {
       await appendAudit(
         req, schoolId, "blocked_payment", "payment_record", paymentOnly.feeRecordId ?? null,
-        `Blocked overpayment attempt of ₹${overpaymentBlockSnap.newAmount.toLocaleString("en-IN")} for ${studentCheck.name}. Invoice total ₹${overpaymentBlockSnap.invoiceAmount.toLocaleString("en-IN")}; already paid ₹${overpaymentBlockSnap.totalAlreadyPaid.toLocaleString("en-IN")}.`,
+        `Blocked payment attempt of ₹${paymentBlockSnap.newAmount.toLocaleString("en-IN")} for ${studentCheck.name}. Invoice total ₹${paymentBlockSnap.invoiceAmount.toLocaleString("en-IN")}; already paid ₹${paymentBlockSnap.totalAlreadyPaid.toLocaleString("en-IN")}.`,
         paymentOnly.studentId,
       );
-      return res.status(400).json({ ...overpaymentBlockSnap, overpaymentGuard: true });
+      return res.status(400).json({ ...paymentBlockSnap, paymentGuard: true });
     }
     res.status(201).json(rec);
   });
@@ -1885,7 +1861,6 @@ export function registerFeesRoutes(app: Express) {
     isEnabled: z.boolean(),
     gatewayUrl: z.string().max(500).optional().nullable(),
     bannerMessage: z.string().max(500).optional().nullable(),
-    maxOvercollectionPercent: z.number().int().min(100).max(500).default(150),
     razorpayEnabled: z.boolean().default(false),
     razorpayKeyId: z.string().max(200).optional().nullable(),
     // Secret is optional — null means "leave unchanged" when masked placeholder is sent
@@ -1907,7 +1882,7 @@ export function registerFeesRoutes(app: Express) {
 
     const base = settings ?? {
       isEnabled: false, gatewayUrl: null, bannerMessage: null,
-      maxOvercollectionPercent: 150, razorpayEnabled: false,
+      razorpayEnabled: false,
       razorpayKeyId: null, razorpayKeySecret: null, razorpayWebhookSecret: null,
     };
 
@@ -1950,7 +1925,6 @@ export function registerFeesRoutes(app: Express) {
       isEnabled: parsed.data.isEnabled,
       gatewayUrl: parsed.data.gatewayUrl || null,
       bannerMessage: parsed.data.bannerMessage || null,
-      maxOvercollectionPercent: parsed.data.maxOvercollectionPercent,
       lastUpdatedBy: req.session.userId,
       razorpayEnabled: parsed.data.razorpayEnabled,
       razorpayKeyId: keyIdToSave,
@@ -1967,9 +1941,6 @@ export function registerFeesRoutes(app: Express) {
       auditParts.push(`Razorpay Key ID updated`);
     if (keySecret !== undefined) auditParts.push("Razorpay Key Secret updated");
     if (webhookSecret !== undefined) auditParts.push("Razorpay Webhook Secret updated");
-    if (previous?.maxOvercollectionPercent !== parsed.data.maxOvercollectionPercent)
-      auditParts.push(`Max over-collection cap: ${previous?.maxOvercollectionPercent ?? 150}% → ${parsed.data.maxOvercollectionPercent}%`);
-
     const updated = await upsertExternalSettingsWithAudit(
       req, schoolId, settingsPatch, "external_settings", auditParts.join("; "),
     );
@@ -2018,7 +1989,6 @@ export function registerFeesRoutes(app: Express) {
       isEnabled:                previous?.isEnabled ?? false,
       gatewayUrl:               previous?.gatewayUrl ?? null,
       bannerMessage:            previous?.bannerMessage ?? null,
-      maxOvercollectionPercent: previous?.maxOvercollectionPercent ?? 150,
       lastUpdatedBy:            req.session.userId,
       razorpayEnabled: parsed.data.razorpayEnabled,
       razorpayKeyId:   keyIdToSave,
@@ -2057,7 +2027,6 @@ export function registerFeesRoutes(app: Express) {
       isEnabled:                previous?.isEnabled ?? false,
       gatewayUrl:               previous?.gatewayUrl ?? null,
       bannerMessage:            previous?.bannerMessage ?? null,
-      maxOvercollectionPercent: previous?.maxOvercollectionPercent ?? 150,
       lastUpdatedBy:            req.session.userId,
       razorpayEnabled:  false,        // disable while wiping
       razorpayKeyId:    null,
@@ -2081,7 +2050,6 @@ export function registerFeesRoutes(app: Express) {
     isEnabled:                z.boolean(),
     gatewayUrl:               z.string().max(500).optional().nullable(),
     bannerMessage:            z.string().max(500).optional().nullable(),
-    maxOvercollectionPercent: z.number().int().min(100).max(500).default(150),
   });
 
   app.put("/api/admin/fees/external-settings/portal", async (req, res) => {
@@ -2102,7 +2070,6 @@ export function registerFeesRoutes(app: Express) {
       isEnabled:                parsed.data.isEnabled,
       gatewayUrl:               parsed.data.gatewayUrl    || null,
       bannerMessage:            parsed.data.bannerMessage  || null,
-      maxOvercollectionPercent: parsed.data.maxOvercollectionPercent,
     };
 
     const auditParts: string[] = [];
@@ -2110,9 +2077,6 @@ export function registerFeesRoutes(app: Express) {
       auditParts.push(`External portal ${parsed.data.isEnabled ? "enabled" : "disabled"}`);
     if (parsed.data.gatewayUrl !== (previous?.gatewayUrl ?? null))
       auditParts.push("Gateway URL updated");
-    if (parsed.data.maxOvercollectionPercent !== (previous?.maxOvercollectionPercent ?? 150))
-      auditParts.push(`Over-collection cap: ${parsed.data.maxOvercollectionPercent}%`);
-
     const updated = await upsertExternalSettingsWithAudit(
       req, schoolId, settingsPatch, "portal_settings", auditParts.join("; "),
     );
@@ -5529,156 +5493,6 @@ export function registerFeesRoutes(app: Express) {
       console.error("[transaction-pdf-post]", err);
       res.status(500).json({ message: String(err) });
     }
-  });
-
-  // ── Receipt Backfill (one-time, idempotent) ───────────────────────────────
-  // Assigns AF receipt numbers to fee_records with receipt_number IS NULL and
-  // OP receipt numbers to payment_records with receipt_number IS NULL.
-  // Safe to call multiple times — re-running skips already-numbered rows.
-  //
-  // Concurrency guard: pg_try_advisory_xact_lock runs inside db.transaction()
-  // so acquire + all work + auto-release are pinned to the same DB connection.
-  // Transaction-scoped locks release automatically when the transaction ends
-  // (commit or rollback), so there is no risk of a stuck lock from pool churn.
-  // A concurrent call sees the lock held and receives 409 immediately.
-  const BACKFILL_LOCK_NS = 987654321; // arbitrary namespace for this operation
-  app.post("/api/admin/fees/backfill-receipts", async (req, res) => {
-    if (!adminGuard(req, res)) return;
-    const schoolId = req.session.schoolId!;
-    const actor = await resolveFeeAuditActor(req, schoolId);
-
-    let afCount = 0;
-    let opCount = 0;
-    let lockBlocked = false;
-    let afFirst: string | null = null;
-    let afLast: string | null = null;
-    let opFirst: string | null = null;
-    let opLast: string | null = null;
-
-    await db.transaction(async (tx) => {
-      // pg_try_advisory_xact_lock is transaction-scoped: it is guaranteed to
-      // run on the same connection as the rest of the transaction and releases
-      // automatically at commit/rollback — safe with connection pools.
-      const lockResult = await tx.execute(
-        sql`SELECT pg_try_advisory_xact_lock(${BACKFILL_LOCK_NS}, ${schoolId}) AS acquired`,
-      );
-      const lockAcquired = (lockResult.rows[0] as { acquired: boolean }).acquired;
-      if (!lockAcquired) {
-        lockBlocked = true;
-        return; // exit transaction callback; no writes; lock not held by us
-      }
-
-      // ── 1. Backfill fee_records (AF prefix) ───────────────────────────────
-      const nullFeeRows = await tx.execute(
-        sql`SELECT id FROM fee_records
-            WHERE school_id = ${schoolId}
-              AND receipt_number IS NULL
-            ORDER BY id ASC`,
-      );
-      const feeIds = (nullFeeRows.rows as { id: number }[]).map(r => r.id);
-
-      if (feeIds.length > 0) {
-        // Claim the entire AF range in one atomic step — inside the transaction —
-        // so the sequence advance rolls back with the row updates if the server
-        // crashes mid-run.  This prevents gaps from partial backfill runs.
-        const afSeqResult = await tx.execute(
-          sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
-                VALUES (${schoolId}, 'AF', ${feeIds.length})
-              ON CONFLICT (school_id, prefix) DO UPDATE
-                SET current_number = receipt_sequences.current_number + ${feeIds.length}
-              RETURNING current_number`,
-        );
-        const afEnd = Number((afSeqResult.rows[0] as any).current_number);
-        const afStart = afEnd - feeIds.length + 1;
-
-        for (let i = 0; i < feeIds.length; i++) {
-          const n = afStart + i;
-          const receiptNumber = `AF${String(n).padStart(2, "0")}`;
-          await tx.execute(
-            sql`UPDATE fee_records
-                SET receipt_number = ${receiptNumber}
-                WHERE id = ${feeIds[i]} AND school_id = ${schoolId}`,
-          );
-          if (i === 0) afFirst = receiptNumber;
-          afLast = receiptNumber;
-          afCount++;
-        }
-      }
-
-      // ── 2. Backfill payment_records (OP prefix) ───────────────────────────
-      const nullPayRows = await tx.execute(
-        sql`SELECT id FROM payment_records
-            WHERE school_id = ${schoolId}
-              AND receipt_number IS NULL
-            ORDER BY id ASC`,
-      );
-      const payIds = (nullPayRows.rows as { id: number }[]).map(r => r.id);
-
-      if (payIds.length > 0) {
-        // Same atomic batch pattern: advance the OP sequence once inside the
-        // transaction so a mid-run crash rolls back both the counter and the rows.
-        const opSeqResult = await tx.execute(
-          sql`INSERT INTO receipt_sequences (school_id, prefix, current_number)
-                VALUES (${schoolId}, 'OP', ${payIds.length})
-              ON CONFLICT (school_id, prefix) DO UPDATE
-                SET current_number = receipt_sequences.current_number + ${payIds.length}
-              RETURNING current_number`,
-        );
-        const opEnd = Number((opSeqResult.rows[0] as any).current_number);
-        const opStart = opEnd - payIds.length + 1;
-
-        for (let i = 0; i < payIds.length; i++) {
-          const n = opStart + i;
-          const receiptNumber = `OP${String(n).padStart(2, "0")}`;
-          await tx.execute(
-            sql`UPDATE payment_records
-                SET receipt_number = ${receiptNumber}
-                WHERE id = ${payIds[i]} AND school_id = ${schoolId}`,
-          );
-          if (i === 0) opFirst = receiptNumber;
-          opLast = receiptNumber;
-          opCount++;
-        }
-      }
-      const afRange = afFirst && afLast ? (afFirst === afLast ? afFirst : `${afFirst}–${afLast}`) : null;
-      const opRange = opFirst && opLast ? (opFirst === opLast ? opFirst : `${opFirst}–${opLast}`) : null;
-      await appendFeeAudit({
-        schoolId,
-        actor,
-        action: "backfill_receipts",
-        entityType: "fee_record",
-        entityId: null,
-        recordLabel: "Receipt number backfill",
-        description: `Assigned invoice numbers to ${afCount} fee records${afRange ? ` (${afRange})` : ""} and receipt numbers to ${opCount} payment records${opRange ? ` (${opRange})` : ""}.`,
-        ipAddress: requestIpAddress(req),
-      }, tx);
-      // Transaction commits here → xact lock auto-released by PostgreSQL.
-      // Because the sequence advances were also inside this transaction, a crash
-      // before commit rolls back both the counter and the row updates — no gaps.
-    });
-
-    if (lockBlocked) {
-      return res.status(409).json({
-        message: "Receipt backfill is already running. Please wait for it to finish and try again.",
-        alreadyRunning: true,
-      });
-    }
-
-    // Build human-readable range strings (e.g. "AF01–AF05" or null when nothing assigned)
-    const afRange = afFirst && afLast
-      ? (afFirst === afLast ? afFirst : `${afFirst}–${afLast}`)
-      : null;
-    const opRange = opFirst && opLast
-      ? (opFirst === opLast ? opFirst : `${opFirst}–${opLast}`)
-      : null;
-    res.json({
-      success: true,
-      feeRecordsUpdated: afCount,
-      paymentRecordsUpdated: opCount,
-      afRange,
-      opRange,
-      message: `Backfill complete: ${afCount} fee record(s) and ${opCount} payment record(s) assigned receipt numbers.`,
-    });
   });
 
   // ── Admin: Notification Config GET ────────────────────────────────────────

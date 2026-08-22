@@ -202,7 +202,6 @@ interface ExternalSettings {
   isEnabled: boolean;
   gatewayUrl: string | null;
   bannerMessage: string | null;
-  maxOvercollectionPercent: number | null;
   razorpayEnabled: boolean;
   razorpayKeyId: string | null;
   razorpayKeySecret: string | null;
@@ -5690,7 +5689,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [isEnabled, setIsEnabled] = useState(false);
   const [url, setUrl] = useState("");
   const [banner, setBanner] = useState("");
-  const [maxOvercollectionPercent, setMaxOvercollectionPercent] = useState(150);
 
   const [synced, setSynced] = useState(false);
 
@@ -5717,7 +5715,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setIsEnabled(settings.isEnabled);
       setUrl(settings.gatewayUrl ?? "");
       setBanner(settings.bannerMessage ?? "");
-      setMaxOvercollectionPercent(settings.maxOvercollectionPercent ?? 150);
       setSynced(true);
     }
   }, [settings, synced]);
@@ -5824,7 +5821,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       isEnabled,
       gatewayUrl:               url || null,
       bannerMessage:            banner || null,
-      maxOvercollectionPercent,
     }),
     onSuccess: () => {
       invalidate();
@@ -6043,28 +6039,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
           </div>
 
-          {/* Over-collection cap */}
-          <div className="p-3.5 rounded-xl border border-amber-700/25 bg-amber-900/10 space-y-2.5">
-            <p className="text-white font-semibold text-sm flex items-center gap-2">
-              <Shield className="w-4 h-4 text-amber-400" /> Max Over-collection Cap
-            </p>
-            <p className="text-white/40 text-xs leading-relaxed">
-              Payments that would bring total collected above this % of the invoice are blocked. Default 150%.
-            </p>
-            <div className="flex items-center gap-3">
-              <input type="number" min={100} max={500} step={1}
-                value={maxOvercollectionPercent}
-                onChange={e => {
-                  const v = parseInt(e.target.value, 10);
-                  if (!isNaN(v)) setMaxOvercollectionPercent(Math.min(500, Math.max(100, v)));
-                }}
-                disabled={isArchiveMode}
-                className="w-24 bg-[#0F1E35] border border-white/10 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-amber-500 disabled:opacity-40" />
-              <span className="text-white/60 text-sm">%</span>
-              <span className="text-white/30 text-xs">Range: 100–500%</span>
-            </div>
-          </div>
-
           {/* Preview */}
           {(isEnabled || banner) && (
             <div className="space-y-1.5">
@@ -6216,102 +6190,6 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         </div>
       </div>
 
-      {/* ── Data Maintenance ─────────────────────────────────────────────── */}
-      <BackfillReceiptsSection />
-    </div>
-  );
-}
-
-// ─── Backfill Receipts Section ────────────────────────────────────────────────
-// Assigns AF/OP receipt numbers to any fee/payment records that pre-date the
-// receipt system.  Safe to run multiple times — already-numbered rows are skipped.
-
-function BackfillReceiptsSection() {
-  const { toast } = useToast();
-  const [result, setResult] = useState<{ feeRecordsUpdated: number; paymentRecordsUpdated: number; afRange: string | null; opRange: string | null } | null>(null);
-  const [alreadyRunning, setAlreadyRunning] = useState(false);
-
-  const backfillMut = useMutation({
-    mutationFn: async () => {
-      setAlreadyRunning(false);
-      const r = await sessionFetch("/api/admin/fees/backfill-receipts", { method: "POST" });
-      const body = await r.json().catch(() => ({}));
-      if (r.status === 409) {
-        const err: any = new Error(body.message ?? "Backfill already running");
-        err.alreadyRunning = true;
-        throw err;
-      }
-      if (!r.ok) {
-        throw new Error(body.message ?? "Backfill failed");
-      }
-      return body as { feeRecordsUpdated: number; paymentRecordsUpdated: number; afRange: string | null; opRange: string | null; message: string };
-    },
-    onSuccess: (data) => {
-      setResult({ feeRecordsUpdated: data.feeRecordsUpdated, paymentRecordsUpdated: data.paymentRecordsUpdated, afRange: data.afRange ?? null, opRange: data.opRange ?? null });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/fees/audit-log"] });
-      toast({ title: "Receipt backfill complete", description: data.message });
-    },
-    onError: (e: any) => {
-      if (e.alreadyRunning) {
-        setAlreadyRunning(true);
-      } else {
-        toast({ title: "Backfill failed", description: e.message, variant: "destructive" });
-      }
-    },
-  });
-
-  return (
-    <div className="p-4 rounded-xl border border-amber-700/30 bg-amber-900/10 space-y-3">
-      <div>
-        <p className="text-white font-semibold flex items-center gap-2">
-          <Receipt className="w-4 h-4 text-amber-400" /> Assign Missing Receipt Numbers
-        </p>
-        <p className="text-white/40 text-xs mt-0.5 leading-relaxed">
-          Fee and payment records created before the receipt system was added show "—" in the Receipt column.
-          Run this once to assign sequential AF/OP numbers to all such records. Safe to run multiple times.
-        </p>
-      </div>
-
-      {result && !alreadyRunning && (
-        <div className="text-xs text-emerald-400 bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2 space-y-1">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              Done — {result.feeRecordsUpdated} fee record{result.feeRecordsUpdated !== 1 ? "s" : ""} and{" "}
-              {result.paymentRecordsUpdated} payment record{result.paymentRecordsUpdated !== 1 ? "s" : ""} updated.
-              {result.feeRecordsUpdated === 0 && result.paymentRecordsUpdated === 0 && " All records already have receipt numbers."}
-            </span>
-          </div>
-          {(result.afRange || result.opRange) && (
-            <div className="flex flex-wrap gap-x-4 gap-y-0.5 pl-5 text-emerald-300/80 font-mono">
-              {result.afRange && (
-                <span>Fee receipts: <span className="font-semibold text-emerald-300">{result.afRange}</span></span>
-              )}
-              {result.opRange && (
-                <span>Payment receipts: <span className="font-semibold text-emerald-300">{result.opRange}</span></span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {alreadyRunning && (
-        <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-2">
-          <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />
-          <span>Another admin is running the backfill. Please wait a moment and try again.</span>
-        </div>
-      )}
-
-      <Button
-        onClick={() => backfillMut.mutate()}
-        disabled={backfillMut.isPending}
-        variant="outline"
-        className="border-amber-600/50 text-amber-300 hover:bg-amber-900/30 hover:text-amber-200 bg-transparent text-xs h-8"
-      >
-        {backfillMut.isPending
-          ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> Running backfill…</>
-          : <><Receipt className="w-3.5 h-3.5 mr-1.5" /> Run Receipt Backfill</>}
-      </Button>
     </div>
   );
 }

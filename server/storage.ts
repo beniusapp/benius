@@ -5106,7 +5106,7 @@ export class DatabaseStorage {
   }
 
   async upsertExternalPaymentSettings(schoolId: number, data: {
-    isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; maxOvercollectionPercent?: number; lastUpdatedBy?: number | null;
+    isEnabled: boolean; gatewayUrl?: string | null; bannerMessage?: string | null; lastUpdatedBy?: number | null;
     razorpayEnabled?: boolean; razorpayKeyId?: string | null; razorpayKeySecret?: string | null; razorpayWebhookSecret?: string | null; razorpayMode?: string;
   }, executor: any = db): Promise<ExternalPaymentSettings> {
     const [rec] = await executor.insert(externalPaymentSettings)

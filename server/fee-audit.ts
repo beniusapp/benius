@@ -71,10 +71,8 @@ const ACTION_LABELS: Record<string, string> = {
   dispute_closed: "Dispute Resolved",
   settings_change: "Settings Changed",
   update_notification_config: "Notification Settings Changed",
-  backfill_receipts: "Receipts Backfilled",
   reminder_sent: "Reminder Sent",
   auto_overdue: "Invoice Marked Overdue",
-  receipts_backfilled: "Receipts Backfilled",
   overdue: "Invoice Marked Overdue",
 };
 
@@ -106,7 +104,6 @@ export const CURRENT_FEE_AUDIT_ACTION_OPTIONS = Object.freeze([
   { value: "dispute_updated", label: "Dispute Updated" },
   { value: "settings_change", label: "Settings Changed" },
   { value: "update_notification_config", label: "Notification Settings Changed" },
-  { value: "backfill_receipts", label: "Receipts Backfilled" },
   { value: "reminder_sent", label: "Reminder Sent" },
   { value: "auto_overdue", label: "Invoice Marked Overdue" },
 ] as const);
