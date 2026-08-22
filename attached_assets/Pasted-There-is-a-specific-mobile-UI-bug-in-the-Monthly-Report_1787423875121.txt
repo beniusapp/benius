@@ -1,0 +1,79 @@
+There is a specific mobile UI bug in the Monthly Report Schedule → Recipient Email input.
+
+Please reproduce this on a mobile browser.
+
+Current problem
+
+When I tap the recipient email field and start typing:
+
+1. I tap the email input.
+2. The keyboard opens.
+3. I type the first character, for example “s”.
+4. Immediately after that single character is entered, the input loses focus and the mobile keyboard closes.
+5. I have to tap the input again.
+6. I type the next character.
+7. The exact same thing happens again.
+
+For example, I should be able to type:
+
+"sunny111@gmail.com"
+
+continuously.
+
+Instead, after typing "s", the keyboard closes; after tapping again and typing "u", it closes again, etc.
+
+Required fix
+
+Fix the underlying React/UI state or component lifecycle issue causing the email input to lose focus after every keystroke.
+
+The input must:
+
+- Remain focused while the user is typing.
+- Keep the mobile keyboard open while typing.
+- Accept the complete email continuously without requiring the user to tap the field after every character.
+- Preserve the typed value during component re-renders.
+- Not remount/recreate the input element on every "onChange".
+- Not trigger a parent state update that causes the input to lose focus.
+- Not close the keyboard because of validation running on every keystroke.
+- Not reset the input value after each character.
+
+Important
+
+Do not simply add a workaround that repeatedly calls ".focus()".
+
+Find and fix the actual cause of the focus loss.
+
+Please inspect for things such as:
+
+- Component remounting on every keystroke.
+- Changing React "key" values.
+- Conditional rendering around the input.
+- State updates causing the input component to be recreated.
+- Form validation triggering a re-render/remount.
+- Recipient-list state being updated incorrectly on every character.
+- "onChange" causing the entire Monthly Report Schedule section to rebuild.
+- Any "useEffect" that focuses/resets the field after state changes.
+- Any mobile-specific event handling that closes the keyboard.
+- Controlled-input value/state synchronization problems.
+
+Acceptance test
+
+On a real mobile viewport:
+
+1. Open Financial Analytics.
+2. Go to Monthly Report Schedule.
+3. Tap the recipient email field.
+4. Type continuously:
+
+"sunny111@gmail.com"
+
+5. The keyboard must remain open throughout typing.
+6. The complete email must appear correctly in the field.
+7. The cursor must remain in the input.
+8. No re-tapping should be required between characters.
+9. After typing, the user should be able to click Add recipient normally.
+10. The same behavior must work after refreshing the page and when editing an existing recipient.
+
+Please fix this as a proper input-focus/lifecycle bug, not as a visual workaround.
+
+After fixing it, test the exact scenario on mobile and confirm that the keyboard no longer closes after each character.

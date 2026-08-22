@@ -6492,6 +6492,10 @@ type AnalyticsData = {
 };
 type AnalyticsChannel = { grossCollected: number; netCollected: number; transactionCount: number; averageTransaction: number; statuses: Array<{ status: string; count: number; amount: number }>; methods: Array<{ method: string; count: number; amount: number }> };
 
+function AnalyticsCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <section className={`min-w-0 rounded-xl border border-white/10 bg-[#17263d] p-4 shadow-[0_10px_28px_rgba(0,0,0,.12)] ${className}`}>{children}</section>;
+}
+
 function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const { selectedSession } = useSessionView();
   const { toast } = useToast();
@@ -6592,7 +6596,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     } catch (e) { toast({ title: "Download failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setExporting(null); }
   };
   const DownloadButton = ({ section = "summary" }: { section?: string }) => <button type="button" onClick={() => downloadPdf(section)} disabled={!!exporting} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold text-cyan-300/70 hover:bg-cyan-300/10 hover:text-cyan-200 disabled:opacity-40" aria-label={`Download ${section} PDF`}><Download className="h-3 w-3" />{exporting === section ? "Preparing" : "PDF"}</button>;
-  const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => <section className={`min-w-0 rounded-xl border border-white/10 bg-[#17263d] p-4 shadow-[0_10px_28px_rgba(0,0,0,.12)] ${className}`}>{children}</section>;
+  const Card = AnalyticsCard;
   const comparison = data?.comparison ?? null;
   const changeFor = (key: string) => {
     const field = key === "billed" ? "billedChange" : key === "grossCollected" ? "grossCollectedChange" : key === "netCollected" ? "netCollectedChange" : null;
