@@ -1,0 +1,253 @@
+Please thoroughly review the existing Fees & Payments → Financial Analytics module and improve it without breaking any existing Fees & Payments functionality.
+
+The current dashboard already has summary cards, revenue trend, class-wise breakdown, payment channel split, fee category breakdown and receivable aging. Keep useful existing functionality, but make the module significantly more modern, accurate and useful for a Principal/Accounts administrator.
+
+1. First audit the existing implementation
+
+Before changing anything, inspect the current frontend, APIs, database calculations and payment records.
+
+Verify:
+
+- All calculations are correct.
+- School/tenant isolation is correct.
+- Academic-session filtering is correct.
+- Failed/cancelled payments are not counted as collected.
+- Refunds and corrections are handled correctly.
+- Online and offline payments are correctly identified.
+- Analytics use actual payment/collection dates.
+- Existing PDF functionality can be reused.
+
+Do not invent or approximate financial data.
+
+2. Add global period filters
+
+Add:
+
+Today | This Week | This Month | This Academic Year | Custom Range
+
+The selected period should update all relevant analytics.
+
+Show the selected academic session and date range clearly.
+
+3. Separate ONLINE and OFFLINE payments
+
+Create two clearly separated sections.
+
+Online / Portal Payments
+
+Show:
+
+- Total collected
+- Successful transactions
+- Failed payments
+- Cancelled payments
+- Refunds
+- Average payment
+- Net collected
+- Payment method breakdown where reliable
+
+Offline Payments
+
+Show:
+
+- Total collected
+- Number of transactions
+- Average payment
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- Other actually supported methods
+
+Do not invent payment methods.
+
+4. Offline Cash drill-down
+
+If I select:
+
+Offline → Cash → Today
+
+show exactly how much cash was collected today.
+
+Clicking Cash should open a detailed breakdown.
+
+For example:
+
+₹500 × 30 = ₹15,000
+₹200 × 50 = ₹10,000
+₹100 × 120 = ₹12,000
+
+IMPORTANT: First check whether denomination information is actually stored in the current database.
+
+If denomination data exists, use it.
+
+If it does NOT exist, do not fabricate denominations. Clearly report that denomination-level analytics require denomination capture in the offline payment workflow.
+
+5. Online vs Offline comparison
+
+Add a clear comparison showing:
+
+Online Collection
+Offline Collection
+Percentage split
+Transaction count
+
+Allow Today / Week / Month / Custom Range.
+
+6. Improve the top financial summary
+
+Keep/improve the existing cards:
+
+- Total Billed
+- Total Collected
+- Outstanding
+- Collection Efficiency
+- Online Collection
+- Offline Collection
+- Refunds
+- Overdue Amount
+
+Show useful trend/comparison indicators where meaningful.
+
+7. Improve existing analytics
+
+Keep and improve:
+
+- Revenue Collection Trend
+- Class-Wise Breakdown
+- Fee Category Breakdown
+- Accounts Receivable Aging
+- Payment Channel Split
+
+Allow useful drill-downs where the existing permission model allows them.
+
+For trends:
+
+Today → hourly
+Week → daily
+Month → daily
+Academic Year → monthly
+
+8. Refund and payment-status accuracy
+
+Clearly distinguish:
+
+Successful
+Pending
+Failed
+Cancelled
+Refunded
+
+Failed/cancelled payments must never increase collected revenue.
+
+Show net collection correctly after applicable refunds.
+
+9. PDF download
+
+Every major analytics section should have a Download PDF option.
+
+Also provide:
+
+Download Complete Financial Analytics PDF
+
+The PDF should contain:
+
+- School name
+- Academic session
+- Selected period
+- Generated date/time in IST
+- Financial summary
+- Online collection
+- Offline collection
+- Payment methods
+- Class/category analytics
+- Outstanding/aging
+- Refunds
+- Relevant charts/tables
+
+CRITICAL:
+
+Screen amount = API amount = PDF amount
+
+Use the same server-side analytics data/calculation wherever possible.
+
+10. Data freshness
+
+Analytics should update after:
+
+- Payment
+- Payment correction
+- Refund
+- Reconciliation
+- Capture/settlement
+
+Show:
+
+Last updated: HH:MM IST
+
+Add a refresh option if appropriate.
+
+11. Security & performance
+
+All analytics must be:
+
+- School/tenant scoped
+- Authenticated
+- Permission checked
+- Academic-session aware
+
+Do not load all financial records into the browser just to calculate analytics. Use efficient server-side aggregation and proper indexes.
+
+12. Modern UI
+
+Keep the existing dark ERP design but make Financial Analytics feel:
+
+- Premium
+- Modern
+- Attractive
+- Clean
+- Easy to understand
+- Information-rich without being crowded
+- Fully responsive on mobile
+
+Avoid unnecessary animations and page-wide horizontal overflow.
+
+13. Do not break existing modules
+
+Do not unnecessarily modify:
+
+- Invoice generation
+- Fee structures
+- Ledger & Transactions
+- Offline payments
+- Razorpay/Portal payments
+- Duplicate-payment protection
+- Refunds
+- Receipts
+- Audit Log
+- Academic sessions
+- Tenant isolation
+
+This is primarily an analytics enhancement.
+
+14. Testing
+
+After implementation verify:
+
+- Today / Week / Month / Custom Range
+- Online/offline separation
+- Cash/payment-method totals
+- Academic-session filtering
+- Refund calculations
+- Class/category calculations
+- Tenant isolation
+- PDF accuracy
+- Mobile and desktop behavior
+
+For every major metric verify:
+
+Database → API → Screen → PDF = same value
+
+Finally provide me a concise report showing:
+
+Already correct | Problems found | Changes made | New analytics | PDF exports | Denomination capability | Tests passed | Remaining recommendations
