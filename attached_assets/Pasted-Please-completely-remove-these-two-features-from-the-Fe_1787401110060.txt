@@ -1,0 +1,187 @@
+Please completely remove these two features from the Fees & Payments module:
+
+1. Max Over-collection Cap
+2. Assign Missing Receipt Numbers / Receipt Backfill
+
+I do NOT want these features merely hidden from the UI. If they are confirmed to be unnecessary and have no active production dependency, remove them completely from the application.
+
+1. Max Over-collection Cap
+
+Remove:
+
+- Max Over-collection Cap UI
+- Its settings fields/configuration
+- Related API handling
+- Related database/schema fields if they are no longer used anywhere
+- Related validation/calculation logic
+- Related frontend state/types
+- Related tests that exist only for this feature
+- Related audit action if it is used only by this feature
+
+Do NOT affect:
+
+- Invoice creation
+- Invoice generation
+- Manual invoice creation
+- Fee structures
+- Ledger & Transactions
+- Offline payments
+- Razorpay payments
+- Duplicate-payment protection
+- Idempotency
+- Payment locks
+- Payment verification
+- Refunds
+- Payment reconciliation
+- Audit Log
+
+The removal must not weaken any existing duplicate-payment or payment-integrity protection.
+
+2. Assign Missing Receipt Numbers
+
+Completely remove:
+
+- "Assign Missing Receipt Numbers" UI
+- "Run Receipt Backfill" button
+- "/api/admin/fees/backfill-receipts" endpoint
+- Backfill service/helper functions
+- Backfill-specific database logic
+- Backfill-specific schema/configuration if unused elsewhere
+- AF/OP backfill numbering logic
+- Backfill-specific audit action if it is used only for this feature
+- Backfill-specific tests
+
+Do NOT modify the normal receipt-number system.
+
+The existing receipt system must continue to work exactly as it does now:
+
+- Online receipts → ON
+- Offline receipts → OF
+
+Do not change invoice numbers.
+
+3. IMPORTANT — Dependency Check First
+
+Before deleting anything, perform a complete repository search.
+
+Check whether either feature is referenced by:
+
+- Fee generation
+- Invoice creation
+- Invoice deletion
+- Ledger
+- Transactions
+- Offline payment recording
+- Online/Razorpay payment flow
+- Receipt generation
+- Refunds
+- Reconciliation
+- Audit Log
+- Student portal
+- Admin portal
+- Scheduled jobs
+- Database triggers
+- Background workers
+- Other APIs
+- Other settings
+- Reports
+- Existing production workflows
+
+If either feature is genuinely required by another active workflow, DO NOT blindly delete it.
+
+Instead, report exactly what depends on it and stop before making the destructive change.
+
+4. Database Cleanup
+
+If the associated database fields/tables/settings are used exclusively by these two features, remove them as well.
+
+However, do NOT remove a shared field or table merely because these features use it.
+
+Only remove database structures after confirming there are no remaining references.
+
+If a migration is required, create a proper migration rather than manually modifying the database.
+
+5. Preserve Existing Fees & Payments Behavior
+
+This cleanup must NOT change the behavior of:
+
+- Generate Invoices
+- Add Invoice
+- Edit Invoice
+- Delete Invoice
+- Bulk Invoice operations
+- Fee Structures
+- Ledger & Transactions
+- Offline payment
+- Razorpay payment
+- Payment failure/cancellation
+- Payment success
+- Refunds
+- Receipt generation
+- Payment reconciliation
+- Audit Log
+- Academic-session scoping
+- School/tenant isolation
+
+6. Audit Log
+
+Do not remove the existing Fees Audit Log architecture.
+
+The following must continue to be audited:
+
+- Fee structure creation/update/deletion
+- Invoice creation/update/deletion
+- Bulk invoice generation/deletion
+- Manual invoice creation
+- Ledger/transaction changes
+- Offline payments
+- Payment corrections
+- Payment lifecycle events
+- Refunds
+- Relevant automation
+- Any other existing financial mutation
+
+Only remove audit actions that exist exclusively for the deleted features.
+
+7. Final Cleanup
+
+After removal:
+
+- Search the entire repository for remaining references to "max_overcollection", "max_overcollection_percent", "backfill-receipts", "receipt backfill", "Assign Missing Receipt Numbers", AF backfill, OP backfill, and related identifiers.
+- Remove dead imports.
+- Remove unused types.
+- Remove unused API routes.
+- Remove unused database fields only when confirmed safe.
+- Remove dead UI code.
+- Remove obsolete comments/documentation.
+
+There should be no misleading references left behind.
+
+8. Verification
+
+Run:
+
+- Typecheck
+- Relevant unit tests
+- Fees & Payments tests
+- Payment/Razorpay tests
+- Receipt-generation tests
+- Audit Log tests
+- Database migration validation
+- Build validation
+
+Then perform a final end-to-end check of:
+
+1. Generate invoice
+2. Add invoice manually
+3. Edit invoice
+4. Delete invoice
+5. Make offline payment
+6. Make online/Razorpay payment
+7. Generate receipt
+8. Check Ledger & Transactions
+9. Check Audit Log
+
+The purpose of this task is to simplify Fees & Payments and remove unnecessary maintenance burden without changing any core financial behavior.
+
+Please do not rewrite unrelated code.
