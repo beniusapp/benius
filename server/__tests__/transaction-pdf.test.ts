@@ -536,6 +536,28 @@ describe("fmtDateTime — Asia/Kolkata timezone", () => {
     const result = fmtDateTime("2024-08-15T10:30:00Z");
     expect(result).toContain("2024");
   });
+
+  // ── IST timezone standardization boundary cases ─────────────────────────────
+  // Five persisted-instant forms around the 22-Aug-2026 IST boundary. Each is a
+  // timestamp that must display in Asia/Kolkata with an explicit " IST" suffix,
+  // host-timezone independent. Covers PostgreSQL bare (UTC convention), short
+  // offsets ("+00" / "-05"), full offset ("+05:30"), and ISO "Z".
+  it("renders the five persisted-instant boundary forms in IST with suffix", () => {
+    // PostgreSQL bare timestamp-without-time-zone (treated as UTC by convention)
+    expect(fmtDateTime("2026-08-21 23:14:01")).toBe("22 Aug 2026, 04:44:01 AM IST");
+    // Short offset "+00"
+    expect(fmtDateTime("2026-08-21 23:14:01+00")).toBe("22 Aug 2026, 04:44:01 AM IST");
+    // Short offset "-05"
+    expect(fmtDateTime("2026-08-21 23:14:01-05")).toBe("22 Aug 2026, 09:44:01 AM IST");
+    // Full offset "+05:30" (already IST) — stays on 21 Aug in IST
+    expect(fmtDateTime("2026-08-21 23:14:01+05:30")).toBe("21 Aug 2026, 11:14:01 PM IST");
+    // ISO "Z"
+    expect(fmtDateTime("2026-08-21T23:14:01Z")).toBe("22 Aug 2026, 04:44:01 AM IST");
+  });
+
+  it("always appends an IST suffix to a rendered timestamp", () => {
+    expect(fmtDateTime("2026-08-21T23:14:01Z")).toMatch(/ IST$/);
+  });
 });
 
 // ── 7. s() helper ─────────────────────────────────────────────────────────────

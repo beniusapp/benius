@@ -22,4 +22,57 @@ describe("formatPersistedInvoiceDateTimeIST", () => {
     expect(formatPersistedInvoiceDateTimeIST(null)).toBe("—");
     expect(formatPersistedInvoiceDateTimeIST("not-a-timestamp")).toBe("—");
   });
+
+  // ── Bare-UTC convention ──────────────────────────────────────────────────
+  // PostgreSQL timestamp-without-time-zone values are serialised as
+  // "YYYY-MM-DD HH:MM:SS" with no zone designator. The app treats them as UTC
+  // wall-clock instants. A naive `new Date("2026-08-20 18:30:00")` parses that
+  // string as HOST-LOCAL time — the exact defect the shared helper prevents.
+  // Proving the bare-UTC form equals the explicit-Z form demonstrates the
+  // rendering is host/browser-timezone independent by construction.
+  it("treats a bare timestamp-without-time-zone value as UTC, not host-local", () => {
+    const bareUtc = "2026-08-20 18:30:00";
+    const explicitZ = "2026-08-20T18:30:00.000Z";
+    expect(formatPersistedInvoiceDateTimeIST(bareUtc))
+      .toBe(formatPersistedInvoiceDateTimeIST(explicitZ));
+    expect(formatPersistedInvoiceDateTimeIST(bareUtc))
+      .toBe("21 Aug 2026, 12:00:00 AM IST");
+  });
+
+  // ── IST midnight boundary cases (21 / 22 / 23 Aug) ───────────────────────
+  // IST is UTC+05:30, so an IST calendar day starts at 18:30 UTC the prior day.
+  // These five cases pin the exact display on both sides of the 21/22/23 Aug
+  // IST midnight boundaries so the rendered calendar date never depends on the
+  // machine's local zone.
+  it("renders the 21/22/23 Aug IST midnight boundaries exactly", () => {
+    // 1s before 21 Aug IST midnight → still 20 Aug in IST.
+    expect(formatPersistedInvoiceDateTimeIST("2026-08-20T18:29:59.000Z"))
+      .toBe("20 Aug 2026, 11:59:59 PM IST");
+    // Exactly 21 Aug IST midnight.
+    expect(formatPersistedInvoiceDateTimeIST("2026-08-20T18:30:00.000Z"))
+      .toBe("21 Aug 2026, 12:00:00 AM IST");
+    // 1s before 22 Aug IST midnight → still 21 Aug in IST.
+    expect(formatPersistedInvoiceDateTimeIST("2026-08-21T18:29:59.000Z"))
+      .toBe("21 Aug 2026, 11:59:59 PM IST");
+    // Exactly 22 Aug IST midnight.
+    expect(formatPersistedInvoiceDateTimeIST("2026-08-21T18:30:00.000Z"))
+      .toBe("22 Aug 2026, 12:00:00 AM IST");
+    // Exactly 23 Aug IST midnight.
+    expect(formatPersistedInvoiceDateTimeIST("2026-08-22T18:30:00.000Z"))
+      .toBe("23 Aug 2026, 12:00:00 AM IST");
+  });
+
+  // ── Host-timezone independence proof ─────────────────────────────────────
+  // Re-derive the boundary instants as Date objects (which capture a true
+  // instant independent of any string zone parsing) and confirm the IST
+  // rendering is identical to the string form. Because the output is produced
+  // via Intl with an explicit `timeZone: "Asia/Kolkata"`, the result cannot
+  // vary with the host/browser default zone.
+  it("is host/browser-timezone independent for Date and string inputs at the boundary", () => {
+    const boundary = "2026-08-20T18:30:00.000Z"; // 21 Aug IST midnight
+    const expected = "21 Aug 2026, 12:00:00 AM IST";
+    expect(formatPersistedInvoiceDateTimeIST(boundary)).toBe(expected);
+    expect(formatPersistedInvoiceDateTimeIST(new Date(boundary))).toBe(expected);
+    expect(formatPersistedInvoiceDateTimeIST(new Date(Date.UTC(2026, 7, 20, 18, 30, 0)))).toBe(expected);
+  });
 });

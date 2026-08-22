@@ -40,17 +40,26 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import { normalizePaymentMethod } from "@shared/payment-method";
+import {
+  SCHOOL_TIME_ZONE,
+  todayInIST,
+  addCalendarDays,
+  calendarWeekday,
+} from "@shared/ist-time";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-export const ANALYTICS_TZ = "Asia/Kolkata";
+/**
+ * Analytics timezone. Re-exported from the shared IST-time policy so the
+ * Asia/Kolkata constant lives in exactly one place. Preserved as a public
+ * export for existing callers and the filter.timezone contract.
+ */
+export const ANALYTICS_TZ = SCHOOL_TIME_ZONE;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** Pure positive-integer denomination key: only digit characters, no leading
  *  zeros unless the whole value is "0" (which we exclude by the >0 check). */
 const DENOM_KEY_RE = /^\d+$/;
 const MAX_CUSTOM_DAYS = 5 * 366; // 5 years
-/** IST offset in minutes (UTC+5:30 = 330 min). */
-const IST_OFFSET_MIN = 330;
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -200,36 +209,26 @@ export function isValidDate(s: string): boolean {
 
 /**
  * Returns the current date in Asia/Kolkata as a YYYY-MM-DD string.
+ * Delegates to the shared IST-time policy.
  */
 export function todayIST(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: ANALYTICS_TZ }).format(new Date());
-}
-
-/**
- * Converts a JS Date (or any value that new Date() accepts) to the IST
- * YYYY-MM-DD calendar date string. Handles both timestamp strings and Date
- * objects.
- */
-function toISTDate(value: Date | string): string {
-  const d = typeof value === "string" ? new Date(value) : value;
-  return new Intl.DateTimeFormat("en-CA", { timeZone: ANALYTICS_TZ }).format(d);
+  return todayInIST();
 }
 
 /**
  * Returns the day-of-week (0=Sun … 6=Sat) for a YYYY-MM-DD string, treated
- * as a UTC calendar date.
+ * as a host-independent calendar date. Delegates to the shared helper.
  */
 function dayOfWeek(date: string): number {
-  return new Date(date + "T00:00:00Z").getUTCDay();
+  return calendarWeekday(date) ?? new Date(date + "T00:00:00Z").getUTCDay();
 }
 
 /**
- * Adds `n` days to a YYYY-MM-DD string (n may be negative).
+ * Adds `n` days to a YYYY-MM-DD string (n may be negative). Host-independent
+ * calendar arithmetic via the shared helper.
  */
 export function addDays(date: string, n: number): string {
-  const d = new Date(date + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+  return addCalendarDays(date, n);
 }
 
 /**
@@ -544,6 +543,17 @@ export async function buildFinancialAnalytics(
       pr.payment_mode,
       pr.received_date,
       pr.created_at,
+      -- IST wall-clock hour (0-23) of created_at, computed in Postgres so
+      -- hourly bucketing never re-derives the offset host-side.
+      -- payment_records.created_at is timestamp WITHOUT time zone whose stored
+      -- wall clock is UTC by this app convention. The two-step conversion first
+      -- reads the naive value AS UTC (yielding a timestamptz instant) and then
+      -- renders it in Asia/Kolkata. A single AT TIME ZONE Asia/Kolkata on a
+      -- naive column would instead interpret the value as local IST, which is
+      -- wrong and depends on the DB session TimeZone.
+      EXTRACT(HOUR FROM
+        (pr.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
+      )::int AS created_hour_ist,
       pr.denomination_breakdown,
       -- True when this payment_record is backed by a payment_attempt row
       -- (regardless of whether that attempt falls inside the selected range).
@@ -1195,12 +1205,11 @@ function buildHourlyTrend(
   points[0]!.billed = dayBilled;
 
   for (const row of paymentRows) {
-    const createdAt = row.created_at ? String(row.created_at) : null;
-    if (!createdAt) continue;
-    // Convert UTC created_at to IST hour
-    const d = new Date(createdAt);
-    const istMs   = d.getTime() + IST_OFFSET_MIN * 60_000;
-    const istHour = new Date(istMs).getUTCHours();
+    // created_hour_ist is the Asia/Kolkata wall-clock hour (0-23) computed in
+    // SQL; use it directly rather than re-parsing a timestamp and applying a
+    // fixed offset host-side.
+    if (row.created_hour_ist === null || row.created_hour_ist === undefined) continue;
+    const istHour = Number(row.created_hour_ist);
     const pt      = points[istHour];
     if (pt) pt.grossCollected += Number(row.amount ?? 0);
   }

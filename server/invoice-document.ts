@@ -1,4 +1,9 @@
 import { formatPersistedDateTimeIST } from "./persisted-date-time";
+import {
+  dateOnlyParts,
+  formatDateOnly,
+  formatMonthYearFromDateOnly,
+} from "@shared/ist-time";
 
 type FeeBreakdown = { name: string; purpose?: string; amount: number };
 
@@ -108,20 +113,18 @@ function frequencyLabel(frequency: string | null): string {
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00Z`) : new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "—"
-    : date.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
+  return formatDateOnly(String(value).slice(0, 10));
 }
 
 function feePeriodLabel(data: InvoiceDocumentData): string {
   if (!data.feePeriodStart || !data.feePeriodEnd) return "—";
   if ((data.frequency === "annual" || data.frequency === "one-time") && data.academicYear) return data.academicYear;
-  const start = new Date(`${data.feePeriodStart}T00:00:00Z`);
-  const end = new Date(`${data.feePeriodEnd}T00:00:00Z`);
-  const sameMonth = start.getUTCFullYear() === end.getUTCFullYear() && start.getUTCMonth() === end.getUTCMonth();
-  if (sameMonth) return start.toLocaleDateString("en-IN", { timeZone: "UTC", month: "long", year: "numeric" });
-  return `${start.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" })} – ${end.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" })}`;
+  const start = dateOnlyParts(data.feePeriodStart);
+  const end = dateOnlyParts(data.feePeriodEnd);
+  if (!start || !end) return "—";
+  const sameMonth = start.year === end.year && start.month === end.month;
+  if (sameMonth) return formatMonthYearFromDateOnly(data.feePeriodStart);
+  return `${formatMonthYearFromDateOnly(data.feePeriodStart, false)} – ${formatMonthYearFromDateOnly(data.feePeriodEnd, false)}`;
 }
 
 export function renderInvoiceDocument(data: InvoiceDocumentData): string {

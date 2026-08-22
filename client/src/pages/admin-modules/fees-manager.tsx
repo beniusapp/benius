@@ -26,7 +26,11 @@ import { useSessionView } from "@/contexts/session-view-context";
 import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
 import { offlinePaymentEntryDefaults, offlinePaymentDetailRows } from "@shared/offline-payment-details";
-import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
+import {
+  formatDateOnly, formatDateTimeIST, todayInIST,
+  formatMonthYearFromDateOnly, formatMonthFromDateOnly, dayOfMonthFromDateOnly,
+  dateOnlyParts, addCalendarDays,
+} from "@shared/ist-time";
 import {
   type LedgerFilters, emptyLedgerFilters, ledgerFiltersToSearchParams,
   ledgerFiltersToBody, countActiveLedgerFilters,
@@ -107,7 +111,17 @@ type InvoicePeriodOption = {
   end: string;
 };
 
-function addInvoicePeriodOptionsForSession(
+/**
+ * Last calendar day of a month as a YYYY-MM-DD string, computed without the
+ * host timezone. `month` is 0-based. Uses UTC arithmetic so the result never
+ * shifts across a DST/offset boundary.
+ */
+export function monthEndDateOnly(year: number, month: number): string {
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}
+
+export function addInvoicePeriodOptionsForSession(
   frequency: string,
   session: { startDate?: string | null; endDate?: string | null } | null,
 ): InvoicePeriodOption[] {
@@ -127,47 +141,46 @@ function addInvoicePeriodOptionsForSession(
     start >= sessionStart && end <= sessionEnd;
   const options: InvoicePeriodOption[] = [];
   const monthPeriod = (year: number, month: number): InvoicePeriodOption => {
-    const lastDay = new Date(year, month + 1, 0).getDate();
+    const start = `${year}-${String(month + 1).padStart(2, "0")}-01`;
     return {
       value: `${year}-${String(month + 1).padStart(2, "0")}`,
-      label: new Date(year, month, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
-      start: `${year}-${String(month + 1).padStart(2, "0")}-01`,
-      end: `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      label: formatMonthYearFromDateOnly(start),
+      start,
+      end: monthEndDateOnly(year, month),
     };
   };
   const quarterPeriod = (year: number, quarterStartMonth: number): InvoicePeriodOption => {
-    const quarterStart = new Date(year, quarterStartMonth, 1);
-    const quarterEnd = new Date(year, quarterStartMonth + 2, 1);
-    const lastDay = new Date(year, quarterStartMonth + 3, 0).getDate();
+    const endMonthIndex = (quarterStartMonth + 2) % 12;
+    const endYear = year + Math.floor((quarterStartMonth + 2) / 12);
+    const start = `${year}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`;
+    const endMonthStart = `${endYear}-${String(endMonthIndex + 1).padStart(2, "0")}-01`;
     return {
       value: `${year}-Q${Math.floor(quarterStartMonth / 3) + 1}`,
-      label: `${quarterStart.toLocaleDateString("en-IN", { month: "long" })}–${quarterEnd.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`,
-      start: `${year}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`,
-      end: `${quarterEnd.getFullYear()}-${String(quarterEnd.getMonth() + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      label: `${formatMonthFromDateOnly(start)}–${formatMonthYearFromDateOnly(endMonthStart)}`,
+      start,
+      end: monthEndDateOnly(endYear, endMonthIndex),
     };
   };
 
-  const startDate = new Date(`${sessionStart}T00:00:00`);
-  const endDate = new Date(`${sessionEnd}T00:00:00`);
-  if (frequency === "quarterly") {
-    let current = new Date(
-      startDate.getFullYear(),
-      Math.floor(startDate.getMonth() / 3) * 3,
-      1,
-    );
-    while (current <= endDate) {
-      const candidate = quarterPeriod(current.getFullYear(), current.getMonth());
-      if (isWithinSession(candidate.start, candidate.end)) options.push(candidate);
-      current = new Date(current.getFullYear(), current.getMonth() + 3, 1);
-    }
-    return options;
-  }
-
-  let current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-  while (current <= endDate) {
-    const candidate = monthPeriod(current.getFullYear(), current.getMonth());
+  // Calendar-only iteration: month indices are absolute (year * 12 + month) so
+  // the walk never touches the host timezone. The session bounds are compared
+  // as YYYY-MM-DD strings, which are lexicographically ordered.
+  const startParts = dateOnlyParts(sessionStart);
+  const endParts = dateOnlyParts(sessionEnd);
+  if (!startParts || !endParts) return options;
+  const startIndex = startParts.year * 12 + (startParts.month - 1);
+  const endIndex = endParts.year * 12 + (endParts.month - 1);
+  const step = frequency === "quarterly" ? 3 : 1;
+  const firstIndex = frequency === "quarterly"
+    ? startParts.year * 12 + Math.floor((startParts.month - 1) / 3) * 3
+    : startIndex;
+  for (let index = firstIndex; index <= endIndex; index += step) {
+    const year = Math.floor(index / 12);
+    const month = index % 12;
+    const candidate = frequency === "quarterly"
+      ? quarterPeriod(year, month)
+      : monthPeriod(year, month);
     if (isWithinSession(candidate.start, candidate.end)) options.push(candidate);
-    current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
   }
   return options;
 }
@@ -717,17 +730,9 @@ function printCreatedInvoice(detail: TransactionDetail, existingWindow?: Window 
     (total, component) => total + Number(component.amount ?? 0),
     0,
   );
-  const formatIssueDate = (value: string | null) => {
-    if (!value) return "—";
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-    const date = dateOnly ? new Date(`${value}T00:00:00Z`) : new Date(value);
-    return date.toLocaleDateString("en-IN", {
-      timeZone: dateOnly ? "UTC" : "Asia/Kolkata",
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  // Due date is a calendar DATE value — format it calendar-only so it never
+  // shifts across a timezone boundary.
+  const formatIssueDate = (value: string | null) => formatDateOnly(value);
   const schoolAddress = [
     school.addressLine1,
     school.addressLine2,
@@ -2117,20 +2122,23 @@ const feeFormSchema = z.object({
 });
 type FeeFormValues = z.infer<typeof feeFormSchema>;
 
-/** Client-side mirror of server/fee-period.ts feePeriodLabel — used for period preview in the form. */
-function clientFeePeriodLabel(start: string, end: string): string {
+/**
+ * Client-side mirror of server/fee-period.ts feePeriodLabel — used for period
+ * preview in the form. Operates only on calendar DATE values (YYYY-MM-DD) via
+ * shared calendar helpers, so labels never shift with the host timezone.
+ */
+export function clientFeePeriodLabel(start: string, end: string): string {
   if (!start || !end) return "";
-  const s = new Date(start + "T00:00:00");
-  const e = new Date(end   + "T00:00:00");
-  const days = Math.round((e.getTime() - s.getTime()) / 86400000);
-  if (days <= 31)
-    return s.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-  if (days <= 92) {
-    const startLabel = s.toLocaleDateString("en-IN", { month: "long" });
-    const endLabel   = e.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-    return `${startLabel}–${endLabel}`;
-  }
-  return `${s.getFullYear()}–${String(s.getFullYear() + 1).slice(2)}`;
+  const s = dateOnlyParts(start.slice(0, 10));
+  const e = dateOnlyParts(end.slice(0, 10));
+  if (!s || !e) return "";
+  // Calendar-day span computed in UTC (never local) so DST/offset never shifts it.
+  const days = Math.round(
+    (Date.UTC(e.year, e.month - 1, e.day) - Date.UTC(s.year, s.month - 1, s.day)) / 86400000,
+  );
+  if (days <= 31) return formatMonthYearFromDateOnly(start);
+  if (days <= 92) return `${formatMonthFromDateOnly(start)}–${formatMonthYearFromDateOnly(end)}`;
+  return `${s.year}–${String(s.year + 1).slice(2)}`;
 }
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
@@ -4267,9 +4275,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     setFrequency(s.frequency);
     setSelectedClasses([...s.applicableClasses]);
     if (s.dueDayOfMonth) {
-      const now = new Date();
-      const y = now.getFullYear();
-      const mo = String(now.getMonth() + 1).padStart(2, "0");
+      // Synthesize a DATE for the date-input using the current IST calendar
+      // month/year so the day-of-month never shifts near the midnight boundary.
+      const [y, mo] = todayInIST().split("-");
       const d = String(Math.min(s.dueDayOfMonth, 28)).padStart(2, "0");
       setDueDay(`${y}-${mo}-${d}`);
     } else { setDueDay(""); }
@@ -4298,7 +4306,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
         name, feeType, amount: parseInt(amount),
         frequency,
         applicableClasses: selectedClasses,
-        dueDayOfMonth: dueDay ? new Date(dueDay + "T00:00:00").getDate() : null,
+        dueDayOfMonth: dueDay ? dayOfMonthFromDateOnly(dueDay) : null,
         breakdown: parsedBreakdown,
         lateFeeConfig: {
           enabled: lateFeeEnabled,
@@ -4404,10 +4412,9 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   function quarterBounds(qi: number, year: number): { start: string; end: string } {
     const sm = qi * 3;
     const em = sm + 2;
-    const lastDay = new Date(year, em + 1, 0).getDate();
     return {
       start: `${year}-${String(sm + 1).padStart(2, "0")}-01`,
-      end:   `${year}-${String(em + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      end:   monthEndDateOnly(year, em),
     };
   }
 
@@ -4424,40 +4431,37 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     const options: PeriodOption[] = [];
     if (!sessionStart || !sessionEnd) return options;
 
-    const sDate = new Date(sessionStart + "T00:00:00");
-    const eDate = new Date(sessionEnd + "T00:00:00");
+    // Calendar-only iteration on absolute month indices (year * 12 + month) so
+    // the walk never touches the host timezone.
+    const sParts = dateOnlyParts(sessionStart.slice(0, 10));
+    const eParts = dateOnlyParts(sessionEnd.slice(0, 10));
+    if (!sParts || !eParts) return options;
+    const startIndex = sParts.year * 12 + (sParts.month - 1);
+    const endIndex = eParts.year * 12 + (eParts.month - 1);
 
     if (freq === "monthly") {
-      // Walk month by month from sDate to eDate
-      let cur = new Date(sDate.getFullYear(), sDate.getMonth(), 1);
-      const limit = new Date(eDate.getFullYear(), eDate.getMonth(), 1);
-      while (cur <= limit) {
-        const py = cur.getFullYear(); const pm = cur.getMonth();
-        const last = new Date(py, pm + 1, 0).getDate();
+      // Walk month by month from session start to session end (inclusive).
+      for (let index = startIndex; index <= endIndex; index++) {
+        const py = Math.floor(index / 12); const pm = index % 12;
         const start = `${py}-${String(pm + 1).padStart(2, "0")}-01`;
-        const end   = `${py}-${String(pm + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-        const label = cur.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+        const end   = monthEndDateOnly(py, pm);
+        const label = formatMonthYearFromDateOnly(start);
         options.push({ label, start, end });
-        cur = new Date(py, pm + 1, 1);
       }
     } else if (freq === "quarterly") {
-      // Walk quarter by quarter — each quarter whose START is ≤ session end
-      const startQI = Math.floor(sDate.getMonth() / 3);
-      let cur = new Date(sDate.getFullYear(), startQI * 3, 1);
-      while (cur <= eDate) {
-        const qy = cur.getFullYear();
-        const qi = Math.floor(cur.getMonth() / 3);
+      // Walk quarter by quarter — each quarter whose START is ≤ session end.
+      const firstQuarterIndex = sParts.year * 12 + Math.floor((sParts.month - 1) / 3) * 3;
+      for (let index = firstQuarterIndex; index <= endIndex; index += 3) {
+        const qy = Math.floor(index / 12);
+        const qi = Math.floor((index % 12) / 3);
         const b = quarterBounds(qi, qy);
-        const sm2 = new Date(qy, qi * 3, 1);
-        const em2 = new Date(qy, qi * 3 + 2, 1);
-        const label = `${sm2.toLocaleDateString("en-IN", { month: "long" })}–${em2.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}`;
+        const label = `${formatMonthFromDateOnly(b.start)}–${formatMonthYearFromDateOnly(monthEndDateOnly(qy, qi * 3 + 2))}`;
         options.push({ label, ...b });
-        cur = new Date(qy, (qi + 1) * 3, 1);
       }
     } else {
       // Annual / one-time — single period = full session
       options.push({
-        label: `${sDate.toLocaleDateString("en-IN", { month: "short", year: "numeric" })} – ${eDate.toLocaleDateString("en-IN", { month: "short", year: "numeric" })}`,
+        label: `${formatMonthYearFromDateOnly(sessionStart.slice(0, 10), false)} – ${formatMonthYearFromDateOnly(sessionEnd.slice(0, 10), false)}`,
         start: sessionStart.slice(0, 10),
         end:   sessionEnd.slice(0, 10),
       });
@@ -4665,7 +4669,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                 <input type="date" value={dueDay} onChange={e => setDueDay(e.target.value)}
                   className="w-full bg-[#0A1628] border border-white/20 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]" />
                 {dueDay && (
-                  <p className="text-white/40 text-xs mt-1">Day {new Date(dueDay + "T00:00:00").getDate()} of each month</p>
+                  <p className="text-white/40 text-xs mt-1">Day {dayOfMonthFromDateOnly(dueDay)} of each month</p>
                 )}
               </div>
             </div>
@@ -6569,7 +6573,7 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const filterLabel = data.filter?.label ?? `${data.filter?.startDate ?? ""} – ${data.filter?.endDate ?? ""}`;
   return <div className="min-w-0 space-y-4 text-white">
     <div className="flex flex-col gap-3 rounded-xl border border-cyan-300/15 bg-[#132238] p-4 lg:flex-row lg:items-end lg:justify-between">
-      <div><div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[11px] font-semibold uppercase tracking-[.18em] text-cyan-200/70">Financial cockpit</span><span className="rounded bg-white/10 px-2 py-0.5 text-[10px] text-white/60">{data.sessionInfo?.sessionName ?? selectedSession?.sessionName ?? "Active session"}</span></div><h2 className="mt-2 text-xl font-bold tracking-tight">Collections & receivables</h2><p className="mt-1 text-xs text-white/45">{filterLabel} · {data.filter?.timezone ?? "IST"} · Updated {data.generatedAt ? formatDateTimeIST(new Date(data.generatedAt)) : "—"}</p></div>
+      <div><div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[11px] font-semibold uppercase tracking-[.18em] text-cyan-200/70">Financial cockpit</span><span className="rounded bg-white/10 px-2 py-0.5 text-[10px] text-white/60">{data.sessionInfo?.sessionName ?? selectedSession?.sessionName ?? "Active session"}</span></div><h2 className="mt-2 text-xl font-bold tracking-tight">Collections & receivables</h2><p className="mt-1 text-xs text-white/45">{filterLabel} · {data.filter?.timezone ?? "IST"} · Updated {data.generatedAt ? formatDateTimeIST(data.generatedAt) : "—"}</p></div>
       <div><div className="flex flex-wrap items-center gap-2"><select value={preset} onChange={e => setPreset(e.target.value as AnalyticsPreset)} className="rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs text-white"><option value="today">Today</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="academic_year">Academic Year</option><option value="custom">Custom</option></select>{preset === "custom" && <><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} max={endDate || undefined} className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" aria-label="Start date" /><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} min={startDate || undefined} className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" aria-label="End date" /></>}<button onClick={() => refetch()} className="inline-flex items-center gap-2 rounded-md border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/10" aria-label="Refresh analytics"><Loader2 className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />Refresh</button><DownloadButton section="complete" /></div>{invalidCustom && <p className="mt-2 text-[11px] text-amber-200/80">Choose both dates; start date must be on or before end date.</p>}</div>
     </div>
     <div><div className="mb-2 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Executive summary</h3><p className="text-[11px] text-white/40">Demand, collections, and receivables at a glance</p></div><DownloadButton section="summary" /></div><div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">{moneyMetric("Billed", "billed", "border-white/10 bg-white/[.03]")}{moneyMetric("Gross collected", "grossCollected", "border-cyan-300/20 bg-cyan-300/[.04]")}{moneyMetric("Refunds", "refunds", "border-amber-300/20 bg-amber-300/[.04]")}{moneyMetric("Net collected", "netCollected", "border-emerald-300/20 bg-emerald-300/[.04]")}{moneyMetric("Outstanding", "outstanding", "border-rose-300/20 bg-rose-300/[.04]")}{<div className="rounded-lg border border-indigo-300/20 bg-indigo-300/[.04] p-3"><div className="text-[10px] uppercase tracking-[.14em] text-white/45">Efficiency</div><div className="mt-1 text-lg font-bold tabular-nums text-white">{Number(s.collectionEfficiency ?? 0)}%</div></div>}{moneyMetric("Online collection", "onlineCollected", "border-cyan-300/20 bg-cyan-300/[.04]")}{moneyMetric("Offline collection", "offlineCollected", "border-amber-300/20 bg-amber-300/[.04]")}{moneyMetric("Overdue amount", "overdueAmount", "border-rose-300/20 bg-rose-300/[.04]")}</div></div>

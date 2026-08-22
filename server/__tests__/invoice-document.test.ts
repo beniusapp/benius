@@ -60,6 +60,19 @@ describe("renderInvoiceDocument", () => {
     expect(html).toContain("Component subtotal");
   });
 
+  it.each([
+    ["2026-08-21T18:29:59Z", "21 Aug 2026, 11:59:59 PM IST"],
+    ["2026-08-21T18:30:00Z", "22 Aug 2026, 12:00:00 AM IST"],
+    ["2026-08-21T18:30:01Z", "22 Aug 2026, 12:00:01 AM IST"],
+    ["2026-08-22T18:29:59Z", "22 Aug 2026, 11:59:59 PM IST"],
+    ["2026-08-22T18:30:00Z", "23 Aug 2026, 12:00:00 AM IST"],
+  ])("renders the persisted invoice instant at the IST boundary: %s", (createdAt, expected) => {
+    const html = renderInvoiceDocument({ ...invoice, createdAt });
+    expect(html).toContain(expected);
+    expect(html).toContain("31 Aug 2026");
+    expect(html).toContain("August 2026");
+  });
+
   it("renders the persisted invoice frequency in the invoice details table", () => {
     const html = renderInvoiceDocument({ ...invoice, frequency: "quarterly" });
 

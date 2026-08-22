@@ -514,6 +514,7 @@ export async function markRefundProviderFailure(
 export async function reconcileRefundWebhook(input: {
   schoolId: number; refund: any; eventType: "refund.created" | "refund.processed" | "refund.failed" | "refund.speed_changed";
   webhookDeliveryId: number; fallbackFeeRecordId?: number | null; fallbackStudentId?: number | null; fallbackSessionId?: number | null;
+  providerOccurredAt?: Date | null;
   afterReconcile?: (
     tx: any,
     context: RefundPaymentContext,
@@ -578,13 +579,14 @@ export async function reconcileRefundWebhook(input: {
     const processed = effectiveLocal === "processed";
     const failure = effectiveLocal === "failed";
     const amount = Number(input.refund.amount ?? row.requested_amount_paise);
+    const providerOccurredAt = input.providerOccurredAt ?? providerDate(input.refund);
     const updated = await tx.execute(sql`
       UPDATE refunds
       SET local_status = ${effectiveLocal},
           provider_status = ${input.refund.status ?? map.local},
           processed_amount_paise = CASE WHEN ${processed} THEN ${amount} ELSE processed_amount_paise END,
           provider_created_at = COALESCE(${providerDate(input.refund)?.toISOString() ?? null}::timestamptz, provider_created_at),
-          provider_processed_at = CASE WHEN ${processed} THEN COALESCE(${providerDate(input.refund)?.toISOString() ?? null}::timestamptz, NOW()) ELSE provider_processed_at END,
+          provider_processed_at = CASE WHEN ${processed} THEN COALESCE(${providerOccurredAt?.toISOString() ?? null}::timestamptz, NOW()) ELSE provider_processed_at END,
           failure_code = CASE WHEN ${failure} THEN ${input.refund?.error_code ?? null} ELSE failure_code END,
           failure_message = CASE WHEN ${failure} THEN ${input.refund?.error_description ?? null} ELSE failure_message END,
           provider_payload = ${JSON.stringify(sanitizePaymentPayload(input.refund))}::jsonb,
@@ -600,7 +602,7 @@ export async function reconcileRefundWebhook(input: {
       razorpayPaymentId, razorpayOrderId: context.razorpayOrderId, razorpayRefundId,
       amountPaise: amount, source: "webhook", webhookDeliveryId: input.webhookDeliveryId,
       correlationKey: `webhook-refund:${input.webhookDeliveryId}:${razorpayRefundId}:${map.event}`,
-      payload: input.refund, providerOccurredAt: providerDate(input.refund), occurredAt: new Date(),
+      payload: input.refund, providerOccurredAt, occurredAt: new Date(),
     });
     const summary = await recalculateFinancialProjection(tx, context);
     if (input.afterReconcile) {

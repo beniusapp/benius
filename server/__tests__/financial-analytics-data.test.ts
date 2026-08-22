@@ -34,7 +34,7 @@
  * 26.  Response contract: all required top-level fields present.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { db } from "../db";
 import {
   schools,
@@ -1572,5 +1572,361 @@ describe("buildFinancialAnalytics — response contract", () => {
     }
 
     expect(r.aging.map(a => a.bucket)).toEqual(["1-30", "31-60", "61-90", "90+"]);
+  });
+});
+
+// ── 27. IST boundary instants around 22-Aug-2026 ──────────────────────────────
+//
+// IST is UTC+5:30. The five UTC instants that stress the boundaries of the
+// IST calendar day 2026-08-22 are:
+//   A. 2026-08-21T18:30:00Z → 2026-08-22 00:00:00 IST  (first instant of 22nd)
+//   B. 2026-08-22T18:29:59Z → 2026-08-22 23:59:59 IST  (last  instant of 22nd)
+//   C. 2026-08-21T18:29:59Z → 2026-08-21 23:59:59 IST  (just before the 22nd)
+//   D. 2026-08-22T18:30:00Z → 2026-08-23 00:00:00 IST  (just after  the 22nd)
+//   E. 2026-08-22T00:00:00Z → 2026-08-22 05:30:00 IST  (mid-day; same date
+//                                                        in both UTC and IST)
+// Any correct Asia/Kolkata classifier must place A, B and E on 2026-08-22 and
+// place C on 2026-08-21 and D on 2026-08-23. A naive UTC ::date classifier
+// would wrongly place A on the 21st and D on the 22nd.
+const IST_BOUNDARY_2026 = {
+  A_startOf22: "2026-08-21T18:30:00Z", // 22 Aug 00:00 IST
+  B_endOf22:   "2026-08-22T18:29:59Z", // 22 Aug 23:59:59 IST
+  C_before22:  "2026-08-21T18:29:59Z", // 21 Aug 23:59:59 IST
+  D_after22:   "2026-08-22T18:30:00Z", // 23 Aug 00:00 IST
+  E_midday22:  "2026-08-22T00:00:00Z", // 22 Aug 05:30 IST
+} as const;
+
+// Session bounds that comfortably contain August 2026.
+const SESSION_2026 = { sessionStart: "2026-04-01", sessionEnd: "2027-03-31" };
+
+describe("IST boundary — host timezone independence (unit)", () => {
+  const originalTZ = process.env.TZ;
+  afterEach(() => {
+    if (originalTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTZ;
+  });
+
+  it("addDays / daysBetween / resolvePeriod are identical across host timezones", () => {
+    const session: SessionInfo = {
+      id: 1, sessionName: "2026-27",
+      startDate: SESSION_2026.sessionStart, endDate: SESSION_2026.sessionEnd,
+    };
+
+    const compute = () => ({
+      // Calendar arithmetic must not shift when the host offset changes.
+      addFwd:  addDays("2026-08-22", 6),
+      addBack: addDays("2026-08-22", -1),
+      // Month/leap boundary crossings.
+      monthEnd: addDays("2026-08-31", 1),
+      between:  daysBetween("2026-08-21", "2026-08-23"),
+      // A custom range fully inside the session with a prior comparison window.
+      period: resolvePeriod("custom", session, "2026-08-22", "2026-08-28"),
+    });
+
+    for (const tz of ["UTC", "America/Los_Angeles", "Asia/Kolkata", "Pacific/Kiritimati"]) {
+      process.env.TZ = tz;
+      const r = compute();
+      expect(r.addFwd).toBe("2026-08-28");
+      expect(r.addBack).toBe("2026-08-21");
+      expect(r.monthEnd).toBe("2026-09-01");
+      expect(r.between).toBe(2);
+      expect(r.period.startDate).toBe("2026-08-22");
+      expect(r.period.endDate).toBe("2026-08-28");
+      // 7-day window → prior 7-day window 2026-08-15..2026-08-21 (in session).
+      expect(r.period.comparison).not.toBeNull();
+      expect(r.period.comparison!.startDate).toBe("2026-08-15");
+      expect(r.period.comparison!.endDate).toBe("2026-08-21");
+    }
+  });
+});
+
+describe("IST boundary 2026-08-22 — refund classification", () => {
+  let fixture: Fixture;
+  afterEach(async () => { if (fixture) await teardown(fixture.schoolId); });
+
+  it("classifies the five boundary instants onto the correct IST calendar day (range + trend)", async () => {
+    fixture = await createFixture(SESSION_2026);
+    const { schoolId, studentId, sessionId } = fixture;
+
+    const [fr] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId,
+      feeType: "Tuition", amount: 100000, dueDate: "2026-08-22", status: "Paid",
+    }).returning();
+    const rzpId = `pay_${uid()}`;
+    const [pr] = await db.insert(paymentRecords).values({
+      schoolId, studentId, feeRecordId: fr.id, sessionId,
+      paymentMethod: "Portal Payment", razorpayPaymentId: rzpId,
+      receivedDate: "2026-08-22", amount: 100000,
+    }).returning();
+
+    // One processed refund per boundary instant, distinct amounts so we can
+    // trace which instant landed where. Amounts in paise.
+    const refunds: Array<{ at: string; paise: number }> = [
+      { at: IST_BOUNDARY_2026.A_startOf22, paise: 100000 }, // ₹1000 → 22nd
+      { at: IST_BOUNDARY_2026.B_endOf22,   paise: 200000 }, // ₹2000 → 22nd
+      { at: IST_BOUNDARY_2026.C_before22,  paise: 400000 }, // ₹4000 → 21st
+      { at: IST_BOUNDARY_2026.D_after22,   paise: 800000 }, // ₹8000 → 23rd
+      { at: IST_BOUNDARY_2026.E_midday22,  paise: 160000 }, // ₹1600 → 22nd
+    ];
+    for (const rf of refunds) {
+      await insertRefund({
+        schoolId, feeRecordId: fr.id, paymentRecordId: pr.id,
+        razorpayPaymentId: rzpId, requestedAmountPaise: rf.paise,
+        processedAmountPaise: rf.paise, localStatus: "processed",
+        providerProcessedAt: rf.at,
+      });
+    }
+
+    // Range = exactly the 22nd. Only A (₹1000) + B (₹2000) + E (₹1600) qualify.
+    const day22 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-22", customEnd: "2026-08-22",
+    });
+    expect(day22.summary.refunds).toBe(1000 + 2000 + 1600); // 4600
+    const t22 = day22.trend.find(p => p.label === dailyLabel("2026-08-22"));
+    expect(t22).toBeDefined();
+    expect(t22!.refunds).toBe(4600);
+
+    // Range = the 21st. Only C (₹4000) qualifies.
+    const day21 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-21", customEnd: "2026-08-21",
+    });
+    expect(day21.summary.refunds).toBe(4000);
+
+    // Range = the 23rd. Only D (₹8000) qualifies.
+    const day23 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-23", customEnd: "2026-08-23",
+    });
+    expect(day23.summary.refunds).toBe(8000);
+
+    // A three-day window must contain everything, attributed per IST day.
+    const span = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-21", customEnd: "2026-08-23",
+    });
+    expect(span.summary.refunds).toBe(1000 + 2000 + 4000 + 8000 + 1600); // 16600
+    const s21 = span.trend.find(p => p.label === dailyLabel("2026-08-21"));
+    const s22 = span.trend.find(p => p.label === dailyLabel("2026-08-22"));
+    const s23 = span.trend.find(p => p.label === dailyLabel("2026-08-23"));
+    expect(s21!.refunds).toBe(4000);
+    expect(s22!.refunds).toBe(4600);
+    expect(s23!.refunds).toBe(8000);
+  });
+});
+
+describe("IST boundary 2026-08-22 — attempt classification", () => {
+  let fixture: Fixture;
+  afterEach(async () => { if (fixture) await teardown(fixture.schoolId); });
+
+  it("scopes captured attempts to the correct IST calendar day via rzp_captured_at", async () => {
+    fixture = await createFixture(SESSION_2026);
+    const { schoolId, studentId, sessionId } = fixture;
+
+    const [fr] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId,
+      feeType: "Tuition", amount: 500000, dueDate: "2026-08-22", status: "Paid",
+    }).returning();
+
+    // One captured attempt per boundary instant; created_at deliberately set to
+    // a UTC-midday on the 22nd so ONLY the outcome-specific rzp_captured_at
+    // drives inclusion (not created_at).
+    const instants = [
+      IST_BOUNDARY_2026.A_startOf22, // → 22nd
+      IST_BOUNDARY_2026.B_endOf22,   // → 22nd
+      IST_BOUNDARY_2026.C_before22,  // → 21st
+      IST_BOUNDARY_2026.D_after22,   // → 23rd
+      IST_BOUNDARY_2026.E_midday22,  // → 22nd
+    ];
+    for (const capturedAt of instants) {
+      await insertPaymentAttempt({
+        schoolId, studentId, feeRecordId: fr.id, sessionId,
+        outcome: "captured", amountPaise: 500000,
+        razorpayPaymentId: `pay_bnd_${uid()}`,
+        createdAt: "2026-08-22T12:00:00Z",
+        rzpCapturedAt: capturedAt,
+      });
+    }
+
+    // The 22nd must include A, B, E → 3 captured attempts.
+    const day22 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-22", customEnd: "2026-08-22",
+    });
+    expect(day22.online.statuses.find(s => s.status === "captured")?.count ?? 0).toBe(3);
+
+    // The 21st must include only C → 1.
+    const day21 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-21", customEnd: "2026-08-21",
+    });
+    expect(day21.online.statuses.find(s => s.status === "captured")?.count ?? 0).toBe(1);
+
+    // The 23rd must include only D → 1.
+    const day23 = await buildFinancialAnalytics({
+      schoolId, sessionId,
+      preset: "custom", customStart: "2026-08-23", customEnd: "2026-08-23",
+    });
+    expect(day23.online.statuses.find(s => s.status === "captured")?.count ?? 0).toBe(1);
+  });
+});
+
+// ── 28. Payment hourly bucketing — created_at IST hour (schema-semantic) ───────
+//
+// payment_records.created_at is `timestamp WITHOUT time zone` whose stored wall
+// clock is UTC by this app's convention. The IST hour must therefore be derived
+// with the two-step conversion (created_at AT TIME ZONE 'UTC' AT TIME ZONE
+// 'Asia/Kolkata'). A single `AT TIME ZONE 'Asia/Kolkata'` would misinterpret
+// the naive value and its result would depend on the DB session TimeZone.
+//
+// Expected IST wall-clock hour for each boundary UTC instant:
+//   A 2026-08-21 18:30:00Z → 00:00 IST → hour 0
+//   B 2026-08-22 18:29:59Z → 23:59:59 IST → hour 23
+//   C 2026-08-21 18:29:59Z → 23:59:59 IST → hour 23
+//   D 2026-08-22 18:30:00Z → 00:00 IST → hour 0
+//   E 2026-08-22 00:00:00Z → 05:30 IST → hour 5
+
+/** Naive-UTC wall-clock string (YYYY-MM-DD HH:MM:SS) for a boundary UTC ISO. */
+function naiveUtc(iso: string): string {
+  return iso.replace("T", " ").replace("Z", "");
+}
+
+/** Insert a payment_record with an explicit created_at (naive UTC wall clock). */
+async function insertPaymentWithCreatedAt(fields: {
+  schoolId: number;
+  studentId: number;
+  feeRecordId: number;
+  sessionId: number;
+  receivedDate: string;
+  amount: number;
+  createdAtNaiveUtc: string;
+  razorpayPaymentId?: string | null;
+}): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO payment_records (
+      school_id, student_id, fee_record_id, session_id,
+      payment_method, razorpay_payment_id, received_date, amount, created_at
+    ) VALUES (
+      ${fields.schoolId}, ${fields.studentId}, ${fields.feeRecordId}, ${fields.sessionId},
+      'Portal Payment', ${fields.razorpayPaymentId ?? null},
+      ${fields.receivedDate}, ${fields.amount},
+      ${fields.createdAtNaiveUtc}::timestamp
+    )
+  `);
+}
+
+const PAYMENT_HOUR_INSTANTS = [
+  { key: "A", utc: IST_BOUNDARY_2026.A_startOf22, hour: 0,  amount: 1000 },
+  { key: "B", utc: IST_BOUNDARY_2026.B_endOf22,   hour: 23, amount: 2000 },
+  { key: "C", utc: IST_BOUNDARY_2026.C_before22,  hour: 23, amount: 4000 },
+  { key: "D", utc: IST_BOUNDARY_2026.D_after22,   hour: 0,  amount: 8000 },
+  { key: "E", utc: IST_BOUNDARY_2026.E_midday22,  hour: 5,  amount: 1600 },
+] as const;
+
+describe("Payment hourly bucketing — SQL IST-hour conversion is session-tz independent", () => {
+  let fixture: Fixture;
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+    // Always restore the DB session TimeZone the pooled connection may carry.
+    await db.execute(sql`SET TIME ZONE 'UTC'`);
+  });
+
+  it("derives the expected IST hour for each boundary instant regardless of DB session TimeZone", async () => {
+    fixture = await createFixture(SESSION_2026);
+    const { schoolId, studentId, sessionId } = fixture;
+
+    const [fr] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId,
+      feeType: "Tuition", amount: 100000, dueDate: "2026-08-22", status: "Paid",
+    }).returning();
+
+    for (const p of PAYMENT_HOUR_INSTANTS) {
+      await insertPaymentWithCreatedAt({
+        schoolId, studentId, feeRecordId: fr.id, sessionId,
+        receivedDate: "2026-08-22", amount: p.amount,
+        createdAtNaiveUtc: naiveUtc(p.utc),
+        razorpayPaymentId: `pay_hr_${p.key}_${uid()}`,
+      });
+    }
+
+    // Run the exact production conversion under several DB session timezones.
+    for (const tz of ["UTC", "America/Los_Angeles", "Asia/Kolkata"]) {
+      await db.execute(sql`SET TIME ZONE ${sql.raw(`'${tz}'`)}`);
+      const res = await db.execute(sql`
+        SELECT
+          pr.amount,
+          EXTRACT(HOUR FROM
+            (pr.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
+          )::int AS created_hour_ist
+        FROM payment_records pr
+        WHERE pr.school_id = ${schoolId} AND pr.fee_record_id = ${fr.id}
+        ORDER BY pr.amount
+      `);
+      const byAmount = new Map(
+        (res.rows as any[]).map(r => [Number(r.amount), Number(r.created_hour_ist)]),
+      );
+      for (const p of PAYMENT_HOUR_INSTANTS) {
+        expect(byAmount.get(p.amount)).toBe(p.hour);
+      }
+    }
+  });
+});
+
+describe("Payment hourly bucketing — 'today' hourly trend (Date pinned to 22-Aug-2026 IST)", () => {
+  let fixture: Fixture;
+  afterEach(async () => {
+    vi.useRealTimers();
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("buckets each boundary payment into its expected IST hour", async () => {
+    // Pin ONLY Date (leave real setTimeout so the pg pool keeps working) to an
+    // instant that is 2026-08-22 in Asia/Kolkata (11:30 IST on the 22nd).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-22T06:00:00Z"));
+    expect(todayIST()).toBe("2026-08-22");
+
+    fixture = await createFixture(SESSION_2026);
+    const { schoolId, studentId, sessionId } = fixture;
+
+    const [fr] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId,
+      feeType: "Tuition", amount: 100000, dueDate: "2026-08-22", status: "Paid",
+    }).returning();
+
+    // received_date = 2026-08-22 so all five payments fall in the "today" range;
+    // hourly bucketing is then driven purely by created_at's IST hour.
+    for (const p of PAYMENT_HOUR_INSTANTS) {
+      await insertPaymentWithCreatedAt({
+        schoolId, studentId, feeRecordId: fr.id, sessionId,
+        receivedDate: "2026-08-22", amount: p.amount,
+        createdAtNaiveUtc: naiveUtc(p.utc),
+        razorpayPaymentId: `pay_tr_${p.key}_${uid()}`,
+      });
+    }
+
+    const r = await buildFinancialAnalytics({ schoolId, sessionId, preset: "today" });
+    expect(r.trend.length).toBe(24);
+
+    const grossAt = (hour: number) =>
+      r.trend.find(pt => pt.key === String(hour).padStart(2, "0"))!.grossCollected;
+
+    // hour 0: A(1000) + D(8000) = 9000
+    expect(grossAt(0)).toBe(9000);
+    // hour 23: B(2000) + C(4000) = 6000
+    expect(grossAt(23)).toBe(6000);
+    // hour 5: E(1600)
+    expect(grossAt(5)).toBe(1600);
+    // No revenue leaks into any other hour.
+    for (let h = 0; h < 24; h++) {
+      if (h === 0 || h === 5 || h === 23) continue;
+      expect(grossAt(h)).toBe(0);
+    }
+
+    // Parity: total collected in the hourly trend equals summary.grossCollected.
+    const trendGross = r.trend.reduce((acc, pt) => acc + pt.grossCollected, 0);
+    expect(trendGross).toBe(r.summary.grossCollected);
+    expect(trendGross).toBe(9000 + 6000 + 1600);
   });
 });

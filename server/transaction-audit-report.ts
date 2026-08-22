@@ -27,7 +27,11 @@
  *   - NEVER defaults missing gateway status to "captured"
  */
 
-import { formatInstantIST, formatDateOnly } from "../shared/ist-time";
+import {
+  formatInstantIST,
+  formatDateOnly,
+  instantEpochMillis,
+} from "../shared/ist-time";
 
 type InstantValue = string | Date | null | undefined;
 
@@ -431,12 +435,7 @@ function fmtInstant(value: InstantValue): string {
 }
 
 function instantMillis(value: InstantValue): number {
-  if (!value) return Number.POSITIVE_INFINITY;
-  const date = value instanceof Date
-    ? value
-    : new Date(String(value).replace(" ", "T"));
-  const millis = date.getTime();
-  return Number.isNaN(millis) ? Number.POSITIVE_INFINITY : millis;
+  return instantEpochMillis(value) ?? Number.POSITIVE_INFINITY;
 }
 
 /** Format a DATE-only value — never parse as timestamp */

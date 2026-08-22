@@ -1039,3 +1039,79 @@ describe("StudentFees — shared SSE connection via StudentSessionProvider", () 
     expect(eventSourceInstances).toHaveLength(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Test suite E: IST timezone correctness in the rendered fee history card
+//
+// The paid-attempt date line renders formatDateTime(paymentAttemptEventTime())
+// which, for a captured payment, resolves to rzpCapturedAt. These tests feed
+// IST-midnight-boundary instants (21 / 22 / 23 Aug) — including the bare-UTC
+// "timestamp-without-time-zone" serialisation — and assert the component
+// displays the correct Asia/Kolkata calendar date. Because rendering goes
+// through the shared Intl formatter pinned to "Asia/Kolkata", the displayed
+// date cannot vary with the host/browser default timezone.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("StudentFees — fee history renders event time in IST at midnight boundaries", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/student/fees/portal-info") return makeOkJson(PORTAL_RAZORPAY_ON);
+      if (url === "/api/student/fees") return makeOkJson([FEE_PAID]);
+      if (url === "/api/student/fees/summary") return makeOkJson(SUMMARY);
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  /** Renders the History tab with a single captured attempt whose capture
+   *  instant is `capturedAt`, then returns the rendered date-line text. */
+  async function renderPaidAttemptDateLine(capturedAt: string): Promise<string> {
+    const attempt = {
+      ...PAYMENT_ATTEMPT_PAID,
+      date: capturedAt,
+      rzpCapturedAt: capturedAt,
+    };
+    const qc = buildQueryClient([FEE_PAID], [attempt]);
+
+    render(
+      <Wrapper queryClient={qc}>
+        <StudentFees />
+      </Wrapper>,
+    );
+
+    const historyTab = await screen.findByRole("button", { name: /history/i });
+    await act(async () => { historyTab.click(); });
+
+    const card = await screen.findByTestId(`card-fee-paid-${FEE_PAID.id}`);
+    // The date line is the only place an "IST" timestamp is rendered on the card.
+    const match = card.textContent?.match(/\d{2} \w{3} \d{4}, \d{2}:\d{2}:\d{2} (?:AM|PM) IST/);
+    return match?.[0] ?? "";
+  }
+
+  // IST is UTC+05:30 → an IST calendar day begins at 18:30 UTC the prior day.
+  it.each([
+    // 1s before 21 Aug IST midnight → still 20 Aug in IST.
+    ["2026-08-20T18:29:59.000Z", "20 Aug 2026, 11:59:59 PM IST"],
+    // Exactly 21 Aug IST midnight.
+    ["2026-08-20T18:30:00.000Z", "21 Aug 2026, 12:00:00 AM IST"],
+    // 1s before 22 Aug IST midnight → still 21 Aug in IST.
+    ["2026-08-21T18:29:59.000Z", "21 Aug 2026, 11:59:59 PM IST"],
+    // Exactly 22 Aug IST midnight.
+    ["2026-08-21T18:30:00.000Z", "22 Aug 2026, 12:00:00 AM IST"],
+    // Exactly 23 Aug IST midnight.
+    ["2026-08-22T18:30:00.000Z", "23 Aug 2026, 12:00:00 AM IST"],
+  ])("renders %s as %s on the paid card", async (capturedAt, expected) => {
+    expect(await renderPaidAttemptDateLine(capturedAt)).toBe(expected);
+  });
+
+  it("treats a bare timestamp-without-time-zone capture time as UTC, not host-local", async () => {
+    // Bare-UTC serialisation of 21 Aug IST midnight (== 2026-08-20T18:30:00Z).
+    expect(await renderPaidAttemptDateLine("2026-08-20 18:30:00"))
+      .toBe("21 Aug 2026, 12:00:00 AM IST");
+  });
+});

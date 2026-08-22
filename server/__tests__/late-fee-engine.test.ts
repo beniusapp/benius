@@ -205,3 +205,26 @@ describe("calculateLateFee — disabled or NONE", () => {
     expect(calculateLateFee(cfg, DUE, "Due", daysAfterDue(DUE, 10))).toBe(0);
   });
 });
+
+describe("calculateLateFee — IST business-date boundaries", () => {
+  const cfg: LateFeeConfig = {
+    enabled: true,
+    type: "DAILY",
+    grace_period_days: 0,
+    flat_amount: 0,
+    daily_rate: 10,
+    max_cap: 0,
+    tiered_slabs: [],
+  };
+
+  it.each([
+    ["2026-08-21T18:29:59Z", 0],
+    ["2026-08-21T18:30:00Z", 10],
+    ["2026-08-21T18:30:01Z", 10],
+    ["2026-08-22T18:29:59Z", 10],
+    ["2026-08-22T18:30:00Z", 20],
+  ])("uses the IST calendar day for %s", (instant, expectedFee) => {
+    expect(calculateLateFee(cfg, "2026-08-21", "Due", new Date(instant)))
+      .toBe(expectedFee);
+  });
+});

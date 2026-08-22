@@ -7,7 +7,7 @@
  * payment_record rows not already represented by a payment_attempt.
  */
 import { normalizePaymentMethod } from "@shared/payment-method";
-import { dateOnlyInIST } from "@shared/ist-time";
+import { dateOnlyInIST, instantEpochMillis } from "@shared/ist-time";
 /**
  *
  * Key design decisions
@@ -285,8 +285,8 @@ export async function buildTransactionRows(
 
     const unique = [...new Map(matches.map((refund) => [refund.id, refund])).values()]
       .sort((a, b) => {
-        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        const aTime = instantEpochMillis(a.updatedAt) ?? 0;
+        const bTime = instantEpochMillis(b.updatedAt) ?? 0;
         return aTime - bTime || a.id - b.id;
       });
 
@@ -564,7 +564,7 @@ export async function buildTransactionRows(
         ? refundInfo.latestProcessedAt
         : row.received_date
           ? String(row.received_date)
-          : (row.created_at ? String(row.created_at) : null);
+          : persistedTemporalString(row.created_at);
     const paidRangeDate = row.received_date != null
       ? String(row.received_date).slice(0, 10)
       : transactionDateInIST(transactionAt);
@@ -597,10 +597,8 @@ export async function buildTransactionRows(
 
   // ── Step 5: sort newest first with stable tiebreakers ───────────────────────
   txRows.sort((a, b) => {
-    const ta = a.transaction_at ?? '';
-    const tb = b.transaction_at ?? '';
-    // newest first
-    if (ta !== tb) return ta < tb ? 1 : -1;
+    const timeOrder = compareTransactionAtNewestFirst(a.transaction_at, b.transaction_at);
+    if (timeOrder !== 0) return timeOrder;
     const inv = (b.invoice_number ?? '').localeCompare(a.invoice_number ?? '');
     if (inv !== 0) return inv;
     // stable final tiebreaker on synthetic id
@@ -617,6 +615,33 @@ export function transactionDateInIST(value: string | null): string | null {
   const calendarDate = /^(\d{4}-\d{2}-\d{2})(?:$|[T\s])/.exec(value);
   if (calendarDate && value.length === 10) return calendarDate[1]!;
   return dateOnlyInIST(value);
+}
+
+/**
+ * Newest-first ordering for mixed report timestamp sources.
+ *
+ * DATE-only values have no real instant. They sort by their calendar date and
+ * after precise instants on that same IST business day (an explicit start-of-day
+ * fallback) rather than being reinterpreted as UTC or browser-local timestamps.
+ */
+export function compareTransactionAtNewestFirst(
+  left: string | null,
+  right: string | null,
+): number {
+  const leftDate = transactionDateInIST(left) ?? "";
+  const rightDate = transactionDateInIST(right) ?? "";
+  if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+
+  const leftIsDateOnly = Boolean(left && /^\d{4}-\d{2}-\d{2}$/.test(left));
+  const rightIsDateOnly = Boolean(right && /^\d{4}-\d{2}-\d{2}$/.test(right));
+  const leftMillis = leftIsDateOnly ? null : instantEpochMillis(left);
+  const rightMillis = rightIsDateOnly ? null : instantEpochMillis(right);
+  if (leftMillis != null && rightMillis != null && leftMillis !== rightMillis) {
+    return rightMillis - leftMillis;
+  }
+  if (leftMillis != null) return -1;
+  if (rightMillis != null) return 1;
+  return 0;
 }
 
 export function matchesPaidDateRange(
@@ -695,7 +720,7 @@ function pickTimestamp(
   refundProcessedAt: string | null,
   status:          string,
 ): string | null {
-  const v = (x: unknown): string | null => x != null ? String(x) : null;
+  const v = persistedTemporalString;
 
   if (status === 'refunded' || status === 'partially_refunded') {
     return refundProcessedAt ?? v(rzpCapturedAt) ?? v(rzpCreatedAt) ?? v(createdAt);
@@ -714,4 +739,12 @@ function pickTimestamp(
   }
   // pending / other
   return v(rzpCreatedAt) ?? v(createdAt);
+}
+
+function persistedTemporalString(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  return String(value);
 }

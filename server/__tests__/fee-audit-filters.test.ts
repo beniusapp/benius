@@ -188,6 +188,45 @@ describe("fee audit filter contract", () => {
     expect(toOnly.entries.map(entry => entry.id)).toEqual([end, start, before]);
   });
 
+  it("classifies every exact IST-midnight audit boundary deterministically", async () => {
+    const schoolId = await createSchool();
+    const instants = [
+      ["2026-08-21 18:29:59", 821],
+      ["2026-08-21 18:30:00", 8220],
+      ["2026-08-21 18:30:01", 8221],
+      ["2026-08-22 18:29:59", 8222],
+      ["2026-08-22 18:30:00", 823],
+    ] as const;
+    const ids = new Map<number, number>();
+    for (const [createdAt, entityId] of instants) {
+      ids.set(entityId, await insertAudit({
+        schoolId,
+        action: "settings_change",
+        entityId,
+        createdAt,
+      }));
+    }
+
+    const aug21 = await storage.getFeeAuditLog(
+      schoolId, 20, 0, "2026-08-21", "2026-08-21",
+    );
+    expect(aug21.entries.map(entry => entry.id)).toEqual([ids.get(821)]);
+
+    const aug22 = await storage.getFeeAuditLog(
+      schoolId, 20, 0, "2026-08-22", "2026-08-22",
+    );
+    expect(aug22.entries.map(entry => entry.id)).toEqual([
+      ids.get(8222),
+      ids.get(8221),
+      ids.get(8220),
+    ]);
+
+    const aug23 = await storage.getFeeAuditLog(
+      schoolId, 20, 0, "2026-08-23", "2026-08-23",
+    );
+    expect(aug23.entries.map(entry => entry.id)).toEqual([ids.get(823)]);
+  });
+
   it("applies search, action, dates, and tenant scope together with an exact count", async () => {
     const schoolId = await createSchool();
     const otherSchoolId = await createSchool("Combined Filter Other Tenant");

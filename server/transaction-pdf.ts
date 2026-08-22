@@ -18,6 +18,7 @@
 import PDFDocument from "pdfkit";
 import { LedgerFilters } from "../shared/ledger-filters";
 import { normalizePaymentMethod } from "@shared/payment-method";
+import { formatInstantIST, formatDateOnly } from "@shared/ist-time";
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
@@ -84,28 +85,15 @@ export function fmtINR(n: number): string {
   }).format(n);
 }
 
+// Persisted transaction instants display in Asia/Kolkata with an IST suffix.
 export function fmtDateTime(v: string | null | undefined): string {
-  if (!v) return EM;
-  try {
-    const d = new Date(String(v));
-    if (isNaN(d.getTime())) return EM;
-    return d.toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata",
-      day: "2-digit", month: "short", year: "numeric",
-      hour: "2-digit", minute: "2-digit", hour12: true,
-    });
-  } catch { return EM; }
+  return formatInstantIST(v);
 }
 
+// Calendar DATE values (filter date ranges) render date-only, no timezone shift.
 export function fmtDate(v: string | null | undefined): string {
   if (!v) return EM;
-  try {
-    const d = /^\d{4}-\d{2}-\d{2}/.test(String(v))
-      ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
-      : new Date(String(v));
-    return isNaN(d.getTime()) ? EM
-      : d.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
-  } catch { return EM; }
+  return formatDateOnly(String(v).slice(0, 10));
 }
 
 export function s(v: unknown): string {

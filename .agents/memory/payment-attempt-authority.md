@@ -39,6 +39,22 @@ would otherwise make payment history appear to report the wrong action time.
 **How to apply:** Choose the persisted lifecycle timestamp first and format it
 consistently in IST in cards, details, copied data, and PDFs.
 
+For successful Razorpay payments, derive the IST business date from the best
+provider occurrence in this order: payment `captured_at`, signed
+`payment.captured` event time, then payment `created_at`; use application
+receipt time only when the provider supplied no usable occurrence.
+
+**Why:** Delayed webhook delivery or client verification can arrive on a later
+IST calendar day than the real capture. Assigning `received_date` or invoice
+`paid_date` from processing time moves revenue, ledger filters, and reports
+onto the wrong school business day.
+
+**How to apply:** Keep provider-created, provider-lifecycle, and
+webhook/application-received instants separate. Use the provider-derived IST
+date for the successful payment and invoice projections; use the same provider
+occurrence for immutable lifecycle events. For processed refunds, prefer the
+signed webhook occurrence over the refund entity creation time.
+
 Payment-attempt history has two layers: the mutable `payment_attempts`
 projection answers “what is the latest known state?”, while immutable lifecycle
 events answer “what happened, in what order?”. Webhook deliveries are retained

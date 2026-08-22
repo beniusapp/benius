@@ -14,7 +14,13 @@ type InstantInput = string | Date | null | undefined;
 function instant(value: InstantInput): Date | null {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const raw = String(value).trim().replace(" ", "T");
+  const source = String(value).trim();
+  const isPostgresTimestamp = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(source);
+  if (!isPostgresTimestamp) {
+    const date = new Date(source);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const raw = source.replace(" ", "T");
   // PostgreSQL timestamp-without-time-zone values in this app are UTC.
   // PostgreSQL TIMESTAMPTZ values returned by raw Drizzle queries can use a
   // shortened offset such as "+00" or "-05". JavaScript rejects that offset
@@ -58,6 +64,11 @@ export function formatMonthYearIST(value: InstantInput): string {
   return date ? parts(date, { month: "long", year: "numeric" }) : "—";
 }
 
+/** Epoch milliseconds for a persisted instant, including bare-UTC timestamps. */
+export function instantEpochMillis(value: InstantInput): number | null {
+  return instant(value)?.getTime() ?? null;
+}
+
 /** Formats a PostgreSQL DATE / YYYY-MM-DD string without timezone conversion. */
 export function formatDateOnly(value: string | null | undefined, long = false): string {
   if (!value) return "—";
@@ -67,6 +78,26 @@ export function formatDateOnly(value: string | null | undefined, long = false): 
   const monthName = (long ? MONTHS_LONG : MONTHS_SHORT)[Number(month) - 1];
   if (!monthName) return String(value);
   return `${day} ${monthName} ${year}`;
+}
+
+/** Month/year label ("August 2026") for a calendar DATE without timezone conversion. */
+export function formatMonthYearFromDateOnly(value: string, long = true): string {
+  const parts = dateOnlyParts(String(value).slice(0, 10));
+  if (!parts) return String(value);
+  const monthName = (long ? MONTHS_LONG : MONTHS_SHORT)[parts.month - 1];
+  return monthName ? `${monthName} ${parts.year}` : String(value);
+}
+
+/** Month-only label ("August") for a calendar DATE without timezone conversion. */
+export function formatMonthFromDateOnly(value: string, long = true): string {
+  const parts = dateOnlyParts(String(value).slice(0, 10));
+  if (!parts) return String(value);
+  return (long ? MONTHS_LONG : MONTHS_SHORT)[parts.month - 1] ?? String(value);
+}
+
+/** Day-of-month (1–31) for a calendar DATE without timezone conversion. */
+export function dayOfMonthFromDateOnly(value: string): number | null {
+  return dateOnlyParts(String(value).slice(0, 10))?.day ?? null;
 }
 
 export function dateOnlyParts(value: string): { year: number; month: number; day: number } | null {

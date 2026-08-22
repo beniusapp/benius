@@ -9,6 +9,20 @@ import PDFDocument from "pdfkit";
 import https from "https";
 import http from "http";
 import type { InvoiceDocumentData } from "./invoice-document";
+import { formatDateOnly, formatInstantIST, dateOnlyParts } from "@shared/ist-time";
+
+// Long month names for host-independent, date-only fee-period labels.
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Formats a PostgreSQL DATE / YYYY-MM-DD string as a month + year label without
+// any timezone conversion, matching the calendar-only fee-period semantics.
+function monthYearOnly(value: string, long: boolean): string {
+  const parts = dateOnlyParts(String(value).slice(0, 10));
+  if (!parts) return String(value);
+  const name = (long ? MONTHS_LONG : MONTHS_SHORT)[parts.month - 1];
+  return name ? `${name} ${parts.year}` : String(value);
+}
 
 // DejaVu Sans ships on the host and supports the ₹ (U+20B9) glyph.
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
@@ -72,23 +86,26 @@ function frequencyLabel(f: string | null): string {
   return { monthly: "Monthly", quarterly: "Quarterly", annual: "Annual", "one-time": "One-Time" }[f ?? ""] ?? (f || "—");
 }
 
-function formatDate(v: string | null | undefined): string {
-  if (!v) return "—";
-  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(v))
-    ? new Date(`${v}T00:00:00Z`) : new Date(String(v));
-  return isNaN(d.getTime()) ? "—"
-    : d.toLocaleDateString("en-IN", { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" });
+// Calendar DATE values (e.g. due date) render date-only with no timezone shift.
+export function formatDate(v: string | null | undefined): string {
+  return formatDateOnly(v ? String(v).slice(0, 10) : v);
 }
 
-function feePeriodLabel(data: InvoiceDocumentData): string {
+// Persisted instant (invoice creation timestamp) displayed in IST with suffix.
+export function formatInvoiceInstant(v: InvoiceDocumentData["createdAt"]): string {
+  return formatInstantIST(v);
+}
+
+export function feePeriodLabel(data: InvoiceDocumentData): string {
   if (!data.feePeriodStart || !data.feePeriodEnd) return "—";
   if ((data.frequency === "annual" || data.frequency === "one-time") && data.academicYear)
     return data.academicYear;
-  const s = new Date(`${data.feePeriodStart}T00:00:00Z`);
-  const e = new Date(`${data.feePeriodEnd}T00:00:00Z`);
-  if (s.getUTCFullYear() === e.getUTCFullYear() && s.getUTCMonth() === e.getUTCMonth())
-    return s.toLocaleDateString("en-IN", { timeZone: "UTC", month: "long", year: "numeric" });
-  return `${s.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" })} \u2013 ${e.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" })}`;
+  const s = dateOnlyParts(String(data.feePeriodStart).slice(0, 10));
+  const e = dateOnlyParts(String(data.feePeriodEnd).slice(0, 10));
+  if (!s || !e) return "—";
+  if (s.year === e.year && s.month === e.month)
+    return monthYearOnly(data.feePeriodStart, true);
+  return `${monthYearOnly(data.feePeriodStart, false)} \u2013 ${monthYearOnly(data.feePeriodEnd, false)}`;
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -244,8 +261,7 @@ export async function renderInvoicePdf(data: InvoiceDocumentData): Promise<Buffe
 
     const period = feePeriodLabel(data);
     const metaRows: [string, string][] = [
-      ["Invoice Date & Time", formatDate(typeof data.createdAt === "string"
-        ? data.createdAt : (data.createdAt as Date | null)?.toISOString() ?? null)],
+      ["Invoice Date & Time", formatInvoiceInstant(data.createdAt)],
       ["Academic Session",    data.academicYear ?? "\u2014"],
       ["Frequency",           frequencyLabel(data.frequency)],
       ["Fee Period",          period],

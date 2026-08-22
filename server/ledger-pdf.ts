@@ -17,6 +17,10 @@ import PDFDocument from "pdfkit";
 import https from "https";
 import http from "http";
 import { normalizePaymentMethod } from "@shared/payment-method";
+import { formatDateOnly, dateOnlyParts } from "@shared/ist-time";
+
+// Short month names for host-independent, date-only fee-period labels.
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
 const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
@@ -69,17 +73,11 @@ function fmtINR(n: number): string {
   }).format(Math.round(n));
 }
 
-function fmtDate(v: string | null | undefined): string {
+// Calendar DATE values (due date, paid date, filter dates) render date-only,
+// without any timezone conversion.
+export function fmtDate(v: string | null | undefined): string {
   if (!v) return EM;
-  try {
-    const d = /^\d{4}-\d{2}-\d{2}/.test(String(v))
-      ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
-      : new Date(String(v));
-    if (isNaN(d.getTime())) return EM;
-    return d.toLocaleDateString("en-IN", {
-      timeZone: "UTC", day: "2-digit", month: "short", year: "numeric",
-    });
-  } catch { return EM; }
+  return formatDateOnly(String(v).slice(0, 10));
 }
 
 function safe(v: unknown): string {
@@ -87,18 +85,16 @@ function safe(v: unknown): string {
   return String(v);
 }
 
-function fmtMonthYear(v: string | null | undefined): string {
+// Fee-period boundaries are calendar DATE values; format month + year date-only.
+export function fmtMonthYear(v: string | null | undefined): string {
   if (!v) return "";
-  try {
-    const d = /^\d{4}-\d{2}-\d{2}/.test(String(v))
-      ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`)
-      : new Date(String(v));
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString("en-IN", { timeZone: "UTC", month: "short", year: "numeric" });
-  } catch { return ""; }
+  const parts = dateOnlyParts(String(v).slice(0, 10));
+  if (!parts) return "";
+  const name = MONTHS_SHORT[parts.month - 1];
+  return name ? `${name} ${parts.year}` : "";
 }
 
-function fmtPeriod(s: string | null | undefined, e: string | null | undefined): string {
+export function fmtPeriod(s: string | null | undefined, e: string | null | undefined): string {
   const a = fmtMonthYear(s), b = fmtMonthYear(e);
   if (a && b && a !== b) return `${a} \u2013 ${b}`;
   return a || b || EM;

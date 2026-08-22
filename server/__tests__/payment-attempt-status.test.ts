@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { classifyStudentPaymentAttempt } from "@shared/payment-attempt-status";
-import { mapRazorpayPayment } from "../rzp-enrichment";
+import {
+  mapRazorpayPayment,
+  razorpayPaymentBusinessDateIST,
+  razorpayPaymentCapturedAt,
+} from "../rzp-enrichment";
 
 describe("student payment-attempt status mapping", () => {
   it("preserves the authoritative non-failure lifecycle states", () => {
@@ -36,5 +40,39 @@ describe("student payment-attempt status mapping", () => {
       amountCapturedPaise: 100000,
       amountRefundedPaise: 25000,
     });
+  });
+
+  it.each([
+    ["2026-08-21T18:29:59Z", "2026-08-21"],
+    ["2026-08-21T18:30:00Z", "2026-08-22"],
+    ["2026-08-21T18:30:01Z", "2026-08-22"],
+    ["2026-08-22T18:29:59Z", "2026-08-22"],
+    ["2026-08-22T18:30:00Z", "2026-08-23"],
+  ])("derives the payment business date at IST midnight: %s", (instant, expectedDate) => {
+    expect(razorpayPaymentBusinessDateIST({
+      status: "captured",
+      created_at: Date.parse(instant) / 1000,
+    })).toBe(expectedDate);
+  });
+
+  it("prefers a real provider capture instant, then the signed capture-event instant", () => {
+    const paymentCreatedAt = Date.parse("2026-08-21T18:29:00Z") / 1000;
+    const eventCreatedAt = Date.parse("2026-08-21T18:30:00Z") / 1000;
+    const capturedAt = Date.parse("2026-08-22T18:30:00Z") / 1000;
+
+    expect(razorpayPaymentBusinessDateIST(
+      { status: "captured", created_at: paymentCreatedAt },
+      { event: "payment.captured", created_at: eventCreatedAt },
+    )).toBe("2026-08-22");
+
+    const selected = razorpayPaymentCapturedAt(
+      { status: "captured", created_at: paymentCreatedAt, captured_at: capturedAt },
+      { event: "payment.captured", created_at: eventCreatedAt },
+    );
+    expect(selected?.toISOString()).toBe("2026-08-22T18:30:00.000Z");
+    expect(razorpayPaymentBusinessDateIST(
+      { status: "captured", created_at: paymentCreatedAt, captured_at: capturedAt },
+      { event: "payment.captured", created_at: eventCreatedAt },
+    )).toBe("2026-08-23");
   });
 });

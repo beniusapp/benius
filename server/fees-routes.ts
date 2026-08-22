@@ -9,7 +9,15 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import Razorpay from "razorpay";
 import { broadcastPaymentUpdate } from "./sse";
-import { fetchRazorpayData, mapRazorpayPayment, upsertPaymentAttempt } from "./rzp-enrichment";
+import {
+  fetchRazorpayData,
+  mapRazorpayPayment,
+  razorpayEpochToDate,
+  razorpayPaymentBusinessDateIST,
+  razorpayPaymentCapturedAt,
+  razorpayPaymentCreatedAt,
+  upsertPaymentAttempt,
+} from "./rzp-enrichment";
 import {
   appendPaymentAttemptEvent,
   recordWebhookDelivery,
@@ -2370,6 +2378,9 @@ export function registerFeesRoutes(app: Express) {
         // `payment` is already declared in the outer scope above
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
         if (!feeRecordId) return res.status(400).json({ message: "feeRecordId missing from notes" });
+        const webhookReceivedAt = new Date();
+        const providerCreatedAt = razorpayPaymentCreatedAt(payment);
+        const providerCapturedAt = razorpayPaymentCapturedAt(payment, event);
 
         // The late fee snapshot embedded in the order notes at creation time — immutable.
         // This is the exact late fee the student was shown and Razorpay charged.
@@ -2438,10 +2449,10 @@ export function registerFeesRoutes(app: Express) {
             vpa: payment.vpa ?? null,
             payerEmail: payment.email ?? null,
             payerContact: payment.contact ?? null,
-            rzpCreatedAt: payment.created_at ? new Date(payment.created_at * 1000) : null,
-            rzpCapturedAt: payment.created_at ? new Date(payment.created_at * 1000) : new Date(),
+            rzpCreatedAt: providerCreatedAt,
+            rzpCapturedAt: providerCapturedAt,
             webhookEvent: "payment.captured",
-            webhookReceivedAt: new Date(),
+            webhookReceivedAt,
             webhookVerified: true,
             webhookPayload: payment,
             source: "webhook",
@@ -2454,7 +2465,7 @@ export function registerFeesRoutes(app: Express) {
             webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
             razorpayOrderId: payment.order_id ?? null,
             amountPaise: payment.amount != null ? Number(payment.amount) : null,
-            payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : new Date(),
+            payload: event, providerOccurredAt: providerCapturedAt, occurredAt: webhookReceivedAt,
             idempotencyKey: `webhook:${webhookDeliveryId}:payment_captured`,
           });
           await updateWebhookDelivery(webhookDeliveryId, { status: "processed" });
@@ -2469,8 +2480,8 @@ export function registerFeesRoutes(app: Express) {
         // any reason (schema mismatch, constraint violation, transient error),
         // the UPDATE is rolled back automatically: fee_record stays Unpaid, the
         // webhook returns 500, and Razorpay retries until both operations commit.
-        const now = new Date();
-        const paidDateIST = todayInIST(now);
+        const now = webhookReceivedAt;
+        const paidDateIST = razorpayPaymentBusinessDateIST(payment, event) ?? todayInIST(now);
         const activeSession = await storage.getActiveSession(schoolId);
         let idempotentDuplicate = false;
         try {
@@ -2584,8 +2595,8 @@ export function registerFeesRoutes(app: Express) {
           wallet:            payment.wallet         ?? null,
           payerEmail:        payment.email          ?? null,
           payerContact:      payment.contact        ?? null,
-          rzpCreatedAt:      payment.created_at  ? new Date(payment.created_at * 1000) : null,
-          rzpCapturedAt:     now,
+          rzpCreatedAt:      providerCreatedAt,
+          rzpCapturedAt:     providerCapturedAt,
           webhookEvent:      "payment.captured",
           webhookReceivedAt: now,
           webhookVerified:   true,
@@ -2600,7 +2611,7 @@ export function registerFeesRoutes(app: Express) {
           webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
           razorpayOrderId: payment.order_id ?? null,
           amountPaise: payment.amount != null ? Number(payment.amount) : null,
-          payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          payload: event, providerOccurredAt: providerCapturedAt, occurredAt: now,
           idempotencyKey: `webhook:${webhookDeliveryId}:payment_captured`,
         });
 
@@ -2697,6 +2708,8 @@ export function registerFeesRoutes(app: Express) {
         }
 
         const now = new Date();
+        const providerCreatedAt = razorpayPaymentCreatedAt(payment);
+        const providerFailedAt = razorpayEpochToDate(event.created_at) ?? providerCreatedAt;
 
         // Resolve the academic session for this fee record so the attempt is
         // correctly linked to the right session even when viewSessionId is not set.
@@ -2784,8 +2797,8 @@ export function registerFeesRoutes(app: Express) {
           errorSource:       payment.error_source   ?? null,
           errorStep:         payment.error_step     ?? null,
           errorReason:       payment.error_reason   ?? null,
-          rzpCreatedAt:      payment.created_at ? new Date(payment.created_at * 1000) : null,
-          rzpFailedAt:       now,
+          rzpCreatedAt:      providerCreatedAt,
+          rzpFailedAt:       providerFailedAt,
           webhookEvent:      "payment.failed",
           webhookReceivedAt: now,
           webhookVerified:   true,
@@ -2799,7 +2812,7 @@ export function registerFeesRoutes(app: Express) {
           webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
           razorpayOrderId: payment.order_id ?? null,
           amountPaise: payment.amount != null ? Number(payment.amount) : null,
-          payload: event, occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          payload: event, providerOccurredAt: providerFailedAt, occurredAt: now,
           idempotencyKey: `webhook:${webhookDeliveryId}:payment_failed`,
         });
 
@@ -2812,6 +2825,8 @@ export function registerFeesRoutes(app: Express) {
         const feeRecordId = notes.feeRecordId ? parseInt(notes.feeRecordId) : null;
         const studentIdAu = notes.studentId  ? parseInt(notes.studentId)  : null;
         const now = new Date();
+        const providerCreatedAt = razorpayPaymentCreatedAt(payment);
+        const providerAuthorizedAt = razorpayEpochToDate(event.created_at) ?? providerCreatedAt;
         const authorizedContext = (await db.execute(sql`
           SELECT fr.invoice_number, fr.session_id, s.name AS student_name
           FROM fee_records fr
@@ -2849,8 +2864,8 @@ export function registerFeesRoutes(app: Express) {
           cardNetwork:       payment.card?.network ?? null,
           cardLast4:         payment.card?.last4   ?? null,
           vpa:               payment.vpa           ?? null,
-          rzpCreatedAt:      payment.created_at ? new Date(payment.created_at * 1000) : null,
-          rzpAuthorizedAt:   now,
+          rzpCreatedAt:      providerCreatedAt,
+          rzpAuthorizedAt:   providerAuthorizedAt,
           webhookEvent:      "payment.authorized",
           webhookReceivedAt: now,
           webhookVerified:   true,
@@ -2863,7 +2878,8 @@ export function registerFeesRoutes(app: Express) {
           source: "webhook", webhookEventId: webhookDeliveryId,
           razorpayPaymentId: payment.id ?? null, razorpayOrderId: payment.order_id ?? null,
           amountPaise: payment.amount != null ? Number(payment.amount) : null, payload: event,
-          occurredAt: payment.created_at ? new Date(payment.created_at * 1000) : now,
+          providerOccurredAt: providerAuthorizedAt,
+          occurredAt: now,
           idempotencyKey: `webhook:${webhookDeliveryId}:payment_authorized`,
         });
 
@@ -2900,7 +2916,8 @@ export function registerFeesRoutes(app: Express) {
           if (pr) { rfFeeRecordId = Number(pr.fee_record_id); rfStudentId = Number(pr.student_id); rfResolution = "payment_id"; }
         }
         const now = new Date();
-        const refundProviderAt = typeof refund.created_at === "number" ? new Date(refund.created_at * 1000) : null;
+        const refundProviderAt = razorpayEpochToDate(refund.created_at);
+        const refundEventAt = razorpayEpochToDate(event.created_at) ?? refundProviderAt;
         await updateWebhookDelivery(webhookDeliveryId, {
           feeRecordId: rfFeeRecordId, resolutionSource: rfResolution,
           resolutionStatus: rfFeeRecordId != null ? "resolved" : "unresolved",
@@ -2918,6 +2935,7 @@ export function registerFeesRoutes(app: Express) {
           refund,
           eventType: event.event,
           webhookDeliveryId,
+          providerOccurredAt: refundEventAt,
           fallbackFeeRecordId: rfFeeRecordId,
           fallbackStudentId: rfStudentId,
           fallbackSessionId: rfSessionId,
@@ -2968,7 +2986,7 @@ export function registerFeesRoutes(app: Express) {
             webhookEventId: webhookDeliveryId, razorpayPaymentId: refPmtId, razorpayOrderId: refOrderId,
             refundId: refund.id, amountPaise: refund.amount != null ? Number(refund.amount) : null,
             payload: { event, resolution: { source: rfResolution, status: rfFeeRecordId != null ? "resolved" : "unresolved" } },
-            providerOccurredAt: refundProviderAt, occurredAt: now,
+            providerOccurredAt: refundEventAt, occurredAt: now,
             idempotencyKey: `webhook:${webhookDeliveryId}:${rfAction}`,
           });
         }
@@ -3005,7 +3023,8 @@ export function registerFeesRoutes(app: Express) {
           if (pr) { disFeeId = Number(pr.fee_record_id); disStudId = Number(pr.student_id); disResolution = "payment_id"; }
         }
         const now = new Date();
-        const disputeProviderAt = typeof dispute.created_at === "number" ? new Date(dispute.created_at * 1000) : null;
+        const disputeProviderAt = razorpayEpochToDate(event.created_at)
+          ?? razorpayEpochToDate(dispute.created_at);
         await updateWebhookDelivery(webhookDeliveryId, {
           feeRecordId: disFeeId, resolutionSource: disResolution,
           resolutionStatus: disFeeId != null ? "resolved" : "unresolved",
@@ -3358,7 +3377,6 @@ export function registerFeesRoutes(app: Express) {
           razorpayOrderId: razorpay_order_id,
           amountPaise: Math.round(Number(feeRec.amount) * 100),
           currency: "INR",
-          rzpCapturedAt: new Date(),
           source: "client",
           receiptNumber: feeRec.receipt_number ?? null,
         });
@@ -3429,7 +3447,8 @@ export function registerFeesRoutes(app: Express) {
       // row.  Matches the pattern used in the webhook handler.
       const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
       const now = new Date();
-      const paidDateIST = todayInIST(now);
+      const providerCapturedAt = razorpayPaymentCapturedAt(verifiedPayment);
+      const paidDateIST = razorpayPaymentBusinessDateIST(verifiedPayment) ?? todayInIST(now);
       const activeSession = await storage.getActiveSession(schoolId);
 
       let idempotentDuplicate = false;
@@ -3583,6 +3602,7 @@ export function registerFeesRoutes(app: Express) {
         razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
         amountPaise: verifiedCapture.amountPaise,
         payload: { verification: "authoritative_razorpay_api", payment: sanitizePaymentPayload(verifiedPayment) },
+        providerOccurredAt: providerCapturedAt,
         occurredAt: now,
         idempotencyKey: `client-verify:${razorpay_payment_id}`,
       });
@@ -3981,7 +4001,7 @@ export function registerFeesRoutes(app: Express) {
           amount: Number(payRow.amount ?? 0),
           lateFeePaid: Number(payRow.late_fee_paid ?? 0),
           paymentMethod: payRow.payment_method ?? "Cash",
-          receivedDate: payRow.received_date ? String(payRow.received_date).slice(0, 10) : todayInIST(),
+          receivedDate: payRow.received_date ? String(payRow.received_date).slice(0, 10) : "—",
           paymentDateTimeIST: formatInstantIST(payRow.created_at),
           cashierNotes: payRow.cashier_notes ?? null,
           // Online
@@ -4653,7 +4673,9 @@ export function registerFeesRoutes(app: Express) {
           amount: Number(payRow?.amount ?? feeRow.amount ?? 0),
           lateFeePaid: Number(payRow?.late_fee_paid ?? 0),
           paymentMethod: normalizePaymentMethod(payRow?.payment_method ?? "Portal Payment") ?? "Portal Payment",
-          receivedDate: payRow?.received_date ? String(payRow.received_date).slice(0, 10) : (feeRow.paid_date ? String(feeRow.paid_date).slice(0, 10) : todayInIST()),
+          receivedDate: payRow?.received_date
+            ? String(payRow.received_date).slice(0, 10)
+            : (feeRow.paid_date ? String(feeRow.paid_date).slice(0, 10) : "—"),
           paymentDateTimeIST: formatInstantIST(paymentInstant),
           cashierNotes: payRow?.cashier_notes ?? null,
           // Online
@@ -4860,9 +4882,8 @@ export function registerFeesRoutes(app: Express) {
     };
     const fmtDate = (d: string | null | undefined) => {
       if (!d) return "";
-      try {
-        return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-      } catch { return String(d); }
+      const formatted = formatDateOnly(String(d).slice(0, 10));
+      return formatted === "—" ? String(d) : formatted;
     };
 
     // 20 columns — aligns with Ledger PDF order, adds Invoice No., Fee Period, Frequency.

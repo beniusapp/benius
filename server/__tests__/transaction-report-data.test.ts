@@ -35,6 +35,7 @@ import { eq } from "drizzle-orm";
 import { emptyLedgerFilters } from "@shared/ledger-filters";
 import {
   buildTransactionRows,
+  compareTransactionAtNewestFirst,
   matchesPaidDateRange,
   transactionDateInIST,
 } from "../transaction-report-data";
@@ -959,6 +960,34 @@ describe("transaction report paid-date authority", () => {
       paidDateFrom: "2026-08-22",
       paidDateTo: "2026-08-22",
     })).toBe(true);
+  });
+
+  it.each([
+    ["2026-08-21T18:29:59Z", "2026-08-21"],
+    ["2026-08-21T18:30:00Z", "2026-08-22"],
+    ["2026-08-21T18:30:01Z", "2026-08-22"],
+    ["2026-08-22T18:29:59Z", "2026-08-22"],
+    ["2026-08-22T18:30:00Z", "2026-08-23"],
+  ])("uses the IST business date at the exact midnight boundary: %s", (instant, expected) => {
+    expect(transactionDateInIST(instant)).toBe(expected);
+  });
+
+  it("orders mixed timestamp serializations by IST business day and real instant", () => {
+    const rows = [
+      { id: "date-only-22", at: "2026-08-22" },
+      { id: "offset-midnight", at: "2026-08-22 00:00:00+05:30" },
+      { id: "offset-later", at: "2026-08-21 23:00:00+00" },
+      { id: "native-date", at: String(new Date("2026-08-22T18:29:59Z")) },
+      { id: "date-only-23", at: "2026-08-23" },
+    ].sort((a, b) => compareTransactionAtNewestFirst(a.at, b.at));
+
+    expect(rows.map(row => row.id)).toEqual([
+      "date-only-23",
+      "native-date",
+      "offset-later",
+      "offset-midnight",
+      "date-only-22",
+    ]);
   });
 
   it("matches an invoice by any payment in range and excludes its unrelated transactions", async () => {

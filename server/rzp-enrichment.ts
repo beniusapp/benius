@@ -13,6 +13,7 @@ import Razorpay from "razorpay";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { sanitizePaymentPayload } from "./payment-attempt-history";
+import { dateOnlyInIST } from "../shared/ist-time";
 
 export interface RzpCredentials {
   keyId: string;
@@ -20,9 +21,38 @@ export interface RzpCredentials {
 }
 
 /** Convert a Razorpay epoch-seconds timestamp to Date (null-safe). */
-function epochToDate(epoch: number | null | undefined): Date | null {
-  if (!epoch) return null;
-  return new Date(epoch * 1000);
+export function razorpayEpochToDate(epoch: number | string | null | undefined): Date | null {
+  if (epoch == null || epoch === "") return null;
+  const numericEpoch = Number(epoch);
+  if (!Number.isFinite(numericEpoch) || numericEpoch <= 0) return null;
+  const date = new Date(numericEpoch * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Provider creation is distinct from capture and from application receipt. */
+export function razorpayPaymentCreatedAt(payment: any): Date | null {
+  return razorpayEpochToDate(payment?.created_at);
+}
+
+/**
+ * Best available provider occurrence for a successful capture.
+ *
+ * Razorpay payment entities do not always expose a separate captured_at. A
+ * signed payment.captured webhook does expose the provider event creation time,
+ * which is a better capture occurrence than the later application receipt time.
+ * Client verification has no signed event, so it falls back to the payment's
+ * provider-created instant rather than inventing a capture instant from Date.now().
+ */
+export function razorpayPaymentCapturedAt(payment: any, event?: any): Date | null {
+  return razorpayEpochToDate(payment?.captured_at)
+    ?? (event?.event === "payment.captured" ? razorpayEpochToDate(event?.created_at) : null)
+    ?? razorpayPaymentCreatedAt(payment);
+}
+
+/** Successful-payment business date, derived from the provider occurrence in IST. */
+export function razorpayPaymentBusinessDateIST(payment: any, event?: any): string | null {
+  const capturedAt = razorpayPaymentCapturedAt(payment, event);
+  return capturedAt ? dateOnlyInIST(capturedAt) : null;
 }
 
 /** Full shape accepted by upsertPaymentAttempt. Every field except the
@@ -146,11 +176,11 @@ export function mapRazorpayPayment(p: any): Partial<UpsertAttemptData> {
   if (p.error_source)      out.errorSource      = p.error_source;
   if (p.error_step)        out.errorStep        = p.error_step;
   if (p.error_reason)      out.errorReason      = p.error_reason;
-  if (p.created_at) out.rzpCreatedAt = epochToDate(p.created_at);
+  if (p.created_at) out.rzpCreatedAt = razorpayPaymentCreatedAt(p);
   if (p.status === "captured")
-    out.rzpCapturedAt = epochToDate(p.captured_at ?? p.created_at);
+    out.rzpCapturedAt = razorpayPaymentCapturedAt(p);
   if (p.status === "failed")
-    out.rzpFailedAt = epochToDate(p.created_at);
+    out.rzpFailedAt = razorpayPaymentCreatedAt(p);
 
   out.razorpayPaymentData = p;
   out.apiSyncedAt = new Date();

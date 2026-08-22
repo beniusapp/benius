@@ -20,7 +20,7 @@ import {
 import { getCheckoutDismissAction } from "@shared/razorpay-checkout-dismiss";
 import { paymentAttemptEventTime } from "@shared/payment-attempt-event-time";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
-import { formatDateOnly, formatInstantIST } from "@shared/ist-time";
+import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -667,11 +667,11 @@ function downloadPaymentPDF(
   }
 
   // ── Save ──
-  const ts = new Date();
-  const day = String(ts.getDate()).padStart(2, "0");
-  const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][ts.getMonth()];
-  const yr  = ts.getFullYear();
-  doc.save(`Payment_Statement_${attempt.feeRecordId}_${attemptLabel}_${day}${mon}${yr}.pdf`);
+  // Stamp the filename with the IST calendar date so the generated report's
+  // date is stable regardless of the host/browser timezone (a report made
+  // near IST midnight must not shift a calendar day based on the device).
+  const fileDate = formatDateOnly(todayInIST()).replace(/\s+/g, "");
+  doc.save(`Payment_Statement_${attempt.feeRecordId}_${attemptLabel}_${fileDate}.pdf`);
 }
 
 // ── Copy + Download action buttons rendered inside the expanded drawer ────────
@@ -2450,7 +2450,7 @@ export default function StudentFees() {
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <div className="relative z-10 text-center pb-8 pt-2">
         <p className="text-[10px] text-slate-400">
-          © {new Date().getFullYear()} BENIUS · {student.schoolName}
+          © {todayInIST().slice(0, 4)} BENIUS · {student.schoolName}
         </p>
       </div>
     </div>
