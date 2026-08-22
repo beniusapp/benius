@@ -2081,373 +2081,6 @@ function StandaloneOfflinePayModal({ open, onClose, onSuccess }: StandaloneOffli
   );
 }
 
-// ─── Payment History Modal ────────────────────────────────────────────────────
-
-interface PaymentHistoryModalProps {
-  open: boolean;
-  onClose: () => void;
-  feeRecord: FeeRecordWithStudent | null;
-}
-
-function PaymentHistoryModal({ open, onClose, feeRecord }: PaymentHistoryModalProps) {
-  const { toast } = useToast();
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
-  const [filterMethod, setFilterMethod] = useState("All");
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
-
-  // Fetch payments directly inside the modal with polling so the list stays
-  // live while the modal is open — no manual refresh needed.
-  const { data: payments = [], isFetching } = useQuery<PaymentRecord[]>({
-    queryKey: ["/api/admin/fees/payments", feeRecord?.id],
-    queryFn: async () => {
-      if (!feeRecord) return [];
-      const r = await sessionFetch(`/api/admin/fees/payments?feeRecordId=${feeRecord.id}`);
-      if (!r.ok) return [];
-      const data = await r.json();
-      setLastRefreshed(new Date());
-      return data;
-    },
-    enabled: open && !!feeRecord,
-    staleTime: 0,
-    refetchInterval: open ? 30_000 : false,
-  });
-
-  // Reset filters whenever the modal is opened/closed
-  useEffect(() => {
-    if (!open) {
-      setFilterFrom("");
-      setFilterTo("");
-      setFilterMethod("All");
-      setLastRefreshed(null);
-    }
-  }, [open]);
-
-  const methodLabel: Record<string, string> = {
-    Cash: "Cash", Cheque: "Cheque", BankTransfer: "Bank Transfer",
-    DemandDraft: "Demand Draft", UpiQr: "UPI/QR", Online: "Portal Payment",
-  };
-
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-  const outstanding = Math.max(0, (feeRecord?.amount ?? 0) - totalPaid);
-
-  // Apply filters
-  const filteredPayments = useMemo(() => {
-    return payments.filter(p => {
-      if (filterMethod !== "All" && p.paymentMethod !== filterMethod) return false;
-      const date = p.receivedDate.split("T")[0];
-      if (filterFrom && date < filterFrom) return false;
-      if (filterTo && date > filterTo) return false;
-      return true;
-    });
-  }, [payments, filterFrom, filterTo, filterMethod]);
-
-  const filteredTotal = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
-  const isFiltered = filterMethod !== "All" || filterFrom !== "" || filterTo !== "";
-
-  if (!feeRecord) return null;
-
-  function clearFilters() {
-    setFilterFrom("");
-    setFilterTo("");
-    setFilterMethod("All");
-  }
-
-  function exportToCSV() {
-    if (filteredPayments.length === 0) {
-      toast({ title: "Nothing to export", description: "No transactions match the current filters.", variant: "destructive" });
-      return;
-    }
-    const studentName = feeRecord!.student?.name ?? "student";
-    const headers = ["#", "Invoice No.", "Date", "Amount (INR)", "Method", "Reference No.", "Notes", "Receipt No."];
-    const dataRows = filteredPayments.map((p, idx) => [
-      idx + 1,
-      p.invoiceNumber ?? "—",
-      fmtDate(p.receivedDate),
-      p.amount,
-      methodLabel[p.paymentMethod] ?? p.paymentMethod,
-      p.referenceNumber ?? "",
-      p.cashierNotes ?? "",
-      p.receiptNumber ?? "—",
-    ]);
-    // Summary footer rows
-    dataRows.push(["", "", "", "", "", "", "", ""]);
-    dataRows.push(["", "", "Filtered Total", filteredTotal, "", "", "", ""]);
-    if (isFiltered) {
-      dataRows.push(["", "", "Overall Total", feeRecord!.amount, "", "", "", ""]);
-    }
-
-    const csvContent = [headers, ...dataRows]
-      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const safeName = studentName.replace(/[^a-zA-Z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
-    a.download = `payment-history-${safeName}-${todayInIST()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  function exportToPDF() {
-    if (filteredPayments.length === 0) {
-      toast({ title: "Nothing to export", description: "No transactions match the current filters.", variant: "destructive" });
-      return;
-    }
-    const studentName = feeRecord!.student?.name ?? "—";
-    const studentInfo = feeRecord!.student ? `${feeRecord!.student.class}-${feeRecord!.student.section}` : "";
-    const feeTypeLabel = feeRecord!.feeType;
-    const esc = (s: string | null | undefined) =>
-      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const filterDesc = [
-      filterFrom ? `From: ${fmtDate(filterFrom)}` : "",
-      filterTo ? `To: ${fmtDate(filterTo)}` : "",
-      filterMethod !== "All" ? `Method: ${methodLabel[filterMethod] ?? filterMethod}` : "",
-    ].filter(Boolean).join(" · ");
-
-    const rows = filteredPayments.map((p, idx) => `
-      <tr>
-        <td>${idx + 1}</td>
-        <td class="inv">${esc(p.invoiceNumber ?? "—")}</td>
-        <td>${esc(fmtDate(p.receivedDate))}</td>
-        <td class="amount">₹${p.amount.toLocaleString("en-IN")}</td>
-        <td>${esc(methodLabel[p.paymentMethod] ?? p.paymentMethod)}</td>
-        <td>${esc(p.referenceNumber ?? "—")}</td>
-        <td>${esc(p.cashierNotes ?? "—")}</td>
-        <td class="mono">${esc(p.receiptNumber ?? "—")}</td>
-      </tr>`).join("");
-
-    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<title>Payment History – ${esc(studentName)}</title>
-<style>
-  body{font-family:Arial,sans-serif;margin:0;padding:24px;color:#1e293b;font-size:13px;}
-  h1{font-size:18px;margin:0 0 4px;color:#0891b2;}
-  .meta{color:#64748b;font-size:12px;margin-bottom:16px;}
-  .filter-badge{display:inline-block;background:#f0f9ff;border:1px solid #bae6fd;border-radius:4px;padding:2px 8px;font-size:11px;color:#0369a1;margin-bottom:12px;}
-  table{width:100%;border-collapse:collapse;margin-top:4px;}
-  th{background:#0891b2;color:#fff;text-align:left;padding:8px 6px;font-size:12px;}
-  td{padding:7px 6px;border-bottom:1px solid #f1f5f9;}
-  tr:nth-child(even) td{background:#f8fafc;}
-  .amount{font-weight:700;}
-  .mono{font-family:monospace;font-size:11px;color:#94a3b8;}
-  .inv{font-family:monospace;font-size:11px;color:#7c3aed;}
-  .total-row td{border-top:2px solid #0891b2;font-weight:700;background:#f0f9ff;}
-  .footer{margin-top:20px;font-size:11px;color:#94a3b8;text-align:center;}
-  @media print{body{padding:0;}}
-</style></head><body>
-<h1>Payment History</h1>
-<div class="meta">
-  <strong>${esc(studentName)}</strong> · ${esc(studentInfo)} · ${esc(feeTypeLabel)}<br>
-  Invoice: ₹${feeRecord!.amount.toLocaleString("en-IN")} · Status: ${esc(feeRecord!.status)}
-</div>
-${filterDesc ? `<div class="filter-badge">Filtered: ${esc(filterDesc)}</div>` : ""}
-<table>
-  <thead><tr>
-    <th>#</th><th>Invoice No.</th><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th><th>Receipt No.</th>
-  </tr></thead>
-  <tbody>${rows}</tbody>
-  <tfoot><tr class="total-row">
-    <td colspan="3">${isFiltered ? `Filtered Total (${filteredPayments.length} of ${payments.length})` : "Total"}</td>
-    <td class="amount">₹${filteredTotal.toLocaleString("en-IN")}</td>
-    <td colspan="4"></td>
-  </tr></tfoot>
-</table>
-<div class="footer">Generated ${formatDateTimeIST(new Date())} · BENIUS</div>
-<script>window.print();</script>
-</body></html>`;
-
-    const win = window.open("", "_blank");
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-lg max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-cyan-400">
-            <History className="w-5 h-5" />
-            Payment History
-            {isFetching && <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-500/60 ml-1" />}
-          </DialogTitle>
-          {lastRefreshed && !isFetching && (
-            <p className="text-white/30 text-[10px] mt-0.5">
-              Updated {lastRefreshed.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · auto-refreshes every 30 s
-            </p>
-          )}
-        </DialogHeader>
-
-        {/* Fee record summary */}
-        <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm shrink-0">
-          <p className="text-white font-semibold">{feeRecord.student?.name ?? "—"}</p>
-          <p className="text-white/50 text-xs">{feeRecord.feeType} · {feeRecord.student?.class}-{feeRecord.student?.section}</p>
-          <div className="mt-2 flex items-center gap-4 flex-wrap">
-            <span className="text-white/40 text-xs">Invoice: <span className="text-white font-medium">{fmt(feeRecord.amount)}</span></span>
-            <span className="text-white/40 text-xs">Paid: <span className="text-emerald-400 font-medium">{fmt(totalPaid)}</span></span>
-            {outstanding > 0 && (
-              <span className="text-white/40 text-xs">Outstanding: <span className="text-amber-400 font-medium">{fmt(outstanding)}</span></span>
-            )}
-            <StatusChip status={feeRecord.status} />
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="shrink-0 space-y-2">
-          <div className="flex gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 flex-1 min-w-[130px]">
-              <label className="text-white/40 text-xs shrink-0">From</label>
-              <input
-                type="date"
-                value={filterFrom}
-                onChange={e => setFilterFrom(e.target.value)}
-                className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]"
-              />
-            </div>
-            <div className="flex items-center gap-1.5 flex-1 min-w-[130px]">
-              <label className="text-white/40 text-xs shrink-0">To</label>
-              <input
-                type="date"
-                value={filterTo}
-                onChange={e => setFilterTo(e.target.value)}
-                className="flex-1 bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500 [color-scheme:dark]"
-              />
-            </div>
-            <select
-              value={filterMethod}
-              onChange={e => setFilterMethod(e.target.value)}
-              className="bg-[#0A1628] border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
-            >
-              <option value="All">All Methods</option>
-              <option value="Cash">Cash</option>
-              <option value="Cheque">Cheque</option>
-              <option value="BankTransfer">Bank Transfer</option>
-              <option value="DemandDraft">Demand Draft</option>
-              <option value="UpiQr">UPI/QR</option>
-              <option value="Portal Payment">Portal Payment</option>
-            </select>
-            {isFiltered && (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="text-white/40 hover:text-red-400 text-xs flex items-center gap-1 transition-colors"
-              >
-                <X className="w-3 h-3" /> Reset
-              </button>
-            )}
-          </div>
-          {isFiltered && (
-            <div className="flex items-center gap-3 px-1">
-              <span className="text-white/40 text-xs">
-                {filteredPayments.length} of {payments.length} transaction{payments.length !== 1 ? "s" : ""}
-              </span>
-              <span className="text-white/40 text-xs">
-                Filtered total: <span className="text-cyan-400 font-medium">{fmt(filteredTotal)}</span>
-                {" "}/ <span className="text-emerald-400 font-medium">{fmt(totalPaid)}</span>
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Payment list */}
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {filteredPayments.length === 0 ? (
-            <div className="py-10 text-center text-white/30 text-sm">
-              <Receipt className="w-8 h-8 mx-auto mb-2 opacity-20" />
-              {payments.length === 0 ? "No payment transactions recorded yet." : "No transactions match the current filters."}
-            </div>
-          ) : (
-            <div className="space-y-2 pr-1">
-              {filteredPayments.map((p, idx) => (
-                <div key={p.id} className="rounded-lg border border-white/10 bg-white/5 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-white/30 text-xs font-mono shrink-0">#{idx + 1}</span>
-                      <div className="min-w-0">
-                        <p className="text-white font-semibold text-sm">{fmt(p.amount)}</p>
-                        <p className="text-white/50 text-xs mt-0.5">{p.createdAt ? fmtDateTimeIST(p.createdAt) : fmtDate(p.receivedDate)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded bg-cyan-900/40 border border-cyan-700/40 text-cyan-300">
-                        {methodLabel[p.paymentMethod] ?? p.paymentMethod}
-                      </span>
-                      <Button size="icon" variant="ghost"
-                        onClick={() => window.open(`/api/admin/fees/payments/${p.id}/receipt?print=1`, "_blank")}
-                        className="h-6 w-6 text-white/30 hover:text-cyan-400"
-                        title="Print receipt">
-                        <Printer className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  {/* Invoice No. + Receipt No. — always shown, visually separated */}
-                  <div className="mt-2 pt-2 border-t border-white/5 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/30 text-[10px] w-14 shrink-0">Invoice</span>
-                      <span className="font-mono text-[10px] tracking-wide text-violet-300">
-                        {p.invoiceNumber ?? "—"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/30 text-[10px] w-14 shrink-0">Receipt</span>
-                      <span className="font-mono text-[10px] tracking-wide text-cyan-300">
-                        {p.receiptNumber ?? "—"}
-                      </span>
-                    </div>
-                    {p.referenceNumber && (
-                      <p className="text-white/40 text-xs">Ref: <span className="text-white/60 font-mono">{p.referenceNumber}</span></p>
-                    )}
-                    {p.cashierNotes && (
-                      <p className="text-white/40 text-xs">Note: <span className="text-white/60">{p.cashierNotes}</span></p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="shrink-0 pt-2 border-t border-white/10 flex justify-between items-center gap-2 flex-wrap">
-          {!isFiltered && (
-            <span className="text-white/40 text-xs">{payments.length} transaction{payments.length !== 1 ? "s" : ""}</span>
-          )}
-          {isFiltered && <span />}
-          <div className="flex items-center gap-2 ml-auto">
-            {filteredPayments.length > 0 && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={exportToCSV}
-                  className="text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900/20 h-8 gap-1.5 text-xs"
-                  title="Download filtered payments as CSV"
-                >
-                  <Download className="w-3.5 h-3.5" /> CSV
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={exportToPDF}
-                  className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-900/20 h-8 gap-1.5 text-xs"
-                  title="Print / save as PDF"
-                >
-                  <FileText className="w-3.5 h-3.5" /> PDF
-                </Button>
-              </>
-            )}
-            <Button variant="ghost" onClick={onClose} className="text-white/60 h-8 text-sm">Close</Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 const NOTIF_CHANNEL_ICONS: Record<string, React.ReactNode> = {
   sms:      <MessageSquare className="w-3.5 h-3.5" />,
   whatsapp: <Phone className="w-3.5 h-3.5" />,
@@ -2663,8 +2296,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   const [isDownloadingTxPdf,     setIsDownloadingTxPdf]      = useState(false);
   const [editing, setEditing] = useState<FeeRecordWithStudent | null>(null);
   const [showStandalonePay, setShowStandalonePay] = useState(false);
-  const [showPaymentsModal, setShowPaymentsModal] = useState(false);
-  const [viewPaymentsRecord, setViewPaymentsRecord] = useState<FeeRecordWithStudent | null>(null);
   // ── Bulk selection ────────────────────────────────────────────────────────
   // Explicit-ID mode (selectAllMatching=false): selectedIds holds every picked record.
   // All-matching mode (selectAllMatching=true): every record matching current filters
@@ -2952,7 +2583,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     staleTime: 30_000,
   });
 
-  // Payment records — used for transaction history, receipts, and action badges.
+  // Payment records are retained here to select the correct receipt route.
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/fees/payments"],
     queryFn: async () => {
@@ -2962,7 +2593,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     },
     staleTime: 30_000,
   });
-  // Map feeRecordId → all payment records (sorted newest-first) for the history modal
+  // Map feeRecordId → payment records, sorted newest-first, for receipt selection.
   const paymentsByFeeRecordId = useMemo(() => {
     const map = new Map<number, PaymentRecord[]>();
     [...paymentRecordsList]
@@ -3605,19 +3236,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         {(() => {
-                          const count = paymentsByFeeRecordId.get(rec.id)?.length ?? 0;
-                          const hasPayments = count > 0;
-                          return (
-                            <Button size="sm" variant="ghost"
-                              onClick={() => { setViewPaymentsRecord(rec); setShowPaymentsModal(true); }}
-                              className={`h-7 px-2 text-xs gap-1 ${hasPayments ? "text-purple-400 hover:bg-purple-900/30" : "text-white/20 hover:bg-white/5 hover:text-white/40"}`}
-                              title={hasPayments ? "View payment transactions" : "No transactions recorded"}>
-                              <History className="w-3 h-3" />
-                              <span>{count}</span>
-                            </Button>
-                          );
-                        })()}
-                        {(() => {
                           const dCount = dunningCounts[rec.id] ?? 0;
                           const hasDunning = dCount > 0;
                           return (
@@ -4074,11 +3692,6 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         </SheetContent>
       </Sheet>
       <StandaloneOfflinePayModal open={showStandalonePay} onClose={() => setShowStandalonePay(false)} />
-      <PaymentHistoryModal
-        open={showPaymentsModal}
-        onClose={() => { setShowPaymentsModal(false); setViewPaymentsRecord(null); }}
-        feeRecord={viewPaymentsRecord}
-      />
       <ExportLedgerDialog
         open={showExportLedger}
         onClose={() => setShowExportLedger(false)}
