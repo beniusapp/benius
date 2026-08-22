@@ -114,6 +114,17 @@ const BASE_DATA: FinancialAnalyticsResult = {
       { method: "Cheque", count: 18, amount: 120000 },
     ],
   },
+  paymentChannelSplit: {
+    totalCollected: 980000,
+    totalTransactions: 142,
+    channels: [
+      { method: "Razorpay UPI", count: 52, amount: 380000, percentage: 38.78 },
+      { method: "Cash", count: 35, amount: 240000, percentage: 24.49 },
+      { method: "Net Banking", count: 20, amount: 160000, percentage: 16.33 },
+      { method: "Cheque", count: 18, amount: 120000, percentage: 12.24 },
+      { method: "Card", count: 17, amount: 80000, percentage: 8.16 },
+    ],
+  },
   classWise: [
     { class: "1",  billed:  80000, grossCollected:  65000, netCollected:  65000, outstanding: 15000 },
     { class: "2",  billed:  85000, grossCollected:  70000, netCollected:  70000, outstanding: 15000 },

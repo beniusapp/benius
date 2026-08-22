@@ -26,3 +26,9 @@ Financial Analytics reports only fee and payment operations that are currently s
 **Why:** The product does not currently have a real refund workflow, so refund analytics would imply financial operations that the system cannot reliably record or reconcile.
 
 **How to apply:** Keep refund tables and any future refund workflow outside the analytics contract until a complete, auditable refund process is deliberately introduced. When that happens, define its accounting authority first and update the canonical service, dashboard, PDFs, scheduled reports, and reconciliation tests together.
+
+When reconciling PDF report headings with `pdftotext -layout`, use spacing-tolerant assertions for tracked, uppercase display headings while keeping numeric and table-row assertions exact.
+
+**Why:** The PDF renderer can emit a visually correct title as individually spaced glyphs, and extraction may apply inconsistent spacing within a single heading.
+
+**How to apply:** Assert the heading with whitespace permitted between letters; validate the collection totals, transaction counts, channel labels, amounts, and shares in their normal extracted table text.

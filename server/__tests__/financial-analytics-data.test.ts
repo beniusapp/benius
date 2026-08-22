@@ -919,6 +919,14 @@ describe("buildFinancialAnalytics — online vs offline channel split", () => {
     expect(r.summary.offlineCollected).toBe(3000);
     expect(r.online.grossCollected).toBe(12000);
     expect(r.offline.grossCollected).toBe(3000);
+    expect(r.paymentChannelSplit).toEqual({
+      totalCollected: 15000,
+      totalTransactions: 2,
+      channels: [
+        { method: "Portal Payment", count: 1, amount: 12000, percentage: 80 },
+        { method: "Cash", count: 1, amount: 3000, percentage: 20 },
+      ],
+    });
   });
 
   it("treats legacy 'Online' method as online channel", async () => {
@@ -976,6 +984,9 @@ describe("buildFinancialAnalytics — online method label from payment_mode", ()
     const upiMethod = r.online.methods.find(m => m.method === "UPI");
     expect(upiMethod).toBeDefined();
     expect(upiMethod!.amount).toBe(6000);
+    expect(r.paymentChannelSplit.channels).toEqual([
+      { method: "UPI", count: 1, amount: 6000, percentage: 100 },
+    ]);
   });
 
   it("falls back to 'Portal Payment' when payment_mode is null", async () => {
@@ -999,6 +1010,9 @@ describe("buildFinancialAnalytics — online method label from payment_mode", ()
     const ppMethod = r.online.methods.find(m => m.method === "Portal Payment");
     expect(ppMethod).toBeDefined();
     expect(ppMethod!.amount).toBe(4000);
+    expect(r.paymentChannelSplit.channels).toEqual([
+      { method: "Portal Payment", count: 1, amount: 4000, percentage: 100 },
+    ]);
   });
 });
 
@@ -1582,6 +1596,7 @@ describe("buildFinancialAnalytics — response contract", () => {
     expect(r).toHaveProperty("trend");
     expect(r).toHaveProperty("online");
     expect(r).toHaveProperty("offline");
+    expect(r).toHaveProperty("paymentChannelSplit");
     expect(r).toHaveProperty("classWise");
     expect(r).toHaveProperty("feeCategories");
     expect(r).toHaveProperty("aging");
@@ -1610,6 +1625,11 @@ describe("buildFinancialAnalytics — response contract", () => {
     expect(r.accountingBasis).not.toHaveProperty("refunds");
     expect(r.online).not.toHaveProperty("refunds");
     expect(r.offline).not.toHaveProperty("refunds");
+    expect(r.paymentChannelSplit).toEqual({
+      totalCollected: 0,
+      totalTransactions: 0,
+      channels: [],
+    });
 
     expect(r.aging.map(a => a.bucket)).toEqual(["1-30", "31-60", "61-90", "90+"]);
   });

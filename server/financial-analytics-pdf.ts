@@ -435,7 +435,38 @@ function renderTrendSection(ctx: Ctx): void {
 }
 
 function renderChannelsSection(ctx: Ctx): void {
-  const { online, offline } = ctx.data;
+  const { online, offline, paymentChannelSplit } = ctx.data;
+
+  drawSectionTitle(ctx, "Payment Channel Split");
+  drawKpiRow(ctx, [
+    { label: "Total Collected", value: fmtINR(paymentChannelSplit.totalCollected), color: C_GREEN },
+    { label: "Transactions", value: String(paymentChannelSplit.totalTransactions), color: C_MUTED },
+  ]);
+  ctx.doc.font(FONT_REG).fontSize(7).fillColor(C_MUTED).text(
+    "Successful recorded payments in the selected IST date range. This total reconciles to Gross Collected.",
+    MARGIN_H,
+    ctx.y,
+    { width: CONTENT_W },
+  );
+  ctx.y += 18;
+  if (paymentChannelSplit.channels.length > 0) {
+    const channelWidths = [CONTENT_W * 0.4, CONTENT_W * 0.18, CONTENT_W * 0.25, CONTENT_W * 0.17];
+    drawTableHeader(ctx, ["Payment Channel", "Transactions", "Collected", "Share"], channelWidths);
+    paymentChannelSplit.channels.forEach((channel, i) => {
+      drawTableRow(
+        ctx,
+        [channel.method, String(channel.count), fmtINR(channel.amount), `${channel.percentage.toFixed(2)}%`],
+        channelWidths,
+        i % 2 === 0,
+        [null, null, C_GREEN, C_CYAN],
+      );
+    });
+  } else {
+    ctx.doc.font(FONT_REG).fontSize(8).fillColor(C_MUTED)
+      .text("No successful recorded payments were received in this range.", MARGIN_H, ctx.y, { width: CONTENT_W });
+    ctx.y += 18;
+  }
+  ctx.y += 10;
 
   drawSectionTitle(ctx, "Online Channel");
   drawKpiRow(ctx, [

@@ -116,6 +116,17 @@ export interface ChannelBreakdown {
   methods: Array<{ method: string; count: number; amount: number }>;
 }
 
+export interface PaymentChannelSplit {
+  totalCollected: number;
+  totalTransactions: number;
+  channels: Array<{
+    method: string;
+    count: number;
+    amount: number;
+    percentage: number;
+  }>;
+}
+
 export interface ClassWiseRow {
   class: string;
   billed: number;
@@ -197,6 +208,7 @@ export interface FinancialAnalyticsResult {
   trend: TrendPoint[];
   online: ChannelBreakdown;
   offline: ChannelBreakdown;
+  paymentChannelSplit: PaymentChannelSplit;
   classWise: ClassWiseRow[];
   feeCategories: FeeCategoryRow[];
   aging: AgingBucket[];
@@ -749,6 +761,7 @@ export async function buildFinancialAnalytics(
   // method label → {count, amount}
   const onlineMethods  = new Map<string, { count: number; amount: number }>();
   const offlineMethods = new Map<string, { count: number; amount: number }>();
+  const paymentChannels = new Map<string, { count: number; amount: number }>();
 
   // Cash denomination state
   let cashCollected      = 0;
@@ -779,6 +792,9 @@ export async function buildFinancialAnalytics(
       const om = onlineMethods.get(mLabel) ?? { count: 0, amount: 0 };
       om.count  += 1; om.amount += amount;
       onlineMethods.set(mLabel, om);
+      const channel = paymentChannels.get(mLabel) ?? { count: 0, amount: 0 };
+      channel.count += 1; channel.amount += amount;
+      paymentChannels.set(mLabel, channel);
     } else {
       offlineGross += amount;
       offlineCount += 1;
@@ -786,6 +802,9 @@ export async function buildFinancialAnalytics(
       const om = offlineMethods.get(mLabel) ?? { count: 0, amount: 0 };
       om.count  += 1; om.amount += amount;
       offlineMethods.set(mLabel, om);
+      const channel = paymentChannels.get(mLabel) ?? { count: 0, amount: 0 };
+      channel.count += 1; channel.amount += amount;
+      paymentChannels.set(mLabel, channel);
     }
 
     classRevenue.set(cls, (classRevenue.get(cls) ?? 0) + amount);
@@ -830,6 +849,25 @@ export async function buildFinancialAnalytics(
   }
 
   const netCollected = grossCollected;
+  const channelCollected = [...paymentChannels.values()]
+    .reduce((total, channel) => total + channel.amount, 0);
+  if (channelCollected !== grossCollected) {
+    throw new Error("Payment channel split does not reconcile to collected revenue.");
+  }
+  const paymentChannelSplit: PaymentChannelSplit = {
+    totalCollected: grossCollected,
+    totalTransactions: transactionCount,
+    channels: [...paymentChannels.entries()]
+      .map(([method, channel]) => ({
+        method,
+        count: channel.count,
+        amount: channel.amount,
+        percentage: grossCollected > 0
+          ? Math.round((channel.amount / grossCollected) * 10_000) / 100
+          : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method)),
+  };
 
   const collectionEfficiency = totalBilled > 0
     ? Math.round((netCollected / totalBilled) * 1000) / 10
@@ -1053,6 +1091,7 @@ export async function buildFinancialAnalytics(
     trend,
     online:  onlineBreakdown,
     offline: offlineBreakdown,
+    paymentChannelSplit,
     classWise,
     feeCategories,
     aging,

@@ -126,6 +126,7 @@ type IndependentLedger = {
   summary: FinancialAnalyticsResult["summary"];
   online: Pick<FinancialAnalyticsResult["online"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
   offline: Pick<FinancialAnalyticsResult["offline"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
+  paymentChannelSplit: FinancialAnalyticsResult["paymentChannelSplit"];
   classWise: FinancialAnalyticsResult["classWise"];
   feeCategories: FinancialAnalyticsResult["feeCategories"];
   aging: FinancialAnalyticsResult["aging"];
@@ -175,6 +176,25 @@ function auditIsOnline(method: string | null | undefined, razorpayPaymentId: str
     normalized === "online" ||
     normalized === "online payment" ||
     normalized === "razorpay";
+}
+
+function auditChannelMethod(row: RawPayment): string {
+  if (auditIsOnline(row.payment_method, row.razorpay_payment_id)) {
+    switch (String(row.payment_mode ?? "").toLowerCase()) {
+      case "upi": return "UPI";
+      case "card": return "Card";
+      case "netbanking": return "Net Banking";
+      case "wallet": return "Wallet";
+      case "emi": return "EMI";
+      default: return "Portal Payment";
+    }
+  }
+  switch (row.payment_method) {
+    case "BankTransfer": return "Bank Transfer";
+    case "DemandDraft": return "Demand Draft";
+    case "UpiQr": return "UPI / QR";
+    default: return row.payment_method || "Unknown";
+  }
 }
 
 function auditPeriod(range: RangeCase, session: SessionInfo): { startDate: string; endDate: string } {
@@ -610,7 +630,7 @@ async function independentLedger(
         FROM payment_records pr
         WHERE pr.school_id = ${fixture.schoolId}
           AND pr.fee_record_id = fr.id
-      ), 0) AS lifetime_paid,
+      ), 0) AS lifetime_paid
     FROM fee_records fr
     JOIN students s ON s.id = fr.student_id AND s.school_id = ${fixture.schoolId}
     WHERE fr.school_id = ${fixture.schoolId}
@@ -680,6 +700,26 @@ async function independentLedger(
       averageTransaction: rows.length ? round2(gross / rows.length) : 0,
     };
   };
+  const paymentChannelMap = new Map<string, { count: number; amount: number }>();
+  for (const row of payments) {
+    const method = auditChannelMethod(row);
+    const current = paymentChannelMap.get(method) ?? { count: 0, amount: 0 };
+    current.count += 1;
+    current.amount += row.amount;
+    paymentChannelMap.set(method, current);
+  }
+  const paymentChannelSplit = {
+    totalCollected: grossCollected,
+    totalTransactions: payments.length,
+    channels: [...paymentChannelMap.entries()]
+      .map(([method, value]) => ({
+        method,
+        count: value.count,
+        amount: value.amount,
+        percentage: grossCollected > 0 ? Math.round((value.amount / grossCollected) * 10_000) / 100 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method)),
+  } satisfies FinancialAnalyticsResult["paymentChannelSplit"];
 
   const cashRows = payments.filter((row) => row.payment_method.trim().toLowerCase() === "cash");
   const denominationMap = new Map<number, number>();
@@ -746,6 +786,7 @@ async function independentLedger(
     },
     online: channel(onlinePayments),
     offline: channel(offlinePayments),
+    paymentChannelSplit,
     classWise: groupedRows(invoices, payments, "student_class") as FinancialAnalyticsResult["classWise"],
     feeCategories: groupedRows(invoices, payments, "fee_type") as FinancialAnalyticsResult["feeCategories"],
     aging: ["1-30", "31-60", "61-90", "90+"].map((bucket) => ({ bucket, ...agingMap.get(bucket)! })) as FinancialAnalyticsResult["aging"],
@@ -859,6 +900,16 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
         },
         `${range.name}: offline channel`,
       ).toEqual(expected.offline);
+      expect(
+        service.paymentChannelSplit,
+        `${range.name}: successful payment methods reconcile to collected revenue`,
+      ).toEqual(expected.paymentChannelSplit);
+      expect(service.paymentChannelSplit.totalCollected, `${range.name}: channel amount total`).toBe(
+        service.summary.grossCollected,
+      );
+      expect(service.paymentChannelSplit.totalTransactions, `${range.name}: channel transaction total`).toBe(
+        service.summary.transactionCount,
+      );
       expect(service.classWise, `${range.name}: class attribution`).toEqual(expected.classWise);
       expect(service.feeCategories, `${range.name}: category attribution`).toEqual(expected.feeCategories);
       expect(service.aging, `${range.name}: aging`).toEqual(expected.aging);
@@ -974,6 +1025,18 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
           }
 
           if (section === "channels" || section === "complete") {
+            expect(pdfText).toMatch(/P\s*A\s*Y\s*M\s*E\s*N\s*T\s*C\s*H\s*A\s*N\s*N\s*E\s*L\s*S\s*P\s*L\s*I\s*T/i);
+            assertPdfSequence(pdfText, `${range.name}/${section}: payment channel reconciliation`, [
+              "Total Collected", "Transactions",
+              "₹", pdfAmount(expected.paymentChannelSplit.totalCollected),
+              expected.paymentChannelSplit.totalTransactions,
+            ]);
+            for (const channel of expected.paymentChannelSplit.channels) {
+              assertPdfSequence(pdfText, `${range.name}/${section}: channel ${channel.method}`, [
+                channel.method, channel.count, "₹", pdfAmount(channel.amount),
+                `${channel.percentage.toFixed(2)}%`,
+              ]);
+            }
             expect(pdfText).toMatch(/Online Channel/i);
             expect(pdfText).toMatch(/Offline Channel/i);
             assertPdfSequence(pdfText, `${range.name}/${section}: online channel values`, [
