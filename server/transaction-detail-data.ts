@@ -16,6 +16,10 @@ function numberOrNull(value: unknown): number | null {
   return value == null ? null : Number(value);
 }
 
+function integerList(values: number[]) {
+  return sql.join(values.map((value) => sql`${value}`), sql`, `);
+}
+
 /**
  * Loads the complete, tenant-scoped transaction evidence for one invoice.
  *
@@ -262,7 +266,7 @@ export async function loadTransactionDetailData(
             ON u.id = rev.changed_by
            AND u.school_id = rev.school_id
           WHERE rev.school_id = ${schoolId}
-            AND rev.payment_record_id = ANY(${paymentIds}::int[])
+            AND rev.payment_record_id IN (${integerList(paymentIds)})
           ORDER BY rev.created_at ASC, rev.id ASC
         `)
       : Promise.resolve({ rows: [] }),
@@ -289,7 +293,7 @@ export async function loadTransactionDetailData(
           FROM payment_attempt_events
           WHERE school_id = ${schoolId}
             AND fee_record_id = ${feeRecordId}
-            AND payment_attempt_id = ANY(${attemptIds}::int[])
+            AND payment_attempt_id IN (${integerList(attemptIds)})
           ORDER BY COALESCE(provider_occurred_at, occurred_at, recorded_at) ASC, id ASC
         `)
       : Promise.resolve({ rows: [] }),
@@ -359,7 +363,7 @@ export async function loadTransactionDetailData(
           FROM refund_events
           WHERE school_id = ${schoolId}
             AND fee_record_id = ${feeRecordId}
-            AND refund_id = ANY(${refundIds}::int[])
+            AND refund_id IN (${integerList(refundIds)})
           ORDER BY COALESCE(provider_occurred_at, occurred_at, recorded_at) ASC, id ASC
         `)
       : Promise.resolve({ rows: [] }),
@@ -384,7 +388,7 @@ export async function loadTransactionDetailData(
           ON pwe.id = wpe.webhook_delivery_id
          AND pwe.school_id = ${schoolId}
         WHERE wpe.school_id = ${schoolId}
-          AND wpe.webhook_delivery_id = ANY(${webhookIds}::int[])
+          AND wpe.webhook_delivery_id IN (${integerList(webhookIds)})
         ORDER BY wpe.created_at ASC, wpe.id ASC
       `))
     : [];
