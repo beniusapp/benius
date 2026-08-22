@@ -1,0 +1,81 @@
+I am providing the Financial Analytics PDF for final verification.
+
+Please inspect this PDF thoroughly, page by page and section by section.
+
+Do NOT only check the PDF layout or whether the numbers look reasonable.
+
+I want you to verify the actual financial calculations behind EVERY number shown in the PDF.
+
+For every amount, count, percentage, total, breakdown, chart/table value and date range shown in the PDF:
+
+1. Identify the exact source/database records used.
+2. Independently calculate what the value should be from the authoritative financial records.
+3. Compare the independently calculated value with the value shown in the PDF.
+4. Compare the PDF value with the Financial Analytics API value.
+5. Confirm that all three agree.
+
+Verify at minimum:
+
+- Gross Collected
+- Billed/Invoice amount
+- Outstanding/Due
+- Overdue
+- Online/Portal payments
+- Offline payments
+- Cash
+- UPI/QR
+- Cheque
+- Bank Transfer
+- Other payment methods
+- Payment counts
+- Channel split
+- Fee-category breakdown
+- Class/section breakdown
+- Aging
+- Trends
+- Percentages
+- Any other number appearing anywhere in the PDF
+
+Also verify:
+
+- Today
+- Week
+- Month
+- Academic Session
+- Custom date range
+
+Pay special attention to IST date boundaries. Confirm that payments at 00:00 IST and 23:59:59 IST are included/excluded correctly.
+
+Do NOT reuse the Financial Analytics calculation function as the test oracle. The expected values must be independently calculated from the underlying authoritative records.
+
+Also verify that:
+
+- Failed payments are not counted as collected.
+- Cancelled payments are not counted.
+- Duplicate attempts are not double-counted.
+- Online and offline payments are correctly separated.
+- Refunds follow the application's defined accounting policy.
+- Another school's records cannot enter the calculation.
+- Payments from another academic session cannot accidentally enter the selected session.
+- No UTC/IST conversion shifts a payment into the wrong day, week or month.
+
+If ANY value differs, even by ₹1 or by one transaction, report it as a FAILURE and trace the exact database records responsible.
+
+Do not change any code during this verification unless I explicitly ask you to fix something.
+
+At the end give me a detailed verification report:
+
+PDF section → PDF value → independently calculated value → API value → PASS/FAIL
+
+Also give me:
+
+- Total values checked
+- Total values passed
+- Total mismatches
+- Records included
+- Records excluded
+- Date-range checks passed
+- IST boundary checks passed
+- Tenant-isolation checks passed
+
+Only report the PDF as VERIFIED if every financial value has been independently reconciled with ZERO unexplained differences.

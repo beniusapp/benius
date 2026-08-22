@@ -1,0 +1,207 @@
+
+
+===== PAGE 1 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Apr 2027 – 31 Mar 2028   |   Filter: Academic Year 2027-2028
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:27 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 1
+E X E C U T I V E S U M M A R Y
+Due This Period
+₹3,35,188
+Gross Collected
+₹0
+Net Collected
+₹0
+Outstanding
+₹59,700
+Collection Efficiency
+0.0%
+Online Collected
+₹0
+Offline Collected
+₹0
+Overdue Amount
+₹0
+Transactions
+0
+Due This Period uses invoice due dates. Collections use payment received dates; efficiency is N/A when no invoices are due.
+C O L L E C T I O N T R E N D
+Period
+Due This Period
+Collected
+Net Collected
+Apr 27
+₹3,12,000
+₹0
+₹0
+May 27
+₹0
+₹0
+₹0
+Jun 27
+₹0
+₹0
+₹0
+Jul 27
+₹0
+₹0
+₹0
+Aug 27
+₹16,700
+₹0
+₹0
+Sep 27
+₹3,688
+₹0
+₹0
+Oct 27
+₹0
+₹0
+₹0
+Nov 27
+₹0
+₹0
+₹0
+Dec 27
+₹550
+₹0
+₹0
+Jan 28
+₹1,000
+₹0
+₹0
+
+
+===== PAGE 2 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Apr 2027 – 31 Mar 2028   |   Filter: Academic Year 2027-2028
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:27 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 2
+Feb 28
+₹0
+₹0
+₹0
+Mar 28
+₹1,250
+₹0
+₹0
+P A Y M E N T C H A N N E L S P L I T
+Total Collected
+₹0
+Transactions
+0
+Successful recorded payments in the selected IST date range. This total reconciles to Gross Collected.
+No successful recorded payments were received in this range.
+O N L I N E C H A N N E L
+Gross Collected
+₹0
+Transactions
+0
+Net Collected
+₹0
+O F F L I N E C H A N N E L
+Gross Collected
+₹0
+Transactions
+0
+Net Collected
+₹0
+C L A S S - W I S E B R E A K D O W N
+Class / Section
+Due This Period
+Collected
+Outstanding
+Efficiency
+2
+₹54,700
+₹0
+₹19,700
+0%
+6
+₹1,71,088
+₹0
+₹0
+0%
+7
+₹54,700
+₹0
+₹40,000
+0%
+8
+₹54,700
+₹0
+₹0
+0%
+
+
+===== PAGE 3 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Apr 2027 – 31 Mar 2028   |   Filter: Academic Year 2027-2028
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:27 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 3
+F E E C A T E G O R I E S
+Fee Type
+Due This Period
+Collected
+Annual yearly fee
+₹2,10,000
+₹0
+Equipment fee
+₹30,000
+₹0
+Example type
+₹3,688
+₹0
+Laboratory purpose
+₹1,000
+₹0
+Math
+₹600
+₹0
+Math fee
+₹500
+₹0
+Math fees
+₹550
+₹0
+Monthly fee
+₹16,200
+₹0
+Quaterly 
+₹72,000
+₹0
+Science fee
+₹650
+₹0
+A C C O U N T S R E C E I V A B L E A G I N G
+Aging Bucket
+Invoices
+Outstanding
+1–30 Days
+0
+₹0
+31–60 Days
+0
+₹0
+61–90 Days
+0
+₹0
+90+ Days
+0
+₹0
+C A S H D E N O M I N A T I O N C O V E R A G E
+Cash Collected
+₹0
+Cash Payments
+0
+With Denomination Breakdown
+0
+Without Breakdown
+0
+Documented Amount
+₹0
+Coverage
+—

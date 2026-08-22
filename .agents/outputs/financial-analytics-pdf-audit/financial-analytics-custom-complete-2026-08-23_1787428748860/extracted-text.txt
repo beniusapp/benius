@@ -1,0 +1,275 @@
+
+
+===== PAGE 1 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Jun 2026 – 23 Aug 2026   |   Filter: 2026-06-01 – 2026-08-23
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 1
+E X E C U T I V E S U M M A R Y
+Due This Period
+₹0
+Gross Collected
+₹2,75,488
+Net Collected
+₹2,75,488
+Outstanding
+₹0
+Collection Efficiency
+N/A
+Online Collected
+₹1,45,050
+Offline Collected
+₹1,30,438
+Overdue Amount
+₹0
+Transactions
+25
+Due This Period uses invoice due dates. Collections use payment received dates; efficiency is N/A when no invoices are due.
+C O L L E C T I O N T R E N D
+Period
+Due This Period
+Collected
+Net Collected
+Jun 26
+₹0
+₹0
+₹0
+Jul 26
+₹0
+₹0
+₹0
+Aug 26
+₹0
+₹2,75,488
+₹2,75,488
+P A Y M E N T C H A N N E L S P L I T
+Total Collected
+₹2,75,488
+Transactions
+25
+Successful recorded payments in the selected IST date range. This total reconciles to Gross Collected.
+Payment Channel
+Transactions
+Collected
+Share
+Card
+10
+₹1,45,050
+52.65%
+
+
+===== PAGE 2 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Jun 2026 – 23 Aug 2026   |   Filter: 2026-06-01 – 2026-08-23
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 2
+Cash
+5
+₹53,888
+19.56%
+Cheque
+1
+₹35,000
+12.70%
+Bank Transfer
+2
+₹17,000
+6.17%
+Demand Draft
+3
+₹15,700
+5.70%
+UPI / QR
+4
+₹8,850
+3.21%
+O N L I N E C H A N N E L
+Gross Collected
+₹1,45,050
+Transactions
+10
+Net Collected
+₹1,45,050
+Successful Payment Method
+Transactions
+Collected
+Card
+10
+₹1,45,050
+O F F L I N E C H A N N E L
+Gross Collected
+₹1,30,438
+Transactions
+15
+Net Collected
+₹1,30,438
+Successful Payment Method
+Transactions
+Collected
+Cash
+5
+₹53,888
+Cheque
+1
+₹35,000
+Bank Transfer
+2
+₹17,000
+Demand Draft
+3
+₹15,700
+UPI / QR
+4
+₹8,850
+
+
+===== PAGE 3 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Jun 2026 – 23 Aug 2026   |   Filter: 2026-06-01 – 2026-08-23
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 3
+P O R T A L P A Y M E N T L I F E C Y C L E / P A Y M E N T A T T E M P T S
+Portal gateway outcomes in the selected IST date range. These counts and requested amounts are operational only and do not reconcile to 
+collected revenue.
+Portal Outcome
+Attempts
+Requested Amount
+captured
+25
+₹2,75,488
+cancelled
+12
+₹1,98,800
+failed
+4
+₹80,000
+C L A S S - W I S E B R E A K D O W N
+Class / Section
+Due This Period
+Collected
+Outstanding
+Efficiency
+2
+₹0
+₹35,000
+₹0
+—
+6
+₹0
+₹1,71,088
+₹0
+—
+7
+₹0
+₹14,700
+₹0
+—
+8
+₹0
+₹54,700
+₹0
+—
+F E E C A T E G O R I E S
+Fee Type
+Due This Period
+Collected
+Annual yearly fee
+₹0
+₹1,75,000
+Equipment fee
+₹0
+₹20,000
+Example type
+₹0
+₹3,688
+Laboratory purpose
+₹0
+₹1,000
+Math
+₹0
+₹600
+Math fee
+₹0
+₹500
+Math fees
+₹0
+₹550
+Monthly fee
+₹0
+₹13,500
+Quaterly 
+₹0
+₹60,000
+Science fee
+₹0
+₹650
+A C C O U N T S R E C E I V A B L E A G I N G
+Aging Bucket
+Invoices
+Outstanding
+1–30 Days
+0
+₹0
+31–60 Days
+0
+₹0
+61–90 Days
+0
+₹0
+
+
+===== PAGE 4 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   01 Jun 2026 – 23 Aug 2026   |   Filter: 2026-06-01 – 2026-08-23
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 4
+90+ Days
+0
+₹0
+C A S H D E N O M I N A T I O N C O V E R A G E
+Cash Collected
+₹53,888
+Cash Payments
+5
+With Denomination Breakdown
+4
+Without Breakdown
+1
+Documented Amount
+₹19,388
+Coverage
+36%
+Denomination (₹)
+Quantity
+Total
+₹500
+32
+₹16,000
+₹200
+14
+₹2,800
+₹100
+5
+₹500
+₹50
+1
+₹50
+₹20
+1
+₹20
+₹10
+1
+₹10
+₹5
+1
+₹5
+₹2
+1
+₹2
+₹1
+1
+₹1

@@ -1,0 +1,195 @@
+
+
+===== PAGE 1 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   23 Aug 2026 – 23 Aug 2026   |   Filter: Today
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 1
+E X E C U T I V E S U M M A R Y
+Due This Period
+₹0
+Gross Collected
+₹0
+Net Collected
+₹0
+Outstanding
+₹0
+Collection Efficiency
+N/A
+Online Collected
+₹0
+Offline Collected
+₹0
+Overdue Amount
+₹0
+Transactions
+0
+Due This Period uses invoice due dates. Collections use payment received dates; efficiency is N/A when no invoices are due.
+C O L L E C T I O N T R E N D
+Period
+Due This Period
+Collected
+Net Collected
+00:00
+₹0
+₹0
+₹0
+01:00
+₹0
+₹0
+₹0
+02:00
+₹0
+₹0
+₹0
+03:00
+₹0
+₹0
+₹0
+04:00
+₹0
+₹0
+₹0
+05:00
+₹0
+₹0
+₹0
+06:00
+₹0
+₹0
+₹0
+07:00
+₹0
+₹0
+₹0
+08:00
+₹0
+₹0
+₹0
+09:00
+₹0
+₹0
+₹0
+
+
+===== PAGE 2 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   23 Aug 2026 – 23 Aug 2026   |   Filter: Today
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 2
+10:00
+₹0
+₹0
+₹0
+11:00
+₹0
+₹0
+₹0
+12:00
+₹0
+₹0
+₹0
+13:00
+₹0
+₹0
+₹0
+14:00
+₹0
+₹0
+₹0
+15:00
+₹0
+₹0
+₹0
+16:00
+₹0
+₹0
+₹0
+17:00
+₹0
+₹0
+₹0
+18:00
+₹0
+₹0
+₹0
+19:00
+₹0
+₹0
+₹0
+20:00
+₹0
+₹0
+₹0
+21:00
+₹0
+₹0
+₹0
+22:00
+₹0
+₹0
+₹0
+23:00
+₹0
+₹0
+₹0
+P A Y M E N T C H A N N E L S P L I T
+Total Collected
+₹0
+Transactions
+0
+Successful recorded payments in the selected IST date range. This total reconciles to Gross Collected.
+No successful recorded payments were received in this range.
+O N L I N E C H A N N E L
+Gross Collected
+₹0
+Transactions
+0
+Net Collected
+₹0
+
+
+===== PAGE 3 | 595×842 pt =====
+Mary Immaculate School
+Session: 2027-2028   |   23 Aug 2026 – 23 Aug 2026   |   Filter: Today
+Timezone: Asia/Kolkata   |   Generated: 23 Aug 2026, 01:28 AM IST
+F I N A N C I A L A N A LY T I C S R E P O R T
+Mary Immaculate School   |   Financial Analytics   |   Confidential — For board use only   |   Page 3
+O F F L I N E C H A N N E L
+Gross Collected
+₹0
+Transactions
+0
+Net Collected
+₹0
+A C C O U N T S R E C E I V A B L E A G I N G
+Aging Bucket
+Invoices
+Outstanding
+1–30 Days
+0
+₹0
+31–60 Days
+0
+₹0
+61–90 Days
+0
+₹0
+90+ Days
+0
+₹0
+C A S H D E N O M I N A T I O N C O V E R A G E
+Cash Collected
+₹0
+Cash Payments
+0
+With Denomination Breakdown
+0
+Without Breakdown
+0
+Documented Amount
+₹0
+Coverage
+—

@@ -1,0 +1,308 @@
+{
+  "generatedAt": "2026-08-22T20:02:50.814Z",
+  "sessionInfo": {
+    "id": 42,
+    "sessionName": "2027-2028",
+    "startDate": "2027-04-01",
+    "endDate": "2028-03-31"
+  },
+  "filter": {
+    "preset": "academic_year",
+    "startDate": "2027-04-01",
+    "endDate": "2028-03-31",
+    "label": "Academic Year 2027-2028",
+    "timezone": "Asia/Kolkata",
+    "comparison": null
+  },
+  "accountingBasis": {
+    "timezone": "Asia/Kolkata",
+    "billed": {
+      "label": "Due this period",
+      "recordAuthority": "fee_records",
+      "dateAuthority": "due_date",
+      "description": "Invoices whose due date falls in the selected IST date range."
+    },
+    "grossCollected": {
+      "label": "Gross collected",
+      "recordAuthority": "payment_records",
+      "dateAuthority": "received_date",
+      "description": "Successful recorded payments received in the selected IST date range."
+    },
+    "netCollected": {
+      "label": "Net collected",
+      "description": "The same successful payment total reported as gross collected."
+    },
+    "outstanding": {
+      "label": "Outstanding",
+      "description": "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments."
+    },
+    "collectionEfficiency": {
+      "label": "Collection efficiency",
+      "description": "Net collected divided by due-this-period demand; not applicable when no invoices are due in the selected range."
+    }
+  },
+  "summary": {
+    "billed": 335188,
+    "grossCollected": 0,
+    "netCollected": 0,
+    "outstanding": 59700,
+    "collectionEfficiency": 0,
+    "onlineCollected": 0,
+    "offlineCollected": 0,
+    "overdueAmount": 0,
+    "transactionCount": 0,
+    "totalLatePenalties": 0
+  },
+  "comparison": null,
+  "trend": [
+    {
+      "key": "2027-04",
+      "label": "Apr 27",
+      "startDate": "2027-04-01",
+      "billed": 312000,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-05",
+      "label": "May 27",
+      "startDate": "2027-05-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-06",
+      "label": "Jun 27",
+      "startDate": "2027-06-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-07",
+      "label": "Jul 27",
+      "startDate": "2027-07-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-08",
+      "label": "Aug 27",
+      "startDate": "2027-08-01",
+      "billed": 16700,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-09",
+      "label": "Sep 27",
+      "startDate": "2027-09-01",
+      "billed": 3688,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-10",
+      "label": "Oct 27",
+      "startDate": "2027-10-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-11",
+      "label": "Nov 27",
+      "startDate": "2027-11-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2027-12",
+      "label": "Dec 27",
+      "startDate": "2027-12-01",
+      "billed": 550,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2028-01",
+      "label": "Jan 28",
+      "startDate": "2028-01-01",
+      "billed": 1000,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2028-02",
+      "label": "Feb 28",
+      "startDate": "2028-02-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2028-03",
+      "label": "Mar 28",
+      "startDate": "2028-03-01",
+      "billed": 1250,
+      "grossCollected": 0,
+      "netCollected": 0
+    }
+  ],
+  "online": {
+    "grossCollected": 0,
+    "netCollected": 0,
+    "transactionCount": 0,
+    "averageTransaction": 0,
+    "statuses": [],
+    "methods": []
+  },
+  "offline": {
+    "grossCollected": 0,
+    "netCollected": 0,
+    "transactionCount": 0,
+    "averageTransaction": 0,
+    "statuses": [],
+    "methods": []
+  },
+  "paymentChannelSplit": {
+    "totalCollected": 0,
+    "totalTransactions": 0,
+    "channels": []
+  },
+  "classWise": [
+    {
+      "class": "2",
+      "billed": 54700,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 19700
+    },
+    {
+      "class": "6",
+      "billed": 171088,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "class": "7",
+      "billed": 54700,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 40000
+    },
+    {
+      "class": "8",
+      "billed": 54700,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    }
+  ],
+  "feeCategories": [
+    {
+      "feeType": "Annual yearly fee",
+      "billed": 210000,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 35000
+    },
+    {
+      "feeType": "Equipment fee",
+      "billed": 30000,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 10000
+    },
+    {
+      "feeType": "Example type",
+      "billed": 3688,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Laboratory purpose",
+      "billed": 1000,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math",
+      "billed": 600,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math fee",
+      "billed": 500,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math fees",
+      "billed": 550,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Monthly fee",
+      "billed": 16200,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 2700
+    },
+    {
+      "feeType": "Quaterly ",
+      "billed": 72000,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 12000
+    },
+    {
+      "feeType": "Science fee",
+      "billed": 650,
+      "grossCollected": 0,
+      "netCollected": 0,
+      "outstanding": 0
+    }
+  ],
+  "aging": [
+    {
+      "bucket": "1-30",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "31-60",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "61-90",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "90+",
+      "count": 0,
+      "amount": 0
+    }
+  ],
+  "cashDenominations": {
+    "cashCollected": 0,
+    "cashPaymentCount": 0,
+    "withBreakdownCount": 0,
+    "withoutBreakdownCount": 0,
+    "documentedAmount": 0,
+    "denominations": []
+  }
+}

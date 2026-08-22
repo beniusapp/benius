@@ -1,0 +1,393 @@
+{
+  "generatedAt": "2026-08-22T20:02:50.825Z",
+  "sessionInfo": {
+    "id": 42,
+    "sessionName": "2027-2028",
+    "startDate": "2027-04-01",
+    "endDate": "2028-03-31"
+  },
+  "filter": {
+    "preset": "custom",
+    "startDate": "2026-06-01",
+    "endDate": "2026-08-23",
+    "label": "2026-06-01 – 2026-08-23",
+    "timezone": "Asia/Kolkata",
+    "comparison": null
+  },
+  "accountingBasis": {
+    "timezone": "Asia/Kolkata",
+    "billed": {
+      "label": "Due this period",
+      "recordAuthority": "fee_records",
+      "dateAuthority": "due_date",
+      "description": "Invoices whose due date falls in the selected IST date range."
+    },
+    "grossCollected": {
+      "label": "Gross collected",
+      "recordAuthority": "payment_records",
+      "dateAuthority": "received_date",
+      "description": "Successful recorded payments received in the selected IST date range."
+    },
+    "netCollected": {
+      "label": "Net collected",
+      "description": "The same successful payment total reported as gross collected."
+    },
+    "outstanding": {
+      "label": "Outstanding",
+      "description": "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments."
+    },
+    "collectionEfficiency": {
+      "label": "Collection efficiency",
+      "description": "Net collected divided by due-this-period demand; not applicable when no invoices are due in the selected range."
+    }
+  },
+  "summary": {
+    "billed": 0,
+    "grossCollected": 275488,
+    "netCollected": 275488,
+    "outstanding": 0,
+    "collectionEfficiency": null,
+    "onlineCollected": 145050,
+    "offlineCollected": 130438,
+    "overdueAmount": 0,
+    "transactionCount": 25,
+    "totalLatePenalties": 0
+  },
+  "comparison": null,
+  "trend": [
+    {
+      "key": "2026-06",
+      "label": "Jun 26",
+      "startDate": "2026-06-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2026-07",
+      "label": "Jul 26",
+      "startDate": "2026-07-01",
+      "billed": 0,
+      "grossCollected": 0,
+      "netCollected": 0
+    },
+    {
+      "key": "2026-08",
+      "label": "Aug 26",
+      "startDate": "2026-08-01",
+      "billed": 0,
+      "grossCollected": 275488,
+      "netCollected": 275488
+    }
+  ],
+  "online": {
+    "grossCollected": 145050,
+    "netCollected": 145050,
+    "transactionCount": 10,
+    "averageTransaction": 14505,
+    "statuses": [
+      {
+        "status": "captured",
+        "count": 25,
+        "amount": 275488
+      },
+      {
+        "status": "cancelled",
+        "count": 12,
+        "amount": 198800
+      },
+      {
+        "status": "failed",
+        "count": 4,
+        "amount": 80000
+      }
+    ],
+    "methods": [
+      {
+        "method": "Card",
+        "count": 10,
+        "amount": 145050
+      }
+    ]
+  },
+  "offline": {
+    "grossCollected": 130438,
+    "netCollected": 130438,
+    "transactionCount": 15,
+    "averageTransaction": 8695.87,
+    "statuses": [
+      {
+        "status": "Cash",
+        "count": 5,
+        "amount": 53888
+      },
+      {
+        "status": "UPI / QR",
+        "count": 4,
+        "amount": 8850
+      },
+      {
+        "status": "Demand Draft",
+        "count": 3,
+        "amount": 15700
+      },
+      {
+        "status": "Bank Transfer",
+        "count": 2,
+        "amount": 17000
+      },
+      {
+        "status": "Cheque",
+        "count": 1,
+        "amount": 35000
+      }
+    ],
+    "methods": [
+      {
+        "method": "Cash",
+        "count": 5,
+        "amount": 53888
+      },
+      {
+        "method": "Cheque",
+        "count": 1,
+        "amount": 35000
+      },
+      {
+        "method": "Bank Transfer",
+        "count": 2,
+        "amount": 17000
+      },
+      {
+        "method": "Demand Draft",
+        "count": 3,
+        "amount": 15700
+      },
+      {
+        "method": "UPI / QR",
+        "count": 4,
+        "amount": 8850
+      }
+    ]
+  },
+  "paymentChannelSplit": {
+    "totalCollected": 275488,
+    "totalTransactions": 25,
+    "channels": [
+      {
+        "method": "Card",
+        "count": 10,
+        "amount": 145050,
+        "percentage": 52.65
+      },
+      {
+        "method": "Cash",
+        "count": 5,
+        "amount": 53888,
+        "percentage": 19.56
+      },
+      {
+        "method": "Cheque",
+        "count": 1,
+        "amount": 35000,
+        "percentage": 12.7
+      },
+      {
+        "method": "Bank Transfer",
+        "count": 2,
+        "amount": 17000,
+        "percentage": 6.17
+      },
+      {
+        "method": "Demand Draft",
+        "count": 3,
+        "amount": 15700,
+        "percentage": 5.7
+      },
+      {
+        "method": "UPI / QR",
+        "count": 4,
+        "amount": 8850,
+        "percentage": 3.21
+      }
+    ]
+  },
+  "classWise": [
+    {
+      "class": "2",
+      "billed": 0,
+      "grossCollected": 35000,
+      "netCollected": 35000,
+      "outstanding": 0
+    },
+    {
+      "class": "6",
+      "billed": 0,
+      "grossCollected": 171088,
+      "netCollected": 171088,
+      "outstanding": 0
+    },
+    {
+      "class": "7",
+      "billed": 0,
+      "grossCollected": 14700,
+      "netCollected": 14700,
+      "outstanding": 0
+    },
+    {
+      "class": "8",
+      "billed": 0,
+      "grossCollected": 54700,
+      "netCollected": 54700,
+      "outstanding": 0
+    }
+  ],
+  "feeCategories": [
+    {
+      "feeType": "Annual yearly fee",
+      "billed": 0,
+      "grossCollected": 175000,
+      "netCollected": 175000,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Equipment fee",
+      "billed": 0,
+      "grossCollected": 20000,
+      "netCollected": 20000,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Example type",
+      "billed": 0,
+      "grossCollected": 3688,
+      "netCollected": 3688,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Laboratory purpose",
+      "billed": 0,
+      "grossCollected": 1000,
+      "netCollected": 1000,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math",
+      "billed": 0,
+      "grossCollected": 600,
+      "netCollected": 600,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math fee",
+      "billed": 0,
+      "grossCollected": 500,
+      "netCollected": 500,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Math fees",
+      "billed": 0,
+      "grossCollected": 550,
+      "netCollected": 550,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Monthly fee",
+      "billed": 0,
+      "grossCollected": 13500,
+      "netCollected": 13500,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Quaterly ",
+      "billed": 0,
+      "grossCollected": 60000,
+      "netCollected": 60000,
+      "outstanding": 0
+    },
+    {
+      "feeType": "Science fee",
+      "billed": 0,
+      "grossCollected": 650,
+      "netCollected": 650,
+      "outstanding": 0
+    }
+  ],
+  "aging": [
+    {
+      "bucket": "1-30",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "31-60",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "61-90",
+      "count": 0,
+      "amount": 0
+    },
+    {
+      "bucket": "90+",
+      "count": 0,
+      "amount": 0
+    }
+  ],
+  "cashDenominations": {
+    "cashCollected": 53888,
+    "cashPaymentCount": 5,
+    "withBreakdownCount": 4,
+    "withoutBreakdownCount": 1,
+    "documentedAmount": 19388,
+    "denominations": [
+      {
+        "denomination": 500,
+        "quantity": 32,
+        "total": 16000
+      },
+      {
+        "denomination": 200,
+        "quantity": 14,
+        "total": 2800
+      },
+      {
+        "denomination": 100,
+        "quantity": 5,
+        "total": 500
+      },
+      {
+        "denomination": 50,
+        "quantity": 1,
+        "total": 50
+      },
+      {
+        "denomination": 20,
+        "quantity": 1,
+        "total": 20
+      },
+      {
+        "denomination": 10,
+        "quantity": 1,
+        "total": 10
+      },
+      {
+        "denomination": 5,
+        "quantity": 1,
+        "total": 5
+      },
+      {
+        "denomination": 2,
+        "quantity": 1,
+        "total": 2
+      },
+      {
+        "denomination": 1,
+        "quantity": 1,
+        "total": 1
+      }
+    ]
+  }
+}

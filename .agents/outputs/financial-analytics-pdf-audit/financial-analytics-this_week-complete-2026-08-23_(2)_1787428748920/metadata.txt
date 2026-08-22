@@ -1,0 +1,3 @@
+source=attached_assets/financial-analytics-this_week-complete-2026-08-23_(2)_1787428748920.pdf
+pages=4
+metadata={'format': 'PDF 1.3', 'title': '', 'author': '', 'subject': '', 'keywords': '', 'creator': 'PDFKit', 'producer': 'PDFKit', 'creationDate': 'D:20260822195805Z', 'modDate': '', 'trapped': '', 'encryption': None}
