@@ -49,7 +49,7 @@ const ACTION_LABELS: Record<string, string> = {
   update: "Updated",
   delete: "Deleted",
   payment: "Payment Received",
-  fifo_payment: "Payment Received",
+  fifo_payment: "Payment Allocated",
   payment_successful: "Payment Received",
   payment_captured: "Payment Received",
   payment_failed: "Payment Failed",
@@ -58,22 +58,88 @@ const ACTION_LABELS: Record<string, string> = {
   payment_blocked: "Payment Blocked",
   offline_payment_corrected: "Payment Corrected",
   refund_requested: "Refund Requested",
-  refund_created: "Refund Requested",
+  refund_created: "Refund Accepted",
   refund_processed: "Refund Processed",
   refund_failed: "Refund Failed",
   refund_reconciliation_required: "Refund Review Required",
   refund_superseded: "Refund Reconciled",
-  refund_speed_changed: "Refund Updated",
+  refund_speed_changed: "Refund Speed Changed",
   dispute_created: "Dispute Opened",
   dispute_won: "Dispute Won",
   dispute_lost: "Dispute Lost",
   dispute_updated: "Dispute Updated",
   dispute_closed: "Dispute Resolved",
   settings_change: "Settings Changed",
-  update_notification_config: "Settings Changed",
+  update_notification_config: "Notification Settings Changed",
+  backfill_receipts: "Receipts Backfilled",
+  reminder_sent: "Reminder Sent",
+  auto_overdue: "Invoice Marked Overdue",
   receipts_backfilled: "Receipts Backfilled",
   overdue: "Invoice Marked Overdue",
 };
+
+/**
+ * Actions that current Fees & Payments production paths can append.
+ * Legacy-only codes stay in ACTION_LABELS so old rows remain readable, but
+ * they are intentionally absent from the filter menu.
+ */
+export const CURRENT_FEE_AUDIT_ACTION_OPTIONS = Object.freeze([
+  { value: "create", label: "Created" },
+  { value: "update", label: "Updated" },
+  { value: "delete", label: "Deleted" },
+  { value: "payment", label: "Payment Received" },
+  { value: "fifo_payment", label: "Payment Allocated" },
+  { value: "offline_payment_corrected", label: "Payment Corrected" },
+  { value: "payment_authorized", label: "Payment Authorized" },
+  { value: "payment_failed", label: "Payment Failed" },
+  { value: "payment_cancelled", label: "Payment Cancelled" },
+  { value: "refund_requested", label: "Refund Requested" },
+  { value: "refund_created", label: "Refund Accepted" },
+  { value: "refund_processed", label: "Refund Processed" },
+  { value: "refund_failed", label: "Refund Failed" },
+  { value: "refund_reconciliation_required", label: "Refund Review Required" },
+  { value: "refund_superseded", label: "Refund Reconciled" },
+  { value: "refund_speed_changed", label: "Refund Speed Changed" },
+  { value: "dispute_created", label: "Dispute Opened" },
+  { value: "dispute_won", label: "Dispute Won" },
+  { value: "dispute_lost", label: "Dispute Lost" },
+  { value: "dispute_updated", label: "Dispute Updated" },
+  { value: "settings_change", label: "Settings Changed" },
+  { value: "update_notification_config", label: "Notification Settings Changed" },
+  { value: "backfill_receipts", label: "Receipts Backfilled" },
+  { value: "reminder_sent", label: "Reminder Sent" },
+  { value: "auto_overdue", label: "Invoice Marked Overdue" },
+] as const);
+
+const CURRENT_FEE_AUDIT_ACTIONS = new Set<string>(
+  CURRENT_FEE_AUDIT_ACTION_OPTIONS.map(option => option.value),
+);
+
+export function isCurrentFeeAuditAction(value: string): boolean {
+  return CURRENT_FEE_AUDIT_ACTIONS.has(value);
+}
+
+function isRealDateOnly(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+export function validateFeeAuditDateRange(
+  from?: string | null,
+  to?: string | null,
+): string | null {
+  if (from && !isRealDateOnly(from)) return "From date must be a valid calendar date.";
+  if (to && !isRealDateOnly(to)) return "To date must be a valid calendar date.";
+  if (from && to && from > to) return "From date must be on or before To date.";
+  return null;
+}
 
 function titleCaseCode(value: string): string {
   return value

@@ -56,11 +56,26 @@ import { eq, sql, like, count, and, desc, gte, lte, lt, or, ilike, isNull, inArr
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import {
+  CURRENT_FEE_AUDIT_ACTION_OPTIONS,
   feeAuditActionLabel,
   normalizeFeeAuditActorDisplay,
   safeFeeAuditDescription,
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
+
+const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
+
+/**
+ * Stored legacy prose can predate the audit redaction contract. Exclude an
+ * entire unsafe value from the searchable projection so hidden technical
+ * evidence cannot be discovered through result membership.
+ */
+function searchableFeeAuditText(column: SQL): SQL {
+  return sql`CASE
+    WHEN COALESCE(${column}, '') ~* ${UNSAFE_FEE_AUDIT_SEARCH_PATTERN} THEN ''
+    ELSE COALESCE(${column}, '')
+  END`;
+}
 
 function buildCalendarAudienceFilter(
   filter?: Array<{ cls: string; sec?: string }>
@@ -4977,7 +4992,9 @@ export class DatabaseStorage {
     actionOptions: Array<{ value: string; label: string }>;
   }> {
     const searchTrimmed = search?.trim() || null;
-    const searchPat = searchTrimmed ? `%${searchTrimmed}%` : null;
+    const searchPat = searchTrimmed
+      ? `%${searchTrimmed.replace(/[\\%_]/g, "\\$&")}%`
+      : null;
     const fromClause = from
       ? sql`AND (fal.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date >= ${from}::date`
       : sql``;
@@ -4986,18 +5003,23 @@ export class DatabaseStorage {
       : sql``;
     const actionClause = action ? sql`AND fal.action = ${action}` : sql``;
     const sessionClause = sessionId ? sql`AND fal.session_id = ${sessionId}` : sql``;
+    const searchableActorName = searchableFeeAuditText(sql`fal.actor_name`);
+    const searchableRecordLabel = searchableFeeAuditText(sql`fal.record_label`);
+    const searchableDescription = searchableFeeAuditText(sql`fal.description`);
     const searchClause = searchPat
       ? sql`AND (
-          COALESCE(fal.actor_name, '') ILIKE ${searchPat}
+          ${searchableActorName} ILIKE ${searchPat}
           OR COALESCE(fal.actor_identifier, '') ILIKE ${searchPat}
           OR COALESCE(fal.student_name, '') ILIKE ${searchPat}
           OR COALESCE(fal.student_identifier, '') ILIKE ${searchPat}
-          OR COALESCE(fal.record_label, '') ILIKE ${searchPat}
-          OR COALESCE(fal.description, '') ILIKE ${searchPat}
+          OR COALESCE(fal.student_id::text, '') ILIKE ${searchPat}
+          OR COALESCE(fal.entity_id::text, '') ILIKE ${searchPat}
+          OR ${searchableRecordLabel} ILIKE ${searchPat}
+          OR ${searchableDescription} ILIKE ${searchPat}
         )`
       : sql``;
 
-    const [countResult, rowsResult, actionResult] = await Promise.all([
+    const [countResult, rowsResult] = await Promise.all([
       db.execute(sql`
         SELECT COUNT(*)::int AS cnt
         FROM fee_audit_log fal
@@ -5028,12 +5050,6 @@ export class DatabaseStorage {
           ${fromClause} ${toClause} ${actionClause} ${sessionClause} ${searchClause}
         ORDER BY fal.created_at DESC, fal.id DESC
         LIMIT ${limit} OFFSET ${offset}
-      `),
-      db.execute(sql`
-        SELECT DISTINCT action
-        FROM fee_audit_log
-        WHERE school_id = ${schoolId}
-        ORDER BY action
       `),
     ]);
 
@@ -5074,14 +5090,10 @@ export class DatabaseStorage {
         createdAt: row.created_at,
       };
     });
-    const actionOptions = (actionResult.rows as any[]).map((row) => ({
-      value: String(row.action),
-      label: feeAuditActionLabel(String(row.action)),
-    }));
     return {
       entries,
       total: Number((countResult.rows[0] as any)?.cnt ?? 0),
-      actionOptions,
+      actionOptions: CURRENT_FEE_AUDIT_ACTION_OPTIONS.map(option => ({ ...option })),
     };
   }
 

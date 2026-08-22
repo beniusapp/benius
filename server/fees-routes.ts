@@ -80,10 +80,12 @@ import { feePeriodLabel } from "./fee-period";
 import {
   appendFeeAudit,
   describeFeeAuditChanges,
+  isCurrentFeeAuditAction,
   RAZORPAY_FEE_AUDIT_ACTOR,
   requestIpAddress,
   resolveFeeAuditActor,
   SYSTEM_FEE_AUDIT_ACTOR,
+  validateFeeAuditDateRange,
 } from "./fee-audit";
 
 // ── Signature background removal ─────────────────────────────────────────────
@@ -3706,6 +3708,11 @@ export function registerFeesRoutes(app: Express) {
     }).safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ message: "Invalid audit-log filters." });
     const { limit, offset, from, to, action, search, sessionId } = parsed.data;
+    const dateRangeError = validateFeeAuditDateRange(from, to);
+    if (dateRangeError) return res.status(400).json({ message: dateRangeError });
+    if (action && !isCurrentFeeAuditAction(action)) {
+      return res.status(400).json({ message: "The selected action is not available." });
+    }
     if (sessionId) {
       const sessions = await storage.getAcademicSessions(req.session.schoolId!);
       if (!sessions.some(session => session.id === sessionId)) {

@@ -6332,9 +6332,15 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
   const handleSearchTerm   = (v: string) => { setSearchTerm(v);   setPage(0); };
   const clearFilters       = () => { setFromDate(""); setToDate(""); setActionFilter(""); setSearchTerm(""); setPage(0); };
 
-  const hasFilter = fromDate || toDate || actionFilter || searchTerm;
+  const normalizedSearch = searchTerm.trim();
+  const invalidDateRange = Boolean(fromDate && toDate && fromDate > toDate);
+  const hasFilter = Boolean(fromDate || toDate || actionFilter || normalizedSearch);
 
-  const { data, isLoading, isError, refetch } = useQuery<{
+  useEffect(() => {
+    setPage(0);
+  }, [viewSessionId]);
+
+  const { data, isLoading, isError, error, refetch } = useQuery<{
     entries: AuditLogEntry[];
     total: number;
     actionOptions?: Array<{ value: string; label: string }>;
@@ -6345,13 +6351,17 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
       if (fromDate)     params.set("from",   fromDate);
       if (toDate)       params.set("to",     toDate);
       if (actionFilter) params.set("action", actionFilter);
-      if (searchTerm)   params.set("search", searchTerm);
+      if (normalizedSearch) params.set("search", normalizedSearch);
       if (viewSessionId) params.set("sessionId", String(viewSessionId));
       const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed");
+      if (!r.ok) {
+        const body = await r.json().catch(() => null);
+        throw new Error(body?.message || "The register could not be loaded.");
+      }
       return r.json();
     },
     staleTime: 15_000,
+    enabled: !invalidDateRange,
   });
 
   const totalPages = data ? Math.ceil(data.total / PAGE) : 0;
@@ -6393,7 +6403,8 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
             <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-slate-400" />
           <input
             type="text"
-            placeholder="Search student or record"
+            aria-label="Search fees activity"
+            placeholder="Search student, invoice, actor or description"
             value={searchTerm}
             onChange={e => handleSearchTerm(e.target.value)}
             className="h-8 w-full rounded-lg border border-[#d6e2df] bg-white pl-8 pr-3 text-xs text-slate-700 outline-none transition-shadow placeholder:text-slate-400 focus:border-[#62a99e] focus:ring-2 focus:ring-[#bde0d9]"
@@ -6404,6 +6415,8 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
           <input
             type="date"
             value={fromDate}
+            max={toDate || undefined}
+            aria-invalid={invalidDateRange}
             onChange={e => handleFromDate(e.target.value)}
             className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:light]"
           />
@@ -6413,6 +6426,8 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
           <input
             type="date"
             value={toDate}
+            min={fromDate || undefined}
+            aria-invalid={invalidDateRange}
             onChange={e => handleToDate(e.target.value)}
             className="bg-transparent text-xs text-slate-700 outline-none [color-scheme:light]"
           />
@@ -6436,8 +6451,15 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
             Clear filters
           </button>
         )}
-        <p className="ml-auto text-[11px] tabular-nums text-slate-500">{data ? `${data.total} entr${data.total !== 1 ? "ies" : "y"}` : "Loading register…"}</p>
+        <p className="ml-auto text-[11px] tabular-nums text-slate-500">
+          {invalidDateRange ? "Fix date range" : data ? `${data.total} entr${data.total !== 1 ? "ies" : "y"}` : "Loading register…"}
+        </p>
       </div>
+      {invalidDateRange && (
+        <p role="alert" className="mt-2 text-xs font-medium text-rose-700">
+          From date must be on or before To date.
+        </p>
+      )}
       </div>
 
       <div className="flex items-center justify-between gap-3">
@@ -6453,7 +6475,13 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
         </div>
       </div>
 
-      {isLoading ? (
+      {invalidDateRange ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-12 text-center">
+          <AlertTriangle className="mx-auto mb-2 h-7 w-7 text-rose-500" />
+          <p className="text-sm font-medium text-rose-800">Choose a From date that is on or before the To date.</p>
+          <p className="mt-1 text-xs text-rose-600">No audit records were requested for this invalid range.</p>
+        </div>
+      ) : isLoading ? (
         <div className="overflow-hidden rounded-xl border border-[#d8e1e0] bg-white">
           {[1, 2, 3, 4, 5].map(row => <div key={row} className="h-14 animate-pulse border-b border-[#edf2f1] bg-gradient-to-r from-[#f5f9f8] via-white to-[#f5f9f8]" />)}
         </div>
@@ -6461,12 +6489,13 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-12 text-center">
           <AlertTriangle className="mx-auto mb-2 h-7 w-7 text-rose-500" />
           <p className="text-sm font-medium text-rose-800">The register could not be loaded.</p>
+          <p className="mt-1 text-xs text-rose-600">{error instanceof Error ? error.message : "Please try again."}</p>
           <button onClick={() => refetch()} className="mt-3 text-xs font-semibold text-rose-700 underline underline-offset-2">Try again</button>
         </div>
       ) : !data?.entries.length ? (
         <div className="rounded-xl border border-dashed border-[#cbded9] bg-[#f8fbfa] px-4 py-16 text-center">
           <Shield className="mx-auto mb-3 h-10 w-10 text-[#8bbdb5]" />
-          <p className="text-sm font-medium text-[#315e59]">{hasFilter ? "No entries match these filters." : "No activity has been recorded yet."}</p>
+          <p className="text-sm font-medium text-[#315e59]">{hasFilter ? "No activity found for the selected filters." : "No activity has been recorded yet."}</p>
           <p className="mt-1 text-xs text-slate-500">{hasFilter ? "Try widening the date range or clearing a filter." : "Fee record changes will appear here as they happen."}</p>
         </div>
       ) : (
