@@ -538,55 +538,6 @@ app.use((req, res, next) => {
     UPDATE dunning_templates SET stage = 'D+14' WHERE stage = 'D14';
   `);
 
-  // ── Report email schedule table ──────────────────────────────────────────
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS report_email_schedule (
-      id              SERIAL PRIMARY KEY,
-      school_id       INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
-      enabled         BOOLEAN NOT NULL DEFAULT FALSE,
-      recipients      TEXT[]  NOT NULL DEFAULT '{}',
-      day_of_month    SMALLINT NOT NULL DEFAULT 1,
-      send_time       VARCHAR(5) NOT NULL DEFAULT '09:00',
-      last_sent_at    TIMESTAMP,
-      last_sent_month VARCHAR(7),
-      updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
-    );
-    ALTER TABLE report_email_schedule ADD COLUMN IF NOT EXISTS last_sent_month VARCHAR(7);
-    ALTER TABLE report_email_schedule ADD COLUMN IF NOT EXISTS day_of_month SMALLINT NOT NULL DEFAULT 1;
-    ALTER TABLE report_email_schedule ADD COLUMN IF NOT EXISTS send_time VARCHAR(5) NOT NULL DEFAULT '09:00';
-    ALTER TABLE report_email_schedule
-      DROP CONSTRAINT IF EXISTS report_email_schedule_day_of_month_check;
-    ALTER TABLE report_email_schedule
-      ADD CONSTRAINT report_email_schedule_day_of_month_check
-      CHECK (day_of_month BETWEEN 1 AND 31);
-    ALTER TABLE report_email_schedule
-      DROP CONSTRAINT IF EXISTS report_email_schedule_send_time_check;
-    ALTER TABLE report_email_schedule
-      ADD CONSTRAINT report_email_schedule_send_time_check
-      CHECK (send_time ~ '^[0-2][0-9]:[0-5][0-9]$');
-
-    CREATE TABLE IF NOT EXISTS report_email_delivery (
-      id              SERIAL PRIMARY KEY,
-      school_id       INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-      report_month    VARCHAR(7) NOT NULL,
-      recipient       TEXT NOT NULL,
-      status          VARCHAR(12) NOT NULL DEFAULT 'pending',
-      attempts        SMALLINT NOT NULL DEFAULT 0,
-      last_attempt_at TIMESTAMP,
-      next_retry_at   TIMESTAMP,
-      locked_until    TIMESTAMP,
-       claim_token     TEXT,
-      sent_at         TIMESTAMP,
-      last_error      TEXT,
-      updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
-      UNIQUE (school_id, report_month, recipient),
-      CHECK (status IN ('pending', 'sending', 'sent', 'failed'))
-    );
-    ALTER TABLE report_email_delivery ADD COLUMN IF NOT EXISTS claim_token TEXT;
-    CREATE INDEX IF NOT EXISTS report_email_delivery_due_idx
-      ON report_email_delivery(school_id, report_month, status, next_retry_at);
-  `);
-
   await pool.query(`
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(100);
     ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_expires_at TIMESTAMPTZ;
@@ -1312,23 +1263,6 @@ app.use((req, res, next) => {
   });
   // Also run once on startup to catch any fees that fell due during downtime
   runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
-
-  // ===== MONTHLY ANALYTICS REPORT EMAIL =====
-  // Check each minute in Asia/Kolkata. Each tenant's stored day/time policy
-  // decides whether it is due, and the delivery ledger makes this safe across
-  // restarts and concurrent instances.
-  const { runMonthlyAnalyticsReport } = await import("./analytics-report");
-  cron.schedule("* * * * *", async () => {
-    try {
-      await runMonthlyAnalyticsReport();
-    } catch (err) {
-      log(`Monthly analytics report job error: ${String(err)}`, "cron");
-    }
-  }, { timezone: "Asia/Kolkata" });
-  // Recover a delivery missed while the process was unavailable. The report
-  // runner sends only schedules whose configured IST date/time has passed.
-  runMonthlyAnalyticsReport().catch(err => log(`Monthly analytics startup check error: ${String(err)}`, "cron"));
-  log("Monthly analytics report scheduler active (per-school IST day/time)", "cron");
 
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
   // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has

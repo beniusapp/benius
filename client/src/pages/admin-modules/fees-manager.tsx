@@ -6504,14 +6504,6 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   const [endDate, setEndDate] = useState("");
   const [selectedBucket, setSelectedBucket] = useState<(typeof AGING_BUCKETS)[number] | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [recipients, setRecipients] = useState<string[]>([]);
-  const [recipientInput, setRecipientInput] = useState("");
-  const [scheduleDay, setScheduleDay] = useState(1);
-  const [scheduleTime, setScheduleTime] = useState("09:00");
-  const [savingSchedule, setSavingSchedule] = useState(false);
-  const [sendingNow, setSendingNow] = useState(false);
-  const scheduleFormHydrated = useRef(false);
   const handlePresetChange = (next: AnalyticsPreset) => {
     if (next === "custom") {
       setStartDate("");
@@ -6537,56 +6529,10 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     enabled: preset !== "custom" || (!!startDate && !!endDate && startDate <= endDate),
     staleTime: 0, refetchOnMount: "always",
   });
-  const { data: scheduleData, refetch: refetchSchedule } = useQuery<{
-    enabled: boolean;
-    recipients: string[];
-    dayOfMonth: number;
-    sendTime: string;
-    lastSentMonth?: string | null;
-    latestDelivery?: { reportMonth: string; sent: number; failed: number; pending: number; lastAttemptAt: string | null; lastError: string | null } | null;
-  }>({
-    queryKey: ["/api/admin/report-schedule"], queryFn: async () => { const r = await sessionFetch("/api/admin/report-schedule"); if (!r.ok) throw new Error("Schedule unavailable"); return r.json(); }, staleTime: 60_000,
-  });
-  useEffect(() => {
-    if (!scheduleData || scheduleFormHydrated.current) return;
-    setScheduleEnabled(scheduleData.enabled);
-    setRecipients(scheduleData.recipients ?? []);
-    setScheduleDay(scheduleData.dayOfMonth ?? 1);
-    setScheduleTime(scheduleData.sendTime ?? "09:00");
-    scheduleFormHydrated.current = true;
-  }, [scheduleData]);
-
   const fmtMoney = (v: unknown) => formatIndianRupees(Number(v ?? 0));
   const s = data?.summary ?? {};
   const paymentChannelSplit = data?.paymentChannelSplit;
   const agingData = useMemo(() => AGING_BUCKETS.map(b => ({ ...b, ...(data?.aging?.find(a => a.bucket === b.key) ?? { count: 0, amount: 0 }) })), [data]);
-  const addRecipient = () => {
-    const email = recipientInput.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || recipients.includes(email) || recipients.length >= 20) { toast({ title: "Recipient not added", description: "Enter a unique valid email address (up to 20).", variant: "destructive" }); return; }
-    setRecipients(r => [...r, email]); setRecipientInput("");
-  };
-  const saveSchedule = async () => {
-    if (scheduleEnabled && recipients.length === 0) {
-      toast({ title: "Add a recipient", description: "An enabled schedule needs at least one valid recipient.", variant: "destructive" });
-      return;
-    }
-    setSavingSchedule(true);
-    try { const r = await sessionFetch("/api/admin/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: scheduleEnabled, recipients, dayOfMonth: scheduleDay, sendTime: scheduleTime }) }); const body = await r.json().catch(() => ({})); if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not save schedule"); await refetchSchedule(); toast({ title: "Schedule saved" }); } catch (e) { toast({ title: "Schedule failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSavingSchedule(false); }
-  };
-  const sendNow = async () => {
-    if (!recipients.length) { toast({ title: "No recipients", description: "Add a recipient before sending.", variant: "destructive" }); return; }
-    setSendingNow(true);
-    try {
-      const save = await sessionFetch("/api/admin/report-schedule", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipients }) });
-      const saveBody = await save.json().catch(() => ({}));
-      if (!save.ok) throw new Error(saveBody.message ?? saveBody.error ?? "Could not save recipients");
-      const r = await sessionFetch("/api/admin/report-schedule/send-now", { method: "POST" });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.message ?? body.error ?? "Could not send report");
-      await refetchSchedule();
-      toast({ title: "Report sent", description: body.sent != null ? `Delivered to ${body.sent} recipient${body.sent === 1 ? "" : "s"}.` : undefined });
-    } catch (e) { toast({ title: "Send failed", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); } finally { setSendingNow(false); }
-  };
   const downloadPdf = async (section: string) => {
     setExporting(section);
     try {
@@ -6604,17 +6550,6 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
   };
   const moneyMetric = (label: string, key: string, tone: string) => { const change = changeFor(key); return <div className={`rounded-lg border p-3 ${tone}`}><div className="text-[10px] uppercase tracking-[.14em] text-white/45">{label}</div><div className="mt-1 text-lg font-bold tabular-nums text-white">{fmtMoney(s[key])}</div>{change != null && <div className={`mt-1 text-[10px] tabular-nums ${change >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{change >= 0 ? "+" : ""}{change}% prior period</div>}</div>; };
   const statusLabel = (status: string) => status.toLowerCase().split(/[_-]+/).map(word => word ? word[0].toUpperCase() + word.slice(1) : "").join(" ");
-  const scheduleDayLabel = `${scheduleDay}${scheduleDay % 10 === 1 && scheduleDay !== 11 ? "st" : scheduleDay % 10 === 2 && scheduleDay !== 12 ? "nd" : scheduleDay % 10 === 3 && scheduleDay !== 13 ? "rd" : "th"}${scheduleDay === 31 ? " (last day when needed)" : ""}`;
-  const [scheduleHour, scheduleMinute] = scheduleTime.split(":").map(Number);
-  const scheduleTimeLabel = `${String(((scheduleHour ?? 0) % 12) || 12).padStart(2, "0")}:${String(scheduleMinute ?? 0).padStart(2, "0")} ${(scheduleHour ?? 0) >= 12 ? "PM" : "AM"} IST`;
-  const latestDelivery = scheduleData?.latestDelivery;
-  const deliveryLabel = !latestDelivery
-    ? "No automatic delivery has run yet."
-    : latestDelivery.pending > 0
-      ? `Delivery for ${latestDelivery.reportMonth} is retrying (${latestDelivery.sent} sent, ${latestDelivery.failed} failed).`
-      : latestDelivery.failed > 0
-        ? `Delivery for ${latestDelivery.reportMonth} needs attention (${latestDelivery.sent} sent, ${latestDelivery.failed} failed).`
-        : `Delivered ${latestDelivery.sent} recipient${latestDelivery.sent === 1 ? "" : "s"} for ${latestDelivery.reportMonth}.`;
   const invalidCustom = preset === "custom" && (!startDate || !endDate || startDate > endDate);
   if (invalidCustom) return <div className="rounded-xl border border-cyan-300/15 bg-[#132238] p-4 text-white"><div className="flex flex-wrap items-center gap-2"><select value={preset} onChange={e => setPreset(e.target.value as AnalyticsPreset)} className="rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs"><option value="today">Today</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="academic_year">Academic Year</option><option value="custom">Custom</option></select><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} aria-label="Start date" className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" /><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} aria-label="End date" className="rounded-md border border-white/15 bg-[#0d1a2d] px-2 py-2 text-xs" /></div><p className="mt-2 text-[11px] text-amber-200/80">Choose both dates; start date must be on or before end date.</p></div>;
   if (isLoading) return <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 animate-pulse rounded-xl bg-white/5" />)}</div>;
@@ -6634,60 +6569,6 @@ function AnalyticsTab({ viewSessionId }: { viewSessionId: number | null }) {
     <Card><div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-semibold">Receivables aging</h3><p className="text-[11px] text-white/40">Select a bucket to inspect responsible students</p></div><DownloadButton section="aging" /></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-4">{agingData.map(b => <button key={b.key} onClick={() => b.count > 0 && setSelectedBucket(b)} disabled={!b.count} className="rounded-lg border p-3 text-left transition-colors hover:bg-white/[.05] disabled:cursor-default disabled:opacity-50" style={{ borderColor: `${b.color}45` }}><div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: b.color }}>{b.label}</div><div className="mt-2 text-lg font-bold tabular-nums">{fmtMoney(b.amount)}</div><div className="mt-1 text-[10px] text-white/40">{b.count} invoices · {b.risk} risk</div></button>)}</div>{agingData.every(b => !b.count) && <p className="py-5 text-center text-xs text-white/35">No overdue receivables in this range.</p>}</Card>
     <Card><div className="mb-3 flex justify-between"><div><h3 className="text-sm font-semibold">Cash denomination coverage</h3><p className="text-[11px] text-white/40">Documented cash breakdown versus cash collected</p></div><DownloadButton section="cash" /></div>{data.cashDenominations?.cashPaymentCount ? <div className="grid gap-4 md:grid-cols-[1fr_1.5fr]"><div className="grid grid-cols-2 gap-2 text-xs">{[["Cash collected",fmtMoney(data.cashDenominations.cashCollected)],["Cash payments",data.cashDenominations.cashPaymentCount],["With breakdown",data.cashDenominations.withBreakdownCount],["Without breakdown",data.cashDenominations.withoutBreakdownCount]].map(([l,v]) => <div key={String(l)} className="rounded bg-white/[.04] p-2"><span className="block text-[10px] text-white/40">{l}</span><b>{v}</b></div>)}</div><div className="overflow-x-auto"><table className="w-full min-w-[360px] text-xs"><thead className="text-[10px] text-white/40"><tr><th className="text-left">Denomination</th><th className="text-right">Quantity</th><th className="text-right">Documented total</th></tr></thead><tbody>{(data.cashDenominations.denominations ?? []).map(d => <tr key={d.denomination} className="border-t border-white/5"><td className="py-2">₹{d.denomination}</td><td className="py-2 text-right">{d.quantity}</td><td className="py-2 text-right">{fmtMoney(d.total)}</td></tr>)}</tbody></table></div></div> : <div className="rounded-lg border border-dashed border-amber-300/20 bg-amber-300/[.03] p-5 text-center text-xs text-amber-100/70">No cash denomination data is available for this range. Cash may be recorded without a breakdown.</div>}</Card>
     <AgingDefaultersDrawer bucket={selectedBucket} startDate={data.filter?.startDate} endDate={data.filter?.endDate} onClose={() => setSelectedBucket(null)} />
-    <Card>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">Monthly report schedule</h3>
-          <p className="mt-1 text-xs text-white/40">Email the complete Financial Analytics PDF for the previous completed calendar month.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Switch checked={scheduleEnabled} onCheckedChange={setScheduleEnabled} />
-          <span className="text-xs text-white/60">{scheduleEnabled ? "Enabled" : "Disabled"}</span>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3 rounded-lg border border-cyan-300/15 bg-cyan-300/[.03] p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-        <div><span className="block text-[10px] uppercase tracking-wider text-white/40">Schedule</span><b className="text-cyan-100">{scheduleDayLabel} · {scheduleTimeLabel}</b></div>
-        <div><span className="block text-[10px] uppercase tracking-wider text-white/40">Timezone</span><b className="text-cyan-100">Asia/Kolkata (IST)</b></div>
-        <div><span className="block text-[10px] uppercase tracking-wider text-white/40">Report period</span><b className="text-cyan-100">Previous calendar month</b></div>
-        <div><span className="block text-[10px] uppercase tracking-wider text-white/40">Recipients</span><b className="text-cyan-100">{recipients.length || "None"} configured</b></div>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs text-white/60">Day of month
-          <select value={scheduleDay} onChange={e => setScheduleDay(Number(e.target.value))} className="mt-1 block w-full rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs text-white" aria-label="Monthly report day of month">
-            {Array.from({ length: 31 }, (_, index) => index + 1).map(day => <option key={day} value={day}>{day}{day === 31 ? " (last day when needed)" : ""}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-white/60">Time (IST)
-          <input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} className="mt-1 block w-full rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs text-white" aria-label="Monthly report time in IST" />
-        </label>
-      </div>
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <input
-          type="email"
-          value={recipientInput}
-          onChange={e => setRecipientInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addRecipient(); } }}
-          placeholder="accounts@school.org"
-          aria-label="Report recipient email"
-          className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#0d1a2d] px-3 py-2 text-xs"
-        />
-        <button type="button" onClick={addRecipient} className="rounded-md bg-cyan-400/15 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-400/25">Add recipient</button>
-      </div>
-      <div className="mt-2 flex min-h-7 flex-wrap gap-2">
-        {recipients.map(email => <button type="button" key={email} onClick={() => setRecipients(r => r.filter(x => x !== email))} className="rounded bg-white/10 px-2 py-1 text-[10px] text-white/70 hover:bg-rose-400/20" aria-label={`Remove ${email}`}>{email} ×</button>)}
-        {!recipients.length && <span className="text-[11px] text-amber-100/70">Add at least one recipient before enabling the schedule.</span>}
-      </div>
-      <div className={`mt-4 rounded-md border p-3 text-[11px] ${latestDelivery?.failed ? "border-amber-300/25 bg-amber-300/[.04] text-amber-100" : "border-white/10 bg-white/[.025] text-white/60"}`}>
-        <b className="font-semibold text-white/80">Latest automatic delivery:</b> {deliveryLabel}
-        {latestDelivery?.lastAttemptAt && <span> Last attempted {formatDateTimeIST(latestDelivery.lastAttemptAt)}.</span>}
-        {latestDelivery?.lastError && <p className="mt-1 text-amber-100/80">Latest error: {latestDelivery.lastError}</p>}
-        <p className="mt-1 text-white/40">Delivery requires valid email provider settings and a sender address in Notification Settings.</p>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={saveSchedule} disabled={savingSchedule} className="rounded-md bg-cyan-400 px-3 py-2 text-xs font-bold text-[#082032] hover:bg-cyan-300 disabled:opacity-50">{savingSchedule ? "Saving…" : "Save schedule"}</button>
-        <button type="button" onClick={sendNow} disabled={sendingNow} className="rounded-md border border-white/15 px-3 py-2 text-xs font-semibold hover:bg-white/10">{sendingNow ? "Sending…" : "Send now"}</button>
-      </div>
-    </Card>
   </div>;
 }
 
