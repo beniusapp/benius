@@ -1,0 +1,106 @@
+I found another important issue in Financial Analytics that needs a STRICT data-reconciliation investigation.
+
+Look at the screenshots:
+
+TODAY
+
+Gross Collected = ₹58,388
+Online/Portal = ₹54,700
+Offline = ₹3,688
+
+But:
+Billed = ₹0
+Class Performance → Billed = ₹0
+Class Performance → Collected = ₹58,388
+Outstanding = ₹0
+Efficiency = 0%
+
+THIS WEEK
+
+Gross Collected = ₹2,75,488
+Online = ₹1,45,050
+Offline = ₹1,30,438
+
+But again:
+Billed = ₹0
+Class Performance → Billed = ₹0
+while Collected contains the correct-looking amounts.
+
+I do NOT want you to simply change the UI.
+
+First determine exactly WHY Billed is ₹0.
+
+It may be valid if "Billed" is based on invoice creation/issue date while "Collected" is based on successful payment date. For example, an invoice created on 20-Aug and paid on 22-Aug could legitimately produce Billed ₹0 and Collected ₹2,000 for the 22-Aug period.
+
+However, I need this verified from the actual database records and SQL/API logic.
+
+STRICT RECONCILIATION REQUIRED
+
+For Today, This Week, This Month, Academic Year and Custom:
+
+1. Identify exactly which database records are included in Billed.
+2. Identify exactly which records are included in Collected.
+3. Identify exactly which records are included in Outstanding.
+4. Identify exactly how Efficiency is calculated.
+5. Identify exactly how Class Performance Billed/Collected is calculated.
+6. Identify exactly how Fee Categories Billed/Collected is calculated.
+7. Verify that every amount uses the same IST (Asia/Kolkata) business-date authority.
+8. Verify that invoices created earlier but paid during the selected period are handled intentionally and correctly.
+9. Verify that invoices created during the selected period but unpaid are handled correctly.
+10. Verify refunds are handled correctly.
+11. Verify online and offline payments separately and in total.
+12. Verify the results directly against the underlying database records.
+
+VERY IMPORTANT
+
+Do NOT assume ₹0 is correct just because the API returns ₹0.
+
+Show me the actual accounting logic and records proving why it is ₹0.
+
+Also investigate this:
+
+If Billed = ₹0 and Collected = ₹58,388, why is Efficiency displayed as 0%?
+
+If the denominator is zero, displaying "0%" may be misleading. Consider whether the correct display should be "N/A", "—", or another clearly defined state.
+
+Cross-surface reconciliation
+
+For every selected range:
+
+Database
+→ Analytics API
+→ Analytics UI
+→ Class Performance
+→ Fee Categories
+→ Ledger & Transactions
+→ PDF
+
+must reconcile according to one clearly documented accounting definition.
+
+Do this for:
+
+Today + This Week + This Month + Academic Year + Custom
+
+And check EVERY financial field, not just Billed:
+
+- Billed
+- Gross Collected
+- Net Collected
+- Refunds
+- Outstanding
+- Efficiency
+- Online Collection
+- Offline Collection
+- Overdue Amount
+- Payment channel totals
+- Transaction counts
+- Average transaction
+- Class totals
+- Category totals
+- Aging
+- Trends
+- Cash/payment-method breakdowns
+
+If any value differs between Financial Analytics and Ledger, identify the exact reason and fix it.
+
+Do not mark this complete until the numbers are proven from the underlying records.
