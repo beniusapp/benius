@@ -85,6 +85,7 @@ import {
 import {
   buildLedgerFilterPredicates,
   buildLedgerInvoiceSessionPredicate,
+  buildLedgerPaymentDatePredicate,
   type LedgerFilterFields,
 } from "./ledger-filter-sql";
 import { feePeriodLabel } from "./fee-period";
@@ -2469,6 +2470,7 @@ export function registerFeesRoutes(app: Express) {
         // the UPDATE is rolled back automatically: fee_record stays Unpaid, the
         // webhook returns 500, and Razorpay retries until both operations commit.
         const now = new Date();
+        const paidDateIST = todayInIST(now);
         const activeSession = await storage.getActiveSession(schoolId);
         let idempotentDuplicate = false;
         try {
@@ -2476,7 +2478,7 @@ export function registerFeesRoutes(app: Express) {
             await tx.execute(sql`
               UPDATE fee_records
               SET status = 'Paid',
-                  paid_date = ${now.toISOString()},
+                  paid_date = ${paidDateIST},
                   receipt_number = ${receiptNumber},
                   razorpay_order_id = NULL,
                   razorpay_order_expires_at = NULL
@@ -2493,7 +2495,7 @@ export function registerFeesRoutes(app: Express) {
                 studentId: Number(feeRec.student_id),
                 paymentMethod: "Portal Payment",
                 referenceNumber: payment.id,        // pay_XXXX
-                receivedDate: todayInIST(now),
+                receivedDate: paidDateIST,
                 amount: Number(feeRec.amount) + lateFeeFromNotes,
                 lateFeePaid: lateFeeFromNotes,
                 cashierNotes: `Razorpay payment ID: ${payment.id}`,
@@ -3427,6 +3429,7 @@ export function registerFeesRoutes(app: Express) {
       // row.  Matches the pattern used in the webhook handler.
       const receiptNumber = await storage.nextReceiptNumber(schoolId, "ON");
       const now = new Date();
+      const paidDateIST = todayInIST(now);
       const activeSession = await storage.getActiveSession(schoolId);
 
       let idempotentDuplicate = false;
@@ -3437,7 +3440,7 @@ export function registerFeesRoutes(app: Express) {
           await tx.execute(sql`
             UPDATE fee_records
             SET status = 'Paid',
-                paid_date = ${now.toISOString()},
+                paid_date = ${paidDateIST},
                 receipt_number = ${receiptNumber},
                 razorpay_order_id = NULL,
                 razorpay_order_expires_at = NULL
@@ -3456,7 +3459,7 @@ export function registerFeesRoutes(app: Express) {
               paymentMethod: "Portal Payment",
               paymentMode: verifiedPayment.method ?? null,
               referenceNumber: razorpay_payment_id,
-              receivedDate: todayInIST(now),
+              receivedDate: paidDateIST,
               amount: verifiedCapture.amountPaise / 100,
               lateFeePaid: lateFeeFromOrder,
               cashierNotes: `Razorpay payment ID: ${razorpay_payment_id} (client-verified)`,
@@ -4753,11 +4756,15 @@ export function registerFeesRoutes(app: Express) {
       academicYear:      sql`fr.academic_year`,
       amount:            sql`fr.amount`,
       dueDate:           sql`fr.due_date`,
-      paidDate:          sql`fr.paid_date`,
       referenceNumber:   sql`COALESCE(lp.raw_reference_number, '')`,
     };
 
     const predicates   = buildLedgerFilterPredicates(csvFilters, fieldMap);
+    const paymentDatePredicate = buildLedgerPaymentDatePredicate(csvFilters, {
+      schoolId: sql`fr.school_id`,
+      feeRecordId: sql`fr.id`,
+    });
+    if (paymentDatePredicate) predicates.push(paymentDatePredicate);
     const sessionCond  = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
     const extraWhere   = predicates.length > 0
       ? sql`AND ${sql.join(predicates, sql` AND `)}`
@@ -4794,7 +4801,12 @@ export function registerFeesRoutes(app: Express) {
         GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
         fr.status            AS status,
         fr.due_date          AS due_date,
-        fr.paid_date         AS paid_date,
+        COALESCE((
+          SELECT MAX(ledger_paid_date.received_date)
+          FROM payment_records ledger_paid_date
+          WHERE ledger_paid_date.school_id = fr.school_id
+            AND ledger_paid_date.fee_record_id = fr.id
+        ), fr.paid_date) AS paid_date,
         fr.academic_year     AS academic_year,
         lp.raw_payment_method    AS payment_method,
         lp.raw_reference_number  AS reference_number,
@@ -4861,10 +4873,10 @@ export function registerFeesRoutes(app: Express) {
       "Class", "Section",
       "Fee Name", "Fee Type",
       "Fee Period", "Frequency",
-      "Amount (₹)",
+      "Invoice Amount (₹)",
       "Due Date",
       "Status",
-      "Paid On",
+      "Latest Payment On",
       "Acad. Year",
       "Notes",
       "Amount Paid (₹)", "Outstanding (₹)",
@@ -4994,10 +5006,14 @@ export function registerFeesRoutes(app: Express) {
         academicYear:   sql`fr.academic_year`,
         amount:         sql`fr.amount`,
         dueDate:        sql`fr.due_date`,
-        paidDate:       sql`fr.paid_date`,
         referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
       };
       const ledgerGetPreds = buildLedgerFilterPredicates(ledgerGetFilters, ledgerGetFields);
+      const ledgerGetPaymentDatePredicate = buildLedgerPaymentDatePredicate(ledgerGetFilters, {
+        schoolId: sql`fr.school_id`,
+        feeRecordId: sql`fr.id`,
+      });
+      if (ledgerGetPaymentDatePredicate) ledgerGetPreds.push(ledgerGetPaymentDatePredicate);
       const ledgerGetSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
       const ledgerGetExtraWhere = ledgerGetPreds.length > 0
         ? sql`AND ${sql.join(ledgerGetPreds, sql` AND `)}`
@@ -5022,7 +5038,12 @@ export function registerFeesRoutes(app: Express) {
           GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
           fr.status            AS status,
           fr.due_date          AS due_date,
-          fr.paid_date         AS paid_date,
+          COALESCE((
+            SELECT MAX(ledger_paid_date.received_date)
+            FROM payment_records ledger_paid_date
+            WHERE ledger_paid_date.school_id = fr.school_id
+              AND ledger_paid_date.fee_record_id = fr.id
+          ), fr.paid_date) AS paid_date,
           fr.academic_year     AS academic_year,
           lp.raw_payment_method    AS payment_method,
           lp.raw_reference_number  AS reference_number,
@@ -5177,10 +5198,14 @@ export function registerFeesRoutes(app: Express) {
         academicYear:   sql`fr.academic_year`,
         amount:         sql`fr.amount`,
         dueDate:        sql`fr.due_date`,
-        paidDate:       sql`fr.paid_date`,
         referenceNumber: sql`COALESCE(lp.raw_reference_number, '')`,
       };
       const ledgerPostPreds = buildLedgerFilterPredicates(ledgerPostFilters, ledgerPostFields);
+      const ledgerPostPaymentDatePredicate = buildLedgerPaymentDatePredicate(ledgerPostFilters, {
+        schoolId: sql`fr.school_id`,
+        feeRecordId: sql`fr.id`,
+      });
+      if (ledgerPostPaymentDatePredicate) ledgerPostPreds.push(ledgerPostPaymentDatePredicate);
       const ledgerPostSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
       const ledgerPostExtraWhere = ledgerPostPreds.length > 0
         ? sql`AND ${sql.join(ledgerPostPreds, sql` AND `)}`
@@ -5205,7 +5230,12 @@ export function registerFeesRoutes(app: Express) {
           GREATEST(fr.amount - COALESCE(p.total_paid, 0), 0)::int AS outstanding,
           fr.status            AS status,
           fr.due_date          AS due_date,
-          fr.paid_date         AS paid_date,
+          COALESCE((
+            SELECT MAX(ledger_paid_date.received_date)
+            FROM payment_records ledger_paid_date
+            WHERE ledger_paid_date.school_id = fr.school_id
+              AND ledger_paid_date.fee_record_id = fr.id
+          ), fr.paid_date) AS paid_date,
           fr.academic_year     AS academic_year,
           lp.raw_payment_method    AS payment_method,
           lp.raw_reference_number  AS reference_number,

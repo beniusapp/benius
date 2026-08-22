@@ -74,6 +74,41 @@ export interface LedgerFilterFields {
   referenceNumber?: SQL;
 }
 
+export interface LedgerPaymentDateFields {
+  schoolId: SQL;
+  feeRecordId: SQL;
+}
+
+/**
+ * Authoritative successful-payment calendar filter.
+ *
+ * fee_records.paid_date is only an invoice-level projection and historical
+ * online captures could write the prior UTC calendar day there. A Ledger
+ * invoice therefore matches a paid-date range when ANY persisted
+ * payment_records.received_date for that tenant/invoice is inside the range.
+ */
+export function buildLedgerPaymentDatePredicate(
+  filters: LedgerFilters,
+  fields: LedgerPaymentDateFields,
+): SQL | null {
+  const bounds: SQL[] = [];
+  if (filters.paidDateFrom) {
+    bounds.push(sql`ledger_paid_pr.received_date >= ${filters.paidDateFrom}`);
+  }
+  if (filters.paidDateTo) {
+    bounds.push(sql`ledger_paid_pr.received_date <= ${filters.paidDateTo}`);
+  }
+  if (bounds.length === 0) return null;
+
+  return sql`EXISTS (
+    SELECT 1
+    FROM payment_records ledger_paid_pr
+    WHERE ledger_paid_pr.school_id = ${fields.schoolId}
+      AND ledger_paid_pr.fee_record_id = ${fields.feeRecordId}
+      AND ${sql.join(bounds, sql` AND `)}
+  )`;
+}
+
 // ── Builder ───────────────────────────────────────────────────────────────────
 
 /**

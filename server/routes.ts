@@ -44,7 +44,12 @@ import path from "node:path";
 import fs from "node:fs";
 import { dateOnlyParts, replaceCalendarYear, todayInIST } from "@shared/ist-time";
 import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
-import { buildLedgerFilterPredicates, filtersRequirePaymentJoin, type LedgerFilterFields } from "./ledger-filter-sql";
+import {
+  buildLedgerFilterPredicates,
+  buildLedgerPaymentDatePredicate,
+  filtersRequirePaymentJoin,
+  type LedgerFilterFields,
+} from "./ledger-filter-sql";
 import {
   appendFeeAudit,
   describeFeeAuditChanges,
@@ -4430,11 +4435,15 @@ export async function registerRoutes(
       academicYear:  sql`fr.academic_year`,
       amount:        sql`fr.amount`,
       dueDate:       sql`fr.due_date`,
-      paidDate:      sql`fr.paid_date`,
       referenceNumber: sql`COALESCE(ledger_payment.raw_reference_number, '')`,
     };
 
     const filterPredicates = buildLedgerFilterPredicates(filters, filterFields);
+    const paymentDatePredicate = buildLedgerPaymentDatePredicate(filters, {
+      schoolId: sql`fr.school_id`,
+      feeRecordId: sql`fr.id`,
+    });
+    if (paymentDatePredicate) filterPredicates.push(paymentDatePredicate);
     conditions.push(...filterPredicates);
 
     const whereClause = sql.join(conditions, sql` AND `);
@@ -4483,7 +4492,12 @@ export async function registerRoutes(
         fr.fee_type AS "feeType",
         fr.amount,
         fr.due_date AS "dueDate",
-        fr.paid_date AS "paidDate",
+        COALESCE((
+          SELECT MAX(ledger_paid_date.received_date)
+          FROM payment_records ledger_paid_date
+          WHERE ledger_paid_date.school_id = fr.school_id
+            AND ledger_paid_date.fee_record_id = fr.id
+        ), fr.paid_date) AS "paidDate",
         fr.status,
         fr.receipt_number AS "receiptNumber",
         fr.invoice_number AS "invoiceNumber",

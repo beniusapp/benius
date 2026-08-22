@@ -13,6 +13,7 @@ import { emptyLedgerFilters, type LedgerFilters } from "@shared/ledger-filters";
 import {
   buildLedgerFilterPredicates,
   buildLedgerInvoiceSessionPredicate,
+  buildLedgerPaymentDatePredicate,
   filtersRequirePaymentJoin,
   type LedgerFilterFields,
 } from "../ledger-filter-sql";
@@ -234,6 +235,34 @@ describe("buildLedgerInvoiceSessionPredicate", () => {
 
   it("returns no predicate when there is no session scope", () => {
     expect(buildLedgerInvoiceSessionPredicate(null)).toBeNull();
+  });
+});
+
+describe("buildLedgerPaymentDatePredicate", () => {
+  it("uses a tenant-bound EXISTS over authoritative payment received dates", () => {
+    const predicate = buildLedgerPaymentDatePredicate(
+      withFilter({ paidDateFrom: "2026-08-22", paidDateTo: "2026-08-22" }),
+      { schoolId: sql`fr.school_id`, feeRecordId: sql`fr.id` },
+    );
+
+    expect(predicate).not.toBeNull();
+    const { text, params } = render(predicate!);
+    expect(text.toUpperCase()).toContain("EXISTS");
+    expect(text).toContain("payment_records");
+    expect(text).toContain("ledger_paid_pr.school_id = fr.school_id");
+    expect(text).toContain("ledger_paid_pr.fee_record_id = fr.id");
+    expect(text).toContain("ledger_paid_pr.received_date");
+    expect(text).not.toContain("fr.paid_date");
+    expect(params).toEqual(["2026-08-22", "2026-08-22"]);
+  });
+
+  it("returns no predicate when paid-date bounds are empty", () => {
+    expect(
+      buildLedgerPaymentDatePredicate(emptyLedgerFilters(), {
+        schoolId: sql`fr.school_id`,
+        feeRecordId: sql`fr.id`,
+      }),
+    ).toBeNull();
   });
 });
 

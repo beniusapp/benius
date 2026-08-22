@@ -158,7 +158,7 @@ export function buildFilterSummary(filters: LedgerFilters, selectionLabel?: stri
 // ── Summary math ───────────────────────────────────────────────────────────────
 export interface TxSummary {
   totalTransactions:  number;
-  totalAmount:        number;   // sum of amount for every displayed row
+  totalAmount:        number;   // lifecycle amount across every displayed row; not collected revenue
   successfulAmount:   number;   // captured/settled/refunded/partially-refunded rows
   failedAmount:       number;   // failed rows
   refundedAmount:     number;   // sum of refund_amount
@@ -724,7 +724,7 @@ export async function renderTransactionPdf(input: TransactionPdfInput): Promise<
       (doc as any).font("Bold").fontSize(HEADING_FS).fillColor(C_DARK)
         .text("TRANSACTION SUMMARY", TABLE_LEFT, headY, { lineBreak: false });
       (doc as any).font("Reg").fontSize(SUBTITLE_FS).fillColor(C_MUTED)
-        .text("Payment amounts for the selected report scope — totals exclude invoice amounts",
+        .text("Lifecycle amounts for this report — only Successful Amount is collected revenue",
           TABLE_LEFT, headY + HEADING_H, { lineBreak: false });
 
       const CARDS = [
@@ -738,7 +738,7 @@ export async function renderTransactionPdf(input: TransactionPdfInput): Promise<
           amtColor:    C_DARK,
         },
         {
-          label: "TOTAL TX AMOUNT",
+          label: "ALL STATUS AMOUNT",
           value: fmtINR(summary.totalAmount),
           isAmount: true,
           borderColor: "#c8d6e0",

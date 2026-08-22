@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, jsonb, check } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1124,7 +1124,10 @@ export const paymentRecords = pgTable("payment_records", {
   chequeDate: date("cheque_date"),
   // Branch name for cheque, DD, and bank transfer payments
   branchName: varchar("branch_name", { length: 100 }),
-});
+}, (table) => [
+  index("idx_payment_records_school_fee_received")
+    .on(table.schoolId, table.feeRecordId, table.receivedDate),
+]);
 export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
 export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
 export type PaymentRecord = typeof paymentRecords.$inferSelect;

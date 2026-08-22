@@ -7,6 +7,7 @@
  * payment_record rows not already represented by a payment_attempt.
  */
 import { normalizePaymentMethod } from "@shared/payment-method";
+import { dateOnlyInIST } from "@shared/ist-time";
 /**
  *
  * Key design decisions
@@ -45,6 +46,7 @@ import { db } from "./db";
 import {
   buildLedgerFilterPredicates,
   buildLedgerInvoiceSessionPredicate,
+  buildLedgerPaymentDatePredicate,
   type LedgerFilterFields,
 } from "./ledger-filter-sql";
 import type { LedgerFilters } from "@shared/ledger-filters";
@@ -107,13 +109,17 @@ export async function buildTransactionRows(
     academicYear:      sql`fr.academic_year`,
     amount:            sql`fr.amount`,
     dueDate:           sql`fr.due_date`,
-    paidDate:          sql`fr.paid_date`,
     // canonical filters resolve against the fee record's latest non-auto payment
     referenceNumber:   sql`COALESCE(lp.raw_reference_number, '')`,
     paymentMethod:     sql`lp.raw_payment_method`,
   };
 
   const invoicePredicates = buildLedgerFilterPredicates(txFilters, invoiceFields);
+  const paymentDatePredicate = buildLedgerPaymentDatePredicate(txFilters, {
+    schoolId: sql`fr.school_id`,
+    feeRecordId: sql`fr.id`,
+  });
+  if (paymentDatePredicate) invoicePredicates.push(paymentDatePredicate);
   const sessionPredicate  = buildLedgerInvoiceSessionPredicate(sessionFilter);
 
   const sessionCond: SQL = sessionPredicate ? sql`AND ${sessionPredicate}` : sql``;
@@ -335,7 +341,8 @@ export async function buildTransactionRows(
       pr.id                AS linked_pr_id,
       pr.reference_number  AS pr_reference_number,
       pr.payment_method    AS pr_payment_method,
-      pr.receipt_number    AS pr_receipt_number
+       pr.receipt_number    AS pr_receipt_number,
+       pr.received_date     AS pr_received_date
     FROM payment_attempts pa
     JOIN fee_records fr        ON fr.id = pa.fee_record_id AND fr.school_id = ${schoolId}
     LEFT JOIN students s       ON s.id = fr.student_id AND s.school_id = ${schoolId}
@@ -420,6 +427,10 @@ export async function buildTransactionRows(
           : null),
       status,
     );
+    const paidRangeDate = row.pr_received_date != null
+      ? String(row.pr_received_date).slice(0, 10)
+      : transactionDateInIST(transactionAt);
+    if (!matchesPaidDateRange(paidRangeDate, txFilters)) continue;
 
     // Method / reference coalesce with linked payment record + attempt fields.
     //
@@ -554,6 +565,10 @@ export async function buildTransactionRows(
         : row.received_date
           ? String(row.received_date)
           : (row.created_at ? String(row.created_at) : null);
+    const paidRangeDate = row.received_date != null
+      ? String(row.received_date).slice(0, 10)
+      : transactionDateInIST(transactionAt);
+    if (!matchesPaidDateRange(paidRangeDate, txFilters)) continue;
 
     txRows.push({
       id:               `pr:${prId}`,
@@ -596,6 +611,24 @@ export async function buildTransactionRows(
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+export function transactionDateInIST(value: string | null): string | null {
+  if (!value) return null;
+  const calendarDate = /^(\d{4}-\d{2}-\d{2})(?:$|[T\s])/.exec(value);
+  if (calendarDate && value.length === 10) return calendarDate[1]!;
+  return dateOnlyInIST(value);
+}
+
+export function matchesPaidDateRange(
+  date: string | null,
+  filters: Pick<LedgerFilters, "paidDateFrom" | "paidDateTo">,
+): boolean {
+  if (!filters.paidDateFrom && !filters.paidDateTo) return true;
+  if (!date) return false;
+  if (filters.paidDateFrom && date < filters.paidDateFrom) return false;
+  if (filters.paidDateTo && date > filters.paidDateTo) return false;
+  return true;
+}
 
 /**
  * Derive a display status from a payment_attempt outcome + processed refund.

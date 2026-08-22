@@ -110,6 +110,7 @@ type RawInvoice = {
 
 type RawPayment = {
   id: number;
+  invoice_number: string;
   fee_type: string;
   student_class: string;
   amount: number;
@@ -143,6 +144,7 @@ type IndependentLedger = {
   cashDenominations: FinancialAnalyticsResult["cashDenominations"];
   trendByKey: Map<string, { billed: number; grossCollected: number; refunds: number; netCollected: number }>;
   sourceCounts: { invoices: number; payments: number; refunds: number };
+  paymentInvoiceNumbers: string[];
 };
 
 function uid(): string {
@@ -713,6 +715,7 @@ async function independentLedger(
   const paymentResult = await db.execute(sql`
     SELECT
       pr.id,
+      fr.invoice_number,
       fr.fee_type,
       s.class AS student_class,
       pr.amount,
@@ -894,6 +897,7 @@ async function independentLedger(
     },
     trendByKey,
     sourceCounts: { invoices: invoices.length, payments: payments.length, refunds: refunds.length },
+    paymentInvoiceNumbers: [...new Set(payments.map((row) => row.invoice_number))].sort(),
   };
 }
 
@@ -1030,6 +1034,33 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
         ...service,
         generatedAt: "",
       });
+
+      const ledgerQuery = new URLSearchParams({
+        paidDateFrom: period.startDate,
+        paidDateTo: period.endDate,
+      });
+      const ledgerResponse = await fetch(
+        `${baseUrl}/api/admin/fees/export-ledger?${ledgerQuery.toString()}`,
+        { headers: { "x-view-session-id": String(fixture.sessionId) } },
+      );
+      expect(ledgerResponse.status, `${range.name}: Ledger CSV status`).toBe(200);
+      const ledgerCsv = (await ledgerResponse.text()).replace(/^\uFEFF/, "");
+      const ledgerLines = ledgerCsv.split(/\r?\n/).filter(Boolean);
+      expect(ledgerLines[0], `${range.name}: Ledger CSV authority labels`).toContain(
+        '"Invoice Amount (₹)"',
+      );
+      expect(ledgerLines[0], `${range.name}: Ledger CSV payment-date label`).toContain(
+        '"Latest Payment On"',
+      );
+      const ledgerInvoiceNumbers = ledgerLines.slice(1).map((line) => {
+        const firstCell = /^"((?:[^"]|"")*)",/.exec(line)?.[1];
+        if (firstCell == null) throw new Error(`Could not parse Ledger CSV row: ${line}`);
+        return firstCell.replace(/""/g, '"');
+      }).sort();
+      expect(
+        ledgerInvoiceNumbers,
+        `${range.name}: Analytics payment range -> Ledger invoice population`,
+      ).toEqual(expected.paymentInvoiceNumbers);
 
       const tempDir = await mkdtemp(join(tmpdir(), "financial-analytics-reconcile-"));
       try {

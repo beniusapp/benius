@@ -3095,8 +3095,8 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                   {([
                     ["Invoice No.","invoiceNumbers","text"],["Receipt No.","receiptNumbers","text"],["Student","studentNames","text"],["DSID","dsids","text"],
                     ["Class","classes","multi"],["Section","sections","multi"],["Fee Name","feeNames","multi"],["Fee Type","feeTypes","multi"],
-                    ["Fee Period","feePeriods","multi"],["Frequency","frequencies","multi"],["Amount","amountMin","range"],["Due Date","dueDateFrom","date"],
-                    ["Status","statuses","multi"],["Payment Method","paymentMethods","multi"],["Paid On","paidDateFrom","date"],["Acad. Year","academicYears","multi"],["Actions","","text"],
+                    ["Fee Period","feePeriods","multi"],["Frequency","frequencies","multi"],["Invoice Amount","amountMin","range"],["Due Date","dueDateFrom","date"],
+                    ["Status","statuses","multi"],["Payment Method","paymentMethods","multi"],["Latest Payment On","paidDateFrom","date"],["Acad. Year","academicYears","multi"],["Actions","","text"],
                   ] as const).map(([h, field, kind], i) => (
                     <th key={h} className={`px-4 py-3 text-white/50 font-medium text-xs ${i === 10 || i === 16 ? "text-right" : i >= 11 && i <= 15 ? "text-center" : "text-left"}`}>
                       <span className="inline-flex items-center gap-0.5">{h}{field && <HeaderFilter label={h} field={field as keyof LedgerFilters} toField={field === "amountMin" ? "amountMax" : field === "dueDateFrom" ? "dueDateTo" : field === "paidDateFrom" ? "paidDateTo" : undefined} filters={filters} setFilters={setFilters} kind={kind} options={(field === "feePeriods" ? (ledgerFilterOptions?.feePeriods ?? []) : (

@@ -437,6 +437,8 @@ app.use((req, res, next) => {
     );
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_records_school_fee_received
+      ON payment_records(school_id, fee_record_id, received_date);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
     CREATE TABLE IF NOT EXISTS receipt_sequences (
       id SERIAL PRIMARY KEY,

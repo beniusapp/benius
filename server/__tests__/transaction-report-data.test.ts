@@ -33,7 +33,11 @@ import {
 import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { emptyLedgerFilters } from "@shared/ledger-filters";
-import { buildTransactionRows } from "../transaction-report-data";
+import {
+  buildTransactionRows,
+  matchesPaidDateRange,
+  transactionDateInIST,
+} from "../transaction-report-data";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -938,5 +942,89 @@ describe("buildTransactionRows — empty invoice population", () => {
     // No fee records inserted
     const rows = await buildTransactionRows(schoolId, session1Id, emptyLedgerFilters());
     expect(rows).toEqual([]);
+  });
+});
+
+describe("transaction report paid-date authority", () => {
+  let fixture: Fixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("converts the prior UTC day to the correct IST calendar date", () => {
+    expect(transactionDateInIST("2026-08-21T22:51:24.997Z")).toBe("2026-08-22");
+    expect(transactionDateInIST("2026-08-22")).toBe("2026-08-22");
+    expect(matchesPaidDateRange("2026-08-22", {
+      paidDateFrom: "2026-08-22",
+      paidDateTo: "2026-08-22",
+    })).toBe(true);
+  });
+
+  it("matches an invoice by any payment in range and excludes its unrelated transactions", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId, session1Id } = fixture;
+
+    const [matchingInvoice] = await db.insert(feeRecords).values({
+      schoolId,
+      studentId,
+      sessionId: session1Id,
+      feeType: "Tuition",
+      amount: 3000,
+      dueDate: "2024-06-01",
+      paidDate: "2024-06-09",
+      status: "Paid",
+    }).returning();
+
+    await db.insert(paymentRecords).values([
+      {
+        schoolId,
+        studentId,
+        sessionId: session1Id,
+        feeRecordId: matchingInvoice.id,
+        paymentMethod: "Cash",
+        receivedDate: "2024-06-10",
+        amount: 1000,
+      },
+      {
+        schoolId,
+        studentId,
+        sessionId: session1Id,
+        feeRecordId: matchingInvoice.id,
+        paymentMethod: "Cash",
+        receivedDate: "2024-07-10",
+        amount: 2000,
+      },
+    ]);
+
+    const [projectionOnlyInvoice] = await db.insert(feeRecords).values({
+      schoolId,
+      studentId,
+      sessionId: session1Id,
+      feeType: "Transport",
+      amount: 4000,
+      dueDate: "2024-06-01",
+      paidDate: "2024-06-10",
+      status: "Paid",
+    }).returning();
+    await db.insert(paymentRecords).values({
+      schoolId,
+      studentId,
+      sessionId: session1Id,
+      feeRecordId: projectionOnlyInvoice.id,
+      paymentMethod: "Cash",
+      receivedDate: "2024-07-10",
+      amount: 4000,
+    });
+
+    const rows = await buildTransactionRows(schoolId, session1Id, {
+      ...emptyLedgerFilters(),
+      paidDateFrom: "2024-06-10",
+      paidDateTo: "2024-06-10",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.amount).toBe(1000);
+    expect(rows[0]!.transaction_at).toBe("2024-06-10");
   });
 });
