@@ -5,9 +5,9 @@ description: Durable rules for accurate, session-scoped financial reporting and 
 
 Financial analytics must have one canonical, server-side dataset consumed by the interactive API, every PDF export, and scheduled reports. Scope invoice populations by both tenant and the selected academic session.
 
-**Why:** Separate report queries and client-side aggregation drifted from the ledger, which made totals, refund dates, and exports disagree. Payment-attempt lifecycle events communicate portal state but do not represent booked money.
+**Why:** Separate report queries and client-side aggregation drifted from the ledger, which made totals and exports disagree. Payment-attempt lifecycle events communicate portal state but do not represent booked money.
 
-**How to apply:** Derive revenue only from persisted payment records; reduce it exactly once for processed refunds, using Asia/Kolkata calendar boundaries. Keep attempts/statuses as non-revenue operational counts. Return a prior-period comparison only when both ranges lie wholly within the selected session. Keep PDFs server-rendered from the same data and measure variable-length table rows before pagination so long labels cannot overlap rows or footers.
+**How to apply:** Derive revenue only from persisted payment records. Keep attempts/statuses as non-revenue operational counts. Return a prior-period comparison only when both ranges lie wholly within the selected session. Keep PDFs server-rendered from the same data and measure variable-length table rows before pagination so long labels cannot overlap rows or footers.
 
 For successful-payment calendar ranges, `payment_records.received_date` is authoritative. An invoice-level Ledger row matches a paid-date range when any tenant-bound payment for that invoice falls inside it; display the latest authoritative payment date, using the invoice paid-date projection only for legacy invoices with no payment record.
 
@@ -20,3 +20,9 @@ Due-period demand and collections intentionally use different date authorities. 
 **Why:** A payment can be received before or after its invoice due date. Showing paid receipts beside zero due-period demand is valid, but displaying a numeric 0% efficiency falsely suggests failed collection rather than an absent denominator.
 
 **How to apply:** Return the accounting basis with analytics API data and keep dashboard labels, PDF labels, trend/class/category headings, and report-copy aligned with it. Do not relabel receipts as due-period demand or backfill historical dates to make the two date populations appear to match.
+
+Financial Analytics reports only fee and payment operations that are currently supported and recorded. It has no refund metric, query, adjustment, comparison, or presentation; Net Collected equals Gross Collected throughout the canonical dataset.
+
+**Why:** The product does not currently have a real refund workflow, so refund analytics would imply financial operations that the system cannot reliably record or reconcile.
+
+**How to apply:** Keep refund tables and any future refund workflow outside the analytics contract until a complete, auditable refund process is deliberately introduced. When that happens, define its accounting authority first and update the canonical service, dashboard, PDFs, scheduled reports, and reconciliation tests together.

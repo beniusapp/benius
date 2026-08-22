@@ -14,24 +14,21 @@
  * 3. Billed = invoices whose due_date is in the selected period.
  * 4. Revenue (grossCollected) = payment_records.received_date in period.
  *    Only successful persisted payments are revenue — no payment_attempts.
- * 5. Refunds: only local_status='processed' rows from the refunds table.
- *    Each refund row counted once. Amount = COALESCE(processed_amount_paise,
- *    requested_amount_paise) / 100.
- * 6. Outstanding: for invoices due in range, lifetime payments are used (not
+ * 5. Outstanding: for invoices due in range, lifetime payments are used (not
  *    just period payments).
- * 7. Online = razorpay_payment_id present OR method is Portal Payment/Online.
+ * 6. Online = razorpay_payment_id present OR method is Portal Payment/Online.
  *    Offline = everything else.
- * 8. Denominations: only Cash payment_records in range with strict positive
+ * 7. Denominations: only Cash payment_records in range with strict positive
  *    integer keys and positive integer quantities in denomination_breakdown.
  *    Keys must be pure digit strings — "500foo" is rejected.
- * 9. Prior comparison: only when an equal-length preceding period fits within
+ * 8. Prior comparison: only when an equal-length preceding period fits within
  *    the same academic session.
- * 10. payment_attempts are used only for status counts. Each attempt is
+ * 9. payment_attempts are used only for status counts. Each attempt is
  *     included only when its outcome-specific lifecycle timestamp falls within
  *     the IST calendar range (not any timestamp on the row).
- * 11. Online methods show the persisted payment_mode instrument when present,
+ * 10. Online methods show the persisted payment_mode instrument when present,
  *     falling back to "Portal Payment". Offline methods use normalised labels.
- * 12. Historical online payment_records without an attempt (no rzp_payment_id
+ * 11. Historical online payment_records without an attempt (no rzp_payment_id
  *     in payment_attempts) appear in online statuses as "captured". They are
  *     identified by having a razorpay_payment_id on the payment_record itself.
  *     Only those not already represented by a payment_attempt are included.
@@ -81,7 +78,6 @@ export interface FinancialAnalyticsParams {
 export interface FinancialSummary {
   billed: number;
   grossCollected: number;
-  refunds: number;
   netCollected: number;
   outstanding: number;
   /** Net collected ÷ invoices due in the selected period; null when no invoice is due. */
@@ -96,12 +92,10 @@ export interface FinancialSummary {
 export interface ComparisonSummary {
   billed: number;
   grossCollected: number;
-  refunds: number;
   netCollected: number;
   billedChange: number | null;
   grossCollectedChange: number | null;
   netCollectedChange: number | null;
-  refundsChange: number | null;
 }
 
 export interface TrendPoint {
@@ -110,13 +104,11 @@ export interface TrendPoint {
   startDate: string;
   billed: number;
   grossCollected: number;
-  refunds: number;
   netCollected: number;
 }
 
 export interface ChannelBreakdown {
   grossCollected: number;
-  refunds: number;
   netCollected: number;
   transactionCount: number;
   averageTransaction: number;
@@ -128,7 +120,6 @@ export interface ClassWiseRow {
   class: string;
   billed: number;
   grossCollected: number;
-  refunds: number;
   netCollected: number;
   outstanding: number;
 }
@@ -137,7 +128,6 @@ export interface FeeCategoryRow {
   feeType: string;
   billed: number;
   grossCollected: number;
-  refunds: number;
   netCollected: number;
   outstanding: number;
 }
@@ -192,12 +182,6 @@ export interface FinancialAnalyticsAccountingBasis {
     dateAuthority: "received_date";
     description: string;
   };
-  refunds: {
-    label: "Processed refunds";
-    recordAuthority: "refunds";
-    dateAuthority: "provider_processed_at_or_updated_at";
-    description: string;
-  };
   netCollected: { label: "Net collected"; description: string };
   outstanding: { label: "Outstanding"; description: string };
   collectionEfficiency: { label: "Collection efficiency"; description: string };
@@ -233,19 +217,13 @@ const FINANCIAL_ANALYTICS_ACCOUNTING_BASIS: FinancialAnalyticsAccountingBasis = 
     dateAuthority: "received_date",
     description: "Successful recorded payments received in the selected IST date range.",
   },
-  refunds: {
-    label: "Processed refunds",
-    recordAuthority: "refunds",
-    dateAuthority: "provider_processed_at_or_updated_at",
-    description: "Processed refunds dated by provider processing time, or update time when the provider time is unavailable, in the selected IST date range.",
-  },
   netCollected: {
     label: "Net collected",
-    description: "Gross collected less processed refunds for the selected IST date range.",
+    description: "The same successful payment total reported as gross collected.",
   },
   outstanding: {
     label: "Outstanding",
-    description: "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments and processed refunds.",
+    description: "Lifetime unpaid balance of invoices due in the selected IST date range, after successful payments.",
   },
   collectionEfficiency: {
     label: "Collection efficiency",
@@ -579,17 +557,7 @@ export async function buildFinancialAnalytics(
         FROM payment_records pr2
         WHERE pr2.fee_record_id = fr.id
           AND pr2.school_id = ${schoolId}
-      ), 0) AS lifetime_paid,
-      -- lifetime processed refunds for this invoice (in INR)
-      COALESCE((
-        SELECT SUM(
-          COALESCE(rf2.processed_amount_paise, rf2.requested_amount_paise)
-        ) / 100.0
-        FROM refunds rf2
-        WHERE rf2.fee_record_id = fr.id
-          AND rf2.school_id = ${schoolId}
-          AND rf2.local_status = 'processed'
-      ), 0) AS lifetime_refunds
+      ), 0) AS lifetime_paid
     FROM fee_records fr
     JOIN students s ON s.id = fr.student_id AND s.school_id = ${schoolId}
     WHERE fr.school_id = ${schoolId}
@@ -645,46 +613,7 @@ export async function buildFinancialAnalytics(
       AND pr.received_date <= ${endDate}
   `);
 
-  // ── Step 5: Fetch processed refunds (dated in period, session-scoped) ────────
-  // Dated by COALESCE(provider_processed_at, updated_at), converted to the
-  // Asia/Kolkata (IST) calendar — matching the payment_attempts lifecycle rule.
-  // effective_date is returned as an explicit IST YYYY-MM-DD string and
-  // effective_hour_ist as an integer 0-23, so JS-side daily/monthly/hourly
-  // aggregation is deterministic and never re-derives the timezone.
-  const refundsResult = await db.execute(sql`
-    SELECT
-      rf.id,
-      rf.school_id,
-      rf.fee_record_id,
-      rf.payment_record_id,
-      rf.razorpay_payment_id,
-      rf.local_status,
-      COALESCE(rf.processed_amount_paise, rf.requested_amount_paise) AS amount_paise,
-      to_char(
-        (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata'),
-        'YYYY-MM-DD'
-      ) AS effective_date,
-      EXTRACT(HOUR FROM
-        (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata')
-      )::int AS effective_hour_ist,
-      fr.fee_type AS fee_type,
-      s.class     AS student_class,
-      pr.payment_method      AS pr_payment_method,
-      pr.razorpay_payment_id AS pr_razorpay_id
-    FROM refunds rf
-    JOIN fee_records fr ON fr.id = rf.fee_record_id
-                        AND fr.school_id = ${schoolId}
-                        AND fr.session_id = ${sessionId}
-    LEFT JOIN payment_records pr ON pr.id = rf.payment_record_id
-                                 AND pr.school_id = ${schoolId}
-    LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = ${schoolId}
-    WHERE rf.school_id    = ${schoolId}
-      AND rf.local_status = 'processed'
-      AND (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata')::date >= ${startDate}::date
-      AND (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata')::date <= ${endDate}::date
-  `);
-
-  // ── Step 6: payment_attempts — status counts only, NOT revenue ────────────────
+  // ── Step 5: payment_attempts — status counts only, NOT revenue ────────────────
   // Each attempt is included only when its outcome-specific lifecycle timestamp
   // (converted to IST calendar date) falls within [startDate, endDate]:
   //   captured          → rzp_captured_at    fallback created_at
@@ -729,9 +658,8 @@ export async function buildFinancialAnalytics(
         ${startDate}::date AND (${endDate}::date + INTERVAL '1 day' - INTERVAL '1 second')
   `);
 
-  // ── Step 7: Comparison period data (if applicable) ────────────────────────────
+  // ── Step 6: Comparison period data (if applicable) ────────────────────────────
   let compPayments: any[] = [];
-  let compRefunds: any[] = [];
   let compBilled: any[] = [];
 
   if (comparisonRange) {
@@ -760,25 +688,12 @@ export async function buildFinancialAnalytics(
     `);
     compPayments = cpResult.rows as any[];
 
-    const crResult = await db.execute(sql`
-      SELECT COALESCE(rf.processed_amount_paise, rf.requested_amount_paise) AS amount_paise
-      FROM refunds rf
-      JOIN fee_records fr ON fr.id = rf.fee_record_id
-                          AND fr.school_id = ${schoolId}
-                          AND fr.session_id = ${sessionId}
-      WHERE rf.school_id    = ${schoolId}
-        AND rf.local_status = 'processed'
-        AND (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata')::date >= ${cs}::date
-        AND (COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata')::date <= ${ce}::date
-    `);
-    compRefunds = crResult.rows as any[];
   }
 
   // ── Aggregate ──────────────────────────────────────────────────────────────────
 
   const billedRows   = billedResult.rows   as any[];
   const paymentRows  = paymentsResult.rows as any[];
-  const refundRows   = refundsResult.rows  as any[];
   const attemptRows  = attemptsResult.rows as any[];
 
   // ── Billed invoice aggregation ────────────────────────────────────────────────
@@ -793,8 +708,7 @@ export async function buildFinancialAnalytics(
   for (const row of billedRows) {
     const billed        = Number(row.amount) + Number(row.late_fee_amount ?? 0);
     const lifetimePaid  = Number(row.lifetime_paid   ?? 0);
-    const lifetimeRefunds = Number(row.lifetime_refunds ?? 0);
-    const unpaid        = Math.max(0, billed - lifetimePaid + lifetimeRefunds);
+    const unpaid        = Math.max(0, billed - lifetimePaid);
 
     totalBilled      += billed;
     totalOutstanding += unpaid;
@@ -829,8 +743,8 @@ export async function buildFinancialAnalytics(
   let offlineCount     = 0;
   let totalLatePenalties = 0;
 
-  const classRevenue = new Map<string, { gross: number; refunds: number }>();
-  const catRevenue   = new Map<string, { gross: number; refunds: number }>();
+  const classRevenue = new Map<string, number>();
+  const catRevenue   = new Map<string, number>();
 
   // method label → {count, amount}
   const onlineMethods  = new Map<string, { count: number; amount: number }>();
@@ -874,13 +788,8 @@ export async function buildFinancialAnalytics(
       offlineMethods.set(mLabel, om);
     }
 
-    const crEntry  = classRevenue.get(cls) ?? { gross: 0, refunds: 0 };
-    crEntry.gross += amount;
-    classRevenue.set(cls, crEntry);
-
-    const catEntry  = catRevenue.get(cat) ?? { gross: 0, refunds: 0 };
-    catEntry.gross += amount;
-    catRevenue.set(cat, catEntry);
+    classRevenue.set(cls, (classRevenue.get(cls) ?? 0) + amount);
+    catRevenue.set(cat, (catRevenue.get(cat) ?? 0) + amount);
 
     // Cash denominations
     if (method === "Cash") {
@@ -920,35 +829,7 @@ export async function buildFinancialAnalytics(
     }
   }
 
-  // ── Refund aggregation ────────────────────────────────────────────────────────
-  let totalRefunds  = 0;
-  let onlineRefunds  = 0;
-  let offlineRefunds = 0;
-
-  for (const row of refundRows) {
-    const amount  = Number(row.amount_paise ?? 0) / 100;
-    const rzpId   = row.razorpay_payment_id ?? row.pr_razorpay_id;
-    const method  = row.pr_payment_method ? String(row.pr_payment_method) : null;
-    // A razorpay_payment_id on the refund itself always means online
-    const online  = isOnlinePayment(method, rzpId ? String(rzpId) : null) ||
-                    !!row.razorpay_payment_id;
-    const cls     = String(row.student_class ?? "Unknown");
-    const cat     = String(row.fee_type      ?? "Unknown");
-
-    totalRefunds += amount;
-    if (online) onlineRefunds  += amount;
-    else        offlineRefunds += amount;
-
-    const crEntry  = classRevenue.get(cls) ?? { gross: 0, refunds: 0 };
-    crEntry.refunds += amount;
-    classRevenue.set(cls, crEntry);
-
-    const catEntry  = catRevenue.get(cat) ?? { gross: 0, refunds: 0 };
-    catEntry.refunds += amount;
-    catRevenue.set(cat, catEntry);
-  }
-
-  const netCollected = grossCollected - totalRefunds;
+  const netCollected = grossCollected;
 
   const collectionEfficiency = totalBilled > 0
     ? Math.round((netCollected / totalBilled) * 1000) / 10
@@ -1025,12 +906,11 @@ export async function buildFinancialAnalytics(
   }
 
   // ── Build channel breakdown objects ───────────────────────────────────────────
-  const onlineNetCollected  = onlineGross  - onlineRefunds;
-  const offlineNetCollected = offlineGross - offlineRefunds;
+  const onlineNetCollected  = onlineGross;
+  const offlineNetCollected = offlineGross;
 
   const onlineBreakdown: ChannelBreakdown = {
     grossCollected:   onlineGross,
-    refunds:          onlineRefunds,
     netCollected:     onlineNetCollected,
     transactionCount: onlineCount,
     averageTransaction: onlineCount > 0
@@ -1044,7 +924,6 @@ export async function buildFinancialAnalytics(
 
   const offlineBreakdown: ChannelBreakdown = {
     grossCollected:   offlineGross,
-    refunds:          offlineRefunds,
     netCollected:     offlineNetCollected,
     transactionCount: offlineCount,
     averageTransaction: offlineCount > 0
@@ -1061,13 +940,12 @@ export async function buildFinancialAnalytics(
   const classWise: ClassWiseRow[] = [];
   for (const cls of [...allClasses].sort()) {
     const b = classBilled.get(cls)  ?? { billed: 0, outstanding: 0 };
-    const r = classRevenue.get(cls) ?? { gross: 0,  refunds: 0 };
+    const collected = classRevenue.get(cls) ?? 0;
     classWise.push({
       class:          cls,
       billed:         b.billed,
-      grossCollected: r.gross,
-      refunds:        r.refunds,
-      netCollected:   r.gross - r.refunds,
+      grossCollected: collected,
+      netCollected:   collected,
       outstanding:    b.outstanding,
     });
   }
@@ -1077,13 +955,12 @@ export async function buildFinancialAnalytics(
   const feeCategories: FeeCategoryRow[] = [];
   for (const cat of [...allCats].sort()) {
     const b = catBilled.get(cat)  ?? { billed: 0, outstanding: 0 };
-    const r = catRevenue.get(cat) ?? { gross: 0,  refunds: 0 };
+    const collected = catRevenue.get(cat) ?? 0;
     feeCategories.push({
       feeType:        cat,
       billed:         b.billed,
-      grossCollected: r.gross,
-      refunds:        r.refunds,
-      netCollected:   r.gross - r.refunds,
+      grossCollected: collected,
+      netCollected:   collected,
       outstanding:    b.outstanding,
     });
   }
@@ -1131,13 +1008,12 @@ export async function buildFinancialAnalytics(
   };
 
   // ── Trend ─────────────────────────────────────────────────────────────────────
-  const trend = buildTrend(preset, startDate, endDate, billedRows, paymentRows, refundRows);
+  const trend = buildTrend(preset, startDate, endDate, billedRows, paymentRows);
 
   // ── Summary ───────────────────────────────────────────────────────────────────
   const summary: FinancialSummary = {
     billed:             totalBilled,
     grossCollected,
-    refunds:            totalRefunds,
     netCollected,
     outstanding:        totalOutstanding,
     collectionEfficiency,
@@ -1155,18 +1031,15 @@ export async function buildFinancialAnalytics(
       (acc, r) => acc + Number(r.amount ?? 0) + Number(r.late_fee_amount ?? 0), 0,
     );
     const cGross   = compPayments.reduce((acc, r) => acc + Number(r.amount ?? 0), 0);
-    const cRefunds = compRefunds.reduce((acc, r) => acc + Number(r.amount_paise ?? 0) / 100, 0);
-    const cNet     = cGross - cRefunds;
+    const cNet     = cGross;
 
     comparison = {
       billed:              cBilled,
       grossCollected:      cGross,
-      refunds:             cRefunds,
       netCollected:        cNet,
       billedChange:        pctChange(cBilled,  totalBilled),
       grossCollectedChange: pctChange(cGross,  grossCollected),
       netCollectedChange:  pctChange(cNet,     netCollected),
-      refundsChange:       pctChange(cRefunds, totalRefunds),
     };
   }
 
@@ -1220,23 +1093,22 @@ function buildTrend(
   endDate: string,
   billedRows: any[],
   paymentRows: any[],
-  refundRows: any[],
 ): TrendPoint[] {
   const spanDays = daysBetween(startDate, endDate) + 1;
 
   if (preset === "today") {
-    return buildHourlyTrend(startDate, billedRows, paymentRows, refundRows);
+    return buildHourlyTrend(startDate, billedRows, paymentRows);
   } else if (preset === "academic_year" || spanDays > 62) {
-    return buildMonthlyTrend(startDate, endDate, billedRows, paymentRows, refundRows);
+    return buildMonthlyTrend(startDate, endDate, billedRows, paymentRows);
   } else {
-    return buildDailyTrend(startDate, endDate, billedRows, paymentRows, refundRows);
+    return buildDailyTrend(startDate, endDate, billedRows, paymentRows);
   }
 }
 
 /**
  * Hourly trend for the "today" preset.
  *
- * - grossCollected / refunds are placed in the bucket whose IST hour matches
+ * - Collected values are placed in the bucket whose IST hour matches
  *   payment_records.created_at (the moment of payment creation).
  * - The entire day-level billed total is placed in bucket "00" (midnight) so
  *   that the sum across all hourly billed values equals summary.billed.
@@ -1247,7 +1119,6 @@ function buildHourlyTrend(
   date: string,
   billedRows: any[],
   paymentRows: any[],
-  refundRows: any[],
 ): TrendPoint[] {
   const points: TrendPoint[] = [];
   for (let h = 0; h < 24; h++) {
@@ -1259,7 +1130,6 @@ function buildHourlyTrend(
       startDate: `${date}T${key}:00`,
       billed:         0,
       grossCollected: 0,
-      refunds:        0,
       netCollected:   0,
     });
   }
@@ -1281,17 +1151,8 @@ function buildHourlyTrend(
     if (pt) pt.grossCollected += Number(row.amount ?? 0);
   }
 
-  for (const row of refundRows) {
-    // effective_hour_ist is the IST wall-clock hour (0-23) computed in SQL;
-    // use it directly rather than re-parsing a timestamp and shifting by 330m.
-    if (row.effective_hour_ist === null || row.effective_hour_ist === undefined) continue;
-    const istHour = Number(row.effective_hour_ist);
-    const pt      = points[istHour];
-    if (pt) pt.refunds += Number(row.amount_paise ?? 0) / 100;
-  }
-
   for (const pt of points) {
-    pt.netCollected = pt.grossCollected - pt.refunds;
+    pt.netCollected = pt.grossCollected;
   }
 
   return points;
@@ -1305,7 +1166,6 @@ function buildDailyTrend(
   endDate: string,
   billedRows: any[],
   paymentRows: any[],
-  refundRows: any[],
 ): TrendPoint[] {
   const days   = daysBetween(startDate, endDate) + 1;
   const points: TrendPoint[] = [];
@@ -1318,7 +1178,6 @@ function buildDailyTrend(
       startDate:      d,
       billed:         0,
       grossCollected: 0,
-      refunds:        0,
       netCollected:   0,
     });
   }
@@ -1339,14 +1198,7 @@ function buildDailyTrend(
       points[i]!.grossCollected += Number(row.amount ?? 0);
   }
 
-  for (const row of refundRows) {
-    const eff = String(row.effective_date ?? "").slice(0, 10);
-    const i   = idx.get(eff);
-    if (i !== undefined)
-      points[i]!.refunds += Number(row.amount_paise ?? 0) / 100;
-  }
-
-  for (const pt of points) pt.netCollected = pt.grossCollected - pt.refunds;
+  for (const pt of points) pt.netCollected = pt.grossCollected;
 
   return points;
 }
@@ -1359,7 +1211,6 @@ function buildMonthlyTrend(
   endDate: string,
   billedRows: any[],
   paymentRows: any[],
-  refundRows: any[],
 ): TrendPoint[] {
   const points: TrendPoint[] = [];
   let cursor  = startDate.slice(0, 7); // YYYY-MM
@@ -1372,7 +1223,6 @@ function buildMonthlyTrend(
       startDate:      cursor + "-01",
       billed:         0,
       grossCollected: 0,
-      refunds:        0,
       netCollected:   0,
     });
     const [y, m] = cursor.split("-").map(Number);
@@ -1398,14 +1248,7 @@ function buildMonthlyTrend(
       points[i]!.grossCollected += Number(row.amount ?? 0);
   }
 
-  for (const row of refundRows) {
-    const eff = String(row.effective_date ?? "").slice(0, 7);
-    const i   = idx.get(eff);
-    if (i !== undefined)
-      points[i]!.refunds += Number(row.amount_paise ?? 0) / 100;
-  }
-
-  for (const pt of points) pt.netCollected = pt.grossCollected - pt.refunds;
+  for (const pt of points) pt.netCollected = pt.grossCollected;
 
   return points;
 }

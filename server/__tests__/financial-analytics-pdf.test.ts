@@ -57,16 +57,14 @@ const BASE_DATA: FinancialAnalyticsResult = {
     timezone: "Asia/Kolkata",
     billed: { label: "Due this period", recordAuthority: "fee_records", dateAuthority: "due_date", description: "Invoices whose due date falls in the selected IST date range." },
     grossCollected: { label: "Gross collected", recordAuthority: "payment_records", dateAuthority: "received_date", description: "Successful recorded payments received in the selected IST date range." },
-    refunds: { label: "Processed refunds", recordAuthority: "refunds", dateAuthority: "provider_processed_at_or_updated_at", description: "Processed refunds in the selected IST date range." },
-    netCollected: { label: "Net collected", description: "Gross collected less processed refunds." },
+    netCollected: { label: "Net collected", description: "The same successful payment total reported as gross collected." },
     outstanding: { label: "Outstanding", description: "Lifetime unpaid balance of invoices due in range." },
     collectionEfficiency: { label: "Collection efficiency", description: "N/A when no invoices are due." },
   },
   summary: {
     billed:               1250000,
     grossCollected:        980000,
-    refunds:                15000,
-    netCollected:          965000,
+    netCollected:          980000,
     outstanding:           270000,
     collectionEfficiency:    78.4,
     onlineCollected:       620000,
@@ -78,28 +76,24 @@ const BASE_DATA: FinancialAnalyticsResult = {
   comparison: {
     billed:                1180000,
     grossCollected:         920000,
-    refunds:                 12000,
-    netCollected:           908000,
+    netCollected:           920000,
     billedChange:              5.93,
     grossCollectedChange:      6.52,
     netCollectedChange:        6.28,
-    refundsChange:            25.0,
   },
   trend: [
-    { key: "2024-10", label: "Oct '24", startDate: "2024-10-01", billed: 400000, grossCollected: 310000, refunds: 5000,  netCollected: 305000 },
-    { key: "2024-11", label: "Nov '24", startDate: "2024-11-01", billed: 420000, grossCollected: 330000, refunds: 6000,  netCollected: 324000 },
-    { key: "2024-12", label: "Dec '24", startDate: "2024-12-01", billed: 430000, grossCollected: 340000, refunds: 7000,  netCollected: 333000 },
-    { key: "2025-01", label: "Jan '25", startDate: "2025-01-01", billed: 1250000, grossCollected: 980000, refunds: 15000, netCollected: 965000 },
+    { key: "2024-10", label: "Oct '24", startDate: "2024-10-01", billed: 400000, grossCollected: 310000, netCollected: 310000 },
+    { key: "2024-11", label: "Nov '24", startDate: "2024-11-01", billed: 420000, grossCollected: 330000, netCollected: 330000 },
+    { key: "2024-12", label: "Dec '24", startDate: "2024-12-01", billed: 430000, grossCollected: 340000, netCollected: 340000 },
+    { key: "2025-01", label: "Jan '25", startDate: "2025-01-01", billed: 1250000, grossCollected: 980000, netCollected: 980000 },
   ],
   online: {
     grossCollected:  620000,
-    refunds:          10000,
-    netCollected:    610000,
+    netCollected:    620000,
     transactionCount:    89,
     averageTransaction: 6966,
     statuses: [
       { status: "captured", count: 85, amount: 610000 },
-      { status: "refunded", count:  4, amount:  10000 },
     ],
     methods: [
       { method: "Razorpay UPI",  count: 52, amount: 380000 },
@@ -109,13 +103,11 @@ const BASE_DATA: FinancialAnalyticsResult = {
   },
   offline: {
     grossCollected:  360000,
-    refunds:           5000,
-    netCollected:    355000,
+    netCollected:    360000,
     transactionCount:    53,
     averageTransaction: 6792,
     statuses: [
       { status: "Paid",   count: 50, amount: 355000 },
-      { status: "Refund", count:  3, amount:   5000 },
     ],
     methods: [
       { method: "Cash",   count: 35, amount: 240000 },
@@ -123,17 +115,17 @@ const BASE_DATA: FinancialAnalyticsResult = {
     ],
   },
   classWise: [
-    { class: "1",  billed:  80000, grossCollected:  65000, refunds:    0, netCollected:  65000, outstanding: 15000 },
-    { class: "2",  billed:  85000, grossCollected:  70000, refunds: 1000, netCollected:  69000, outstanding: 15000 },
-    { class: "5",  billed: 120000, grossCollected:  95000, refunds: 2000, netCollected:  93000, outstanding: 25000 },
-    { class: "10", billed: 200000, grossCollected: 160000, refunds: 5000, netCollected: 155000, outstanding: 40000 },
+    { class: "1",  billed:  80000, grossCollected:  65000, netCollected:  65000, outstanding: 15000 },
+    { class: "2",  billed:  85000, grossCollected:  70000, netCollected:  70000, outstanding: 15000 },
+    { class: "5",  billed: 120000, grossCollected:  95000, netCollected:  95000, outstanding: 25000 },
+    { class: "10", billed: 200000, grossCollected: 160000, netCollected: 160000, outstanding: 40000 },
   ],
   feeCategories: [
-    { feeType: "Tuition Fee",   billed: 800000, grossCollected: 630000, refunds: 10000, netCollected: 620000, outstanding: 170000 },
-    { feeType: "Transport Fee", billed: 180000, grossCollected: 140000, refunds:  2000, netCollected: 138000, outstanding:  40000 },
-    { feeType: "Activity Fee",  billed: 120000, grossCollected:  95000, refunds:  1000, netCollected:  94000, outstanding:  25000 },
-    { feeType: "Library Fee",   billed:  60000, grossCollected:  50000, refunds:   500, netCollected:  49500, outstanding:  10000 },
-    { feeType: "Exam Fee",      billed:  90000, grossCollected:  65000, refunds:  1500, netCollected:  63500, outstanding:  25000 },
+    { feeType: "Tuition Fee",   billed: 800000, grossCollected: 630000, netCollected: 630000, outstanding: 170000 },
+    { feeType: "Transport Fee", billed: 180000, grossCollected: 140000, netCollected: 140000, outstanding:  40000 },
+    { feeType: "Activity Fee",  billed: 120000, grossCollected:  95000, netCollected:  95000, outstanding:  25000 },
+    { feeType: "Library Fee",   billed:  60000, grossCollected:  50000, netCollected:  50000, outstanding:  10000 },
+    { feeType: "Exam Fee",      billed:  90000, grossCollected:  65000, netCollected:  65000, outstanding:  25000 },
   ],
   aging: [
     { bucket: "1-30",  count: 28, amount: 85000 },
@@ -180,8 +172,7 @@ function makeStressData(): FinancialAnalyticsResult {
     class: `Class ${i + 1} - Long Section Name for Testing Row Height (Batch ${String.fromCharCode(65 + (i % 6))})`,
     billed:          (i + 1) * 50000,
     grossCollected:  (i + 1) * 42000,
-    refunds:         (i + 1) * 500,
-    netCollected:    (i + 1) * 41500,
+    netCollected:    (i + 1) * 42000,
     outstanding:     (i + 1) * 8500,
   }));
 
@@ -190,8 +181,7 @@ function makeStressData(): FinancialAnalyticsResult {
     feeType: `Annual Development and Infrastructure Maintenance Levy — Category ${i + 1}`,
     billed:         (i + 1) * 30000,
     grossCollected: (i + 1) * 25000,
-    refunds:        (i + 1) * 300,
-    netCollected:   (i + 1) * 24700,
+    netCollected:   (i + 1) * 25000,
     outstanding:    (i + 1) * 5000,
   }));
 
@@ -202,8 +192,7 @@ function makeStressData(): FinancialAnalyticsResult {
     startDate:     `2023-${String(i + 1).padStart(2, "0")}-01`,
     billed:        (i + 1) * 100000,
     grossCollected:(i + 1) * 85000,
-    refunds:       (i + 1) * 1000,
-    netCollected:  (i + 1) * 84000,
+    netCollected:  (i + 1) * 85000,
   }));
 
   // Long payment method and status strings
@@ -215,7 +204,6 @@ function makeStressData(): FinancialAnalyticsResult {
 
   const onlineStatuses = [
     { status: "Payment Captured and Settled Successfully by Gateway", count: 200, amount: 1000000 },
-    { status: "Partially Refunded — Refund Initiated and Pending Settlement", count: 12, amount: 60000 },
     { status: "Failed — Insufficient Funds or Network Timeout at Acquiring Bank", count: 5, amount: 0 },
     { status: "Authorized but not Captured — Order Expired", count: 3, amount: 0 },
   ];

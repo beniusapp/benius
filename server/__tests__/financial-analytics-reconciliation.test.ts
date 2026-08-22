@@ -105,7 +105,6 @@ type RawInvoice = {
   late_fee_amount: number;
   due_date: string;
   lifetime_paid: number;
-  lifetime_refunds: number;
 };
 
 type RawPayment = {
@@ -123,27 +122,16 @@ type RawPayment = {
   denomination_breakdown: Record<string, unknown> | null;
 };
 
-type RawRefund = {
-  fee_type: string;
-  student_class: string;
-  amount: number;
-  effective_date: string;
-  effective_hour_ist: number;
-  razorpay_payment_id: string;
-  payment_method: string | null;
-  payment_razorpay_id: string | null;
-};
-
 type IndependentLedger = {
   summary: FinancialAnalyticsResult["summary"];
-  online: Pick<FinancialAnalyticsResult["online"], "grossCollected" | "refunds" | "netCollected" | "transactionCount" | "averageTransaction">;
-  offline: Pick<FinancialAnalyticsResult["offline"], "grossCollected" | "refunds" | "netCollected" | "transactionCount" | "averageTransaction">;
+  online: Pick<FinancialAnalyticsResult["online"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
+  offline: Pick<FinancialAnalyticsResult["offline"], "grossCollected" | "netCollected" | "transactionCount" | "averageTransaction">;
   classWise: FinancialAnalyticsResult["classWise"];
   feeCategories: FinancialAnalyticsResult["feeCategories"];
   aging: FinancialAnalyticsResult["aging"];
   cashDenominations: FinancialAnalyticsResult["cashDenominations"];
-  trendByKey: Map<string, { billed: number; grossCollected: number; refunds: number; netCollected: number }>;
-  sourceCounts: { invoices: number; payments: number; refunds: number };
+  trendByKey: Map<string, { billed: number; grossCollected: number; netCollected: number }>;
+  sourceCounts: { invoices: number; payments: number };
   paymentInvoiceNumbers: string[];
 };
 
@@ -436,69 +424,6 @@ async function createFixture(): Promise<Fixture> {
     date: auditAddDays(currentMonthStart, -1), amount: 5_000, method: "Cash",
   });
 
-  async function refund(input: {
-    key: string;
-    invoiceId: number;
-    paymentId: number;
-    rzp: string;
-    amount: number;
-    status: "processed" | "requested" | "failed";
-    at: string;
-  }) {
-    await db.execute(sql`
-      INSERT INTO refunds (
-        school_id, session_id, student_id, fee_record_id, payment_record_id,
-        razorpay_payment_id, requested_amount_paise, processed_amount_paise,
-        local_status, provider_processed_at, idempotency_key, origin, currency,
-        created_at, updated_at
-      ) VALUES (
-        ${school.id}, ${session.id}, NULL, ${input.invoiceId}, ${input.paymentId},
-        ${input.rzp}, ${input.amount * 100},
-        ${input.status === "processed" ? input.amount * 100 : null},
-        ${input.status}, ${input.at}::timestamptz,
-        ${`far-refund-${marker}-${input.key}`}, 'admin', 'INR',
-        ${input.at}::timestamptz, ${input.at}::timestamptz
-      )
-    `);
-  }
-
-  await refund({
-    key: "month-start", invoiceId: invoice["month-start"].id, paymentId: monthStartPayment.id,
-    rzp: `rf_far_${marker}_month`, amount: 250, status: "processed",
-    at: istInstant(currentMonthStart, "10:00:00"),
-  });
-  await refund({
-    key: "week-start", invoiceId: invoice["week-start"].id, paymentId: weekStartPayment.id,
-    rzp: `rf_far_${marker}_week`, amount: 500, status: "processed",
-    at: istInstant(weekStart, "10:00:00"),
-  });
-  await refund({
-    key: "today-midnight", invoiceId: invoice.today.id, paymentId: todayOnlinePayment.id,
-    rzp: `rf_far_${marker}_today`, amount: 2_000, status: "processed",
-    at: istInstant(today, "00:00:00"),
-  });
-  await refund({
-    key: "today-requested", invoiceId: invoice.today.id, paymentId: todayOnlinePayment.id,
-    rzp: `rf_far_${marker}_requested`, amount: 999, status: "requested",
-    at: istInstant(today, "13:00:00"),
-  });
-  await refund({
-    key: "week-end", invoiceId: invoice["week-end"].id, paymentId: weekEndPayment.id,
-    rzp: `rf_far_${marker}_week_end`, amount: 1_000, status: "processed",
-    at: istInstant(weekEnd, "17:00:00"),
-  });
-  await refund({
-    key: "session-end", invoiceId: invoice["session-end"].id, paymentId: sessionEndPayment.id,
-    rzp: `rf_far_${marker}_session_end`, amount: 1_500, status: "processed",
-    at: istInstant(bounds.end, "09:00:00"),
-  });
-  const todayStart = new Date(istInstant(today, "00:00:00"));
-  await refund({
-    key: "one-second-before-today", invoiceId: invoice.today.id, paymentId: todayCashPayment.id,
-    rzp: `rf_far_${marker}_pre_today`, amount: 300, status: "processed",
-    at: new Date(todayStart.getTime() - 1_000).toISOString(),
-  });
-
   async function attempt(
     outcome: string,
     key: string,
@@ -633,28 +558,25 @@ async function createFixture(): Promise<Fixture> {
 function groupedRows(
   invoices: RawInvoice[],
   payments: RawPayment[],
-  refunds: RawRefund[],
   groupKey: "student_class" | "fee_type",
 ) {
-  const map = new Map<string, { billed: number; grossCollected: number; refunds: number; outstanding: number }>();
+  const map = new Map<string, { billed: number; grossCollected: number; outstanding: number }>();
   const get = (key: string) => {
-    const existing = map.get(key) ?? { billed: 0, grossCollected: 0, refunds: 0, outstanding: 0 };
+    const existing = map.get(key) ?? { billed: 0, grossCollected: 0, outstanding: 0 };
     map.set(key, existing);
     return existing;
   };
   for (const row of invoices) {
     const item = get(String(row[groupKey]));
     item.billed += row.amount + row.late_fee_amount;
-    item.outstanding += Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid + row.lifetime_refunds);
+    item.outstanding += Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid);
   }
   for (const row of payments) get(String(row[groupKey])).grossCollected += row.amount;
-  for (const row of refunds) get(String(row[groupKey])).refunds += row.amount;
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => ({
     [groupKey === "student_class" ? "class" : "feeType"]: key,
     billed: value.billed,
     grossCollected: value.grossCollected,
-    refunds: value.refunds,
-    netCollected: value.grossCollected - value.refunds,
+    netCollected: value.grossCollected,
     outstanding: value.outstanding,
   }));
 }
@@ -689,13 +611,6 @@ async function independentLedger(
         WHERE pr.school_id = ${fixture.schoolId}
           AND pr.fee_record_id = fr.id
       ), 0) AS lifetime_paid,
-      COALESCE((
-        SELECT SUM(COALESCE(rf.processed_amount_paise, rf.requested_amount_paise)) / 100.0
-        FROM refunds rf
-        WHERE rf.school_id = ${fixture.schoolId}
-          AND rf.fee_record_id = fr.id
-          AND rf.local_status = 'processed'
-      ), 0) AS lifetime_refunds
     FROM fee_records fr
     JOIN students s ON s.id = fr.student_id AND s.school_id = ${fixture.schoolId}
     WHERE fr.school_id = ${fixture.schoolId}
@@ -709,7 +624,6 @@ async function independentLedger(
     amount: Number(row.amount),
     late_fee_amount: Number(row.late_fee_amount),
     lifetime_paid: Number(row.lifetime_paid),
-    lifetime_refunds: Number(row.lifetime_refunds),
   }));
 
   const paymentResult = await db.execute(sql`
@@ -743,68 +657,25 @@ async function independentLedger(
     created_at: new Date(row.created_at).toISOString(),
   }));
 
-  const refundResult = await db.execute(sql`
-    SELECT
-      fr.fee_type,
-      s.class AS student_class,
-      COALESCE(rf.processed_amount_paise, rf.requested_amount_paise) / 100.0 AS amount,
-      to_char(
-        COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata',
-        'YYYY-MM-DD'
-      ) AS effective_date,
-      EXTRACT(HOUR FROM
-        COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata'
-      )::int AS effective_hour_ist,
-      rf.razorpay_payment_id,
-      pr.payment_method,
-      pr.razorpay_payment_id AS payment_razorpay_id
-    FROM refunds rf
-    JOIN fee_records fr ON fr.id = rf.fee_record_id
-                       AND fr.school_id = ${fixture.schoolId}
-                       AND fr.session_id = ${fixture.sessionId}
-    JOIN students s ON s.id = fr.student_id AND s.school_id = ${fixture.schoolId}
-    LEFT JOIN payment_records pr ON pr.id = rf.payment_record_id
-                                AND pr.school_id = ${fixture.schoolId}
-    WHERE rf.school_id = ${fixture.schoolId}
-      AND rf.local_status = 'processed'
-      AND (
-        COALESCE(rf.provider_processed_at, rf.updated_at) AT TIME ZONE 'Asia/Kolkata'
-      )::date BETWEEN ${startDate}::date AND ${endDate}::date
-    ORDER BY rf.id
-  `);
-  const refunds = refundResult.rows.map((row: any): RawRefund => ({
-    ...row,
-    amount: Number(row.amount),
-    effective_hour_ist: Number(row.effective_hour_ist),
-  }));
-
   const billed = invoices.reduce((sum, row) => sum + row.amount + row.late_fee_amount, 0);
   const grossCollected = payments.reduce((sum, row) => sum + row.amount, 0);
-  const totalRefunds = refunds.reduce((sum, row) => sum + row.amount, 0);
   const outstanding = invoices.reduce(
-    (sum, row) => sum + Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid + row.lifetime_refunds),
+    (sum, row) => sum + Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid),
     0,
   );
   const overdueAmount = invoices
     .filter((row) => row.due_date < auditTodayIST())
     .reduce(
-      (sum, row) => sum + Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid + row.lifetime_refunds),
+      (sum, row) => sum + Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid),
       0,
     );
   const onlinePayments = payments.filter((row) => auditIsOnline(row.payment_method, row.razorpay_payment_id));
   const offlinePayments = payments.filter((row) => !auditIsOnline(row.payment_method, row.razorpay_payment_id));
-  const onlineRefunds = refunds.filter((row) =>
-    Boolean(row.razorpay_payment_id) || auditIsOnline(row.payment_method, row.payment_razorpay_id),
-  );
-  const offlineRefunds = refunds.filter((row) => !onlineRefunds.includes(row));
-
-  const channel = (rows: RawPayment[], refundRows: RawRefund[]) => {
+  const channel = (rows: RawPayment[]) => {
     const gross = rows.reduce((sum, row) => sum + row.amount, 0);
-    const refunded = refundRows.reduce((sum, row) => sum + row.amount, 0);
     return {
       grossCollected: gross,
-      refunds: refunded,
-      netCollected: gross - refunded,
+      netCollected: gross,
       transactionCount: rows.length,
       averageTransaction: rows.length ? round2(gross / rows.length) : 0,
     };
@@ -835,7 +706,7 @@ async function independentLedger(
     ["90+", { count: 0, amount: 0 }],
   ]);
   for (const row of invoices) {
-    const amount = Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid + row.lifetime_refunds);
+    const amount = Math.max(0, row.amount + row.late_fee_amount - row.lifetime_paid);
     const overdueDays = auditDaysBetween(row.due_date, auditTodayIST());
     if (amount <= 0 || overdueDays <= 0) continue;
     const bucket = overdueDays <= 30 ? "1-30" : overdueDays <= 60 ? "31-60" : overdueDays <= 90 ? "61-90" : "90+";
@@ -844,9 +715,9 @@ async function independentLedger(
     value.amount += amount;
   }
 
-  const trendByKey = new Map<string, { billed: number; grossCollected: number; refunds: number; netCollected: number }>();
+  const trendByKey = new Map<string, { billed: number; grossCollected: number; netCollected: number }>();
   const trend = (key: string) => {
-    const value = trendByKey.get(key) ?? { billed: 0, grossCollected: 0, refunds: 0, netCollected: 0 };
+    const value = trendByKey.get(key) ?? { billed: 0, grossCollected: 0, netCollected: 0 };
     trendByKey.set(key, value);
     return value;
   };
@@ -858,32 +729,25 @@ async function independentLedger(
     const key = trendKey(preset, startDate, endDate, row.received_date, row.created_at);
     trend(key).grossCollected += row.amount;
   }
-  for (const row of refunds) {
-    const key = preset === "today"
-      ? String(row.effective_hour_ist).padStart(2, "0")
-      : trendKey(preset, startDate, endDate, row.effective_date);
-    trend(key).refunds += row.amount;
-  }
-  for (const value of trendByKey.values()) value.netCollected = value.grossCollected - value.refunds;
+  for (const value of trendByKey.values()) value.netCollected = value.grossCollected;
 
   return {
     summary: {
       billed,
       grossCollected,
-      refunds: totalRefunds,
-      netCollected: grossCollected - totalRefunds,
+      netCollected: grossCollected,
       outstanding,
-      collectionEfficiency: pct(grossCollected - totalRefunds, billed),
+      collectionEfficiency: pct(grossCollected, billed),
       onlineCollected: onlinePayments.reduce((sum, row) => sum + row.amount, 0),
       offlineCollected: offlinePayments.reduce((sum, row) => sum + row.amount, 0),
       overdueAmount,
       transactionCount: payments.length,
       totalLatePenalties: payments.reduce((sum, row) => sum + row.late_fee_paid, 0),
     },
-    online: channel(onlinePayments, onlineRefunds),
-    offline: channel(offlinePayments, offlineRefunds),
-    classWise: groupedRows(invoices, payments, refunds, "student_class") as FinancialAnalyticsResult["classWise"],
-    feeCategories: groupedRows(invoices, payments, refunds, "fee_type") as FinancialAnalyticsResult["feeCategories"],
+    online: channel(onlinePayments),
+    offline: channel(offlinePayments),
+    classWise: groupedRows(invoices, payments, "student_class") as FinancialAnalyticsResult["classWise"],
+    feeCategories: groupedRows(invoices, payments, "fee_type") as FinancialAnalyticsResult["feeCategories"],
     aging: ["1-30", "31-60", "61-90", "90+"].map((bucket) => ({ bucket, ...agingMap.get(bucket)! })) as FinancialAnalyticsResult["aging"],
     cashDenominations: {
       cashCollected: cashRows.reduce((sum, row) => sum + row.amount, 0),
@@ -896,7 +760,7 @@ async function independentLedger(
         .sort((a, b) => b.denomination - a.denomination),
     },
     trendByKey,
-    sourceCounts: { invoices: invoices.length, payments: payments.length, refunds: refunds.length },
+    sourceCounts: { invoices: invoices.length, payments: payments.length },
     paymentInvoiceNumbers: [...new Set(payments.map((row) => row.invoice_number))].sort(),
   };
 }
@@ -980,7 +844,6 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
       expect(
         {
           grossCollected: service.online.grossCollected,
-          refunds: service.online.refunds,
           netCollected: service.online.netCollected,
           transactionCount: service.online.transactionCount,
           averageTransaction: service.online.averageTransaction,
@@ -990,7 +853,6 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
       expect(
         {
           grossCollected: service.offline.grossCollected,
-          refunds: service.offline.refunds,
           netCollected: service.offline.netCollected,
           transactionCount: service.offline.transactionCount,
           averageTransaction: service.offline.averageTransaction,
@@ -1007,20 +869,21 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
           {
             billed: point.billed,
             grossCollected: point.grossCollected,
-            refunds: point.refunds,
             netCollected: point.netCollected,
           },
           `${range.name}: trend bucket ${point.key}`,
         ).toEqual(expected.trendByKey.get(point.key) ?? {
           billed: 0,
           grossCollected: 0,
-          refunds: 0,
           netCollected: 0,
         });
       }
       expect(service.trend.reduce((sum, point) => sum + point.billed, 0)).toBe(expected.summary.billed);
       expect(service.trend.reduce((sum, point) => sum + point.grossCollected, 0)).toBe(expected.summary.grossCollected);
-      expect(service.trend.reduce((sum, point) => sum + point.refunds, 0)).toBe(expected.summary.refunds);
+      expect(service.summary.netCollected).toBe(service.summary.grossCollected);
+      expect(service.online.netCollected).toBe(service.online.grossCollected);
+      expect(service.offline.netCollected).toBe(service.offline.grossCollected);
+      expect(service.trend.every((point) => point.netCollected === point.grossCollected)).toBe(true);
 
       const query = new URLSearchParams({ preset: range.preset });
       if (range.customStart) query.set("startDate", range.customStart);
@@ -1085,8 +948,8 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
             assertPdfSequence(pdfText, `${range.name}/${section}: billed and gross`, [
               "Due This Period", "Gross Collected", "₹", pdfAmount(expected.summary.billed), "₹", pdfAmount(expected.summary.grossCollected),
             ]);
-            assertPdfSequence(pdfText, `${range.name}/${section}: net and refunds`, [
-              "Net Collected (after refunds)", "Refunds", "₹", pdfAmount(expected.summary.netCollected), "₹", pdfAmount(expected.summary.refunds),
+            assertPdfSequence(pdfText, `${range.name}/${section}: net collected`, [
+              "Net Collected", "₹", pdfAmount(expected.summary.netCollected),
             ]);
             assertPdfSequence(pdfText, `${range.name}/${section}: outstanding and efficiency`, [
               "Outstanding", "Collection Efficiency", "₹", pdfAmount(expected.summary.outstanding), expected.summary.collectionEfficiency == null ? "N/A" : `${expected.summary.collectionEfficiency.toFixed(1)}%`,
@@ -1102,7 +965,7 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
           if (section === "trend" || section === "complete") {
             expect(pdfText).toMatch(/Collection Trend/i);
             for (const point of service.trend.filter((row) =>
-              row.billed !== 0 || row.grossCollected !== 0 || row.refunds !== 0 || row.netCollected !== 0
+              row.billed !== 0 || row.grossCollected !== 0 || row.netCollected !== 0
             )) {
               assertPdfSequence(pdfText, `${range.name}/${section}: trend ${point.key}`, [
                 point.label, "₹", pdfAmount(point.billed), "₹", pdfAmount(point.grossCollected), "₹", pdfAmount(point.netCollected),
@@ -1115,12 +978,12 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
             expect(pdfText).toMatch(/Offline Channel/i);
             assertPdfSequence(pdfText, `${range.name}/${section}: online channel values`, [
               "Online Channel", "Gross Collected", "Transactions", "₹", pdfAmount(service.online.grossCollected),
-              service.online.transactionCount, "Refunds", "Net Collected", "₹", pdfAmount(service.online.refunds),
+              service.online.transactionCount, "Net Collected",
               "₹", pdfAmount(service.online.netCollected),
             ]);
             assertPdfSequence(pdfText, `${range.name}/${section}: offline channel values`, [
               "Offline Channel", "Gross Collected", "Transactions", "₹", pdfAmount(service.offline.grossCollected),
-              service.offline.transactionCount, "Refunds", "Net Collected", "₹", pdfAmount(service.offline.refunds),
+              service.offline.transactionCount, "Net Collected",
               "₹", pdfAmount(service.offline.netCollected),
             ]);
           }
@@ -1137,12 +1000,11 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
 
           if (section === "categories" || section === "complete") {
             assertPdfSequence(pdfText, `${range.name}/${section}: category table headers`, [
-              "Fee Type", "Due This Period", "Collected", "Refunds",
+              "Fee Type", "Due This Period", "Collected",
             ]);
             for (const row of expected.feeCategories) {
               assertPdfSequence(pdfText, `${range.name}/${section}: category ${row.feeType}`, [
                 row.feeType, "₹", pdfAmount(row.billed), "₹", pdfAmount(row.grossCollected),
-                "₹", pdfAmount(row.refunds),
               ]);
             }
           }
@@ -1189,10 +1051,8 @@ describeReconciliation("Financial Analytics all-range reconciliation", () => {
         dates: `${period.startDate}..${period.endDate}`,
         invoices: expected.sourceCounts.invoices,
         payments: expected.sourceCounts.payments,
-        refunds: expected.sourceCounts.refunds,
         billed: expected.summary.billed,
         gross: expected.summary.grossCollected,
-        refunded: expected.summary.refunds,
         net: expected.summary.netCollected,
         outstanding: expected.summary.outstanding,
       });

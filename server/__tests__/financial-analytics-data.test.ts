@@ -573,7 +573,7 @@ describe("buildFinancialAnalytics — attempt IST timestamp scoping", () => {
 
 // ── 12. Processed refunds only ────────────────────────────────────────────────
 
-describe("buildFinancialAnalytics — processed refunds only", () => {
+describe.skip("removed refund analytics coverage", () => {
   let fixture: Fixture;
   afterEach(async () => { if (fixture) await teardown(fixture.schoolId); });
 
@@ -772,14 +772,13 @@ describe("buildFinancialAnalytics — offline revision tables ignored", () => {
       preset: "custom", customStart: "2024-08-01", customEnd: "2024-08-31",
     });
     expect(r.summary.grossCollected).toBe(8000);
-    expect(r.summary.refunds).toBe(0);
     expect(r.summary.netCollected).toBe(8000);
   });
 });
 
 // ── 13b. Comparison refund IST boundary ───────────────────────────────────────
 
-describe("buildFinancialAnalytics — comparison refund IST boundary", () => {
+describe.skip("removed refund comparison coverage", () => {
   let fixture: Fixture;
   afterEach(async () => { if (fixture) await teardown(fixture.schoolId); });
 
@@ -1597,17 +1596,20 @@ describe("buildFinancialAnalytics — response contract", () => {
       timezone: "Asia/Kolkata",
       billed: { label: "Due this period", recordAuthority: "fee_records", dateAuthority: "due_date" },
       grossCollected: { label: "Gross collected", recordAuthority: "payment_records", dateAuthority: "received_date" },
-      refunds: { label: "Processed refunds", recordAuthority: "refunds" },
     });
 
     const s = r.summary;
     for (const key of [
-      "billed", "grossCollected", "refunds", "netCollected",
+      "billed", "grossCollected", "netCollected",
       "outstanding", "collectionEfficiency", "onlineCollected",
       "offlineCollected", "overdueAmount", "transactionCount", "totalLatePenalties",
     ]) {
       expect(s).toHaveProperty(key);
     }
+    expect(s).not.toHaveProperty("refunds");
+    expect(r.accountingBasis).not.toHaveProperty("refunds");
+    expect(r.online).not.toHaveProperty("refunds");
+    expect(r.offline).not.toHaveProperty("refunds");
 
     expect(r.aging.map(a => a.bucket)).toEqual(["1-30", "31-60", "61-90", "90+"]);
   });
@@ -1678,7 +1680,7 @@ describe("IST boundary — host timezone independence (unit)", () => {
   });
 });
 
-describe("IST boundary 2026-08-22 — refund classification", () => {
+describe.skip("removed refund IST-boundary coverage", () => {
   let fixture: Fixture;
   afterEach(async () => { if (fixture) await teardown(fixture.schoolId); });
 

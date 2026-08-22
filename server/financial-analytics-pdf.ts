@@ -360,22 +360,12 @@ function renderSummarySection(ctx: Ctx): void {
 
   drawKpiRow(ctx, [
     {
-      label: "Net Collected (after refunds)",
+      label: "Net Collected",
       value: fmtINR(s.netCollected),
       color: C_GREEN,
       subvalue: c
         ? (c.netCollectedChange !== null
             ? `${c.netCollectedChange >= 0 ? "+" : ""}${c.netCollectedChange.toFixed(1)}% vs prior period`
-            : undefined)
-        : undefined,
-    },
-    {
-      label: "Refunds",
-      value: fmtINR(s.refunds),
-      color: C_RED,
-      subvalue: c
-        ? (c.refundsChange !== null
-            ? `${c.refundsChange >= 0 ? "+" : ""}${c.refundsChange.toFixed(1)}% vs prior period`
             : undefined)
         : undefined,
     },
@@ -453,7 +443,6 @@ function renderChannelsSection(ctx: Ctx): void {
     { label: "Transactions",    value: String(online.transactionCount), color: C_MUTED },
   ]);
   drawKpiRow(ctx, [
-    { label: "Refunds",       value: fmtINR(online.refunds),      color: C_RED   },
     { label: "Net Collected", value: fmtINR(online.netCollected), color: C_GREEN },
   ]);
   ctx.y += 4;
@@ -483,7 +472,6 @@ function renderChannelsSection(ctx: Ctx): void {
     { label: "Transactions",    value: String(offline.transactionCount), color: C_MUTED },
   ]);
   drawKpiRow(ctx, [
-    { label: "Refunds",       value: fmtINR(offline.refunds),      color: C_RED   },
     { label: "Net Collected", value: fmtINR(offline.netCollected), color: C_GREEN },
   ]);
   ctx.y += 4;
@@ -538,14 +526,14 @@ function renderCategoriesSection(ctx: Ctx): void {
 
   drawSectionTitle(ctx, "Fee Categories");
   // Give the label column more room; numeric cols are narrow but sufficient
-  const w = [CONTENT_W * 0.45, CONTENT_W * 0.18, CONTENT_W * 0.18, CONTENT_W * 0.19];
-  drawTableHeader(ctx, ["Fee Type", "Due This Period", "Collected", "Refunds"], w);
+  const w = [CONTENT_W * 0.50, CONTENT_W * 0.25, CONTENT_W * 0.25];
+  drawTableHeader(ctx, ["Fee Type", "Due This Period", "Collected"], w);
   cats.forEach((r, i) => {
     drawTableRow(
       ctx,
-      [r.feeType, fmtINR(r.billed), fmtINR(r.grossCollected), fmtINR(r.refunds)],
+      [r.feeType, fmtINR(r.billed), fmtINR(r.grossCollected)],
       w, i % 2 === 0,
-      [null, null, C_CYAN, C_RED],
+      [null, null, C_CYAN],
     );
   });
   ctx.y += 12;
