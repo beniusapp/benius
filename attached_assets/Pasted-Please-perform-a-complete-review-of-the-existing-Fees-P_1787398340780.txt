@@ -1,0 +1,197 @@
+Please perform a complete review of the existing Fees & Payments → Audit Log → Fees activity register filters.
+
+Do NOT redesign the Audit Log. I only want you to verify whether the existing Search, From, To, and Action controls are actually relevant, correctly implemented, and working end-to-end.
+
+1. Search
+
+Review exactly what the Search field currently searches.
+
+It should be useful for finding audit records by human-readable information, such as:
+
+- Student name
+- DSID/student ID
+- Invoice number
+- Fee/invoice record ID
+- Actor name
+- Actor ID
+- Relevant record reference
+- Meaningful description text
+
+Do NOT expose or search unnecessary sensitive technical data such as:
+
+- IP addresses
+- Razorpay payment/order/refund IDs
+- HMAC/signatures
+- Raw webhook payloads
+- Secrets/tokens
+- Card/UPI/payment credentials
+
+Verify that searching works correctly from the UI all the way through the backend/database query.
+
+Also verify:
+
+- Partial text works
+- Case-insensitive search works
+- Search with spaces works
+- Search with numbers/IDs works
+- Search returns only records belonging to the authenticated school
+- No sensitive/raw audit-table fields are returned merely because search is being used
+
+2. From / To date filters
+
+Verify that the From and To filters are actually useful and correctly implemented.
+
+Requirements:
+
+- Dates must be interpreted using IST / Asia-Kolkata
+- From date must include the entire selected day
+- To date must include the entire selected day
+- Example: From 20 Aug to To 20 Aug must return events from the full 20 Aug IST day
+- From only should work
+- To only should work
+- From + To together should work
+- Invalid ranges such as From > To must be handled clearly
+- Boundary timestamps must not be accidentally excluded
+- Results must remain newest-first
+
+Do not accidentally use the browser's local timezone or UTC date boundaries when the Audit Log is explicitly displayed as IST.
+
+3. Action filter
+
+Review the Action dropdown against the actual audit action types currently written by production code.
+
+Do NOT keep stale/historical actions merely because they existed previously.
+
+The dropdown should contain only meaningful actions that can actually occur in the current Fees & Payments system.
+
+At the same time, every real audit action that an administrator may reasonably want to filter should be available.
+
+Verify that selecting an action performs an exact, reliable backend filter and does not merely filter the currently loaded page in the browser.
+
+4. Combined filters
+
+This is very important.
+
+Verify that all filters work correctly in combination:
+
+- Search only
+- Date only
+- Action only
+- Search + Action
+- Search + From/To
+- Action + From/To
+- Search + Action + From + To
+
+The backend must apply all selected conditions together.
+
+Example:
+
+Search = "student3mis"
+From = "20 Aug 2026"
+To = "22 Aug 2026"
+Action = "Payment Failed"
+
+The result must contain only records matching all four conditions.
+
+5. Pagination
+
+Verify pagination after filtering.
+
+For example:
+
+- Apply a filter
+- Confirm the total result count changes
+- Move to page 2
+- Confirm page 2 contains the correct filtered records
+- Change the filter while currently on page 2
+- The page should safely reset to page 1 when necessary
+- No records should be skipped or duplicated between pages
+- Ordering must remain deterministic
+
+Keep the existing stable ordering:
+
+"created_at DESC, id DESC"
+
+6. Reset / clear behavior
+
+Verify the reset/clear functionality.
+
+When Reset is clicked:
+
+- Search is cleared
+- From is cleared
+- To is cleared
+- Action returns to All actions
+- Pagination returns to page 1
+- Full unfiltered audit list is loaded again
+- Result count is recalculated correctly
+
+7. Empty results
+
+If no records match the selected filters, show a clear human-readable empty state.
+
+Do not show an error when the correct result is simply zero records.
+
+Example:
+
+"No activity found for the selected filters."
+
+8. Security and tenant isolation
+
+This is mandatory.
+
+All filtering must remain restricted to the authenticated school's audit records.
+
+A user must never be able to use:
+
+- Search
+- From
+- To
+- Action
+- Pagination
+
+to access another school's audit data.
+
+Do not trust a school ID supplied by the browser.
+
+The backend must derive the tenant/school from the authenticated session.
+
+9. Verify the implementation, not just the UI
+
+Please inspect the complete flow:
+
+Audit Log UI → API request → backend route → storage/database query → response → UI rendering
+
+Confirm:
+
+- Which API endpoint handles the filters
+- Which query parameters are used
+- How Search is implemented
+- How From/To are converted to IST boundaries
+- How Action filtering is implemented
+- How pagination/counting works
+- Whether filtering happens server-side
+- Whether the total count uses the exact same filters as the returned rows
+
+Do not make assumptions based only on the UI.
+
+10. Final report
+
+After reviewing, tell me clearly:
+
+1. Search — Working / Not Working
+2. From — Working / Not Working
+3. To — Working / Not Working
+4. Action — Working / Not Working
+5. Combined filters — Working / Not Working
+6. Pagination — Working / Not Working
+7. Reset — Working / Not Working
+8. IST date handling — Correct / Incorrect
+9. Tenant isolation — Correct / Incorrect
+10. Any unnecessary or missing filter — explain
+
+If anything is incorrect, fix it.
+
+Do not add new filters unless there is a clear functional reason. Keep the Audit Log simple and human-readable.
+
+After making any required fixes, run the relevant tests and verify the actual browser behavior on both desktop and mobile.
