@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   appendFeeAudit,
+  RAZORPAY_FEE_AUDIT_ACTOR,
   safeFeeAuditDescription,
   safeFeeAuditRecordLabel,
   SYSTEM_FEE_AUDIT_ACTOR,
@@ -165,5 +166,151 @@ describe("fee audit security contract", () => {
       await tx.execute(sql`SELECT set_config('app.fee_audit_cleanup', 'on', true)`);
       await tx.execute(sql`DELETE FROM fee_audit_log WHERE id = ${auditId}`);
     })).rejects.toThrow(/append-only/i);
+  });
+
+  it("shows authoritative actors and student records for the required fee scenarios", async () => {
+    const id = await createSchool();
+    const [student] = await db.insert(students).values({
+      schoolId: id,
+      digitalStudentId: `MIS-${uid()}`,
+      name: "Student Three",
+      class: "9",
+      section: "A",
+      phone: "9200000000",
+      dob: "2008-03-15",
+      passwordHash: "x",
+      isActive: true,
+    }).returning();
+    const principal = {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "principal" as const,
+      actorName: "Principal One",
+      actorRole: "Principal",
+      actorIdentifier: "ADM-001",
+    };
+    const teacher = {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "teacher" as const,
+      actorName: "Rahul Das",
+      actorRole: "Teacher",
+      actorIdentifier: "TCH-014",
+    };
+    const staff = {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "non_teaching_staff" as const,
+      actorName: "Finance Staff",
+      actorRole: "Non-Teaching Staff",
+      actorIdentifier: "NTS-008",
+    };
+    const studentActor = {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "student" as const,
+      actorName: student.name,
+      actorRole: "Student",
+      actorIdentifier: student.digitalStudentId,
+    };
+    const invoice = "INV-0093";
+    const scenarios = [
+      { actor: principal, action: "invoice_generation", label: "25 invoices", description: "Generated 25 invoices." },
+      { actor: teacher, action: "update", label: invoice, description: "Updated invoice." },
+      { actor: staff, action: "delete", label: invoice, description: "Deleted invoice." },
+      { actor: principal, action: "create", label: "Annual Fee", description: "Added fee structure." },
+      { actor: principal, action: "delete", label: "Annual Fee", description: "Deleted fee structure." },
+      { actor: staff, action: "payment", label: invoice, description: "Recorded offline payment." },
+      { actor: studentActor, action: "payment_cancelled", label: invoice, description: "Cancelled checkout." },
+      { actor: studentActor, action: "payment_failed", label: invoice, description: "Payment failed." },
+      { actor: RAZORPAY_FEE_AUDIT_ACTOR, action: "payment_captured", label: invoice, description: "Payment received." },
+      { actor: SYSTEM_FEE_AUDIT_ACTOR, action: "overdue_sweep", label: invoice, description: "Marked invoice overdue." },
+    ];
+    for (const scenario of scenarios) {
+      const invoiceRelated = scenario.label === invoice;
+      await appendFeeAudit({
+        schoolId: id,
+        actor: scenario.actor,
+        action: scenario.action,
+        entityType: invoiceRelated ? "fee_record" : "fee_structure",
+        entityId: invoiceRelated ? 93 : null,
+        studentId: invoiceRelated ? student.id : null,
+        recordLabel: scenario.label,
+        description: scenario.description,
+      });
+    }
+
+    const result = await storage.getFeeAuditLog(id, 20, 0);
+    expect(result.entries).toHaveLength(10);
+    expect(result.entries.every(entry =>
+      !/unknown/i.test(`${entry.actorName} ${entry.actorRole} ${entry.actorIdentifier}`),
+    )).toBe(true);
+    expect(result.entries.find(entry => entry.action === "payment_cancelled")).toMatchObject({
+      actorName: student.name,
+      actorRole: "Student",
+      actorIdentifier: student.digitalStudentId,
+      studentName: student.name,
+      studentIdentifier: student.digitalStudentId,
+      recordLabel: invoice,
+    });
+    expect(result.entries.find(entry => entry.action === "payment_captured")).toMatchObject({
+      actorName: "Razorpay",
+      actorRole: "Payment Gateway",
+      actorIdentifier: "RAZORPAY",
+    });
+    expect(result.entries.find(entry => entry.action === "overdue_sweep")).toMatchObject({
+      actorName: "System",
+      actorRole: "System",
+      actorIdentifier: "SYSTEM",
+    });
+    expect(result.entries.find(entry => entry.actorIdentifier === "TCH-014")?.actorName).toBe("Rahul Das");
+    expect(result.entries.find(entry => entry.actorIdentifier === "NTS-008")?.actorRole).toBe("Non-Teaching Staff");
+  });
+
+  it("repairs reliable legacy client/provider classifications without guessing a person", async () => {
+    const id = await createSchool();
+    await db.execute(sql`
+      INSERT INTO fee_audit_log (
+        school_id, actor_type, actor_name, actor_role, actor_identifier,
+        action, entity_type, entity_id, student_id, student_name, student_identifier, description
+      ) VALUES
+        (${id}, 'student', 'Razorpay (client)', 'Unknown', 'UNKNOWN',
+         'payment_failed', 'fee_record', 91, NULL, 'Student Snapshot', 'DS-077', 'Payment failed.'),
+        (${id}, 'legacy', 'Razorpay (client)', 'Unknown', 'UNKNOWN',
+         'refund_failed', 'refund', 92, NULL, NULL, NULL, 'Refund failed.'),
+        (${id}, 'legacy', 'Finance Office', 'Unknown', 'UNKNOWN',
+         'payment', 'payment_record', 93, NULL, NULL, NULL, 'Manual payment imported.'),
+        (${id}, 'student', 'Student Portal', 'Student', 'UNKNOWN',
+         'payment_cancelled', 'fee_record', 94, NULL, NULL, NULL, 'Legacy student checkout.')
+    `);
+    const result = await storage.getFeeAuditLog(id, 20, 0);
+    const studentEvent = result.entries.find(entry => entry.action === "payment_failed");
+    const providerEvent = result.entries.find(entry => entry.action === "refund_failed");
+    const manualPayment = result.entries.find(entry => entry.entityId === 93);
+    const incompleteStudent = result.entries.find(entry => entry.entityId === 94);
+    expect(studentEvent).toMatchObject({
+      actorName: "Student Snapshot",
+      actorRole: "Student",
+      actorIdentifier: "DS-077",
+    });
+    expect(providerEvent).toMatchObject({
+      actorName: "Razorpay",
+      actorRole: "Payment Gateway",
+      actorIdentifier: "RAZORPAY",
+    });
+    expect(manualPayment).toMatchObject({
+      actorName: "Historical record",
+      actorRole: "Source not recorded",
+      actorIdentifier: "NOT_RECORDED",
+    });
+    expect(incompleteStudent).toMatchObject({
+      actorName: "Historical record",
+      actorRole: "Source not recorded",
+      actorIdentifier: "NOT_RECORDED",
+    });
   });
 });

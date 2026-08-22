@@ -55,7 +55,12 @@ import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, lte, lt, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
-import { feeAuditActionLabel, safeFeeAuditDescription, safeFeeAuditRecordLabel } from "./fee-audit";
+import {
+  feeAuditActionLabel,
+  normalizeFeeAuditActorDisplay,
+  safeFeeAuditDescription,
+  safeFeeAuditRecordLabel,
+} from "./fee-audit";
 
 function buildCalendarAudienceFilter(
   filter?: Array<{ cls: string; sec?: string }>
@@ -4928,6 +4933,7 @@ export class DatabaseStorage {
     schoolId: number; actorId?: number | null; actorName?: string | null;
     ipAddress?: string | null; action: string; entityType?: string | null;
     entityId?: number | null; studentId?: number | null; studentName?: string | null;
+    studentIdentifier?: string | null;
     sessionId?: number | null; recordLabel?: string | null; amount?: number | null;
     eventKey?: string | null;
     actorTeacherId?: number | null; actorStaffId?: number | null; actorType?: string;
@@ -4952,12 +4958,14 @@ export class DatabaseStorage {
       actorName: string;
       actorRole: string;
       actorIdentifier: string;
+      actorType: string;
       action: string;
       actionLabel: string;
       entityType: string | null;
       entityId: number | null;
       studentId: number | null;
       studentName: string | null;
+      studentIdentifier: string | null;
       recordLabel: string | null;
       amount: number | null;
       currency: string;
@@ -4983,6 +4991,7 @@ export class DatabaseStorage {
           COALESCE(fal.actor_name, '') ILIKE ${searchPat}
           OR COALESCE(fal.actor_identifier, '') ILIKE ${searchPat}
           OR COALESCE(fal.student_name, '') ILIKE ${searchPat}
+          OR COALESCE(fal.student_identifier, '') ILIKE ${searchPat}
           OR COALESCE(fal.record_label, '') ILIKE ${searchPat}
           OR COALESCE(fal.description, '') ILIKE ${searchPat}
         )`
@@ -4998,14 +5007,16 @@ export class DatabaseStorage {
       db.execute(sql`
         SELECT
           fal.id,
-          COALESCE(NULLIF(fal.actor_name, ''), 'Unknown Actor') AS actor_name,
-          COALESCE(NULLIF(fal.actor_role, ''), 'Unknown') AS actor_role,
-          COALESCE(NULLIF(fal.actor_identifier, ''), 'UNKNOWN') AS actor_identifier,
+          fal.actor_type,
+          fal.actor_name,
+          fal.actor_role,
+          fal.actor_identifier,
           fal.action,
           fal.entity_type,
           fal.entity_id,
           fal.student_id,
           NULLIF(fal.student_name, '') AS student_name,
+          NULLIF(fal.student_identifier, '') AS student_identifier,
           fal.record_label,
           fal.amount,
           COALESCE(fal.currency, 'INR') AS currency,
@@ -5028,17 +5039,29 @@ export class DatabaseStorage {
 
     const entries = (rowsResult.rows as any[]).map((row) => {
       const recordLabel = safeFeeAuditRecordLabel(row.record_label);
+      const actor = normalizeFeeAuditActorDisplay({
+        actorType: row.actor_type,
+        actorName: row.actor_name,
+        actorRole: row.actor_role,
+        actorIdentifier: row.actor_identifier,
+        action: row.action,
+        studentId: row.student_id,
+        studentName: row.student_name,
+        studentIdentifier: row.student_identifier,
+      });
       return {
         id: Number(row.id),
-        actorName: String(row.actor_name),
-        actorRole: String(row.actor_role),
-        actorIdentifier: String(row.actor_identifier),
+        actorName: actor.actorName,
+        actorRole: actor.actorRole,
+        actorIdentifier: actor.actorIdentifier,
+        actorType: actor.actorType,
         action: String(row.action),
         actionLabel: feeAuditActionLabel(String(row.action), row.entity_type, row.entity_id),
         entityType: row.entity_type ?? null,
         entityId: row.entity_id == null ? null : Number(row.entity_id),
         studentId: row.student_id == null ? null : Number(row.student_id),
         studentName: row.student_name ?? null,
+        studentIdentifier: row.student_identifier ?? null,
         recordLabel,
         amount: row.amount == null ? null : Number(row.amount),
         currency: String(row.currency ?? "INR"),

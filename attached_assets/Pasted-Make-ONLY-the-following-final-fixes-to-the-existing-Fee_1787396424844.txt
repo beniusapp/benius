@@ -1,0 +1,140 @@
+Make ONLY the following final fixes to the existing Fees & Payments Audit Log. Do not redesign the Audit Log or add unnecessary features.
+
+1. Fix Actor / Role / ID
+
+The current Audit Log shows entries such as:
+
+- Who: "Razorpay (client)"
+- Role: "Unknown"
+- ID: "UNKNOWN"
+
+This must be corrected.
+
+Use the actual source of the event:
+
+Human/admin action
+
+- Show the actual user's name
+- Show their correct role: Principal / Teacher / Non-Teaching Staff
+- Show their authoritative internal user/staff ID
+
+Example:
+
+"Rahul Das | Teacher | TCH-014"
+
+System action
+
+- Who: "System"
+- Role: "System"
+- ID: "SYSTEM"
+
+Razorpay webhook/provider event
+
+- Who: "Razorpay"
+- Role: "Payment Gateway"
+- ID: "RAZORPAY"
+
+Student/client payment event
+If the authenticated student/portal session is available:
+
+- Who: Student name
+- Role: "Student"
+- ID: authoritative student ID/DSID
+
+If the student identity genuinely cannot be determined, do NOT fabricate an ID. Use:
+
+"Razorpay / Payment Gateway | Payment Gateway | RAZORPAY"
+
+or the appropriate known source classification.
+
+Never display "Unknown" / "UNKNOWN" when a reliable source classification is available.
+
+2. Remove misleading "Recorded by staff"
+
+Currently Razorpay client events display:
+
+"Recorded by staff"
+
+This is misleading because no staff member necessarily performed the event.
+
+Remove this label.
+
+Only show a staff/admin attribution when an actual authenticated staff/admin user performed the action.
+
+3. Fix Student / Record column
+
+Currently payment events can show:
+
+"School-wide"
+"fee_record"
+
+This is too generic when the specific invoice/student is known.
+
+For invoice/payment-related events, show the relevant:
+
+- Student name
+- DSID/student ID
+- Invoice number when available
+- Fee/invoice record reference when useful
+
+Example:
+
+"student3mis · MIS-0004 · INV-0093"
+
+Keep it concise.
+
+If the event genuinely has no specific student/invoice association, then "School-wide" is acceptable.
+
+4. Keep the existing simple design
+
+Do NOT change the current Audit Log structure unnecessarily.
+
+Keep:
+
+Date & Time | Who | Role | ID | Action | Student / Record | Description
+
+Keep:
+
+- IST timestamps
+- Simple filters
+- Human-readable descriptions
+- Safe/whitelisted fields only
+- No IP addresses
+- No raw Razorpay payloads
+- No HMAC/signatures
+- No secrets
+- No card/CVV/full payment credentials
+- No unnecessary technical gateway data
+
+5. Important actor rule
+
+Do not infer or guess identity.
+
+Use the authoritative authenticated identity/source available at event creation time.
+
+For Principal / Teacher / Non-Teaching Staff actions, the audit entry MUST preserve the exact actor identity and ID at the time the action occurred so that historical records remain understandable even if the user's profile later changes.
+
+6. Test these exact scenarios
+
+Verify that the Audit Log correctly displays:
+
+1. Principal generates invoices
+2. Teacher edits an invoice
+3. Non-Teaching Staff deletes an invoice
+4. Principal adds a fee structure
+5. Principal deletes a fee structure
+6. Staff records an offline payment
+7. Student cancels Razorpay checkout
+8. Student payment fails
+9. Razorpay webhook records a payment
+10. System automatically performs an action
+
+For each, verify:
+
+Who + Role + ID + Action + Student/Record + Description
+
+There must be no misleading "Unknown", "UNKNOWN", or "Recorded by staff" values.
+
+Run the relevant tests and type-check after the fix.
+
+Do not make any unrelated changes.

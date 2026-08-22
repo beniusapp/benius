@@ -182,12 +182,14 @@ interface AuditLogEntry {
   actorName: string | null;
   actorRole: string | null;
   actorIdentifier: string | null;
+  actorType: string | null;
   action: string;
   actionLabel: string | null;
   entityType: string | null;
   entityId: number | null;
   studentId: number | null;
   studentName: string | null;
+  studentIdentifier: string | null;
   recordLabel: string | null;
   description: string | null;
   amount: number | null;
@@ -6480,19 +6482,33 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
               </thead>
               <tbody>
                 {data.entries.map(e => {
+                  const actorCaption =
+                    e.actorType === "system" ? "Automatic entry"
+                    : e.actorType === "payment_gateway" ? "Provider event"
+                    : e.actorType === "student" ? "Student portal"
+                    : ["principal", "teacher", "non_teaching_staff"].includes(e.actorType ?? "") ? "Authenticated user"
+                    : "Historical entry";
+                  const entityReference = e.recordLabel
+                    ?? (e.entityId != null
+                      ? `${(e.entityType ?? "record").replaceAll("_", " ")} #${e.entityId}`
+                      : null);
+                  const studentRecord = [e.studentName, e.studentIdentifier, entityReference]
+                    .filter((value): value is string => Boolean(value))
+                    .join(" · ");
                   return (
                     <tr key={e.id} className="border-b border-[#edf2f1] transition-colors hover:bg-[#f4faf8]">
                       <td className="whitespace-nowrap px-3 py-3 align-top text-[11px] tabular-nums text-slate-500">{fmtDateTime(e.createdAt)}</td>
                       <td className="max-w-[150px] px-3 py-3 align-top">
                         <div className="truncate text-xs font-semibold text-[#274b47]">{e.actorName ?? "School system"}</div>
-                        <div className="mt-0.5 text-[10px] text-slate-400">{e.actorName ? "Recorded by staff" : "Automatic entry"}</div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">{actorCaption}</div>
                       </td>
                       <td className="px-3 py-3 align-top text-xs text-slate-600">{e.actorRole ?? "—"}</td>
                       <td className="px-3 py-3 align-top font-mono text-[11px] text-slate-500">{e.actorIdentifier ?? "—"}</td>
                       <td className="px-3 py-3 align-top"><span className={`inline-flex rounded-md border px-2 py-1 text-[10px] font-bold capitalize ${actionTone(e.action)}`}>{e.actionLabel ?? e.action.replaceAll("_", " ")}</span></td>
                       <td className="max-w-[190px] px-3 py-3 align-top">
-                        <div className="truncate text-xs font-medium text-[#315e59]">{e.studentName ?? "School-wide"}</div>
-                        <div className="mt-0.5 truncate text-[10px] text-slate-400">{e.recordLabel ?? e.entityType ?? "General register"}</div>
+                        <div className="text-xs font-medium leading-relaxed text-[#315e59]" title={studentRecord || "School-wide"}>
+                          {studentRecord || "School-wide"}
+                        </div>
                       </td>
                       <td className="max-w-[280px] px-3 py-3 align-top text-xs leading-relaxed text-slate-600">{e.description ?? "No additional details recorded."}</td>
                     </tr>

@@ -1261,6 +1261,7 @@ export const feeAuditLog = pgTable("fee_audit_log", {
   entityId: integer("entity_id"),
   studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
   studentName: text("student_name"),
+  studentIdentifier: varchar("student_identifier", { length: 100 }),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   recordLabel: text("record_label"),
   eventKey: varchar("event_key", { length: 200 }),

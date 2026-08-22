@@ -587,6 +587,7 @@ app.use((req, res, next) => {
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_role VARCHAR(80) NOT NULL DEFAULT 'Unknown';
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_identifier VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN';
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_name TEXT;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_identifier VARCHAR(100);
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS record_label TEXT;
     ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS event_key VARCHAR(200);
     UPDATE fee_audit_log SET currency = 'INR' WHERE currency IS NULL;

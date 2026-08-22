@@ -84,7 +84,6 @@ import {
   requestIpAddress,
   resolveFeeAuditActor,
   SYSTEM_FEE_AUDIT_ACTOR,
-  UNKNOWN_FEE_AUDIT_ACTOR,
 } from "./fee-audit";
 
 // ── Signature background removal ─────────────────────────────────────────────
@@ -3142,7 +3141,7 @@ export function registerFeesRoutes(app: Express) {
   // the same invoice right away without waiting for the webhook round-trip.
   app.post("/api/payments/clear-failed-order", async (req, res) => {
     const studentId  = req.session?.studentId;
-    const adminSchId = req.session?.schoolId;
+    const adminSchId = req.session?.userRole === "admin" ? req.session.schoolId : null;
     if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
 
     const {
@@ -3202,18 +3201,21 @@ export function registerFeesRoutes(app: Express) {
       clientFeeAmount = fee?.amount == null ? null : Number(fee.amount);
       if (!fee) return;
       const studentResult = await tx.execute(sql`
-        SELECT name FROM students
+        SELECT name, digital_student_id FROM students
         WHERE id = ${Number(fee.student_id)} AND school_id = ${schoolId}
         LIMIT 1
       `);
+      const studentSnapshot = studentResult.rows[0] as any;
       const clientActor = req.session?.userRole === "admin"
         ? await resolveFeeAuditActor(req, schoolId)
         : {
-            ...UNKNOWN_FEE_AUDIT_ACTOR,
+            actorId: null,
+            actorTeacherId: null,
+            actorStaffId: null,
             actorType: "student" as const,
-            actorName: "Student Portal",
+            actorName: studentSnapshot?.name,
             actorRole: "Student",
-            actorIdentifier: `STU-${String(fee.student_id).padStart(4, "0")}`,
+            actorIdentifier: studentSnapshot?.digital_student_id,
           };
       await appendFeeAudit({
         schoolId,
@@ -3222,7 +3224,8 @@ export function registerFeesRoutes(app: Express) {
         entityType: "fee_record",
         entityId: feeRecordId,
         studentId: Number(fee.student_id),
-        studentName: (studentResult.rows[0] as any)?.name ?? null,
+        studentName: studentSnapshot?.name ?? null,
+        studentIdentifier: studentSnapshot?.digital_student_id ?? null,
         sessionId: clientFeeSessionId,
         recordLabel: fee.invoice_number ?? null,
         eventKey: isCancelled
@@ -3347,7 +3350,7 @@ export function registerFeesRoutes(app: Express) {
   // waiting for the webhook — idempotent if the webhook already ran first.
   app.post("/api/payments/verify", async (req, res) => {
     const studentId   = req.session?.studentId;
-    const adminSchId  = req.session?.schoolId;
+    const adminSchId  = req.session?.userRole === "admin" ? req.session.schoolId : null;
     if (!studentId && !adminSchId) return res.status(403).json({ message: "Authentication required" });
 
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, feeRecordId,

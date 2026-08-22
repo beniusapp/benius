@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { nonTeachingStaff, teachers, users } from "@shared/schema";
+import { nonTeachingStaff, students, teachers, users } from "@shared/schema";
 import { db } from "./db";
 import { isIP } from "node:net";
 
@@ -34,6 +34,7 @@ export type FeeAuditInput = {
   entityId?: number | null;
   studentId?: number | null;
   studentName?: string | null;
+  studentIdentifier?: string | null;
   sessionId?: number | null;
   recordLabel?: string | null;
   eventKey?: string | null;
@@ -218,14 +219,14 @@ export const RAZORPAY_FEE_AUDIT_ACTOR: FeeAuditActor = Object.freeze({
   actorIdentifier: "RAZORPAY",
 });
 
-export const UNKNOWN_FEE_AUDIT_ACTOR: FeeAuditActor = Object.freeze({
+const HISTORICAL_FEE_AUDIT_ACTOR: FeeAuditActor = Object.freeze({
   actorId: null,
   actorTeacherId: null,
   actorStaffId: null,
   actorType: "unknown",
-  actorName: "Unknown Actor",
-  actorRole: "Unknown",
-  actorIdentifier: "UNKNOWN",
+  actorName: "Historical record",
+  actorRole: "Source not recorded",
+  actorIdentifier: "NOT_RECORDED",
 });
 
 /**
@@ -242,7 +243,7 @@ export async function resolveFeeAuditActor(req: any, schoolId: number): Promise<
       eq(nonTeachingStaff.id, req.session.staffId),
       eq(nonTeachingStaff.schoolId, schoolId),
     ));
-    if (!staff) return UNKNOWN_FEE_AUDIT_ACTOR;
+    if (!staff) throw new Error("Authenticated non-teaching staff identity could not be resolved.");
     return {
       actorId: null,
       actorTeacherId: null,
@@ -265,7 +266,9 @@ export async function resolveFeeAuditActor(req: any, schoolId: number): Promise<
       eq(teachers.id, req.session.teacherId),
       eq(teachers.schoolId, schoolId),
     ));
-    if (!teacher || teacher.userId !== req.session.userId) return UNKNOWN_FEE_AUDIT_ACTOR;
+    if (!teacher || teacher.userId !== req.session.userId) {
+      throw new Error("Authenticated teacher identity could not be resolved.");
+    }
     return {
       actorId: teacher.userId,
       actorTeacherId: teacher.id,
@@ -287,7 +290,7 @@ export async function resolveFeeAuditActor(req: any, schoolId: number): Promise<
       eq(users.schoolId, schoolId),
       eq(users.role, "admin"),
     ));
-    if (!user) return UNKNOWN_FEE_AUDIT_ACTOR;
+    if (!user) throw new Error("Authenticated principal identity could not be resolved.");
     return {
       actorId: user.id,
       actorTeacherId: null,
@@ -299,7 +302,77 @@ export async function resolveFeeAuditActor(req: any, schoolId: number): Promise<
     };
   }
 
-  return UNKNOWN_FEE_AUDIT_ACTOR;
+  throw new Error("Authenticated audit actor is not supported.");
+}
+
+export function normalizeFeeAuditActorDisplay(input: {
+  actorType?: unknown;
+  actorName?: unknown;
+  actorRole?: unknown;
+  actorIdentifier?: unknown;
+  action?: unknown;
+  studentId?: unknown;
+  studentName?: unknown;
+  studentIdentifier?: unknown;
+}): FeeAuditActor {
+  const actorType = cleanAuditText(input.actorType, 30) as FeeAuditActorType | null;
+  const actorName = cleanAuditText(input.actorName, 200);
+  const actorRole = cleanAuditText(input.actorRole, 80);
+  const actorIdentifier = cleanAuditText(input.actorIdentifier, 100);
+  const studentId = Number(input.studentId);
+  const studentName = cleanAuditText(input.studentName, 200);
+  const studentIdentifier = cleanAuditText(input.studentIdentifier, 100);
+  const stableStudentIdentifier = studentIdentifier
+    ?? (Number.isSafeInteger(studentId) ? String(studentId) : null);
+  const hasUnknownSnapshot =
+    !actorName || !actorRole || !actorIdentifier
+    || /^unknown(?: actor)?$/i.test(actorName)
+    || /^unknown$/i.test(actorRole)
+    || /^unknown$/i.test(actorIdentifier);
+
+  if (actorType === "system") return SYSTEM_FEE_AUDIT_ACTOR;
+  if (actorType === "payment_gateway") return RAZORPAY_FEE_AUDIT_ACTOR;
+  if (actorType === "student") {
+    if (!studentName || !stableStudentIdentifier) return HISTORICAL_FEE_AUDIT_ACTOR;
+    return {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "student",
+      actorName: studentName,
+      actorRole: "Student",
+      actorIdentifier: stableStudentIdentifier,
+    };
+  }
+  if (
+    hasUnknownSnapshot
+    && studentName
+    && stableStudentIdentifier
+    && /payment_(?:failed|cancelled)/i.test(String(input.action ?? ""))
+  ) {
+    return {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: "student",
+      actorName: studentName,
+      actorRole: "Student",
+      actorIdentifier: stableStudentIdentifier,
+    };
+  }
+  if (/^razorpay(?:\s|\(|\/|$)/i.test(actorName ?? "")) return RAZORPAY_FEE_AUDIT_ACTOR;
+  if (!hasUnknownSnapshot) {
+    return {
+      actorId: null,
+      actorTeacherId: null,
+      actorStaffId: null,
+      actorType: actorType ?? "unknown",
+      actorName,
+      actorRole,
+      actorIdentifier,
+    };
+  }
+  return HISTORICAL_FEE_AUDIT_ACTOR;
 }
 
 export function requestIpAddress(req: any): string | null {
@@ -316,21 +389,45 @@ export async function appendFeeAudit(
   input: FeeAuditInput,
   executor: FeeAuditExecutor = db,
 ): Promise<number> {
+  const actorName = cleanAuditText(input.actor.actorName, 200);
+  const actorRole = cleanAuditText(input.actor.actorRole, 80);
+  const actorIdentifier = cleanAuditText(input.actor.actorIdentifier, 100);
+  if (
+    !actorName || !actorRole || !actorIdentifier
+    || /^unknown(?: actor)?$/i.test(actorName)
+    || /^unknown$/i.test(actorRole)
+    || /^unknown$/i.test(actorIdentifier)
+  ) {
+    throw new Error("Audit actor must have a reliable source classification.");
+  }
+  const studentSnapshotResult = input.studentId == null
+    ? null
+    : await executor.execute(sql`
+        SELECT name, digital_student_id
+        FROM ${students}
+        WHERE id = ${input.studentId}
+          AND school_id = ${input.schoolId}
+        LIMIT 1
+      `);
+  const studentSnapshot = studentSnapshotResult?.rows?.[0] as any;
+  const studentName = cleanAuditText(input.studentName ?? studentSnapshot?.name, 200);
+  const studentIdentifier = cleanAuditText(
+    input.studentIdentifier ?? studentSnapshot?.digital_student_id,
+    100,
+  );
   const result = await executor.execute(sql`
     INSERT INTO fee_audit_log (
       school_id, actor_id, actor_teacher_id, actor_staff_id, actor_type,
       actor_name, actor_role, actor_identifier, ip_address, action,
-      entity_type, entity_id, student_id, student_name, session_id,
+      entity_type, entity_id, student_id, student_name, student_identifier, session_id,
       record_label, event_key, amount, currency, description, created_at
     ) VALUES (
       ${input.schoolId}, ${input.actor.actorId}, ${input.actor.actorTeacherId},
       ${input.actor.actorStaffId}, ${input.actor.actorType},
-      ${cleanAuditText(input.actor.actorName, 200) ?? "Unknown Actor"},
-      ${cleanAuditText(input.actor.actorRole, 80) ?? "Unknown"},
-      ${cleanAuditText(input.actor.actorIdentifier, 100) ?? "UNKNOWN"},
+      ${actorName}, ${actorRole}, ${actorIdentifier},
       ${cleanAuditText(input.ipAddress, 120)}, ${cleanAuditText(input.action, 50) ?? "activity"},
       ${cleanAuditText(input.entityType, 50)}, ${input.entityId ?? null},
-      ${input.studentId ?? null}, ${cleanAuditText(input.studentName, 200)},
+      ${input.studentId ?? null}, ${studentName}, ${studentIdentifier},
       ${input.sessionId ?? null}, ${cleanAuditText(input.recordLabel, 200)},
       ${cleanAuditText(input.eventKey, 200)},
       ${input.amount ?? null}, ${cleanAuditText(input.currency, 10) ?? "INR"},

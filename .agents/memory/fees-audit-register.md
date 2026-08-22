@@ -9,6 +9,12 @@ The normal fees audit register is an operational history, not a forensic payment
 
 **How to apply:** Project only explicitly approved fields; sanitize both descriptions and record labels; use fixed generic wording for technical payment/refund/dispute events; and keep provider IDs, IP addresses, emails, phones, cards, VPAs, tokens, signatures, payloads, and raw errors out of this surface.
 
+Actor source snapshots must remain explicit: authenticated students use their name and DSID; provider callbacks use Razorpay / Payment Gateway / RAZORPAY; automation uses System / System / SYSTEM. Never turn an incomplete historical actor into a person or provider based only on the action name.
+
+**Why:** Client payment events were once mislabeled as unknown staff activity, while broad legacy normalization could falsely attribute incomplete manual entries to Razorpay.
+
+**How to apply:** Persist student identifiers alongside student names at event creation, show role-specific source captions, and use a neutral historical-source label when a reliable actor snapshot is absent. Student/client payment endpoints must reject teacher and support-staff sessions before mutation.
+
 Financial and destructive state changes must append their audit entry in the same database transaction. Provider retries use tenant-scoped deterministic event keys. Batch invoice deletion must preserve one snapshot row per deleted invoice rather than only a count summary.
 
 **Why:** A summary cannot identify which financial records were removed, and non-atomic audit writes can claim a mutation that rolled back or omit one that committed.
