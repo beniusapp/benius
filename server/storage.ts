@@ -63,6 +63,17 @@ import {
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
 
+/**
+ * Build a PostgreSQL text-array expression while binding every recipient
+ * independently. Passing a JavaScript array through a generic SQL
+ * interpolation can be coerced into one comma-delimited string, which
+ * PostgreSQL then rejects as a malformed array literal.
+ */
+export function reportEmailRecipientsArraySql(recipients: readonly string[]): SQL {
+  if (recipients.length === 0) return sql`ARRAY[]::text[]`;
+  return sql`ARRAY[${sql.join(recipients.map(recipient => sql`${recipient}`), sql`, `)}]::text[]`;
+}
+
 const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
 
 /**
@@ -5164,11 +5175,12 @@ export class DatabaseStorage {
     data: { enabled?: boolean; recipients?: string[]; dayOfMonth?: number; sendTime?: string; lastSentAt?: Date; lastSentMonth?: string },
     executor: any = db,
   ): Promise<void> {
+    const recipientsSql = reportEmailRecipientsArraySql(data.recipients ?? []);
     await executor.execute(sql`
       INSERT INTO report_email_schedule (
         school_id, enabled, recipients, day_of_month, send_time, last_sent_at, last_sent_month, updated_at
       ) VALUES (
-        ${schoolId}, ${data.enabled ?? false}, ${data.recipients ?? []}::text[],
+        ${schoolId}, ${data.enabled ?? false}, ${recipientsSql},
         ${data.dayOfMonth ?? 1}, ${data.sendTime ?? "09:00"},
         ${data.lastSentAt ?? null}, ${data.lastSentMonth ?? null}, NOW()
       )
@@ -5176,7 +5188,7 @@ export class DatabaseStorage {
         enabled = CASE WHEN ${data.enabled !== undefined}
           THEN ${data.enabled ?? false} ELSE report_email_schedule.enabled END,
         recipients = CASE WHEN ${data.recipients !== undefined}
-          THEN ${data.recipients ?? []}::text[] ELSE report_email_schedule.recipients END,
+          THEN ${recipientsSql} ELSE report_email_schedule.recipients END,
         day_of_month = CASE WHEN ${data.dayOfMonth !== undefined}
           THEN ${data.dayOfMonth ?? 1} ELSE report_email_schedule.day_of_month END,
         send_time = CASE WHEN ${data.sendTime !== undefined}
