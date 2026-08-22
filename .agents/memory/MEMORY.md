@@ -27,3 +27,4 @@
 - [Transaction report authority](transaction-report-authority.md) — invoice scope is authoritative; attempts lead, unmatched payment records fall back, and only processed refunds affect money.
 - [Fees audit register contract](fees-audit-register.md) — snapshot-only identities, safe operational prose, atomic event writes, per-record deletion history, and cascade-only cleanup.
 - [Financial analytics authority](financial-analytics-authority.md) — analytics JSON, PDFs, and scheduled reports share one IST/session-scoped financial dataset; lifecycle attempts are never revenue.
+- [Monthly report delivery](monthly-report-delivery.md) — IST-configured schedules deliver the prior completed month with per-recipient retry and contiguous completion tracking.

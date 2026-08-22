@@ -12,7 +12,14 @@ import { storage } from "./storage";
 import { log } from "./index";
 import { buildFinancialAnalytics } from "./financial-analytics-data";
 import { renderFinancialAnalyticsPdf } from "./financial-analytics-pdf";
-import { formatMonthYearIST, formatDateOnly, todayInIST } from "../shared/ist-time";
+import { formatDateOnly } from "../shared/ist-time";
+import {
+  isMonthlyReportDue,
+  previousCalendarMonthPeriod,
+  reportMonthsAfter,
+  reportPeriodForMonth,
+  type MonthlyReportPeriod,
+} from "./monthly-report-schedule";
 
 // ── Plain HTML email body (brief cover note) ─────────────────────────────────
 function buildCoverHtml(
@@ -118,165 +125,206 @@ async function sendEmailWithPdfAttachment(
   }
 }
 
-// ── Core: send analytics report for one school ───────────────────────────────
-// forceEnabled:
-//   false (default) — scheduled run; respects the enabled flag and enforces a
-//                     once-per-month atomic delivery guard so concurrent runners
-//                     or restarts cannot send duplicate board reports.
-//   true            — manual "Send Now"; ignores enabled flag and monthly guard.
-export async function sendAnalyticsReport(
+type PreparedReport = {
+  provider: string;
+  apiKey: string;
+  fromEmail: string;
+  fromName: string;
+  mailtrapId: string | null;
+  subject: string;
+  htmlCover: string;
+  pdf: Buffer;
+  filename: string;
+};
+
+async function prepareAnalyticsReport(
   schoolId: number,
-  { forceEnabled = false }: { forceEnabled?: boolean } = {},
-): Promise<{ sent: number; errors: string[] }> {
-  const schedule = await storage.getReportEmailSchedule(schoolId);
-
-  if (!schedule || !schedule.recipients || schedule.recipients.length === 0) {
-    return { sent: 0, errors: ["No recipients configured"] };
-  }
-  if (!forceEnabled && !schedule.enabled) {
-    // Scheduled run but schedule is disabled — skip silently
-    return { sent: 0, errors: [] };
-  }
-
-  // ── Require an active session ────────────────────────────────────────────────
+  period: MonthlyReportPeriod,
+): Promise<PreparedReport> {
   const activeSession = await storage.getActiveSession(schoolId);
   if (!activeSession) {
-    return {
-      sent: 0,
-      errors: [
-        `School ${schoolId}: no active academic session found. ` +
-        "Please mark an academic session as active before sending analytics reports.",
-      ],
-    };
+    throw new Error("No active academic session is configured for this school.");
+  }
+  const notifConfig = await storage.getNotificationConfig(schoolId);
+  if (!notifConfig?.emailEnabled) {
+    throw new Error("Email notifications are not enabled. Enable them in Notification Settings.");
   }
 
-  // ── Once-per-month atomic guard (scheduled runs only) ────────────────────────
-  // Claim the month before doing any work so concurrent cron runners or a
-  // restart around the trigger minute cannot both send duplicate board reports.
-  // The claim is a soft lock: it is REVERTED below if zero sends ultimately
-  // succeed, so that the next cron run can retry a configuration failure or
-  // transient provider outage later in the same month.
-  const now = new Date();
-  const currentMonth = todayInIST().slice(0, 7);
-
-  if (!forceEnabled) {
-    const claimed = await storage.claimReportMonthForSend(schoolId, currentMonth);
-    if (!claimed) {
-      log(`School ${schoolId}: analytics report already sent for ${currentMonth} — skipping`, "cron");
-      return { sent: 0, errors: [] };
-    }
+  const provider = (notifConfig as any).emailProvider ?? "sendgrid";
+  const apiKey = provider === "mailtrap"
+    ? (notifConfig as any).mailtrapApiKey
+    : (notifConfig as any).sendgridApiKey;
+  const fromEmail = (notifConfig as any).sendgridFromEmail ?? "";
+  if (!apiKey) throw new Error(`No ${provider} API key is configured in Notification Settings.`);
+  if (provider === "sendgrid" && !fromEmail) {
+    throw new Error("A SendGrid sender email is required in Notification Settings.");
   }
 
-  // All post-claim work lives inside try/finally so that every failure path —
-  // missing credentials, data-fetch error, PDF generation error, or all
-  // recipients failing — reverts the soft lock and allows cron to retry later
-  // in the same month after configuration is corrected.
-  const errors: string[] = [];
-  let sent = 0;
-  try {
-    const notifConfig = await storage.getNotificationConfig(schoolId);
-    if (!notifConfig?.emailEnabled) {
-      errors.push("Email notifications are not enabled for this school. Enable them under Notification Settings.");
-      return { sent: 0, errors };
-    }
-
-    const provider   = (notifConfig as any).emailProvider ?? "sendgrid";
-    const apiKey     = provider === "mailtrap"
-      ? (notifConfig as any).mailtrapApiKey
-      : (notifConfig as any).sendgridApiKey;
-    const fromEmail  = (notifConfig as any).sendgridFromEmail ?? "";
-    const fromName   = (notifConfig as any).sendgridFromName ?? "School Finance";
-    const mailtrapId = (notifConfig as any).mailtrapInboxId ?? null;
-
-    if (!apiKey) {
-      errors.push(`No ${provider} API key configured. Add one under Notification Settings.`);
-      return { sent: 0, errors };
-    }
-
-    // Fetch school name
-    const schoolRow  = await pool.query("SELECT name FROM schools WHERE id = $1", [schoolId]);
-    const schoolName = schoolRow.rows[0]?.name ?? "School";
-
-    // ── Build canonical analytics data via the shared data service ─────────────
-    const analyticsData = await buildFinancialAnalytics({
-      schoolId,
-      sessionId: activeSession.id,
-      preset: "this_month",
-    });
-
-    // Derive period labels from canonical filter data
-    const periodLabel = formatMonthYearIST(now);
-    const sessionLabel = activeSession.sessionName;
-
-    const subject  = `Financial Analytics Report — ${schoolName} (${periodLabel}: ${analyticsData.filter.startDate} to ${analyticsData.filter.endDate})`;
-    const filename = `analytics-${analyticsData.filter.startDate.slice(0, 7)}-${schoolName.replace(/\s+/g, "_")}.pdf`;
-
-    // ── Render PDF using the canonical renderer ─────────────────────────────────
-    const pdf = await renderFinancialAnalyticsPdf({
-      data: analyticsData,
-      school: { name: schoolName },
-      section: "complete",
-    });
-
-    const htmlCover = buildCoverHtml(
+  const schoolRow = await pool.query("SELECT name FROM schools WHERE id = $1", [schoolId]);
+  const schoolName = schoolRow.rows[0]?.name ?? "School";
+  const analyticsData = await buildFinancialAnalytics({
+    schoolId,
+    sessionId: activeSession.id,
+    preset: "custom",
+    customStart: period.startDate,
+    customEnd: period.endDate,
+  });
+  const pdf = await renderFinancialAnalyticsPdf({
+    data: analyticsData,
+    school: { name: schoolName },
+    section: "complete",
+  });
+  const filename = `analytics-${period.reportMonth}-${schoolName.replace(/\s+/g, "_")}.pdf`;
+  return {
+    provider,
+    apiKey,
+    fromEmail,
+    fromName: (notifConfig as any).sendgridFromName ?? "School Finance",
+    mailtrapId: (notifConfig as any).mailtrapInboxId ?? null,
+    subject: `Financial Analytics Report — ${schoolName} (${period.label}: ${period.startDate} to ${period.endDate})`,
+    htmlCover: buildCoverHtml(
       schoolName,
-      periodLabel,
-      sessionLabel,
+      period.label,
+      activeSession.sessionName,
       analyticsData.filter.startDate,
       analyticsData.filter.endDate,
-    );
+    ),
+    pdf,
+    filename,
+  };
+}
 
-    for (const toEmail of schedule.recipients) {
-      try {
-        await sendEmailWithPdfAttachment(
-          provider, apiKey, fromEmail, fromName,
-          toEmail, subject, htmlCover, pdf, filename, mailtrapId,
+// ── Core: send analytics report for one school ───────────────────────────────
+// forceEnabled=true is a manual test/send. It uses the same previous-month PDF
+// pipeline but does not create or complete an automatic monthly delivery claim.
+export async function sendAnalyticsReport(
+  schoolId: number,
+  {
+    forceEnabled = false,
+    now = new Date(),
+    reportMonth,
+  }: { forceEnabled?: boolean; now?: Date; reportMonth?: string } = {},
+): Promise<{ sent: number; errors: string[]; reportMonth: string }> {
+  const schedule = await storage.getReportEmailSchedule(schoolId);
+  const period = reportMonth ? reportPeriodForMonth(reportMonth) : previousCalendarMonthPeriod(now);
+
+  if (!schedule || !schedule.recipients || schedule.recipients.length === 0) {
+    return { sent: 0, errors: ["No recipients configured"], reportMonth: period.reportMonth };
+  }
+  if (!forceEnabled && !schedule.enabled) {
+    return { sent: 0, errors: [], reportMonth: period.reportMonth };
+  }
+  if (!forceEnabled && schedule.lastSentMonth === period.reportMonth) {
+    return { sent: 0, errors: [], reportMonth: period.reportMonth };
+  }
+
+  if (!forceEnabled) {
+    await storage.ensureReportEmailDeliveries(schoolId, period.reportMonth, schedule.recipients);
+  }
+
+  const errors: string[] = [];
+  let sent = 0;
+  let prepared: PreparedReport | null = null;
+  let preparationError: string | null = null;
+  try {
+    prepared = await prepareAnalyticsReport(schoolId, period);
+  } catch (error: any) {
+    preparationError = String(error?.message ?? error);
+  }
+
+  for (const toEmail of schedule.recipients) {
+    const claim = forceEnabled
+      ? { claimed: true, attempts: 0, claimToken: null }
+      : await storage.claimReportEmailDelivery(schoolId, period.reportMonth, toEmail);
+    if (!claim.claimed) continue;
+    try {
+      if (preparationError || !prepared) throw new Error(preparationError ?? "Report preparation failed");
+      await sendEmailWithPdfAttachment(
+        prepared.provider,
+        prepared.apiKey,
+        prepared.fromEmail,
+        prepared.fromName,
+        toEmail,
+        prepared.subject,
+        prepared.htmlCover,
+        prepared.pdf,
+        prepared.filename,
+        prepared.mailtrapId,
+      );
+      sent++;
+      if (!forceEnabled) {
+        const recorded = await storage.completeReportEmailDelivery(
+          schoolId,
+          period.reportMonth,
+          toEmail,
+          claim.claimToken!,
         );
-        sent++;
-      } catch (err: any) {
-        errors.push(`${toEmail}: ${err.message}`);
+        if (!recorded) {
+          errors.push(`${toEmail}: delivery was accepted but its ownership lease expired before completion could be recorded`);
+        }
       }
-    }
-
-    // At least one delivery succeeded — persist the confirmed sent timestamp.
-    // For scheduled runs, last_sent_month was already written atomically by
-    // claimReportMonthForSend; we just update last_sent_at here.
-    if (sent > 0) {
-      await storage.upsertReportEmailSchedule(schoolId, { lastSentAt: new Date() });
-    }
-  } finally {
-    // If zero sends succeeded for a scheduled run, revert the month claim so
-    // the next cron invocation this month can retry after the admin fixes
-    // configuration.  clearMonthClaim is a no-op if a concurrent runner
-    // already committed a successful send in the interim.
-    if (sent === 0 && !forceEnabled) {
-      await storage.clearMonthClaim(schoolId, currentMonth);
+    } catch (error: any) {
+      const message = String(error?.message ?? error);
+      errors.push(`${toEmail}: ${message}`);
+      if (!forceEnabled) {
+        await storage.failReportEmailDelivery(
+          schoolId,
+          period.reportMonth,
+          toEmail,
+          claim.attempts,
+          message,
+          claim.claimToken!,
+        );
+      }
     }
   }
 
-  return { sent, errors };
+  if (!forceEnabled) {
+    const complete = await storage.completeReportMonthIfDelivered(schoolId, period.reportMonth);
+    if (complete) {
+      log(`School ${schoolId}: completed monthly report delivery for ${period.reportMonth}`, "cron");
+    }
+  }
+
+  return { sent, errors, reportMonth: period.reportMonth };
 }
 
 // ── Public: run for all schools (called by cron) ─────────────────────────────
-export async function runMonthlyAnalyticsReport(): Promise<void> {
-  log("Monthly analytics report job starting…", "cron");
+export async function runMonthlyAnalyticsReport(now: Date = new Date()): Promise<void> {
   try {
-    const allSchools = await storage.getSchools();
-    for (const school of allSchools) {
+    const schedules = await storage.getEnabledReportEmailSchedules();
+    if (schedules.length === 0) return;
+    let attempted = false;
+    for (const schedule of schedules) {
       try {
-        // forceEnabled=false — respects the enabled flag during scheduled runs
-        const result = await sendAnalyticsReport(school.id, { forceEnabled: false });
-        if (result.sent > 0) {
-          log(`School ${school.id}: analytics PDF emailed to ${result.sent} recipient(s)`, "cron");
-        }
-        if (result.errors.length > 0) {
-          log(`School ${school.id}: analytics report errors: ${result.errors.join("; ")}`, "cron");
+        if (!isMonthlyReportDue(schedule, now)) continue;
+        const currentPeriod = previousCalendarMonthPeriod(now);
+        const incompleteMonths = await storage.getIncompleteReportEmailMonths(schedule.schoolId, currentPeriod.reportMonth);
+        const reportMonths = new Set<string>([
+          ...(schedule.lastSentMonth
+            ? reportMonthsAfter(schedule.lastSentMonth, currentPeriod.reportMonth)
+            : [currentPeriod.reportMonth]),
+          ...incompleteMonths,
+        ]);
+        for (const reportMonth of [...reportMonths].sort()) {
+          const result = await sendAnalyticsReport(schedule.schoolId, {
+            forceEnabled: false,
+            now,
+            reportMonth,
+          });
+          attempted ||= result.sent > 0 || result.errors.length > 0;
+          if (result.sent > 0) {
+            log(`School ${schedule.schoolId}: analytics PDF for ${reportMonth} emailed to ${result.sent} recipient(s)`, "cron");
+          }
+          if (result.errors.length > 0) {
+            log(`School ${schedule.schoolId}: ${reportMonth} report errors: ${result.errors.join("; ")}`, "cron");
+          }
         }
       } catch (err) {
-        log(`School ${school.id}: analytics report failed: ${String(err)}`, "cron");
+        log(`School ${schedule.schoolId}: analytics report failed: ${String(err)}`, "cron");
       }
     }
-    log("Monthly analytics report job complete", "cron");
+    if (attempted) log("Monthly analytics report job complete", "cron");
   } catch (err) {
     log(`Monthly analytics report job error: ${String(err)}`, "cron");
   }

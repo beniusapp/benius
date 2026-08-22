@@ -5139,9 +5139,9 @@ export class DatabaseStorage {
 
   // ===== REPORT EMAIL SCHEDULE =====
 
-  async getReportEmailSchedule(schoolId: number): Promise<{ id: number; schoolId: number; enabled: boolean; recipients: string[]; lastSentAt: Date | null; lastSentMonth: string | null; updatedAt: Date } | null> {
+  async getReportEmailSchedule(schoolId: number): Promise<{ id: number; schoolId: number; enabled: boolean; recipients: string[]; dayOfMonth: number; sendTime: string; lastSentAt: Date | null; lastSentMonth: string | null; updatedAt: Date } | null> {
     const res = await pool.query(
-      "SELECT id, school_id, enabled, recipients, last_sent_at, last_sent_month, updated_at FROM report_email_schedule WHERE school_id = $1",
+      "SELECT id, school_id, enabled, recipients, day_of_month, send_time, last_sent_at, last_sent_month, updated_at FROM report_email_schedule WHERE school_id = $1",
       [schoolId],
     );
     if (!res.rows[0]) return null;
@@ -5151,6 +5151,8 @@ export class DatabaseStorage {
       schoolId:      r.school_id,
       enabled:       r.enabled,
       recipients:    r.recipients ?? [],
+      dayOfMonth:    Number(r.day_of_month ?? 1),
+      sendTime:      r.send_time ?? "09:00",
       lastSentAt:    r.last_sent_at   ?? null,
       lastSentMonth: r.last_sent_month ?? null,
       updatedAt:     r.updated_at,
@@ -5159,14 +5161,15 @@ export class DatabaseStorage {
 
   async upsertReportEmailSchedule(
     schoolId: number,
-    data: { enabled?: boolean; recipients?: string[]; lastSentAt?: Date; lastSentMonth?: string },
+    data: { enabled?: boolean; recipients?: string[]; dayOfMonth?: number; sendTime?: string; lastSentAt?: Date; lastSentMonth?: string },
     executor: any = db,
   ): Promise<void> {
     await executor.execute(sql`
       INSERT INTO report_email_schedule (
-        school_id, enabled, recipients, last_sent_at, last_sent_month, updated_at
+        school_id, enabled, recipients, day_of_month, send_time, last_sent_at, last_sent_month, updated_at
       ) VALUES (
         ${schoolId}, ${data.enabled ?? false}, ${data.recipients ?? []}::text[],
+        ${data.dayOfMonth ?? 1}, ${data.sendTime ?? "09:00"},
         ${data.lastSentAt ?? null}, ${data.lastSentMonth ?? null}, NOW()
       )
       ON CONFLICT (school_id) DO UPDATE SET
@@ -5174,6 +5177,10 @@ export class DatabaseStorage {
           THEN ${data.enabled ?? false} ELSE report_email_schedule.enabled END,
         recipients = CASE WHEN ${data.recipients !== undefined}
           THEN ${data.recipients ?? []}::text[] ELSE report_email_schedule.recipients END,
+        day_of_month = CASE WHEN ${data.dayOfMonth !== undefined}
+          THEN ${data.dayOfMonth ?? 1} ELSE report_email_schedule.day_of_month END,
+        send_time = CASE WHEN ${data.sendTime !== undefined}
+          THEN ${data.sendTime ?? "09:00"} ELSE report_email_schedule.send_time END,
         last_sent_at = CASE WHEN ${data.lastSentAt !== undefined}
           THEN ${data.lastSentAt ?? null} ELSE report_email_schedule.last_sent_at END,
         last_sent_month = CASE WHEN ${data.lastSentMonth !== undefined}
@@ -5182,43 +5189,164 @@ export class DatabaseStorage {
     `);
   }
 
-  /**
-   * Atomically claim the right to send the report for a given month.
-   * Returns true when this caller wins the claim (no concurrent runner has already
-   * claimed this school + month). Safe against parallel cron instances.
-   * The claim is a soft lock — callers MUST call clearMonthClaim() if zero
-   * sends succeed so that a later cron run can retry the month.
-   */
-  async claimReportMonthForSend(schoolId: number, month: string): Promise<boolean> {
-    // Ensure the row exists (idempotent)
-    await pool.query(
-      `INSERT INTO report_email_schedule (school_id) VALUES ($1) ON CONFLICT (school_id) DO NOTHING`,
-      [schoolId],
-    );
-    // Atomically try to claim; only succeeds if last_sent_month is different
+  async getEnabledReportEmailSchedules(): Promise<Array<{ schoolId: number; enabled: boolean; recipients: string[]; dayOfMonth: number; sendTime: string; lastSentMonth: string | null }>> {
     const res = await pool.query(
-      `UPDATE report_email_schedule
-       SET last_sent_month = $2, updated_at = NOW()
-       WHERE school_id = $1
-         AND (last_sent_month IS NULL OR last_sent_month != $2)
-       RETURNING id`,
-      [schoolId, month],
+      `SELECT school_id, enabled, recipients, day_of_month, send_time, last_sent_month
+       FROM report_email_schedule
+       WHERE enabled = TRUE AND cardinality(recipients) > 0`,
     );
-    return (res.rowCount ?? 0) > 0;
+    return res.rows.map((row: any) => ({
+      schoolId: Number(row.school_id),
+      enabled: Boolean(row.enabled),
+      recipients: row.recipients ?? [],
+      dayOfMonth: Number(row.day_of_month ?? 1),
+      sendTime: row.send_time ?? "09:00",
+      lastSentMonth: row.last_sent_month ?? null,
+    }));
   }
 
-  /**
-   * Revert a month claim when delivery ultimately failed (zero sends).
-   * Only clears the claim if the stored month still matches — a concurrent
-   * runner that succeeded in the interim is left untouched.
-   */
-  async clearMonthClaim(schoolId: number, month: string): Promise<void> {
+  async ensureReportEmailDeliveries(schoolId: number, reportMonth: string, recipients: string[]): Promise<void> {
+    if (recipients.length === 0) return;
     await pool.query(
-      `UPDATE report_email_schedule
-       SET last_sent_month = NULL, updated_at = NOW()
-       WHERE school_id = $1 AND last_sent_month = $2`,
-      [schoolId, month],
+      `INSERT INTO report_email_delivery (school_id, report_month, recipient)
+       SELECT $1, $2, UNNEST($3::text[])
+       ON CONFLICT (school_id, report_month, recipient) DO NOTHING`,
+      [schoolId, reportMonth, recipients],
     );
+  }
+
+  async claimReportEmailDelivery(
+    schoolId: number,
+    reportMonth: string,
+    recipient: string,
+  ): Promise<{ claimed: boolean; attempts: number; claimToken: string | null }> {
+    const result = await pool.query(
+      `UPDATE report_email_delivery
+       SET status = 'sending',
+           attempts = attempts + 1,
+           last_attempt_at = NOW(),
+            locked_until = NOW() + INTERVAL '60 minutes',
+            claim_token = md5(random()::text || clock_timestamp()::text || $1::text || $2 || $3),
+           next_retry_at = NULL,
+           updated_at = NOW()
+       WHERE school_id = $1
+         AND report_month = $2
+         AND recipient = $3
+         AND status <> 'sent'
+         AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+         AND (locked_until IS NULL OR locked_until <= NOW())
+        RETURNING attempts, claim_token`,
+      [schoolId, reportMonth, recipient],
+    );
+    return {
+      claimed: (result.rowCount ?? 0) > 0,
+      attempts: Number(result.rows[0]?.attempts ?? 0),
+      claimToken: result.rows[0]?.claim_token ?? null,
+    };
+  }
+
+  async completeReportEmailDelivery(schoolId: number, reportMonth: string, recipient: string, claimToken: string): Promise<boolean> {
+    const result = await pool.query(
+      `UPDATE report_email_delivery
+        SET status = 'sent', sent_at = NOW(), locked_until = NULL, claim_token = NULL, next_retry_at = NULL,
+            last_error = NULL, updated_at = NOW()
+        WHERE school_id = $1 AND report_month = $2 AND recipient = $3
+          AND status = 'sending' AND claim_token = $4`,
+      [schoolId, reportMonth, recipient, claimToken],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async failReportEmailDelivery(
+    schoolId: number,
+    reportMonth: string,
+    recipient: string,
+    attempts: number,
+    error: string,
+    claimToken: string,
+  ): Promise<void> {
+    const retryMinutes = Math.min(60, 5 * (2 ** Math.max(0, attempts - 1)));
+    await pool.query(
+      `UPDATE report_email_delivery
+        SET status = 'pending',
+           locked_until = NULL,
+            claim_token = NULL,
+           next_retry_at = CASE WHEN $5::integer IS NULL THEN NULL ELSE NOW() + ($5::integer * INTERVAL '1 minute') END,
+           last_error = $4,
+           updated_at = NOW()
+        WHERE school_id = $1 AND report_month = $2 AND recipient = $3
+          AND status = 'sending' AND claim_token = $6`,
+       [schoolId, reportMonth, recipient, error.slice(0, 1000), retryMinutes, claimToken],
+    );
+  }
+
+  async getReportEmailDeliverySummary(
+    schoolId: number,
+    reportMonth?: string,
+  ): Promise<{ reportMonth: string; sent: number; failed: number; pending: number; lastAttemptAt: Date | null; lastError: string | null } | null> {
+    const result = await pool.query(
+      `SELECT report_month,
+              COUNT(*) FILTER (WHERE status = 'sent')::integer AS sent,
+              COUNT(*) FILTER (WHERE status = 'failed')::integer AS failed,
+              COUNT(*) FILTER (WHERE status IN ('pending', 'sending'))::integer AS pending,
+              MAX(last_attempt_at) AS last_attempt_at,
+              (ARRAY_AGG(last_error ORDER BY last_attempt_at DESC) FILTER (WHERE last_error IS NOT NULL))[1] AS last_error
+       FROM report_email_delivery
+       WHERE school_id = $1 AND ($2::varchar IS NULL OR report_month = $2)
+       GROUP BY report_month
+       ORDER BY MAX(last_attempt_at) DESC NULLS LAST, report_month DESC
+       LIMIT 1`,
+      [schoolId, reportMonth ?? null],
+    );
+    const row = result.rows[0];
+    return row ? {
+      reportMonth: row.report_month,
+      sent: Number(row.sent ?? 0),
+      failed: Number(row.failed ?? 0),
+      pending: Number(row.pending ?? 0),
+      lastAttemptAt: row.last_attempt_at ?? null,
+      lastError: row.last_error ?? null,
+    } : null;
+  }
+
+  async getIncompleteReportEmailMonths(schoolId: number, throughMonth: string): Promise<string[]> {
+    const result = await pool.query(
+      `SELECT report_month
+       FROM report_email_delivery
+       WHERE school_id = $1 AND report_month <= $2
+       GROUP BY report_month
+       HAVING COUNT(*) FILTER (WHERE status <> 'sent') > 0
+       ORDER BY report_month`,
+      [schoolId, throughMonth],
+    );
+    return result.rows.map(row => row.report_month);
+  }
+
+  async completeReportMonthIfDelivered(schoolId: number, reportMonth: string): Promise<boolean> {
+    const result = await pool.query(
+      `UPDATE report_email_schedule schedule
+       SET last_sent_month = $2, last_sent_at = NOW(), updated_at = NOW()
+       WHERE schedule.school_id = $1
+         AND NOT EXISTS (
+           SELECT 1
+           FROM UNNEST(schedule.recipients) AS configured(recipient)
+           LEFT JOIN report_email_delivery delivery
+             ON delivery.school_id = schedule.school_id
+            AND delivery.report_month = $2
+            AND delivery.recipient = configured.recipient
+           WHERE delivery.status IS DISTINCT FROM 'sent'
+         )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM report_email_delivery older
+            WHERE older.school_id = schedule.school_id
+              AND older.report_month < $2
+              AND older.status <> 'sent'
+          )
+       RETURNING id`,
+      [schoolId, reportMonth],
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getDunningLog(schoolId: number, limit = 50): Promise<DunningLog[]> {

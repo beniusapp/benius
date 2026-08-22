@@ -6251,12 +6251,26 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const schedule = await storage.getReportEmailSchedule(schoolId);
-    res.json(schedule ?? { enabled: false, recipients: [], lastSentAt: null });
+    const latestDelivery = await storage.getReportEmailDeliverySummary(schoolId);
+    res.json(schedule ? {
+      ...schedule,
+      latestDelivery,
+    } : {
+      enabled: false,
+      recipients: [],
+      dayOfMonth: 1,
+      sendTime: "09:00",
+      lastSentAt: null,
+      lastSentMonth: null,
+      latestDelivery,
+    });
   });
 
   const reportScheduleSchema = z.object({
     enabled:    z.boolean().optional(),
     recipients: z.array(z.string().email()).max(20).optional(),
+    dayOfMonth: z.number().int().min(1).max(31).optional(),
+    sendTime:   z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a 24-hour time such as 09:00").optional(),
   });
 
   app.patch("/api/admin/fees/report-schedule", async (req, res) => {
@@ -6264,15 +6278,25 @@ export function registerFeesRoutes(app: Express) {
     const parsed = reportScheduleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
+    const currentSchedule = await storage.getReportEmailSchedule(schoolId);
+    const effectiveEnabled = parsed.data.enabled ?? currentSchedule?.enabled ?? false;
+    const effectiveRecipients = parsed.data.recipients ?? currentSchedule?.recipients ?? [];
+    if (effectiveEnabled && effectiveRecipients.length === 0) {
+      return res.status(400).json({ message: "Add at least one recipient before enabling the monthly report schedule." });
+    }
     const actor = await resolveFeeAuditActor(req, schoolId);
     await db.transaction(async tx => {
       await storage.upsertReportEmailSchedule(schoolId, {
         enabled: parsed.data.enabled,
         recipients: parsed.data.recipients,
+        dayOfMonth: parsed.data.dayOfMonth,
+        sendTime: parsed.data.sendTime,
       }, tx);
       const changes = [
         parsed.data.enabled !== undefined ? `scheduled reports ${parsed.data.enabled ? "enabled" : "disabled"}` : null,
         parsed.data.recipients !== undefined ? `${parsed.data.recipients.length} recipients configured` : null,
+        parsed.data.dayOfMonth !== undefined ? `day ${parsed.data.dayOfMonth} configured` : null,
+        parsed.data.sendTime !== undefined ? `IST time ${parsed.data.sendTime} configured` : null,
       ].filter(Boolean).join("; ");
       await appendFeeAudit({
         schoolId,
@@ -6301,7 +6325,7 @@ export function registerFeesRoutes(app: Express) {
       }
       await appendAudit(req, schoolId, "settings_change", "report_schedule", null,
         `Manual analytics report send: ${result.sent} sent, ${result.errors.length} error(s)`);
-      res.json({ sent: result.sent, errors: result.errors });
+      res.json({ sent: result.sent, errors: result.errors, reportMonth: result.reportMonth });
     } catch (err: any) {
       res.status(500).json({ message: String(err.message ?? err) });
     }
