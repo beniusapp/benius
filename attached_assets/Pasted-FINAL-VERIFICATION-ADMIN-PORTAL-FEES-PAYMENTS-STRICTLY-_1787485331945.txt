@@ -1,0 +1,156 @@
+FINAL VERIFICATION — ADMIN PORTAL FEES & PAYMENTS
+
+STRICTLY MULTI-TENANT + ACADEMIC SESSION BASED
+
+Before considering the Admin Portal Fees & Payments module 100% complete, perform a final real browser + API + database verification.
+
+Do NOT change unrelated modules or behavior.
+Do NOT modify the External Portal session behavior.
+
+1. Test Setup
+
+Create temporary test data for:
+
+- School A + Session 2027–2028
+- School A + Session 2028–2029
+- Preferably School B as a second tenant for cross-tenant verification.
+
+Put clearly different financial data in 2027–2028 so it can be identified easily.
+
+Then make 2027–2028 active.
+
+2. Verify Active Session
+
+Open Admin Portal → Fees & Payments and verify:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+
+Every session-specific value must belong ONLY to:
+
+authenticated School/Tenant ID + selected Academic Session ID
+
+No other school's data and no other academic session's financial data may appear.
+
+3. Activate a New Academic Session
+
+Create 2028–2029 from School Setup and make it active.
+
+Now open Fees & Payments again.
+
+Because 2028–2029 has no financial data yet:
+
+- Financial Analytics → empty/zero
+- Session-specific Fee Structures → empty/default as appropriate
+- Ledger & Transactions → empty
+- Reminders → empty
+- Audit Log → no records from 2027–2028
+
+ABSOLUTELY NO 2027–2028 DATA MAY APPEAR, CARRY FORWARD, MIX, OR CONTRIBUTE TO 2028–2029.
+
+4. Switch Back to Previous Session
+
+Switch the admin view to archived 2027–2028.
+
+Verify that the complete historical data returns:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+- Invoices
+- Payments
+- Receipts
+- Outstanding/due amounts
+- Relevant historical audit records
+
+The data must exactly belong to 2027–2028.
+
+5. Archived Session = READ ONLY
+
+While 2027–2028 is archived:
+
+- Viewing is allowed.
+- Financial records must NOT be editable/deletable.
+- No payment, refund, reminder, late-fee, invoice, ledger, or other financial mutation may modify archived data.
+- Attempt direct API manipulation as well and confirm it is rejected.
+
+6. Cross-Tenant Verification
+
+Using School A:
+
+- Attempt to access School B's academic session ID.
+- Attempt to access School B's invoice/payment/receipt IDs.
+- Attempt cross-tenant financial API requests.
+
+Every unauthorized attempt must be rejected.
+
+School A must NEVER receive School B's data.
+
+7. Rapid Session Switching
+
+In the real browser:
+
+2027–2028 → 2028–2029 → 2027–2028 → 2028–2029 → 2027–2028
+
+Also switch quickly and repeatedly.
+
+Verify that:
+
+- No stale data appears.
+- No previous-session data briefly appears in the new session.
+- Query/cache keys and request session headers always match the displayed session.
+- Each tab continues showing the correct session after switching.
+
+Test all five tabs, not just Financial Analytics.
+
+8. ⚠️ EXTERNAL PORTAL — DO NOT SESSION-SCOPE
+
+This is extremely important.
+
+External Portal is GLOBAL SCHOOL/TENANT configuration, NOT academic-session data.
+
+Therefore:
+
+- It must NOT reset when a new academic session becomes active.
+- It must NOT become empty when switching sessions.
+- It must NOT be copied per academic session.
+- It must remain exactly the same across 2027–2028, 2028–2029, and every future session.
+- Switching sessions must never clear, hide, reload into an empty state, or alter External Portal configuration.
+
+The correct data model is:
+
+Fees & Payments financial data → School/Tenant ID + Academic Session ID
+
+External Portal → School/Tenant ID only
+
+9. Final Acceptance Criteria
+
+Return YES — 100% VERIFIED ONLY if all of the following are demonstrated with actual runtime evidence:
+
+- Two academic sessions tested.
+- Two tenants tested where applicable.
+- All five Fees & Payments tabs tested.
+- New active session correctly starts with its own empty state.
+- Previous session data is fully recoverable.
+- No session data collision.
+- No data loss.
+- Archived sessions are read-only.
+- Cross-tenant access is rejected.
+- Rapid session switching is safe.
+- Browser cache/request-header/session identity remains synchronized.
+- API and database checks agree with the browser.
+- External Portal remains unchanged and global across session switches.
+- Temporary test fixtures are completely removed afterward.
+
+If ANY item fails, report:
+
+NO — NOT 100% VERIFIED
+
+and provide the exact failure, affected route/table/component, cause, reproduction evidence, and required fix.
+
+Do not claim 100% based only on code inspection or existing tests. I want actual browser + API + database evidence.
