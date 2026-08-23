@@ -158,7 +158,28 @@ export async function resolvePaymentAttemptId(input: Pick<AttemptEventInput,
 
 /** Inserts one immutable event. The database trigger rejects subsequent UPDATE/DELETE. */
 export async function appendPaymentAttemptEvent(input: AttemptEventInput): Promise<number | null> {
-  const attemptId = await resolvePaymentAttemptId(input);
+  let event = { ...input };
+  if (event.feeRecordId != null) {
+    const linkedFee = (await db.execute(sql`
+      SELECT student_id, session_id
+      FROM fee_records
+      WHERE id = ${event.feeRecordId} AND school_id = ${event.schoolId}
+      LIMIT 1
+    `)).rows[0] as { student_id: number; session_id: number | null } | undefined;
+    if (!linkedFee) throw new Error("Payment attempt event fee record was not found for this school.");
+    if (event.studentId != null && Number(event.studentId) !== Number(linkedFee.student_id)) {
+      throw new Error("Payment attempt event student must match the linked invoice.");
+    }
+    if (event.sessionId != null && Number(event.sessionId) !== Number(linkedFee.session_id)) {
+      throw new Error("Payment attempt event session must match the linked invoice session.");
+    }
+    event = {
+      ...event,
+      studentId: Number(linkedFee.student_id),
+      sessionId: linkedFee.session_id == null ? null : Number(linkedFee.session_id),
+    };
+  }
+  const attemptId = await resolvePaymentAttemptId(event);
   if (!attemptId) return null;
   const result = await db.execute(sql`
     INSERT INTO payment_attempt_events (
@@ -167,14 +188,14 @@ export async function appendPaymentAttemptEvent(input: AttemptEventInput): Promi
       dispute_id, amount_paise, currency, source, webhook_event_id,
       idempotency_key, payload, provider_occurred_at, occurred_at, historical
     ) VALUES (
-      ${input.schoolId}, ${attemptId}, ${input.studentId ?? null}, ${input.feeRecordId ?? null},
-      ${input.sessionId ?? null}, ${input.eventType}, ${input.outcome ?? null},
-      ${input.razorpayPaymentId ?? null}, ${input.razorpayOrderId ?? null},
-      ${input.refundId ?? null}, ${input.disputeId ?? null}, ${input.amountPaise ?? null},
-      ${input.currency ?? "INR"}, ${input.source}, ${input.webhookEventId ?? null},
-      ${input.idempotencyKey}, ${payloadJson(input.payload)}::jsonb,
-      ${(input.providerOccurredAt ?? providerTimestamp(input.payload))?.toISOString() ?? null},
-      ${input.occurredAt?.toISOString() ?? null}, ${input.historical ?? false}
+      ${event.schoolId}, ${attemptId}, ${event.studentId ?? null}, ${event.feeRecordId ?? null},
+      ${event.sessionId ?? null}, ${event.eventType}, ${event.outcome ?? null},
+      ${event.razorpayPaymentId ?? null}, ${event.razorpayOrderId ?? null},
+      ${event.refundId ?? null}, ${event.disputeId ?? null}, ${event.amountPaise ?? null},
+      ${event.currency ?? "INR"}, ${event.source}, ${event.webhookEventId ?? null},
+      ${event.idempotencyKey}, ${payloadJson(event.payload)}::jsonb,
+      ${(event.providerOccurredAt ?? providerTimestamp(event.payload))?.toISOString() ?? null},
+      ${event.occurredAt?.toISOString() ?? null}, ${event.historical ?? false}
     )
     ON CONFLICT (school_id, idempotency_key) DO NOTHING
     RETURNING id

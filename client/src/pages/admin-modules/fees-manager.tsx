@@ -2366,7 +2366,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     isLoading: isAddFeeSuccessLoading,
     isError: isAddFeeSuccessDetailError,
   } = useQuery<TransactionDetail>({
-    queryKey: ["/api/admin/fees", addFeeSuccessId, "transaction-detail"],
+    queryKey: ["/api/admin/fees", viewSessionId, addFeeSuccessId, "transaction-detail"],
     queryFn: async () => {
       const response = await sessionFetch(`/api/admin/fees/${addFeeSuccessId}/transaction-detail`);
       if (!response.ok) throw new Error("Failed to load the created invoice");
@@ -2399,6 +2399,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     setExcludedIds(new Set());
     setExpandedLedgerRow(null);
   }, [filters, viewSessionId]);
+  useEffect(() => {
+    setDetailCache(new Map());
+    setExpandedLedgerRow(null);
+  }, [viewSessionId]);
   // NOTE: we intentionally do NOT clear selectedIds on page change —
   // selections persist across pagination (see task #272).
 
@@ -2600,7 +2604,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
   // Payment records are retained here to select the correct receipt route.
   const { data: paymentRecordsList = [] } = useQuery<PaymentRecord[]>({
-    queryKey: ["/api/admin/fees/payments"],
+    queryKey: ["/api/admin/fees/payments", viewSessionId],
     queryFn: async () => {
       const r = await sessionFetch("/api/admin/fees/payments");
       if (!r.ok) return [];
@@ -5099,6 +5103,7 @@ function KeyInput({ value, onChange, placeholder }: { value: string; onChange: (
 
 function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const { toast } = useToast();
+  const { selectedSession } = useSessionView();
   const queryClient = useQueryClient();
 
   // ── Provider form state ──────────────────────────────────────────────────
@@ -5130,7 +5135,7 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   });
 
   const { data: logEntries = [] } = useQuery<DunningLogEntry[]>({
-    queryKey: ["/api/admin/fees/dunning-log"],
+    queryKey: ["/api/admin/fees/dunning-log", selectedSession?.id ?? "unselected"],
     staleTime: 30_000,
   });
 
@@ -6695,8 +6700,9 @@ interface NotificationHistoryModalProps {
 }
 
 function NotificationHistoryModal({ open, onClose, studentId, studentName }: NotificationHistoryModalProps) {
+  const { selectedSession } = useSessionView();
   const { data: entries = [], isLoading } = useQuery<DunningLogEntry[]>({
-    queryKey: ["/api/admin/fees/dunning-log", studentId],
+    queryKey: ["/api/admin/fees/dunning-log", selectedSession?.id ?? "unselected", studentId],
     queryFn: async () => {
       if (!studentId) return [];
       const r = await sessionFetch(`/api/admin/fees/dunning-log?studentId=${studentId}`);
@@ -6833,6 +6839,7 @@ function AgingDefaultersDrawer({
   onClose: () => void;
 }) {
   const { toast } = useToast();
+  const { selectedSession } = useSessionView();
   const [sendingId, setSendingId] = useState<number | null>(null);
   const [filterClass, setFilterClass] = useState<string>("__all__");
   const [filterFeeType, setFilterFeeType] = useState<string>("__all__");
@@ -6844,7 +6851,7 @@ function AgingDefaultersDrawer({
   }, [bucket?.key]);
 
   const { data: students = [], isLoading } = useQuery<AgingStudent[]>({
-    queryKey: ["/api/fees/analytics/aging-students", bucket?.key, startDate, endDate],
+    queryKey: ["/api/fees/analytics/aging-students", selectedSession?.id ?? "unselected", bucket?.key, startDate, endDate],
     queryFn: async () => {
       if (!bucket) return [];
       const params = new URLSearchParams({ bucket: bucket.key });

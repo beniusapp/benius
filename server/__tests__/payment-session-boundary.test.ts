@@ -17,7 +17,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { db, pool } from "../db";
-import { storage } from "../storage";
+import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import {
   schools,
   students,
@@ -411,5 +411,44 @@ describe("payment session boundary: arrears (fee record in session 1, payment in
     // School-wide count must see both payments
     const allSummary = await storage.getFeeSummary(schoolId);
     expect(allSummary.offlinePaymentsCount).toBe(2);
+  });
+
+  it("rejects a caller-provided session that conflicts with the linked invoice", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+    const session1 = await storage.createAcademicSession({
+      schoolId, sessionName: "2024-2025", startDate: "2024-04-01", endDate: "2025-03-31",
+      isActive: false, status: "active", newAdmissionsEnabled: false, promotionStrategy: "defer",
+    });
+    const session2 = await storage.createAcademicSession({
+      schoolId, sessionName: "2025-2026", startDate: "2025-04-01", endDate: "2026-03-31",
+      isActive: false, status: "active", newAdmissionsEnabled: false, promotionStrategy: "defer",
+    });
+    const [invoice] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId: session1.id, feeType: "Tuition",
+      amount: 5000, dueDate: "2024-09-30", status: "Due",
+    }).returning();
+
+    await expect(storage.createPaymentRecord({
+      schoolId, studentId, feeRecordId: invoice.id, sessionId: session2.id,
+      paymentMethod: "Cash", receivedDate: "2025-05-01", amount: 5000,
+    })).rejects.toThrow("Payment session must match the linked invoice session.");
+  });
+
+  it("keeps a session with invoice history from being hard-deleted", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+    const session = await storage.createAcademicSession({
+      schoolId, sessionName: "2024-2025", startDate: "2024-04-01", endDate: "2025-03-31",
+      isActive: false, status: "active", newAdmissionsEnabled: false, promotionStrategy: "defer",
+    });
+    await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId: session.id, feeType: "Tuition",
+      amount: 5000, dueDate: "2024-09-30", status: "Due",
+    });
+
+    await expect(storage.deleteAcademicSession(session.id, schoolId))
+      .rejects.toBeInstanceOf(AcademicSessionFinancialHistoryError);
+    expect(await storage.getAcademicSessionById(session.id, schoolId)).not.toBeNull();
   });
 });

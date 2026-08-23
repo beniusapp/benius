@@ -206,8 +206,24 @@ function Wrapper({
       <QueryClientProvider client={queryClient}>
         <SessionViewContext.Provider
           value={{
-            sessions: [],
-            selectedSession: null,
+            sessions: [{
+              id: 1,
+              schoolId: 1,
+              sessionName: "2025-2026",
+              startDate: "2025-04-01",
+              endDate: "2026-03-31",
+              isActive: true,
+              createdAt: "2025-04-01T00:00:00.000Z",
+            }],
+            selectedSession: {
+              id: 1,
+              schoolId: 1,
+              sessionName: "2025-2026",
+              startDate: "2025-04-01",
+              endDate: "2026-03-31",
+              isActive: true,
+              createdAt: "2025-04-01T00:00:00.000Z",
+            },
             setSelectedSession: vi.fn(),
             isArchiveMode: false,
             isSessionsLoading: false,
@@ -241,13 +257,13 @@ function buildQueryClient(
     },
   });
   qc.setQueryData(["/api/student-me"], STUDENT);
-  qc.setQueryData(["/api/student/fees"], initialFees);
-  qc.setQueryData(["/api/student/fees/summary"], SUMMARY);
+  qc.setQueryData(["/api/student/fees", 1], initialFees);
+  qc.setQueryData(["/api/student/fees/summary", 1], SUMMARY);
   qc.setQueryData(["/api/student/fees/portal-info"], PORTAL_RAZORPAY_ON);
-  qc.setQueryData(["/api/student/fees/notification-history"], []);
+  qc.setQueryData(["/api/student/fees/notification-history", 1], []);
   // Pre-load payment attempts so the History tab renders correctly without
   // triggering a real network fetch (staleTime:Infinity keeps it fresh).
-  qc.setQueryData(["/api/student/fees/payment-attempts"], initialAttempts);
+  qc.setQueryData(["/api/student/fees/payment-attempts", 1], initialAttempts);
   return qc;
 }
 
@@ -671,8 +687,8 @@ describe("Fee card shows correct Paid/Due status from server data", () => {
     // The component invalidates both fees AND payment-attempts on verify;
     // we mirror that here so the History tab has data to render.
     await act(async () => {
-      qc.setQueryData(["/api/student/fees"], [FEE_PAID]);
-      qc.setQueryData(["/api/student/fees/payment-attempts"], [PAYMENT_ATTEMPT_PAID]);
+      qc.setQueryData(["/api/student/fees", 1], [FEE_PAID]);
+      qc.setQueryData(["/api/student/fees/payment-attempts", 1], [PAYMENT_ATTEMPT_PAID]);
     });
 
     // Switch to History tab and confirm the paid card now renders.

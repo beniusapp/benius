@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SessionViewContext, AcademicSession, PaymentUpdatePayload } from "./session-view-context";
+import { setViewSessionId } from "@/lib/queryClient";
 
 async function fetchSessions(): Promise<AcademicSession[]> {
   const res = await fetch("/api/student/academic-sessions", { credentials: "include" });
@@ -34,6 +35,13 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
 
   const [selectedSession, setSelectedSession] = useState<AcademicSession | null>(null);
   const handleSetSelectedSession = (s: AcademicSession | null) => setSelectedSession(s);
+
+  // Student requests use the same selected-session transport as the admin
+  // portal. Keeping this synchronized makes the header and cache identity
+  // point at the same academic year.
+  useEffect(() => {
+    setViewSessionId(selectedSession?.id ?? null);
+  }, [selectedSession?.id]);
 
   // When admin deletes or creates a session, snap to active automatically
   useEffect(() => {

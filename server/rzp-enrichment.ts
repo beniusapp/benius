@@ -234,7 +234,7 @@ export async function fetchRazorpayData(
  */
 export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<number> {
   const now = new Date().toISOString();
-  const d   = data;
+  let d = { ...data };
 
   const wJson = d.webhookPayload      ? JSON.stringify(sanitizePaymentPayload(d.webhookPayload))      : null;
   const pJson = d.razorpayPaymentData ? JSON.stringify(sanitizePaymentPayload(d.razorpayPaymentData)) : null;
@@ -245,9 +245,27 @@ export async function upsertPaymentAttempt(data: UpsertAttemptData): Promise<num
   // same Razorpay order; without this lock both callbacks could allocate the
   // same next attempt number.
   return await db.transaction(async (tx) => {
-  if (d.feeRecordId != null) {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${d.schoolId}, ${d.feeRecordId})`);
-  }
+    if (d.feeRecordId != null) {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${d.schoolId}, ${d.feeRecordId})`);
+      const linkedFee = (await tx.execute(sql`
+        SELECT student_id, session_id
+        FROM fee_records
+        WHERE id = ${d.feeRecordId} AND school_id = ${d.schoolId}
+        LIMIT 1
+      `)).rows[0] as { student_id: number; session_id: number | null } | undefined;
+      if (!linkedFee) throw new Error("Payment attempt fee record was not found for this school.");
+      if (d.studentId != null && Number(d.studentId) !== Number(linkedFee.student_id)) {
+        throw new Error("Payment attempt student must match the linked invoice.");
+      }
+      if (d.sessionId != null && Number(d.sessionId) !== Number(linkedFee.session_id)) {
+        throw new Error("Payment attempt session must match the linked invoice session.");
+      }
+      d = {
+        ...d,
+        studentId: Number(linkedFee.student_id),
+        sessionId: linkedFee.session_id == null ? null : Number(linkedFee.session_id),
+      };
+    }
 
   // An order is an attempt identity. A pending row created at checkout must be
   // promoted by its payment callback rather than becoming a misleading second

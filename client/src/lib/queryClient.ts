@@ -92,7 +92,10 @@ export const getQueryFn: <T>(options: {
     // sessionFetch injects x-view-session-id on every GET so the backend
     // checkSessionContext middleware sets req.viewSessionId, allowing any
     // route handler to scope its database query to the correct academic year.
-    const res = await sessionFetch(queryKey.join("/") as string);
+    // Query keys may include selected session IDs and other cache-only values.
+    // Only their first entry is the request URL; joining the whole key would
+    // accidentally turn a cache identity into a different endpoint.
+    const res = await sessionFetch(String(queryKey[0]));
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

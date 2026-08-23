@@ -113,11 +113,20 @@ async function findPaymentContext(
   `);
   const row = result.rows[0] as any;
   if (!row) return null;
+  if (
+    row.session_id != null
+    && row.fee_session_id != null
+    && Number(row.session_id) !== Number(row.fee_session_id)
+  ) {
+    throw new Error("Payment session does not match its linked invoice session.");
+  }
   return {
     paymentRecordId: Number(row.payment_record_id),
     paymentAttemptId: row.payment_attempt_id == null ? null : Number(row.payment_attempt_id),
     schoolId: Number(row.school_id),
-    sessionId: row.session_id ?? row.fee_session_id ?? null,
+    // The invoice owns the financial session; payment-level session data is
+    // only a legacy fallback when the invoice has no attribution.
+    sessionId: row.fee_session_id ?? row.session_id ?? null,
     studentId: Number(row.student_id),
     feeRecordId: Number(row.fee_record_id),
     invoiceNumber: row.invoice_number ?? null,

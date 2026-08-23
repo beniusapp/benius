@@ -63,6 +63,20 @@ import {
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
 
+/**
+ * Financial history cannot be detached from its original academic session.
+ * Sessions with fee/payment evidence must be archived rather than deleted.
+ */
+export class AcademicSessionFinancialHistoryError extends Error {
+  readonly status = 409;
+  readonly code = "SESSION_HAS_FINANCIAL_HISTORY";
+
+  constructor() {
+    super("This academic session has financial history and cannot be deleted. Archive it instead.");
+    this.name = "AcademicSessionFinancialHistoryError";
+  }
+}
+
 const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
 
 /**
@@ -4850,24 +4864,36 @@ export class DatabaseStorage {
   // ===== PAYMENT RECORDS =====
 
   async createPaymentRecord(data: InsertPaymentRecord): Promise<PaymentRecord> {
-    // Session resolution priority:
-    //   1. Caller explicitly supplied sessionId  →  use it as-is
-    //   2. Linked fee record is present          →  inherit session from that fee record
-    //      (handles arrears: payment collected in session B for a session A invoice)
-    //   3. Truly unlinked (freeform) payment     →  stamp with the currently active session
-    let resolvedSessionId = data.sessionId ?? null;
-    if (resolvedSessionId == null) {
-      if (data.feeRecordId) {
-        const [linked] = await db
-          .select({ sessionId: feeRecords.sessionId })
-          .from(feeRecords)
-          .where(and(eq(feeRecords.id, data.feeRecordId), eq(feeRecords.schoolId, data.schoolId)));
-        resolvedSessionId = linked?.sessionId ?? null;
+    // A linked invoice is authoritative for school, student, and session.
+    // An arrears payment remains in the original invoice year; no client field
+    // may move it to another academic session.
+    let resolvedSessionId: number | null;
+    if (data.feeRecordId != null) {
+      const [linked] = await db
+        .select({
+          studentId: feeRecords.studentId,
+          sessionId: feeRecords.sessionId,
+        })
+        .from(feeRecords)
+        .where(and(eq(feeRecords.id, data.feeRecordId), eq(feeRecords.schoolId, data.schoolId)));
+      if (!linked) throw new Error("Fee record not found for this school.");
+      if (linked.studentId !== data.studentId) {
+        throw new Error("Fee record does not belong to the specified student.");
       }
-      if (resolvedSessionId == null) {
-        const active = await this.getActiveSession(data.schoolId);
-        resolvedSessionId = active?.id ?? null;
+      if (data.sessionId != null && data.sessionId !== linked.sessionId) {
+        throw new Error("Payment session must match the linked invoice session.");
       }
+      resolvedSessionId = linked.sessionId ?? null;
+    } else if (data.sessionId != null) {
+      const [session] = await db
+        .select({ id: academicSessions.id })
+        .from(academicSessions)
+        .where(and(eq(academicSessions.id, data.sessionId), eq(academicSessions.schoolId, data.schoolId)));
+      if (!session) throw new Error("Academic session does not belong to this school.");
+      resolvedSessionId = session.id;
+    } else {
+      const active = await this.getActiveSession(data.schoolId);
+      resolvedSessionId = active?.id ?? null;
     }
     const [rec] = await db.insert(paymentRecords).values({ ...data, sessionId: resolvedSessionId }).returning();
     return rec;
@@ -5638,23 +5664,98 @@ export class DatabaseStorage {
     return session;
   }
 
-  /** Hard-delete a session. Cascades to enrollments via FK. */
-  async deleteAcademicSession(id: number, schoolId: number): Promise<void> {
-    await db.transaction(async (tx) => {
-      // Check if the session being deleted is currently active
-      const [target] = await tx
-        .select({ isActive: academicSessions.isActive })
-        .from(academicSessions)
-        .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
+  /**
+   * Hard-delete only a session with no financial history. Fee and payment
+   * foreign keys use SET NULL for legacy compatibility, so the service must
+   * prevent a delete from detaching immutable financial evidence.
+   */
+  async deleteAcademicSession(id: number, schoolId: number): Promise<boolean> {
+    return await db.transaction(async (tx) => {
+      // Lock the target before checking history to close delete/write races.
+      const locked = await tx.execute(sql`
+        SELECT id, is_active
+        FROM academic_sessions
+        WHERE id = ${id} AND school_id = ${schoolId}
+        FOR UPDATE
+      `);
+      const target = locked.rows[0] as { id: number; is_active: boolean } | undefined;
+      if (!target) return false;
 
-      if (!target) return; // not found / wrong school — no-op
+      // Direct session records and all rows that inherit session via a linked
+      // invoice/payment count as financial history. Every predicate is tenant
+      // scoped so another school can never block or expose this session.
+      const evidence = await tx.execute(sql`
+        SELECT EXISTS (
+          SELECT 1 FROM fee_records
+           WHERE school_id = ${schoolId} AND session_id = ${id}
+          UNION ALL
+          SELECT 1 FROM payment_records pr
+           WHERE pr.school_id = ${schoolId}
+             AND (pr.session_id = ${id} OR pr.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             ))
+          UNION ALL
+          SELECT 1 FROM payment_attempts pa
+           WHERE pa.school_id = ${schoolId}
+             AND (pa.session_id = ${id} OR pa.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             ))
+          UNION ALL
+          SELECT 1 FROM payment_attempt_events pae
+           WHERE pae.school_id = ${schoolId}
+             AND (pae.session_id = ${id} OR pae.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             ))
+          UNION ALL
+          SELECT 1 FROM refunds r
+           WHERE r.school_id = ${schoolId}
+             AND (r.session_id = ${id} OR r.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             ))
+          UNION ALL
+          SELECT 1 FROM refund_events re
+          JOIN refunds r ON r.id = re.refund_id AND r.school_id = re.school_id
+           WHERE re.school_id = ${schoolId}
+             AND (r.session_id = ${id} OR re.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             ))
+          UNION ALL
+          SELECT 1 FROM fee_audit_log
+           WHERE school_id = ${schoolId}
+             AND (
+               session_id = ${id}
+               OR (
+                 entity_type = 'fee_record'
+                 AND entity_id IN (
+                   SELECT fr.id FROM fee_records fr
+                    WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+                 )
+               )
+             )
+          UNION ALL
+          SELECT 1 FROM payment_webhook_events pwe
+           WHERE pwe.school_id = ${schoolId}
+             AND pwe.fee_record_id IN (
+               SELECT fr.id FROM fee_records fr
+                WHERE fr.school_id = ${schoolId} AND fr.session_id = ${id}
+             )
+        ) AS has_financial_history
+      `);
+      if ((evidence.rows[0] as { has_financial_history?: boolean } | undefined)?.has_financial_history) {
+        throw new AcademicSessionFinancialHistoryError();
+      }
 
       await tx
         .delete(academicSessions)
         .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
 
       // If the deleted session was active, promote the most recent remaining session
-      if (target.isActive) {
+      if (target.is_active) {
         const remaining = await tx
           .select({ id: academicSessions.id })
           .from(academicSessions)
@@ -5669,6 +5770,7 @@ export class DatabaseStorage {
             .where(and(eq(academicSessions.id, remaining[0].id), eq(academicSessions.schoolId, schoolId)));
         }
       }
+      return true;
     });
   }
 

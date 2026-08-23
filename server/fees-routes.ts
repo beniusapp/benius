@@ -1219,12 +1219,22 @@ export function registerFeesRoutes(app: Express) {
 
     // Tenant ownership: verify feeRecordId belongs to this school (and matches the student)
     if (paymentData.feeRecordId) {
-      const [recCheck] = await db.select({ id: feeRecords.id, studentId: feeRecords.studentId })
+      const [recCheck] = await db.select({
+        id: feeRecords.id,
+        studentId: feeRecords.studentId,
+        sessionId: feeRecords.sessionId,
+      })
         .from(feeRecords)
         .where(and(eq(feeRecords.id, paymentData.feeRecordId), eq(feeRecords.schoolId, schoolId)));
       if (!recCheck) return res.status(400).json({ message: "Fee record does not belong to this school" });
       if (recCheck.studentId !== paymentData.studentId) {
         return res.status(400).json({ message: "Fee record does not belong to the specified student" });
+      }
+      if (
+        req.body?.sessionId != null
+        && Number(req.body.sessionId) !== Number(recCheck.sessionId)
+      ) {
+        return res.status(400).json({ message: "Payment session must match the linked invoice session." });
       }
     }
 
@@ -2234,6 +2244,13 @@ export function registerFeesRoutes(app: Express) {
       // another tenant's fee record via the razorpay_order_id fallback.
       if (Number(fee.school_id) !== schoolId)
         return res.status(403).json({ message: "Access denied" });
+      const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
+      if (requestedSessionId != null && Number(fee.session_id) !== requestedSessionId) {
+        return res.status(409).json({
+          message: "The selected academic session does not match this invoice.",
+          code: "INVOICE_SESSION_MISMATCH",
+        });
+      }
 
       const creds = await resolveRazorpayCredentials(schoolId);
       if (!creds || !creds.enabled)
@@ -2433,12 +2450,11 @@ export function registerFeesRoutes(app: Express) {
           });
           // A signed duplicate also repairs the payment-attempt projection. The
           // lifecycle idempotency key makes this safe for ordinary retries.
-          const repairSession = await storage.getActiveSession(schoolId);
           const repairedAttemptId = await upsertPaymentAttempt({
             schoolId,
             studentId: Number(feeRec.student_id),
             feeRecordId,
-            sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+            sessionId: feeRec.session_id ?? null,
             outcome: "captured",
             razorpayPaymentId: payment.id ?? null,
             razorpayOrderId: payment.order_id ?? null,
@@ -2460,7 +2476,7 @@ export function registerFeesRoutes(app: Express) {
           });
           await appendPaymentAttemptEvent({
             schoolId, paymentAttemptId: repairedAttemptId, feeRecordId,
-            studentId: Number(feeRec.student_id), sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+            studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
             eventType: "payment_captured", outcome: "captured", source: "webhook",
             webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
             razorpayOrderId: payment.order_id ?? null,
@@ -2482,7 +2498,6 @@ export function registerFeesRoutes(app: Express) {
         // webhook returns 500, and Razorpay retries until both operations commit.
         const now = webhookReceivedAt;
         const paidDateIST = razorpayPaymentBusinessDateIST(payment, event) ?? todayInIST(now);
-        const activeSession = await storage.getActiveSession(schoolId);
         let idempotentDuplicate = false;
         try {
           await db.transaction(async (tx) => {
@@ -2501,7 +2516,7 @@ export function registerFeesRoutes(app: Express) {
             try {
               await tx.insert(paymentRecords).values({
                 schoolId,
-                sessionId: activeSession?.id ?? null,
+                sessionId: feeRec.session_id ?? null,
                 feeRecordId,
                 studentId: Number(feeRec.student_id),
                 paymentMethod: "Portal Payment",
@@ -2556,7 +2571,7 @@ export function registerFeesRoutes(app: Express) {
               entityId: feeRecordId,
               studentId: Number(feeRec.student_id),
               studentName: (studentResult.rows[0] as any)?.name ?? null,
-              sessionId: activeSession?.id ?? feeRec.session_id ?? null,
+                sessionId: feeRec.session_id ?? null,
               recordLabel: feeRec.invoice_number ?? receiptNumber,
               eventKey: payment.id ? `payment-captured:${payment.id}` : null,
               amount: Number(feeRec.amount) + lateFeeFromNotes,
@@ -2577,7 +2592,7 @@ export function registerFeesRoutes(app: Express) {
           schoolId,
           studentId:         Number(feeRec.student_id),
           feeRecordId,
-          sessionId:         activeSession?.id ?? null,
+          sessionId:         feeRec.session_id ?? null,
           outcome:           "captured",
           razorpayPaymentId: payment.id          ?? null,
           razorpayOrderId:   payment.order_id    ?? null,
@@ -2606,7 +2621,7 @@ export function registerFeesRoutes(app: Express) {
         });
         await appendPaymentAttemptEvent({
           schoolId, paymentAttemptId: capturedAttemptId, feeRecordId,
-          studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+          studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
           eventType: "payment_captured", outcome: "captured", source: "webhook",
           webhookEventId: webhookDeliveryId, razorpayPaymentId: payment.id ?? null,
           razorpayOrderId: payment.order_id ?? null,
@@ -2625,7 +2640,7 @@ export function registerFeesRoutes(app: Express) {
                   schoolId,
                   studentId:  Number(feeRec.student_id),
                   feeRecordId,
-                  sessionId:  activeSession?.id ?? null,
+                  sessionId:  feeRec.session_id ?? null,
                   outcome:    "captured",
                   source:     "webhook",
                   receiptNumber,
@@ -2639,7 +2654,7 @@ export function registerFeesRoutes(app: Express) {
                   status: "completed",
                 });
                 await appendPaymentAttemptEvent({
-                  schoolId, feeRecordId, studentId: Number(feeRec.student_id),
+                  schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
                   eventType: "api_enrichment_completed", source: "system",
                   razorpayPaymentId: payment.id, razorpayOrderId: payment.order_id ?? null,
                   payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
@@ -2653,7 +2668,7 @@ export function registerFeesRoutes(app: Express) {
                 status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr),
               });
               await appendPaymentAttemptEvent({
-                schoolId, feeRecordId, studentId: Number(feeRec.student_id),
+                schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
                 eventType: "api_enrichment_failed", source: "system",
                 razorpayPaymentId: payment.id ?? null, razorpayOrderId: payment.order_id ?? null,
                 payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),
@@ -3352,6 +3367,13 @@ export function registerFeesRoutes(app: Express) {
       if (!creds?.keySecret) return res.status(400).json({ message: "Razorpay not configured" });
       if (Number(feeRec.school_id) !== schoolId)
         return res.status(403).json({ message: "Access denied" });
+      const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
+      if (requestedSessionId != null && Number(feeRec.session_id) !== requestedSessionId) {
+        return res.status(409).json({
+          message: "The selected academic session does not match this invoice.",
+          code: "INVOICE_SESSION_MISMATCH",
+        });
+      }
 
       // Verify HMAC: SHA-256 of "order_id|payment_id"
       const body = `${razorpay_order_id}|${razorpay_payment_id}`;
@@ -3366,12 +3388,11 @@ export function registerFeesRoutes(app: Express) {
         // A client verify request can be retried after the financial write
         // committed but before attempt history was durable. Rebuild the same
         // idempotent projection/event here before reporting success.
-        const repairSession = await storage.getActiveSession(schoolId);
         const repairedAttemptId = await upsertPaymentAttempt({
           schoolId,
           studentId: Number(feeRec.student_id),
           feeRecordId,
-          sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+          sessionId: feeRec.session_id ?? null,
           outcome: "captured",
           razorpayPaymentId: razorpay_payment_id,
           razorpayOrderId: razorpay_order_id,
@@ -3382,7 +3403,7 @@ export function registerFeesRoutes(app: Express) {
         });
         await appendPaymentAttemptEvent({
           schoolId, paymentAttemptId: repairedAttemptId, feeRecordId,
-          studentId: Number(feeRec.student_id), sessionId: repairSession?.id ?? feeRec.session_id ?? null,
+          studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
           eventType: "payment_captured", outcome: "captured", source: "client",
           razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
           amountPaise: Math.round(Number(feeRec.amount) * 100),
@@ -3449,8 +3470,6 @@ export function registerFeesRoutes(app: Express) {
       const now = new Date();
       const providerCapturedAt = razorpayPaymentCapturedAt(verifiedPayment);
       const paidDateIST = razorpayPaymentBusinessDateIST(verifiedPayment) ?? todayInIST(now);
-      const activeSession = await storage.getActiveSession(schoolId);
-
       let idempotentDuplicate = false;
       let canonicalReceipt: string | undefined;
 
@@ -3472,7 +3491,7 @@ export function registerFeesRoutes(app: Express) {
           try {
             await tx.insert(paymentRecords).values({
               schoolId,
-              sessionId: activeSession?.id ?? null,
+              sessionId: feeRec.session_id ?? null,
               feeRecordId,
               studentId: Number(feeRec.student_id),
               paymentMethod: "Portal Payment",
@@ -3524,7 +3543,7 @@ export function registerFeesRoutes(app: Express) {
             entityId: feeRecordId,
             studentId: Number(feeRec.student_id),
             studentName: (studentResult.rows[0] as any)?.name ?? null,
-            sessionId: activeSession?.id ?? feeRec.session_id ?? null,
+            sessionId: feeRec.session_id ?? null,
             recordLabel: feeRec.invoice_number ?? receiptNumber,
             eventKey: `payment-captured:${razorpay_payment_id}`,
             amount: verifiedCapture.amountPaise / 100,
@@ -3579,7 +3598,7 @@ export function registerFeesRoutes(app: Express) {
         schoolId,
         studentId:         Number(feeRec.student_id),
         feeRecordId,
-        sessionId:         activeSession?.id ?? null,
+        sessionId:         feeRec.session_id ?? null,
         outcome:           "captured",
         razorpayPaymentId: razorpay_payment_id,
         razorpayOrderId:   razorpay_order_id   ?? null,
@@ -3597,7 +3616,7 @@ export function registerFeesRoutes(app: Express) {
       });
       await appendPaymentAttemptEvent({
         schoolId, paymentAttemptId: verifiedAttemptId, feeRecordId,
-        studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+        studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
         eventType: "payment_captured", outcome: "captured", source: "client",
         razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id,
         amountPaise: verifiedCapture.amountPaise,
@@ -3617,7 +3636,7 @@ export function registerFeesRoutes(app: Express) {
                 schoolId,
                 studentId:       Number(feeRec.student_id),
                 feeRecordId,
-                sessionId:       activeSession?.id ?? null,
+                sessionId:       feeRec.session_id ?? null,
                 outcome:         "captured",
                 source:          "client",
                 receiptNumber,
@@ -3630,7 +3649,7 @@ export function registerFeesRoutes(app: Express) {
                 status: "completed",
               });
               await appendPaymentAttemptEvent({
-                schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+                schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
                 eventType: "api_enrichment_completed", source: "system",
                 razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
                 payload: { entities: ["payment", "order"] }, occurredAt: new Date(),
@@ -3644,7 +3663,7 @@ export function registerFeesRoutes(app: Express) {
               status: "failed", error: (enrichErr as any)?.message ?? String(enrichErr),
             });
             await appendPaymentAttemptEvent({
-              schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: activeSession?.id ?? null,
+                schoolId, feeRecordId, studentId: Number(feeRec.student_id), sessionId: feeRec.session_id ?? null,
               eventType: "api_enrichment_failed", source: "system",
               razorpayPaymentId: razorpay_payment_id, razorpayOrderId: razorpay_order_id ?? null,
               payload: { error: (enrichErr as any)?.message ?? String(enrichErr) }, occurredAt: new Date(),

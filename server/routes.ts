@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { type Server } from "http";
-import { storage } from "./storage";
+import { AcademicSessionFinancialHistoryError, storage } from "./storage";
 import { feePeriodLabel } from "./fee-period";
 import {
   insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
@@ -289,8 +289,8 @@ function assertSchoolOwnership(entitySchoolId: number, sessionSchoolId: number):
  *   The transaction-report POST is an explicit read-only export transport and
  *   is exempt so archived-session invoice selections can still be downloaded.
  *
- * Fails open on any database error so that a middleware issue never blocks
- * legitimate traffic.
+ * Fails closed on database errors for a selected-session mutation. Financial
+ * history must never be changed when archive status cannot be verified.
  */
 export async function checkSessionContext(
   req: import("express").Request,
@@ -324,8 +324,14 @@ export async function checkSessionContext(
     req.session?.schoolId
   ) {
     try {
-      const activeSession = await storage.getActiveSession(req.session.schoolId);
-      if (activeSession && activeSession.id !== (req as any).viewSessionId) {
+      const selectedSession = await storage.getAcademicSessionById(
+        (req as any).viewSessionId,
+      );
+      if (
+        !selectedSession
+        || selectedSession.schoolId !== req.session.schoolId
+        || !selectedSession.isActive
+      ) {
         // Give teachers a role-specific message; admins get the general archive message.
         return res.status(403).json({
           error: "Security Restriction: Write operations are strictly blocked for archived school years.",
@@ -333,7 +339,10 @@ export async function checkSessionContext(
         });
       }
     } catch {
-      // Fail open — never let a middleware DB error block legitimate traffic.
+      return res.status(503).json({
+        error: "Unable to verify the selected academic session. Please retry before making changes.",
+        code: "SESSION_STATUS_UNAVAILABLE",
+      });
     }
   }
 
@@ -3627,12 +3636,16 @@ export async function registerRoutes(
       const valid = await bcrypt.compare(password, adminUser.passwordHash);
       if (!valid) return res.status(401).json({ message: "Incorrect password" });
 
-      await storage.deleteAcademicSession(id, schoolId);
+      const deleted = await storage.deleteAcademicSession(id, schoolId);
+      if (!deleted) return res.status(404).json({ message: "Academic session not found" });
       res.json({ message: "Session deleted" });
       // Notify all connected teachers and students so their session lists
       // update instantly — no page refresh required.
       broadcastSessionDeleted(schoolId, { sessionId: id });
     } catch (e: any) {
+      if (e instanceof AcademicSessionFinancialHistoryError) {
+        return res.status(e.status).json({ message: e.message, code: e.code });
+      }
       res.status(500).json({ message: e.message || "Failed to delete session" });
     }
   });

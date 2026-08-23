@@ -10,7 +10,7 @@ import {
   XCircle, RotateCcw, X, ReceiptText,
 } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetch } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import {
   classifyStudentPaymentAttempt,
@@ -1183,6 +1183,7 @@ export default function StudentFees() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { isArchiveMode, selectedSession, subscribeToPaymentUpdate } = useSessionView();
+  const sessionCacheId = selectedSession?.id ?? "unselected";
   const [copiedReceiptId, setCopiedReceiptId] = useState<number | null>(null);
   const [payingFeeId, setPayingFeeId] = useState<number | null>(null);
   const [payError, setPayError] = useState<string | null>(null);
@@ -1236,15 +1237,15 @@ export default function StudentFees() {
   });
 
   const { data: feeRecords = [], isLoading: feesLoading, refetch: refetchFees } = useQuery<FeeRecord[]>({
-    queryKey: ["/api/student/fees"],
-    enabled: !!student,
+    queryKey: ["/api/student/fees", sessionCacheId],
+    enabled: !!student && !!selectedSession,
     staleTime: 0,               // always treat as stale — payment status must never be served from cache
     refetchOnWindowFocus: true, // re-check status the moment the student returns to this tab
   });
 
   const { data: feesSummary, refetch: refetchSummary } = useQuery<FeesSummary>({
-    queryKey: ["/api/student/fees/summary"],
-    enabled: !!student,
+    queryKey: ["/api/student/fees/summary", sessionCacheId],
+    enabled: !!student && !!selectedSession,
     staleTime: 0,
     refetchOnWindowFocus: true,
   });
@@ -1257,14 +1258,14 @@ export default function StudentFees() {
   });
 
   const { data: notificationHistory = [], isLoading: notifLoading } = useQuery<NotificationHistoryEntry[]>({
-    queryKey: ["/api/student/fees/notification-history"],
-    enabled: !!student,
+    queryKey: ["/api/student/fees/notification-history", sessionCacheId],
+    enabled: !!student && !!selectedSession,
     staleTime: 30_000,
   });
 
   const { data: paymentAttempts = [], isLoading: attemptsLoading } = useQuery<PaymentAttempt[]>({
-    queryKey: ["/api/student/fees/payment-attempts"],
-    enabled: !!student,
+    queryKey: ["/api/student/fees/payment-attempts", sessionCacheId],
+    enabled: !!student && !!selectedSession,
     staleTime: 0,
     refetchOnWindowFocus: true,
   });
@@ -1301,11 +1302,10 @@ export default function StudentFees() {
 
     try {
       await loadRazorpayScript();
-      const resp = await fetch("/api/payments/create-order", {
+      const resp = await sessionFetch("/api/payments/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ feeRecordId: rec.id }),
-        credentials: "include",
         signal: abort.signal,
       });
       if (!resp.ok) {
@@ -1355,10 +1355,9 @@ export default function StudentFees() {
             // Immediately verify via our endpoint — no 15 s polling wait.
             // Falls back to a plain refetch if verify fails (webhook may have
             // already run, making the fee Paid anyway).
-            fetch("/api/payments/verify", {
+            sessionFetch("/api/payments/verify", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              credentials: "include",
               body: JSON.stringify({
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_order_id:   response.razorpay_order_id,
@@ -1398,10 +1397,9 @@ export default function StudentFees() {
                 // different one without waiting for the 10-minute checkout
                 // window to elapse.  The endpoint is a no-op if the fee is
                 // already Paid (status guard on the server prevents the UPDATE).
-                fetch("/api/payments/clear-failed-order", {
+                sessionFetch("/api/payments/clear-failed-order", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  credentials: "include",
                   body: JSON.stringify({
                     feeRecordId:     rec.id,
                     razorpayOrderId: orderId,
@@ -1431,10 +1429,9 @@ export default function StudentFees() {
           const errStep        = response?.error?.step        ?? "";
           const errReason      = response?.error?.reason      ?? "";
           const rzpPaymentId   = response?.error?.metadata?.payment_id ?? "";
-          fetch("/api/payments/clear-failed-order", {
+          sessionFetch("/api/payments/clear-failed-order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "include",
             body: JSON.stringify({
               feeRecordId:       rec.id,
               razorpayOrderId:   orderId,
