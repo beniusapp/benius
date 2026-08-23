@@ -1,0 +1,176 @@
+STRICT FIX — EXTERNAL PORTAL ONLY
+
+Fix only the remaining External Portal issue identified in the latest verification.
+
+Core rule — VERY IMPORTANT
+
+External Portal is GLOBAL SCHOOL/TENANT data. It is NOT academic-session based.
+
+External Portal must be scoped by:
+
+schoolId / tenantId
+
+and MUST NOT depend on academicSessionId.
+
+Academic session switching or activation must NEVER reset, empty, recreate, copy, delete, or modify External Portal configuration.
+
+1. FIX THE ARCHIVED-SESSION BLOCK
+
+Currently, when an admin has selected an archived academic session, the existing "ARCHIVE_READ_ONLY" guard blocks the External Portal password-verification request.
+
+This is incorrect for External Portal.
+
+External Portal must be explicitly exempt from the academic-session archive read-only restriction, because it is global school-level configuration.
+
+However, do NOT weaken security.
+
+The External Portal must still require:
+
+- Authenticated admin login.
+- Current admin password re-authentication.
+- Admin must belong to the authenticated school/tenant.
+- Server-side school/tenant ownership validation.
+- Existing short-lived re-authentication approval.
+- Existing External Portal authorization/security checks.
+
+Do NOT trust schoolId, tenantId, password, or approval state from the browser.
+
+2. DO NOT CHANGE OTHER FEES & PAYMENTS
+
+This fix must NOT change:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+- Invoices
+- Payments
+- Receipts
+- Academic-session isolation
+- Archived-session read-only rules for financial data
+- Razorpay behavior
+
+Only make the minimum change required to allow the External Portal global configuration to be accessed while any academic session is selected, including archived sessions.
+
+3. VERIFY GLOBAL EXTERNAL PORTAL BEHAVIOR
+
+Use temporary isolated test schools.
+
+For School A:
+
+1. Configure External Portal with clearly identifiable test configuration.
+2. Select active session 2027–2028.
+3. Open External Portal.
+4. Enter the correct admin password.
+5. Verify the configuration.
+6. Switch to 2028–2029.
+7. Open External Portal again.
+8. Re-authenticate.
+9. Verify the configuration is exactly unchanged.
+10. Switch back to 2027–2028.
+11. Verify again.
+12. Select an archived session.
+13. Open External Portal.
+14. Re-authenticate successfully.
+15. Confirm the same configuration is still present.
+
+4. VERIFY SESSION ACTIVATION
+
+Activate a completely new academic session.
+
+Confirm that External Portal:
+
+- Does not become empty.
+- Does not reset.
+- Does not create a second configuration.
+- Does not copy configuration into the new session.
+- Does not lose its existing configuration.
+- Remains exactly the same before and after activation.
+
+5. MULTI-TENANT TEST
+
+Create School B with a different External Portal configuration.
+
+Verify:
+
+- School A can see only School A's configuration.
+- School B can see only School B's configuration.
+- School A cannot access School B's External Portal configuration.
+- Forged school/session IDs cannot bypass tenant ownership.
+- Academic-session switching never crosses tenant boundaries.
+
+6. DATABASE VERIFICATION
+
+Confirm the External Portal configuration remains associated with the school/tenant only.
+
+Verify that:
+
+- There is no accidental "academicSessionId" dependency.
+- One school's configuration does not appear under another school.
+- Switching/activating sessions does not create duplicate portal configurations.
+- The original configuration remains unchanged.
+
+7. SECURITY REQUIREMENT
+
+The exemption must apply ONLY to the External Portal routes/actions.
+
+Do NOT remove or weaken the general "ARCHIVE_READ_ONLY" protection.
+
+For example:
+
+Archived session + Financial Analytics mutation → BLOCKED
+
+Archived session + Invoice mutation → BLOCKED
+
+Archived session + Payment mutation → BLOCKED
+
+Archived session + External Portal password verification → ALLOWED
+
+This distinction is mandatory.
+
+8. REGRESSION TESTS
+
+Add permanent regression coverage proving:
+
+- External Portal can be re-authenticated while an archived session is selected.
+- Wrong password is rejected.
+- Unauthenticated access is rejected.
+- Cross-tenant access is rejected.
+- External Portal configuration remains identical across session switches.
+- Financial mutations against archived sessions remain blocked.
+- External Portal remains independent of "academicSessionId".
+
+9. FINAL VERIFICATION
+
+Use actual API + browser + database evidence.
+
+Clean up all temporary schools, users, students, sessions, financial records, and External Portal test configuration afterward.
+
+Confirm:
+
+0 temporary verification records remain.
+
+FINAL ACCEPTANCE
+
+Return:
+
+YES — 100% VERIFIED
+
+ONLY if:
+
+1. External Portal works while an archived session is selected.
+2. Password re-authentication still works securely.
+3. External Portal remains completely global to the school/tenant.
+4. Academic-session activation/switching never changes it.
+5. Cross-tenant access is impossible.
+6. All existing Fees & Payments academic-session protections remain intact.
+7. Browser, API, database, and regression tests pass.
+
+Otherwise return:
+
+NO — NOT 100% VERIFIED
+
+and clearly identify the exact remaining failure.
+
+DO NOT modify anything outside this External Portal exception/fix.
