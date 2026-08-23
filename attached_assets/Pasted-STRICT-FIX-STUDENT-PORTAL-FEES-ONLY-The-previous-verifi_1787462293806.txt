@@ -1,0 +1,249 @@
+STRICT FIX — STUDENT PORTAL → FEES ONLY
+
+The previous verification found 3 confirmed runtime failures. Fix ONLY these issues and do not redesign unrelated parts of the application.
+
+1. FIX — Previous-session Paid amount appearing in a new session
+
+Current problem:
+
+A student enters a newly active academic session that has no invoices.
+
+Expected:
+
+- Total Fees = 0
+- Paid = 0
+- Outstanding = 0
+- Due = 0
+- Overdue = 0
+
+Actual:
+
+The new session showed "totalPaid: ₹2,000" from the previous academic session.
+
+Fix the Student Fees Summary so every financial calculation is strictly filtered by:
+
+authenticated schoolId/tenantId + selected academicSessionId + studentId
+
+The "totalPaid" calculation MUST NOT aggregate payments across all academic sessions.
+
+Audit every other summary calculation at the same time to ensure there is no similar cross-session aggregation.
+
+---
+
+2. FIX — Previous-session reminder history appearing in a new session
+
+Current problem:
+
+A reminder/dunning record from the previous academic session appeared when the student opened the new session.
+
+Fix Student Portal → Fees notification/reminder history so it is strictly scoped to:
+
+schoolId/tenantId + studentId + selected academicSessionId
+
+The query must follow the reminder → invoice/fee record → academic session relationship where necessary.
+
+A new session with no financial records must show no reminders from previous sessions.
+
+---
+
+3. FIX — Reject forged/foreign academicSessionId
+
+Current problem:
+
+A School A student sent School B's "academicSessionId" through:
+
+"x-view-session-id"
+
+and the API returned "200".
+
+Even though School B's fee rows were not exposed, this is not acceptable for strict tenant/session isolation.
+
+Every Student Portal → Fees request using a selected session must verify:
+
+selectedSession.schoolId === authenticatedStudent.schoolId
+
+If the selected session does not belong to the authenticated student's school:
+
+reject the request.
+
+Do not simply ignore the invalid session and continue using another session.
+
+Return an appropriate authorization/not-found response according to the application's existing security convention.
+
+---
+
+IMPORTANT: AUDIT THE ENTIRE STUDENT PORTAL → FEES MODULE
+
+While fixing these 3 confirmed issues, inspect ALL Student Portal → Fees data sources for the same class of problem.
+
+Every Fees-related query must respect:
+
+Tenant/School ID + Student ID + Academic Session ID
+
+Check at minimum:
+
+- Total Fees
+- Paid
+- Outstanding
+- Due
+- Overdue
+- Invoices
+- Invoice details
+- Payment history
+- Payment attempts
+- Failed/cancelled payments
+- Receipts
+- Reminders
+- Dunning history
+- Notification/payment history
+- Any other financial information displayed inside Student Portal → Fees
+
+Do not assume that fixing the three reported queries is enough.
+
+---
+
+SESSION SWITCHING REQUIREMENT
+
+Verify this exact scenario:
+
+Session A — Previous session
+
+Student has:
+
+Invoice = ₹2,000
+Payment = ₹2,000
+Reminder history exists
+
+Session B — New session
+
+Student has:
+
+No invoices
+No payments
+No reminders
+
+Now test:
+
+A → B
+
+Expected:
+
+Session B shows completely fresh/empty Fees data.
+
+Then:
+
+B → A
+
+Expected:
+
+The ₹2,000 invoice, ₹2,000 payment and previous reminder/history are visible again.
+
+Then:
+
+A → B
+
+Expected:
+
+Again completely empty.
+
+Repeat the switching multiple times, including rapid switching, to ensure there is no stale frontend/cache data.
+
+---
+
+MULTI-TENANT SECURITY
+
+Test:
+
+School A + Session A
+School A + Session B
+School B + Session A
+School B + Session B
+
+A School A student must never be able to access School B's session or financial data.
+
+Test manipulated:
+
+- academicSessionId
+- studentId
+- invoiceId
+- paymentId
+- receiptId
+- other relevant IDs
+
+Server-side validation must enforce tenant ownership.
+
+Never trust client-supplied school/session identifiers.
+
+---
+
+DO NOT CHANGE
+
+Do NOT modify:
+
+- Admin Fees & Payments
+- Financial Analytics
+- Fee Structure architecture
+- Academic Session creation logic unless absolutely required for this fix
+- Existing invoice/payment business rules
+- Unrelated modules
+- UI design unnecessarily
+
+This task is ONLY:
+
+Student Portal → Fees academic-session + tenant isolation.
+
+---
+
+VERIFICATION AFTER FIX
+
+Do not tell me that the code "looks correct."
+
+Run actual verification using:
+
+1. Database-level checks
+2. Real API requests
+3. Temporary isolated two-school/two-session fixtures
+4. Real Student Portal browser testing
+5. Session switching
+6. Rapid session switching
+7. Cache/stale-data testing
+8. Foreign-session manipulation
+9. Cross-tenant ID manipulation
+
+Clean up all temporary test data afterward and verify that nothing remains.
+
+FINAL RESULT
+
+Only report:
+
+YES — 100% VERIFIED
+
+if all Student Portal → Fees data is proven to be isolated by:
+
+School/Tenant ID + Academic Session ID
+
+and the following scenario is proven:
+
+«New academic session with no invoices = completely fresh/empty Fees module.»
+
+«Switching to previous session = complete previous-session Fees data is restored.»
+
+«Switching back to new session = previous-session data disappears again.»
+
+«No data is lost.»
+
+«No data is overwritten.»
+
+«No data is mixed between sessions.»
+
+«No stale cache data appears.»
+
+«No other school's data can be accessed.»
+
+If ANY issue remains, report:
+
+NO — NOT 100% VERIFIED
+
+and provide the exact failing endpoint, query, data path, or UI behavior.
+
+Do not proceed to Admin Fees & Payments until this verification returns YES.
