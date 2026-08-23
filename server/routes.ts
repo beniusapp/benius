@@ -319,8 +319,10 @@ async function feeRecordWriteBlock(
  *   Validates the session against the database.  If the referenced session is
  *   archived (is_active = false for that school), the request is aborted with
  *   403 so historical data can never be accidentally overwritten through the UI.
- *   The transaction-report POST is an explicit read-only export transport and
- *   is exempt so archived-session invoice selections can still be downloaded.
+ *   Read-only export transports and the explicitly school-global External
+ *   Portal configuration routes are exempt. The latter have their own
+ *   admin/password/tenant authorization in fees-routes and never operate on
+ *   academic-session financial data.
  *
  * Fails closed on database errors for a selected-session mutation. Financial
  * history must never be changed when archive status cannot be verified.
@@ -336,6 +338,14 @@ export async function checkSessionContext(
       req.path === "/api/admin/fees/payments/report/pdf" ||
       req.path === "/api/admin/fees/export-ledger"
     );
+  const isExternalPortalGlobalMutation = MUTATION_METHODS.has(req.method) && (
+    req.path === "/api/admin/fees/external-settings/verify-access" ||
+    req.path === "/api/admin/fees/external-settings" ||
+    req.path === "/api/admin/fees/external-settings/razorpay" ||
+    req.path === "/api/admin/fees/external-settings/razorpay/credentials" ||
+    req.path === "/api/admin/fees/external-settings/portal" ||
+    req.path === "/api/admin/fees/external-portal/signature"
+  );
 
   // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
   // This allows any downstream route handler — GET or mutation — to read
@@ -353,6 +363,7 @@ export async function checkSessionContext(
   if (
     MUTATION_METHODS.has(req.method) &&
     !isReadOnlyTransactionExport &&
+    !isExternalPortalGlobalMutation &&
     (req as any).viewSessionId &&
     req.session?.schoolId
   ) {

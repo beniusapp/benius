@@ -5677,10 +5677,8 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 // ─── External Portal Tab ──────────────────────────────────────────────────────
 
 function ExternalPortalTab({
-  isArchiveMode,
   onReauthRequired,
 }: {
-  isArchiveMode: boolean;
   onReauthRequired: () => void;
 }) {
   const { toast } = useToast();
@@ -5906,7 +5904,7 @@ function ExternalPortalTab({
               <p className="text-white/40 text-xs mt-0.5">Accept UPI, cards, net banking & wallets in the student portal.</p>
             </div>
           </div>
-          <Switch checked={rzpEnabled} onCheckedChange={setRzpEnabled} disabled={isArchiveMode} />
+          <Switch checked={rzpEnabled} onCheckedChange={setRzpEnabled} />
         </div>
 
         <div className="px-5 py-4 space-y-4">
@@ -5926,7 +5924,7 @@ function ExternalPortalTab({
           )}
 
           {/* Wipe credentials button */}
-          {(rzpKeyId || rzpKeySecret === "••••••••" || rzpWebhookSecret === "••••••••") && !isArchiveMode && (
+          {(rzpKeyId || rzpKeySecret === "••••••••" || rzpWebhookSecret === "••••••••") && (
             <button
               onClick={() => {
                 const ok = window.confirm(
@@ -5961,7 +5959,6 @@ function ExternalPortalTab({
             <label className="text-xs font-semibold text-white/60">Key ID <span className="text-red-400">*</span></label>
             <input value={rzpKeyId} onChange={e => saveKeyIdDraft(e.target.value)}
               placeholder="rzp_live_… or rzp_test_…"
-              disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
           </div>
 
@@ -5970,7 +5967,6 @@ function ExternalPortalTab({
             <label className="text-xs font-semibold text-white/60">Key Secret <span className="text-red-400">*</span></label>
             <input type="password" value={rzpKeySecret} onChange={e => saveSecretDraft(e.target.value)}
               placeholder={rzpKeySecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Key Secret…"}
-              disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40" />
             <p className="text-white/25 text-[11px]">Stored server-side only — never exposed to the browser after saving.</p>
           </div>
@@ -5980,7 +5976,6 @@ function ExternalPortalTab({
             <label className="text-xs font-semibold text-white/60">Webhook Secret <span className="text-red-400">*</span></label>
             <input type="password" value={rzpWebhookSecret} onChange={e => saveWebhookDraft(e.target.value)}
               placeholder={rzpWebhookSecret === "••••••••" ? "Leave blank to keep existing secret" : "Enter Webhook Secret…"}
-              disabled={isArchiveMode}
               className={`w-full bg-[#0F1E35] border rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500 placeholder:text-white/20 disabled:opacity-40 ${!rzpWebhookSecret ? "border-red-500/50" : "border-white/10"}`} />
             <div className="space-y-1">
               <p className="text-white/25 text-[11px]">
@@ -6038,12 +6033,12 @@ function ExternalPortalTab({
             </div>
           )}
 
-          {!isArchiveMode && (
-            <Button onClick={() => rzpMut.mutate()} disabled={rzpMut.isPending || !rzpWebhookSecret}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
-              {rzpMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Razorpay Settings"}
-            </Button>
-          )}
+          <Button onClick={() => rzpMut.mutate()} disabled={rzpMut.isPending || !rzpWebhookSecret}
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
+            {rzpMut.isPending
+              ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</>
+              : "Save Razorpay Settings"}
+          </Button>
         </div>
       </div>
 
@@ -6061,7 +6056,7 @@ function ExternalPortalTab({
               <p className="text-white/40 text-xs mt-0.5">Show a third-party payment link to students (Instamojo, PayU, etc.).</p>
             </div>
           </div>
-          <Switch checked={isEnabled} onCheckedChange={setIsEnabled} disabled={isArchiveMode} />
+          <Switch checked={isEnabled} onCheckedChange={setIsEnabled} />
         </div>
 
         <div className="px-5 py-4 space-y-4">
@@ -6072,7 +6067,6 @@ function ExternalPortalTab({
             </label>
             <input value={url} onChange={e => setUrl(e.target.value)}
               placeholder="https://pay.yourschool.edu/fees"
-              disabled={isArchiveMode}
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 disabled:opacity-40" />
           </div>
 
@@ -6082,7 +6076,6 @@ function ExternalPortalTab({
               <Bell className="w-3 h-3" /> Banner Message (shown to students)
             </label>
             <textarea value={banner} onChange={e => setBanner(e.target.value)} rows={3}
-              disabled={isArchiveMode}
               placeholder="Pay your fees online at the link below. For queries, contact the accounts office."
               className="w-full bg-[#0F1E35] border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 placeholder:text-white/20 resize-none disabled:opacity-40" />
             <p className="text-white/25 text-xs text-right">{banner.length}/500</p>
@@ -6107,12 +6100,12 @@ function ExternalPortalTab({
             </div>
           )}
 
-          {!isArchiveMode && (
-            <Button onClick={() => portalMut.mutate()} disabled={portalMut.isPending}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl py-2.5">
-              {portalMut.isPending ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</> : "Save Portal Settings"}
-            </Button>
-          )}
+          <Button onClick={() => portalMut.mutate()} disabled={portalMut.isPending}
+            className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-xl py-2.5">
+            {portalMut.isPending
+              ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Saving…</>
+              : "Save Portal Settings"}
+          </Button>
         </div>
       </div>
 
@@ -6156,14 +6149,12 @@ function ExternalPortalTab({
                 </p>
               )}
               <div className="flex gap-2 flex-wrap">
-                {!isArchiveMode && (
-                  <button type="button" onClick={() => sigFileRef.current?.click()}
-                    disabled={sigUploading || sigRemoving}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/15 text-white/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-40">
-                    <Upload className="w-3.5 h-3.5" /> Replace Signature
-                  </button>
-                )}
-                {!isArchiveMode && (settings?.feeReceiptSignatureUrl || sigPreviewUrl) && (
+                <button type="button" onClick={() => sigFileRef.current?.click()}
+                  disabled={sigUploading || sigRemoving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-white/15 text-white/70 hover:text-white hover:bg-white/5 transition-all disabled:opacity-40">
+                  <Upload className="w-3.5 h-3.5" /> Replace Signature
+                </button>
+                {(settings?.feeReceiptSignatureUrl || sigPreviewUrl) && (
                   <button type="button" onClick={() => setShowSigConfirmRemove(true)}
                     disabled={sigRemoving || sigUploading}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-700/30 text-red-400 hover:bg-red-900/20 transition-all disabled:opacity-40">
@@ -6173,19 +6164,17 @@ function ExternalPortalTab({
               </div>
             </div>
           ) : (
-            !isArchiveMode && (
-              <button type="button" onClick={() => sigFileRef.current?.click()}
-                disabled={sigUploading}
-                className="w-full border-2 border-dashed border-white/15 rounded-xl py-8 flex flex-col items-center gap-3 hover:border-purple-500/40 hover:bg-purple-900/10 transition-all group disabled:opacity-40">
-                <div className="w-10 h-10 rounded-xl bg-purple-900/30 border border-purple-500/25 flex items-center justify-center group-hover:bg-purple-900/50 transition-all">
-                  <Upload className="w-5 h-5 text-purple-400" />
-                </div>
-                <div className="text-center">
-                  <p className="text-white/70 text-sm font-semibold">Upload Authorized Signature</p>
-                  <p className="text-white/30 text-xs mt-1">Click to select a file</p>
-                </div>
-              </button>
-            )
+            <button type="button" onClick={() => sigFileRef.current?.click()}
+              disabled={sigUploading}
+              className="w-full border-2 border-dashed border-white/15 rounded-xl py-8 flex flex-col items-center gap-3 hover:border-purple-500/40 hover:bg-purple-900/10 transition-all group disabled:opacity-40">
+              <div className="w-10 h-10 rounded-xl bg-purple-900/30 border border-purple-500/25 flex items-center justify-center group-hover:bg-purple-900/50 transition-all">
+                <Upload className="w-5 h-5 text-purple-400" />
+              </div>
+              <div className="text-center">
+                <p className="text-white/70 text-sm font-semibold">Upload Authorized Signature</p>
+                <p className="text-white/30 text-xs mt-1">Click to select a file</p>
+              </div>
+            </button>
           )}
 
           {/* Confirm removal inline dialog */}
@@ -6207,7 +6196,7 @@ function ExternalPortalTab({
           )}
 
           {/* Save staged file */}
-          {selectedSigFile && !isArchiveMode && (
+          {selectedSigFile && (
             <button type="button" onClick={handleSigSave} disabled={sigUploading}
               className="w-full py-2.5 rounded-xl text-sm font-bold bg-purple-700 hover:bg-purple-600 text-white transition-all disabled:opacity-50 flex items-center justify-center gap-2">
               {sigUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
@@ -6753,11 +6742,9 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   const queryClient = useQueryClient();
   const [externalVerificationOpen, setExternalVerificationOpen] = useState(false);
   const [externalAccessExpiry, setExternalAccessExpiry] = useState<number | null>(null);
-  const [externalAccessSessionId, setExternalAccessSessionId] = useState<number | null>(null);
 
   const clearExternalPortalAccess = useCallback(() => {
     setExternalAccessExpiry(null);
-    setExternalAccessSessionId(null);
     setExternalVerificationOpen(false);
     queryClient.removeQueries({ queryKey: ["/api/admin/fees/external-settings"] });
     setActiveTab(currentTab => currentTab === "external" ? "ledger" : currentTab);
@@ -6770,12 +6757,6 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
     return () => window.clearTimeout(timer);
   }, [clearExternalPortalAccess, externalAccessExpiry]);
 
-  useEffect(() => {
-    if (externalAccessExpiry !== null && externalAccessSessionId !== viewSessionId) {
-      clearExternalPortalAccess();
-    }
-  }, [clearExternalPortalAccess, externalAccessExpiry, externalAccessSessionId, viewSessionId]);
-
   const openTab = useCallback((tab: Tab) => {
     if (tab !== "external") {
       setActiveTab(tab);
@@ -6783,15 +6764,14 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
     }
     if (
       externalAccessExpiry !== null &&
-      externalAccessExpiry > Date.now() &&
-      externalAccessSessionId === viewSessionId
+      externalAccessExpiry > Date.now()
     ) {
       setActiveTab("external");
       return;
     }
     clearExternalPortalAccess();
     setExternalVerificationOpen(true);
-  }, [clearExternalPortalAccess, externalAccessExpiry, externalAccessSessionId, viewSessionId]);
+  }, [clearExternalPortalAccess, externalAccessExpiry]);
 
   const handleExternalPortalVerified = useCallback((expiresAt: string) => {
     const parsedExpiry = Date.parse(expiresAt);
@@ -6800,10 +6780,9 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       return;
     }
     setExternalAccessExpiry(parsedExpiry);
-    setExternalAccessSessionId(viewSessionId);
     setExternalVerificationOpen(false);
     setActiveTab("external");
-  }, [clearExternalPortalAccess, viewSessionId]);
+  }, [clearExternalPortalAccess]);
 
   // ── Real-time sync: listen for Razorpay webhook payment-update events ──────
   // When a student pays via Razorpay the webhook fires on the server, which
@@ -6881,7 +6860,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
       {activeTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
       {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} onReauthRequired={clearExternalPortalAccess} />}
+      {activeTab === "external"   && <ExternalPortalTab onReauthRequired={clearExternalPortalAccess} />}
       {activeTab === "audit"      && <AuditLogTab viewSessionId={viewSessionId} />}
       <ExternalPortalVerificationDialog
         open={externalVerificationOpen}

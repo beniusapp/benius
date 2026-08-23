@@ -24,6 +24,7 @@ let adminAId = 0;
 let adminBId = 0;
 let schoolASessionId = 0;
 let schoolAArchivedSessionId = 0;
+let schoolANextSessionId = 0;
 let schoolAActiveFeeId = 0;
 let server: http.Server;
 let baseUrl = "";
@@ -125,6 +126,17 @@ beforeAll(async () => {
     promotionStrategy: "defer",
   }).returning();
   schoolAArchivedSessionId = schoolAArchivedSession.id;
+  const [schoolANextSession] = await db.insert(academicSessions).values({
+    schoolId: schoolAId,
+    sessionName: "2027-28",
+    startDate: "2027-04-01",
+    endDate: "2028-03-31",
+    isActive: false,
+    status: "upcoming",
+    newAdmissionsEnabled: false,
+    promotionStrategy: "defer",
+  }).returning();
+  schoolANextSessionId = schoolANextSession.id;
   const [student] = await db.insert(students).values({
     schoolId: schoolAId,
     digitalStudentId: `EPRA-STU-${uid()}`,
@@ -241,16 +253,20 @@ describe("External Portal recent password verification", () => {
     expect(followUp.status).toBe(403);
   });
 
-  it("accepts the current password and permits the existing settings view and mutation for that school only", async () => {
+  it("accepts re-authentication and keeps school-global settings unchanged across archived and newly activated sessions", async () => {
     const cookie = await login("a");
+    const archivedSessionHeaders = { "x-view-session-id": String(schoolAArchivedSessionId) };
     const verified = await request("/api/admin/fees/external-settings/verify-access", cookie, {
       method: "POST",
       body: JSON.stringify({ password: ADMIN_PASSWORD }),
+      headers: archivedSessionHeaders,
     });
     expect(verified.status).toBe(200);
     expect((await verified.json()).expiresAt).toBeTruthy();
 
-    const read = await request("/api/admin/fees/external-settings", cookie);
+    const read = await request("/api/admin/fees/external-settings", cookie, {
+      headers: archivedSessionHeaders,
+    });
     expect(read.status).toBe(200);
     expect(read.headers.get("cache-control")).toBe("no-store");
     const settings: any = await read.json();
@@ -264,12 +280,110 @@ describe("External Portal recent password verification", () => {
         gatewayUrl: "https://school-a.example/updated",
         bannerMessage: "School A updated payment portal",
       }),
+      headers: archivedSessionHeaders,
     });
     expect(update.status).toBe(200);
+
+    const [schoolASettings] = await db.select().from(externalPaymentSettings)
+      .where(eq(externalPaymentSettings.schoolId, schoolAId));
+    expect(schoolASettings.gatewayUrl).toBe("https://school-a.example/updated");
+    const [schoolASettingsCount] = await db.select({
+      count: sql<number>`count(*)::int`,
+    }).from(externalPaymentSettings).where(eq(externalPaymentSettings.schoolId, schoolAId));
+    expect(schoolASettingsCount.count).toBe(1);
+
+    const activeRead = await request("/api/admin/fees/external-settings", cookie, {
+      headers: { "x-view-session-id": String(schoolASessionId) },
+    });
+    expect(activeRead.status).toBe(200);
+    expect((await activeRead.json()).gatewayUrl).toBe("https://school-a.example/updated");
+
+    await db.transaction(async tx => {
+      await tx.update(academicSessions)
+        .set({ isActive: false, status: "archived" })
+        .where(eq(academicSessions.id, schoolASessionId));
+      await tx.update(academicSessions)
+        .set({ isActive: true, status: "active" })
+        .where(eq(academicSessions.id, schoolANextSessionId));
+    });
+
+    const activatedRead = await request("/api/admin/fees/external-settings", cookie, {
+      headers: { "x-view-session-id": String(schoolANextSessionId) },
+    });
+    expect(activatedRead.status).toBe(200);
+    expect((await activatedRead.json()).gatewayUrl).toBe("https://school-a.example/updated");
 
     const [schoolBSettings] = await db.select().from(externalPaymentSettings)
       .where(eq(externalPaymentSettings.schoolId, schoolBId));
     expect(schoolBSettings.gatewayUrl).toBe("https://school-b.example/pay");
+  });
+
+  it("allows every school-global External Portal mutation from an archived view after verification", async () => {
+    const cookie = await login("a");
+    const headers = { "x-view-session-id": String(schoolAArchivedSessionId) };
+    const verified = await request("/api/admin/fees/external-settings/verify-access", cookie, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ password: ADMIN_PASSWORD }),
+    });
+    expect(verified.status).toBe(200);
+
+    const mutations: Array<{ path: string; init: RequestInit }> = [
+      {
+        path: "/api/admin/fees/external-settings",
+        init: {
+          method: "PUT",
+          body: JSON.stringify({
+            isEnabled: true,
+            gatewayUrl: "https://school-a.example/full-settings",
+            bannerMessage: "Full external settings update",
+            razorpayEnabled: false,
+            razorpayKeyId: null,
+            razorpayKeySecret: null,
+            razorpayWebhookSecret: "webhook-secret",
+          }),
+        },
+      },
+      {
+        path: "/api/admin/fees/external-settings/razorpay",
+        init: {
+          method: "PUT",
+          body: JSON.stringify({
+            razorpayEnabled: false,
+            razorpayKeyId: null,
+            razorpayKeySecret: null,
+            razorpayWebhookSecret: "webhook-secret",
+          }),
+        },
+      },
+      {
+        path: "/api/admin/fees/external-settings/razorpay/credentials",
+        init: { method: "DELETE" },
+      },
+      {
+        path: "/api/admin/fees/external-settings/portal",
+        init: {
+          method: "PUT",
+          body: JSON.stringify({
+            isEnabled: true,
+            gatewayUrl: "https://school-a.example/portal-only",
+            bannerMessage: "Portal-only update",
+          }),
+        },
+      },
+      {
+        path: "/api/admin/fees/external-portal/signature",
+        init: { method: "DELETE" },
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const response = await request(mutation.path, cookie, {
+        ...mutation.init,
+        headers,
+      });
+      expect(response.status, `${mutation.init.method} ${mutation.path}`).toBe(200);
+    }
   });
 
   it("rejects a School A approval when a forged session school is changed to School B", async () => {
@@ -305,9 +419,9 @@ describe("External Portal recent password verification", () => {
     expect((await response.json()).code).toBe("EXTERNAL_PORTAL_REAUTH_REQUIRED");
   });
 
-  it("allows receipt-signature upload and removal only after verification for the selected session", async () => {
+  it("allows receipt-signature upload and removal only after verification from an archived session", async () => {
     const cookie = await login("a");
-    const selectedSessionHeaders = { "x-view-session-id": String(schoolASessionId) };
+    const selectedSessionHeaders = { "x-view-session-id": String(schoolAArchivedSessionId) };
 
     const blockedUpload = new FormData();
     blockedUpload.append("file", new Blob(["signature"], { type: "image/png" }), "signature.png");

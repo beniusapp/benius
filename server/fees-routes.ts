@@ -597,9 +597,8 @@ export function registerFeesRoutes(app: Express) {
     const sessionSchoolId = req.session.schoolId as number;
     const admin = await storage.getUserById(sessionUserId);
     const approval = (req.session as any).externalPortalReauth as
-      | { userId: number; schoolId: number; viewSessionId: number | null; verifiedAt: number }
+      | { userId: number; schoolId: number; verifiedAt: number }
       | undefined;
-    const viewSessionId = req.viewSessionId ?? null;
     const isValid =
       !!admin &&
       admin.isActive &&
@@ -608,7 +607,6 @@ export function registerFeesRoutes(app: Express) {
       !!approval &&
       approval.userId === sessionUserId &&
       approval.schoolId === sessionSchoolId &&
-      approval.viewSessionId === viewSessionId &&
       Number.isFinite(approval.verifiedAt) &&
       Date.now() - approval.verifiedAt >= 0 &&
       Date.now() - approval.verifiedAt < EXTERNAL_PORTAL_REAUTH_TTL_MS;
@@ -2073,7 +2071,6 @@ export function registerFeesRoutes(app: Express) {
     (req.session as any).externalPortalReauth = {
       userId,
       schoolId,
-      viewSessionId: (req as any).viewSessionId ?? null,
       verifiedAt,
     };
     res.set("Cache-Control", "no-store");
