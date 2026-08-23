@@ -1,0 +1,175 @@
+STRICT VERIFICATION — STUDENT PORTAL → FEES ONLY
+
+For this task, focus ONLY on:
+
+Student Portal → Fees module
+
+Do NOT work on Admin Fees & Payments yet. Do NOT make unrelated changes.
+
+I need 100% confidence that Student Fees is strictly isolated by:
+
+schoolId/tenantId + academicSessionId
+
+Required behavior
+
+Suppose the current active academic session is:
+
+2027–2028
+
+The admin creates and activates a new session:
+
+2028–2029
+
+The exact session names may vary. Do not hard-code these names.
+
+After the student enters the newly active session:
+
+If no invoices/fees have been generated for that new session yet, Student Portal → Fees must show a completely fresh financial state.
+
+Verify that the new session shows:
+
+- Total Fees = 0 / empty
+- Paid = 0
+- Outstanding = 0
+- Due = 0
+- Overdue = 0
+- No previous-session invoices
+- No previous-session payment history
+- No previous-session receipts
+- No previous-session payment attempts
+- No previous-session reminders/dunning history
+- No previous-session financial data anywhere in the Fees module
+
+This must happen because the new session has no financial records yet — NOT because previous-session data was deleted.
+
+Previous-session recovery
+
+Now switch the same student back to the previous academic session.
+
+The student MUST be able to see the complete Fees data belonging to that previous session, including where applicable:
+
+- Total Fees
+- Paid
+- Outstanding
+- Due
+- Overdue
+- Invoices
+- Invoice details
+- Payment history
+- Payment attempts
+- Receipts
+- Reminders/dunning history
+- Any other Student Portal → Fees financial information belonging to that session
+
+Nothing may be lost.
+
+Critical isolation rule
+
+Data must never collide between sessions.
+
+Example:
+
+2027–2028:
+Invoice A = ₹2,000
+Payment = ₹2,000
+
+2028–2029:
+No invoices yet
+
+When viewing 2028–2029:
+
+₹0 / empty
+
+When switching back to 2027–2028:
+
+₹2,000 invoice + ₹2,000 payment must be visible again.
+
+Then switch again to 2028–2029:
+
+₹0 / empty
+
+Repeat this switching multiple times and verify there is no stale-data leakage.
+
+Database verification
+
+Do not rely only on the UI.
+
+Trace the complete Student Fees data flow:
+
+schoolId/tenantId + academicSessionId → API → database query → response → frontend/cache → displayed Fees data
+
+Verify every Student Fees endpoint/query that returns financial information is properly scoped to BOTH:
+
+- authenticated student's school/tenant
+- selected academic session
+
+Check invoices, summaries, payments, attempts, receipts, reminders and every other Fees-related Student Portal data source.
+
+Cache/session verification
+
+Verify that changing the academic session cannot show stale data from the previous session.
+
+Test:
+
+2027–2028 → 2028–2029 → 2027–2028 → 2028–2029
+
+including rapid switching.
+
+The frontend cache/query identity must be session-aware wherever required.
+
+Multi-tenant verification
+
+Create/use controlled test data for at least:
+
+School A + Session 1
+School A + Session 2
+School B + Session 1
+School B + Session 2
+
+Verify a student from School A can NEVER see School B financial data.
+
+Also test forged/manipulated:
+
+- schoolId
+- academicSessionId
+- studentId
+- invoiceId
+- paymentId
+- receiptId
+
+The server must reject unauthorized access.
+
+Important
+
+Do NOT simply tell me that the code appears correct.
+
+I want actual verification using:
+
+1. Database-level checks
+2. API-level checks
+3. Frontend/cache checks
+4. Real browser Student Portal checks
+5. Session switching tests
+6. Multi-tenant isolation tests
+
+Do not modify financial data permanently during testing. Use isolated temporary fixtures and clean them up safely.
+
+Final answer required
+
+At the end, give me a strict YES/NO result.
+
+Only say:
+
+YES — 100% VERIFIED
+
+if you can actually prove that:
+
+«Student Portal → Fees is completely isolated by school/tenant + academic session, a newly active session starts with a fresh/empty Fees view when it has no invoices, previous-session Fees data remains fully preserved and recoverable, switching sessions never mixes or loses data, and no other school's data can be accessed.»
+
+If even one part is uncertain, say:
+
+NO — NOT 100% VERIFIED
+
+and clearly identify the exact remaining gap.
+
+Do NOT proceed to Admin Fees & Payments. This verification is ONLY for Student Portal → Fees.
