@@ -1,0 +1,421 @@
+You are working on a STRICTLY MULTI-TENANT school ERP.
+
+I want you to make ONE narrowly scoped security change only:
+
+Objective
+
+In Admin Portal → Fees & Payments → External Portal, require the currently authenticated admin to enter their current account password before the External Payment Portal settings can be opened or accessed.
+
+This section is security-sensitive because it contains the external payment/portal URL and student-facing payment configuration.
+
+IMPORTANT SCOPE RULE
+
+DO NOT change anything else in Fees & Payments.
+
+Do not modify:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+- Razorpay Gateway functionality
+- Student Fees
+- Payment processing
+- Invoices
+- Receipts
+- Payment history
+- Webhooks
+- Payment calculations
+- Academic-session behavior
+- Existing UI/design outside the External Portal section
+- Existing External Portal fields, except what is required for the password verification flow
+
+Do not refactor unrelated code.
+
+Do not change database structures unless absolutely necessary for secure implementation.
+
+---
+
+Required behavior
+
+When an authorized admin clicks/opens:
+
+Fees & Payments → External Portal
+
+the system must first display a security modal.
+
+Example:
+
+Admin Verification Required
+
+«For security, please enter your current account password to access External Payment Portal settings.»
+
+Fields:
+
+- Current Password
+- Cancel
+- Verify & Continue
+
+Correct password
+
+If the password is correct:
+
+- Close the verification modal.
+- Open/display the External Payment Portal settings normally.
+- Show the existing External Portal UI exactly as it currently works.
+- Do not change its existing fields or functionality.
+
+Incorrect password
+
+If the password is incorrect:
+
+- Do NOT open the External Portal settings.
+- Display a clear error such as:
+  “Incorrect password. Please try again.”
+- Do not reveal any protected configuration data.
+
+Cancel
+
+If the admin cancels:
+
+- Do not open the External Portal settings.
+- No configuration data should be exposed.
+
+---
+
+SECURITY REQUIREMENTS
+
+This MUST NOT be implemented as a frontend-only password popup.
+
+The password verification must be performed server-side against the currently authenticated admin account.
+
+Do NOT:
+
+- hard-code a password;
+- compare the password in frontend JavaScript;
+- store the password anywhere;
+- store the plaintext password in logs;
+- store the password in localStorage;
+- store it in sessionStorage;
+- put it in the URL;
+- send it back to the browser;
+- expose password hashes to the frontend.
+
+Use the application's existing secure password-hashing/verification mechanism.
+
+Do not introduce a second password system if the application already has a standard authentication/password verification service.
+
+---
+
+Multi-tenant requirement — CRITICAL
+
+This application is STRICTLY MULTI-TENANT.
+
+The verification must always operate within the currently authenticated administrator's identity and school/tenant context.
+
+School A must NEVER be able to use this mechanism to access or modify School B's External Portal configuration.
+
+Do NOT trust:
+
+- school ID supplied by the browser;
+- tenant ID supplied by the browser;
+- arbitrary user ID;
+- arbitrary admin ID;
+- arbitrary External Portal record ID.
+
+Resolve authorization from the authenticated server-side session/user context.
+
+The backend must independently verify that the authenticated administrator has permission to manage the External Payment Portal for their own school.
+
+---
+
+Protect the backend, not only the UI
+
+After implementing the UI verification, inspect every existing backend endpoint used by the External Payment Portal.
+
+The actual configuration APIs must remain protected by normal:
+
+1. authentication;
+2. tenant/school authorization;
+3. administrator permission checks.
+
+The password verification must not become a substitute for authorization.
+
+If the current External Portal API returns sensitive configuration data before verification, change only that access path so that protected configuration cannot be obtained simply by directly calling the API.
+
+A user must not be able to bypass the password modal by manually calling the API.
+
+Also protect configuration mutations appropriately.
+
+For example:
+
+- GET/view configuration → requires authenticated authorized admin + successful recent re-authentication where appropriate.
+- SAVE/update configuration → requires authenticated authorized admin + appropriate authorization.
+
+Do not weaken any existing authorization.
+
+---
+
+Re-authentication state
+
+After successful verification, allow the administrator to use the External Portal settings without entering the password for every individual field interaction.
+
+Use a short-lived server-recognized re-authentication state tied to the authenticated administrator/session.
+
+It must:
+
+- belong to the current authenticated admin;
+- belong to the current tenant/school context;
+- expire after a reasonable short period;
+- not be transferable to another user;
+- not authorize another school;
+- not survive logout;
+- be invalidated when the authenticated session ends.
+
+Do not create a long-lived permanent “verified” flag.
+
+If the application already has a secure recent-authentication/re-authentication mechanism, reuse it instead of creating another mechanism.
+
+---
+
+Session and tenant switching
+
+Because this is a multi-tenant, academic-session-based application, verify that changing school/session context cannot accidentally reuse an old verification state.
+
+A verification obtained for:
+
+Admin A + School A
+
+must not become valid for:
+
+School B
+
+or another authenticated user.
+
+If tenant/session context changes, the protected External Portal access must be revalidated as necessary.
+
+---
+
+UI requirements
+
+Keep the existing External Portal design unchanged as much as possible.
+
+Do not redesign the page.
+
+Only add the required verification gate/modal.
+
+The existing External Portal fields such as:
+
+- Gateway / Portal URL
+- Banner Message
+- Enable/Disable
+- Save Portal Settings
+- Student Portal Preview
+
+must remain functionally unchanged after successful verification.
+
+---
+
+TESTING — MANDATORY
+
+Do NOT tell me this is fixed merely because the code compiles.
+
+Perform a real security verification.
+
+Create temporary isolated test fixtures if necessary and remove them completely afterward.
+
+Test 1 — Correct password
+
+Authenticated authorized admin:
+
+- click External Portal;
+- enter correct current password;
+- verify.
+
+Expected:
+
+- verification succeeds;
+- External Portal opens;
+- existing settings are visible;
+- existing functionality works.
+
+Test 2 — Incorrect password
+
+Enter an incorrect password.
+
+Expected:
+
+- verification fails;
+- External Portal does not open;
+- protected configuration is not returned.
+
+Test 3 — Cancel
+
+Open verification modal and cancel.
+
+Expected:
+
+- External Portal remains inaccessible.
+
+Test 4 — Direct API bypass
+
+Without successful re-authentication, attempt to call the External Portal configuration GET endpoint directly.
+
+Expected:
+
+- access is rejected according to the application's security contract;
+- no protected configuration is leaked.
+
+Then perform successful re-authentication and verify the authorized request works.
+
+Test 5 — Direct mutation bypass
+
+Attempt to update External Portal configuration without the required authentication/re-authentication state.
+
+Expected:
+
+- update is rejected;
+- existing configuration remains unchanged.
+
+Then authenticate correctly and confirm the authorized update path still works.
+
+Test 6 — Wrong tenant/session manipulation
+
+Use a temporary School A and School B.
+
+Verify:
+
+- School A admin cannot access School B External Portal configuration;
+- forged tenant/school IDs are rejected;
+- forged configuration IDs are rejected;
+- a re-authentication obtained for School A cannot authorize School B.
+
+This test is mandatory.
+
+Test 7 — Logout
+
+Successfully verify External Portal.
+
+Then log out.
+
+Attempt to access the External Portal again.
+
+Expected:
+
+- previous verification cannot be reused;
+- login/authentication is required again.
+
+Test 8 — Expiration
+
+Successfully verify.
+
+Wait/use the application's configured short re-authentication lifetime or simulate expiration through the test environment.
+
+Expected:
+
+- expired verification cannot access the protected settings;
+- the admin must verify again.
+
+Test 9 — Wrong password must not leak information
+
+Verify that incorrect-password responses do not reveal:
+
+- password hashes;
+- account details;
+- tenant information;
+- configuration values;
+- internal authentication details.
+
+Test 10 — Existing functionality regression
+
+After successful verification, confirm that the existing External Portal functionality still works exactly as before.
+
+Do not modify unrelated Fees & Payments behavior.
+
+---
+
+Regression protection
+
+Add focused automated regression tests for this security boundary.
+
+At minimum cover:
+
+- correct password;
+- incorrect password;
+- missing re-authentication;
+- expired re-authentication;
+- logout invalidation;
+- cross-tenant access;
+- direct API bypass;
+- mutation bypass.
+
+Do not create broad unrelated tests or refactor the entire Fees module.
+
+---
+
+Final verification report
+
+After implementation, give me a strict report containing:
+
+1. Files changed
+
+List only the files actually modified.
+
+2. Exact implementation
+
+Explain exactly how the password verification works.
+
+3. Backend protection
+
+Identify every External Portal endpoint that was checked and how unauthorized access is prevented.
+
+4. Multi-tenant verification
+
+Explicitly confirm whether School A → School B access was tested.
+
+5. Test results
+
+Use:
+
+Test| Result
+Correct password| PASS/FAIL
+Incorrect password| PASS/FAIL
+Cancel| PASS/FAIL
+Direct API bypass| PASS/FAIL
+Direct mutation bypass| PASS/FAIL
+Cross-tenant access| PASS/FAIL
+Logout invalidation| PASS/FAIL
+Expiration| PASS/FAIL
+Information leakage| PASS/FAIL
+Existing External Portal functionality| PASS/FAIL
+
+6. Scope confirmation
+
+Explicitly state whether anything outside:
+
+Admin Portal → Fees & Payments → External Portal security access
+
+was changed.
+
+If anything else was changed, list it and explain why.
+
+7. Final verdict
+
+Return:
+
+YES — VERIFIED
+
+only if every mandatory security test passes.
+
+If even one mandatory test fails, return:
+
+NO — NOT VERIFIED
+
+and clearly identify the exact failure.
+
+Do not claim 100% verification based only on source-code inspection.
+
+Do not make unrelated improvements.
+
+This is a surgical security change. Preserve all existing Fees & Payments behavior.
