@@ -1,0 +1,220 @@
+STRICT MULTI-TENANT + ACADEMIC SESSION ISOLATION — FIX ONLY VERIFIED GAPS
+
+The audit is very useful. Do NOT redesign the Fees & Payments architecture and do NOT make unrelated changes.
+
+I want you to fix ONLY the confirmed gaps identified in your audit.
+
+1. PAYMENT MUST INHERIT THE ORIGINAL INVOICE SESSION
+
+This is mandatory.
+
+A payment must always remain permanently associated with:
+
+school/tenant → student → invoice/fee record → original academicSessionId
+
+When a payment is created for an invoice, the payment session must be derived from the linked invoice/fee record.
+
+Do NOT blindly trust a caller-supplied sessionId.
+
+If a supplied sessionId exists, validate that it:
+
+- belongs to the authenticated school
+- matches the linked invoice's academic session
+- cannot move a payment from one academic session to another
+
+If there is any mismatch:
+
+reject the operation.
+
+The same principle must apply to:
+
+- online/portal payments
+- offline payments
+- payment corrections
+- payment receipts
+- refunds
+- payment attempts
+- failed/cancelled payment lifecycle records
+
+A payment must never be able to change academic-session ownership by manipulating a request parameter.
+
+---
+
+2. MAKE CLIENT CACHE KEYS SESSION-AWARE
+
+Fix the confirmed cache problem.
+
+Any Fees & Payments query whose result depends on academic session must include the session identity in its cache/query key.
+
+This includes, where applicable:
+
+- Student Fees
+- Student Fee Summary
+- Student Payment History
+- Student Payment Attempts
+- Admin Payment History
+- Ledger
+- Transactions
+- Dunning/Reminders
+- Notification history
+- Financial Analytics
+- Audit Log
+- session-specific reports
+
+Do NOT rely only on global invalidation after switching sessions.
+
+A response for:
+
+2027–2028
+
+must have a different cache identity from:
+
+2028–2029
+
+This must prevent stale previous-session data from appearing after a session switch.
+
+Add regression coverage for:
+
+2027–2028 → 2028–2029 → 2027–2028
+
+including rapid switching and in-flight requests.
+
+---
+
+3. ARCHIVED SESSION WRITE PROTECTION MUST FAIL CLOSED
+
+If the system cannot determine whether the selected session is archived because of a database/storage error:
+
+REJECT the mutation.
+
+Never allow a financial mutation when archive status cannot be verified.
+
+Expected principle:
+
+Unable to verify = deny write.
+
+Apply this to all relevant Fees & Payments mutations.
+
+Add a regression test simulating the database-check failure and verify that the mutation is rejected.
+
+---
+
+4. PROTECT FINANCIAL SESSION HISTORY FROM SESSION DELETION
+
+Financial records must never lose their original academic-session attribution.
+
+Review:
+
+- fee_records.session_id
+- payment_records.session_id
+- payment attempts
+- refunds
+- receipts
+- audit records
+- other session-linked financial records
+
+If an academic session contains financial records, it must not be physically deleted in a way that causes:
+
+"academicSessionId → NULL"
+
+Do NOT silently detach historical financial records from their academic session.
+
+Preferred behavior:
+
+Academic Session with financial history → cannot be deleted → can only be archived/inactive.
+
+Verify the existing School Setup session deletion flow and enforce this server-side, not only in the UI.
+
+---
+
+STRICT MULTI-TENANT RULE
+
+For every financial record, enforce:
+
+schoolId/tenantId + original academicSessionId
+
+The authenticated school must always control the tenant boundary.
+
+Never trust schoolId/sessionId supplied by the client without server-side validation.
+
+---
+
+IMPORTANT — DO NOT CHANGE THESE
+
+Do NOT change:
+
+- Fee Structure being school-wide/reusable
+- Existing Copy Previous Session behavior
+- Financial Analytics calculation logic
+- Existing invoice numbering
+- Existing payment numbering
+- Existing audit-log design
+- Existing UI unnecessarily
+
+Only fix the confirmed isolation/integrity gaps above.
+
+---
+
+AFTER FIXING — FULL VERIFICATION
+
+Do not just say the code looks correct.
+
+Perform a complete verification for at least:
+
+Student Portal
+
+- New active session
+- Old session
+- Total Fees
+- Paid
+- Outstanding
+- Due
+- Overdue
+- Invoices
+- Payment history
+- Payment attempts
+- Receipts
+- Reminders
+
+Admin Portal
+
+- Session switching
+- Ledger
+- Transactions
+- Invoices
+- Payments
+- Receipts
+- Refunds
+- Financial Analytics
+- Audit Log
+- Reports/PDFs
+
+Multi-tenant isolation
+
+Test conceptually/with fixtures:
+
+School A / 2027–2028
+School A / 2028–2029
+School B / 2027–2028
+School B / 2028–2029
+
+Verify that no combination of:
+
+- forged schoolId
+- forged academicSessionId
+- forged studentId
+- forged invoiceId
+- forged paymentId
+- forged receiptId
+
+can expose or modify another school's or another session's financial data.
+
+Final requirement
+
+Only mark the requirement YES — VERIFIED if you can demonstrate:
+
+«Every school's Fees & Payments data is strictly isolated by tenant/school and original academic session, new sessions never mix with previous sessions, historical sessions remain recoverable, financial records permanently retain their original session, archived sessions cannot be modified, and session switching cannot expose stale or incorrect data.»
+
+If anything remains uncertain, explicitly report it as NOT VERIFIED.
+
+Do not make any unrelated improvements during this task.
