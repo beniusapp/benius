@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
@@ -5676,9 +5676,17 @@ function RemindersTab({ isArchiveMode }: { isArchiveMode: boolean }) {
 
 // ─── External Portal Tab ──────────────────────────────────────────────────────
 
-function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
+function ExternalPortalTab({
+  isArchiveMode,
+  onReauthRequired,
+}: {
+  isArchiveMode: boolean;
+  onReauthRequired: () => void;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const isReauthError = (error: unknown) =>
+    error instanceof Error && error.message.includes("Admin verification is required");
 
   // ── Razorpay state (production / live only — no test mode) ────────────────
   // Draft values survive a mobile page-reload (switching apps to copy a key).
@@ -5709,10 +5717,24 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const [showSigConfirmRemove, setShowSigConfirmRemove] = useState(false);
   const sigFileRef = React.useRef<HTMLInputElement>(null);
 
-  const { data: settings, isLoading } = useQuery<ExternalSettings>({
+  const { data: settings, isLoading, error } = useQuery<ExternalSettings>({
     queryKey: ["/api/admin/fees/external-settings"],
     staleTime: 60_000,
+    queryFn: async () => {
+      const response = await sessionFetch("/api/admin/fees/external-settings");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(body.message ?? body.error ?? "External Portal settings could not be loaded.");
+        (requestError as Error & { code?: string }).code = body.code;
+        throw requestError;
+      }
+      return body;
+    },
   });
+
+  useEffect(() => {
+    if (isReauthError(error)) onReauthRequired();
+  }, [error, onReauthRequired]);
 
   useEffect(() => {
     if (settings && !synced) {
@@ -5766,8 +5788,8 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
     try {
       const form = new FormData();
       form.append("file", selectedSigFile, selectedSigFile.name);
-      const res = await fetch("/api/admin/fees/external-portal/signature", {
-        method: "POST", body: form, credentials: "include",
+      const res = await sessionFetch("/api/admin/fees/external-portal/signature", {
+        method: "POST", body: form,
       });
       const json = await parseJsonResponse(res);
       if (!res.ok) throw new Error(json.error || json.message || `Upload failed (${res.status})`);
@@ -5777,6 +5799,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setSynced(false);   // force re-sync from server so preview shows processed version
       invalidate();
     } catch (err: any) {
+      if (isReauthError(err)) {
+        onReauthRequired();
+        return;
+      }
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
     } finally {
       setSigUploading(false);
@@ -5786,8 +5812,8 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   const handleSigRemove = async () => {
     setSigRemoving(true);
     try {
-      const res = await fetch("/api/admin/fees/external-portal/signature", {
-        method: "DELETE", credentials: "include",
+      const res = await sessionFetch("/api/admin/fees/external-portal/signature", {
+        method: "DELETE",
       });
       const json = await parseJsonResponse(res);
       if (!res.ok) throw new Error(json.error || json.message || `Remove failed (${res.status})`);
@@ -5798,6 +5824,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       setSynced(false);
       invalidate();
     } catch (err: any) {
+      if (isReauthError(err)) {
+        onReauthRequired();
+        return;
+      }
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
       setSigRemoving(false);
@@ -5821,7 +5851,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       }
       toast({ title: "✅ Razorpay settings saved" });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      if (isReauthError(e)) return onReauthRequired();
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
   });
 
   // ── Portal link save mutation ──────────────────────────────────────────────
@@ -5835,7 +5868,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       invalidate();
       toast({ title: "✅ External portal settings saved" });
     },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      if (isReauthError(e)) return onReauthRequired();
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
   });
 
   if (isLoading) return (
@@ -5843,6 +5879,7 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading…
     </div>
   );
+  if (error) return null;
 
   const rzpConfigured = !!(settings?.razorpayKeyId && settings?.razorpayKeySecret);
 
@@ -5909,7 +5946,10 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
                     setSynced(false);
                     toast({ title: "Credentials wiped", description: "All Razorpay keys have been removed." });
                   })
-                  .catch(() => toast({ title: "Error wiping credentials", variant: "destructive" }));
+                  .catch((error: Error) => {
+                    if (isReauthError(error)) return onReauthRequired();
+                    toast({ title: "Error wiping credentials", variant: "destructive" });
+                  });
               }}
               className="w-full py-2 rounded-xl text-xs font-bold border border-red-700/40 bg-red-900/10 text-red-400 hover:bg-red-900/20 transition-all">
               🗑️ Clear All Credentials
@@ -6200,6 +6240,84 @@ function ExternalPortalTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       </div>
 
     </div>
+  );
+}
+
+function ExternalPortalVerificationDialog({
+  open,
+  onOpenChange,
+  onVerified,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onVerified: (expiresAt: string) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const verifyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/admin/fees/external-settings/verify-access", { password });
+      return response.json() as Promise<{ expiresAt: string }>;
+    },
+    onSuccess: ({ expiresAt }) => {
+      setPassword("");
+      setError(null);
+      onVerified(expiresAt);
+    },
+    onError: (requestError: Error) => {
+      setError(requestError.message === "Incorrect password. Please try again."
+        ? requestError.message
+        : "Verification could not be completed. Please try again.");
+    },
+  });
+
+  const close = () => {
+    if (verifyMutation.isPending) return;
+    setPassword("");
+    setError(null);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={nextOpen => { if (!nextOpen) close(); }}>
+      <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-cyan-300">
+            <Shield className="w-5 h-5" /> Admin Verification Required
+          </DialogTitle>
+          <DialogDescription className="text-sm leading-relaxed text-white/65">
+            For security, please enter your current account password to access External Payment Portal settings.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={event => { event.preventDefault(); setError(null); verifyMutation.mutate(); }} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="external-portal-current-password" className="text-xs font-semibold text-white/70">
+              Current Password
+            </label>
+            <input
+              id="external-portal-current-password"
+              type="password"
+              value={password}
+              onChange={event => setPassword(event.target.value)}
+              autoComplete="current-password"
+              autoFocus
+              required
+              disabled={verifyMutation.isPending}
+              className="w-full rounded-xl border border-white/10 bg-[#0F1E35] px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-500 disabled:opacity-50"
+            />
+          </div>
+          {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="ghost" onClick={close} disabled={verifyMutation.isPending} className="text-white/65 hover:text-white">
+              Cancel
+            </Button>
+            <Button type="submit" disabled={verifyMutation.isPending || !password} className="bg-cyan-600 hover:bg-cyan-500 text-white">
+              {verifyMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…</> : "Verify & Continue"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -6595,6 +6713,59 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   const viewSessionId = selectedSession?.id ?? null;
   const [activeTab, setActiveTab] = useState<Tab>("ledger");
   const queryClient = useQueryClient();
+  const [externalVerificationOpen, setExternalVerificationOpen] = useState(false);
+  const [externalAccessExpiry, setExternalAccessExpiry] = useState<number | null>(null);
+  const [externalAccessSessionId, setExternalAccessSessionId] = useState<number | null>(null);
+
+  const clearExternalPortalAccess = useCallback(() => {
+    setExternalAccessExpiry(null);
+    setExternalAccessSessionId(null);
+    setExternalVerificationOpen(false);
+    queryClient.removeQueries({ queryKey: ["/api/admin/fees/external-settings"] });
+    setActiveTab(currentTab => currentTab === "external" ? "ledger" : currentTab);
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (externalAccessExpiry === null) return;
+    const delay = Math.max(0, externalAccessExpiry - Date.now());
+    const timer = window.setTimeout(clearExternalPortalAccess, delay);
+    return () => window.clearTimeout(timer);
+  }, [clearExternalPortalAccess, externalAccessExpiry]);
+
+  useEffect(() => {
+    if (externalAccessExpiry !== null && externalAccessSessionId !== viewSessionId) {
+      clearExternalPortalAccess();
+    }
+  }, [clearExternalPortalAccess, externalAccessExpiry, externalAccessSessionId, viewSessionId]);
+
+  const openTab = useCallback((tab: Tab) => {
+    if (tab !== "external") {
+      setActiveTab(tab);
+      return;
+    }
+    if (
+      externalAccessExpiry !== null &&
+      externalAccessExpiry > Date.now() &&
+      externalAccessSessionId === viewSessionId
+    ) {
+      setActiveTab("external");
+      return;
+    }
+    clearExternalPortalAccess();
+    setExternalVerificationOpen(true);
+  }, [clearExternalPortalAccess, externalAccessExpiry, externalAccessSessionId, viewSessionId]);
+
+  const handleExternalPortalVerified = useCallback((expiresAt: string) => {
+    const parsedExpiry = Date.parse(expiresAt);
+    if (!Number.isFinite(parsedExpiry) || parsedExpiry <= Date.now()) {
+      clearExternalPortalAccess();
+      return;
+    }
+    setExternalAccessExpiry(parsedExpiry);
+    setExternalAccessSessionId(viewSessionId);
+    setExternalVerificationOpen(false);
+    setActiveTab("external");
+  }, [clearExternalPortalAccess, viewSessionId]);
 
   // ── Real-time sync: listen for Razorpay webhook payment-update events ──────
   // When a student pays via Razorpay the webhook fires on the server, which
@@ -6658,7 +6829,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
         {TABS.map(({ id, label, Icon }) => {
           const active = activeTab === id;
           return (
-            <button key={id} onClick={() => setActiveTab(id)}
+            <button key={id} onClick={() => openTab(id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${active ? "bg-cyan-600 text-white shadow-sm" : "text-white/50 hover:text-white hover:bg-white/5"}`}>
               <Icon className="w-4 h-4" />
               {label}
@@ -6672,8 +6843,13 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
       {activeTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
       {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} />}
+      {activeTab === "external"   && <ExternalPortalTab isArchiveMode={isArchiveMode} onReauthRequired={clearExternalPortalAccess} />}
       {activeTab === "audit"      && <AuditLogTab viewSessionId={viewSessionId} />}
+      <ExternalPortalVerificationDialog
+        open={externalVerificationOpen}
+        onOpenChange={setExternalVerificationOpen}
+        onVerified={handleExternalPortalVerified}
+      />
     </div>
   );
 }

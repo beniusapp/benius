@@ -499,6 +499,49 @@ export function registerFeesRoutes(app: Express) {
     return true;
   }
 
+  const EXTERNAL_PORTAL_REAUTH_TTL_MS = Math.min(
+    Math.max(Number(process.env.EXTERNAL_PORTAL_REAUTH_TTL_MS) || 10 * 60 * 1000, 60_000),
+    30 * 60 * 1000,
+  );
+
+  function clearExternalPortalReauth(req: any) {
+    delete (req.session as any).externalPortalReauth;
+  }
+
+  async function externalPortalGuard(req: any, res: any): Promise<boolean> {
+    if (!adminGuard(req, res)) return false;
+
+    const sessionUserId = req.session.userId as number;
+    const sessionSchoolId = req.session.schoolId as number;
+    const admin = await storage.getUserById(sessionUserId);
+    const approval = (req.session as any).externalPortalReauth as
+      | { userId: number; schoolId: number; viewSessionId: number | null; verifiedAt: number }
+      | undefined;
+    const viewSessionId = req.viewSessionId ?? null;
+    const isValid =
+      !!admin &&
+      admin.isActive &&
+      admin.role === "admin" &&
+      admin.schoolId === sessionSchoolId &&
+      !!approval &&
+      approval.userId === sessionUserId &&
+      approval.schoolId === sessionSchoolId &&
+      approval.viewSessionId === viewSessionId &&
+      Number.isFinite(approval.verifiedAt) &&
+      Date.now() - approval.verifiedAt >= 0 &&
+      Date.now() - approval.verifiedAt < EXTERNAL_PORTAL_REAUTH_TTL_MS;
+
+    if (!isValid) {
+      clearExternalPortalReauth(req);
+      return res.status(403).json({
+        message: "Admin verification is required to access External Payment Portal settings.",
+        code: "EXTERNAL_PORTAL_REAUTH_REQUIRED",
+      }), false;
+    }
+
+    return true;
+  }
+
   async function refundGuard(req: any, res: any): Promise<boolean> {
     if (!adminGuard(req, res)) return false;
     const [user] = await db.select({ canRefund: users.canRefund, schoolId: users.schoolId })
@@ -1873,9 +1916,54 @@ export function registerFeesRoutes(app: Express) {
     // No prefix validation — both rzp_test_* and rzp_live_* keys are accepted.
   });
 
-  app.get("/api/admin/fees/external-settings", async (req, res) => {
+  const externalPortalVerifySchema = z.object({
+    password: z.string().min(1).max(200),
+  });
+
+  app.post("/api/admin/fees/external-settings/verify-access", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    const parsed = externalPortalVerifySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Current password is required." });
+    }
+
+    const userId = req.session.userId as number;
+    const schoolId = req.session.schoolId as number;
+    const admin = await storage.getUserById(userId);
+    if (
+      !admin ||
+      !admin.isActive ||
+      admin.role !== "admin" ||
+      admin.schoolId !== schoolId
+    ) {
+      clearExternalPortalReauth(req);
+      return res.status(403).json({ message: "Admin access required." });
+    }
+
+    const passwordMatches = await bcrypt.compare(parsed.data.password, admin.passwordHash);
+    if (!passwordMatches) {
+      clearExternalPortalReauth(req);
+      return res.status(401).json({ message: "Incorrect password. Please try again." });
+    }
+
+    const verifiedAt = Date.now();
+    (req.session as any).externalPortalReauth = {
+      userId,
+      schoolId,
+      viewSessionId: (req as any).viewSessionId ?? null,
+      verifiedAt,
+    };
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      ok: true,
+      expiresAt: new Date(verifiedAt + EXTERNAL_PORTAL_REAUTH_TTL_MS).toISOString(),
+    });
+  });
+
+  app.get("/api/admin/fees/external-settings", async (req, res) => {
+    if (!await externalPortalGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
+    res.set("Cache-Control", "no-store");
     const settings = await storage.getExternalPaymentSettings(schoolId);
 
     // Resolve effective credentials (DB first, env-var fallback).
@@ -1913,7 +2001,7 @@ export function registerFeesRoutes(app: Express) {
   });
 
   app.put("/api/admin/fees/external-settings", async (req, res) => {
-    if (!adminGuard(req, res)) return;
+    if (!await externalPortalGuard(req, res)) return;
     const parsed = externalSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
@@ -1966,7 +2054,7 @@ export function registerFeesRoutes(app: Express) {
   });
 
   app.put("/api/admin/fees/external-settings/razorpay", async (req, res) => {
-    if (!adminGuard(req, res)) return;
+    if (!await externalPortalGuard(req, res)) return;
     const parsed = razorpaySettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
@@ -2023,7 +2111,7 @@ export function registerFeesRoutes(app: Express) {
 
   // ── Wipe all Razorpay credentials (purge test/live keys completely) ──────────
   app.delete("/api/admin/fees/external-settings/razorpay/credentials", async (req, res) => {
-    if (!adminGuard(req, res)) return;
+    if (!await externalPortalGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const previous = await storage.getExternalPaymentSettings(schoolId);
 
@@ -2057,7 +2145,7 @@ export function registerFeesRoutes(app: Express) {
   });
 
   app.put("/api/admin/fees/external-settings/portal", async (req, res) => {
-    if (!adminGuard(req, res)) return;
+    if (!await externalPortalGuard(req, res)) return;
     const parsed = portalLinkSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
@@ -2097,8 +2185,8 @@ export function registerFeesRoutes(app: Express) {
   // ── Fee Receipt Signature — Upload ───────────────────────────────────────
   // Auth middleware runs first (before multer touches the body).
   // On success calls next(); on failure sends 401/403 and stops.
-  const sigAuthMiddleware = (req: any, res: any, next: any) => {
-    if (!adminGuard(req, res)) return;
+  const sigAuthMiddleware = async (req: any, res: any, next: any) => {
+    if (!await externalPortalGuard(req, res)) return;
     next();
   };
 
@@ -2183,7 +2271,7 @@ export function registerFeesRoutes(app: Express) {
 
   // ── Fee Receipt Signature — Remove ────────────────────────────────────────
   app.delete("/api/admin/fees/external-portal/signature", async (req, res) => {
-    if (!adminGuard(req, res)) return;
+    if (!await externalPortalGuard(req, res)) return;
     const schoolId = req.session.schoolId as number;
 
     try {
