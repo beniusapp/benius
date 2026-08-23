@@ -215,6 +215,25 @@ function formatAmount(amount: number) {
   }).format(amount);
 }
 
+function openSessionDocument(url: string) {
+  const popup = window.open("", "_blank");
+  if (!popup) return;
+
+  popup.document.title = "Loading document…";
+  popup.document.body.innerHTML = "<p style='font-family:system-ui;padding:24px'>Loading document…</p>";
+  void sessionFetch(url)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Unable to open document");
+      const blobUrl = URL.createObjectURL(await response.blob());
+      popup.location.replace(blobUrl);
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    })
+    .catch(() => {
+      popup.document.title = "Document unavailable";
+      popup.document.body.innerHTML = "<p style='font-family:system-ui;padding:24px'>This document is unavailable for the selected academic session.</p>";
+    });
+}
+
 function formatDate(dateStr: string | null) {
   return formatDateOnly(dateStr);
 }
@@ -1936,7 +1955,7 @@ export default function StudentFees() {
                               {/* View Invoice — opens the server-rendered invoice in a new tab */}
                               {rec.invoiceNumber && (
                                 <button
-                                  onClick={() => window.open(`/api/student/fees/${rec.id}/invoice`, "_blank")}
+                                  onClick={() => openSessionDocument(`/api/student/fees/${rec.id}/invoice`)}
                                   className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold transition-all active:scale-95"
                                   style={{
                                     background: "#f5f3ff",
@@ -2338,7 +2357,10 @@ export default function StudentFees() {
                                 {isPaid && (
                                   <a
                                     href={`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`}
-                                    target="_blank" rel="noopener noreferrer"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      openSessionDocument(`/api/student/fees/${attempt.feeRecordId ?? attempt.id}/receipt`);
+                                    }}
                                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all hover:opacity-80 active:scale-95"
                                     style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)",
                                       color: "#065f46", border: "1px solid #86efac",

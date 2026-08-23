@@ -21,6 +21,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { registerFeesRoutes } from "./fees-routes";
+import { requireStudentFeeSession } from "./student-fee-session-context";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
@@ -4925,6 +4926,7 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
 
@@ -5010,6 +5012,7 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
 
     const sessionCond = viewSessionId != null
@@ -5059,11 +5062,18 @@ export async function registerRoutes(
     }
 
     // Also fetch total actually paid (for display)
+    const paidSessionCond = viewSessionId != null
+      ? sql`AND COALESCE(fr.session_id, pr.session_id) = ${viewSessionId}`
+      : sql``;
     const paidRow = await db.execute(sql`
       SELECT COALESCE(SUM(pr.amount), 0)::int AS total_paid
       FROM payment_records pr
+      LEFT JOIN fee_records fr
+        ON fr.id = pr.fee_record_id
+       AND fr.school_id = pr.school_id
       WHERE pr.student_id = ${req.session.studentId}
         AND pr.school_id  = ${student.schoolId}
+        ${paidSessionCond}
     `);
     const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
 
@@ -5084,6 +5094,7 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
 
@@ -5204,6 +5215,7 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;

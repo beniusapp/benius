@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
+import { useSessionView } from "@/contexts/session-view-context";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
 interface AcademicSession {
@@ -1202,6 +1203,11 @@ type MainTab = "view" | "results";
 
 export default function StudentExamination() {
   const [, setLocation] = useLocation();
+  const {
+    sessions: sharedSessions,
+    selectedSession: sharedSelectedSession,
+    setSelectedSession: setSharedSelectedSession,
+  } = useSessionView();
   const [tab, setTab]   = useState<MainTab>("view");
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1251,13 +1257,36 @@ export default function StudentExamination() {
     [rawSessions, enrollments, student],
   );
 
-  // Auto-select the active session on first load
+  // Keep this module's enrollment-aware picker aligned with the portal-wide
+  // selection. Fees and other session-scoped modules use the shared context
+  // for their request header and query cache identity.
   useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null) {
-      const active = sessions.find(s => s.isActive) ?? sessions[0];
-      setSelectedSessionId(active.id);
+    if (sharedSelectedSession && sessions.some((session) => session.id === sharedSelectedSession.id)) {
+      if (selectedSessionId !== sharedSelectedSession.id) {
+        setSelectedSessionId(sharedSelectedSession.id);
+      }
+      return;
     }
-  }, [sessions, selectedSessionId]);
+
+    if (sessions.length > 0 && selectedSessionId === null) {
+      const active = sessions.find((session) => session.isActive) ?? sessions[0];
+      setSelectedSessionId(active.id);
+      const sharedActive = sharedSessions.find((session) => session.id === active.id);
+      if (sharedActive) setSharedSelectedSession(sharedActive);
+    }
+  }, [
+    sessions,
+    selectedSessionId,
+    sharedSelectedSession,
+    sharedSessions,
+    setSharedSelectedSession,
+  ]);
+
+  const selectSession = useCallback((sessionId: number) => {
+    setSelectedSessionId(sessionId);
+    const sharedSession = sharedSessions.find((session) => session.id === sessionId);
+    if (sharedSession) setSharedSelectedSession(sharedSession);
+  }, [sharedSessions, setSharedSelectedSession]);
 
   // Reset to View Marks whenever the selected session changes
   useEffect(() => { setTab("view"); }, [selectedSessionId]);
@@ -1442,7 +1471,7 @@ export default function StudentExamination() {
                         const active = s.id === selectedSessionId;
                         return (
                           <button key={s.id}
-                            onClick={() => { setSelectedSessionId(s.id); setMenuOpen(false); }}
+                            onClick={() => { selectSession(s.id); setMenuOpen(false); }}
                             className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
                             style={{ background: active ? "rgba(16,185,129,0.1)" : "transparent" }}
                             onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"; }}

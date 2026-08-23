@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, sessionFetch } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -170,13 +170,6 @@ export default function StudentDashboard() {
     staleTime: 0,
     refetchOnMount: "always",
   });
-
-  // Sync the global header injector with the student's selected session
-  useEffect(() => {
-    if (selectedSession) {
-      setViewSessionId(selectedSession.id);
-    }
-  }, [selectedSession?.id]);
 
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
     queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? "default"],

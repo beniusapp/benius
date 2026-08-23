@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SessionViewContext, AcademicSession, PaymentUpdatePayload } from "./session-view-context";
 import { setViewSessionId } from "@/lib/queryClient";
 
+const STUDENT_SELECTED_SESSION_KEY = "student-selected-session-id";
+
 async function fetchSessions(): Promise<AcademicSession[]> {
   const res = await fetch("/api/student/academic-sessions", { credentials: "include" });
   if (res.status === 401) return [];
@@ -34,22 +36,36 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
   });
 
   const [selectedSession, setSelectedSession] = useState<AcademicSession | null>(null);
-  const handleSetSelectedSession = (s: AcademicSession | null) => setSelectedSession(s);
+  // Keep the request transport synchronized before React exposes the new
+  // cache identity to children. A passive effect here would allow a
+  // session-keyed query to render with the previous request header.
+  const handleSetSelectedSession = useCallback((session: AcademicSession | null) => {
+    if (typeof window !== "undefined") {
+      if (session) {
+        window.sessionStorage.setItem(STUDENT_SELECTED_SESSION_KEY, String(session.id));
+      } else {
+        window.sessionStorage.removeItem(STUDENT_SELECTED_SESSION_KEY);
+      }
+    }
+    setViewSessionId(session?.id ?? null);
+    setSelectedSession(session);
+  }, []);
 
-  // Student requests use the same selected-session transport as the admin
-  // portal. Keeping this synchronized makes the header and cache identity
-  // point at the same academic year.
-  useEffect(() => {
-    setViewSessionId(selectedSession?.id ?? null);
-  }, [selectedSession?.id]);
-
-  // When admin deletes or creates a session, snap to active automatically
+  // Restore the student's deliberate selection after navigation/provider
+  // remounts. It is accepted only when it belongs to the freshly loaded
+  // school session list; otherwise the active session is the safe fallback.
   useEffect(() => {
     if (sessions.length > 0 && !selectedSession) {
-      const active = sessions.find((s) => s.isActive) ?? sessions[0];
-      setSelectedSession(active);
+      const persistedId = typeof window === "undefined"
+        ? null
+        : Number(window.sessionStorage.getItem(STUDENT_SELECTED_SESSION_KEY));
+      const persistedSession = Number.isInteger(persistedId)
+        ? sessions.find((session) => session.id === persistedId)
+        : undefined;
+      const nextSession = persistedSession ?? sessions.find((session) => session.isActive) ?? sessions[0];
+      handleSetSelectedSession(nextSession);
     }
-  }, [sessions, selectedSession]);
+  }, [sessions, selectedSession, handleSetSelectedSession]);
 
   // ── Pending activation — shown as a blocking modal before switching ──────
   const [pendingActivation, setPendingActivation] = useState<AcademicSession | null>(null);
@@ -57,7 +73,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
   // Called when the student taps "Confirm & Continue"
   const confirmActivation = useCallback(() => {
     setPendingActivation(null);
-    setSelectedSession(null); // useEffect above will pick the new active session
+    handleSetSelectedSession(null); // session-list effect will pick the new active session
     queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
     // Also bust all session-scoped module caches so they refetch for the new session
     queryClient.invalidateQueries({ queryKey: ["/api/student/attendance"] });
@@ -69,7 +85,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
     queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
     queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
     queryClient.invalidateQueries({ queryKey: ["/api/student/classwork"] });
-  }, [queryClient]);
+  }, [queryClient, handleSetSelectedSession]);
 
   // ── Real-time session activation listener ────────────────────────────────
   // Single shared EventSource for the browser tab.  All SSE event types are
@@ -90,13 +106,13 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
               setPendingActivation(newActive);
             } else {
               // Fallback: auto-switch without modal
-              setSelectedSession(null);
+              handleSetSelectedSession(null);
               queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
             }
           });
         } else if (data.type === "session-deleted") {
           // Session deleted — silently refresh and snap to active
-          setSelectedSession(null);
+          handleSetSelectedSession(null);
           queryClient.invalidateQueries({ queryKey: ["/api/student/academic-sessions"] });
         } else if (data.type === "payment-update") {
           // Fan out to any subscribed pages (e.g. student-fees) so they can
@@ -110,7 +126,7 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
       } catch { /* malformed event — ignore */ }
     };
     return () => es.close();
-  }, [queryClient]);
+  }, [queryClient, handleSetSelectedSession]);
 
   const isArchiveMode = selectedSession !== null && selectedSession.isActive === false;
 

@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { storage } from "./storage";
+import { requireStudentFeeSession } from "./student-fee-session-context";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
 import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
@@ -2238,6 +2239,7 @@ export function registerFeesRoutes(app: Express) {
       const schoolId: number = studentId
         ? (await storage.getStudentById(studentId))!.schoolId
         : adminSchoolId!;
+      if (studentId && !await requireStudentFeeSession(req, res, schoolId)) return;
 
       // Scope check: admin can only create orders for their own school's fees.
       // This prevents a rogue admin from binding their Razorpay credentials to
@@ -3152,6 +3154,25 @@ export function registerFeesRoutes(app: Express) {
       schoolId = student?.schoolId ?? null;
     }
     if (!schoolId) return res.status(403).json({ message: "School not found" });
+    if (studentId && !await requireStudentFeeSession(req, res, schoolId)) return;
+    const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
+    if (studentId && requestedSessionId != null) {
+      const feeSession = await db.execute(sql`
+        SELECT session_id
+        FROM fee_records
+        WHERE id = ${feeRecordId}
+          AND school_id = ${schoolId}
+          AND student_id = ${studentId}
+        LIMIT 1
+      `);
+      const targetSessionId = (feeSession.rows[0] as any)?.session_id;
+      if (targetSessionId != null && Number(targetSessionId) !== requestedSessionId) {
+        return res.status(409).json({
+          message: "The selected academic session does not match this invoice.",
+          code: "INVOICE_SESSION_MISMATCH",
+        });
+      }
+    }
 
     // Build WHERE clause:
     //  • Always scope to school and fee record.
@@ -3163,6 +3184,9 @@ export function registerFeesRoutes(app: Express) {
       : razorpayOrderId
         ? sql`id = ${feeRecordId} AND school_id = ${schoolId} AND razorpay_order_id = ${razorpayOrderId}`
         : sql`id = ${feeRecordId} AND school_id = ${schoolId}`;
+    const selectedSessionCondition = requestedSessionId != null
+      ? sql`AND session_id = ${requestedSessionId}`
+      : sql``;
 
     // ── Clear order lock; only voluntary cancellation is an operational event ─
     // isCancelled=true means the student voluntarily closed the checkout modal
@@ -3179,6 +3203,7 @@ export function registerFeesRoutes(app: Express) {
         SET razorpay_order_id = NULL,
             razorpay_order_expires_at = NULL
         WHERE ${condition}
+          ${selectedSessionCondition}
           AND status IN ('Due', 'Overdue')
         RETURNING invoice_number, session_id, amount, student_id
       `);
@@ -3357,6 +3382,7 @@ export function registerFeesRoutes(app: Express) {
       const schoolId: number = studentId
         ? (await storage.getStudentById(studentId))!.schoolId
         : adminSchId!;
+      if (studentId && !await requireStudentFeeSession(req, res, schoolId)) return;
 
       // Scope check. Administrators and students must both remain inside the
       // authenticated tenant before any Razorpay/API work is attempted.
@@ -6120,10 +6146,11 @@ export function registerFeesRoutes(app: Express) {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
 
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionCond = viewSessionId != null
-      ? sql`AND COALESCE(pa.session_id, fr.session_id) = ${viewSessionId}`
+      ? sql`AND COALESCE(fr.session_id, pa.session_id) = ${viewSessionId}`
       : sql``;
 
     try {
@@ -6250,7 +6277,9 @@ export function registerFeesRoutes(app: Express) {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
-    const rows = await storage.getDunningLogByStudent(student.id, student.schoolId);
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const rows = await storage.getDunningLogByStudent(student.id, student.schoolId, viewSessionId);
     // Strip any admin-only fields — only expose channel, stage, sentAt, status, recipient
     const safe = rows.map(r => ({
       id: r.id,
@@ -6269,6 +6298,7 @@ export function registerFeesRoutes(app: Express) {
     if (!req.session?.studentId) return res.status(403).json({ message: "Student access required" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
     const settings = await storage.getExternalPaymentSettings(student.schoolId);
     // Resolve credentials with env-var fallback so the Pay Now button appears
     // even when only process.env.RAZORPAY_* vars are set (no DB config saved yet).
