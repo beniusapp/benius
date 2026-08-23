@@ -32,6 +32,26 @@ export function sessionFetch(url: string, init: RequestInit = {}): Promise<Respo
   return fetch(url, { credentials: "include", ...init, headers });
 }
 
+/**
+ * Fetch using the session captured by a session-keyed query, rather than the
+ * mutable dashboard selection. This is required when a request can outlive a
+ * rapid session switch: its cache key, query parameter, and HTTP header must
+ * all keep referring to the same session.
+ */
+export function sessionFetchForViewSession(
+  url: string,
+  viewSessionId: number | null | undefined,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (viewSessionId == null) {
+    headers.delete("x-view-session-id");
+  } else {
+    headers.set("x-view-session-id", String(viewSessionId));
+  }
+  return fetch(url, { credentials: "include", ...init, headers });
+}
+
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 async function throwIfResNotOk(res: Response) {

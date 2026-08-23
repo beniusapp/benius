@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, sessionFetch, queryClient } from "@/lib/queryClient";
+import { apiRequest, sessionFetch, sessionFetchForViewSession, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import { amountInWords, formatIndianRupees } from "@/lib/amount-in-words";
 import { formatPersistedInvoiceDateTimeIST } from "@/lib/invoice-date-time";
@@ -6322,6 +6322,53 @@ function ExternalPortalVerificationDialog({
 }
 
 const AUDIT_ACTION_OPTIONS = [{ value: "", label: "All actions" }];
+
+export interface AuditLogPage {
+  entries: AuditLogEntry[];
+  total: number;
+  actionOptions?: Array<{ value: string; label: string }>;
+}
+
+export async function fetchAuditLogPage({
+  page,
+  fromDate,
+  toDate,
+  actionFilter,
+  searchTerm,
+  viewSessionId,
+  signal,
+}: {
+  page: number;
+  fromDate: string;
+  toDate: string;
+  actionFilter: string;
+  searchTerm: string;
+  viewSessionId?: number | null;
+  signal?: AbortSignal;
+}): Promise<AuditLogPage> {
+  const params = new URLSearchParams({ limit: "20", offset: String(page * 20) });
+  if (fromDate) params.set("from", fromDate);
+  if (toDate) params.set("to", toDate);
+  if (actionFilter) params.set("action", actionFilter);
+  if (searchTerm) params.set("search", searchTerm);
+  if (viewSessionId) params.set("sessionId", String(viewSessionId));
+
+  // `viewSessionId` is captured by this query's key. Do not use the mutable
+  // global session selection here: it can advance during a rapid switch, which
+  // would otherwise pair this request's old `sessionId` query value with a new
+  // session header and correctly trigger the server mismatch guard.
+  const response = await sessionFetchForViewSession(
+    `/api/admin/fees/audit-log?${params}`,
+    viewSessionId,
+    { signal },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.message || "The register could not be loaded.");
+  }
+  return response.json();
+}
+
 function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
   const PAGE = 20;
   const [page, setPage] = useState(0);
@@ -6345,26 +6392,17 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
     setPage(0);
   }, [viewSessionId]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery<{
-    entries: AuditLogEntry[];
-    total: number;
-    actionOptions?: Array<{ value: string; label: string }>;
-  }>({
-    queryKey: ["/api/admin/fees/audit-log", page, fromDate, toDate, actionFilter, searchTerm, viewSessionId],
-    queryFn: async () => {
-      const params = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
-      if (fromDate)     params.set("from",   fromDate);
-      if (toDate)       params.set("to",     toDate);
-      if (actionFilter) params.set("action", actionFilter);
-      if (normalizedSearch) params.set("search", normalizedSearch);
-      if (viewSessionId) params.set("sessionId", String(viewSessionId));
-      const r = await sessionFetch(`/api/admin/fees/audit-log?${params}`);
-      if (!r.ok) {
-        const body = await r.json().catch(() => null);
-        throw new Error(body?.message || "The register could not be loaded.");
-      }
-      return r.json();
-    },
+  const { data, isLoading, isError, error, refetch } = useQuery<AuditLogPage>({
+    queryKey: ["/api/admin/fees/audit-log", viewSessionId, page, fromDate, toDate, actionFilter, searchTerm],
+    queryFn: ({ signal }) => fetchAuditLogPage({
+      page,
+      fromDate,
+      toDate,
+      actionFilter,
+      searchTerm: normalizedSearch,
+      viewSessionId,
+      signal,
+    }),
     staleTime: 15_000,
     enabled: !invalidDateRange,
   });
