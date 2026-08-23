@@ -83,6 +83,28 @@ app.use((req, res, next) => {
 
 (async () => {
   // ===== DB MIGRATIONS (safe, idempotent) =====
+  // Dunning used to have a single global status row. Keep that legacy row
+  // untouched, add tenant ownership for new rows, and repair the old sequence
+  // so the first tenant insert cannot collide with the singleton primary key.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dunning_job_status (
+      id SERIAL PRIMARY KEY,
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMP,
+      last_completed_at TIMESTAMP,
+      school_id INTEGER REFERENCES schools(id) ON DELETE CASCADE
+    );
+    ALTER TABLE dunning_job_status
+      ADD COLUMN IF NOT EXISTS school_id INTEGER REFERENCES schools(id) ON DELETE CASCADE;
+    CREATE UNIQUE INDEX IF NOT EXISTS dunning_job_status_school_id_unique
+      ON dunning_job_status (school_id);
+    SELECT setval(
+      pg_get_serial_sequence('dunning_job_status', 'id'),
+      COALESCE((SELECT MAX(id) FROM dunning_job_status), 1),
+      true
+    );
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS student_profiles (
       id SERIAL PRIMARY KEY,
@@ -650,6 +672,10 @@ app.use((req, res, next) => {
       'rzp_reconstructed_' || fr.receipt_number AS idempotency_key,
       fr.receipt_number
     FROM fee_records fr
+    JOIN academic_sessions acs
+      ON acs.id = fr.session_id
+     AND acs.school_id = fr.school_id
+     AND acs.is_active = true
     WHERE fr.status = 'Paid'
       AND fr.receipt_number LIKE 'ON%'
       AND NOT EXISTS (
@@ -666,8 +692,15 @@ app.use((req, res, next) => {
     SET session_id = fr.session_id
     FROM fee_records fr
     WHERE pr.fee_record_id = fr.id
+      AND pr.school_id = fr.school_id
       AND pr.session_id IS NULL
       AND fr.session_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM academic_sessions acs
+        WHERE acs.id = fr.session_id
+          AND acs.school_id = fr.school_id
+          AND acs.is_active = true
+      )
   `);
 
   // ── payment_attempts: unified payment-attempt ledger ─────────────────────

@@ -7,7 +7,10 @@ import { eq, sql } from "drizzle-orm";
 import { registerFeesRoutes } from "../fees-routes";
 import { checkSessionContext } from "../routes";
 import { db } from "../db";
-import { academicSessions, externalPaymentSettings, schools, users } from "@shared/schema";
+import {
+  academicSessions, dunningJobStatus, externalPaymentSettings, feeRecords,
+  schools, students, users,
+} from "@shared/schema";
 
 const ADMIN_PASSWORD = "External-portal-test-password";
 
@@ -20,6 +23,8 @@ let schoolBId = 0;
 let adminAId = 0;
 let adminBId = 0;
 let schoolASessionId = 0;
+let schoolAArchivedSessionId = 0;
+let schoolAActiveFeeId = 0;
 let server: http.Server;
 let baseUrl = "";
 
@@ -109,6 +114,37 @@ beforeAll(async () => {
     promotionStrategy: "defer",
   }).returning();
   schoolASessionId = schoolASession.id;
+  const [schoolAArchivedSession] = await db.insert(academicSessions).values({
+    schoolId: schoolAId,
+    sessionName: "2025-26",
+    startDate: "2025-04-01",
+    endDate: "2026-03-31",
+    isActive: false,
+    status: "archived",
+    newAdmissionsEnabled: false,
+    promotionStrategy: "defer",
+  }).returning();
+  schoolAArchivedSessionId = schoolAArchivedSession.id;
+  const [student] = await db.insert(students).values({
+    schoolId: schoolAId,
+    digitalStudentId: `EPRA-STU-${uid()}`,
+    name: "External Portal Test Student",
+    class: "7",
+    section: "A",
+    phone: "9999999999",
+    dob: "2013-01-01",
+    passwordHash: "x",
+  }).returning();
+  const [activeFee] = await db.insert(feeRecords).values({
+    schoolId: schoolAId,
+    studentId: student.id,
+    sessionId: schoolASessionId,
+    feeType: "Tuition",
+    amount: 5000,
+    dueDate: "2026-06-01",
+    status: "Due",
+  }).returning();
+  schoolAActiveFeeId = activeFee.id;
 
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
   const [adminA] = await db.insert(users).values({
@@ -317,5 +353,54 @@ describe("External Portal recent password verification", () => {
     const response = await request("/api/admin/fees/external-settings", cookie);
     expect(response.status).toBe(403);
     expect((await response.json()).message).toBe("Admin access required");
+  });
+});
+
+describe("Fees tenant and session boundaries", () => {
+  it("does not expose another school's dunning job status", async () => {
+    await db.insert(dunningJobStatus).values({
+      schoolId: schoolBId,
+      isRunning: true,
+      startedAt: new Date(),
+    });
+
+    const cookie = await login("a");
+    const response = await request("/api/admin/fees/dunning-job-status", cookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      isRunning: false,
+      startedAt: null,
+      lastCompletedAt: null,
+    });
+
+    await db.insert(dunningJobStatus).values({
+      schoolId: schoolAId,
+      isRunning: true,
+      startedAt: new Date(),
+    });
+    const ownResponse = await request("/api/admin/fees/dunning-job-status", cookie);
+    expect(ownResponse.status).toBe(200);
+    expect((await ownResponse.json()).isRunning).toBe(true);
+  });
+
+  it("does not resolve an active-year fee payment lookup while a different year is selected", async () => {
+    const cookie = await login("a");
+    const response = await request(
+      `/api/admin/fees/payments?feeRecordId=${schoolAActiveFeeId}`,
+      cookie,
+      { headers: { "x-view-session-id": String(schoolAArchivedSessionId) } },
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("blocks manual dunning from an archived academic session before any reminder runs", async () => {
+    const cookie = await login("a");
+    const response = await request("/api/admin/fees/dunning-trigger", cookie, {
+      method: "POST",
+      headers: { "x-view-session-id": String(schoolAArchivedSessionId) },
+      body: JSON.stringify({ feeRecordId: schoolAActiveFeeId }),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "ARCHIVE_READ_ONLY" });
   });
 });

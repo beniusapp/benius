@@ -3,7 +3,7 @@ import { storage } from "./storage";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { db } from "./db";
 import { calculateLateFee, recalculateLateFees, DEFAULT_LATE_FEE_CONFIG, type LateFeeConfig } from "./late-fee-engine";
-import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus } from "@shared/schema";
+import { users, schools, students, feeRecords, paymentRecords, notificationConfig, dunningLog, dunningTemplates, externalPaymentSettings, feeStructures, dunningJobStatus, academicSessions } from "@shared/schema";
 import { and, eq, sql, desc, or, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
@@ -180,7 +180,7 @@ export type AcquireOrderResult =
   | { ok: true;  orderId: string; amount: number; lateFeeAmount: number }
   | { ok: false; status: 409; code: "PAYMENT_IN_PROGRESS"; message: string }
   | { ok: false; status: 503; code: "ORDER_STATUS_UNKNOWN"; message: string }
-  | { ok: false; status: 400 | 404; message: string };
+  | { ok: false; status: 400 | 403 | 404; message: string };
 
 /** Minimal Razorpay orders-API surface consumed by acquireRazorpayOrder. */
 export interface RzpOrdersApi {
@@ -253,6 +253,22 @@ export async function acquireRazorpayOrder(
     const locked = lockedResult.rows[0] as any;
     if (!locked) {
       result = { ok: false, status: 404, message: "Fee record not found" };
+      return;
+    }
+    const activeSession = await tx.execute(sql`
+      SELECT 1
+      FROM academic_sessions
+      WHERE id = ${locked.session_id}
+        AND school_id = ${schoolId}
+        AND is_active = true
+      LIMIT 1
+    `);
+    if (activeSession.rows.length === 0) {
+      result = {
+        ok: false,
+        status: 403,
+        message: "Archived or unassigned academic-session invoices cannot be paid.",
+      };
       return;
     }
 
@@ -499,6 +515,72 @@ export function registerFeesRoutes(app: Express) {
     return true;
   }
 
+  /**
+   * Resolve the selected financial session only when it belongs to the
+   * authenticated school. A client-supplied session header is never a scope
+   * authority on its own. Returning null means this school has no selected or
+   * active session; callers must return an empty financial result rather than
+   * silently falling back to all historical years.
+   */
+  async function resolveFeeViewSession(
+    req: any,
+    res: any,
+    schoolId: number,
+  ): Promise<number | null | undefined> {
+    const requestedId = (req as any).viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (requestedId == null) return null;
+    const selected = await storage.getAcademicSessionById(Number(requestedId));
+    if (!selected || selected.schoolId !== schoolId) {
+      res.status(404).json({ message: "Selected academic session not found for this school." });
+      return undefined;
+    }
+    return selected.id;
+  }
+
+  async function activeFinancialSessionGuard(
+    res: any,
+    schoolId: number,
+    sessionId: number | null | undefined,
+  ): Promise<boolean> {
+    if (sessionId == null) {
+      res.status(409).json({ message: "This financial record has no academic-session ownership and is read-only." });
+      return false;
+    }
+    const [session] = await db.select({ id: academicSessions.id })
+      .from(academicSessions)
+      .where(and(
+        eq(academicSessions.id, Number(sessionId)),
+        eq(academicSessions.schoolId, schoolId),
+        eq(academicSessions.isActive, true),
+      ));
+    if (!session) {
+      res.status(403).json({
+        message: "Archived academic-session financial records are read-only.",
+        code: "ARCHIVE_READ_ONLY",
+      });
+      return false;
+    }
+    return true;
+  }
+
+  async function activePaymentRecordGuard(
+    res: any,
+    schoolId: number,
+    paymentRecordId: number,
+  ): Promise<boolean> {
+    const [payment] = await db.select({ sessionId: paymentRecords.sessionId })
+      .from(paymentRecords)
+      .where(and(
+        eq(paymentRecords.id, paymentRecordId),
+        eq(paymentRecords.schoolId, schoolId),
+      ));
+    if (!payment) {
+      res.status(404).json({ message: "Payment record not found." });
+      return false;
+    }
+    return activeFinancialSessionGuard(res, schoolId, payment.sessionId);
+  }
+
   const EXTERNAL_PORTAL_REAUTH_TTL_MS = Math.min(
     Math.max(Number(process.env.EXTERNAL_PORTAL_REAUTH_TTL_MS) || 10 * 60 * 1000, 60_000),
     30 * 60 * 1000,
@@ -627,8 +709,11 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const actor = await resolveFeeAuditActor(req, schoolId);
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) {
+      return res.json({ totalRevenue: 0, outstanding: 0, collectionRate: 0, offlinePaymentsCount: 0 });
+    }
     const summary = await storage.getFeeSummary(schoolId, sessionFilter);
     res.json(summary);
   });
@@ -925,6 +1010,14 @@ export function registerFeesRoutes(app: Express) {
       if (!before) return null;
       const updated = await storage.updateFeeStructure(id, schoolId, parsed.data, tx);
       if (!updated) return null;
+      const [activeSession] = await tx.select({ id: academicSessions.id })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.schoolId, schoolId),
+          eq(academicSessions.isActive, true),
+        ))
+        .limit(1);
+      const activeSessionId = activeSession?.id ?? null;
 
       const amountChanged = parsed.data.amount !== undefined && parsed.data.amount !== before.amount;
       const feeTypeChanged = parsed.data.feeType !== undefined && parsed.data.feeType !== before.feeType;
@@ -932,18 +1025,19 @@ export function registerFeesRoutes(app: Express) {
         && parsed.data.dueDayOfMonth !== null
         && parsed.data.dueDayOfMonth !== before.dueDayOfMonth;
       let syncedCount = 0;
-      if (amountChanged || feeTypeChanged) {
+      if (activeSessionId != null && (amountChanged || feeTypeChanged)) {
         const patch: Record<string, unknown> = {};
         if (amountChanged) patch.amount = parsed.data.amount;
         if (feeTypeChanged) patch.feeType = parsed.data.feeType;
         const synced = await tx.update(feeRecords).set(patch as any).where(and(
           eq(feeRecords.schoolId, schoolId),
+          eq(feeRecords.sessionId, activeSessionId),
           eq(feeRecords.feeType, before.feeType),
           or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
         )).returning({ id: feeRecords.id });
         syncedCount = synced.length;
       }
-      if (dueDayChanged) {
+      if (activeSessionId != null && dueDayChanged) {
         const newDay = parsed.data.dueDayOfMonth!;
         const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
         const dueDateResult = await tx.execute(sql`
@@ -957,6 +1051,7 @@ export function registerFeesRoutes(app: Express) {
             )
           )
           WHERE school_id = ${schoolId}
+            AND session_id = ${activeSessionId}
             AND fee_type = ${matchFeeType}
             AND status IN ('Due', 'Overdue')
           RETURNING id
@@ -966,7 +1061,7 @@ export function registerFeesRoutes(app: Express) {
 
       let voidedCount = 0;
       const newClasses: string[] | undefined = parsed.data.applicableClasses;
-      if (newClasses !== undefined && newClasses.length > 0) {
+      if (activeSessionId != null && newClasses !== undefined && newClasses.length > 0) {
         const matchFeeType = feeTypeChanged ? parsed.data.feeType! : before.feeType;
         const unpaidRecs = await tx.select({
           id: feeRecords.id,
@@ -978,6 +1073,7 @@ export function registerFeesRoutes(app: Express) {
         })
           .from(feeRecords).where(and(
             eq(feeRecords.schoolId, schoolId),
+            eq(feeRecords.sessionId, activeSessionId),
             eq(feeRecords.feeType, matchFeeType),
             or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
           ));
@@ -995,6 +1091,7 @@ export function registerFeesRoutes(app: Express) {
           if (toVoidIds.length > 0) {
             const removed = await tx.delete(feeRecords).where(and(
               eq(feeRecords.schoolId, schoolId),
+              eq(feeRecords.sessionId, activeSessionId),
               sql`id = ANY(${sql.raw(`ARRAY[${toVoidIds.join(",")}]`)})`,
               or(eq(feeRecords.status, "Due"), eq(feeRecords.status, "Overdue")),
             )).returning({ id: feeRecords.id });
@@ -1187,6 +1284,9 @@ export function registerFeesRoutes(app: Express) {
       .from(students)
       .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)));
     if (!studentRow) return res.status(404).json({ message: "Student not found" });
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.json([]);
 
     const rows = await db.execute(sql`
       SELECT
@@ -1207,6 +1307,7 @@ export function registerFeesRoutes(app: Express) {
       FROM fee_records fr
       WHERE fr.student_id = ${studentId}
         AND fr.school_id  = ${schoolId}
+        AND fr.session_id = ${sessionFilter}
         AND fr.status IN ('Due', 'Overdue')
       ORDER BY fr.due_date ASC, fr.id ASC
     `);
@@ -1233,13 +1334,23 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     const { studentId, feeRecordId } = req.query as { studentId?: string; feeRecordId?: string };
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.json([]);
     const opts: { studentId?: number; feeRecordId?: number; sessionId?: number | null } = {};
     if (studentId) opts.studentId = parseInt(studentId);
-    // When fetching for a specific fee record, skip session filter (receipt lookup by ID)
-    if (feeRecordId) opts.feeRecordId = parseInt(feeRecordId);
-    else opts.sessionId = sessionFilter;
+    if (feeRecordId) {
+      const parsedFeeId = parseInt(feeRecordId);
+      if (isNaN(parsedFeeId)) return res.status(400).json({ message: "Invalid fee record ID" });
+      const [fee] = await db.select({ id: feeRecords.id }).from(feeRecords).where(and(
+        eq(feeRecords.id, parsedFeeId),
+        eq(feeRecords.schoolId, schoolId),
+        eq(feeRecords.sessionId, sessionFilter),
+      ));
+      if (!fee) return res.status(404).json({ message: "Fee record not found in the selected academic session." });
+      opts.feeRecordId = parsedFeeId;
+    }
+    opts.sessionId = sessionFilter;
     const records = await storage.getPaymentRecordsBySchool(schoolId, opts);
     res.json(records);
   });
@@ -1251,6 +1362,9 @@ export function registerFeesRoutes(app: Express) {
     if (multiInvoiceError) return res.status(400).json({ message: multiInvoiceError });
     const parsed = paymentBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     const { idempotencyKey, ...paymentData } = parsed.data;
     const actor = await resolveFeeAuditActor(req, schoolId);
@@ -1271,6 +1385,9 @@ export function registerFeesRoutes(app: Express) {
         .from(feeRecords)
         .where(and(eq(feeRecords.id, paymentData.feeRecordId), eq(feeRecords.schoolId, schoolId)));
       if (!recCheck) return res.status(400).json({ message: "Fee record does not belong to this school" });
+      if (recCheck.sessionId == null || Number(recCheck.sessionId) !== sessionFilter) {
+        return res.status(403).json({ message: "Payments can only be recorded against invoices in the active selected academic session." });
+      }
       if (recCheck.studentId !== paymentData.studentId) {
         return res.status(400).json({ message: "Fee record does not belong to the specified student" });
       }
@@ -1306,6 +1423,7 @@ export function registerFeesRoutes(app: Express) {
         ) p ON p.fee_record_id = fr.id
         WHERE fr.student_id = ${paymentData.studentId}
           AND fr.school_id  = ${schoolId}
+          AND fr.session_id = ${sessionFilter}
           AND fr.status IN ('Due', 'Overdue')
         HAVING GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0) > 0
         ORDER BY fr.due_date ASC, fr.id ASC
@@ -1773,6 +1891,11 @@ export function registerFeesRoutes(app: Express) {
 
     const patch = parsed.data;
     const actor = await resolveFeeAuditActor(req, schoolId);
+    const [paymentContext] = await db.select({ sessionId: paymentRecords.sessionId })
+      .from(paymentRecords)
+      .where(and(eq(paymentRecords.id, paymentRecordId), eq(paymentRecords.schoolId, schoolId)));
+    if (!paymentContext) return res.status(404).json({ message: "Payment record not found" });
+    if (!await activeFinancialSessionGuard(res, schoolId, paymentContext.sessionId)) return;
     let response: any = null;
     let correctionError: string | null = null;
     await db.transaction(async (tx) => {
@@ -2334,6 +2457,7 @@ export function registerFeesRoutes(app: Express) {
       // another tenant's fee record via the razorpay_order_id fallback.
       if (Number(fee.school_id) !== schoolId)
         return res.status(403).json({ message: "Access denied" });
+      if (!await activeFinancialSessionGuard(res, schoolId, Number(fee.session_id))) return;
       const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
       if (requestedSessionId != null && Number(fee.session_id) !== requestedSessionId) {
         return res.status(409).json({
@@ -2494,8 +2618,24 @@ export function registerFeesRoutes(app: Express) {
         const lateFeeFromNotes = Math.round(Number(notes.lateFeeAmount ?? 0)) || 0;
 
         // Load the fee record
-        const feeRec = (await db.execute(sql`SELECT * FROM fee_records WHERE id = ${feeRecordId} AND school_id = ${schoolId} LIMIT 1`)).rows[0] as any;
-        if (!feeRec) return res.status(404).json({ message: "Fee record not found" });
+        const feeRec = (await db.execute(sql`
+          SELECT fr.*
+          FROM fee_records fr
+          JOIN academic_sessions acs
+            ON acs.id = fr.session_id
+           AND acs.school_id = fr.school_id
+           AND acs.is_active = true
+          WHERE fr.id = ${feeRecordId}
+            AND fr.school_id = ${schoolId}
+          LIMIT 1
+        `)).rows[0] as any;
+        if (!feeRec) {
+          // A captured provider event can arrive after an admin archives the
+          // session. Historical financial records are immutable: leave the
+          // signed delivery recorded for reconciliation, but never create a
+          // payment or alter an archived invoice.
+          return res.status(409).json({ message: "Archived or unassigned academic-session invoices cannot be captured." });
+        }
 
         // Already paid? idempotent — 200 OK. Clear a matching stale lock left
         // by an earlier delivery without touching an unrelated replacement order.
@@ -2819,16 +2959,28 @@ export function registerFeesRoutes(app: Express) {
         // Resolve the academic session for this fee record so the attempt is
         // correctly linked to the right session even when viewSessionId is not set.
         let webhookFeeSessionId: number | null = null;
+        let webhookFeeIsActive = false;
         if (feeRecordId) {
           const sessionRow = (await db.execute(sql`
-            SELECT session_id FROM fee_records WHERE id = ${feeRecordId} LIMIT 1
+            SELECT fr.session_id,
+              EXISTS (
+                SELECT 1 FROM academic_sessions acs
+                WHERE acs.id = fr.session_id
+                  AND acs.school_id = fr.school_id
+                  AND acs.is_active = true
+              ) AS is_active_session
+            FROM fee_records fr
+            WHERE fr.id = ${feeRecordId}
+              AND fr.school_id = ${schoolId}
+            LIMIT 1
           `)).rows[0] as any;
           webhookFeeSessionId = sessionRow?.session_id ?? null;
+          webhookFeeIsActive = Boolean(sessionRow?.is_active_session);
         }
 
         // Clearing the retry lock and recording the operational event are one
         // transaction. Payment-attempt details remain in their dedicated ledger.
-        await db.transaction(async tx => {
+        if (!feeRecordId || webhookFeeIsActive) await db.transaction(async tx => {
           let invoiceNumber: string | null = null;
           let studentName: string | null = null;
           if (feeRecordId) {
@@ -2838,6 +2990,12 @@ export function registerFeesRoutes(app: Express) {
                   razorpay_order_expires_at = NULL
               WHERE id = ${feeRecordId} AND school_id = ${schoolId}
                 AND razorpay_order_id = ${payment.order_id ?? null}
+                AND EXISTS (
+                  SELECT 1 FROM academic_sessions acs
+                  WHERE acs.id = fee_records.session_id
+                    AND acs.school_id = fee_records.school_id
+                    AND acs.is_active = true
+                )
               RETURNING invoice_number
             `);
             invoiceNumber = (feeResult.rows[0] as any)?.invoice_number ?? null;
@@ -2875,6 +3033,7 @@ export function registerFeesRoutes(app: Express) {
         }
 
         // Write to payment_attempts — webhook payload already has card + error details
+        if (!feeRecordId || webhookFeeIsActive) {
         const failedAttemptId = await upsertPaymentAttempt({
           schoolId,
           studentId:         studentIdResolved,
@@ -2920,6 +3079,9 @@ export function registerFeesRoutes(app: Express) {
           payload: event, providerOccurredAt: providerFailedAt, occurredAt: now,
           idempotencyKey: `webhook:${webhookDeliveryId}:payment_failed`,
         });
+        } else {
+          console.warn(`[razorpay webhook] payment.failed retained without financial projection for immutable fee #${feeRecordId}`);
+        }
 
         console.log(`[razorpay webhook] Payment failed for fee #${feeRecordId}: ${errCode} — ${errDesc}`);
 
@@ -2933,12 +3095,20 @@ export function registerFeesRoutes(app: Express) {
         const providerCreatedAt = razorpayPaymentCreatedAt(payment);
         const providerAuthorizedAt = razorpayEpochToDate(event.created_at) ?? providerCreatedAt;
         const authorizedContext = (await db.execute(sql`
-          SELECT fr.invoice_number, fr.session_id, s.name AS student_name
+          SELECT fr.invoice_number, fr.session_id, s.name AS student_name,
+            EXISTS (
+              SELECT 1 FROM academic_sessions acs
+              WHERE acs.id = fr.session_id
+                AND acs.school_id = fr.school_id
+                AND acs.is_active = true
+            ) AS is_active_session
           FROM fee_records fr
           LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
           WHERE fr.id = ${feeRecordId} AND fr.school_id = ${schoolId}
           LIMIT 1
         `)).rows[0] as any;
+        const authorizedFeeIsActive = !feeRecordId || Boolean(authorizedContext?.is_active_session);
+        if (authorizedFeeIsActive) {
         await appendFeeAudit({
           schoolId,
           actor: RAZORPAY_FEE_AUDIT_ACTOR,
@@ -2987,6 +3157,9 @@ export function registerFeesRoutes(app: Express) {
           occurredAt: now,
           idempotencyKey: `webhook:${webhookDeliveryId}:payment_authorized`,
         });
+        } else {
+          console.warn(`[razorpay webhook] payment.authorized retained without financial projection for immutable fee #${feeRecordId}`);
+        }
 
         console.log(`[razorpay webhook] payment.authorized fee #${feeRecordId} — ${payment.id ?? "?"}`);
 
@@ -3083,7 +3256,7 @@ export function registerFeesRoutes(app: Express) {
           rfFeeRecordId = reconciledRefund.feeRecordId;
           rfResolution = "payment_id";
         }
-        if ((refPmtId || refOrderId) && refund.id) {
+        if (reconciledRefund.projectionApplied && (refPmtId || refOrderId) && refund.id) {
           const rfOutcome  = event.event === "refund.processed" ? "refunded" : "captured";
           await appendPaymentAttemptEvent({
             schoolId, feeRecordId: rfFeeRecordId, studentId: rfStudentId, sessionId: rfSessionId,
@@ -3243,6 +3416,17 @@ export function registerFeesRoutes(app: Express) {
     }
     if (!schoolId) return res.status(403).json({ message: "School not found" });
     if (studentId && !await requireStudentFeeSession(req, res, schoolId)) return;
+    const [targetFee] = await db.select({
+      studentId: feeRecords.studentId,
+      sessionId: feeRecords.sessionId,
+    }).from(feeRecords).where(and(
+      eq(feeRecords.id, feeRecordId),
+      eq(feeRecords.schoolId, schoolId),
+    ));
+    if (!targetFee || (studentId && targetFee.studentId !== studentId)) {
+      return res.status(404).json({ message: "Fee record not found" });
+    }
+    if (!await activeFinancialSessionGuard(res, schoolId, targetFee.sessionId)) return;
     const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
     if (studentId && requestedSessionId != null) {
       const feeSession = await db.execute(sql`
@@ -3481,6 +3665,7 @@ export function registerFeesRoutes(app: Express) {
       if (!creds?.keySecret) return res.status(400).json({ message: "Razorpay not configured" });
       if (Number(feeRec.school_id) !== schoolId)
         return res.status(403).json({ message: "Access denied" });
+      if (!await activeFinancialSessionGuard(res, schoolId, Number(feeRec.session_id))) return;
       const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
       if (requestedSessionId != null && Number(feeRec.session_id) !== requestedSessionId) {
         return res.status(409).json({
@@ -3817,14 +4002,17 @@ export function registerFeesRoutes(app: Express) {
     if (action && !isCurrentFeeAuditAction(action)) {
       return res.status(400).json({ message: "The selected action is not available." });
     }
-    if (sessionId) {
-      const sessions = await storage.getAcademicSessions(req.session.schoolId!);
-      if (!sessions.some(session => session.id === sessionId)) {
-        return res.status(400).json({ message: "Session does not belong to this school." });
-      }
+    const schoolId = req.session.schoolId!;
+    const resolvedSessionId = await resolveFeeViewSession(req, res, schoolId);
+    if (resolvedSessionId === undefined) return;
+    if (resolvedSessionId === null) {
+      return res.json({ entries: [], total: 0, actionOptions: [], limit, offset });
+    }
+    if (sessionId != null && sessionId !== resolvedSessionId) {
+      return res.status(400).json({ message: "Audit-log session must match the selected academic session." });
     }
     const result = await storage.getFeeAuditLog(
-      req.session.schoolId!, limit, offset, from, to, action, search, sessionId,
+      schoolId, limit, offset, from, to, action, search, resolvedSessionId,
     );
     res.json({ ...result, limit, offset });
   });
@@ -4237,6 +4425,7 @@ export function registerFeesRoutes(app: Express) {
       return res.status(400).json({ message: "A valid idempotency key is required." });
     }
     try {
+      if (!await activePaymentRecordGuard(res, req.session.schoolId!, paymentRecordId)) return;
       const actor = await resolveFeeAuditActor(req, req.session.schoolId!);
       const forwarded = req.headers["x-forwarded-for"] as string | undefined;
       const reservation = await reserveRefundRequest({
@@ -4457,6 +4646,7 @@ export function registerFeesRoutes(app: Express) {
     if (typeof cashierNotes !== "string" && cashierNotes !== null)
       return res.status(400).json({ message: "cashierNotes must be string or null" });
     try {
+      if (!await activePaymentRecordGuard(res, schoolId, id)) return;
       const result = await db.execute(sql`
         UPDATE payment_records SET cashier_notes = ${cashierNotes ?? null}
         WHERE id = ${id} AND school_id = ${schoolId}
@@ -4920,7 +5110,9 @@ export function registerFeesRoutes(app: Express) {
       feeRecordId: sql`fr.id`,
     });
     if (paymentDatePredicate) predicates.push(paymentDatePredicate);
-    const sessionCond  = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+    // Callers normally reject a missing scope. Keep this helper fail-closed too
+    // so a future caller cannot accidentally export every historical session.
+    const sessionCond  = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql`AND FALSE`;
     const extraWhere   = predicates.length > 0
       ? sql`AND ${sql.join(predicates, sql` AND `)}`
       : sql``;
@@ -5075,8 +5267,9 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/export-ledger", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId    = req.session.schoolId!;
-    const viewSessId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
     const csvFilters  = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
     try {
       const rows = await runLedgerCsvQuery(schoolId, sessionFilter, csvFilters);
@@ -5100,8 +5293,9 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/export-ledger", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId    = req.session.schoolId!;
-    const viewSessId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     const {
       selectAllMatching: rawSelectAll,
@@ -5137,8 +5331,9 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/ledger/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     // Normalize all ledger filters from query string.
     const ledgerGetFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
@@ -5168,7 +5363,7 @@ export function registerFeesRoutes(app: Express) {
         feeRecordId: sql`fr.id`,
       });
       if (ledgerGetPaymentDatePredicate) ledgerGetPreds.push(ledgerGetPaymentDatePredicate);
-      const ledgerGetSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+      const ledgerGetSessionCond = sql`AND fr.session_id = ${sessionFilter}`;
       const ledgerGetExtraWhere = ledgerGetPreds.length > 0
         ? sql`AND ${sql.join(ledgerGetPreds, sql` AND `)}`
         : sql``;
@@ -5301,8 +5496,9 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/ledger/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     // Extract selection predicates (typed integer arrays — unchanged logic).
     const {
@@ -5360,7 +5556,7 @@ export function registerFeesRoutes(app: Express) {
         feeRecordId: sql`fr.id`,
       });
       if (ledgerPostPaymentDatePredicate) ledgerPostPreds.push(ledgerPostPaymentDatePredicate);
-      const ledgerPostSessionCond = sessionFilter != null ? sql`AND fr.session_id = ${sessionFilter}` : sql``;
+      const ledgerPostSessionCond = sql`AND fr.session_id = ${sessionFilter}`;
       const ledgerPostExtraWhere = ledgerPostPreds.length > 0
         ? sql`AND ${sql.join(ledgerPostPreds, sql` AND `)}`
         : sql``;
@@ -5565,8 +5761,9 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/payments/report/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     // Normalize all ledger filters from query (same contract as ledger endpoints).
     const txFilters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
@@ -5592,8 +5789,9 @@ export function registerFeesRoutes(app: Express) {
   app.post("/api/admin/fees/payments/report/pdf", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
 
     // Extract selection predicates from body
     const body = req.body as Record<string, unknown>;
@@ -5758,24 +5956,18 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/dunning-counts", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.json({});
 
     const result = await db.execute(
-      sessionFilter != null
-        ? sql`
+      sql`
             SELECT dl.fee_record_id AS "feeRecordId", COUNT(dl.id)::int AS count
             FROM dunning_log dl
-            INNER JOIN fee_records fr ON fr.id = dl.fee_record_id
+            INNER JOIN fee_records fr ON fr.id = dl.fee_record_id AND fr.school_id = dl.school_id
             WHERE dl.school_id = ${schoolId}
               AND dl.status = 'sent'
               AND fr.session_id = ${sessionFilter}
-            GROUP BY dl.fee_record_id`
-        : sql`
-            SELECT dl.fee_record_id AS "feeRecordId", COUNT(dl.id)::int AS count
-            FROM dunning_log dl
-            WHERE dl.school_id = ${schoolId}
-              AND dl.status = 'sent'
             GROUP BY dl.fee_record_id`,
     );
     // Return as a plain object { [feeRecordId]: count }
@@ -5791,36 +5983,23 @@ export function registerFeesRoutes(app: Express) {
   app.get("/api/admin/fees/failed-counts", async (req, res) => {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.json({});
 
     const result = await db.execute(
-      sessionFilter != null
-        ? sql`
+      sql`
             SELECT
               al.entity_id::int            AS "feeRecordId",
               COUNT(al.id)::int            AS count,
               (ARRAY_AGG(al.description ORDER BY al.created_at DESC))[1] AS "lastError"
             FROM fee_audit_log al
-            INNER JOIN fee_records fr ON fr.id = al.entity_id::int
+            INNER JOIN fee_records fr ON fr.id = al.entity_id::int AND fr.school_id = al.school_id
             WHERE al.school_id   = ${schoolId}
               AND al.action      = 'payment_failed'
               AND al.entity_type = 'fee_record'
               AND al.entity_id   IS NOT NULL
               AND fr.session_id  = ${sessionFilter}
-              AND fr.status      <> 'Paid'
-            GROUP BY al.entity_id`
-        : sql`
-            SELECT
-              al.entity_id::int            AS "feeRecordId",
-              COUNT(al.id)::int            AS count,
-              (ARRAY_AGG(al.description ORDER BY al.created_at DESC))[1] AS "lastError"
-            FROM fee_audit_log al
-            INNER JOIN fee_records fr ON fr.id = al.entity_id::int
-            WHERE al.school_id   = ${schoolId}
-              AND al.action      = 'payment_failed'
-              AND al.entity_type = 'fee_record'
-              AND al.entity_id   IS NOT NULL
               AND fr.status      <> 'Paid'
             GROUP BY al.entity_id`,
     );
@@ -5841,6 +6020,9 @@ export function registerFeesRoutes(app: Express) {
     if (studentId !== null && isNaN(studentId)) {
       return res.status(400).json({ message: "Invalid studentId" });
     }
+    const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+    if (sessionFilter === undefined) return;
+    if (sessionFilter === null) return res.json([]);
     const result = await db.execute(
       studentId !== null
         ? sql`
@@ -5852,10 +6034,13 @@ export function registerFeesRoutes(app: Express) {
                    dl.error_message, dl.recipient, dl.student_name,
                    (fr.id IS NULL) AS fee_record_deleted
             FROM dunning_log dl
-            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
+            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id AND fr.school_id = dl.school_id
             WHERE dl.school_id = ${schoolId}
               AND dl.fee_record_id IN (
-                SELECT id FROM fee_records WHERE student_id = ${studentId}
+                SELECT id FROM fee_records
+                WHERE student_id = ${studentId}
+                  AND school_id = ${schoolId}
+                  AND session_id = ${sessionFilter}
               )
             ORDER BY dl.sent_at DESC
             LIMIT 200`
@@ -5864,8 +6049,9 @@ export function registerFeesRoutes(app: Express) {
                    dl.error_message, dl.recipient, dl.student_name,
                    (fr.id IS NULL) AS fee_record_deleted
             FROM dunning_log dl
-            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
+            LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id AND fr.school_id = dl.school_id
             WHERE dl.school_id = ${schoolId}
+              AND fr.session_id = ${sessionFilter}
             ORDER BY dl.sent_at DESC
             LIMIT 50`,
     );
@@ -5937,8 +6123,11 @@ export function registerFeesRoutes(app: Express) {
   // ── Admin: Dunning Job Status ─────────────────────────────────────────────
   app.get("/api/admin/fees/dunning-job-status", async (req, res) => {
     if (!adminGuard(req, res)) return;
+    const schoolId = req.session.schoolId!;
     try {
-      const rows = await db.select().from(dunningJobStatus).where(eq(dunningJobStatus.id, 1)).limit(1);
+      const rows = await db.select().from(dunningJobStatus)
+        .where(eq(dunningJobStatus.schoolId, schoolId))
+        .limit(1);
       if (rows.length === 0) {
         return res.json({ isRunning: false, startedAt: null, lastCompletedAt: null });
       }
@@ -5953,8 +6142,9 @@ export function registerFeesRoutes(app: Express) {
     if (!adminGuard(req, res)) return;
     const schoolId = req.session.schoolId!;
     try {
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+      const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+      if (sessionFilter === undefined) return;
+      if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
       const { runDunningSimulation } = await import("./dunning");
       const result = await runDunningSimulation(schoolId, sessionFilter);
       res.json(result);
@@ -6192,15 +6382,23 @@ export function registerFeesRoutes(app: Express) {
     }
 
     try {
-      const { runDunningForSingleFee } = await import("./dunning");
-      const result = await runDunningForSingleFee(schoolId, Number(feeRecordId));
+      const sessionFilter = await resolveFeeViewSession(req, res, schoolId);
+      if (sessionFilter === undefined) return;
+      if (sessionFilter === null) return res.status(409).json({ message: "No academic session selected or active." });
       const feeContext = (await db.execute(sql`
         SELECT fr.invoice_number, fr.session_id, fr.student_id, s.name AS student_name
         FROM fee_records fr
         LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
-        WHERE fr.id = ${Number(feeRecordId)} AND fr.school_id = ${schoolId}
+        WHERE fr.id = ${Number(feeRecordId)}
+          AND fr.school_id = ${schoolId}
+          AND fr.session_id = ${sessionFilter}
         LIMIT 1
       `)).rows[0] as any;
+      if (!feeContext) {
+        return res.status(404).json({ message: "Fee record not found in the selected academic session." });
+      }
+      const { runDunningForSingleFee } = await import("./dunning");
+      const result = await runDunningForSingleFee(schoolId, Number(feeRecordId), sessionFilter);
       await appendFeeAudit({
         schoolId,
         actor: await resolveFeeAuditActor(req, schoolId),

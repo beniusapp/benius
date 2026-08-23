@@ -1354,13 +1354,17 @@ export const dunningTemplates = pgTable("dunning_templates", {
 ]);
 export type DunningTemplate = typeof dunningTemplates.$inferSelect;
 
-// ── Dunning job status (single global row, id=1) ──────────────────────────────
-// Tracks whether the dunning job is currently running and when it last finished.
-// Written by runDunningJob() so the admin panel can surface live status.
+// ── Dunning job status (one row per school) ───────────────────────────────────
+// Tracks whether a school's dunning pass is currently running and when it last
+// finished. schoolId remains nullable solely for compatibility with the old
+// global id=1 row; new code only reads/writes tenant-owned rows.
 export const dunningJobStatus = pgTable("dunning_job_status", {
   id: serial("id").primaryKey(),
+  schoolId: integer("school_id").references(() => schools.id, { onDelete: "cascade" }),
   isRunning: boolean("is_running").notNull().default(false),
   startedAt: timestamp("started_at"),
   lastCompletedAt: timestamp("last_completed_at"),
-});
+}, (table) => [
+  uniqueIndex("dunning_job_status_school_id_unique").on(table.schoolId),
+]);
 export type DunningJobStatus = typeof dunningJobStatus.$inferSelect;

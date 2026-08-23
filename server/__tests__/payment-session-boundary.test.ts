@@ -18,6 +18,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { db, pool } from "../db";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
+import { recalculateLateFees } from "../late-fee-engine";
 import {
   schools,
   students,
@@ -450,5 +451,110 @@ describe("payment session boundary: arrears (fee record in session 1, payment in
     await expect(storage.deleteAcademicSession(session.id, schoolId))
       .rejects.toBeInstanceOf(AcademicSessionFinancialHistoryError);
     expect(await storage.getAcademicSessionById(session.id, schoolId)).not.toBeNull();
+  });
+});
+
+describe("overdue sweep session boundary", () => {
+  let fixture: Fixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("marks only active-session invoices overdue and leaves archived history unchanged", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+    const archivedSession = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2024-2025",
+      startDate: "2024-04-01",
+      endDate: "2025-03-31",
+      isActive: false,
+      status: "archived",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+    const activeSession = await storage.createAcademicSession({
+      schoolId,
+      sessionName: "2025-2026",
+      startDate: "2025-04-01",
+      endDate: "2026-03-31",
+      isActive: false,
+      status: "active",
+      newAdmissionsEnabled: false,
+      promotionStrategy: "defer",
+    });
+    await storage.activateAcademicSession(activeSession.id, schoolId);
+
+    const [archivedFee] = await db.insert(feeRecords).values({
+      schoolId,
+      studentId,
+      sessionId: archivedSession.id,
+      feeType: "Tuition",
+      amount: 1000,
+      dueDate: "2025-01-01",
+      status: "Due",
+    }).returning();
+    const [activeFee] = await db.insert(feeRecords).values({
+      schoolId,
+      studentId,
+      sessionId: activeSession.id,
+      feeType: "Tuition",
+      amount: 1000,
+      dueDate: "2025-01-01",
+      status: "Due",
+    }).returning();
+
+    await storage.bulkUpdateOverdueFeeRecords(schoolId);
+
+    const [archivedAfter] = await db.select({ status: feeRecords.status })
+      .from(feeRecords).where(eq(feeRecords.id, archivedFee.id));
+    const [activeAfter] = await db.select({ status: feeRecords.status })
+      .from(feeRecords).where(eq(feeRecords.id, activeFee.id));
+    expect(archivedAfter.status).toBe("Due");
+    expect(activeAfter.status).toBe("Overdue");
+  });
+});
+
+describe("late-fee recalculation session boundary", () => {
+  let fixture: Fixture;
+
+  afterEach(async () => {
+    if (fixture) await teardown(fixture.schoolId);
+  });
+
+  it("updates only active-session invoices and preserves archived invoice late fees", async () => {
+    fixture = await createFixture();
+    const { schoolId, studentId } = fixture;
+    const archivedSession = await storage.createAcademicSession({
+      schoolId, sessionName: "2024-2025", startDate: "2024-04-01", endDate: "2025-03-31",
+      isActive: false, status: "archived", newAdmissionsEnabled: false, promotionStrategy: "defer",
+    });
+    const activeSession = await storage.createAcademicSession({
+      schoolId, sessionName: "2025-2026", startDate: "2025-04-01", endDate: "2026-03-31",
+      isActive: false, status: "active", newAdmissionsEnabled: false, promotionStrategy: "defer",
+    });
+    await storage.activateAcademicSession(activeSession.id, schoolId);
+    const lateFeeConfig = {
+      enabled: true, type: "FLAT", grace_period_days: 0, flat_amount: 75,
+      daily_rate: 0, max_cap: 0, tiered_slabs: [],
+    };
+    const [archivedFee] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId: archivedSession.id, feeType: "Tuition",
+      amount: 1000, dueDate: "2025-01-01", status: "Due", lateFeeAmount: 11, lateFeeConfig,
+    }).returning();
+    const [activeFee] = await db.insert(feeRecords).values({
+      schoolId, studentId, sessionId: activeSession.id, feeType: "Tuition",
+      amount: 1000, dueDate: "2025-01-01", status: "Due", lateFeeAmount: 0, lateFeeConfig,
+    }).returning();
+
+    await recalculateLateFees(schoolId);
+
+    const [archivedAfter] = await db.select({ lateFeeAmount: feeRecords.lateFeeAmount })
+      .from(feeRecords).where(eq(feeRecords.id, archivedFee.id));
+    const [activeAfter] = await db.select({ lateFeeAmount: feeRecords.lateFeeAmount })
+      .from(feeRecords).where(eq(feeRecords.id, activeFee.id));
+    expect(archivedAfter.lateFeeAmount).toBe(11);
+    expect(activeAfter.lateFeeAmount).toBe(75);
   });
 });

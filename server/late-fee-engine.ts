@@ -4,7 +4,7 @@
  */
 
 import { db } from "./db";
-import { feeRecords, feeStructures } from "@shared/schema";
+import { academicSessions, feeRecords, feeStructures } from "@shared/schema";
 import { and, eq, or } from "drizzle-orm";
 import { todayInIST } from "../shared/ist-time";
 
@@ -139,6 +139,17 @@ export function getInvoiceCurrentDetails(
  */
 export async function recalculateLateFees(schoolId: number): Promise<number> {
   const today = new Date();
+  const [activeSession] = await db
+    .select({ id: academicSessions.id })
+    .from(academicSessions)
+    .where(and(
+      eq(academicSessions.schoolId, schoolId),
+      eq(academicSessions.isActive, true),
+    ))
+    .limit(1);
+  // An archived academic year is immutable, and legacy records without an
+  // owner must never be silently adopted by a current-year recalculation.
+  if (!activeSession) return 0;
 
   // 1. Load all fee structures for the school
   const structures = await db
@@ -167,6 +178,7 @@ export async function recalculateLateFees(schoolId: number): Promise<number> {
     .from(feeRecords)
     .where(and(
       eq(feeRecords.schoolId, schoolId),
+      eq(feeRecords.sessionId, activeSession.id),
       or(
         eq(feeRecords.status, "Due"),
         eq(feeRecords.status, "Overdue"),

@@ -515,23 +515,26 @@ async function fetchFeeRows(schoolId: number, statusFilter: string[] | null, ses
       status:        feeRecords.status,
     })
     .from(feeRecords)
-    .innerJoin(students, eq(feeRecords.studentId, students.id))
+    .innerJoin(students, and(
+      eq(feeRecords.studentId, students.id),
+      eq(feeRecords.schoolId, students.schoolId),
+    ))
     .where(and(...conditions));
 }
 
 // ─── Job status helper ────────────────────────────────────────────────────────
 
-async function setJobStatus(isRunning: boolean): Promise<void> {
+async function setJobStatus(schoolId: number, isRunning: boolean): Promise<void> {
   try {
     await db
       .insert(dunningJobStatus)
       .values({
-        id: 1, isRunning,
+        schoolId, isRunning,
         startedAt:       isRunning ? new Date() : undefined,
         lastCompletedAt: isRunning ? undefined  : new Date(),
       })
       .onConflictDoUpdate({
-        target: dunningJobStatus.id,
+        target: dunningJobStatus.schoolId,
         set: isRunning
           ? { isRunning: true,  startedAt: new Date() }
           : { isRunning: false, lastCompletedAt: new Date() },
@@ -557,8 +560,6 @@ export async function runDunningJob(): Promise<void> {
       return;
     }
 
-    await setJobStatus(true);
-
     const configs = await db.select().from(notificationConfig).where(
       or(
         eq(notificationConfig.smsEnabled,   true),
@@ -570,14 +571,16 @@ export async function runDunningJob(): Promise<void> {
 
     for (const cfg of configs) {
       try {
+        await setJobStatus(cfg.schoolId, true);
         await processDunningForSchool(cfg);
       } catch (err) {
         log(`school ${cfg.schoolId} error: ${String(err)}`);
+      } finally {
+        await setJobStatus(cfg.schoolId, false);
       }
     }
   } finally {
     if (locked) {
-      await setJobStatus(false);
       await client.query("SELECT pg_advisory_unlock($1)", [DUNNING_LOCK_KEY]);
     }
     client.release();
@@ -677,8 +680,14 @@ export async function runDunningSimulation(schoolId: number, sessionId?: number 
 export async function runDunningForSingleFee(
   schoolId: number,
   feeRecordId: number,
+  sessionId?: number | null,
 ): Promise<{ sent: string[]; failed: string[]; skipped: string[] }> {
   const sent: string[] = [], failed: string[] = [], skipped: string[] = [];
+  const conditions = [
+    eq(feeRecords.id, feeRecordId),
+    eq(feeRecords.schoolId, schoolId),
+  ];
+  if (sessionId != null) conditions.push(eq(feeRecords.sessionId, sessionId));
 
   const rows = await db
     .select({
@@ -696,8 +705,11 @@ export async function runDunningForSingleFee(
       status:        feeRecords.status,
     })
     .from(feeRecords)
-    .innerJoin(students, eq(feeRecords.studentId, students.id))
-    .where(and(eq(feeRecords.id, feeRecordId), eq(feeRecords.schoolId, schoolId)))
+    .innerJoin(students, and(
+      eq(feeRecords.studentId, students.id),
+      eq(feeRecords.schoolId, students.schoolId),
+    ))
+    .where(and(...conditions))
     .limit(1);
 
   if (rows.length === 0) throw new Error("Fee record not found or does not belong to this school");
@@ -816,7 +828,11 @@ export async function processDunningForSchool(cfg: typeof notificationConfig.$in
     .from(academicSessions)
     .where(and(eq(academicSessions.schoolId, cfg.schoolId), eq(academicSessions.isActive, true)))
     .limit(1);
-  const sessionId = activeSession[0]?.id ?? null;
+  const sessionId = activeSession[0]?.id;
+  if (sessionId == null) {
+    log(`school ${cfg.schoolId} has no active academic session — skipping`);
+    return;
+  }
 
   const rows = await fetchFeeRows(cfg.schoolId, ["Due", "Overdue"], sessionId);
   if (rows.length === 0) return;

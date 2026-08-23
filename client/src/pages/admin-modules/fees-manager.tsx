@@ -6358,7 +6358,7 @@ function AuditLogTab({ viewSessionId }: { viewSessionId?: number | null }) {
       if (actionFilter) params.set("action", actionFilter);
       if (normalizedSearch) params.set("search", normalizedSearch);
       if (viewSessionId) params.set("sessionId", String(viewSessionId));
-      const r = await fetch(`/api/admin/fees/audit-log?${params}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/admin/fees/audit-log?${params}`);
       if (!r.ok) {
         const body = await r.json().catch(() => null);
         throw new Error(body?.message || "The register could not be loaded.");

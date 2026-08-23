@@ -213,20 +213,24 @@ async function appendRefundEvent(
 async function recalculateFinancialProjection(
   executor: { execute: (query: any) => Promise<any> },
   context: RefundPaymentContext,
-): Promise<RefundFinancialSummary> {
+): Promise<{ summary: RefundFinancialSummary; applied: boolean }> {
   const summary = await getSummary(executor, context.schoolId, context.paymentRecordId, context.capturedAmountPaise);
   const feeTotals = await executor.execute(sql`
     SELECT
       fr.amount, fr.late_fee_amount, fr.due_date,
       COALESCE(SUM(pr.amount), 0)::int AS gross_paid
     FROM fee_records fr
+    JOIN academic_sessions acs
+      ON acs.id = fr.session_id
+     AND acs.school_id = fr.school_id
+     AND acs.is_active = true
     LEFT JOIN payment_records pr
       ON pr.fee_record_id = fr.id AND pr.school_id = fr.school_id
     WHERE fr.id = ${context.feeRecordId} AND fr.school_id = ${context.schoolId}
     GROUP BY fr.id
   `);
   const fee = feeTotals.rows[0] as any;
-  if (!fee) return summary;
+  if (!fee) return { summary, applied: false };
   const refundTotals = await executor.execute(sql`
     SELECT COALESCE(SUM(COALESCE(processed_amount_paise, requested_amount_paise)), 0)::int AS refunded_paise
     FROM refunds
@@ -246,6 +250,12 @@ async function recalculateFinancialProjection(
     UPDATE fee_records
     SET status = ${nextStatus}
     WHERE id = ${context.feeRecordId} AND school_id = ${context.schoolId}
+      AND EXISTS (
+        SELECT 1 FROM academic_sessions acs
+        WHERE acs.id = fee_records.session_id
+          AND acs.school_id = fee_records.school_id
+          AND acs.is_active = true
+      )
   `);
 
   if (context.paymentAttemptId) {
@@ -278,7 +288,7 @@ async function recalculateFinancialProjection(
       WHERE pa.id = ${context.paymentAttemptId} AND pa.school_id = ${context.schoolId}
     `);
   }
-  return summary;
+  return { summary, applied: true };
 }
 
 export async function reserveRefundRequest(input: {
@@ -529,10 +539,10 @@ export async function reconcileRefundWebhook(input: {
     context: RefundPaymentContext,
     state: { action: string; localStatus: string; amountPaise: number; refundId: number },
   ) => Promise<void>;
-}): Promise<{ refundId: number | null; feeRecordId: number | null; paymentRecordId: number | null; summary: RefundFinancialSummary | null }> {
+}): Promise<{ refundId: number | null; feeRecordId: number | null; paymentRecordId: number | null; summary: RefundFinancialSummary | null; projectionApplied: boolean }> {
   const razorpayRefundId = input.refund?.id ? String(input.refund.id) : null;
   const razorpayPaymentId = input.refund?.payment_id ? String(input.refund.payment_id) : null;
-  if (!razorpayRefundId || !razorpayPaymentId) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null };
+  if (!razorpayRefundId || !razorpayPaymentId) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null, projectionApplied: false };
   return db.transaction(async tx => {
     const existing = (await tx.execute(sql`
       SELECT * FROM refunds
@@ -552,9 +562,9 @@ export async function reconcileRefundWebhook(input: {
           AND razorpay_payment_id = ${razorpayPaymentId}
         LIMIT 2
       `)).rows as any[];
-      if (paymentRow.length !== 1) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null };
+      if (paymentRow.length !== 1) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null, projectionApplied: false };
       context = await findPaymentContext(tx, input.schoolId, Number(paymentRow[0].id), true);
-      if (!context) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null };
+      if (!context) return { refundId: null, feeRecordId: input.fallbackFeeRecordId ?? null, paymentRecordId: null, summary: null, projectionApplied: false };
       const created = await tx.execute(sql`
         INSERT INTO refunds (
           school_id, session_id, student_id, fee_record_id, payment_record_id, payment_attempt_id,
@@ -573,7 +583,7 @@ export async function reconcileRefundWebhook(input: {
       `);
       row = created.rows[0] as any;
     }
-    if (!context) return { refundId: null, feeRecordId: null, paymentRecordId: null, summary: null };
+    if (!context) return { refundId: null, feeRecordId: null, paymentRecordId: null, summary: null, projectionApplied: false };
     const map = input.eventType === "refund.processed"
       ? { local: "processed", event: "refund_processed" }
       : input.eventType === "refund.failed"
@@ -613,7 +623,7 @@ export async function reconcileRefundWebhook(input: {
       correlationKey: `webhook-refund:${input.webhookDeliveryId}:${razorpayRefundId}:${map.event}`,
       payload: input.refund, providerOccurredAt, occurredAt: new Date(),
     });
-    const summary = await recalculateFinancialProjection(tx, context);
+    const projection = await recalculateFinancialProjection(tx, context);
     if (input.afterReconcile) {
       await input.afterReconcile(tx, context, {
         action: map.event,
@@ -622,6 +632,12 @@ export async function reconcileRefundWebhook(input: {
         refundId: Number(stored.id),
       });
     }
-    return { refundId: Number(stored.id), feeRecordId: context.feeRecordId, paymentRecordId: context.paymentRecordId, summary };
+    return {
+      refundId: Number(stored.id),
+      feeRecordId: context.feeRecordId,
+      paymentRecordId: context.paymentRecordId,
+      summary: projection.summary,
+      projectionApplied: projection.applied,
+    };
   });
 }

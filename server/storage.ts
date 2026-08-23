@@ -4803,6 +4803,13 @@ export class DatabaseStorage {
             eq(feeRecords.schoolId, schoolId),
             eq(feeRecords.status, "Due"),
             lt(feeRecords.dueDate, sql`CURRENT_DATE`),
+            sql`EXISTS (
+              SELECT 1
+              FROM academic_sessions session_scope
+              WHERE session_scope.id = ${feeRecords.sessionId}
+                AND session_scope.school_id = ${schoolId}
+                AND session_scope.is_active = true
+            )`,
           )
         )
         .returning();
@@ -4849,14 +4856,25 @@ export class DatabaseStorage {
 
   /**
    * Bulk-mark all "Due" fee records whose due_date is strictly before today
-   * as "Overdue". Runs across all schools in one query.
+   * as "Overdue". Only records in each school's active session are eligible:
+   * archived and legacy NULL-session financial history must remain immutable.
    * Returns the number of records updated.
    */
   async markOverdueFeeRecords(): Promise<number> {
     const today = todayInIST(); // YYYY-MM-DD
     const result = await db.update(feeRecords)
       .set({ status: "Overdue" })
-      .where(and(eq(feeRecords.status, "Due"), lt(feeRecords.dueDate, today)))
+      .where(and(
+        eq(feeRecords.status, "Due"),
+        lt(feeRecords.dueDate, today),
+        sql`EXISTS (
+          SELECT 1
+          FROM academic_sessions session_scope
+          WHERE session_scope.id = ${feeRecords.sessionId}
+            AND session_scope.school_id = ${feeRecords.schoolId}
+            AND session_scope.is_active = true
+        )`,
+      ))
       .returning({ id: feeRecords.id });
     return result.length;
   }
@@ -4980,6 +4998,15 @@ export class DatabaseStorage {
     actorTeacherId?: number | null; actorStaffId?: number | null; actorType?: string;
     actorRole?: string; actorIdentifier?: string; description?: string | null;
   }): Promise<FeeAuditLog> {
+    if (entry.sessionId != null) {
+      const [session] = await db.select({ id: academicSessions.id })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, entry.sessionId),
+          eq(academicSessions.schoolId, entry.schoolId),
+        ));
+      if (!session) throw new Error("Fee audit session does not belong to this school.");
+    }
     const [rec] = await db.insert(feeAuditLog).values(entry as any).returning();
     return rec;
   }
@@ -5184,7 +5211,7 @@ export class DatabaseStorage {
                  dl.recipient, dl.student_name,
                  (fr.id IS NULL) AS fee_record_deleted
           FROM dunning_log dl
-          LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id
+          LEFT JOIN fee_records fr ON fr.id = dl.fee_record_id AND fr.school_id = dl.school_id
           WHERE dl.school_id = ${schoolId}
             AND dl.fee_record_id IN (
               SELECT id

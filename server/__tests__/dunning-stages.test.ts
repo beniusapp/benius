@@ -780,6 +780,23 @@ describe("Integration — runDunningForSingleFee", () => {
     expect(result.sent.length).toBe(0);
   });
 
+  it("11c — selected session rejects a fee from another session", async () => {
+    const feeId = await insertFee(manSchoolId, manStudentId, manSessionId, istDate(0));
+    const [otherSession] = await db.insert(academicSessions).values({
+      schoolId: manSchoolId,
+      sessionName: `Other-${Date.now()}`,
+      startDate: "2027-04-01",
+      endDate: "2028-03-31",
+      isActive: false,
+    }).returning({ id: academicSessions.id });
+
+    await expect(
+      runDunningForSingleFee(manSchoolId, feeId, otherSession.id),
+    ).rejects.toThrow("does not belong to this school");
+
+    await db.delete(academicSessions).where(eq(academicSessions.id, otherSession.id));
+  });
+
   it("11d — cross-school access is rejected", async () => {
     const feeId = await insertFee(manSchoolId, manStudentId, manSessionId, istDate(0));
     const otherSchool = await insertSchool();

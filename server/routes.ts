@@ -275,6 +275,38 @@ function assertSchoolOwnership(entitySchoolId: number, sessionSchoolId: number):
 }
 
 /**
+ * Financial records must keep the academic session that created them.  This
+ * check is intentionally record-owned rather than header-owned: a forged or
+ * omitted view-session header must never turn an archived invoice writable.
+ */
+async function feeRecordWriteBlock(
+  sessionId: number | null,
+  schoolId: number,
+): Promise<{ status: number; message: string } | null> {
+  if (sessionId == null) {
+    return {
+      status: 409,
+      message: "This legacy fee record has no academic-session ownership and cannot be changed.",
+    };
+  }
+  try {
+    const session = await storage.getAcademicSessionById(sessionId);
+    if (!session || session.schoolId !== schoolId) {
+      return { status: 403, message: "Fee record session does not belong to this school." };
+    }
+    if (!session.isActive) {
+      return { status: 403, message: "Archived academic-session fee records are read-only." };
+    }
+    return null;
+  } catch {
+    return {
+      status: 503,
+      message: "Unable to verify the fee record's academic session. Please retry before making changes.",
+    };
+  }
+}
+
+/**
  * checkSessionContext — global middleware that runs on EVERY incoming request.
  *
  * For ALL request methods (GET included):
@@ -4310,11 +4342,15 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (sessionFilter == null) {
+      return res.json({
+        classes: [], sections: [], feeNames: [], feeTypes: [], feePeriods: [],
+        frequencies: [], statuses: [], paymentMethods: [], academicYears: [],
+      });
+    }
 
     try {
-      const sessionCond = sessionFilter != null
-        ? sql`AND fr.session_id = ${sessionFilter}`
-        : sql``;
+      const sessionCond = sql`AND fr.session_id = ${sessionFilter}`;
 
       // Fetch all distinct categorical values from the full session (not paged).
       // Fee-structure name is resolved via the SAME deterministic first-structure
@@ -4417,6 +4453,9 @@ export async function registerRoutes(
 
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (sessionFilter == null) {
+      return res.json({ records: [], total: 0, page: 1, pageSize, totalPages: 0 });
+    }
 
     // Normalize all ledger filters from query string (handles old singular fields).
     const filters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
@@ -4425,7 +4464,7 @@ export async function registerRoutes(
     const conditions: any[] = [
       sql`fr.school_id = ${schoolId}`,
     ];
-    if (sessionFilter != null) conditions.push(sql`fr.session_id = ${sessionFilter}`);
+    conditions.push(sql`fr.session_id = ${sessionFilter}`);
     if (studentId) {
       const sid = parseInt(studentId, 10);
       if (!Number.isFinite(sid)) return res.status(400).json({ message: "Invalid studentId" });
@@ -4651,6 +4690,12 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const [writeTarget] = await db.select({ sessionId: feeRecords.sessionId })
+      .from(feeRecords)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+    if (!writeTarget) return res.status(404).json({ message: "Fee record not found" });
+    const writeBlock = await feeRecordWriteBlock(writeTarget.sessionId, schoolId);
+    if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
     const parsed = feeRecordPatchSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     if (parsed.data.studentId !== undefined) {
@@ -4718,6 +4763,12 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const [writeTarget] = await db.select({ sessionId: feeRecords.sessionId })
+      .from(feeRecords)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+    if (!writeTarget) return res.status(404).json({ message: "Fee record not found" });
+    const writeBlock = await feeRecordWriteBlock(writeTarget.sessionId, schoolId);
+    if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
 
     // Require password confirmation for single delete
     const { password } = req.body ?? {};
@@ -4785,6 +4836,15 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
 
     const numericIds = ids.map((r: any) => parseInt(String(r))).filter((n: number) => !isNaN(n));
+    const writeTargets = numericIds.length > 0
+      ? await db.select({ sessionId: feeRecords.sessionId })
+          .from(feeRecords)
+          .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
+      : [];
+    for (const target of writeTargets) {
+      const writeBlock = await feeRecordWriteBlock(target.sessionId, schoolId);
+      if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
+    }
 
     try {
       const actor = await resolveFeeAuditActor(req, schoolId);
@@ -4927,7 +4987,10 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
     if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const viewSessionId: number | null = (req as any).viewSessionId
+      ?? (await storage.getActiveSession(student.schoolId))?.id
+      ?? null;
+    if (viewSessionId == null) return res.json([]);
     const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
 
     // Attach fee-structure name + breakdown to each record so students always
@@ -5013,14 +5076,22 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(403).json({ message: "Student not found" });
     if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-
-    const sessionCond = viewSessionId != null
-      ? sql`AND fr.session_id = ${viewSessionId}`
-      : sql``;
-
     const today = new Date();
     const currentYYYYMM = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    const viewSessionId: number | null = (req as any).viewSessionId
+      ?? (await storage.getActiveSession(student.schoolId))?.id
+      ?? null;
+    if (viewSessionId == null) {
+      return res.json({
+        previousArrears: 0,
+        currentMonthCharges: 0,
+        totalOutstanding: 0,
+        totalPaid: 0,
+        currentMonth: currentYYYYMM,
+      });
+    }
+
+    const sessionCond = sql`AND fr.session_id = ${viewSessionId}`;
 
     // For each unpaid fee record: compute net balance = invoice amount - total paid so far.
     // Split into "previous arrears" (due_date before this month) and "current charges" (due this month or later).
@@ -5062,9 +5133,7 @@ export async function registerRoutes(
     }
 
     // Also fetch total actually paid (for display)
-    const paidSessionCond = viewSessionId != null
-      ? sql`AND COALESCE(fr.session_id, pr.session_id) = ${viewSessionId}`
-      : sql``;
+    const paidSessionCond = sql`AND COALESCE(fr.session_id, pr.session_id) = ${viewSessionId}`;
     const paidRow = await db.execute(sql`
       SELECT COALESCE(SUM(pr.amount), 0)::int AS total_paid
       FROM payment_records pr
