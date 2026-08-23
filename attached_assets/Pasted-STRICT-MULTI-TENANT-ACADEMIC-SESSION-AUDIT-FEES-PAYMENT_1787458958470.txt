@@ -1,0 +1,250 @@
+STRICT MULTI-TENANT + ACADEMIC SESSION AUDIT — FEES & PAYMENTS
+
+Before making ANY code changes, I want you to thoroughly inspect the existing implementation and explain exactly how Academic Sessions and the Fees module currently work.
+
+Do not modify anything yet. This is an audit and verification only.
+
+Example scenario
+
+Assume the current active academic session is:
+
+2027–2028
+
+Now the admin goes to School Setup → Academic Session, creates a new session, for example:
+
+2028–2029
+
+The exact session name may vary; do not hard-code these names. Use the actual session ID/academicSessionId throughout the system.
+
+The admin then makes 2028–2029 ACTIVE.
+
+I need you to answer exactly what happens after this.
+
+---
+
+1. STUDENT PORTAL — FEES
+
+When the student opens the Student Portal after 2028–2029 becomes active:
+
+- Which academic session does the Fees module load?
+- Does it automatically use the newly active session?
+- What happens to the previous 2027–2028 invoices?
+- Does the student see old outstanding amounts mixed with the new session?
+- Does Total Fees start fresh for the new session?
+- What happens to:
+  - Total Fees
+  - Outstanding
+  - Paid amount
+  - Due amount
+  - Overdue amount
+  - Invoices
+  - Payment history
+  - Receipts
+  - Payment attempts
+  - Reminders
+  - Late fees
+  - Transactions
+  - Failed payments
+  - Refund-related records
+  - Any other Fees/Payments information
+
+I specifically want to know whether these are scoped by:
+
+tenant/school ID + academicSessionId + student ID
+
+and whether this scope is enforced in the backend/database queries, not merely hidden in the frontend.
+
+---
+
+2. NEW SESSION MUST NOT COLLIDE WITH OLD SESSION
+
+If 2028–2029 becomes active, verify whether its Fees data is completely isolated from 2027–2028.
+
+For example:
+
+2027–2028:
+
+- Invoice A
+- Invoice B
+- Outstanding ₹X
+- Payment history
+- Receipts
+
+2028–2029:
+
+- Should start with its own session-specific data.
+- It must NOT inherit/mix the previous session's invoices, outstanding, history, reminders or transactions unless there is an explicitly designed session-copy operation.
+
+Check for every relevant Fees/Payments table, relation, API, backend query and frontend state.
+
+---
+
+3. ADMIN PORTAL — SESSION SWITCHING
+
+Now assume the currently active session is:
+
+2028–2029
+
+If the administrator switches the Admin Portal to:
+
+2027–2028
+
+what exactly happens?
+
+Can the admin see the complete historical Fees & Payments data belonging to 2027–2028, including:
+
+- Fee structures
+- Invoices
+- Invoice items
+- Outstanding
+- Paid amounts
+- Transactions
+- Payment history
+- Receipts
+- Payment attempts
+- Failed/cancelled payments
+- Offline payments
+- Online/portal payments
+- Reminders
+- Late fees
+- Corrections
+- Refund records, if applicable
+- Ledger
+- Financial Analytics
+- Audit Log
+- Any other Fees & Payments data
+
+The old session must remain preserved and recoverable.
+
+---
+
+4. VERY IMPORTANT — BACKEND ENFORCEMENT
+
+Do NOT simply check whether the frontend displays the correct session.
+
+Trace the complete data flow:
+
+UI → API → backend route → service/storage → database query → response → UI
+
+For every Fees/Payments entity, determine:
+
+- Does it contain "schoolId" / tenant ID?
+- Does it contain "academicSessionId" where required?
+- Is the relationship correct?
+- Does every relevant query filter by both tenant and session?
+- Can an API accidentally return another session's data?
+- Can one school's data ever appear in another school's session?
+- Can changing the active session affect only the UI while the backend still returns mixed data?
+- Are cached/query states session-aware?
+- Are exports/PDFs session-aware?
+- Are Financial Analytics session-aware?
+- Are Audit Logs session-aware?
+- Are payment and receipt records correctly associated with the original session?
+
+5. DO NOT ASSUME
+
+Do not tell me that something is session-based merely because a column exists.
+
+Verify actual usage in:
+
+- Database schema
+- Foreign keys/relations
+- API endpoints
+- Backend services
+- SQL/ORM queries
+- Frontend queries
+- React/query cache keys
+- Session switching logic
+- Student Portal session logic
+- Admin Portal session logic
+- Invoice generation
+- Payment processing
+- Receipt generation
+- Ledger
+- Transactions
+- Financial Analytics
+- Audit Log
+
+Identify any place where "academicSessionId" is missing, optional when it should be mandatory, ignored, derived incorrectly, or replaced by the currently active session.
+
+---
+
+6. NEW SESSION BEHAVIOR
+
+Verify exactly what happens when a new session becomes active.
+
+I expect:
+
+New active session = new session-specific Fees context
+
+It should NOT automatically mix with the previous session.
+
+If there is an intentional "Copy Previous Session" feature, clearly explain which Fees configuration/data is copied and which transactional/history data is NOT copied.
+
+Do not assume copying rules. Inspect the actual implementation.
+
+---
+
+7. PREVIOUS SESSION BEHAVIOR
+
+When an admin switches back to an old session, I expect the old session's complete historical data to remain available according to the user's permissions.
+
+Verify whether this is actually true.
+
+Also verify that switching sessions does not modify, regenerate, overwrite, migrate, or duplicate the previous session's financial records.
+
+---
+
+8. STRICT MULTI-TENANT TEST
+
+Use at least two schools/tenants in the analysis.
+
+Test conceptually or with existing test fixtures:
+
+School A
+
+- Session 2027–2028
+- Session 2028–2029
+
+School B
+
+- Session 2027–2028
+- Session 2028–2029
+
+Verify that:
+
+- School A can never receive School B's Fees data.
+- School A's 2027–2028 cannot mix with School A's 2028–2029.
+- School B's 2027–2028 cannot mix with School A's 2027–2028.
+- Session switching cannot bypass tenant isolation.
+- Direct API manipulation of "academicSessionId" cannot expose another tenant/session.
+
+---
+
+FINAL REPORT REQUIRED
+
+Do NOT change code yet.
+
+Give me a detailed report with:
+
+1. What is currently correct
+2. What is currently wrong
+3. Which Fees/Payments tables are session-scoped
+4. Which tables are tenant-scoped
+5. Which tables are missing proper session isolation
+6. Which APIs are correctly session-scoped
+7. Which APIs can return mixed-session data
+8. Exactly what happens in Student Portal when a new session becomes active
+9. Exactly what happens when Admin switches to a previous session
+10. Whether Total Fees, Outstanding, History and Reminders are completely session-based
+11. Whether invoices/payments/receipts/transactions remain permanently associated with their original academic session
+12. Any caching/session-switching problems
+13. Any multi-tenant security risks
+14. Any data-integrity risks
+15. A clear YES/NO answer to this requirement:
+
+«Every school's Fees & Payments data must be isolated by "schoolId/tenantId + academicSessionId", while historical sessions remain fully preserved and recoverable. A newly active session must never mix with the previous session's financial data.»
+
+If anything is not 100% verified, explicitly mark it NOT VERIFIED instead of assuming it is correct.
+
+Again: audit only. Do not modify code until I review your findings.
