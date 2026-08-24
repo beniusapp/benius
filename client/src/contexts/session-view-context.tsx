@@ -7,7 +7,7 @@ export interface AcademicSession {
   startDate: string;
   endDate: string;
   isActive: boolean;
-  createdAt: string;
+  createdAt: string | null;
 }
 
 export interface PaymentUpdatePayload {

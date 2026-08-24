@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import Cropper from "react-easy-crop";
 import type { Point, Area } from "react-easy-crop";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -19,8 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, setViewSessionId, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { SessionViewContext, type AcademicSession } from "@/contexts/session-view-context";
+import {
+  getSessionDropdownPlacement,
+  isLegacyAdminSessionQueryKey,
+  resolveAdminViewSession,
+  type SessionDropdownPlacement,
+} from "@/lib/admin-session-view";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -1356,21 +1363,56 @@ function SessionSwitcher({
   isLoading: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState<SessionDropdownPlacement | null>(null);
+
+  const updatePlacement = useCallback(() => {
+    const trigger = triggerRef.current?.getBoundingClientRect();
+    if (!trigger || typeof window === "undefined") return;
+    const estimatedHeight = Math.min(360, 52 + sessions.length * 56);
+    setPlacement(getSessionDropdownPlacement(
+      trigger,
+      { width: window.innerWidth, height: window.innerHeight },
+      256,
+      estimatedHeight,
+    ));
+  }, [sessions.length]);
 
   useEffect(() => {
     function handleOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
     }
     document.addEventListener("mousedown", handleOutside);
-    return () => document.removeEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [open, updatePlacement]);
 
   const isArchive = selected ? !selected.isActive : false;
   const label = selected ? selected.sessionName : (isLoading ? "Loading…" : "No Session");
 
   return (
-    <div ref={ref} className="relative" data-testid="session-switcher">
+    <div ref={triggerRef} className="relative" data-testid="session-switcher">
       <button
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-2 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all duration-200"
@@ -1391,10 +1433,16 @@ function SessionSwitcher({
         <ChevronDown className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
+      {open && placement && typeof document !== "undefined" && createPortal(
         <div
-          className="absolute right-0 top-full mt-2 w-64 rounded-xl overflow-hidden z-50"
+          ref={menuRef}
+          className="fixed rounded-xl overflow-y-auto z-[100]"
           style={{
+            left: placement.left,
+            width: placement.width,
+            maxHeight: placement.maxHeight,
+            top: placement.top,
+            bottom: placement.bottom,
             background: "rgba(10,22,40,0.98)",
             backdropFilter: "blur(24px)",
             WebkitBackdropFilter: "blur(24px)",
@@ -1444,7 +1492,7 @@ function SessionSwitcher({
             </div>
           )}
         </div>
-      )}
+      , document.body)}
     </div>
   );
 }
@@ -1503,6 +1551,43 @@ export default function AdminDashboard() {
   // be included in every session-scoped queryKey.  The default is null; the
   // useEffect below sets it to the active session once sessions data loads.
   const [selectedViewSession, setSelectedViewSession] = useState<AcademicSession | null>(null);
+  const selectedViewSessionRef = useRef<AcademicSession | null>(null);
+
+  const selectViewSession = useCallback((session: AcademicSession | null) => {
+    const previousSessionId = selectedViewSessionRef.current?.id ?? null;
+    const nextSessionId = session?.id ?? null;
+
+    // Keep transport and visible selection in one synchronous state transition.
+    // No request can observe the new UI state with the old view-session header.
+    setViewSessionId(nextSessionId);
+    selectedViewSessionRef.current = session;
+
+    setSelectedViewSession(session);
+
+    if (previousSessionId !== nextSessionId) {
+      void (async () => {
+        await queryClient.cancelQueries({
+          predicate: (query) => (
+            query.meta?.sessionScoped === true
+            || isLegacyAdminSessionQueryKey(query.queryKey)
+          ),
+        });
+        // This clears only the header-scoped legacy module data before it
+        // refetches with the newly selected transport session. Queries that
+        // already carry a captured session ID use distinct keys and do not need
+        // this reset.
+        await queryClient.resetQueries({
+          predicate: (query) => isLegacyAdminSessionQueryKey(query.queryKey),
+        });
+      })();
+    }
+  }, []);
+
+  // A dashboard mount starts with no transport selection so a prior dashboard
+  // instance (for example before Session Migration) cannot leak its header.
+  useLayoutEffect(() => {
+    setViewSessionId(null);
+  }, []);
 
   function toggleGroup(group: string) {
     setExpandedGroups(prev => ({ ...prev, [group]: !prev[group] }));
@@ -1576,13 +1661,19 @@ export default function AdminDashboard() {
   // whenever the admin switches sessions.  The backend will receive
   // x-view-session-id via sessionFetch and can scope the response accordingly.
   const { data: dailySummary } = useQuery<{ total: number; present: number; percentage: number }>({
-    queryKey: ["/api/attendance/daily-summary", me?.schoolId, today, selectedViewSession?.id],
-    queryFn: async () => {
-      if (!me?.schoolId) return { total: 0, present: 0, percentage: 0 };
-      const r = await sessionFetch(`/api/attendance/daily-summary/${me.schoolId}/${today}`);
+    queryKey: ["admin-session-summary", selectedViewSession?.id ?? null, me?.schoolId, today],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, viewSessionId, schoolId, date] = queryKey as [string, number | null, number | undefined, string];
+      if (!schoolId || viewSessionId == null) return { total: 0, present: 0, percentage: 0 };
+      const r = await sessionFetchForViewSession(
+        `/api/attendance/daily-summary/${schoolId}/${date}`,
+        viewSessionId,
+        { signal },
+      );
       return r.ok ? r.json() : { total: 0, present: 0, percentage: 0 };
     },
-    enabled: !!me?.schoolId,
+    enabled: !!me?.schoolId && selectedViewSession?.id != null,
+    meta: { sessionScoped: true },
   });
 
   const { data: pendingLeaves = [] } = useQuery<unknown[]>({
@@ -1646,20 +1737,13 @@ export default function AdminDashboard() {
   });
 
   useEffect(() => {
-    if (sessions.length > 0 && !selectedViewSession) {
-      const active = sessions.find(s => s.isActive) ?? sessions[0];
-      setSelectedViewSession(active);
+    const resolved = resolveAdminViewSession(sessions, selectedViewSession);
+    if (resolved !== selectedViewSession) {
+      selectViewSession(resolved);
     }
-  }, [sessions, selectedViewSession]);
+  }, [sessions, selectedViewSession, selectViewSession]);
 
   const isArchiveMode = selectedViewSession ? !selectedViewSession.isActive : false;
-
-  useEffect(() => {
-    setViewSessionId(selectedViewSession?.id ?? null);
-    // Bust every cached query so all modules immediately refetch
-    // scoped to the newly-selected session.
-    queryClient.invalidateQueries();
-  }, [selectedViewSession]);
 
   const pendingLeavesCount          = (pendingLeaves          as { status: string }[]).filter(l => l.status === "pending").length;
   const forwardedStudentLeavesCount = (forwardedStudentLeaves as unknown[]).length;
@@ -1773,7 +1857,7 @@ export default function AdminDashboard() {
     <SessionViewContext.Provider value={{
       sessions,
       selectedSession: selectedViewSession,
-      setSelectedSession: setSelectedViewSession,
+      setSelectedSession: selectViewSession,
       isArchiveMode,
       isSessionsLoading,
       pendingActivation: null,
@@ -1837,7 +1921,7 @@ export default function AdminDashboard() {
             <SessionSwitcher
               sessions={sessions}
               selected={selectedViewSession}
-              onSelect={setSelectedViewSession}
+              onSelect={selectViewSession}
               isLoading={isSessionsLoading}
             />
           </div>

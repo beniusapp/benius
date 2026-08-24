@@ -34,6 +34,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { fmtDate } from "@/lib/dateUtils";
+import { useSessionView } from "@/contexts/session-view-context";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1725,6 +1726,7 @@ function EmptyState() {
 export default function AcademicSessions({ schoolId, isArchiveMode = false }: Props) {
   const { toast }       = useToast();
   const [, setLocation] = useLocation();
+  const { setSelectedSession } = useSessionView();
 
   const [showCreate,     setShowCreate]     = useState(false);
   const [rolloverTarget, setRolloverTarget] = useState<AcademicSession | null>(null);
@@ -1752,6 +1754,7 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
     },
     onSuccess: (session) => {
       setShowCreate(false);
+      if (session.isActive) setSelectedSession(session);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
       toast({ title: "Session created", description: `"${session.sessionName}" is ready as a fresh session.` });
     },
@@ -1765,8 +1768,20 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
       if (!r.ok) { const err = await r.json(); throw new Error(err.message || "Failed to activate"); }
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (session: AcademicSession) => {
       setRolloverTarget(null);
+      // The activation endpoint returns the authoritative active session.
+      // Publish it through the dashboard-owned setter before refetching so the
+      // selector, context, archive mode, and transport header change together.
+      setSelectedSession(session);
+      queryClient.setQueriesData<AcademicSession[]>(
+        { queryKey: ["/api/admin/academic-sessions"] },
+        (current) => current?.map((item) => (
+          item.id === session.id
+            ? { ...item, ...session }
+            : { ...item, isActive: false, status: "archived" }
+        )),
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
       toast({ title: "Session activated", description: "Roster rolled over to the new session." });
     },

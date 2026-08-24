@@ -1,0 +1,177 @@
+Fix the **Admin Portal Academic Session Selector** based strictly on the investigation findings above.
+
+### Objective
+
+The selected academic session must always be the **single source of truth** for:
+
+* Top-bar selected session
+* Active/Archived status
+* `SessionViewContext`
+* `isArchiveMode`
+* `x-view-session-id`
+* Session-scoped React Query requests
+
+There must never be a situation where the UI shows one session while API requests use another.
+
+### 1. Fix activation synchronization
+
+When the admin activates a new academic session, immediately synchronize the Admin Portal selector with the newly activated session.
+
+Example:
+
+* Currently viewing `2027–2028`
+* Admin activates `2028–2029`
+* `2028–2029` becomes active
+
+Immediately after successful activation:
+
+* Top bar must show `2028–2029`
+* It must show it as **Active**
+* `isArchiveMode` must become `false`
+* `SessionViewContext.selectedSession` must be `2028–2029`
+* `x-view-session-id` must become the new session ID
+* Session-scoped queries must refresh using the new session
+* No stale `2027–2028` session data may remain visible
+
+Do NOT rely on dashboard remounting or manual session selection to correct this.
+
+### 2. Make session transport safe during rapid switching
+
+Fix the existing race caused by the mutable global `_viewSessionId` and the `useEffect` synchronization delay.
+
+During rapid switching such as:
+
+`2027–2028 → 2028–2029 → 2027–2028 → 2028–2029`
+
+a request must never contain:
+
+* Session A in its query/cache identity
+* while using Session B in `x-view-session-id`
+
+Every session-aware request must use the **same captured session ID** for both its request and its React Query key.
+
+Stale/in-flight requests must be cancelled or ignored when the selected session changes.
+
+The UI must never render stale results or stale errors from a previous session.
+
+### 3. Normal Admin Portal navigation
+
+Verify that navigating between normal Admin Portal modules preserves the currently selected session.
+
+Example:
+
+`2027–2028 → Fees → School Setup → Analytics → Ledger`
+
+The selected session must remain `2027–2028` unless the admin explicitly changes it.
+
+Do not reset the selector simply because the module changes.
+
+### 4. Session Migration route
+
+The separate:
+
+`/admin-dashboard/school-setup/session-migration`
+
+route must be handled deliberately.
+
+When returning to the Admin Dashboard after Session Migration:
+
+* the selector must resolve to the currently active academic session
+* `SessionViewContext` must be correct
+* `x-view-session-id` must be correct
+* no stale pre-migration session object may remain
+
+Do not change the migration/copy business logic itself.
+
+### 5. Dashboard remount
+
+After a dashboard remount:
+
+* load the current session list
+* select the current active session by default
+* ensure the transport session ID matches it
+
+Do not restore a stale/deleted/cross-school session.
+
+### 6. React Query/cache handling
+
+Do not use blanket:
+
+`queryClient.invalidateQueries()`
+
+as the primary mechanism for session synchronization.
+
+Where practical:
+
+* use session-aware query keys
+* include the selected session ID in session-scoped query identity
+* cancel stale session requests
+* invalidate/refetch only the affected session-scoped queries
+
+Do NOT modify unrelated application caching.
+
+### 7. Dropdown UI
+
+Fix the Academic Session dropdown so it is responsive and viewport-aware.
+
+Requirements:
+
+* It must not be hard-coded to open only downward.
+* If there is insufficient space below, it should open upward.
+* It must not be clipped by the sticky navbar.
+* It must remain fully visible on narrow/mobile screens.
+* Preserve the existing design/style as much as possible.
+* Do not change unrelated navbar functionality.
+
+### Strict scope
+
+This task is ONLY about:
+
+**Admin Portal Academic Session Selector synchronization, transport race protection, cache/session identity, navigation/remount behavior, and dropdown positioning.**
+
+Do NOT change:
+
+* Fees & Payments logic
+* Student Portal Fees
+* External Portal
+* Financial Analytics business logic
+* Session creation/activation business rules
+* Session migration/copy semantics
+* Backend financial/session data model
+* Multi-tenant isolation rules
+* Payment/Razorpay logic
+* Any unrelated module behavior
+
+### Required verification
+
+Do not report completion based only on code inspection.
+
+Run real tests and verify:
+
+1. Activate `2028–2029` while viewing `2027–2028` → selector immediately changes to `2028–2029`.
+2. Top bar correctly shows Active.
+3. `SessionViewContext` matches the selector.
+4. `x-view-session-id` matches the selector.
+5. `2027–2028 → 2028–2029 → 2027–2028` works correctly.
+6. Rapid switching does not produce session-mismatch errors.
+7. No stale data from the previous session appears.
+8. Normal module navigation preserves the selected session.
+9. Session Migration → return to Dashboard resolves correctly.
+10. Dashboard remount resolves to the correct active session.
+11. Narrow viewport dropdown remains fully visible.
+12. Upward dropdown placement works when there is insufficient space below.
+13. Cross-school/foreign session IDs cannot become selected.
+14. Deleted/invalid sessions cannot remain selected.
+15. TypeScript/build checks pass.
+16. Add permanent regression tests for activation, rapid switching, navigation, remount, migration, and dropdown behavior.
+
+Use temporary test fixtures where necessary and **delete all fixtures afterward**.
+
+At the end, report:
+
+* exactly what was changed
+* tests performed
+* test results
+* any remaining issue
+
+Do not modify anything outside this scope.

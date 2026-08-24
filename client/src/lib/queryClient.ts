@@ -108,14 +108,14 @@ export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
-  async ({ queryKey }) => {
+  async ({ queryKey, signal }) => {
     // sessionFetch injects x-view-session-id on every GET so the backend
     // checkSessionContext middleware sets req.viewSessionId, allowing any
     // route handler to scope its database query to the correct academic year.
     // Query keys may include selected session IDs and other cache-only values.
     // Only their first entry is the request URL; joining the whole key would
     // accidentally turn a cache identity into a different endpoint.
-    const res = await sessionFetch(String(queryKey[0]));
+    const res = await sessionFetch(String(queryKey[0]), { signal });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;
