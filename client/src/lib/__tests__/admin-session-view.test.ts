@@ -3,6 +3,7 @@ import {
   getSessionDropdownPlacement,
   isLegacyAdminSessionQueryKey,
   resolveAdminViewSession,
+  updateAdminSessionList,
 } from "@/lib/admin-session-view";
 import { sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
 
@@ -24,6 +25,23 @@ describe("Admin Portal academic-session selection", () => {
     ];
 
     expect(resolveAdminViewSession(refreshedSessions, activationResponse)).toBe(activationResponse);
+  });
+
+  it("updates only session-list-shaped cache data, not object-shaped prefixed caches", () => {
+    const updated = updateAdminSessionList(
+      [
+        { ...active, isActive: true, status: "active" },
+        { ...archived, isActive: false, status: "archived" },
+      ],
+      { ...archived, isActive: true, status: "active" },
+    );
+
+    expect(updated).toEqual([
+      { ...active, isActive: false, status: "archived" },
+      { ...archived, isActive: true, status: "active" },
+    ]);
+    expect(updateAdminSessionList(undefined, active)).toBeUndefined();
+    expect(updateAdminSessionList({} as never, active)).toEqual({});
   });
 
   it("preserves an explicit archive selection through normal module navigation", () => {

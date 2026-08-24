@@ -1,0 +1,52 @@
+Please investigate and fix the Academic Session activation error shown in the attached screenshot:
+
+**Error:**
+`Activation failed — currentMap is not a function`
+
+This happens when clicking **Activate** on an archived academic session.
+
+### What I need you to do
+
+1. **Do not change the session activation business rules or migration/copy semantics.**
+2. Trace the complete activation flow:
+
+   * Activate button
+   * frontend mutation/request
+   * backend activation endpoint
+   * session state update
+   * response handling
+   * cache/session-selector synchronization
+3. Find the **exact source of `currentMap is not a function`**.
+4. Determine whether this was introduced by the recent **Task B Academic Session Selector synchronization changes**.
+5. Fix the root cause properly rather than adding a workaround or hiding the error.
+6. Preserve all existing requirements:
+
+   * Only one active session per school.
+   * Previous session becomes archived.
+   * Existing session data remains untouched.
+   * Selected session updates correctly after activation.
+   * `x-view-session-id` stays synchronized.
+   * Fees & Payments session isolation remains unchanged.
+   * External Portal remains global and must not be affected.
+
+### Testing required
+
+After fixing it, test the **actual activation workflow**:
+
+* Activate an archived session.
+* Confirm activation succeeds without any error.
+* Confirm the newly activated session becomes **Active**.
+* Confirm the previous active session becomes **Archived**.
+* Confirm the Admin Portal top-bar selector immediately shows the newly active session.
+* Confirm `SessionViewContext`, archive mode, and `x-view-session-id` all point to the newly active session.
+* Switch between sessions afterward and verify normal switching still works.
+* Confirm Fees & Payments and External Portal behavior has not been changed.
+
+Also run:
+
+* TypeScript/type check
+* Relevant session/activation regression tests
+* Production build
+* Actual browser verification of the Activate button
+
+**Important:** Do not make unrelated changes. Fix only the root cause of `currentMap is not a function` and any directly necessary regression coverage.

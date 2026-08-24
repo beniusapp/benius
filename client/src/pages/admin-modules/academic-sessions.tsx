@@ -35,6 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { fmtDate } from "@/lib/dateUtils";
 import { useSessionView } from "@/contexts/session-view-context";
+import { updateAdminSessionList } from "@/lib/admin-session-view";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -1774,14 +1775,19 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
       // Publish it through the dashboard-owned setter before refetching so the
       // selector, context, archive mode, and transport header change together.
       setSelectedSession(session);
-      queryClient.setQueriesData<AcademicSession[]>(
-        { queryKey: ["/api/admin/academic-sessions"] },
-        (current) => current?.map((item) => (
-          item.id === session.id
-            ? { ...item, ...session }
-            : { ...item, isActive: false, status: "archived" }
-        )),
-      );
+      // Keep these exact list keys separate from promotion-summary and
+      // module-preview keys, which share the same URL prefix but contain
+      // objects rather than session arrays.
+      const sessionListKeys: readonly unknown[][] = [
+        ["/api/admin/academic-sessions"],
+        ["/api/admin/academic-sessions", schoolId],
+      ];
+      for (const queryKey of sessionListKeys) {
+        queryClient.setQueryData<AcademicSession[]>(
+          queryKey,
+          (current) => updateAdminSessionList(current, session),
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
       toast({ title: "Session activated", description: "Roster rolled over to the new session." });
     },

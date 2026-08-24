@@ -3,6 +3,19 @@ export interface ViewSession {
   isActive: boolean;
 }
 
+export function updateAdminSessionList<T extends ViewSession & { status?: string }>(
+  current: T[] | undefined,
+  activated: T,
+): T[] | undefined {
+  if (!Array.isArray(current)) return current;
+
+  return current.map((item) => (
+    item.id === activated.id
+      ? { ...item, ...activated }
+      : { ...item, isActive: false, ...(item.status !== undefined ? { status: "archived" } : {}) }
+  ));
+}
+
 const SESSION_SCOPED_QUERY_PREFIXES = [
   "/api/attendance",
   "/api/leave",
