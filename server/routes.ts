@@ -3114,6 +3114,11 @@ export async function registerRoutes(
       }
 
       const existing = await storage.getAcademicSessions(schoolId);
+      // A brand-new school needs a usable active session immediately. Keep
+      // the existing request-driven behavior for schools that already have
+      // session history.
+      const isFirstSession = existing.length === 0;
+      const shouldActivate = isFirstSession || setAsActive;
 
       if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase())) {
         console.log(`[SESSION-CREATE] ✗ STEP 1 failed: duplicate name "${sessionName}"`);
@@ -3232,8 +3237,8 @@ export async function registerRoutes(
             sessionName:          sessionName.trim(),
             startDate,
             endDate,
-            isActive:             setAsActive,
-            status:               setAsActive ? "active" : status,
+            isActive:             shouldActivate,
+            status:               shouldActivate ? "active" : status,
             newAdmissionsEnabled,
             promotionStrategy,
             copiedFromSessionId:  copiedFromSessionId ?? null,
@@ -3251,7 +3256,7 @@ export async function registerRoutes(
         executionLog.push("STEP 3b-reset — skipped at creation; reset runs at activation time");
 
         // Step 3c: Activate if requested
-        if (setAsActive) {
+        if (shouldActivate) {
           console.log("[SESSION-CREATE] 3c — activating, archiving siblings");
           await tx.update(academicSessions)
             .set({ isActive: false, status: "archived" })
