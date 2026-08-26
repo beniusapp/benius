@@ -2,7 +2,6 @@ const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function run() {
-  // 1. Create the sequences table
   await pool.query(`
     CREATE TABLE IF NOT EXISTS id_sequences (
       school_id    INTEGER NOT NULL,
@@ -11,63 +10,61 @@ async function run() {
       PRIMARY KEY (school_id, type)
     )
   `);
-  console.log('Table created / verified.');
+  const result = await pool.query(`
+    WITH teacher_ids AS (
+      SELECT school_id, digital_teacher_id
+      FROM teachers
+      UNION ALL
+      SELECT school_id, digital_teacher_id
+      FROM removed_teachers_log
+    ),
+    counters AS (
+      SELECT
+        s.id AS school_id,
+        'dtid'::TEXT AS type,
+        COALESCE(MAX(
+          CASE
+            WHEN LEFT(t.digital_teacher_id, LENGTH(s.code) + 2) = s.code || '-T'
+             AND SUBSTRING(t.digital_teacher_id FROM LENGTH(s.code) + 3) ~ '^[0-9]+$'
+            THEN SUBSTRING(t.digital_teacher_id FROM LENGTH(s.code) + 3)::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS last_issued
+      FROM schools s
+      LEFT JOIN teacher_ids t ON t.school_id = s.id
+      GROUP BY s.id, s.code
 
-  // 2. Get all schools
-  const schools = (await pool.query('SELECT id, code FROM schools')).rows;
+      UNION ALL
 
-  for (const school of schools) {
-    const sid = school.id;
-    const code = school.code;
+      SELECT
+        s.id AS school_id,
+        'dsid'::TEXT AS type,
+        COALESCE(MAX(
+          CASE
+            WHEN LEFT(st.digital_student_id, LENGTH(s.code) + 1) = s.code || '-'
+             AND SUBSTRING(st.digital_student_id FROM LENGTH(s.code) + 2) ~ '^[0-9]+$'
+            THEN SUBSTRING(st.digital_student_id FROM LENGTH(s.code) + 2)::INTEGER
+            ELSE 0
+          END
+        ), 0)::INTEGER AS last_issued
+      FROM schools s
+      LEFT JOIN students st ON st.school_id = s.id
+      GROUP BY s.id, s.code
+    )
+    INSERT INTO id_sequences (school_id, type, last_issued)
+    SELECT school_id, type, last_issued
+    FROM counters
+    ON CONFLICT (school_id, type) DO UPDATE
+    SET last_issued = GREATEST(id_sequences.last_issued, EXCLUDED.last_issued)
+    RETURNING school_id, type, last_issued
+  `);
 
-    // --- DTID: max across active teachers AND removed_teachers_log ---
-    const teacherPrefix = code + '-T';
-    const activeTeachers = (await pool.query(
-      `SELECT digital_teacher_id FROM teachers WHERE school_id = $1 AND digital_teacher_id LIKE $2`,
-      [sid, teacherPrefix + '%']
-    )).rows;
-    const removedTeachers = (await pool.query(
-      `SELECT digital_teacher_id FROM removed_teachers_log WHERE school_id = $1 AND digital_teacher_id LIKE $2`,
-      [sid, teacherPrefix + '%']
-    )).rows;
-    const allTeacherIds = [...activeTeachers, ...removedTeachers];
-    let dtidMax = 0;
-    for (const row of allTeacherIds) {
-      const suffix = (row.digital_teacher_id || '').replace(teacherPrefix, '');
-      const num = parseInt(suffix, 10);
-      if (!isNaN(num) && num > dtidMax) dtidMax = num;
-    }
-    await pool.query(`
-      INSERT INTO id_sequences (school_id, type, last_issued) VALUES ($1, 'dtid', $2)
-      ON CONFLICT (school_id, type) DO UPDATE
-        SET last_issued = GREATEST(id_sequences.last_issued, EXCLUDED.last_issued)
-    `, [sid, dtidMax]);
-    console.log(`DTID  school=${code} (id=${sid}) -> last_issued=${dtidMax}`);
-
-    // --- DSID: max across active students ---
-    const studentPrefix = code + '-';
-    const activeStudents = (await pool.query(
-      `SELECT digital_student_id FROM students WHERE school_id = $1 AND digital_student_id LIKE $2`,
-      [sid, studentPrefix + '%']
-    )).rows;
-    let dsidMax = 0;
-    for (const row of activeStudents) {
-      const suffix = (row.digital_student_id || '').replace(studentPrefix, '');
-      const num = parseInt(suffix, 10);
-      if (!isNaN(num) && num > dsidMax) dsidMax = num;
-    }
-    await pool.query(`
-      INSERT INTO id_sequences (school_id, type, last_issued) VALUES ($1, 'dsid', $2)
-      ON CONFLICT (school_id, type) DO UPDATE
-        SET last_issued = GREATEST(id_sequences.last_issued, EXCLUDED.last_issued)
-    `, [sid, dsidMax]);
-    console.log(`DSID  school=${code} (id=${sid}) -> last_issued=${dsidMax}`);
-  }
-
-  const final = (await pool.query('SELECT * FROM id_sequences ORDER BY school_id, type')).rows;
-  console.log('\nFinal id_sequences table:');
-  console.table(final);
-  pool.end();
+  console.log(`id_sequences created/verified; ${result.rowCount} counters safely initialized.`);
 }
 
-run().catch(e => { console.error('FAILED:', e.message); pool.end(); process.exit(1); });
+run()
+  .catch((e) => {
+    console.error('FAILED:', e.message);
+    process.exitCode = 1;
+  })
+  .finally(() => pool.end());

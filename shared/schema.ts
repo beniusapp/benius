@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -30,6 +30,17 @@ export const schools = pgTable("schools", {
   pan: text("pan"),
   gstin: text("gstin"),
 });
+
+// Monotonically-increasing DSID/DTID counters, scoped per school and ID type.
+// Keep the deployed table contract unchanged: the composite key is authoritative
+// and school_id intentionally has no foreign-key constraint.
+export const idSequences = pgTable("id_sequences", {
+  schoolId: integer("school_id").notNull(),
+  type: text("type").notNull(),
+  lastIssued: integer("last_issued").notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.schoolId, table.type], name: "id_sequences_pkey" }),
+]);
 
 /**
  * Immutable online-payment lifecycle records.  `payment_attempts` remains the
