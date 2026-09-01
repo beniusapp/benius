@@ -1,0 +1,153 @@
+Phase 3 is approved and verified. Proceed with Phase 4.
+
+PHASE 4 GOAL:
+Switch Teacher, Admin, and Student portals to consume the Authoritative Backend Academic Calculation Engine.
+
+The final requirement is:
+
+Teacher Result
+=
+Admin Result
+=
+Student Result
+=
+Analytics Result
+=
+Promotion Ledger Result
+=
+Backend Result
+
+All authoritative academic values must come from the same backend engine.
+
+IMPORTANT:
+Do not blindly delete the existing frontend calculation logic immediately.
+
+Implement this in a safe migration order.
+
+1. Identify every frontend calculation path in:
+
+- Teacher Examination
+- Admin Performance Analytics
+- Student Examination
+- Promotion Ledger
+- Exam Controller
+- Report Card paths
+
+2. Replace frontend-authoritative calculations with backend API responses.
+
+Frontend responsibilities must be limited to:
+
+- Requesting authorized results
+- Displaying backend results
+- Displaying policy/configuration errors
+- Displaying incomplete data states
+- Submitting Teacher Decisions
+- Submitting Admin Overrides
+
+Frontend must NOT independently determine:
+
+- Percentage
+- Grade
+- Pass/Fail
+- Failed subjects
+- Attendance result
+- Term average
+- Cumulative percentage
+- Promotion verdict
+- Promotion rules
+
+3. Use the existing authoritative backend engine created in Phase 2.
+
+Every request must remain scoped by:
+
+authenticated school
+→ session
+→ authorized user
+→ authoritative student
+→ authoritative class/section
+
+Never allow the frontend to select another school's policy or academic data.
+
+4. Preserve temporary parity comparison capability.
+
+During migration, compare:
+
+Legacy Frontend Result
+vs
+Authoritative Backend Result
+
+Log/report meaningful differences caused by legacy behavior, but the backend must become the displayed authoritative source once that portal is switched.
+
+5. Handle explicit backend states correctly:
+
+POLICY_NOT_CONFIGURED
+POLICY_CONFIGURATION_AMBIGUOUS
+POLICY_CONFIGURATION_INCOMPLETE
+INVALID_POLICY_WEIGHT_CONFIGURATION
+DUPLICATE_SCORE_DATA
+INVALID_SCORE_DATA
+incomplete evaluation
+
+If promoted is null, the UI must clearly show that no authoritative promotion verdict is available.
+
+Never display Pass or Fail from a frontend fallback.
+
+6. Switch portals carefully in this order:
+
+Phase 4A:
+Teacher Examination
+
+Phase 4B:
+Admin Performance Analytics
+
+Phase 4C:
+Student Examination
+
+Phase 4D:
+Promotion Ledger / Exam Controller / Report Card consumers
+
+Verify each before proceeding to the next.
+
+7. Student security requirements:
+
+- Student can only access own result.
+- Only published academic results/scores may be displayed.
+- Student cannot see unpublished working data.
+- Student must use the backend's school-specific policy result.
+- Remove hardcoded 35% and hardcoded grade brackets from the authoritative display path.
+
+8. Teacher/Admin requirements:
+
+- Teacher and Admin must display the same authoritative calculation result.
+- Teacher decisions remain separate from System Policy Verdict.
+- Admin Overrides remain separate from Teacher Decisions.
+- Manual decisions must never overwrite the original backend policy verdict.
+
+9. Do not modify unrelated modules.
+
+10. Before declaring Phase 4 complete:
+
+Run:
+- TypeScript check
+- Relevant tests
+- Portal-by-portal verification
+- Cross-school isolation test
+- Cross-session isolation test
+- Teacher/Admin parity test
+- Teacher/Student parity test
+- Percentage/grade/both passing tests
+- Rules 1–4 tests
+- Published vs unpublished student visibility tests
+- Incomplete data tests
+
+Report:
+
+- Files changed
+- Which frontend engines were removed or disabled
+- Which backend endpoint each portal now uses
+- Remaining legacy calculation code, if any
+- Any parity differences discovered
+- Verification results
+
+Begin Phase 4A with Teacher Examination first.
+Do not proceed to the next portal until the current portal is verified.

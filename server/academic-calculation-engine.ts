@@ -186,15 +186,36 @@ export function calculateAcademicResults(input: CalculationInput) {
       gradePoint: string | null;
       remarks: string | null;
       status: ResultStatus;
+      breakdown: Array<{
+        sourceExam: string; weight: number; marks: number | null; totalMarks: number | null;
+        isAbsent: boolean; pct: number | null; contribution: number | null;
+        status: "scored" | "absent" | "missing";
+      }>;
     }> = {};
     for (const [term, components] of Object.entries(weights)) {
       const records = components.map(c => scores.find(s => s.subject === subject && s.examType === c.source_exam));
+      const breakdown = components.map((component, index) => {
+        const record = records[index];
+        if (!record) return {
+          sourceExam: component.source_exam, weight: component.weight, marks: null, totalMarks: null,
+          isAbsent: false, pct: null, contribution: null, status: "missing" as const,
+        };
+        if (record.isAbsent) return {
+          sourceExam: component.source_exam, weight: component.weight, marks: record.marks, totalMarks: record.totalMarks,
+          isAbsent: true, pct: null, contribution: null, status: "absent" as const,
+        };
+        const pct = record.marks / record.totalMarks * 100;
+        return {
+          sourceExam: component.source_exam, weight: component.weight, marks: record.marks, totalMarks: record.totalMarks,
+          isAbsent: false, pct, contribution: pct * component.weight / 100, status: "scored" as const,
+        };
+      });
       if (records.some(r => !r)) {
-        terms[term] = { percentage: null, grade: null, gradePoint: null, remarks: null, status: "incomplete" };
+        terms[term] = { percentage: null, grade: null, gradePoint: null, remarks: null, status: "incomplete", breakdown };
         violations.push({ rule: "data", term, reason: `${subject}: missing weighted exam component` }); continue;
       }
       if (records.some(r => r!.isAbsent)) {
-        terms[term] = { percentage: null, grade: null, gradePoint: null, remarks: null, status: "absent" };
+        terms[term] = { percentage: null, grade: null, gradePoint: null, remarks: null, status: "absent", breakdown };
         continue;
       }
       const percentage = roundHalfUpOneDecimal(records.reduce((sum, r, i) => sum + (r!.marks / r!.totalMarks * 100) * components[i].weight / 100, 0));
@@ -205,15 +226,21 @@ export function calculateAcademicResults(input: CalculationInput) {
         gradePoint: grade.gradePoint ?? null,
         remarks: grade.remarks ?? null,
         status: passing(grading, percentage, grade.grade) ? "pass" : "fail",
+        breakdown,
       };
     }
     return { subject, terms };
   });
   const termAverages: Record<string, number | null> = {};
+  const termGrades: Record<string, { label: string; gradePoint: string | null; remarks: string | null } | null> = {};
   for (const term of Object.keys(weights)) {
     const values = subjectResults.map(s => s.terms[term].percentage);
     termAverages[term] = values.length && values.every((v): v is number => v !== null)
       ? roundHalfUpOneDecimal(values.reduce((a, b) => a + b, 0) / values.length) : null;
+    termGrades[term] = termAverages[term] === null ? null : (() => {
+      const grade = gradeFor(grading, termAverages[term]!);
+      return { label: grade.grade, gradePoint: grade.gradePoint ?? null, remarks: grade.remarks ?? null };
+    })();
   }
   const attendance: Record<string, number | null> = {};
   const failedSubjectCounts: Record<string, number> = {};
@@ -271,6 +298,7 @@ export function calculateAcademicResults(input: CalculationInput) {
   }
   const cumulative = (resultsConfig.cumulative ?? {}) as { enabled?: boolean; promotionEnabled?: boolean; triggerTerm?: string; termWeights?: Record<string, number>; minPercent?: number };
   let cumulativeAverage: number | null = null;
+  let cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null = null;
   if (cumulative.enabled) {
     const tw = cumulative.termWeights ?? {}; const entries = Object.entries(tw);
     if (!entries.length || entries.some(([, w]) => !finite(w) || w <= 0) || entries.reduce((n, [, w]) => n + w, 0) !== 100)
@@ -288,7 +316,11 @@ export function calculateAcademicResults(input: CalculationInput) {
       fail("POLICY_CONFIGURATION_INCOMPLETE", "Cumulative promotion rule is incomplete.");
     }
     if (entries.some(([term]) => termAverages[term] === null || termAverages[term] === undefined)) violations.push({ rule: "data", reason: "Cumulative average is incomplete" });
-    else cumulativeAverage = roundHalfUpOneDecimal(entries.reduce((n, [term, w]) => n + termAverages[term]! * w / 100, 0));
+    else {
+      cumulativeAverage = roundHalfUpOneDecimal(entries.reduce((n, [term, w]) => n + termAverages[term]! * w / 100, 0));
+      const grade = gradeFor(grading, cumulativeAverage);
+      cumulativeGrade = { label: grade.grade, gradePoint: grade.gradePoint ?? null, remarks: grade.remarks ?? null };
+    }
     if (cumulative.promotionEnabled && cumulativeAverage !== null && cumulative.triggerTerm &&
         (input.currentTerm ?? cumulative.triggerTerm) === cumulative.triggerTerm &&
         cumulativeAverage < (cumulative.minPercent ?? NaN))
@@ -301,8 +333,10 @@ export function calculateAcademicResults(input: CalculationInput) {
     policy: { gradingId: grading.id, examId: exam.id, gradingSnapshot: grading, examSnapshot: exam },
     subjectResults,
     termAverages,
+    termGrades,
     failedSubjectCounts,
     cumulativeAverage,
+    cumulativeGrade,
     attendance,
     violations,
     complete,

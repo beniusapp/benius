@@ -8,7 +8,7 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, academicTermBoundaries, examPolicyTiers, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, academicTermBoundaries, examPolicyTiers, enrollments, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
@@ -258,6 +258,49 @@ export function registerTeacherRoutes(app: Express) {
       }
       console.error("GET /api/academic-calculation/:studentId error:", error);
       res.status(500).json({ message: "Failed to calculate academic result." });
+    }
+  });
+
+  app.get("/api/teacher/academic-results/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const className = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const assigned = mappings.some(m => m.className === className && m.section === section) ||
+      (teacher.assignedClass === className && teacher.assignedSection === section);
+    if (!assigned) return res.status(403).json({ message: "Not authorized for this class-section." });
+    const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    const term = typeof req.query.term === "string" ? req.query.term : undefined;
+    try {
+      const enrollmentRows = await db.select().from(enrollments).where(and(
+        eq(enrollments.schoolId, teacher.schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, className),
+        eq(enrollments.sectionName, section),
+      ));
+      const results = await Promise.all(enrollmentRows.map(async enrollment => {
+        const student = await storage.getStudentById(enrollment.studentId);
+        if (!student) return null;
+        const result = await calculateStudentAcademicResult({
+          schoolId: teacher.schoolId, sessionId, studentId: enrollment.studentId, currentTerm: term, publishedOnly: false,
+        });
+        return {
+          ...result,
+          name: student.name,
+          digitalStudentId: student.digitalStudentId,
+          rollNumber: student.rollNumber,
+        };
+      }));
+      res.json({ sessionId, results: results.filter(Boolean) });
+    } catch (error) {
+      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
+        return res.status(422).json({ code: error.code, message: error.message });
+      }
+      console.error("GET /api/teacher/academic-results error:", error);
+      res.status(500).json({ message: "Failed to calculate class academic results." });
     }
   });
   // ===== TEACHER CRUD (Principal) =====

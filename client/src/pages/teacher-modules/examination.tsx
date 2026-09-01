@@ -51,15 +51,79 @@ interface CompBreakdown {
 interface SubjectTermResult {
   subject: string; percentage: number | null; passed: boolean | null;
   breakdown: CompBreakdown[]; status: "scored" | "absent" | "incomplete";
+  grade: string | null; gradePoint: string | null; remarks: string | null;
 }
 interface ComputedStudentResult {
   studentId: number; name: string; digitalStudentId: string; rollNumber: number | null;
   termResults: Record<string, SubjectTermResult[]>;
   allTermFailCounts: Record<string, number>;
   attendancePct: number | null;
-  promoted: boolean; promotionReason: string;
+  promoted: boolean | null; promotionReason: string;
   /** Every policy rule that fired against this student — all four rules evaluated independently. */
   detentionViolations: string[];
+  termAverages: Record<string, number | null>;
+  termGrades: Record<string, { label: string; gradePoint: string | null; remarks: string | null } | null>;
+  cumulativeAverage: number | null;
+  cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null;
+  complete: boolean;
+}
+
+type AuthoritativeAcademicResult = {
+  scope: { studentId: number };
+  subjectResults: Array<{ subject: string; terms: Record<string, {
+    percentage: number | null; grade: string | null; gradePoint: string | null; remarks: string | null;
+    status: "pass" | "fail" | "absent" | "incomplete"; breakdown: CompBreakdown[];
+  }> }>;
+  termAverages: Record<string, number | null>;
+  termGrades: ComputedStudentResult["termGrades"];
+  cumulativeAverage: number | null;
+  cumulativeGrade: ComputedStudentResult["cumulativeGrade"];
+  attendance: Record<string, number | null>;
+  failedSubjectCounts: Record<string, number>;
+  violations: Array<{ rule: string; term?: string; reason: string }>;
+  promoted: boolean | null;
+  complete: boolean;
+  name: string; digitalStudentId: string; rollNumber: number | null;
+};
+
+function mapAuthoritativeResult(result: AuthoritativeAcademicResult, selectedTerm: string): ComputedStudentResult {
+  const termResults: Record<string, SubjectTermResult[]> = {};
+  for (const subject of result.subjectResults) {
+    for (const [term, value] of Object.entries(subject.terms)) {
+      (termResults[term] ??= []).push({
+        subject: subject.subject,
+        percentage: value.percentage,
+        passed: value.status === "pass" ? true : value.status === "fail" ? false : null,
+        breakdown: value.breakdown,
+        status: value.status === "pass" || value.status === "fail" ? "scored" : value.status,
+        grade: value.grade,
+        gradePoint: value.gradePoint,
+        remarks: value.remarks,
+      });
+    }
+  }
+  const violations = result.violations.map(violation =>
+    `${violation.term ? `${violation.term}: ` : ""}${violation.reason}`
+  );
+  return {
+    studentId: result.scope.studentId,
+    name: result.name,
+    digitalStudentId: result.digitalStudentId,
+    rollNumber: result.rollNumber,
+    termResults,
+    allTermFailCounts: result.failedSubjectCounts,
+    attendancePct: result.attendance[selectedTerm] ?? null,
+    promoted: result.promoted,
+    promotionReason: result.promoted === null
+      ? "No authoritative promotion verdict is available until the academic data or policy configuration is complete."
+      : violations[0] ?? "Meets all promotion criteria.",
+    detentionViolations: violations,
+    termAverages: result.termAverages,
+    termGrades: result.termGrades,
+    cumulativeAverage: result.cumulativeAverage,
+    cumulativeGrade: result.cumulativeGrade,
+    complete: result.complete,
+  };
 }
 
 // ── Promotion engine (runs on frontend) ───────────────────────────────────────
@@ -135,7 +199,7 @@ function computeAllStudentResults(
           passed = ep >= passPercentage;
           status = "scored";
         }
-        subjectResults.push({ subject, percentage, passed, breakdown, status });
+        subjectResults.push({ subject, percentage, passed, breakdown, status, grade: null, gradePoint: null, remarks: null });
       }
 
       termResults[termName] = subjectResults;
@@ -244,6 +308,11 @@ function computeAllStudentResults(
       attendancePct: attPct,
       promoted, promotionReason,
       detentionViolations: violations,
+      termAverages: {},
+      termGrades: {},
+      cumulativeAverage: null,
+      cumulativeGrade: null,
+      complete: true,
     };
   });
 }
@@ -263,10 +332,8 @@ function computeStudentSuggestion(
   _ruleTermAvg: { enabled: boolean; minPct: number },
   _isCumulativeTerm: boolean,
   _cumulConfig: CumulConfigShape,
-): "promoted" | "retained" {
-  // All four rules are now evaluated inside computeAllStudentResults and encoded
-  // in s.promoted / s.detentionViolations. Simply reflect that result here.
-  return s.promoted ? "promoted" : "retained";
+): "promoted" | "retained" | null {
+  return s.promoted === null ? null : s.promoted ? "promoted" : "retained";
 }
 
 // ── Grade types & helpers ─────────────────────────────────────────────────────
@@ -469,11 +536,10 @@ function buildDetentionReasons(
   return [];
 }
 
-function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
+function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
-  gradingRules: GradingRuleClient[];
   /** Whether the active term has the Promotion Gate verdict enabled in policy config. */
   showPromoVerdict: boolean;
   /** The teacher's manually-set ledger entry for this student, if any. */
@@ -493,11 +559,8 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
     ? buildDetentionReasons(student, isManualOverride)
     : [];
 
-  const subjectsWithScores = termSubjects.filter(s => s.status === "scored");
-  const overallAvg = subjectsWithScores.length > 0
-    ? Math.round((subjectsWithScores.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / subjectsWithScores.length) * 10) / 10
-    : null;
-  const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
+  const overallAvg = student.termAverages[term] ?? null;
+  const overallGrade = student.termGrades[term] ?? null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -539,7 +602,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
             {overallGrade && (
               <div className="text-right">
                 <span className="text-slate-500 text-xs block">Overall Grade</span>
-                <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${overallGrade.color} ${overallGrade.bg}`}
+                <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-300 text-xl font-bold"
                   title={overallGrade.remarks ?? ""}>
                   {overallGrade.label}
                 </span>
@@ -564,13 +627,10 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                       {subj.percentage !== null && (
                         <span className="text-yellow-400 font-bold text-sm">{subj.percentage}%</span>
                       )}
-                      {subj.status === "scored" && subj.percentage !== null && (() => {
-                        const g = computeGrade(subj.percentage, gradingRules);
-                        return (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${g.color} ${g.bg}`}
-                            title={g.remarks ?? ""}>{g.label}</span>
-                        );
-                      })()}
+                      {subj.grade && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-300"
+                          title={subj.remarks ?? ""}>{subj.grade}</span>
+                      )}
                       {subj.passed === true && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                       {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                       {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">INCOMPLETE</span>}
@@ -1089,14 +1149,72 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
-  const allResults = useMemo(() => {
+  // Legacy engine remains temporarily for parity diagnostics only.
+  // It is never used as the displayed or saved authoritative result.
+  const legacyResults = useMemo(() => {
     if (!policyTier || classScores.length === 0) return [];
     return computeAllStudentResults(
       classScores, policyTier, attendanceSummary, gradingPassPct,
       ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined,
     );
   }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
+
+  const {
+    data: allResults = [],
+    isLoading: authoritativeLoading,
+    error: authoritativeErrorRaw,
+    refetch: refetchAuthoritative,
+  } = useQuery<ComputedStudentResult[]>({
+    queryKey: ["/api/teacher/academic-results", resClass, resSection, resTerm],
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/teacher/academic-results/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}?term=${encodeURIComponent(resTerm)}`,
+        { credentials: "include" },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(body.message || "Authoritative academic results are unavailable");
+        (error as Error & { code?: string }).code = body.code;
+        throw error;
+      }
+      return ((body.results ?? []) as AuthoritativeAcademicResult[])
+        .map(result => mapAuthoritativeResult(result, resTerm));
+    },
+    enabled: !!resClass && !!resSection && !!resTerm,
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+  });
+  const authoritativeError = authoritativeErrorRaw as (Error & { code?: string }) | null;
+  const hasIncompleteResults = allResults.some(result => result.promoted === null);
+
+  useEffect(() => {
+    if (!allResults.length || !legacyResults.length) return;
+    const differences: Array<Record<string, unknown>> = [];
+    for (const authoritative of allResults) {
+      const legacy = legacyResults.find(result => result.studentId === authoritative.studentId);
+      if (!legacy) {
+        differences.push({ studentId: authoritative.studentId, field: "student", legacy: "missing", authoritative: "present" });
+        continue;
+      }
+      const checks = [
+        ["termAverage", (() => {
+          const subjects = legacy.termResults[resTerm] ?? [];
+          const scored = subjects.filter(subject => subject.status === "scored");
+          return scored.length ? Math.round(scored.reduce((sum, subject) => sum + (subject.percentage ?? 0), 0) / scored.length * 10) / 10 : null;
+        })(), authoritative.termAverages[resTerm] ?? null],
+        ["failedSubjects", legacy.allTermFailCounts[resTerm] ?? 0, authoritative.allTermFailCounts[resTerm] ?? 0],
+        ["attendance", legacy.attendancePct, authoritative.attendancePct],
+        ["promoted", legacy.promoted, authoritative.promoted],
+      ] as const;
+      for (const [field, legacyValue, authoritativeValue] of checks) {
+        if (legacyValue !== authoritativeValue) {
+          differences.push({ studentId: authoritative.studentId, field, legacy: legacyValue, authoritative: authoritativeValue });
+        }
+      }
+    }
+    if (differences.length) console.warn("[academic-parity][teacher]", { class: resClass, section: resSection, term: resTerm, differences });
+  }, [allResults, legacyResults, resClass, resSection, resTerm]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -1109,7 +1227,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     );
   }, [allResults, resSearch]);
 
-  const isLoading = policyLoading || scoresLoading;
+  const isLoading = policyLoading || scoresLoading || authoritativeLoading;
   const ready = !!resClass && !!resSection && !!resTerm && !!policyTier;
 
   // ── Promotion Ledger state ─────────────────────────────────────────────────
@@ -1190,45 +1308,24 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    * A student is retained if ANY enabled rule flags them.
    */
   async function runAutoSuggestion() {
-    // Always pull the latest policy from the server before computing
-    // so admin changes in school-setup are immediately reflected here
     setIsSyncingPolicy(true);
-    let freshPolicy: ExamPolicyTier | null = policyTier;
+    let freshResults = allResults;
     try {
-      const result = await refetchPolicy();
-      freshPolicy = result.data ?? policyTier;
-    } catch {
-      /* use cached policyTier as fallback */
+      await refetchPolicy();
+      const result = await refetchAuthoritative();
+      freshResults = result.data ?? [];
     } finally {
       setIsSyncingPolicy(false);
     }
-
-    if (!freshPolicy) {
-      toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
+    if (!freshResults.length || freshResults.some(student => student.promoted === null)) {
+      toast({ title: "Suggestion unavailable", description: "Complete the required scores, attendance, term boundaries, and policy configuration before creating promotion suggestions.", variant: "destructive" });
       return;
     }
 
-    // Re-derive rule settings from the freshly fetched policy
-    let freshRuleTermAvg = ruleTermAvg;
-    let freshCumulConfig = cumulConfig;
-    try {
-      const pr = JSON.parse(freshPolicy.promotionFailRules || "{}");
-      const rta = pr.rule_term_avg ?? {};
-      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
-      const rc = JSON.parse(freshPolicy.resultsConfig || "{}");
-      freshCumulConfig = rc.cumulative ?? null;
-    } catch { /* use existing derived values */ }
-
-    // Re-compute results using fresh policy + all 4 rules baked in
-    const freshResults = computeAllStudentResults(
-      classScores, freshPolicy, attendanceSummary, gradingPassPct,
-      freshRuleTermAvg, resTerm || undefined, freshCumulConfig ?? undefined,
-    );
-
     const next: Record<number, PromoEntry> = {};
     for (const s of freshResults) {
-      // computeStudentSuggestion now simply reads s.promoted (all rules in engine)
-      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, false, freshCumulConfig);
+      const decision = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
+      if (!decision) continue;
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
@@ -1251,6 +1348,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const saveLedgerMutation = useMutation({
     mutationFn: async (lock: boolean) => {
+      if (hasIncompleteResults) throw new Error("Cannot save promotion decisions while authoritative results are incomplete.");
       const entries = allResults.map(s => ({
         studentId: s.studentId,
         decision: promoMap[s.studentId]?.decision ?? "promoted",
@@ -1258,7 +1356,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
         editCount: promoMap[s.studentId]?.editCount ?? 0,
         // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
-        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig),
+        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig)!,
       }));
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,
@@ -1368,6 +1466,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
             <span>Loading policy…</span>
           </div>
         )}
+        {authoritativeError && resClass && resSection && resTerm && (
+          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            <p className="font-semibold">Authoritative results unavailable{authoritativeError.code ? ` (${authoritativeError.code})` : ""}</p>
+            <p className="mt-1 text-xs text-red-200/80">{authoritativeError.message}</p>
+          </div>
+        )}
 
         {/* No policy warning */}
         {resClass && !policyLoading && policyError && (
@@ -1468,7 +1572,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       )}
                       <button
                         onClick={runAutoSuggestion}
-                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || isSyncingPolicy}
+                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || hasIncompleteResults || isSyncingPolicy}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
                         data-testid="btn-auto-suggest">
                         {isSyncingPolicy
@@ -1477,7 +1581,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0 || hasIncompleteResults}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-save-ledger">
                         {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1485,7 +1589,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(true)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0 || hasIncompleteResults}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-lock-ledger">
                         <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
@@ -1542,30 +1646,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </thead>
                   <tbody>
                     {filteredResults.map((student, idx) => {
-                      const termSubjects = student.termResults[resTerm] ?? [];
-                      const scoredSubjs = termSubjects.filter(s => s.status === "scored");
-                      const weightedAvg = scoredSubjs.length > 0
-                        ? Math.round((scoredSubjs.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / scoredSubjs.length) * 10) / 10
-                        : null;
+                      const weightedAvg = student.termAverages[resTerm] ?? null;
+                      const termGrade = student.termGrades[resTerm] ?? null;
                       const failCount = student.allTermFailCounts[resTerm] ?? 0;
                       const att = student.attendancePct;
-
-                      // Cumulative calculation: Σ(termAvg × termWeight / 100)
-                      let cumulativePct: number | null = null;
-                      if (isCumulativeTerm && cumulConfig?.termWeights) {
-                        const twEntries = Object.entries(cumulConfig.termWeights);
-                        let totalContrib = 0;
-                        let allHaveData = twEntries.length > 0;
-                        for (const [termName, weight] of twEntries) {
-                          const w = Number(weight);
-                          const tSubjs = student.termResults[termName.trim()] ?? [];
-                          const tScored = tSubjs.filter(s => s.status === "scored");
-                          if (tScored.length === 0) { allHaveData = false; break; }
-                          const avg = tScored.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / tScored.length;
-                          totalContrib += avg * (w / 100);
-                        }
-                        if (allHaveData) cumulativePct = Math.round(totalContrib * 10) / 10;
-                      }
+                      const cumulativePct = student.cumulativeAverage;
 
                       return (
                         <tr key={student.studentId} className="border-b border-[#1e293b]/60 hover:bg-[#1e293b]/30 transition-colors" data-testid={`result-row-${student.studentId}`}>
@@ -1607,15 +1692,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Term Grade */}
                           {showCol.termGrade && (
                             <td className="py-3 px-4 text-center">
-                              {weightedAvg !== null ? (() => {
-                                const g = computeGrade(weightedAvg, gradingRules);
-                                return (
-                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
-                                    title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
-                                    {g.label}
-                                  </span>
-                                );
-                              })() : <span className="text-slate-600 text-xs">—</span>}
+                              {termGrade ? (
+                                <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold"
+                                  title={termGrade.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
+                                  {termGrade.label}
+                                </span>
+                              ) : <span className="text-slate-600 text-xs">—</span>}
                             </td>
                           )}
 
@@ -1647,7 +1729,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Promotion Gate — interactive ledger cell */}
                           {showCol.promotionGate && (
                             <td className="py-3 px-4 text-center">
-                              <PromoCell
+                              {student.promoted === null ? (
+                                <span className="inline-flex px-2.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-bold" title={student.promotionReason}>
+                                  Incomplete
+                                </span>
+                              ) : <PromoCell
                                 studentId={student.studentId}
                                 entry={promoMap[student.studentId]}
                                 isLocked={promoLocked}
@@ -1657,7 +1743,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                                 allSections={allSections}
                                 allClasses={classes}
                                 onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
-                              />
+                              />}
                             </td>
                           )}
 
@@ -1683,15 +1769,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Final Cumulative Grade */}
                           {showCol.finalGrade && isCumulativeTerm && (
                             <td className="py-3 px-4 text-center">
-                              {cumulativePct !== null ? (() => {
-                                const g = computeGrade(cumulativePct, gradingRules);
-                                return (
-                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
-                                    title={g.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
-                                    {g.label}
-                                  </span>
-                                );
-                              })() : <span className="text-slate-600 text-xs">—</span>}
+                              {student.cumulativeGrade ? (
+                                <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold"
+                                  title={student.cumulativeGrade.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
+                                  {student.cumulativeGrade.label}
+                                </span>
+                              ) : <span className="text-slate-600 text-xs">—</span>}
                             </td>
                           )}
 
@@ -1722,7 +1805,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           student={reportStudent}
           term={resTerm}
           policy={policyTier}
-          gradingRules={gradingRules}
           showPromoVerdict={isPromotionTerm}
           promoEntry={promoMap[reportStudent.studentId]}
           onClose={() => setReportStudent(null)}
