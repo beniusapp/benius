@@ -30,3 +30,4 @@
 - [External Portal re-authentication](external-portal-reauthentication.md) — settings access requires a short-lived server approval bound to the admin, school, and selected session.
 - [First-session onboarding](first-session-onboarding.md) — a newly created session defaults to draft/inactive, so first-session activation must be handled explicitly.
 - [Startup DDL deadlocks](startup-ddl-deadlocks.md) — concurrent Replit launches can deadlock startup ALTER TABLE work and surface as a misleading Preview network/DNS failure.
+- [Academic calculation authority](academic-calculation-authority.md) — authoritative results require exact school policies, enrollment scope, complete components, deterministic rounding, and nullable verdicts.

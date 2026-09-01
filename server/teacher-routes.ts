@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { storage, evaluatePromotion } from "./storage";
+import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
@@ -12,6 +12,8 @@ import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
+import { AcademicCalculationError } from "./academic-calculation-engine";
+import { AcademicScopeError, calculateStudentAcademicResult } from "./academic-calculation-service";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -125,6 +127,57 @@ export function registerTeacherRoutes(app: Express) {
     }
     return (await storage.getActiveSession(schoolId))?.id ?? null;
   }
+
+  app.get("/api/academic-calculation/:studentId", async (req, res) => {
+    const schoolId = req.session.schoolId;
+    if (!schoolId || (!req.session.userId && !req.session.teacherId && !req.session.studentId)) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (req.session.userId && !req.session.teacherId && !req.session.studentId && req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required." });
+    }
+    const studentId = Number(req.params.studentId);
+    if (!Number.isInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({ message: "Invalid student ID" });
+    }
+    if (req.session.studentId && req.session.studentId !== studentId) {
+      return res.status(403).json({ message: "Students may only view their own academic result." });
+    }
+    const sessionId = await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, studentId))
+        .find(row => row.sessionId === sessionId);
+      if (!teacher || !enrollment) return res.status(404).json({ message: "Teacher or enrollment not found." });
+      const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const assigned = mappings.some(m =>
+        m.className === enrollment.className && m.section === enrollment.sectionName
+      ) || (
+        teacher.assignedClass === enrollment.className &&
+        teacher.assignedSection === enrollment.sectionName
+      );
+      if (!assigned) return res.status(403).json({ message: "Not authorized for this student's class-section." });
+    }
+
+    try {
+      const result = await calculateStudentAcademicResult({
+        schoolId,
+        sessionId,
+        studentId,
+        currentTerm: typeof req.query.term === "string" ? req.query.term : undefined,
+        publishedOnly: Boolean(req.session.studentId),
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
+        return res.status(422).json({ code: error.code, message: error.message });
+      }
+      console.error("GET /api/academic-calculation/:studentId error:", error);
+      res.status(500).json({ message: "Failed to calculate academic result." });
+    }
+  });
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
     try {
@@ -2579,28 +2632,30 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schema = z.object({
-      studentClass: z.string().min(1),
-      scores: z.array(z.object({
-        subject: z.string(),
-        examType: z.string(),
-        marks: z.number(),
-        totalMarks: z.number(),
-        isAbsent: z.boolean().default(false),
-      })),
-      passPercentage: z.number().min(0).max(100).optional(),
-      termAttendance: z.record(z.string(), z.number()).optional(),
+      studentId: z.number().int().positive(),
+      sessionId: z.number().int().positive().optional(),
+      currentTerm: z.string().min(1).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    const tiers = await storage.getExamPolicyTiers(schoolId);
-    const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
-    if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
-    const gradingTiers = await storage.getGradingTiers(schoolId);
-    const matchingGradingTier = gradingTiers.find(t => (t.classes || []).includes(parsed.data.studentClass));
-    const passPercentage = parsed.data.passPercentage ?? matchingGradingTier?.passPercentage ?? 35;
-    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage, parsed.data.termAttendance);
-    res.json({ tier: matchingTier.tierName, passPercentage, ...result });
+    const sessionId = parsed.data.sessionId ?? await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    try {
+      const result = await calculateStudentAcademicResult({
+        schoolId,
+        sessionId,
+        studentId: parsed.data.studentId,
+        currentTerm: parsed.data.currentTerm,
+        publishedOnly: false,
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
+        return res.status(422).json({ code: error.code, message: error.message });
+      }
+      throw error;
+    }
   });
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====

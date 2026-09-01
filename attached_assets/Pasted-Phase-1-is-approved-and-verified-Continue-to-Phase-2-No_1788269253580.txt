@@ -1,0 +1,83 @@
+Phase 1 is approved and verified. Continue to Phase 2.
+
+Now implement ONE authoritative backend Academic Calculation Engine.
+
+This is the highest-priority remaining work.
+
+The backend engine must become the single source of truth for:
+
+- Exam component calculation
+- Weighted percentages
+- Grade resolution
+- Grade points and remarks
+- Percentage-based pass/fail
+- Grade-based pass/fail
+- Failed subject count
+- Missing/incomplete exam data
+- Duplicate score detection
+- Attendance calculation
+- Term-specific attendance
+- Term weighted average
+- Cumulative percentage
+- Promotion Rules 1–4
+- Deterministic rounding
+
+CRITICAL MULTI-TENANT RULE:
+
+Every evaluation must use and verify:
+
+school_id
+→ session_id
+→ student_id
+→ authoritative class/section
+→ that school's Academic Policy
+→ that school's Exam/Promotion Policy
+
+Every school must use ONLY its own configured policy. Never use another school's policy.
+
+Do not use hardcoded academic fallbacks such as 35%, 33%, or hardcoded grade brackets.
+
+Policy resolution must require exactly ONE applicable policy for the student's authoritative class.
+
+Return explicit errors when policy configuration is invalid:
+
+POLICY_NOT_CONFIGURED
+POLICY_CONFIGURATION_AMBIGUOUS
+POLICY_CONFIGURATION_INCOMPLETE
+INVALID_POLICY_WEIGHT_CONFIGURATION
+
+Do not return an authoritative Pass/Fail when the required policy cannot be resolved.
+
+The engine must use configured grading_rules with both min_percent AND max_percent.
+
+Support the school's configured grading mode correctly:
+
+percentage
+grade
+both
+
+If grade-based passing is configured, determine pass/fail using the configured passing grades, not a percentage fallback.
+
+IMPORTANT:
+
+Do not yet remove the existing frontend calculation engines.
+
+First build the backend engine and run comparison/parity checks against the existing Teacher, Admin, and Student calculations.
+
+Identify and report every difference.
+
+Do not silently change historical results.
+
+After the backend engine is implemented:
+
+1. Run type checks.
+2. Test tenant isolation.
+3. Test session isolation.
+4. Test different policies for different schools.
+5. Test grade-based and percentage-based passing.
+6. Test Rules 1–4.
+7. Test incomplete and duplicate exam data.
+8. Test rounding edge cases.
+9. Report exactly what was implemented and what remains.
+
+Proceed carefully without modifying unrelated features.
