@@ -1,0 +1,320 @@
+I want you to perform a complete accuracy audit and remediation plan for the Academic Policy and Exam & Promotion Policy in my BENIUS application.
+
+⚠️ Important: Do not make any changes yet. This must be a 100% read-only investigation.
+
+Do not modify:
+
+Application code
+Database schema
+Migrations
+Existing data
+APIs
+Workflows
+Configuration
+My requirement
+
+I want 100% consistent academic calculations across the entire application.
+
+For the same:
+
+Student
+Academic session
+Marks
+Academic Policy
+Exam & Promotion Policy
+
+the system must always produce the exact same:
+
+Percentage
+Grade
+Grade point
+Remarks
+Pass/Fail status
+Failed subject count
+Term average
+Attendance evaluation
+Cumulative percentage
+Promotion verdict
+Promotion reasons
+
+There must never be a situation where:
+
+Teacher Portal = Fail
+Admin Portal = Fail
+Student Portal = Pass
+
+for the same student and same data.
+
+Investigate the complete current implementation
+
+Please inspect the actual codebase and investigate all calculation logic related to:
+
+1. Academic Policy
+Grading tiers
+Applicable classes
+Pass percentage
+Percentage-based grading
+Grade-based grading
+Both grading modes
+Passing grades
+Grade brackets
+Grade points
+Remarks
+
+Tell me exactly what is currently implemented, what is actually enforced, and what is only stored but not used.
+
+2. Exam calculation
+
+Investigate:
+
+Marks entry
+Maximum marks
+Pass marks
+Decimal marks
+Negative marks
+Marks greater than maximum marks
+Blank marks
+Absent students
+Missing exam components
+Duplicate score records
+Exam aggregation weights
+Weight validation
+Re-normalization
+Rounding
+
+Identify every possible case where incorrect or inconsistent results can occur.
+
+3. Calculation engines
+
+Find every location where the application independently calculates:
+
+Percentage
+Grade
+Pass/Fail
+Term result
+Term average
+Cumulative percentage
+Promotion verdict
+
+Compare all of them, including:
+
+Teacher Portal
+Admin Portal
+Student Portal
+Backend APIs
+Promotion evaluation
+Analytics
+Report cards
+Academic history
+
+I want you to identify whether multiple engines can produce different results.
+
+4. Hardcoded values
+
+Search the entire codebase for hardcoded academic values such as:
+
+35
+33
+Hardcoded pass percentages
+Hardcoded grade brackets
+A+/A/B+/B etc.
+
+Tell me every location where these values can override or conflict with the school's configured Academic Policy.
+
+5. Grade calculation
+
+Investigate whether all portals use the same configured grade rules.
+
+The final system must have:
+
+One authoritative grade resolver
+
+Every percentage from 0 to 100 must return one deterministic grade according to the school's configured rules.
+
+Also investigate:
+
+Grade gaps
+Grade overlaps
+Invalid ranges
+Min percentage greater than max percentage
+Duplicate grade rules
+Percentages below/above valid limits
+6. Promotion rules
+
+Audit all promotion rules, including:
+
+Maximum failed subjects
+Minimum attendance
+Minimum term weighted average
+Minimum cumulative percentage
+
+Tell me whether every rule is currently evaluated consistently in:
+
+Teacher results
+Admin results
+Backend
+Promotion Ledger
+Final promotion execution
+
+The final system should have one authoritative promotion evaluation result.
+
+7. Final promotion execution
+
+Investigate whether the final Execute Promotion action validates the academic policy and promotion rules.
+
+I need you to clearly explain the difference between:
+
+System policy suggestion
+Teacher decision
+Teacher override
+Admin override
+Final promotion decision
+
+Recommend the safest architecture so manual overrides are possible but the original policy result and reasons are never lost.
+
+8. Academic session integrity
+
+This is extremely important.
+
+Audit every academic table and calculation for proper session_id isolation.
+
+Check:
+
+Exam scores
+Results
+Promotion decisions
+Promotion overrides
+Attendance
+Report cards
+Academic history
+Analytics
+
+No record from one academic session should ever overwrite or affect another academic session.
+
+Find every query, update, upsert, unique constraint, or conflict key that is missing session_id where it should be present.
+
+9. Historical accuracy
+
+Investigate what happens when an Academic Policy changes after results were already calculated.
+
+For example:
+
+Session 2026–2027
+Pass percentage = 35%
+Result is generated
+
+Later the school changes pass percentage to 40%.
+
+Historical results from 2026–2027 must not silently change.
+
+Recommend whether we need:
+
+Policy versioning
+Policy snapshots
+Result snapshots
+Promotion evaluation snapshots
+Most important architectural requirement
+
+I want the final architecture to be:
+
+Teacher Portal ───────┐
+Admin Portal ─────────┤
+Student Portal ───────┼──> ONE AUTHORITATIVE
+Report Cards ─────────┤    BACKEND ACADEMIC
+Analytics ────────────┤    CALCULATION ENGINE
+Promotion Ledger ─────┘
+
+Frontend applications should not have separate academic calculation logic that can produce different answers.
+
+Required output
+
+After completing the investigation, provide:
+
+A. Accuracy verdict
+
+Tell me clearly:
+
+Is the current implementation 100% accurate?
+
+B. Confirmed issues
+
+Classify every issue:
+
+🔴 Critical
+🟠 High
+🟡 Medium
+🟢 Low
+
+C. Exact affected locations
+
+For every issue provide:
+
+Frontend file
+Backend file
+Function name
+API
+Database table
+Exact logic causing the problem
+D. Target architecture
+
+Design the recommended authoritative calculation flow:
+
+Marks
+↓
+Exam Component Calculation
+↓
+Weighted Subject Result
+↓
+Grade Resolution
+↓
+Pass/Fail
+↓
+Term Average
+↓
+Attendance Evaluation
+↓
+Cumulative Result
+↓
+Promotion Rule Evaluation
+↓
+Policy Suggestion
+↓
+Teacher Decision
+↓
+Admin Override
+↓
+Final Promotion
+↓
+Historical Snapshot
+E. Exact implementation plan
+
+Give me a safe phased plan.
+
+Do not implement anything yet.
+
+First tell me exactly:
+
+What needs to be fixed
+Why it needs to be fixed
+Which files/tables are affected
+The recommended architecture
+Database changes required
+Migration risks
+Historical data risks
+Testing strategy
+Rollback strategy
+Final instruction
+
+Do not make assumptions.
+
+Inspect the actual BENIUS codebase and clearly label every statement as either:
+
+CONFIRMED FROM CURRENT CODE
+RECOMMENDED DESIGN CHANGE
+REQUIRES BUSINESS/POLICY DECISION
+
+My goal is simple:
+
+One student + one academic session + one set of marks + one policy configuration must always produce one mathematically accurate and authoritative result everywhere in BENIUS.
+
+Do not make any changes yet. Complete the investigation and give me the full report first.
