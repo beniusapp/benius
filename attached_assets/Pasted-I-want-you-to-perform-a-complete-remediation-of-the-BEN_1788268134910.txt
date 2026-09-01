@@ -1,0 +1,678 @@
+I want you to perform a complete remediation of the BENIUS Academic, Exam, Result, Promotion, Tenant Isolation, and Academic Session architecture.
+
+IMPORTANT:
+
+This is a MULTI-TENANT SCHOOL ERP APPLICATION.
+
+My requirement is not simply that the mathematical calculation should be correct.
+
+I need the complete system to guarantee:
+
+CORRECT SCHOOL
++
+CORRECT ACADEMIC SESSION
++
+CORRECT STUDENT
++
+CORRECT CLASS
++
+CORRECT SECTION
++
+CORRECT SCHOOL-SPECIFIC POLICY
++
+VALID MARKS
++
+VALID ATTENDANCE
++
+ONE AUTHORITATIVE BACKEND ENGINE
+=
+ONE 100% CONSISTENT ACADEMIC RESULT
+
+The following must always produce the same authoritative result:
+
+Teacher Portal
+=
+Admin Portal
+=
+Student Portal
+=
+Performance Analytics
+=
+Promotion Suggestion
+=
+Promotion Ledger
+=
+Report Card
+=
+Academic History
+=
+Final Promotion
+
+--------------------------------------------------
+ABSOLUTE MULTI-TENANT REQUIREMENT
+--------------------------------------------------
+
+Every school is an independent tenant.
+
+Every school can configure its own:
+
+- Academic Policy
+- Grading Tiers
+- Pass Percentage
+- Grading System
+- Passing Grades
+- Grade Brackets
+- Grade Points
+- Remarks
+- Exam Aggregation Policy
+- Exam Weights
+- Promotion Rules
+- Attendance Rules
+- Minimum Term Average
+- Cumulative Percentage Rules
+- Promotion Configuration
+
+THE APPLICATION MUST ALWAYS FOLLOW THE POLICY OF
+THE STUDENT'S OWN SCHOOL.
+
+Example:
+
+School A:
+Pass Percentage = 35%
+
+School B:
+Pass Percentage = 40%
+
+Student score = 38%
+
+School A result:
+PASS
+
+School B result:
+FAIL
+
+The same shared application code may be used by both schools.
+
+However:
+
+DATA MUST BE TENANT-SPECIFIC.
+
+POLICY MUST BE TENANT-SPECIFIC.
+
+ACADEMIC RESULTS MUST BE TENANT-SPECIFIC.
+
+ACADEMIC HISTORY MUST BE TENANT-SPECIFIC.
+
+A student from School A must NEVER use:
+
+- School B's Academic Policy
+- School B's Exam Policy
+- School B's Promotion Rules
+- School B's Marks
+- School B's Attendance
+- School B's Academic Session
+- School B's Promotion Decisions
+- School B's Overrides
+- School B's Historical Records
+
+--------------------------------------------------
+CRITICAL SESSION ISOLATION REQUIREMENT
+--------------------------------------------------
+
+Academic sessions must also be completely isolated.
+
+Example:
+
+2025–2026
+2026–2027
+2027–2028
+
+Data from one academic session must NEVER:
+
+- Overwrite another session
+- Update another session
+- Delete another session
+- Affect another session's result
+- Affect another session's rank
+- Affect another session's promotion decision
+- Affect another session's attendance
+- Affect another session's academic history
+
+Every historical academic operation must be evaluated using the appropriate:
+
+school_id
++
+session_id
+
+Where applicable, this must also include:
+
+student_id
++
+class
++
+section
++
+exam
++
+term
+
+Do not treat session_id as optional where the record represents historical academic data.
+
+--------------------------------------------------
+DO NOT TRUST CALLER-SUPPLIED RELATIONSHIPS
+--------------------------------------------------
+
+The backend must not simply trust submitted values such as:
+
+schoolId
+sessionId
+studentId
+teacherId
+class
+section
+
+The backend must resolve and verify the relationships.
+
+For every authoritative academic operation:
+
+1. Resolve authenticated user.
+2. Resolve the authorized school/tenant.
+3. Resolve the requested academic session.
+4. Verify the session belongs to that school.
+5. Resolve the student.
+6. Verify the student belongs to that school.
+7. Resolve the student's valid class and section for that session.
+8. Verify the requested exam belongs to the school/session.
+9. Verify submitted marks belong to the correct student.
+10. Verify attendance belongs to the correct student/school/session.
+11. Resolve policies belonging only to that school.
+12. Calculate the authoritative result.
+
+Reject mismatched relationships.
+
+Never silently continue with invalid relationships.
+
+--------------------------------------------------
+ONE AUTHORITATIVE BACKEND CALCULATION ENGINE
+--------------------------------------------------
+
+Create or refactor the system so there is ONE authoritative backend/domain calculation engine.
+
+Do not maintain separate academic calculation engines in:
+
+- Teacher frontend
+- Admin frontend
+- Student frontend
+- Promotion frontend
+- Analytics
+- Report Cards
+- Academic History
+
+Frontend applications should NOT independently calculate:
+
+- Weighted percentages
+- Subject results
+- Grades
+- Grade points
+- Remarks
+- Pass/fail
+- Failed subject counts
+- Term averages
+- Cumulative percentages
+- Promotion verdicts
+
+The frontend should request and display the authoritative backend result.
+
+The same input must always produce the same output.
+
+--------------------------------------------------
+MANDATORY POLICY RESOLUTION
+--------------------------------------------------
+
+Before calculating any academic result, resolve:
+
+school_id
+session_id
+student_id
+class
+section
+
+Then resolve the school's policies.
+
+Required policy resolution:
+
+1. Load grading tiers ONLY for the student's school.
+2. Find the grading tier applicable to the student's authoritative class.
+3. Require EXACTLY ONE applicable grading tier.
+
+If zero policies match:
+
+POLICY_NOT_CONFIGURED
+
+If multiple policies match:
+
+POLICY_CONFIGURATION_AMBIGUOUS
+
+Do NOT select the first matching policy.
+
+Then:
+
+4. Load Exam & Promotion Policies ONLY for the student's school.
+5. Find the policy applicable to the student's authoritative class.
+6. Require EXACTLY ONE applicable policy.
+
+If zero policies match:
+
+POLICY_NOT_CONFIGURED
+
+If multiple policies match:
+
+POLICY_CONFIGURATION_AMBIGUOUS
+
+Then validate the complete policy structure.
+
+If invalid:
+
+POLICY_CONFIGURATION_INCOMPLETE
+
+or another clear deterministic configuration error.
+
+--------------------------------------------------
+NO SILENT HARDCODED FALLBACKS
+--------------------------------------------------
+
+Remove hardcoded academic fallback behavior for authoritative calculations.
+
+Do not silently fall back to:
+
+- 35% pass percentage
+- 33% pass marks
+- Hardcoded A+/A/B+/B/C/D/F grade bands
+- Default promotion rules
+- Default policy configurations
+
+If a required school policy is missing, invalid, or ambiguous:
+
+DO NOT calculate an authoritative academic result.
+
+Return a deterministic configuration state.
+
+Examples:
+
+POLICY_NOT_CONFIGURED
+
+POLICY_CONFIGURATION_AMBIGUOUS
+
+POLICY_CONFIGURATION_INCOMPLETE
+
+INVALID_POLICY_WEIGHT_CONFIGURATION
+
+The system must never show a student as PASS or FAIL based on an unintended default value.
+
+--------------------------------------------------
+FIX THE CONFIRMED TENANT AND SESSION DEFECTS
+--------------------------------------------------
+
+Audit and remediate all confirmed issues, including:
+
+1. Attendance upsert identity must include the correct school and academic session context.
+
+Do not identify attendance only by:
+
+student_id + date
+
+The lookup/update identity must be safe for:
+
+school_id
++
+session_id
++
+student_id
++
+date
+
+and any additional required attendance identity.
+
+2. All attendance reads must be correctly school-scoped and session-scoped.
+
+3. Exam class rank must include the correct academic session.
+
+4. Analytics score aggregation must include the correct academic session.
+
+5. Promotion decisions must include session-safe identity.
+
+A promotion decision from one session must never overwrite another session.
+
+6. Promotion execution marking must update only the intended:
+
+school
+session
+student records
+term
+
+7. Promotion decision deletion must never delete sibling-session records.
+
+8. Promotion overrides must become session-aware.
+
+Add session_id where required and update:
+
+- schema
+- indexes
+- unique constraints
+- queries
+- reads
+- writes
+- deletes
+
+9. Academic history score snapshots must include only the intended:
+
+school
+session
+student
+relevant exams/terms
+
+10. Academic session lookup must be tenant-safe.
+
+Do not use an unsafe generic session lookup at an authorization boundary.
+
+--------------------------------------------------
+STRICT DATABASE INTEGRITY
+--------------------------------------------------
+
+Review shared/schema.ts and the complete database architecture.
+
+Where supported by the database and ORM, add appropriate:
+
+- NOT NULL constraints
+- Foreign keys
+- Composite unique constraints
+- Composite indexes
+- Tenant-safe lookup keys
+- Session-safe identities
+
+Critical relationships must guarantee consistency.
+
+Examples that must be validated:
+
+Student.school_id
+=
+Session.school_id
+=
+Policy.school_id
+=
+Teacher.school_id
+=
+Exam.school_id
+=
+Attendance.school_id
+=
+PromotionDecision.school_id
+
+For historical operations:
+
+PromotionDecision.session_id
+=
+AcademicSession.id
+
+PromotionOverride.session_id
+=
+AcademicSession.id
+
+ExamScore.session_id
+=
+AcademicSession.id
+
+The exact implementation should follow the existing schema and database capabilities, but the data model must prevent ambiguous and unsafe relationships wherever possible.
+
+--------------------------------------------------
+EXACTLY-ONE POLICY ENFORCEMENT
+--------------------------------------------------
+
+The system currently allows the possibility of multiple policy tiers applying to the same class.
+
+Fix this.
+
+For both:
+
+- grading_tiers
+- exam_policy_tiers
+
+the system must prevent ambiguous class assignment within the same school.
+
+A class should not belong to multiple active/applicable policies of the same policy type unless there is an explicitly designed priority/versioning mechanism.
+
+If overlap is invalid, reject it at:
+
+1. Backend validation
+2. Database/data integrity layer where practical
+3. Frontend UI
+
+The frontend must not be the only protection.
+
+--------------------------------------------------
+AUTHORITATIVE ACADEMIC CALCULATION FLOW
+--------------------------------------------------
+
+The target architecture should be:
+
+Authenticated User
+↓
+Authorization and Tenant Resolver
+↓
+Verified school_id
+↓
+Verified Academic Session Resolver
+↓
+Verified Student Resolver
+↓
+Session-Specific Class and Section Resolver
+↓
+School-Specific Academic Policy Resolver
+↓
+School-Specific Exam & Promotion Policy Resolver
+↓
+Policy Validation
+↓
+Validated Marks Resolver
+↓
+Validated Attendance Resolver
+↓
+Authoritative Exam Component Calculation
+↓
+Authoritative Weighted Subject Result
+↓
+Authoritative Grade Resolution
+↓
+Authoritative Pass/Fail Resolution
+↓
+Authoritative Failed Subject Count
+↓
+Authoritative Term Average
+↓
+Authoritative Term-Specific Attendance
+↓
+Authoritative Cumulative Calculation
+↓
+All Promotion Rules
+↓
+System Policy Verdict
+↓
+Teacher Decision
+↓
+Admin Override
+↓
+Final Server Validation
+↓
+Atomic Promotion Transaction
+↓
+Immutable Historical Snapshot
+
+--------------------------------------------------
+PROMOTION DECISION MODEL
+--------------------------------------------------
+
+Clearly separate these concepts:
+
+1. System Policy Verdict
+   The result generated by the authoritative engine.
+
+2. Teacher Decision
+   A teacher may confirm or manually modify the system suggestion.
+
+3. Admin Override
+   A properly authorized administrative override.
+
+4. Final Decision
+   The decision approved for execution.
+
+5. Promotion Execution
+   The actual atomic academic-state change.
+
+Manual override must not destroy the original policy result.
+
+The system must preserve:
+
+- Original calculated verdict
+- Triggered rules
+- Reasons
+- Policy configuration/version or snapshot
+- Teacher decision
+- Teacher modification reason
+- Admin override
+- Admin override reason
+- Final decision
+- Final executor
+- Execution timestamp
+
+--------------------------------------------------
+FINAL PROMOTION EXECUTION
+--------------------------------------------------
+
+Promotion execution must be server-authoritative.
+
+Before execution, validate:
+
+- Correct school
+- Correct session
+- Student belongs to school
+- Student belongs to intended session/class/section
+- Promotion decision belongs to the same school/session
+- Teacher ledger state is valid
+- Override is valid and authorized
+- Submitted destination class is valid
+- No unrelated students are affected
+
+The promotion operation must be atomic.
+
+It must not:
+
+- Mark unrelated students as executed
+- Update another academic session
+- Mark all matching historical decisions
+- Partially execute without a safe transaction strategy
+
+--------------------------------------------------
+CALCULATION ACCURACY REQUIREMENTS
+--------------------------------------------------
+
+Fix all confirmed inconsistencies:
+
+- Grade-based passing must actually work.
+- passing_grades must actually be enforced when applicable.
+- percentage-based, grade-based, and both modes must have explicit deterministic behavior.
+- Grade resolution must consistently respect min_percent AND max_percent.
+- Grade gaps and overlaps must be rejected or handled deterministically.
+- Student portal must use the school's configured grade rules.
+- Teacher/Admin/Student must use the same pass threshold.
+- Rules 1, 2, 3, and 4 must all be implemented by the authoritative backend engine.
+- Final promotion validation must understand the complete policy.
+- Rounding rules must be centralized.
+- Displayed percentages and pass/fail decisions must follow one documented rounding policy.
+- Duplicate score handling must be deterministic and database-safe.
+- Invalid marks must be rejected, not silently converted into plausible values.
+- Negative marks must be rejected.
+- Marks above total marks must be rejected.
+- Invalid total marks must be rejected.
+- Decimal marks must follow an explicitly configured rule.
+- Invalid weights must be rejected.
+- Missing exam components must have explicitly defined academic behavior.
+- Attendance must use one consistent status-counting policy.
+- Promotion attendance must follow the intended term/session scope.
+- Missing attendance must result in a deterministic state rather than silently bypassing a promotion rule.
+- Student visibility must consistently respect publication status.
+
+--------------------------------------------------
+IMPORTANT: READ-ONLY AUDIT FIRST
+--------------------------------------------------
+
+Before making any modification:
+
+1. Investigate the complete current implementation.
+2. Trace every affected route.
+3. Trace every affected storage function.
+4. Trace every database table.
+5. Trace every school_id usage.
+6. Trace every session_id usage.
+7. Identify every caller-supplied relationship.
+8. Identify every cross-school risk.
+9. Identify every cross-session risk.
+10. Identify every duplicate academic calculation engine.
+11. Identify every hardcoded academic fallback.
+
+Then provide me with:
+
+A. Current architecture map
+B. Exact confirmed problems
+C. Root cause of every problem
+D. Files that will change
+E. Database schema changes
+F. Migration strategy
+G. Backward compatibility strategy
+H. Data migration/backfill requirements
+I. API changes
+J. Tenant-isolation strategy
+K. Session-isolation strategy
+L. Authoritative calculation-engine design
+M. Testing strategy
+
+DO NOT modify anything until the implementation plan is complete.
+
+--------------------------------------------------
+IMPLEMENTATION REQUIREMENT
+--------------------------------------------------
+
+After I approve the plan, implement the changes in controlled phases.
+
+After each phase, verify:
+
+1. No cross-school data access.
+2. No cross-session data leakage.
+3. Same marks produce the same result everywhere.
+4. School-specific policies are respected.
+5. Missing policies do not trigger unsafe defaults.
+6. Historical sessions remain unchanged.
+7. Existing valid data is preserved.
+8. Promotion history is not corrupted.
+
+The final system must guarantee:
+
+ONE SCHOOL
++
+ONE ACADEMIC SESSION
++
+ONE STUDENT
++
+ONE AUTHORITATIVE POLICY RESOLUTION
++
+ONE AUTHORITATIVE CALCULATION ENGINE
+=
+ONE TRUSTWORTHY RESULT
+
+This is a critical academic and historical-integrity system.
+
+Accuracy, tenant isolation, session isolation, and data integrity are mandatory.
+Do not use shortcuts.
+Do not fix only the UI.
+Do not rely only on frontend validation.
+Do not introduce silent fallback values.
+Do not arbitrarily select the first matching policy.
