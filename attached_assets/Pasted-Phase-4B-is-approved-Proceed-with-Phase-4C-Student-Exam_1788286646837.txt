@@ -1,0 +1,172 @@
+Phase 4B is approved. Proceed with Phase 4C: Student Examination.
+
+GOAL:
+Switch Student Examination to consume the existing Authoritative Backend Academic Calculation Engine.
+
+Do not create another calculation engine.
+
+The Student portal must display the same authoritative academic result used by Teacher and Admin, while applying stricter student authorization and publication rules.
+
+Required flow:
+
+Authenticated Student
+→ authenticated student identity
+→ student.school_id
+→ selected/verified academic session
+→ authoritative session enrollment
+→ authoritative class/section
+→ school-specific policy
+→ published academic data only
+→ Authoritative Backend Academic Calculation Engine
+→ Student display
+
+CRITICAL SECURITY RULES:
+
+A student must never:
+
+- Access another student's result
+- Supply another student ID
+- Access another school's result
+- Access another school's policy
+- Access another session's result without authorization
+- Choose an arbitrary class to change policy resolution
+- See unpublished marks or working data
+- Receive a frontend-calculated fallback result
+
+The server must derive the student identity from authentication.
+
+Any student ID, class, section, school ID, or policy context supplied by the frontend must never become the source of truth.
+
+AUTHORITATIVE DISPLAY REQUIREMENTS:
+
+Replace all Student Examination frontend calculations for:
+
+- Subject percentage
+- Grade
+- Grade point
+- Remarks
+- Pass/fail
+- Failed-subject count
+- Attendance percentage
+- Term average
+- Term grade
+- Cumulative percentage
+- Cumulative grade
+- Promotion policy verdict
+
+Use backend values directly.
+
+Do not use frontend fallbacks such as:
+
+- 35%
+- 33%
+- Hardcoded grade bands
+- Default grade labels
+- First matching policy
+- Partial-weight normalization
+
+If the backend returns:
+
+POLICY_NOT_CONFIGURED
+POLICY_CONFIGURATION_AMBIGUOUS
+POLICY_CONFIGURATION_INCOMPLETE
+INVALID_POLICY_WEIGHT_CONFIGURATION
+DUPLICATE_SCORE_DATA
+INVALID_SCORE_DATA
+
+or:
+
+promoted: null
+
+display a clear Student-safe incomplete/configuration state.
+
+Do not expose internal sensitive implementation details unnecessarily.
+
+Most importantly:
+
+Never display Pass, Fail, Promoted, or Retained when the authoritative verdict is incomplete.
+
+PUBLICATION REQUIREMENTS:
+
+Student calculations and displays must use only published academic data.
+
+Verify:
+
+- Unpublished scores are not visible
+- Unpublished exam results are not visible
+- Unpublished working evaluations are not exposed
+- Teacher/Admin access behavior remains unchanged
+
+MULTI-TENANT REQUIREMENTS:
+
+Every request and result must remain isolated by:
+
+authenticated student
+→ school_id
+→ session_id
+→ student enrollment
+
+Different schools may have:
+
+- Different grading policies
+- Different pass percentages
+- Different grade ranges
+- Different exam policies
+- Different attendance thresholds
+- Different term dates
+- Different promotion rules
+
+The Student portal must always follow the authenticated student's own school's configuration.
+
+PARITY MIGRATION:
+
+Keep the existing Student calculation logic temporarily only for diagnostics.
+
+It must not be used for displayed authoritative values.
+
+Log meaningful differences under:
+
+[academic-parity][student]
+
+Do not modify Teacher Examination or Admin Performance Analytics.
+
+PHASE 4C STEPS:
+
+1. Map all Student Examination calculation paths.
+2. Identify all local grades, percentages, averages, pass/fail and promotion calculations.
+3. Add or use a student-self-only backend endpoint backed by the existing authoritative engine.
+4. Verify publication gating server-side.
+5. Replace displayed calculations with backend values.
+6. Add explicit incomplete/error states.
+7. Retain legacy calculations only for parity diagnostics.
+8. Remove all live frontend fallback calculations.
+
+VERIFY BEFORE COMPLETION:
+
+- TypeScript check
+- Focused academic tests
+- Student can access only own result
+- Cross-student access rejected
+- Cross-school isolation
+- Cross-session isolation
+- Published data visible
+- Unpublished data hidden
+- Student/Teacher parity for published results
+- Student/Admin parity for published results
+- Percentage/grade/both modes
+- Rules 1–4
+- Incomplete result handling
+- No live fallback calculations in Student authoritative display path
+
+REPORT:
+
+- Files changed
+- Backend endpoint used
+- Student authorization model
+- Publication gating verification
+- Legacy calculations remaining for parity
+- Any parity differences found
+- Tests and runtime verification
+- Any remaining authenticated integration-test gaps
+
+Proceed only with Phase 4C.

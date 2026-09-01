@@ -7,7 +7,7 @@ import {
   BarChart3, ChevronDown, Filter, X,
   MoreVertical, Check, History,
 } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -36,6 +36,7 @@ interface ExamScore {
   marks: number; totalMarks: number; passMarks: number;
   isAbsent: boolean; class: string | null; section: string | null;
   published: boolean;
+  authoritativePercentage?: number | null;
 }
 interface ExamPolicyTier {
   id: number; tierName: string; applicableClasses: string[];
@@ -59,6 +60,35 @@ interface SubjectTermResult {
 interface StudentTermResults {
   termResults: Record<string, SubjectTermResult[]>;
   allTermFailCounts: Record<string, number>;
+}
+interface AuthoritativeTermValue {
+  percentage: number | null;
+  grade: string | null;
+  gradePoint: string | null;
+  remarks: string | null;
+  status: "pass" | "fail" | "absent" | "incomplete";
+  breakdown: CompBreakdown[];
+}
+interface AuthoritativeAcademicResult {
+  calculationVersion: string;
+  scope: { schoolId: number; sessionId: number; studentId: number; className: string };
+  policy: {
+    gradingSnapshot: {
+      gradingSystem: "percentage" | "grade" | "both";
+      passPercentage?: number;
+    };
+    examSnapshot: ExamPolicyTier & { examWeights: string | Record<string, { source_exam: string; weight: number }[]> };
+  };
+  subjectResults: Array<{ subject: string; terms: Record<string, AuthoritativeTermValue> }>;
+  termAverages: Record<string, number | null>;
+  termGrades: Record<string, { label: string; gradePoint: string | null; remarks: string | null } | null>;
+  failedSubjectCounts: Record<string, number>;
+  cumulativeAverage: number | null;
+  cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null;
+  attendance: Record<string, number | null>;
+  violations: Array<{ rule: string; term?: string; reason: string }>;
+  complete: boolean;
+  promoted: boolean | null;
 }
 
 // ─────────── Enrollment-aware Session → Class/Section Resolution ────────────────
@@ -299,10 +329,7 @@ function PrintStyles() {
 function StatusBadge({ score }: { score: ExamScore | undefined }) {
   if (!score) return <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-700/40 text-slate-500 border border-slate-700">Pending</span>;
   if (score.isAbsent) return <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-orange-500/15 text-orange-400 border border-orange-500/30">Absent</span>;
-  const pct = score.totalMarks > 0 ? (score.marks / score.totalMarks) * 100 : 0;
-  return pct >= (score.passMarks / score.totalMarks * 100)
-    ? <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Pass</span>
-    : <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-500/15 text-red-400 border border-red-500/30">Fail</span>;
+  return <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-700/40 text-slate-300 border border-slate-600">Published</span>;
 }
 
 // ─────────────────────────── Shared dropdown style ─────────────────────────────
@@ -320,9 +347,9 @@ const selectStyle = { background: "#020617", borderColor: "#1e293b", colorScheme
 // Mode C: subject + exam type → single focused result card
 // ══════════════════════════════════════════════════════════════════════════════
 function ViewMarksPanel({
-  allScores, policy, passThreshold, isLoading, selectedClass, section, schoolId,
+  allScores, policy, isLoading, selectedClass, section, schoolId,
 }: {
-  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
+  allScores: ExamScore[]; policy: ExamPolicyTier | null;
   isLoading: boolean; selectedClass: string; section: string; schoolId: number;
 }) {
   const [viewSubject,  setViewSubject]  = useState("");
@@ -389,7 +416,7 @@ function ViewMarksPanel({
 
   function renderPct(score: ExamScore | undefined) {
     if (!score || score.isAbsent) return null;
-    return score.totalMarks > 0 ? Math.round((score.marks / score.totalMarks) * 1000) / 10 : 0;
+    return score.authoritativePercentage ?? null;
   }
 
   // ── Shared: the two-column filter row ────────────────────────────────────────
@@ -535,18 +562,11 @@ function ViewMarksPanel({
     const rows = examTypeOptions.map(et => {
       const score = scoreFor(viewSubject, et);
       const pct   = renderPct(score);
-      const g     = pct !== null ? computeGrade(pct) : null;
       const contribs = termContributionsFor(et);
-      return { et, score, pct, g, contribs };
+      return { et, score, pct, contribs };
     });
 
     const scored = rows.filter(r => r.score && !r.score.isAbsent);
-    const avgPct = scored.length > 0
-      ? Math.round(scored.reduce((s, r) => s + (r.pct ?? 0), 0) / scored.length * 10) / 10
-      : null;
-    const bestRow = scored.reduce<typeof rows[number] | null>(
-      (best, r) => (!best || (r.pct ?? 0) > (best.pct ?? 0)) ? r : best, null,
-    );
 
     return (
       <div className="space-y-4" data-testid="panel-view-marks-mode-a">
@@ -554,12 +574,9 @@ function ViewMarksPanel({
 
         {/* Summary strip */}
         {scored.length > 0 && (
-          <div className="grid grid-cols-3 gap-px rounded-2xl overflow-hidden" style={{ border: "1px solid #1e293b", background: "#1e293b" }}>
+          <div className="grid grid-cols-1 gap-px rounded-2xl overflow-hidden" style={{ border: "1px solid #1e293b", background: "#1e293b" }}>
             {[
-              { label: "Exams Taken", value: `${scored.length} / ${examTypeOptions.length}`, color: "text-white" },
-              { label: "Average %",   value: avgPct !== null ? `${avgPct}%` : "—",
-                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : avgPct >= 33 ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
-              { label: "Best Exam",   value: bestRow ? `${bestRow.et} · ${bestRow.pct}%` : "—", color: "text-yellow-400" },
+              { label: "Published Components", value: `${scored.length} / ${examTypeOptions.length}`, color: "text-white" },
             ].map(s => (
               <div key={s.label} className="px-4 py-3" style={{ background: "#0f172a" }}>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -582,7 +599,7 @@ function ViewMarksPanel({
             <table className="w-full text-sm" style={{ minWidth: "560px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #1e293b" }}>
-                  {["Exam Type", "Marks", "Total", "Score %", "Grade", "Status", "Contributes to"].map(h => (
+                  {["Exam Type", "Marks", "Total", "Score %", "Publication", "Contributes to"].map(h => (
                     <th key={h} className="text-left py-3 px-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide first:pl-5">
                       {h}
                     </th>
@@ -590,7 +607,7 @@ function ViewMarksPanel({
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ et, score, pct, g, contribs }, i) => (
+                {rows.map(({ et, score, pct, contribs }, i) => (
                   <tr key={et}
                     style={{ borderBottom: i < rows.length - 1 ? "1px solid rgba(30,41,59,0.5)" : "none" }}
                     className="hover:bg-white/[0.02] transition-colors"
@@ -606,14 +623,9 @@ function ViewMarksPanel({
                     <td className="py-3 px-4 text-slate-400 text-sm">{score ? score.totalMarks : "—"}</td>
                     <td className="py-3 px-4">
                       {pct !== null
-                        ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+                        ? <span className="font-bold text-slate-200">
                             {pct.toFixed(1)}%
                           </span>
-                        : <span className="text-slate-600 text-xs">—</span>}
-                    </td>
-                    <td className="py-3 px-4">
-                      {g
-                        ? <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${g.color} ${g.bg}`} title={g.remarks}>{g.label}</span>
                         : <span className="text-slate-600 text-xs">—</span>}
                     </td>
                     <td className="py-3 px-4">
@@ -659,16 +671,10 @@ function ViewMarksPanel({
     const rows = subjectOptions.map(sub => {
       const score = scoreFor(sub, viewExamType);
       const pct   = renderPct(score);
-      const g     = pct !== null ? computeGrade(pct) : null;
-      return { sub, score, pct, g };
+      return { sub, score, pct };
     });
 
     const scored = rows.filter(r => r.score && !r.score.isAbsent);
-    const avgPct = scored.length > 0
-      ? Math.round(scored.reduce((s, r) => s + (r.pct ?? 0), 0) / scored.length * 10) / 10
-      : null;
-    const passCount = scored.filter(r => r.pct !== null && r.score && r.pct >= (r.score.passMarks / r.score.totalMarks * 100)).length;
-    const failCount = scored.length - passCount;
     const absentCount = rows.filter(r => r.score?.isAbsent).length;
 
     return (
@@ -691,13 +697,10 @@ function ViewMarksPanel({
 
         {/* Stats bar */}
         {scored.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px rounded-2xl overflow-hidden" style={{ border: "1px solid #1e293b", background: "#1e293b" }}>
+          <div className="grid grid-cols-2 gap-px rounded-2xl overflow-hidden" style={{ border: "1px solid #1e293b", background: "#1e293b" }}>
             {[
-              { label: "Subjects Taken",  value: `${rows.filter(r => r.score).length} / ${subjectOptions.length}`, color: "text-white" },
-              { label: "Average %",       value: avgPct !== null ? `${avgPct}%` : "—",
-                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : avgPct >= 33 ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
-              { label: "Passed",          value: String(passCount), color: "text-emerald-400" },
-              { label: "Failed / Absent", value: `${failCount} / ${absentCount}`, color: failCount + absentCount === 0 ? "text-slate-400" : "text-red-400" },
+              { label: "Published Subjects", value: `${rows.filter(r => r.score).length} / ${subjectOptions.length}`, color: "text-white" },
+              { label: "Absent", value: String(absentCount), color: absentCount === 0 ? "text-slate-400" : "text-orange-400" },
             ].map(s => (
               <div key={s.label} className="px-4 py-3" style={{ background: "#0f172a" }}>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -720,7 +723,7 @@ function ViewMarksPanel({
             <table className="w-full text-sm" style={{ minWidth: "480px" }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #1e293b" }}>
-                  {["Subject", "Marks", "Total", "Score %", "Grade", "Status", "Contribution"].map(h => (
+                  {["Subject", "Marks", "Total", "Score %", "Publication", "Included In"].map(h => (
                     <th key={h} className="text-left py-3 px-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide first:pl-5">
                       {h}
                     </th>
@@ -728,10 +731,7 @@ function ViewMarksPanel({
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ sub, score, pct, g }, i) => {
-                  const termPctContrib = pct !== null && contribs.length > 0
-                    ? contribs.map(c => ({ termName: c.termName, val: Math.round(pct * c.weight / 100 * 100) / 100 }))
-                    : null;
+                {rows.map(({ sub, score, pct }, i) => {
                   return (
                     <tr key={sub}
                       style={{ borderBottom: i < rows.length - 1 ? "1px solid rgba(30,41,59,0.5)" : "none" }}
@@ -748,27 +748,22 @@ function ViewMarksPanel({
                       <td className="py-3 px-4 text-slate-400 text-sm">{score ? score.totalMarks : "—"}</td>
                       <td className="py-3 px-4">
                         {pct !== null
-                          ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+                          ? <span className="font-bold text-slate-200">
                               {pct.toFixed(1)}%
                             </span>
-                          : <span className="text-slate-600 text-xs">—</span>}
-                      </td>
-                      <td className="py-3 px-4">
-                        {g
-                          ? <span className={`text-xs font-bold px-2 py-0.5 rounded-lg border ${g.color} ${g.bg}`} title={g.remarks}>{g.label}</span>
                           : <span className="text-slate-600 text-xs">—</span>}
                       </td>
                       <td className="py-3 px-4">
                         <StatusBadge score={score} />
                       </td>
                       <td className="py-3 px-4">
-                        {termPctContrib
+                        {contribs.length > 0
                           ? <div className="flex flex-wrap gap-1">
-                              {termPctContrib.map(tc => (
-                                <span key={tc.termName}
+                              {contribs.map(contribution => (
+                                <span key={contribution.termName}
                                   className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap"
                                   style={{ background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.2)", color: "#fbbf24" }}>
-                                  +{tc.val} ({tc.termName})
+                                  {contribution.termName}
                                 </span>
                               ))}
                             </div>
@@ -799,7 +794,6 @@ function ViewMarksPanel({
   // ══════════════════════════════════════════════════════════════════════════════
   const score = scoreFor(viewSubject, viewExamType);
   const pct   = renderPct(score);
-  const g     = pct !== null ? computeGrade(pct) : null;
   const contribsC = termContributionsFor(viewExamType);
 
   return (
@@ -824,11 +818,10 @@ function ViewMarksPanel({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {score && !score.isAbsent && pct !== null && (
-              <span className={`text-2xl font-extrabold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+              <span className="text-2xl font-extrabold text-slate-200">
                 {pct.toFixed(1)}%
               </span>
             )}
-            {g && <span className={`text-sm font-bold px-3 py-1 rounded-xl border ${g.color} ${g.bg}`} title={g.remarks}>{g.label}</span>}
             <StatusBadge score={score} />
           </div>
         </div>
@@ -853,7 +846,7 @@ function ViewMarksPanel({
                 { label: "Marks Obtained", value: score.isAbsent ? "Absent" : String(score.marks),
                   color: score.isAbsent ? "text-orange-400" : "text-white" },
                 { label: "Full Marks",  value: String(score.totalMarks), color: "text-slate-300" },
-                { label: "Pass Marks",  value: String(score.passMarks),  color: "text-slate-300" },
+                { label: "Publication", value: "Published", color: "text-slate-300" },
               ].map(s => (
                 <div key={s.label} className="rounded-xl px-4 py-3" style={{ background: "rgba(30,41,59,0.5)", border: "1px solid #1e293b" }}>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -872,13 +865,13 @@ function ViewMarksPanel({
               </div>
               <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: "#1e293b" }}>
                 <div
-                  className={`h-full rounded-full transition-all ${pct >= 60 ? "bg-emerald-500" : pct >= 33 ? "bg-yellow-500" : "bg-red-500"}`}
+                  className="h-full rounded-full transition-all bg-slate-400"
                   style={{ width: `${Math.min(100, pct)}%` }}
                 />
               </div>
               <div className="flex justify-between text-[10px] text-slate-600">
                 <span>0</span>
-                <span className="text-slate-500">Pass: {score.passMarks}/{score.totalMarks} ({Math.round(score.passMarks / score.totalMarks * 100)}%)</span>
+                <span className="text-slate-500">Published component score</span>
                 <span>{score.totalMarks}</span>
               </div>
             </div>
@@ -906,12 +899,7 @@ function ViewMarksPanel({
                         <td className="py-2.5 px-4 text-slate-400">{c.weight}%</td>
                         <td className="py-2.5 px-4 text-slate-300">{score.marks}/{score.totalMarks}</td>
                         <td className="py-2.5 px-4 text-slate-300">{pct.toFixed(1)}%</td>
-                        <td className="py-2.5 px-4">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-yellow-400 font-bold">+{Math.round(pct * c.weight / 100 * 100) / 100}</span>
-                            <span className="text-[9px] text-slate-600">pts → {c.termName}</span>
-                          </div>
-                        </td>
+                        <td className="py-2.5 px-4 text-yellow-400 font-semibold">Included in {c.termName}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -920,15 +908,6 @@ function ViewMarksPanel({
             </div>
           )}
 
-          {/* Grade remarks footer */}
-          {g && score && !score.isAbsent && (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
-              style={{ background: "rgba(30,41,59,0.3)", border: "1px solid #1e293b" }}>
-              <span className={`text-sm font-bold ${g.color}`}>{g.label}</span>
-              <span className="text-slate-400 text-sm">—</span>
-              <span className="text-slate-300 text-sm">{g.remarks}</span>
-            </div>
-          )}
         </div>
       </div>
     </div>
@@ -939,39 +918,33 @@ function ViewMarksPanel({
 // RESULTS PANEL  (unchanged from previous build)
 // ══════════════════════════════════════════════════════════════════════════════
 function ResultsPanel({
-  allScores, policy, passThreshold, isLoading, attendancePct,
+  result, policy, isLoading, errorMessage,
   selectedClass, section, sessionLabel, studentName, dsid, onPrint,
 }: {
-  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
-  isLoading: boolean; attendancePct: number | null; selectedClass: string;
+  result: AuthoritativeAcademicResult | null; policy: ExamPolicyTier | null;
+  isLoading: boolean; errorMessage: string | null; selectedClass: string;
   section: string; sessionLabel: string; studentName: string; dsid: string;
   onPrint: () => void;
 }) {
   const [resTerm, setResTerm] = useState("");
 
   const termNames = useMemo(() => {
-    if (!policy) return [];
-    try { return Object.keys(JSON.parse(policy.examWeights || "{}")).map(k => k.trim()); }
-    catch { return []; }
-  }, [policy]);
+    return result ? Object.keys(result.termAverages) : [];
+  }, [result]);
 
   useEffect(() => {
     if (termNames.length > 0 && (!resTerm || !termNames.includes(resTerm)))
       setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  const { termResults, allTermFailCounts } = useMemo<StudentTermResults>(() => {
-    if (!policy || allScores.length === 0) return { termResults: {}, allTermFailCounts: {} };
-    return computeStudentTermResults(allScores, policy, passThreshold);
-  }, [allScores, policy, passThreshold]);
-
-  const activeTermSubjects = termResults[resTerm] ?? [];
-  const scoredSubjects = activeTermSubjects.filter(s => s.status === "scored");
-  const termAvg = scoredSubjects.length > 0
-    ? Math.round((scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length) * 10) / 10
-    : null;
-  const failCount = allTermFailCounts[resTerm] ?? 0;
-  const termGrade = termAvg !== null ? computeGrade(termAvg) : null;
+  const activeTermSubjects = result?.subjectResults.map(subject => ({
+    subject: subject.subject,
+    ...subject.terms[resTerm],
+  })).filter(subject => subject.percentage !== undefined) ?? [];
+  const termAvg = result?.termAverages[resTerm] ?? null;
+  const failCount = result?.failedSubjectCounts[resTerm] ?? 0;
+  const termGrade = result?.termGrades[resTerm] ?? null;
+  const attendancePct = result?.attendance[resTerm] ?? null;
 
   if (isLoading) return (
     <div className="flex justify-center py-14">
@@ -979,13 +952,13 @@ function ResultsPanel({
     </div>
   );
 
-  if (!policy) return (
+  if (!result) return (
     <div className="rounded-2xl p-10 flex flex-col items-center gap-3 text-center"
       style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
       <AlertTriangle className="w-7 h-7 text-amber-500/60" />
-      <p className="text-slate-300 font-bold text-sm">No Exam Policy for Class {selectedClass}</p>
+      <p className="text-slate-300 font-bold text-sm">Academic Result Unavailable</p>
       <p className="text-slate-600 text-xs max-w-xs">
-        Ask your admin to configure an Exam Aggregation Policy.
+        {errorMessage ?? "Your academic result is not available yet. Please contact your school administrator."}
       </p>
     </div>
   );
@@ -1034,8 +1007,8 @@ function ResultsPanel({
             {termGrade && (
               <div className="text-right">
                 <span className="text-slate-500 text-xs block">Overall Grade</span>
-                <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${termGrade.color} ${termGrade.bg}`}
-                  title={termGrade.remarks}>{termGrade.label}</span>
+                <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl border border-slate-600 bg-slate-700/30 text-xl font-bold text-slate-200"
+                  title={termGrade.remarks ?? undefined}>{termGrade.label}</span>
               </div>
             )}
             <button onClick={onPrint}
@@ -1050,13 +1023,11 @@ function ResultsPanel({
         {/* Stats bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ background: "#1e293b" }}>
           {[
-            { label: "Term Avg",   value: termAvg !== null ? `${termAvg}%` : "—",
-              color: termAvg !== null ? (termAvg >= 60 ? "text-emerald-400" : termAvg >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
-            { label: "Grade",      value: termGrade?.label ?? "—", color: termGrade ? termGrade.color : "text-slate-600" },
+            { label: "Term Avg",   value: termAvg !== null ? `${termAvg}%` : "—", color: termAvg !== null ? "text-slate-200" : "text-slate-600" },
+            { label: "Grade",      value: termGrade?.label ?? "—", color: termGrade ? "text-slate-200" : "text-slate-600" },
             { label: "Fails",      value: String(failCount),
               color: failCount === 0 ? "text-emerald-400" : failCount <= 2 ? "text-amber-400" : "text-red-400" },
-            { label: "Attendance", value: attendancePct !== null ? `${attendancePct}%` : "—",
-              color: attendancePct !== null ? (attendancePct < 75 ? "text-red-400" : attendancePct < 85 ? "text-yellow-400" : "text-emerald-400") : "text-slate-600" },
+            { label: "Attendance", value: attendancePct !== null ? `${attendancePct}%` : "—", color: attendancePct !== null ? "text-slate-200" : "text-slate-600" },
           ].map(stat => (
             <div key={stat.label} className="px-5 py-4" style={{ background: "#0f172a" }}>
               <p className="text-[10px] text-slate-500 uppercase tracking-wide">{stat.label}</p>
@@ -1081,7 +1052,6 @@ function ResultsPanel({
               </p>
             </div>
           ) : activeTermSubjects.map(subj => {
-            const gS = subj.percentage !== null ? computeGrade(subj.percentage) : null;
             return (
               <div key={subj.subject} className="rounded-xl overflow-hidden"
                 style={{ border: "1px solid #1e293b" }} data-testid={`results-subject-${subj.subject}`}>
@@ -1092,11 +1062,11 @@ function ResultsPanel({
                     {subj.percentage !== null && (
                       <span className="text-emerald-400 font-bold text-sm">{subj.percentage}%</span>
                     )}
-                    {gS && subj.status === "scored" && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${gS.color} ${gS.bg}`} title={gS.remarks}>{gS.label}</span>
+                    {subj.grade && (subj.status === "pass" || subj.status === "fail") && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-slate-600 bg-slate-700/30 text-slate-200" title={subj.remarks ?? undefined}>{subj.grade}</span>
                     )}
-                    {subj.passed === true  && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
-                    {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
+                    {subj.status === "pass" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
+                    {subj.status === "fail" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                     {subj.status === "absent"     && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">ABSENT</span>}
                     {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">PENDING</span>}
                   </div>
@@ -1129,7 +1099,7 @@ function ResultsPanel({
                         </tr>
                       ))}
                     </tbody>
-                    {subj.status === "scored" && subj.percentage !== null && (
+                    {(subj.status === "pass" || subj.status === "fail") && subj.percentage !== null && (
                       <tfoot>
                         <tr style={{ background: "rgba(30,41,59,0.4)", borderTop: "1px solid #1e293b" }}>
                           <td colSpan={4} className="py-2 px-4 text-right text-slate-400 font-semibold text-xs">Weighted Aggregate</td>
@@ -1145,11 +1115,11 @@ function ResultsPanel({
         </div>
 
         {/* Cross-term fail summary */}
-        {Object.keys(allTermFailCounts).length > 0 && activeTermSubjects.length > 0 && (
+        {Object.keys(result.failedSubjectCounts).length > 0 && activeTermSubjects.length > 0 && (
           <div className="px-5 pb-5" style={{ background: "#0f172a" }}>
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Failure Count per Term</h3>
             <div className="flex flex-wrap gap-2">
-              {Object.entries(allTermFailCounts).map(([t, n]) => (
+              {Object.entries(result.failedSubjectCounts).map(([t, n]) => (
                 <button key={t} onClick={() => setResTerm(t)}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all ${t === resTerm ? "ring-1 ring-slate-400" : ""} ${n > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
                   <span className={n > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
@@ -1169,16 +1139,37 @@ function ResultsPanel({
               Policy: {policy?.tierName}
             </p>
             <p className="text-xs text-slate-500">
-              Marks appear in real-time — no publish step needed.
+              Only marks published by your school are included in this result.
             </p>
             {attendancePct !== null && (
               <p className="text-xs text-slate-500 mt-1">
-                Attendance: <span className={`font-semibold ${attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{attendancePct}%</span>
-                {attendancePct < 75 && <span className="text-red-400 ml-1 text-[10px]">⚠ Below 75% minimum</span>}
+                Attendance: <span className="font-semibold text-slate-300">{attendancePct}%</span>
               </p>
             )}
           </div>
         )}
+
+        <div className="mx-5 mb-5 grid sm:grid-cols-2 gap-3">
+          <div className="rounded-xl p-4" style={{ border: "1px solid #1e293b", background: "rgba(30,41,59,0.3)" }}>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Cumulative Result</p>
+            <p className="text-lg font-bold text-slate-200 mt-1">
+              {result.cumulativeAverage === null ? "Unavailable" : `${result.cumulativeAverage}%`}
+              {result.cumulativeGrade ? ` · ${result.cumulativeGrade.label}` : ""}
+            </p>
+          </div>
+          <div className="rounded-xl p-4" style={{
+            border: result.promoted === null ? "1px solid rgba(245,158,11,0.3)" : "1px solid #1e293b",
+            background: result.promoted === null ? "rgba(245,158,11,0.08)" : "rgba(30,41,59,0.3)",
+          }}>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Promotion Policy Result</p>
+            <p className={`text-lg font-bold mt-1 ${result.promoted === null ? "text-amber-300" : result.promoted ? "text-emerald-400" : "text-red-400"}`}>
+              {result.promoted === null ? "Incomplete" : result.promoted ? "Promoted" : "Retained"}
+            </p>
+            {result.promoted === null && (
+              <p className="text-[11px] text-slate-500 mt-1">Your school must complete the required academic information before a verdict is available.</p>
+            )}
+          </div>
+        </div>
 
         {/* Signature footer */}
         {activeTermSubjects.length > 0 && (
@@ -1298,62 +1289,98 @@ export default function StudentExamination() {
   const selectedClass   = selectedSession?.cls     ?? student?.class   ?? "";
   const selectedSection = selectedSession?.section ?? student?.section ?? "";
 
-  // ── Exam policy for the resolved class ───────────────────────────────────────
-  const { data: policyData, isLoading: policyLoading, isError: policyMissing } =
-    useQuery<ExamPolicyTier>({
-      queryKey: ["/api/student/exam/policy", selectedClass],
-      queryFn: async () => {
-        const r = await fetch(
-          `/api/student/exam/policy?class=${encodeURIComponent(selectedClass)}`,
-          { credentials: "include" },
-        );
-        if (!r.ok) throw new Error("No policy");
-        return r.json();
-      },
-      enabled: !!selectedClass,
-      retry: false,
-      staleTime: 60000,
-    });
-
-  const passThreshold = policyData?.passPercentage ?? 35;
-
-  // ── All scores — cache key includes sessionId to prevent cross-session bleed ──
-  const { data: allScoresData, isLoading: scoresLoading } =
-    useQuery<{ scores: ExamScore[]; cls: string }>({
-      queryKey: ["/api/student/exam/all-scores", selectedClass, selectedSessionId],
-      queryFn: async () => {
-        const r = await fetch(
-          `/api/student/exam/all-scores?class=${encodeURIComponent(selectedClass)}`,
-          { credentials: "include" },
-        );
-        if (!r.ok) throw new Error("Failed");
-        return r.json();
-      },
-      enabled: !!selectedClass && selectedSessionId !== null,
-      staleTime: 0,
-      refetchInterval: 30000,
-    });
-
-  const allScores = allScoresData?.scores ?? [];
-
-  // ── Attendance ───────────────────────────────────────────────────────────────
-  const { data: attendanceData } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats", selectedSession?.sessionName],
-    queryFn: async () => {
-      const base = "/api/student/attendance/stats";
-      const qs   = selectedSession
-        ? `?academicYear=${encodeURIComponent(selectedSession.sessionName)}`
-        : "";
-      const r = await fetch(base + qs, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed");
-      return r.json();
+  const {
+    data: authoritativeResult,
+    isLoading: resultLoading,
+    error: resultError,
+  } = useQuery<AuthoritativeAcademicResult>({
+    queryKey: ["/api/student/academic-result", selectedSessionId],
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/student/academic-result",
+        selectedSessionId,
+        { signal },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message || "Your academic result is not available yet.");
+      }
+      return response.json();
     },
-    enabled: !!student,
-    staleTime: 60000,
+    enabled: selectedSessionId !== null,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: 30000,
   });
 
-  const attPct       = attendanceData?.overallPercent ?? null;
-  const isDataLoading = policyLoading || scoresLoading;
+  const policyData = useMemo<ExamPolicyTier | null>(() => {
+    if (!authoritativeResult) return null;
+    const snapshot = authoritativeResult.policy.examSnapshot;
+    return {
+      ...snapshot,
+      examWeights: typeof snapshot.examWeights === "string"
+        ? snapshot.examWeights
+        : JSON.stringify(snapshot.examWeights),
+      passPercentage: authoritativeResult.policy.gradingSnapshot.passPercentage,
+    };
+  }, [authoritativeResult]);
+
+  const allScores = useMemo<ExamScore[]>(() => {
+    if (!authoritativeResult) return [];
+    const unique = new Map<string, ExamScore>();
+    for (const subject of authoritativeResult.subjectResults) {
+      for (const term of Object.values(subject.terms)) {
+        for (const component of term.breakdown) {
+          const key = `${subject.subject}\u0000${component.sourceExam}`;
+          if (unique.has(key) || component.marks === null || component.totalMarks === null) continue;
+          unique.set(key, {
+            id: unique.size + 1,
+            subject: subject.subject,
+            examType: component.sourceExam,
+            marks: component.marks,
+            totalMarks: component.totalMarks,
+            passMarks: 0,
+            isAbsent: component.isAbsent,
+            class: authoritativeResult.scope.className,
+            section: selectedSection,
+            published: true,
+            authoritativePercentage: component.pct,
+          });
+        }
+      }
+    }
+    return [...unique.values()];
+  }, [authoritativeResult, selectedSection]);
+
+  useEffect(() => {
+    if (!authoritativeResult || !policyData || allScores.length === 0) return;
+    const legacy = computeStudentTermResults(
+      allScores,
+      policyData,
+      authoritativeResult.policy.gradingSnapshot.passPercentage ?? 0,
+    );
+    const differences: string[] = [];
+    for (const [term, average] of Object.entries(authoritativeResult.termAverages)) {
+      const legacySubjects = legacy.termResults[term] ?? [];
+      const legacyAverage = legacySubjects.length > 0 && legacySubjects.every(subject => subject.percentage !== null)
+        ? Math.round(legacySubjects.reduce((sum, subject) => sum + subject.percentage!, 0) / legacySubjects.length * 10) / 10
+        : null;
+      if (legacyAverage !== average) differences.push(`${term}: legacy=${legacyAverage}, authoritative=${average}`);
+      const legacyGrade = legacyAverage === null ? null : computeGrade(legacyAverage).label;
+      const authoritativeGrade = authoritativeResult.termGrades[term]?.label ?? null;
+      if (legacyGrade !== authoritativeGrade) {
+        differences.push(`${term} grade: legacy=${legacyGrade}, authoritative=${authoritativeGrade}`);
+      }
+    }
+    if (differences.length > 0) {
+      console.warn("[academic-parity][student]", {
+        sessionId: authoritativeResult.scope.sessionId,
+        differences,
+      });
+    }
+  }, [allScores, authoritativeResult, policyData]);
+
+  const isDataLoading = resultLoading;
   const handlePrint = useCallback(() => {
     const el = document.getElementById("exam-print-area");
     if (!el) { window.print(); return; }
@@ -1547,22 +1574,22 @@ export default function StudentExamination() {
         </div>
 
         {/* ── Context meta banner ───────────────────────────────────────────── */}
-        {!policyLoading && policyMissing && (
+        {!resultLoading && resultError && (
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-medium no-print"
             style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", color: "#fbbf24" }}>
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            No exam policy configured for Class {selectedClass}
-            {selectedSession ? ` · Session ${selectedSession.displayLabel}` : ""}
-            {" "}— aggregated results unavailable. Raw marks still visible in View Marks.
+            Your academic result is not available yet
+            {selectedSession ? ` · Session ${selectedSession.displayLabel}` : ""}.
+            {" "}Please contact your school administrator.
           </div>
         )}
-        {!policyLoading && policyData && (
+        {!resultLoading && authoritativeResult && (
           <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium no-print"
             style={{ background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.18)", color: "#6ee7b7" }}
             data-testid="meta-banner">
             <BookOpen className="w-3.5 h-3.5 flex-shrink-0" />
             <span className="truncate">
-              {policyData.tierName}
+              {policyData?.tierName}
               <span className="mx-1.5 opacity-40">·</span>
               {student.schoolName}
               {selectedSession && (
@@ -1585,7 +1612,6 @@ export default function StudentExamination() {
           <ViewMarksPanel
             allScores={allScores}
             policy={policyData ?? null}
-            passThreshold={passThreshold}
             isLoading={isDataLoading}
             selectedClass={selectedClass}
             section={selectedSection}
@@ -1594,11 +1620,10 @@ export default function StudentExamination() {
         )}
         {tab === "results" && (
           <ResultsPanel
-            allScores={allScores}
+            result={authoritativeResult ?? null}
             policy={policyData ?? null}
-            passThreshold={passThreshold}
             isLoading={isDataLoading}
-            attendancePct={attPct}
+            errorMessage={resultError instanceof Error ? resultError.message : null}
             selectedClass={selectedClass}
             section={selectedSection}
             sessionLabel={selectedSession?.displayLabel ?? ""}

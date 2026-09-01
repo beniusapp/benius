@@ -261,6 +261,38 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
+  app.get("/api/student/academic-result", async (req, res) => {
+    const studentId = req.session.studentId;
+    const schoolId = req.session.schoolId;
+    if (!studentId || !schoolId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const sessionId = await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) {
+      return res.status(409).json({ message: "No academic session is selected." });
+    }
+
+    try {
+      const result = await calculateStudentAcademicResult({
+        schoolId,
+        sessionId,
+        studentId,
+        currentTerm: typeof req.query.term === "string" ? req.query.term : undefined,
+        publishedOnly: true,
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
+        return res.status(422).json({
+          code: error.code,
+          message: "Your academic result is not available yet. Please contact your school administrator.",
+        });
+      }
+      console.error("GET /api/student/academic-result error:", error);
+      res.status(500).json({ message: "Your academic result could not be loaded." });
+    }
+  });
+
   app.get("/api/teacher/academic-results/:class/:section", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
