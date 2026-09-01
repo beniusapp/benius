@@ -1,0 +1,212 @@
+I want you to perform a COMPLETE ACCURACY AUDIT of the Academic Policy and Exam & Promotion Policy in my existing BENIUS application.
+
+IMPORTANT: First do a READ-ONLY investigation. Do NOT modify any code, database, schema, migration, configuration, or data until you complete the investigation and give me the full report.
+
+My main requirement is:
+
+I want the logic and calculations to be 100% accurate, consistent, and reliable across the entire application.
+
+Please trace the complete flow:
+
+School Setup Policy
+→ Database
+→ Backend APIs
+→ Calculation Logic
+→ Teacher Results
+→ Admin Performance Analytics
+→ Student Portal
+→ Promotion Ledger
+→ Final Promotion Execution
+
+1. ACADEMIC POLICY AUDIT
+
+Investigate every Academic Policy setting and verify whether it is:
+
+- Correctly saved
+- Correctly retrieved
+- Actually used in calculations
+- Correctly enforced
+- Consistent across the entire application
+
+Check:
+
+- Grading Tiers
+- Applicable Classes
+- Percentage-Based grading
+- Pass Percentage
+- Grade-Based grading
+- Passing Grades
+- Grade Brackets
+- Minimum Percentage
+- Maximum Percentage
+- Grade Points
+- Remarks
+
+Find every inconsistency between:
+
+Teacher Portal
+Admin Portal
+Student Portal
+Backend calculation logic
+
+2. EXAM CALCULATION AUDIT
+
+Verify the complete mathematical logic for exam aggregation.
+
+Check:
+
+- Conversion of marks to percentage
+- Exam weights
+- Multiple exam components
+- Total weight validation
+- Missing marks
+- Partial exam data
+- Weight re-normalization
+- Absent students
+- Zero marks
+- Incomplete results
+- Division by zero
+- Rounding rules
+- Decimal precision
+
+IMPORTANT:
+
+The same student with the same marks must produce the same result everywhere.
+
+Teacher Result
+=
+Admin Result
+=
+Student Result
+=
+Backend Result
+
+Please find every separate calculation engine or duplicate calculation logic in the application.
+
+3. PROMOTION POLICY AUDIT
+
+Audit all promotion rules completely.
+
+RULE 1 — Maximum Failed Subjects
+
+Check:
+
+- How failed subjects are counted
+- Whether absent subjects count as failed
+- Whether incomplete subjects count as failed
+- Whether the comparison logic is correct
+- Whether the same result appears everywhere
+
+RULE 2 — Minimum Attendance Percentage
+
+Check:
+
+- Whether attendance is calculated separately for each configured term
+- Whether year-to-date attendance is incorrectly used for all terms
+- How missing attendance is handled
+- Whether term dates are correctly respected
+
+RULE 3 — Minimum Term Weighted Average
+
+Check:
+
+- Which subjects are included
+- Whether failed subjects are included
+- Whether absent subjects are included
+- Whether incomplete subjects are included
+- Whether the formula is mathematically correct
+
+RULE 4 — Minimum Cumulative Percentage
+
+Check:
+
+- Term weights
+- Weight validation
+- Cumulative calculation
+- Trigger term
+- Missing terms
+- Partial terms
+- Rounding
+- Promotion impact
+
+4. INVESTIGATE THESE KNOWN POSSIBLE ISSUES
+
+Deeply verify whether these are real problems:
+
+- Student portal using hardcoded 35% pass percentage
+- Grade-based mode being saved but not actually enforced
+- passing_grades being saved but not used
+- Different grade calculation logic in frontend and backend
+- Frontend grade logic ignoring maxPercent
+- Student portal using hardcoded grade brackets
+- Teacher and Admin having separate calculation engines
+- Attendance not being calculated separately per term
+- Promotion Rule 3 not being implemented in the backend evaluator
+- Promotion Rule 4 not being implemented in the backend evaluator
+- Final promotion execution not validating or recalculating policy rules
+- Different resultsConfig data structures being used in different places
+
+Also find any other hidden inconsistencies.
+
+5. TEST THE LOGIC
+
+Create multiple test scenarios and trace the actual calculation results.
+
+Include:
+
+- Student passes everything
+- Student fails exactly at the configured threshold
+- Student has exactly the pass percentage
+- Student is absent
+- Student gets zero marks
+- One exam component is missing
+- Multiple components are missing
+- Grade boundary cases such as 34.99%, 35%, and 35.01%
+- Grade boundary overlaps
+- Grade boundary gaps
+- Attendance exactly equal to the required percentage
+- Cumulative percentage exactly equal to the threshold
+- Multiple promotion rules triggering together
+
+For each test, verify whether Teacher, Admin, Student, and Backend produce identical results where they should.
+
+6. FINAL REPORT
+
+Before making ANY changes, give me a complete report with:
+
+A. What is already correct
+
+B. Critical issues that can produce incorrect marks, grades, pass/fail decisions, or promotion decisions
+
+C. Inconsistencies between different parts of the application
+
+D. Settings that are saved but not actually enforced
+
+E. Exact root cause of every issue, including:
+- File name
+- Function name
+- API route
+- Database field
+- Calculation flow
+
+F. Recommended architecture
+
+Recommend the safest solution so that there is ONE AUTHORITATIVE SOURCE OF TRUTH for:
+
+- Marks calculation
+- Percentage calculation
+- Grade calculation
+- Pass/Fail decision
+- Promotion decision
+
+Teacher Portal, Admin Portal, Student Portal, Analytics, Promotion Ledger, Backend API, and Final Promotion Execution should not produce conflicting results.
+
+DO NOT MODIFY ANYTHING YET.
+
+First complete the investigation and tell me clearly:
+
+“Is the current logic 100% accurate?”
+
+If the answer is no, explain every issue before making changes.
+
+Be extremely strict. This is a school management system, and incorrect marks, grades, pass/fail results, or promotion decisions are unacceptable.
