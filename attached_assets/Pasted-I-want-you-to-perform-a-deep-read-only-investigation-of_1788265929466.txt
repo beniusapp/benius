@@ -1,0 +1,121 @@
+I want you to perform a deep, read-only investigation of my existing application. Do not make any code, database, schema, migration, configuration, or data changes.
+
+I want to understand exactly what is currently implemented in my application, not what you think should ideally be implemented.
+
+Please inspect the existing codebase and investigate:
+
+Admin Portal → School Setup → Academic Policy
+Admin Portal → School Setup → Exam Policy
+Admin Portal → School Setup → Promotion Policy
+
+First, explain each section in detail
+
+For Academic Policy, tell me:
+
+What options/settings currently exist in the UI?
+What does each option actually mean?
+What happens when an admin changes each setting?
+Where is each setting saved?
+Which database table/column stores it?
+Which backend API handles it?
+Which parts of the application actually use it?
+Is the setting actually enforced, or is it only displayed/saved?
+
+Do the same separately for:
+
+1. Academic Policy
+2. Exam Policy
+3. Promotion Policy
+I want the explanation based strictly on my existing application
+
+For every setting or rule you find, explain it in this format:
+
+Setting name:
+
+[Exact name as shown in my application]
+
+What it means:
+
+Explain in simple, non-technical English.
+
+Current application behavior:
+
+Explain exactly what my application currently does.
+
+Example:
+
+Give me a real example of how the rule works.
+
+Frontend location:
+
+Tell me the exact component/file.
+
+Backend logic:
+
+Tell me the exact route/function/file handling it.
+
+Database:
+
+Tell me exactly where and how it is stored.
+
+Is it actually enforced?
+
+Choose one:
+
+✅ Fully enforced
+⚠️ Partially enforced
+❌ Not enforced / only UI or stored configuration
+Then explain the complete connection between these three
+
+I want to understand:
+
+Academic Policy → Exam Policy → Promotion Policy
+
+Please trace the actual flow currently implemented in my application.
+
+For example, explain:
+
+What settings does the admin configure?
+Where are those settings saved?
+When a student receives marks, what policy or logic is used?
+How are results calculated?
+How is pass/fail decided?
+How does the system decide whether the student is promoted?
+Does attendance affect promotion?
+Can an admin override the promotion decision?
+What happens when the academic session changes?
+Are these rules school-specific and academic-session-specific?
+Very important: show me what currently exists
+
+Please do not suggest improvements or redesign the system yet.
+
+I first want a complete explanation of:
+
+What exactly is currently built and working inside my application?
+
+If something is mentioned in the UI but has no backend logic, clearly tell me.
+
+If something exists in the database but is not used, clearly tell me.
+
+If logic is hardcoded instead of using the configured policy, clearly tell me.
+
+If you cannot confirm something from the existing code, say:
+
+NOT CONFIRMED FROM THE CURRENT CODEBASE
+
+Final report
+
+At the end, give me a simple table:
+
+Section	What currently exists	Where it is configured	Where it is stored	Is it actually used/enforced
+Academic Policy				
+Exam Policy				
+Promotion Policy				
+
+Then give me a simple CEO-level explanation, without too much technical language:
+
+“This is exactly how your school's Academic Policy, Exam Policy, and Promotion Policy currently work.”
+
+Again:
+
+READ-ONLY INVESTIGATION ONLY. DO NOT CHANGE ANYTHING. DO NOT ASSUME WHAT THE SYSTEM SHOULD DO. TELL ME STRICTLY WHAT IS ACTUALLY IMPLEMENTED IN MY CURRENT APPLICATION.
