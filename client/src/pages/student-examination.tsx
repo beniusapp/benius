@@ -53,14 +53,6 @@ interface CompBreakdown {
   pct: number | null; contribution: number | null;
   isAbsent: boolean; status: "scored" | "absent" | "missing";
 }
-interface SubjectTermResult {
-  subject: string; percentage: number | null; passed: boolean | null;
-  breakdown: CompBreakdown[]; status: "scored" | "absent" | "incomplete";
-}
-interface StudentTermResults {
-  termResults: Record<string, SubjectTermResult[]>;
-  allTermFailCounts: Record<string, number>;
-}
 interface AuthoritativeTermValue {
   percentage: number | null;
   grade: string | null;
@@ -122,91 +114,6 @@ function resolveSessionsWithEnrollments(
     }
   }
   return result;
-}
-
-// ─────────────────────────── Term Computation ──────────────────────────────────
-function computeStudentTermResults(
-  scores: ExamScore[], policy: ExamPolicyTier, passThreshold = 35,
-): StudentTermResults {
-  let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
-  try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
-  const termNames = Object.keys(rawWeights).map(k => k.trim());
-
-  const bySubject: Record<string, ExamScore[]> = {};
-  for (const sc of scores) {
-    if (!bySubject[sc.subject]) bySubject[sc.subject] = [];
-    bySubject[sc.subject].push(sc);
-  }
-  const subjects = Object.keys(bySubject).sort();
-
-  const termResults: Record<string, SubjectTermResult[]> = {};
-  const allTermFailCounts: Record<string, number> = {};
-
-  for (const termName of termNames) {
-    const components = rawWeights[termName] || [];
-    const subjectResults: SubjectTermResult[] = subjects.map(subject => {
-      const subjectScores = bySubject[subject];
-      let weightedSum = 0, totalWeight = 0;
-      let hasAbsent = false, hasData = false;
-
-      const breakdown: CompBreakdown[] = components.map(comp => {
-        const record = subjectScores.find(s => s.examType === comp.source_exam);
-        if (!record) return {
-          sourceExam: comp.source_exam, weight: comp.weight,
-          marks: null, totalMarks: null, pct: null, contribution: null,
-          isAbsent: false, status: "missing" as const,
-        };
-        hasData = true;
-        if (record.isAbsent) {
-          hasAbsent = true;
-          return {
-            sourceExam: comp.source_exam, weight: comp.weight,
-            marks: 0, totalMarks: record.totalMarks, pct: null, contribution: null,
-            isAbsent: true, status: "absent" as const,
-          };
-        }
-        const pct = record.totalMarks > 0 ? (record.marks / record.totalMarks) * 100 : 0;
-        const contribution = pct * (comp.weight / 100);
-        weightedSum += contribution;
-        totalWeight += comp.weight;
-        return {
-          sourceExam: comp.source_exam, weight: comp.weight,
-          marks: record.marks, totalMarks: record.totalMarks, pct, contribution,
-          isAbsent: false, status: "scored" as const,
-        };
-      });
-
-      let percentage: number | null = null;
-      let status: SubjectTermResult["status"] = "incomplete";
-      if (!hasData) { status = "incomplete"; }
-      else if (hasAbsent) { status = "absent"; percentage = 0; }
-      else {
-        percentage = Math.round(((totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0)) * 10) / 10;
-        status = "scored";
-      }
-      return {
-        subject, percentage,
-        passed: percentage !== null ? percentage >= passThreshold : null,
-        breakdown, status,
-      };
-    });
-
-    termResults[termName] = subjectResults;
-    allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
-  }
-  return { termResults, allTermFailCounts };
-}
-
-// ─────────────────────────── Helpers ───────────────────────────────────────────
-function computeGrade(pct: number) {
-  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
-  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
-  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
-  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
-  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
-  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
 }
 
 function PrintStyles() {
@@ -1351,34 +1258,6 @@ export default function StudentExamination() {
     }
     return [...unique.values()];
   }, [authoritativeResult, selectedSection]);
-
-  useEffect(() => {
-    if (!authoritativeResult || !policyData || allScores.length === 0) return;
-    const legacy = computeStudentTermResults(
-      allScores,
-      policyData,
-      authoritativeResult.policy.gradingSnapshot.passPercentage ?? 0,
-    );
-    const differences: string[] = [];
-    for (const [term, average] of Object.entries(authoritativeResult.termAverages)) {
-      const legacySubjects = legacy.termResults[term] ?? [];
-      const legacyAverage = legacySubjects.length > 0 && legacySubjects.every(subject => subject.percentage !== null)
-        ? Math.round(legacySubjects.reduce((sum, subject) => sum + subject.percentage!, 0) / legacySubjects.length * 10) / 10
-        : null;
-      if (legacyAverage !== average) differences.push(`${term}: legacy=${legacyAverage}, authoritative=${average}`);
-      const legacyGrade = legacyAverage === null ? null : computeGrade(legacyAverage).label;
-      const authoritativeGrade = authoritativeResult.termGrades[term]?.label ?? null;
-      if (legacyGrade !== authoritativeGrade) {
-        differences.push(`${term} grade: legacy=${legacyGrade}, authoritative=${authoritativeGrade}`);
-      }
-    }
-    if (differences.length > 0) {
-      console.warn("[academic-parity][student]", {
-        sessionId: authoritativeResult.scope.sessionId,
-        differences,
-      });
-    }
-  }, [allScores, authoritativeResult, policyData]);
 
   const isDataLoading = resultLoading;
   const handlePrint = useCallback(() => {

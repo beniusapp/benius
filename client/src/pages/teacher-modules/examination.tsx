@@ -126,197 +126,6 @@ function mapAuthoritativeResult(result: AuthoritativeAcademicResult, selectedTer
   };
 }
 
-// ── Promotion engine (runs on frontend) ───────────────────────────────────────
-// All four active rules are evaluated independently — every violation is collected
-// and stored in detentionViolations[]. A student is retained if ANY rule fires.
-function computeAllStudentResults(
-  students: RawStudentScore[],
-  policy: ExamPolicyTier,
-  attendanceSummary: AttendanceSummary[],
-  passPercentage: number = 35,
-  ruleTermAvg?: { enabled: boolean; minPct: number },
-  currentTerm?: string,
-  cumulConfig?: CumulConfigShape,
-): ComputedStudentResult[] {
-  let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
-  let rules: any = {};
-  try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
-  try { rules = JSON.parse(policy.promotionFailRules || "{}"); } catch {}
-
-  // Normalise term names: trim whitespace so "Finally term " === "Finally term"
-  const weights: Record<string, { source_exam: string; weight: number }[]> = {};
-  for (const [k, v] of Object.entries(rawWeights)) weights[k.trim()] = v;
-
-  const termNames = Object.keys(weights);
-  const attendanceMap = new Map(attendanceSummary.map(a => [a.studentId, a]));
-
-  return students.map(student => {
-    const bySubject: Record<string, RawStudentScore["scores"]> = {};
-    for (const sc of student.scores) {
-      if (!bySubject[sc.subject]) bySubject[sc.subject] = [];
-      bySubject[sc.subject].push(sc);
-    }
-
-    const termResults: Record<string, SubjectTermResult[]> = {};
-    const allTermFailCounts: Record<string, number> = {};
-
-    for (const termName of termNames) {
-      const components = weights[termName] || [];
-      const subjectResults: SubjectTermResult[] = [];
-
-      for (const subject of Object.keys(bySubject)) {
-        const subjectScores = bySubject[subject];
-        let weightedSum = 0, totalWeight = 0;
-        let hasAbsent = false, hasData = false;
-        const breakdown: CompBreakdown[] = [];
-
-        for (const comp of components) {
-          const record = subjectScores.find(s => s.examType === comp.source_exam);
-          if (!record) {
-            breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: null, totalMarks: null, isAbsent: false, pct: null, contribution: null, status: "missing" });
-            continue;
-          }
-          hasData = true;
-          if (record.isAbsent) {
-            hasAbsent = true;
-            breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: 0, totalMarks: record.totalMarks, isAbsent: true, pct: null, contribution: null, status: "absent" });
-            continue;
-          }
-          const pct = record.totalMarks > 0 ? (record.marks / record.totalMarks) * 100 : 0;
-          const contribution = pct * (comp.weight / 100);
-          weightedSum += contribution;
-          totalWeight += comp.weight;
-          breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: record.marks, totalMarks: record.totalMarks, isAbsent: false, pct, contribution, status: "scored" });
-        }
-
-        let percentage: number | null = null, passed: boolean | null = null;
-        let status: SubjectTermResult["status"] = "incomplete";
-        if (!hasData) { status = "incomplete"; }
-        else if (hasAbsent) { status = "absent"; percentage = 0; passed = false; }
-        else {
-          const ep = totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0;
-          percentage = Math.round(ep * 10) / 10;
-          passed = ep >= passPercentage;
-          status = "scored";
-        }
-        subjectResults.push({ subject, percentage, passed, breakdown, status, grade: null, gradePoint: null, remarks: null });
-      }
-
-      termResults[termName] = subjectResults;
-      allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
-    }
-
-    // ── Multi-rule evaluation: ALL active rules run independently ─────────────
-    // Every violation is collected. A student is retained if ANY rule fires.
-    const violations: string[] = [];
-    const rule1   = rules.rule1   ?? {};
-    const ruleAtt = rules.rule_attendance ?? {};
-    const attPct  = attendanceMap.get(student.studentId)?.attendancePct ?? null;
-
-    // ── Rule 1: Max Failed Subjects per Term ───────────────────────────────────
-    if (rule1.enabled !== false && termNames.length > 0) {
-      type TermRule = { term: string; fail_count: number };
-      const termRules: TermRule[] =
-        Array.isArray(rule1.rules) && rule1.rules.length > 0
-          ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
-          : rule1.term
-            ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
-            : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
-
-      // Evaluate EVERY term row — no break on first hit
-      for (const tr of termRules) {
-        if (tr.fail_count <= 0) continue; // 0 = no restriction for this term
-        const fails = allTermFailCounts[tr.term] ?? 0;
-        if (fails >= tr.fail_count) {
-          const failedNames = (termResults[tr.term] ?? [])
-            .filter(s => s.passed === false)
-            .map(s => s.subject);
-          const maxAllowed = tr.fail_count - 1;
-          const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
-          violations.push(
-            `The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`,
-          );
-        }
-      }
-    }
-
-    // ── Rule 2: Minimum Attendance % ──────────────────────────────────────────
-    // Evaluated independently — fires even if Rule 1 already fired.
-    if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0 && attPct !== null) {
-      for (const r of ruleAtt.rules as any[]) {
-        const minPct = Number(r.min_pct ?? 0);
-        if (minPct <= 0) continue;
-        if (attPct < minPct) {
-          const termLabel = r.term ? ` in ${r.term}` : "";
-          violations.push(
-            `The student achieved an attendance rate of ${attPct.toFixed(1)}%${termLabel}, falling below the required minimum threshold of ${minPct}%.`,
-          );
-          break; // one attendance violation message is enough (most-strict row already caught)
-        }
-      }
-    }
-
-    // ── Rule 3: Minimum Term Weighted Average Score ────────────────────────────
-    // Requires currentTerm to be known; evaluated only for the selected term.
-    if (ruleTermAvg?.enabled && currentTerm) {
-      const scoredSubjects = (termResults[currentTerm] ?? []).filter(s => s.status === "scored");
-      if (scoredSubjects.length > 0) {
-        const avg = scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length;
-        const rounded = Math.round(avg * 10) / 10;
-        if (rounded < ruleTermAvg.minPct) {
-          violations.push(
-            `The student's weighted average score for ${currentTerm} was ${rounded}%, which falls below the configured pass threshold of ${ruleTermAvg.minPct}%.`,
-          );
-        }
-      }
-    }
-
-    // ── Rule 4: Minimum Cumulative Percentage (trigger-term only) ─────────────
-    const isCumulTerm = cumulConfig?.enabled && cumulConfig.triggerTerm && currentTerm
-      ? currentTerm.trim() === cumulConfig.triggerTerm.trim()
-      : false;
-    if (isCumulTerm && cumulConfig?.promotionEnabled) {
-      const minPct = cumulConfig.minPercent ?? 0;
-      if (minPct > 0) {
-        const twEntries = Object.entries(cumulConfig.termWeights ?? {});
-        let totalContrib = 0, allHaveData = twEntries.length > 0;
-        for (const [termName, weight] of twEntries) {
-          const tScored = (termResults[termName.trim()] ?? []).filter(s => s.status === "scored");
-          if (tScored.length === 0) { allHaveData = false; break; }
-          totalContrib += (tScored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
-        }
-        if (allHaveData) {
-          const cumPct = Math.round(totalContrib * 10) / 10;
-          if (cumPct < minPct) {
-            violations.push(
-              `The student's cumulative year-end percentage of ${cumPct}% falls below the required minimum threshold of ${minPct}%.`,
-            );
-          }
-        }
-      }
-    }
-
-    const promoted = violations.length === 0;
-    const promotionReason = violations.length > 0 ? violations[0] : "Meets all promotion criteria.";
-
-    return {
-      studentId: student.studentId,
-      name: student.name,
-      digitalStudentId: student.digitalStudentId,
-      rollNumber: student.rollNumber,
-      termResults, allTermFailCounts,
-      attendancePct: attPct,
-      promoted, promotionReason,
-      detentionViolations: violations,
-      termAverages: {},
-      termGrades: {},
-      cumulativeAverage: null,
-      cumulativeGrade: null,
-      complete: true,
-    };
-  });
-}
-
 // ── Four-rule suggestion engine (module-level helper) ─────────────────────────
 // Called both by runAutoSuggestion() and saveLedgerMutation() so the saved
 // autoSuggestion field always matches what the run-button would produce.
@@ -519,9 +328,6 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
 // ── Detention reason builder ───────────────────────────────────────────────────
-// All violation messages are pre-computed by computeAllStudentResults and stored
-// in student.detentionViolations. This function just surfaces them, plus handles
-// the manual-override case where a teacher detained an otherwise-passing student.
 function buildDetentionReasons(
   student: ComputedStudentResult,
   isManualOverride: boolean,
@@ -1149,16 +955,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  // Legacy engine remains temporarily for parity diagnostics only.
-  // It is never used as the displayed or saved authoritative result.
-  const legacyResults = useMemo(() => {
-    if (!policyTier || classScores.length === 0) return [];
-    return computeAllStudentResults(
-      classScores, policyTier, attendanceSummary, gradingPassPct,
-      ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined,
-    );
-  }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
-
   const {
     data: allResults = [],
     isLoading: authoritativeLoading,
@@ -1187,34 +983,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
   const authoritativeError = authoritativeErrorRaw as (Error & { code?: string }) | null;
   const hasIncompleteResults = allResults.some(result => result.promoted === null);
-
-  useEffect(() => {
-    if (!allResults.length || !legacyResults.length) return;
-    const differences: Array<Record<string, unknown>> = [];
-    for (const authoritative of allResults) {
-      const legacy = legacyResults.find(result => result.studentId === authoritative.studentId);
-      if (!legacy) {
-        differences.push({ studentId: authoritative.studentId, field: "student", legacy: "missing", authoritative: "present" });
-        continue;
-      }
-      const checks = [
-        ["termAverage", (() => {
-          const subjects = legacy.termResults[resTerm] ?? [];
-          const scored = subjects.filter(subject => subject.status === "scored");
-          return scored.length ? Math.round(scored.reduce((sum, subject) => sum + (subject.percentage ?? 0), 0) / scored.length * 10) / 10 : null;
-        })(), authoritative.termAverages[resTerm] ?? null],
-        ["failedSubjects", legacy.allTermFailCounts[resTerm] ?? 0, authoritative.allTermFailCounts[resTerm] ?? 0],
-        ["attendance", legacy.attendancePct, authoritative.attendancePct],
-        ["promoted", legacy.promoted, authoritative.promoted],
-      ] as const;
-      for (const [field, legacyValue, authoritativeValue] of checks) {
-        if (legacyValue !== authoritativeValue) {
-          differences.push({ studentId: authoritative.studentId, field, legacy: legacyValue, authoritative: authoritativeValue });
-        }
-      }
-    }
-    if (differences.length) console.warn("[academic-parity][teacher]", { class: resClass, section: resSection, term: resTerm, differences });
-  }, [allResults, legacyResults, resClass, resSection, resTerm]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -1290,10 +1058,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    *
    * Four independently-toggled rules from Section B of the admin policy panel:
    *
-   * Rule 1 — Max Failed Subjects (s.promoted encodes this via computeAllStudentResults):
+   * Rule 1 — Max Failed Subjects:
    *   Enabled/disabled by the admin's Rule 1 toggle (rule1.enabled in promotionFailRules).
    *
-   * Rule 2 — Minimum Attendance % (s.promoted encodes this via computeAllStudentResults):
+   * Rule 2 — Minimum Attendance %:
    *   Enabled/disabled by the admin's Rule 2 toggle (rule_attendance.enabled).
    *
    * Rule 3 — Minimum Term Weighted Average Score (applied here directly):
