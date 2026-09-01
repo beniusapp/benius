@@ -2122,7 +2122,11 @@ export async function registerRoutes(
     const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType, viewSessionId);
     let rank: { rank: number; total: number } | null = null;
     if (scores.length > 0) {
-      rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id);
+      const activeSession = viewSessionId ? null : await storage.getActiveSession(student.schoolId);
+      const rankSessionId = viewSessionId ?? activeSession?.id;
+      if (rankSessionId) {
+        rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id, rankSessionId);
+      }
     }
     const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
     const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);

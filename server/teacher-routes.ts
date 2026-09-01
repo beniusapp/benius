@@ -117,6 +117,14 @@ const resetPasswordSchema = z.object({
 });
 
 export function registerTeacherRoutes(app: Express) {
+  async function resolveAcademicSessionId(req: any, schoolId: number): Promise<number | null> {
+    const selected = req.viewSessionId as number | undefined;
+    if (selected) {
+      const session = await storage.getAcademicSessionByIdForSchool(selected, schoolId);
+      return session?.id ?? null;
+    }
+    return (await storage.getActiveSession(schoolId))?.id ?? null;
+  }
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
     try {
@@ -368,7 +376,10 @@ export function registerTeacherRoutes(app: Express) {
     const studentList = viewSessionId
       ? await storage.getStudentsByClassSectionInSession(sid, cls, section, viewSessionId)
       : await storage.getStudentsByClassSection(sid, cls, section);
-    const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date, viewSessionId);
+    const activeSession = viewSessionId ? null : await storage.getActiveSession(sid);
+    const attendanceSessionId = viewSessionId ?? activeSession?.id;
+    if (!attendanceSessionId) return res.status(409).json({ message: "No academic session is selected." });
+    const records = await storage.getAttendanceForStudentsOnDate(sid, studentList.map(s => s.id), date, attendanceSessionId);
 
     const result = studentList.map(student => {
       const record = records.find(r => r.studentId === student.id);
@@ -1037,13 +1048,34 @@ export function registerTeacherRoutes(app: Express) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
-      if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
+      const bodySchema = z.object({
+        scores: z.array(z.object({
+          studentId: z.coerce.number().int().positive(),
+          marks: z.coerce.number().int().min(0),
+          isAbsent: z.boolean().optional().default(false),
+        })).min(1),
+        subject: z.string().trim().min(1),
+        examType: z.string().trim().min(1),
+        totalMarks: z.coerce.number().int().positive(),
+        passMarks: z.coerce.number().int().min(0),
+        class: z.string().trim().min(1).optional(),
+        section: z.string().trim().min(1).optional(),
+      }).superRefine((value, ctx) => {
+        if (value.passMarks > value.totalMarks) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pass marks cannot exceed total marks" });
+        value.scores.forEach((score, index) => {
+          if (!score.isAbsent && score.marks > value.totalMarks) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scores", index, "marks"], message: "Marks cannot exceed total marks" });
+          }
+        });
+      });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = parsed.data;
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
-      const maxMarks = parseInt(totalMarks) || 100;
-      const pMarks = parseInt(passMarks) || 33;
+      const maxMarks = totalMarks;
+      const pMarks = passMarks;
       // Tag each score with the academic session. Prefer the header value
       // (admin previewing an archived year); otherwise resolve the school's
       // active session so teacher-submitted scores are always year-tagged.
@@ -1059,7 +1091,7 @@ export function registerTeacherRoutes(app: Express) {
         schoolId: teacher.schoolId,
         subject,
         examType,
-        marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
+        marks: s.isAbsent ? 0 : s.marks,
         totalMarks: maxMarks,
         passMarks: pMarks,
         isAbsent: !!s.isAbsent,
@@ -2608,7 +2640,9 @@ export function registerTeacherRoutes(app: Express) {
     const term = decodeURIComponent(req.params.term);
     if (!term) return res.status(400).json({ message: "term is required" });
     try {
-      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, term);
+      const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, sessionId, term);
       res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
@@ -2723,9 +2757,11 @@ Thank you for your prompt attention to this matter.
     // Extract the view session so both score aggregation and ledger decisions
     // are scoped to the same academic year when the admin is in archive mode.
     const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
+    const resolvedSessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
+    if (!resolvedSessionId) return res.status(409).json({ message: "No academic session is selected." });
     const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
-      storage.getExamAggregated(schoolId, cls, section, examType, viewSessionId),
-      storage.getPromotionOverrides(schoolId, cls, section, examType),
+      storage.getExamAggregated(schoolId, cls, section, examType, resolvedSessionId),
+      storage.getPromotionOverrides(schoolId, cls, section, examType, resolvedSessionId),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
     ]);
@@ -2787,7 +2823,9 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = overrideSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
     res.json({ message: "Override saved" });
   });
 
@@ -2806,7 +2844,9 @@ Thank you for your prompt attention to this matter.
     const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId })));
+    const sessionId = await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId, sessionId })));
     res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
   });
 
@@ -2820,7 +2860,9 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId! });
+    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
     res.json({ message: "All overrides cleared" });
   });
 
@@ -2835,7 +2877,9 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = clearSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
     res.json({ message: "Override cleared" });
   });
 
@@ -2867,12 +2911,15 @@ Thank you for your prompt attention to this matter.
     const items     = parsed.data.items;
     const studentIds = items.map(i => i.studentId);
     const term      = parsed.data.term;
+    if (!term) return res.status(400).json({ message: "term is required for promotion execution" });
+    const sessionId = await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
 
     // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
     //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
     const [dsidMap, rawScores] = await Promise.all([
       storage.getStudentDsidMap(schoolId, studentIds),
-      storage.getExamScoresForStudents(schoolId, studentIds),
+      storage.getExamScoresForStudents(schoolId, studentIds, sessionId, term),
     ]);
 
     // ── 2. Build enriched academic history records with cold-storage snapshot ──
@@ -2887,6 +2934,7 @@ Thank you for your prompt attention to this matter.
         }));
       return {
         schoolId,
+        sessionId,
         studentId:     item.studentId,
         fromClass:     item.fromClass,
         fromSection:   item.fromSection,
@@ -2925,7 +2973,7 @@ Thank you for your prompt attention to this matter.
     // ── 3. Execute atomic transaction: history + student update + ledger mark ──
     //       Full automatic rollback on any failure — student records revert.     ─
     const promoted = await storage.executePromotionTransaction(
-      schoolId, items, historyRecords, term,
+      schoolId, items, historyRecords, term, sessionId,
     );
 
     // ── 4. Respond immediately — post-pipeline runs without blocking client ───
@@ -2957,7 +3005,7 @@ Thank you for your prompt attention to this matter.
         }
 
         // 6b. Clean up executed promotion override records (stale data prevention)
-        await storage.deletePromotionOverridesByStudentIds(schoolId, studentIds, examType);
+        await storage.deletePromotionOverridesByStudentIds(schoolId, sessionId, studentIds, examType);
 
       } catch (pipelineErr) {
         // Pipeline errors are non-fatal — core promotion already succeeded

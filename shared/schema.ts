@@ -189,7 +189,11 @@ export const attendanceRecords = pgTable("attendance_records", {
   class: varchar("class", { length: 20 }),
   section: varchar("section", { length: 10 }),
   academicYear: varchar("academic_year", { length: 20 }),
-});
+}, (table) => [
+  uniqueIndex("attendance_records_session_student_date_uidx").on(
+    table.schoolId, table.sessionId, table.studentId, table.date,
+  ),
+]);
 
 export const homework = pgTable("homework", {
   id: serial("id").primaryKey(),
@@ -328,7 +332,12 @@ export const examScores = pgTable("exam_scores", {
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at"),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
-});
+}, (table) => [
+  uniqueIndex("exam_scores_session_student_subject_exam_uidx").on(
+    table.schoolId, table.sessionId, table.studentId,
+    table.subject, table.examType, table.class, table.section,
+  ),
+]);
 
 export const promotionDecisions = pgTable("promotion_decisions", {
   id: serial("id").primaryKey(),
@@ -351,7 +360,11 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
-});
+}, (table) => [
+  uniqueIndex("promotion_decisions_session_student_uidx").on(
+    table.schoolId, table.sessionId, table.class, table.section, table.term, table.studentId,
+  ),
+]);
 export type PromotionDecision = typeof promotionDecisions.$inferSelect;
 
 export const galleryItems = pgTable("gallery_items", {
@@ -745,9 +758,12 @@ export const promotionOverrides = pgTable("promotion_overrides", {
   overrideStatus: text("override_status").notNull(),
   nextClass: text("next_class").notNull(),
   nextSection: text("next_section").notNull(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
   overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
 }, (table) => [
-  uniqueIndex("promotion_override_unique").on(table.schoolId, table.studentId, table.examType, table.class, table.section),
+  uniqueIndex("promotion_override_unique").on(
+    table.schoolId, table.sessionId, table.studentId, table.examType, table.class, table.section,
+  ),
 ]);
 
 export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
