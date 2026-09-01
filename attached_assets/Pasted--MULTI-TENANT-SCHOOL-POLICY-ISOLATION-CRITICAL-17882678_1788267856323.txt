@@ -1,0 +1,297 @@
+====================================================
+MULTI-TENANT SCHOOL POLICY ISOLATION — CRITICAL
+====================================================
+
+This is a MULTI-TENANT SCHOOL APPLICATION.
+
+Every school is an independent tenant.
+
+Therefore, every school can have its own completely different:
+
+- Academic Policy
+- Grading Tiers
+- Pass Percentage
+- Grading System
+- Passing Grades
+- Grade Brackets
+- Grade Points
+- Remarks
+- Exam Policy
+- Exam Aggregation Weights
+- Promotion Rules
+- Attendance Requirements
+- Minimum Term Average
+- Cumulative Percentage Rules
+- Promotion Configuration
+
+THE SYSTEM MUST ALWAYS FOLLOW THE POLICY OF THE
+CURRENT SCHOOL/TENANT.
+
+Example:
+
+School A:
+Pass Percentage = 35%
+Grade A = 80–100
+Promotion Rule = Retain if 3 subjects are failed
+
+School B:
+Pass Percentage = 40%
+Grade A = 90–100
+Promotion Rule = Retain if 2 subjects are failed
+
+The exact same student marks must therefore potentially produce
+different results depending on the school the student belongs to.
+
+Example:
+
+Student Score = 38%
+
+School A:
+38% >= 35%
+Result = PASS
+
+School B:
+38% < 40%
+Result = FAIL
+
+Therefore, the calculation engine must NEVER use:
+
+- Another school's Academic Policy
+- Another school's Exam Policy
+- Another school's Promotion Policy
+- Global/default policy values
+- Hardcoded values when a school-specific policy exists
+
+====================================================
+MANDATORY TENANT RESOLUTION
+====================================================
+
+Before ANY academic calculation is performed, the authoritative
+backend calculation engine must determine:
+
+1. school_id / tenant_id
+2. academic session
+3. student's class
+4. student's section where applicable
+5. applicable Academic Policy
+6. applicable Exam & Promotion Policy
+
+The policy must be resolved using the student's actual:
+
+school_id
++
+academic session context where required
++
+class
+
+The system must verify that the policy belongs to the SAME school.
+
+Never allow:
+
+School A student
+→ School B policy
+
+School A teacher
+→ School B grading tier
+
+School A admin
+→ School B promotion configuration
+
+This isolation must be enforced on the BACKEND, not only in the frontend.
+
+====================================================
+NO HARDCODED ACADEMIC FALLBACKS
+====================================================
+
+Do not silently fall back to values such as:
+
+- 35% pass percentage
+- 33% pass marks
+- Hardcoded A+/A/B+/B/C grades
+- Default promotion rules
+
+If a required policy cannot be resolved for the student's school and class:
+
+DO NOT silently calculate an academic result using another default.
+
+Instead return a clear deterministic state such as:
+
+POLICY_NOT_CONFIGURED
+
+or
+
+POLICY_CONFIGURATION_INCOMPLETE
+
+The frontend must clearly show the configuration problem to the
+authorized school administrator.
+
+A student must never receive an academically authoritative result
+based on an unintended fallback policy.
+
+====================================================
+SCHOOL-SPECIFIC POLICY RESOLUTION
+====================================================
+
+For every calculation, use a deterministic policy resolution process:
+
+Step 1:
+Identify the student's school_id.
+
+Step 2:
+Verify the requested user has permission to access that school.
+
+Step 3:
+Identify the student's academic session.
+
+Step 4:
+Identify the student's class.
+
+Step 5:
+Load only Academic Policy records belonging to that school.
+
+Step 6:
+Find the applicable grading tier for that student's class.
+
+Step 7:
+Load only Exam & Promotion Policy records belonging to that school.
+
+Step 8:
+Find the applicable Exam & Promotion Policy for that student's class.
+
+Step 9:
+Validate that exactly one applicable policy is resolved.
+
+Step 10:
+Run the calculation using only that school's policies.
+
+If multiple policies match the same class, treat this as a
+configuration error rather than arbitrarily selecting the first one.
+
+Never use "find the first matching policy" as the final authoritative
+solution if multiple policies can apply.
+
+====================================================
+DATABASE AND BACKEND ENFORCEMENT
+====================================================
+
+Audit the entire database and backend architecture to ensure tenant
+isolation for:
+
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- exam scores
+- attendance
+- promotion decisions
+- promotion overrides
+- academic history
+- result records
+- report cards
+
+Every academic query must be scoped to the correct:
+
+school_id
++
+student
++
+academic session where applicable
+
+Do not trust school_id coming directly from the frontend without
+authorization and validation.
+
+The backend must derive and verify tenant ownership from the
+authenticated user, student, school relationship, or other
+authoritative server-side context.
+
+====================================================
+IMPORTANT EXAMPLE
+====================================================
+
+Imagine three schools use the same application:
+
+School A:
+Pass Percentage: 35%
+
+School B:
+Pass Percentage: 40%
+
+School C:
+Grade-Based Passing:
+Passing Grades: A, B, C
+
+Student X from School A scores 38%.
+Result must be determined using only School A's policy.
+
+Student Y from School B scores 38%.
+Result must be determined using only School B's policy.
+
+Student Z from School C scores 38%.
+Result must be determined using School C's configured grade,
+grading brackets, and passing grades.
+
+The application must never produce the same result merely because
+all schools use the same shared application code.
+
+The CODE can be shared.
+
+The POLICY and DATA must be TENANT-SPECIFIC.
+
+====================================================
+FINAL REQUIREMENT
+====================================================
+
+I want the architecture to guarantee:
+
+CORRECT STUDENT
++
+CORRECT SCHOOL
++
+CORRECT ACADEMIC SESSION
++
+CORRECT CLASS
++
+CORRECT SCHOOL-SPECIFIC POLICY
++
+ONE AUTHORITATIVE CALCULATION ENGINE
+=
+ONE ACCURATE RESULT
+
+This same authoritative result must then be used everywhere:
+
+Teacher Portal
+=
+Admin Portal
+=
+Student Portal
+=
+Performance Analytics
+=
+Promotion Suggestion
+=
+Promotion Ledger
+=
+Report Card
+=
+Academic History
+
+No portal should have its own academic rules.
+
+No school should ever use another school's policy.
+
+No academic session should overwrite another session's data.
+
+Do not make assumptions.
+
+Before implementation, first provide me with:
+
+1. The complete tenant-isolation audit
+2. Current policy resolution flow
+3. All places where school_id is missing or not enforced
+4. All places where session_id is missing or not enforced
+5. Any possibility of cross-school policy leakage
+6. Any possibility of cross-session data leakage
+7. The proposed authoritative calculation architecture
+8. The exact files, database tables, and APIs that need modification
+
+Only after presenting this investigation and implementation plan,
+proceed with the changes.
