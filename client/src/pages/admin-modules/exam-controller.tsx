@@ -39,9 +39,12 @@ interface LedgerDecision {
 
 interface AggStudent {
   studentId: number; dsid: string; name: string;
-  totalObtained: number; totalMax: number; percentage: number; subjects: string[];
+  totalObtained: number; totalMax: number; percentage: number | null; subjects: string[];
   gradeLabel: string | null; gradePoint: string | null; gradeRemarks: string | null;
-  tierPassThreshold: number;
+  systemPolicyVerdict: boolean | null;
+  complete: boolean;
+  calculationVersion: string | null;
+  calculationError: string | null;
   ledger: LedgerDecision | null;
 }
 
@@ -49,7 +52,7 @@ interface AggData {
   students: AggStudent[];
   overrides: { studentId: number; overrideStatus: string; nextClass: string; nextSection: string }[];
   missingSubjects: string[];
-  passThreshold: number;
+  passThreshold: null;
 }
 
 type AdminDecision = "promote" | "retain" | "grace_pass";
@@ -228,7 +231,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       }
       if (filterPctVal !== "") {
         const pct = parseFloat(filterPctVal);
-        if (!isNaN(pct)) {
+        if (!isNaN(pct) && s.percentage !== null) {
           if (filterPctOp === "gte" && s.percentage < pct) return false;
           if (filterPctOp === "lte" && s.percentage > pct) return false;
         }
@@ -450,8 +453,6 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
         return {
           studentId: s.studentId, fromClass: cohort.class, fromSection: cohort.section,
           nextClass: nc, nextSection: ns, examType,
-          totalObtained: s.totalObtained, totalMax: s.totalMax, percentage: Math.round(s.percentage),
-          gradeLabel: s.gradeLabel ?? null, gradePoint: s.gradePoint ?? null, gradeRemarks: s.gradeRemarks ?? null,
         };
       });
       const res = await apiRequest("POST", "/api/admin/promote", { term: cohort.term, items });
@@ -525,20 +526,24 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
   // ── Dynamic counters for step 3 (scoped to executionScope when active) ──────
   const counters = useMemo(() => {
-    if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0 };
+    if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0, incomplete: 0 };
     // If a selection scope is set, only count those students
     const students = executionScope !== null
       ? agg.students.filter(s => executionScope.has(s.studentId))
       : agg.students;
-    let promote = 0, retain = 0, grace = 0;
+    let promote = 0, retain = 0, grace = 0, incomplete = 0;
     for (const s of students) {
       const ov = overrides[s.studentId];
       if (ov?.status === "retain")     { retain++; continue; }
       if (ov?.status === "grace_pass") { grace++;  continue; }
       if (ov?.status === "promote")    { promote++; continue; }
-      s.ledger?.decision === "retained" ? retain++ : promote++;
+      if (s.ledger?.decision === "retained") { retain++; continue; }
+      if (s.ledger?.decision === "promoted") { promote++; continue; }
+      if (s.systemPolicyVerdict === null) incomplete++;
+      else if (s.systemPolicyVerdict) promote++;
+      else retain++;
     }
-    return { total: students.length, promote, retain, grace };
+    return { total: students.length, promote, retain, grace, incomplete };
   }, [agg, overrides, executionScope]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -850,8 +855,6 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       const led      = s.ledger;
                       const ov       = overrides[s.studentId];
                       const isManual = !!led?.manualIntervention;
-                      const thresh   = s.tierPassThreshold ?? agg.passThreshold;
-                      const passing  = s.percentage >= thresh;
                       return (
                         <tr key={s.studentId}
                           className={`border-b border-[#1e2d44]/50 transition-colors ${selectedStudents.has(s.studentId) ? "bg-[#D4AF37]/5" : isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
@@ -885,9 +888,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                             {s.totalObtained}<span className="text-slate-500">/{s.totalMax}</span>
                           </td>
                           <td className="px-4 py-3">
-                            <span className={`font-semibold ${passing ? "text-emerald-400" : "text-red-400"}`}>
-                              {s.percentage.toFixed(1)}%
+                            <span className="font-semibold text-slate-200">
+                              {s.percentage === null ? "Incomplete" : `${s.percentage.toFixed(1)}%`}
                             </span>
+                            {s.gradeLabel && <p className="text-[10px] text-slate-500 mt-0.5">{s.gradeLabel}</p>}
                           </td>
                           <td className="px-4 py-3">
                             {led ? (
@@ -901,7 +905,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                   {led.decision === "promoted" ? "→" : "↺"} Class {led.targetClass} — {led.targetSection}
                                 </p>
                               </div>
-                            ) : <span className="text-slate-500 text-xs">No ledger</span>}
+                            ) : s.systemPolicyVerdict === null ? (
+                              <Chip c="amber" icon={<AlertTriangle className="w-3 h-3"/>} label="System: Incomplete" />
+                            ) : (
+                              <Chip
+                                c={s.systemPolicyVerdict ? "emerald" : "red"}
+                                icon={s.systemPolicyVerdict ? <TrendingUp className="w-3 h-3"/> : <UserX className="w-3 h-3"/>}
+                                label={s.systemPolicyVerdict ? "System: Promote" : "System: Retain"}
+                              />
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col gap-1.5">
@@ -971,7 +983,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   }}
                   className="h-9 px-6 font-semibold text-sm"
                   style={{ background: "linear-gradient(135deg,#D4AF37,#b8972e)", color: "#0A1628" }}
-                  disabled={isArchiveMode}
+                  disabled={isArchiveMode || (selectedStudents.size === 0
+                    ? agg.students.some(student => student.systemPolicyVerdict === null && !overrides[student.studentId])
+                    : [...selectedStudents].some(studentId => {
+                        const student = agg.students.find(row => row.studentId === studentId);
+                        return student?.systemPolicyVerdict === null && !overrides[studentId];
+                      }))}
                   data-testid="btn-step2-next">
                   {selectedStudents.size > 0
                     ? `Next — Execute for ${selectedStudents.size} Selected →`
@@ -1083,6 +1100,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               { label:"Will Be Promoted", val: counters.promote, color:"text-emerald-400", icon:<TrendingUp className="w-5 h-5 text-emerald-400"    /> },
               { label:"Repeating Year",   val: counters.retain,  color:"text-red-400",     icon:<UserX      className="w-5 h-5 text-red-400"        /> },
               { label:"Grace Passes",     val: counters.grace,   color:"text-purple-400",  icon:<Award      className="w-5 h-5 text-purple-400"     /> },
+              { label:"Incomplete",       val: counters.incomplete, color:"text-amber-400", icon:<AlertTriangle className="w-5 h-5 text-amber-400" /> },
             ].map(({ label, val, color, icon }) => (
               <div key={label} className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
                 {icon}
@@ -1109,8 +1127,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   let fin: AdminDecision;
                   if (ov)                             fin = ov.status;
                   else if (led?.decision==="retained") fin = "retain";
-                  else                                fin = "promote";
-                  // Priority: admin override → teacher ledger → cohort default
+                  else if (led?.decision==="promoted") fin = "promote";
+                  else if (s.systemPolicyVerdict === false) fin = "retain";
+                  else fin = "promote";
+                  // Priority: admin override → teacher ledger → system policy verdict
                   const destCls = ov?.nextClass
                     ?? (fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses)));
                   const destSec = ov?.nextSection
@@ -1150,7 +1170,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
+                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0 || counters.incomplete > 0 || isArchiveMode}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}

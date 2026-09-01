@@ -4095,9 +4095,17 @@ export class DatabaseStorage {
       for (const item of items) {
         const updated = await tx.update(students)
           .set({ class: item.nextClass, section: item.nextSection, idCardPendingReissue: true })
-          .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
+          .where(and(
+            eq(students.id, item.studentId),
+            eq(students.schoolId, schoolId),
+            eq(students.class, item.fromClass),
+            eq(students.section, item.fromSection),
+          ))
           .returning();
-        if (updated.length > 0) promoted++;
+        if (updated.length !== 1) {
+          throw new Error("Promotion scope changed before execution; no students were updated.");
+        }
+        promoted++;
       }
       if (items.length > 0) {
         await tx.update(promotionDecisions)

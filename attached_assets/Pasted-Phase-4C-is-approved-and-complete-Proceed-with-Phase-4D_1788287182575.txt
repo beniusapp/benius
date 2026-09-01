@@ -1,0 +1,172 @@
+Phase 4C is approved and complete. Proceed with Phase 4D.
+
+GOAL:
+Migrate all remaining academic consumers to the existing Authoritative Backend Academic Calculation Engine.
+
+Do NOT create another calculation engine.
+
+Target modules only:
+
+- Promotion Ledger
+- Exam Controller
+- Report Cards
+- Academic History
+- Any remaining academic result consumer
+
+CORE RULE:
+
+One student
++ one school
++ one academic session
++ authoritative backend policy
+= one authoritative academic result everywhere.
+
+All modules must consume the same backend result used by:
+
+Teacher Examination
+Admin Performance Analytics
+Student Examination
+
+REMOVE LOCAL AUTHORITY:
+
+Frontend/local logic must not independently calculate:
+
+- percentage
+- grade
+- grade point
+- remarks
+- pass/fail
+- failed subject count
+- attendance result
+- term average
+- cumulative average
+- promotion verdict
+- promotion rule outcome
+
+Use backend values directly.
+
+PROMOTION LEDGER:
+
+Keep these concepts separate:
+
+1. System Policy Verdict
+2. Teacher Decision
+3. Admin Override
+4. Final Decision
+5. Promotion Execution
+
+Manual decisions must never overwrite the original System Policy Verdict.
+
+If the authoritative result has:
+
+promoted: null
+
+or incomplete/configuration errors:
+
+- Show Incomplete
+- Block automatic promotion suggestion
+- Block final promotion execution unless explicitly supported by a valid authorized override workflow
+
+FINAL PROMOTION:
+
+POST /api/admin/promote must remain fully server-authoritative.
+
+Before execution verify:
+
+authenticated admin
+→ authenticated school
+→ verified session
+→ verified student/enrollment
+→ authoritative class/section
+→ promotion decision belongs to same school/session
+→ selected student IDs only
+→ valid ledger state
+→ authorized override if applicable
+
+The transaction must:
+
+- update only selected students
+- affect only the selected school
+- affect only the selected session
+- mark only selected decision rows
+- create only correct session history
+
+Never perform broad class/session updates using the first student in the payload.
+
+REPORT CARDS:
+
+Report cards must render authoritative:
+
+- percentages
+- grades
+- grade points
+- remarks
+- term averages
+- cumulative averages
+- attendance
+- pass/fail
+- promotion verdict
+
+Historical report cards must not silently recalculate using today's policy.
+
+ACADEMIC HISTORY:
+
+Use authoritative historical data.
+
+Do not allow the client to submit arbitrary history snapshots.
+
+History must be generated server-side from verified:
+
+school
+session
+student
+class
+section
+authoritative evaluation
+
+LEGACY CALCULATIONS:
+
+Keep remaining legacy engines temporarily only for parity diagnostics.
+
+They must not control displayed or persisted academic outcomes.
+
+Use:
+
+[academic-parity][promotion]
+[academic-parity][report-card]
+[academic-parity][history]
+
+MULTI-TENANT RULE:
+
+Every operation must remain scoped by:
+
+school_id
++ session_id
++ verified student/enrollment
+
+No cross-school policy, marks, attendance, promotion decision, history, or report-card data may be used.
+
+VERIFY:
+
+- TypeScript check
+- Focused academic tests
+- Promotion execution scope
+- Selected-student-only execution
+- Cross-school isolation
+- Cross-session isolation
+- Incomplete result blocking
+- Teacher/Admin/Student/Promotion parity
+- Report-card parity
+- Historical data isolation
+
+Report:
+
+- Files changed
+- Modules migrated
+- Backend endpoints used
+- Remaining local calculations
+- Remaining parity diagnostics
+- Verification results
+- Any gaps
+
+Proceed only with Phase 4D.

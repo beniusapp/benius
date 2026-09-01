@@ -3012,54 +3012,73 @@ Thank you for your prompt attention to this matter.
     const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     const resolvedSessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
     if (!resolvedSessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
-      storage.getExamAggregated(schoolId, cls, section, examType, resolvedSessionId),
+    const [enrollmentRows, overrides, ledgerDecisions] = await Promise.all([
+      db.select().from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, resolvedSessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+      )),
       storage.getPromotionOverrides(schoolId, cls, section, examType, resolvedSessionId),
-      storage.getAllSchoolMetadata(schoolId),
-      storage.getClassSubjectsMap(schoolId),
+      term ? storage.getPromotionDecisions(schoolId, cls, section, term, resolvedSessionId) : Promise.resolve([]),
     ]);
-
-    // Resolve the subjects that are actually mapped to this class.
-    // Keys in classSubjectsMap may be "Class 6" or "6" — normalise before comparing.
-    const clsNoPrefix = cls.trim().toLowerCase().replace(/^class\s+/, "");
-    let mappedSubjectsForClass: string[] | null = null;
-    for (const [key, subjects] of Object.entries(classSubjectsMap)) {
-      if (key.trim().toLowerCase().replace(/^class\s+/, "") === clsNoPrefix) {
-        mappedSubjectsForClass = subjects;
-        break;
+    const ledgerMap = new Map(ledgerDecisions.map(decision => [decision.studentId, decision]));
+    const studentsEnriched = (await Promise.all(enrollmentRows.map(async enrollment => {
+      const student = await storage.getStudentById(enrollment.studentId);
+      if (!student || student.schoolId !== schoolId) return null;
+      try {
+        const result = await calculateStudentAcademicResult({
+          schoolId,
+          sessionId: resolvedSessionId,
+          studentId: enrollment.studentId,
+          currentTerm: term,
+          publishedOnly: false,
+        });
+        const selectedTerm = term || Object.keys(result.termAverages).at(-1) || "";
+        const termAverage = result.termAverages[selectedTerm] ?? null;
+        const termGrade = result.termGrades[selectedTerm] ?? null;
+        const termSubjects = result.subjectResults.map(subject => subject.terms[selectedTerm]).filter(Boolean);
+        const rawComponents = termSubjects.flatMap(subject => subject.breakdown);
+        return {
+          studentId: student.id,
+          dsid: student.digitalStudentId,
+          name: student.name,
+          totalObtained: rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0),
+          totalMax: rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0),
+          percentage: termAverage,
+          subjects: result.subjectResults.map(subject => subject.subject),
+          gradeLabel: termGrade?.label ?? null,
+          gradePoint: termGrade?.gradePoint ?? null,
+          gradeRemarks: termGrade?.remarks ?? null,
+          systemPolicyVerdict: result.promoted,
+          complete: result.complete,
+          calculationVersion: result.calculationVersion,
+          calculationError: null,
+          ledger: ledgerMap.get(student.id) ?? null,
+        };
+      } catch (error) {
+        if (!(error instanceof AcademicCalculationError || error instanceof AcademicScopeError)) throw error;
+        return {
+          studentId: student.id,
+          dsid: student.digitalStudentId,
+          name: student.name,
+          totalObtained: 0,
+          totalMax: 0,
+          percentage: null,
+          subjects: [],
+          gradeLabel: null,
+          gradePoint: null,
+          gradeRemarks: null,
+          systemPolicyVerdict: null,
+          complete: false,
+          calculationVersion: null,
+          calculationError: error.code,
+          ledger: ledgerMap.get(student.id) ?? null,
+        };
       }
-    }
-    // Audit only the subjects that are mapped to this class.
-    // Fall back to the school-wide list if no per-class mapping has been configured.
-    const configuredSubjects: string[] =
-      mappedSubjectsForClass !== null && mappedSubjectsForClass.length > 0
-        ? mappedSubjectsForClass
-        : (meta.subjects || []);
+    }))).filter((student): student is NonNullable<typeof student> => student !== null);
 
-    const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
-    const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
-    const rawThreshold = meta.pass_threshold;
-    const legacyThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
-      ? (parseInt(rawThreshold[0]) || 35)
-      : 35;
-    const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
-      const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
-      return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
-    }));
-    const passThreshold = studentsWithGrades.length > 0 ? studentsWithGrades[0].tierPassThreshold : legacyThreshold;
-
-    // If a term is provided, enrich each student with their ledger row
-    let ledgerDecisions: import("../shared/schema").PromotionDecision[] = [];
-    if (term) {
-      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
-    }
-    const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
-    const studentsEnriched = studentsWithGrades.map(s => ({
-      ...s,
-      ledger: ledgerMap.get(s.studentId) ?? null,
-    }));
-
-    res.json({ students: studentsEnriched, overrides, missingSubjects, passThreshold });
+    res.json({ students: studentsEnriched, overrides, missingSubjects: [], passThreshold: null });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
@@ -3148,12 +3167,6 @@ Thank you for your prompt attention to this matter.
         fromClass: z.string().min(1),
         fromSection: z.string().min(1),
         examType: z.string().min(1),
-        totalObtained: z.number().int().min(0),
-        totalMax: z.number().int().min(0),
-        percentage: z.number().int().min(0),
-        gradeLabel: z.string().nullable().optional(),
-        gradePoint: z.string().nullable().optional(),
-        gradeRemarks: z.string().nullable().optional(),
       })).min(1),
     });
     const parsed = promoteSchema.safeParse(req.body);
@@ -3163,28 +3176,73 @@ Thank you for your prompt attention to this matter.
     const adminId   = req.session.userId!;
     const items     = parsed.data.items;
     const studentIds = items.map(i => i.studentId);
+    if (new Set(studentIds).size !== studentIds.length) {
+      return res.status(400).json({ message: "Each selected student may appear only once." });
+    }
     const term      = parsed.data.term;
     if (!term) return res.status(400).json({ message: "term is required for promotion execution" });
     const sessionId = await resolveAcademicSessionId(req, schoolId);
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
 
-    // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
-    //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
-    const [dsidMap, rawScores] = await Promise.all([
-      storage.getStudentDsidMap(schoolId, studentIds),
-      storage.getExamScoresForStudents(schoolId, studentIds, sessionId, term),
-    ]);
+    const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
+    const authoritativeItems = await Promise.all(items.map(async item => {
+      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, item.studentId))
+        .find(row => row.sessionId === sessionId);
+      if (!enrollment ||
+          enrollment.className !== item.fromClass ||
+          enrollment.sectionName !== item.fromSection) {
+        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected student does not belong to this class-section in the selected session.");
+      }
+      const [result, decisions, overrideRows] = await Promise.all([
+        calculateStudentAcademicResult({
+          schoolId,
+          sessionId,
+          studentId: item.studentId,
+          currentTerm: term,
+          publishedOnly: false,
+        }),
+        storage.getPromotionDecisions(schoolId, item.fromClass, item.fromSection, term, sessionId),
+        storage.getPromotionOverrides(schoolId, item.fromClass, item.fromSection, item.examType, sessionId),
+      ]);
+      if (!result.complete || result.promoted === null) {
+        throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A selected student has an incomplete authoritative academic result.");
+      }
+      const ledger = decisions.find(decision => decision.studentId === item.studentId);
+      if (!ledger?.locked || ledger.adminExecuted) {
+        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected student does not have a locked, unexecuted promotion decision.");
+      }
+      const override = overrideRows.find(row => row.studentId === item.studentId);
+      const finalNextClass = override?.nextClass ?? ledger.targetClass;
+      const finalNextSection = override?.nextSection ?? ledger.targetSection;
+      if (!finalNextClass || !finalNextSection) {
+        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected promotion decision has no valid destination.");
+      }
+      const termAverage = result.termAverages[term];
+      const termGrade = result.termGrades[term];
+      if (termAverage === null || termAverage === undefined || !termGrade) {
+        throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A selected student's term result is incomplete.");
+      }
+      const termSubjects = result.subjectResults.map(subject => subject.terms[term]).filter(Boolean);
+      const rawComponents = termSubjects.flatMap(subject => subject.breakdown);
+      return {
+        ...item,
+        nextClass: finalNextClass,
+        nextSection: finalNextSection,
+        totalObtained: rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0),
+        totalMax: rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0),
+        percentage: Math.round(termAverage),
+        gradeLabel: termGrade.label,
+        gradePoint: termGrade.gradePoint,
+        gradeRemarks: termGrade.remarks,
+        authoritativeResult: result,
+        systemPolicyVerdict: result.promoted,
+        teacherDecision: ledger.decision,
+        adminOverride: override?.overrideStatus ?? null,
+      };
+    }));
 
-    // ── 2. Build enriched academic history records with cold-storage snapshot ──
-    //       snapshotJson packs student metadata + per-subject score breakdown    ─
-    const historyRecords = items.map(item => {
+    const historyRecords = authoritativeItems.map(item => {
       const info = dsidMap[item.studentId];
-      const scoreBreakdown = rawScores
-        .filter(s => s.studentId === item.studentId)
-        .map(s => ({
-          subject: s.subject, examType: s.examType,
-          marks: s.marks, totalMarks: s.totalMarks, isAbsent: s.isAbsent,
-        }));
       return {
         schoolId,
         sessionId,
@@ -3218,7 +3276,11 @@ Thank you for your prompt attention to this matter.
           gradeLabel:    item.gradeLabel ?? null,
           gradePoint:    item.gradePoint ?? null,
           gradeRemarks:  item.gradeRemarks ?? null,
-          examBreakdown: scoreBreakdown,
+          systemPolicyVerdict: item.systemPolicyVerdict,
+          teacherDecision: item.teacherDecision,
+          adminOverride: item.adminOverride,
+          calculationVersion: item.authoritativeResult.calculationVersion,
+          authoritativeResult: item.authoritativeResult,
         },
       };
     });
@@ -3226,7 +3288,7 @@ Thank you for your prompt attention to this matter.
     // ── 3. Execute atomic transaction: history + student update + ledger mark ──
     //       Full automatic rollback on any failure — student records revert.     ─
     const promoted = await storage.executePromotionTransaction(
-      schoolId, items, historyRecords, term, sessionId,
+      schoolId, authoritativeItems, historyRecords, term, sessionId,
     );
 
     // ── 4. Respond immediately — post-pipeline runs without blocking client ───
@@ -3238,11 +3300,11 @@ Thank you for your prompt attention to this matter.
       try {
         const now = new Date();
         const ts  = now.toISOString().replace("T", " ").slice(0, 19);
-        const examType = items[0]?.examType ?? parsed.data.term ?? "—";
+        const examType = authoritativeItems[0]?.examType ?? parsed.data.term ?? "—";
 
         // 6a. Structured audit log per student
         // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
-        for (const item of items) {
+        for (const item of authoritativeItems) {
           const info = dsidMap[item.studentId];
           const dsid = info?.dsid ?? `ID:${item.studentId}`;
           const name = info?.name ?? "Unknown";
