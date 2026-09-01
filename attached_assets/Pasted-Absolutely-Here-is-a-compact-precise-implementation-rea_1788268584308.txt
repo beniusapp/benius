@@ -1,0 +1,615 @@
+Absolutely. Here is a **compact, precise, implementation-ready prompt** you can paste directly into Replit:
+
+---
+
+# BENIUS Academic Result & Promotion System — Full Remediation
+
+Perform a **complete audit and implementation** of the Academic Policy, Exam Result, Promotion, Attendance, Multi-Tenant, and Academic Session logic.
+
+## Core Rule — Non-Negotiable
+
+BENIUS is a **multi-tenant school application**.
+
+Every academic operation must always use:
+
+`Authenticated School + Academic Session + Student + Authoritative Class/Section + That School's Policy`
+
+**Never use another school's policy, data, marks, attendance, or session.**
+
+The final result must guarantee:
+
+`Teacher Result = Admin Result = Student Result = Backend Result = Promotion Ledger Result = Final Promotion Result`
+
+---
+
+## 1. Create One Authoritative Backend Calculation Engine
+
+Create one centralized backend academic calculation engine.
+
+All portals must consume the same backend result:
+
+* Teacher
+* Admin
+* Student
+* Performance Analytics
+* Promotion Ledger
+* Report Cards
+* Academic History
+
+Remove/stop using independent frontend calculation logic.
+
+The frontend must **display backend-calculated results only**.
+
+The engine must handle:
+
+* Exam component percentages
+* Weighted results
+* Grade resolution
+* Grade points
+* Remarks
+* Pass/fail
+* Grade-based passing
+* Percentage-based passing
+* Failed subject count
+* Term average
+* Cumulative percentage
+* Term-specific attendance
+* Promotion Rules 1–4
+* Deterministic rounding
+* Missing/incomplete data
+* Duplicate score detection
+* Invalid marks
+
+---
+
+## 2. Strict Multi-Tenant and Session Isolation
+
+Every authoritative academic query, write, update, delete, calculation, and transaction must be scoped by:
+
+```text
+school_id
+session_id
+student_id
+class
+section
+```
+
+where applicable.
+
+Before performing any operation, verify:
+
+```text
+student.school_id === authenticated school
+teacher.school_id === authenticated school
+session.school_id === authenticated school
+policy.school_id === authenticated school
+score.school_id === authenticated school
+attendance.school_id === authenticated school
+```
+
+Do not trust client-supplied IDs without verifying ownership.
+
+Create/use tenant-safe helpers such as:
+
+```text
+getAcademicSessionByIdForSchool(sessionId, schoolId)
+```
+
+---
+
+## 3. Every School Must Use Its Own Policy
+
+Policy resolution must always be:
+
+```text
+Authenticated School
+→ Verified Session
+→ Verified Student
+→ Authoritative Class/Section
+→ That School's Academic Policy
+→ That School's Exam/Promotion Policy
+→ Calculate Result
+```
+
+Never:
+
+* Use global policy
+* Use another school's policy
+* Use hardcoded fallback values
+* Use the first matching policy silently
+
+For every class, require **exactly one applicable policy**.
+
+Return explicit errors:
+
+```text
+POLICY_NOT_CONFIGURED
+POLICY_CONFIGURATION_AMBIGUOUS
+POLICY_CONFIGURATION_INCOMPLETE
+INVALID_POLICY_WEIGHT_CONFIGURATION
+```
+
+Do not calculate an authoritative Pass/Fail if policy resolution fails.
+
+---
+
+## 4. Remove Hardcoded Academic Defaults
+
+Remove hardcoded values from authoritative calculations, including:
+
+```text
+35% pass percentage
+33% pass marks
+Hardcoded grade brackets
+Hardcoded grade labels
+Default promotion decisions
+```
+
+All academic decisions must come from the specific school's configured policy.
+
+Example:
+
+```text
+School A → Pass = 35%
+School B → Pass = 40%
+```
+
+A student with 38% must:
+
+```text
+School A → Pass
+School B → Fail
+```
+
+---
+
+## 5. Fix Grade Resolution
+
+Grade calculation must use the school's configured `grading_rules`.
+
+Always validate:
+
+```text
+min_percent <= percentage <= max_percent
+```
+
+Detect and reject:
+
+* Gaps
+* Invalid ranges
+* Overlapping ranges
+* Duplicate applicable rules
+
+Support:
+
+```text
+Percentage-based
+Grade-based
+Both
+```
+
+If grade-based passing is configured, pass/fail must use:
+
+```text
+gradeLabel ∈ passingGrades
+```
+
+not percentage fallback logic.
+
+---
+
+## 6. Fix Score Validation
+
+Reject invalid scores.
+
+Do not:
+
+* Convert invalid marks to 0
+* Use `parseInt` when decimals are supported
+* Convert total marks of 0 into 100
+* Convert pass marks into default values
+* Accept negative marks
+* Accept marks above maximum
+
+Validate:
+
+```text
+marks >= 0
+marks <= totalMarks
+totalMarks > 0
+```
+
+Define one consistent decimal and rounding policy.
+
+---
+
+## 7. Fix Missing and Duplicate Exam Data
+
+Duplicate score records must not produce different results on different portals.
+
+Detect duplicates and return an explicit validation error.
+
+For missing exam components, implement one explicit business rule consistently across the entire application.
+
+Do not silently re-normalize incomplete exams as complete results unless that behavior is explicitly configured.
+
+Return a deterministic state such as:
+
+```text
+INCOMPLETE_RESULT
+MISSING_EXAM_COMPONENT
+DUPLICATE_SCORE_RECORD
+```
+
+---
+
+## 8. Fix Attendance
+
+Every attendance operation must include:
+
+```text
+school_id
+session_id
+student_id
+date
+```
+
+Fix attendance:
+
+* Upsert
+* Reads
+* Class attendance
+* Attendance summary
+* Promotion attendance
+
+Do not update attendance using only:
+
+```text
+studentId + date
+```
+
+Promotion attendance must be calculated for the correct promotion term/date range.
+
+Use one canonical attendance calculation method everywhere.
+
+Missing attendance must never silently bypass a promotion rule.
+
+Return:
+
+```text
+INCOMPLETE_ATTENDANCE_DATA
+```
+
+when appropriate.
+
+---
+
+## 9. Fix Promotion Rules
+
+The backend must implement all configured promotion rules, including:
+
+```text
+Rule 1 → Failed subjects
+Rule 2 → Attendance
+Rule 3 → Term weighted average
+Rule 4 → Cumulative percentage
+```
+
+The backend is the authority.
+
+The teacher/admin/student must not independently calculate promotion eligibility.
+
+---
+
+## 10. Promotion Decision Model
+
+Keep these concepts separate:
+
+### System Policy Verdict
+
+Calculated only by backend.
+
+### Teacher Decision
+
+Teacher confirms or changes the system suggestion.
+
+### Admin Override
+
+Admin changes the decision with authorization and reason.
+
+### Final Decision
+
+Approved decision for execution.
+
+### Promotion Execution
+
+Actual student promotion.
+
+Manual decisions must **never overwrite the original policy verdict**.
+
+Store audit information for each.
+
+---
+
+## 11. Fix Promotion Ledger Session Isolation
+
+Promotion decision identity must include:
+
+```text
+school_id
+session_id
+student_id
+class
+section
+term
+```
+
+No academic session may overwrite another session.
+
+Fix:
+
+* Upsert
+* Read
+* Lock
+* Unlock
+* Delete
+* Execution
+* Completion status
+
+Ledger completeness must compare:
+
+```text
+Expected students
+vs
+Students with valid decisions
+```
+
+Do not consider a partial ledger complete.
+
+---
+
+## 12. Fix Promotion Overrides
+
+Add:
+
+```text
+promotion_overrides.session_id
+```
+
+Update all:
+
+* Reads
+* Writes
+* Deletes
+* Unique constraints
+* Execution logic
+
+Do not delete all overrides merely because a new session becomes active.
+
+Historical overrides must remain isolated by session.
+
+---
+
+## 13. Make Final Promotion Server-Authoritative
+
+Before `POST /api/admin/promote` executes, validate:
+
+```text
+Authenticated admin
+Correct school
+Correct session
+Student belongs to school
+Student belongs to session
+Correct class/section
+Valid ledger decision
+Valid override
+Override reason where required
+Selected student IDs only
+```
+
+The final promotion must:
+
+* Update only selected students
+* Update only selected session
+* Mark only selected decision rows
+* Create only selected session history
+* Never update an entire cohort accidentally
+* Never use the first student's class/term as a broad update key
+
+Use one atomic database transaction.
+
+---
+
+## 14. Fix Historical Academic Integrity
+
+Historical results must not change when a school later changes its policy.
+
+Implement:
+
+```text
+Policy Version / Policy Snapshot
+Calculation Version
+Result Snapshot
+```
+
+Every historical result should preserve:
+
+```text
+school_id
+session_id
+student_id
+policy_version
+percentage
+grade
+grade_point
+remarks
+pass_fail
+attendance
+promotion_verdict
+promotion_reasons
+generated_at
+```
+
+Historical records must render from the saved snapshot, not the current live policy.
+
+---
+
+## 15. Student Portal Security
+
+Student class/session context must be derived server-side.
+
+Do not trust:
+
+```text
+?class=
+?sessionId=
+```
+
+as the source of truth.
+
+Resolve:
+
+```text
+Authenticated Student
+→ Student's School
+→ Verified Session
+→ Student's Class/Section for that Session
+```
+
+Query parameters may only be used as consistency checks.
+
+Students must see only:
+
+* Their own school data
+* Their own session data
+* Their own published results
+
+Unpublished marks/results must never be visible to students.
+
+---
+
+## 16. Session-Safe Database Operations
+
+Audit and fix all academic storage methods, especially:
+
+```text
+Attendance
+Exam Scores
+Class Rank
+Analytics
+Promotion Decisions
+Promotion Overrides
+Promotion Execution
+Academic History
+Session Lookup
+Term Deletion
+Ledger Status
+Score Snapshots
+```
+
+Every historical academic operation must be explicitly session-aware.
+
+Avoid optional `session_id` for records that cannot safely exist outside an academic session.
+
+---
+
+## 17. Implementation Strategy
+
+Do not blindly rewrite everything.
+
+Implement safely in this order:
+
+### Phase 1 — Audit
+
+Identify:
+
+* Missing session IDs
+* Cross-session collisions
+* Duplicate scores
+* Invalid marks
+* Invalid policy weights
+* Overlapping policies
+* Invalid grade rules
+* Missing attendance
+* Unsafe existing records
+
+### Phase 2 — Schema Safety
+
+Add required fields, indexes, constraints, and snapshot structures safely.
+
+Backfill only high-confidence data.
+
+Flag ambiguous data instead of guessing.
+
+### Phase 3 — Backend Engine
+
+Build and fully test the authoritative calculation engine.
+
+### Phase 4 — Comparison Mode
+
+Temporarily compare:
+
+```text
+Old Result
+vs
+New Backend Result
+```
+
+Log differences.
+
+### Phase 5 — Migrate Consumers
+
+Switch:
+
+* Teacher
+* Admin
+* Student
+* Analytics
+* Ledger
+* Report Cards
+
+to backend results.
+
+### Phase 6 — Promotion Enforcement
+
+Make final promotion fully server-authoritative.
+
+### Phase 7 — Cleanup
+
+Remove old frontend calculation engines only after parity is confirmed.
+
+---
+
+# Final Acceptance Criteria
+
+The implementation is complete only when this is guaranteed:
+
+```text
+Same Student
++ Same School
++ Same Session
++ Same Policy
++ Same Marks
++ Same Attendance
+
+=
+Exactly Same Result Everywhere
+```
+
+And:
+
+```text
+School A data/policy/session
+can NEVER affect
+School B data/policy/session
+```
+
+And:
+
+```text
+Session 2025–2026
+can NEVER overwrite
+Session 2026–2027
+```
+
+**First perform a detailed codebase audit against these requirements. Then implement the remediation carefully. Do not make destructive database changes or delete existing data without validation, migration, and backward-compatibility checks.**
