@@ -29,3 +29,4 @@
 - [Financial analytics authority](financial-analytics-authority.md) — analytics JSON, PDFs, and scheduled reports share one IST/session-scoped financial dataset; lifecycle attempts are never revenue.
 - [External Portal re-authentication](external-portal-reauthentication.md) — settings access requires a short-lived server approval bound to the admin, school, and selected session.
 - [First-session onboarding](first-session-onboarding.md) — a newly created session defaults to draft/inactive, so first-session activation must be handled explicitly.
+- [Startup DDL deadlocks](startup-ddl-deadlocks.md) — concurrent Replit launches can deadlock startup ALTER TABLE work and surface as a misleading Preview network/DNS failure.
