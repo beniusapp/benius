@@ -138,6 +138,21 @@ app.use((req, res, next) => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS academic_term_boundaries (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES academic_sessions(id) ON DELETE CASCADE,
+      term VARCHAR(100) NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      CONSTRAINT academic_term_boundaries_school_session_term_unique
+        UNIQUE (school_id, session_id, term)
+    );
+  `);
+
+  await pool.query(`
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS pass_marks INTEGER NOT NULL DEFAULT 33;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS class TEXT;
     ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS section TEXT;

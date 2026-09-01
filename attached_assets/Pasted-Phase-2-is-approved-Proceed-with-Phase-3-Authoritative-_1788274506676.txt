@@ -1,0 +1,126 @@
+Phase 2 is approved.
+
+Proceed with Phase 3: Authoritative Academic Term Boundaries and Attendance Configuration.
+
+The goal is to make Promotion Rule 2 fully authoritative and eliminate date-based assumptions.
+
+Implement a school and session-aware academic term configuration that defines the exact start and end date for every configured promotion term.
+
+CRITICAL MULTI-TENANT REQUIREMENT:
+
+Every term boundary must belong to:
+
+school_id
++ session_id
++ term
+
+Different schools may have different academic calendars.
+
+Never use global term dates or another school's term boundaries.
+
+Requirements:
+
+1. Store authoritative term boundaries for each academic session.
+
+Each term must have:
+
+- school_id
+- session_id
+- term identifier
+- start_date
+- end_date
+
+2. Validate:
+
+- Session belongs to the authenticated school.
+- Term belongs to that school's configured academic/exam policy.
+- Start date is before end date.
+- Term dates fall within the academic session.
+- Terms must not have ambiguous duplicate definitions.
+- Overlapping term boundaries should be rejected unless explicitly supported by the academic model.
+
+3. Update Rule 2 attendance calculation to use ONLY the configured term start_date and end_date.
+
+Do not use:
+
+- April 1 to today
+- current date heuristics
+- global academic dates
+- another term's date range
+
+4. Attendance calculation must remain scoped by:
+
+school_id
+→ session_id
+→ student_id
+→ configured term date range
+
+Use the centralized attendance status rules already implemented in the authoritative engine.
+
+5. If Rule 2 is enabled but the required term boundaries are missing or invalid:
+
+- Do not calculate an authoritative promotion verdict.
+- Return promoted: null.
+- Return a clear configuration/incomplete-data error.
+
+Never silently skip Rule 2.
+
+6. Support multiple schools and sessions independently.
+
+Example:
+
+School A → 2026-2027 → Half Yearly dates
+School B → 2026-2027 → different Half Yearly dates
+
+These must remain completely isolated.
+
+7. Preserve existing attendance data.
+
+Use additive schema changes and safe migrations.
+
+Audit existing data before adding strict constraints.
+
+8. Do not yet remove or change the frontend calculation engines.
+
+The goal of this phase is only:
+
+Authoritative term configuration
++
+Authoritative Rule 2 attendance scope
++
+Tenant/session isolation
++
+Backend engine integration
+
+9. Add focused tests for:
+
+- Two schools with different term boundaries
+- Multiple sessions for the same school
+- Missing term boundaries
+- Invalid date ranges
+- Duplicate terms
+- Overlapping terms
+- Attendance exactly on boundary dates
+- Attendance from another session
+- Attendance from another school
+- Rule 2 enabled vs disabled
+
+10. After implementation:
+
+- Run type checks
+- Run focused tests
+- Verify migrations
+- Verify existing data was preserved
+- Verify tenant isolation
+- Verify session isolation
+
+Then report exactly:
+
+- Files changed
+- Schema changes
+- Migration results
+- Tests passed
+- Any existing test failures unrelated to this work
+- What remains before switching the portals to the authoritative engine
+
+Proceed carefully. Do not modify unrelated modules.

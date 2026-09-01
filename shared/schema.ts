@@ -1034,6 +1034,28 @@ export const insertAcademicSessionSchema = createInsertSchema(academicSessions).
 export type InsertAcademicSession = z.infer<typeof insertAcademicSessionSchema>;
 export type AcademicSession = typeof academicSessions.$inferSelect;
 
+// ── ACADEMIC TERM BOUNDARIES ──────────────────────────────────────────────────
+// Authoritative calendar boundaries for promotion/attendance terms. Boundaries
+// are tenant- and session-scoped; the unique key prevents duplicate terms.
+export const academicTermBoundaries = pgTable("academic_term_boundaries", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  term: varchar("term", { length: 100 }).notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  schoolSessionTermUnique: uniqueIndex("academic_term_boundaries_school_session_term_uidx")
+    .on(table.schoolId, table.sessionId, table.term),
+}));
+
+export const insertAcademicTermBoundarySchema = createInsertSchema(academicTermBoundaries)
+  .omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAcademicTermBoundary = z.infer<typeof insertAcademicTermBoundarySchema>;
+export type AcademicTermBoundary = typeof academicTermBoundaries.$inferSelect;
+
 // ── ENROLLMENTS ───────────────────────────────────────────────────────────────
 // Links a student to an academic session with their class/section for that year.
 // Unique constraint on (schoolId, studentId, sessionId) prevents double-enrollment

@@ -3,6 +3,7 @@ import {
   AcademicCalculationError, calculateAcademicResults, resolveExamPolicy,
   roundHalfUpOneDecimal,
 } from "../academic-calculation-engine";
+import { AcademicTermBoundaryError, validateAcademicTermBoundaries } from "../academic-term-boundaries";
 
 const grading = (schoolId = 1, mode: "percentage" | "grade" | "both" = "percentage") => ({
   id: `g${schoolId}`, schoolId, applicableClasses: ["1"], gradingSystem: mode,
@@ -58,6 +59,61 @@ describe("academic calculation engine", () => {
     expect(result.attendance.Term1).toBe(75);
     expect(result.violations.some(v => v.rule === "rule2")).toBe(true);
     expect(() => calculateAcademicResults(input({ examPolicies: [exam(rules)], termDateRanges: { Term1: { start: "2025-01-01", end: "2025-01-31" } }, attendanceRecords: [{ schoolId: 1, sessionId: 11, studentId: 7, date: "2025-01-02", status: "remote" }] }))).toThrow(AcademicCalculationError);
+  });
+  it("includes attendance exactly on configured boundary dates", () => {
+    const rules = { rule_attendance: { enabled: true, rules: [{ term: "Term1", min_pct: 100 }] } };
+    const result = calculateAcademicResults(input({
+      examPolicies: [exam(rules)],
+      termDateRanges: { Term1: { start: "2026-04-01", end: "2026-06-30" } },
+      attendanceRecords: [
+        { schoolId: 1, sessionId: 11, studentId: 7, date: "2026-04-01", status: "present" },
+        { schoolId: 1, sessionId: 11, studentId: 7, date: "2026-06-30", status: "present" },
+        { schoolId: 1, sessionId: 11, studentId: 7, date: "2026-07-01", status: "absent" },
+      ],
+    }));
+    expect(result.attendance.Term1).toBe(100);
+    expect(result.promoted).toBe(true);
+  });
+  it("blocks Rule 2 when boundaries are missing and ignores attendance when Rule 2 is disabled", () => {
+    const enabled = { rule_attendance: { enabled: true, rules: [{ term: "Term1", min_pct: 75 }] } };
+    const blocked = calculateAcademicResults(input({ examPolicies: [exam(enabled)], attendanceRecords: [] }));
+    expect(blocked.attendance.Term1).toBeNull();
+    expect(blocked.promoted).toBeNull();
+    expect(blocked.violations).toContainEqual(expect.objectContaining({ rule: "data", term: "Term1" }));
+    expect(calculateAcademicResults(input()).promoted).toBe(true);
+  });
+  it("rejects attendance from another school or session", () => {
+    const rules = { rule_attendance: { enabled: true, rules: [{ term: "Term1", min_pct: 75 }] } };
+    const base = { examPolicies: [exam(rules)], termDateRanges: { Term1: { start: "2026-04-01", end: "2026-06-30" } } };
+    expect(() => calculateAcademicResults(input({ ...base, attendanceRecords: [{ schoolId: 2, sessionId: 11, studentId: 7, date: "2026-04-01", status: "present" }] })))
+      .toThrow(expect.objectContaining({ code: "DATA_SCOPE_MISMATCH" }));
+    expect(() => calculateAcademicResults(input({ ...base, attendanceRecords: [{ schoolId: 1, sessionId: 12, studentId: 7, date: "2026-04-01", status: "present" }] })))
+      .toThrow(expect.objectContaining({ code: "DATA_SCOPE_MISMATCH" }));
+  });
+  it("validates duplicate, invalid, overlapping, and out-of-session term boundaries", () => {
+    const terms = new Set(["Term1", "Term2"]);
+    const session = { startDate: "2026-04-01", endDate: "2027-03-31" };
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-04-01", endDate: "2026-06-30" },
+      { term: "Term2", startDate: "2026-07-01", endDate: "2026-10-31" },
+    ], session, terms)).not.toThrow();
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-04-01", endDate: "2026-06-30" },
+      { term: "Term1", startDate: "2026-07-01", endDate: "2026-10-31" },
+    ], session, terms)).toThrow(expect.objectContaining({ code: "DUPLICATE_TERM_BOUNDARY" }));
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-04-01", endDate: "2026-07-01" },
+      { term: "Term2", startDate: "2026-07-01", endDate: "2026-10-31" },
+    ], session, terms)).toThrow(expect.objectContaining({ code: "OVERLAPPING_TERM_BOUNDARY" }));
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-03-31", endDate: "2026-06-30" },
+    ], session, terms)).toThrow(AcademicTermBoundaryError);
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-06-30", endDate: "2026-04-01" },
+    ], session, terms)).toThrow(AcademicTermBoundaryError);
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-02-30", endDate: "2026-03-01" },
+    ], session, terms)).toThrow(expect.objectContaining({ code: "INVALID_TERM_BOUNDARY" }));
   });
   it("rejects score data from another session", () => {
     expect(() => calculateAcademicResults(input({ scores: [{ ...score(), sessionId: 12 }] })))

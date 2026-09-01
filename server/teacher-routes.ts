@@ -8,12 +8,13 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, academicTermBoundaries, examPolicyTiers, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
 import { AcademicCalculationError } from "./academic-calculation-engine";
 import { AcademicScopeError, calculateStudentAcademicResult } from "./academic-calculation-service";
+import { AcademicTermBoundaryError, validateAcademicTermBoundaries } from "./academic-term-boundaries";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -127,6 +128,87 @@ export function registerTeacherRoutes(app: Express) {
     }
     return (await storage.getActiveSession(schoolId))?.id ?? null;
   }
+
+  app.get("/api/admin/academic-term-boundaries", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const requested = Number(req.query.sessionId);
+    const sessionId = Number.isInteger(requested) && requested > 0
+      ? requested
+      : await resolveAcademicSessionId(req, req.session.schoolId!);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    const [session] = await db.select().from(academicSessions).where(and(
+      eq(academicSessions.id, sessionId),
+      eq(academicSessions.schoolId, req.session.schoolId!),
+    ));
+    if (!session) return res.status(404).json({ message: "Academic session not found." });
+    const rows = await db.select().from(academicTermBoundaries).where(and(
+      eq(academicTermBoundaries.schoolId, req.session.schoolId!),
+      eq(academicTermBoundaries.sessionId, sessionId),
+    ));
+    res.json({ sessionId, sessionStartDate: session.startDate, sessionEndDate: session.endDate, boundaries: rows });
+  });
+
+  app.put("/api/admin/academic-term-boundaries", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const bodySchema = z.object({
+      sessionId: z.number().int().positive(),
+      boundaries: z.array(z.object({
+        term: z.string().trim().min(1).max(100),
+        startDate: z.string(),
+        endDate: z.string(),
+      })),
+    });
+    const parsed = bodySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(issue => issue.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    try {
+      const result = await db.transaction(async tx => {
+        const [session] = await tx.select().from(academicSessions).where(and(
+          eq(academicSessions.id, parsed.data.sessionId),
+          eq(academicSessions.schoolId, schoolId),
+        ));
+        if (!session) throw new AcademicScopeError("SESSION_NOT_FOUND", "Academic session not found.");
+        const policies = await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId));
+        const configuredTerms = new Set<string>();
+        for (const policy of policies) {
+          try {
+            const weights = JSON.parse(policy.examWeights || "{}");
+            Object.keys(weights).forEach(term => configuredTerms.add(term));
+          } catch {
+            throw new AcademicTermBoundaryError("TERM_NOT_IN_POLICY", `Exam policy "${policy.tierName}" has invalid term configuration.`);
+          }
+        }
+        for (const term of configuredTerms) {
+          if (!parsed.data.boundaries.some(boundary => boundary.term.trim() === term)) {
+            throw new AcademicTermBoundaryError("INVALID_TERM_BOUNDARY", `A boundary is required for configured term "${term}".`);
+          }
+        }
+        validateAcademicTermBoundaries(parsed.data.boundaries, session, configuredTerms);
+        await tx.delete(academicTermBoundaries).where(and(
+          eq(academicTermBoundaries.schoolId, schoolId),
+          eq(academicTermBoundaries.sessionId, parsed.data.sessionId),
+        ));
+        return tx.insert(academicTermBoundaries).values(parsed.data.boundaries.map(boundary => ({
+          schoolId,
+          sessionId: parsed.data.sessionId,
+          term: boundary.term.trim(),
+          startDate: boundary.startDate,
+          endDate: boundary.endDate,
+        }))).returning();
+      });
+      res.json({ sessionId: parsed.data.sessionId, boundaries: result });
+    } catch (error) {
+      if (error instanceof AcademicScopeError || error instanceof AcademicTermBoundaryError) {
+        return res.status(422).json({ code: error.code, message: error.message });
+      }
+      console.error("PUT /api/admin/academic-term-boundaries error:", error);
+      res.status(500).json({ message: "Failed to save academic term boundaries." });
+    }
+  });
 
   app.get("/api/academic-calculation/:studentId", async (req, res) => {
     const schoolId = req.session.schoolId;

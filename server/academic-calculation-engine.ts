@@ -234,11 +234,18 @@ export function calculateAcademicResults(input: CalculationInput) {
     const range = input.termDateRanges?.[r.term];
     if (!range) { attendance[r.term] = null; violations.push({ rule: "data", term: r.term, reason: "Attendance term date range is missing" }); continue; }
     const start = new Date(range.start).getTime(), end = new Date(range.end).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) {
+      fail("POLICY_CONFIGURATION_INCOMPLETE", `Attendance term date range is invalid for ${r.term}`);
+    }
     const records = (input.attendanceRecords ?? []).filter(a => a.studentId === input.studentId && new Date(a.date).getTime() >= start && new Date(a.date).getTime() <= end);
-    if (!records.length) { attendance[r.term] = null; violations.push({ rule: "data", term: r.term, reason: "Attendance records are missing" }); continue; }
     const values: Record<string, number> = { present: 1, late: 1, leave: 1, halfday: .5, half_day: .5, absent: 0 };
     let earned = 0;
-    for (const a of records) { if (!(a.status in values)) fail("POLICY_CONFIGURATION_INCOMPLETE", `Unknown attendance status: ${a.status}`); earned += values[a.status]; }
+    for (const a of records) {
+      if (!Number.isFinite(new Date(a.date).getTime())) fail("INVALID_SCORE_DATA", `Invalid attendance date: ${a.date}`);
+      if (!(a.status in values)) fail("POLICY_CONFIGURATION_INCOMPLETE", `Unknown attendance status: ${a.status}`);
+      earned += values[a.status];
+    }
+    if (!records.length) { attendance[r.term] = null; violations.push({ rule: "data", term: r.term, reason: "Attendance records are missing" }); continue; }
     attendance[r.term] = roundHalfUpOneDecimal(earned / records.length * 100);
     if (attendance[r.term]! < r.min_pct) violations.push({ rule: "rule2", term: r.term, reason: `Attendance is below ${r.min_pct}%` });
   }

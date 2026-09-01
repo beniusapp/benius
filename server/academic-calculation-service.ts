@@ -8,6 +8,7 @@ import {
   gradingRules,
   gradingTiers,
   schoolMetadata,
+  academicTermBoundaries,
   students,
 } from "@shared/schema";
 import { db } from "./db";
@@ -42,13 +43,6 @@ function parseObject(value: string, label: string): Record<string, unknown> {
   return { __invalidPolicyJson: label };
 }
 
-function termDateRangesFromResultsConfig(resultsConfig: string): Record<string, TermDateRange> | undefined {
-  const parsed = parseObject(resultsConfig, "resultsConfig");
-  const value = parsed.termDateRanges;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  return value as Record<string, TermDateRange>;
-}
-
 export async function calculateStudentAcademicResult(input: {
   schoolId: number;
   sessionId: number;
@@ -79,7 +73,7 @@ export async function calculateStudentAcademicResult(input: {
   if (!student) throw new AcademicScopeError("STUDENT_NOT_FOUND", "Student was not found for this school.");
   if (!enrollment) throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "Student has no enrollment in this academic session.");
 
-  const [tierRows, ruleRows, examPolicyRows, scoreRows, attendanceRows, subjectMeta] = await Promise.all([
+  const [tierRows, ruleRows, examPolicyRows, scoreRows, attendanceRows, subjectMeta, boundaryRows] = await Promise.all([
     db.select().from(gradingTiers).where(eq(gradingTiers.schoolId, input.schoolId)),
     db.select().from(gradingRules).where(eq(gradingRules.schoolId, input.schoolId)),
     db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, input.schoolId)),
@@ -100,6 +94,10 @@ export async function calculateStudentAcademicResult(input: {
       eq(schoolMetadata.schoolId, input.schoolId),
       eq(schoolMetadata.metaKey, "class_subjects"),
     )).limit(1),
+    db.select().from(academicTermBoundaries).where(and(
+      eq(academicTermBoundaries.schoolId, input.schoolId),
+      eq(academicTermBoundaries.sessionId, input.sessionId),
+    )),
   ]);
 
   const gradingPolicies: GradingPolicy[] = tierRows.map(tier => ({
@@ -152,9 +150,9 @@ export async function calculateStudentAcademicResult(input: {
   const matchingExamPolicies = examPolicyRows.filter(policy =>
     policy.applicableClasses.includes(enrollment.className)
   );
-  const termDateRanges = matchingExamPolicies.length === 1
-    ? termDateRangesFromResultsConfig(matchingExamPolicies[0].resultsConfig)
-    : undefined;
+  const termDateRanges: Record<string, TermDateRange> = Object.fromEntries(
+    boundaryRows.map(boundary => [boundary.term, { start: boundary.startDate, end: boundary.endDate }]),
+  );
   let classSubjectMap: Record<string, string[]> = {};
   try { classSubjectMap = JSON.parse(subjectMeta[0]?.metaValue ?? "{}"); } catch {}
   const normalizedClass = enrollment.className.trim().toLowerCase().replace(/^class\s+/, "");
