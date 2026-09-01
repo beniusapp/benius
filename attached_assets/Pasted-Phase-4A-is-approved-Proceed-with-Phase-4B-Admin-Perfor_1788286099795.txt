@@ -1,0 +1,109 @@
+Phase 4A is approved. Proceed with Phase 4B: Admin Performance Analytics.
+
+GOAL:
+Switch Admin Performance Analytics to consume the existing Authoritative Backend Academic Calculation Engine.
+
+Do not create another calculation engine.
+
+The Admin result must come from the same authoritative backend source used by Teacher Examination.
+
+Required flow:
+
+Authenticated Admin
+→ authenticated school_id
+→ selected academic session
+→ verified student/enrollment
+→ authoritative backend result
+→ Admin display
+
+The frontend must NOT independently calculate:
+
+- Percentage
+- Grade
+- Grade point
+- Pass/Fail
+- Failed subject count
+- Attendance percentage
+- Term average
+- Cumulative percentage
+- Promotion verdict
+- Promotion rules
+
+Use backend values directly.
+
+MULTI-TENANT REQUIREMENTS:
+
+Every result must remain strictly scoped by:
+
+school_id
++ session_id
++ student/enrollment
+
+Never allow:
+
+- Another school's scores
+- Another school's policy
+- Another school's analytics
+- Previous/future session scores
+- Global academic fallbacks
+
+If the backend returns:
+
+POLICY_NOT_CONFIGURED
+POLICY_CONFIGURATION_AMBIGUOUS
+POLICY_CONFIGURATION_INCOMPLETE
+INVALID_POLICY_WEIGHT_CONFIGURATION
+DUPLICATE_SCORE_DATA
+INVALID_SCORE_DATA
+
+or:
+
+promoted: null
+
+display the explicit incomplete/configuration state.
+
+Never convert an incomplete result into Pass, Fail, Promoted, or Retained in the frontend.
+
+PHASE 4B STEPS:
+
+1. Map every calculation in Admin Performance Analytics.
+2. Identify all percentages, grades, rankings, pass/fail, averages, and promotion calculations.
+3. Replace displayed academic calculations with the authoritative backend response.
+4. Keep old calculations temporarily only for parity diagnostics.
+5. Log meaningful differences under:
+
+[academic-parity][admin]
+
+6. Ensure Teacher and Admin display identical authoritative results for the same:
+
+school
++ session
++ student
++ academic data
+
+7. Do not change Teacher Examination behavior.
+8. Do not yet modify Student Examination.
+9. Do not modify unrelated modules.
+
+Before completion verify:
+
+- TypeScript check
+- Focused academic tests
+- Admin/Teacher result parity
+- Cross-school isolation
+- Cross-session isolation
+- Incomplete-result handling
+- Published/unpublished behavior remains correct
+- No frontend fallback grades or pass percentages remain in the authoritative Admin display path
+
+Report:
+
+- Files changed
+- Backend endpoint used
+- Legacy calculations disabled/replaced
+- Remaining parity diagnostics
+- Parity differences found
+- Test results
+- Runtime verification
+
+Proceed only with Phase 4B.

@@ -62,14 +62,20 @@ interface CompBreakdown {
 interface SubjectTermResult {
   subject: string; percentage: number | null; passed: boolean | null;
   breakdown: CompBreakdown[]; status: "scored" | "absent" | "incomplete";
+  grade: string | null; gradePoint: string | null; remarks: string | null;
 }
 interface ComputedStudentResult {
   studentId: number; name: string; digitalStudentId: string; rollNumber: number | null;
   termResults: Record<string, SubjectTermResult[]>;
   allTermFailCounts: Record<string, number>;
   attendancePct: number | null;
-  promoted: boolean; promotionReason: string;
+  promoted: boolean | null; promotionReason: string;
   detentionViolations: string[];
+  termAverages: Record<string, number | null>;
+  termGrades: Record<string, { label: string; gradePoint: string | null; remarks: string | null } | null>;
+  cumulativeAverage: number | null;
+  cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null;
+  complete: boolean;
 }
 interface GradingRuleClient {
   id: number; tierId: number; gradeLabel: string;
@@ -188,7 +194,7 @@ function computeAllStudentResults(
           const ep = totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0;
           percentage = Math.round(ep * 10) / 10; passed = ep >= passPercentage; status = "scored";
         }
-        subjectResults.push({ subject, percentage, passed, breakdown, status });
+        subjectResults.push({ subject, percentage, passed, breakdown, status, grade: null, gradePoint: null, remarks: null });
       }
       termResults[termName] = subjectResults;
       allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
@@ -260,8 +266,83 @@ function computeAllStudentResults(
       termResults, allTermFailCounts, attendancePct: attPct,
       promoted, promotionReason: violations.length > 0 ? violations[0] : "Meets all promotion criteria.",
       detentionViolations: violations,
+      termAverages: {},
+      termGrades: {},
+      cumulativeAverage: null,
+      cumulativeGrade: null,
+      complete: true,
     };
   });
+}
+
+type AuthoritativeAcademicResult = {
+  scope: { studentId: number };
+  subjectResults: Array<{ subject: string; terms: Record<string, {
+    percentage: number | null; grade: string | null; gradePoint: string | null; remarks: string | null;
+    status: "pass" | "fail" | "absent" | "incomplete"; breakdown: CompBreakdown[];
+  }> }>;
+  termAverages: Record<string, number | null>;
+  termGrades: ComputedStudentResult["termGrades"];
+  cumulativeAverage: number | null;
+  cumulativeGrade: ComputedStudentResult["cumulativeGrade"];
+  attendance: Record<string, number | null>;
+  failedSubjectCounts: Record<string, number>;
+  violations: Array<{ rule: string; term?: string; reason: string }>;
+  promoted: boolean | null;
+  complete: boolean;
+  name: string; digitalStudentId: string; rollNumber: number | null;
+};
+
+function mapAuthoritativeResult(result: AuthoritativeAcademicResult, selectedTerm: string): ComputedStudentResult {
+  const termResults: Record<string, SubjectTermResult[]> = {};
+  for (const subject of result.subjectResults) {
+    for (const [term, value] of Object.entries(subject.terms)) {
+      (termResults[term] ??= []).push({
+        subject: subject.subject,
+        percentage: value.percentage,
+        passed: value.status === "pass" ? true : value.status === "fail" ? false : null,
+        breakdown: value.breakdown,
+        status: value.status === "pass" || value.status === "fail" ? "scored" : value.status,
+        grade: value.grade,
+        gradePoint: value.gradePoint,
+        remarks: value.remarks,
+      });
+    }
+  }
+  const violations = result.violations.map(v => `${v.term ? `${v.term}: ` : ""}${v.reason}`);
+  return {
+    studentId: result.scope.studentId,
+    name: result.name,
+    digitalStudentId: result.digitalStudentId,
+    rollNumber: result.rollNumber,
+    termResults,
+    allTermFailCounts: result.failedSubjectCounts,
+    attendancePct: result.attendance[selectedTerm] ?? null,
+    promoted: result.promoted,
+    promotionReason: result.promoted === null
+      ? "No authoritative promotion verdict is available until the academic data or policy configuration is complete."
+      : violations[0] ?? "Meets all promotion criteria.",
+    detentionViolations: violations,
+    termAverages: result.termAverages,
+    termGrades: result.termGrades,
+    cumulativeAverage: result.cumulativeAverage,
+    cumulativeGrade: result.cumulativeGrade,
+    complete: result.complete,
+  };
+}
+
+function findAuthoritativeComponent(
+  result: AuthoritativeAcademicResult | undefined,
+  subjectName: string,
+  examType: string,
+) {
+  const subject = result?.subjectResults.find(item => item.subject === subjectName);
+  if (!subject) return null;
+  for (const [term, termResult] of Object.entries(subject.terms)) {
+    const component = termResult.breakdown.find(item => item.sourceExam === examType);
+    if (component) return { component, term, termResult };
+  }
+  return null;
 }
 
 // ── Detention reason builder ───────────────────────────────────────────────────
@@ -306,15 +387,6 @@ function AdminStudentTimeline({
     return m;
   }, [classAverages]);
 
-  const chartData = useMemo(() => {
-    return allExamTypes.map(et => {
-      const s = subjectScores.find(x => x.examType === et);
-      const studentPct = s ? Math.round((s.marks / s.totalMarks) * 100) : null;
-      const classAvg = avgMap[et] ?? null;
-      return { exam: et, studentPct, classAvg };
-    }).filter(Boolean) as { exam: string; studentPct: number | null; classAvg: number | null }[];
-  }, [subjectScores, avgMap, allExamTypes]);
-
   const allSubjects = useMemo(() => {
     const map: Record<string, StudentExamScore[]> = {};
     for (const s of scores) { if (!map[s.subject]) map[s.subject] = []; map[s.subject].push(s); }
@@ -335,42 +407,17 @@ function AdminStudentTimeline({
               <thead><tr className="border-b">
                 <th className="text-left py-1.5 px-2">Exam</th>
                 <th className="text-center py-1.5 px-2">Marks</th>
-                <th className="text-center py-1.5 px-2">%</th>
-                <th className="text-center py-1.5 px-2">Grade</th>
               </tr></thead>
               <tbody>
-                {subjectScores.map((s, i) => {
-                  const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = computeGrade(pct, []);
-                  return (
+                {subjectScores.map((s, i) => (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
                       <td className="py-1.5 px-2 text-center">{s.marks}/{s.totalMarks}</td>
-                      <td className="py-1.5 px-2 text-center">{pct}%</td>
-                      <td className="py-1.5 px-2 text-center">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${g.color} ${g.bg}`}>{g.label}</span>
-                      </td>
                     </tr>
-                  );
-                })}
+                  ))}
               </tbody>
             </table>
           </div>
-          {chartData.length > 1 && (
-            <div className="h-52 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="exam" tick={{ fontSize: 10 }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
-                  <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Line type="monotone" dataKey="studentPct" stroke="#6366f1" strokeWidth={2} name={studentName} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
-                  <Line type="monotone" dataKey="classAvg" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5" name="Class Average" dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
         </>
       )}
       {allSubjects.length > 0 && (
@@ -391,15 +438,11 @@ function AdminStudentTimeline({
                         <span className="font-bold text-gray-500">AB</span>
                       </div>
                     );
-                    const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = computeGrade(pct, []);
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{s.marks}/{s.totalMarks}</span>
-                          <span className="text-muted-foreground">({pct}%)</span>
-                          <span className={`px-1 py-0.5 rounded border text-[9px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                         </div>
                       </div>
                     );
@@ -415,11 +458,10 @@ function AdminStudentTimeline({
 }
 
 // ── Report Card Modal (exact copy from teacher examination.tsx) ────────────────
-function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
+function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
-  gradingRules: GradingRuleClient[];
   showPromoVerdict: boolean;
   promoEntry: PromoEntry | undefined;
   onClose: () => void;
@@ -429,10 +471,8 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
   const isManualOverride = isDetained && student.promoted === true;
   const detentionReasons = isDetained ? buildDetentionReasons(student, isManualOverride) : [];
 
-  const subjectsWithScores = termSubjects.filter(s => s.status === "scored");
-  const overallAvg = subjectsWithScores.length > 0
-    ? Math.round((subjectsWithScores.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / subjectsWithScores.length) * 10) / 10 : null;
-  const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
+  const overallAvg = student.termAverages[term] ?? null;
+  const overallGrade = student.termGrades[term] ?? null;
 
   function printReportCard() {
     const esc = (s: string | number | null | undefined) =>
@@ -440,8 +480,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
 
     // Subject rows
     const subjectRows = termSubjects.map(subj => {
-      const g = subj.status === "scored" && subj.percentage !== null
-        ? computeGrade(subj.percentage, gradingRules) : null;
+      const g = subj.grade;
       const statusBadge = subj.status === "incomplete"
         ? `<span class="badge incomplete">INCOMPLETE</span>`
         : subj.status === "absent"
@@ -450,7 +489,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
             ? `<span class="badge pass">PASS</span>`
             : subj.passed === false
               ? `<span class="badge fail">FAIL</span>` : "";
-      const gradeBadge = g ? `<span class="grade">${esc(g.label)}</span>` : "";
+      const gradeBadge = g ? `<span class="grade">${esc(g)}</span>` : "";
       const pctCell = subj.percentage !== null ? `${esc(subj.percentage)}%` : "—";
 
       const compRows = subj.breakdown.map(comp => `
@@ -504,7 +543,13 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
 
     // Promotion verdict
     let verdictSection = "";
-    if (showPromoVerdict && promoEntry) {
+    if (student.promoted === null) {
+      verdictSection = `
+        <div class="policy-box">
+          <p class="policy-title">Academic Result Incomplete</p>
+          <p class="policy-reason">${esc(student.promotionReason)}</p>
+        </div>`;
+    } else if (showPromoVerdict && promoEntry) {
       const isP = promoEntry.decision === "promoted";
       const verdictLabel = isP
         ? `Promoted to Class ${esc(promoEntry.targetClass)} — Section ${esc(promoEntry.targetSection)}`
@@ -666,7 +711,7 @@ ${verdictSection}
             {overallGrade && (
               <div className="text-right">
                 <span className="text-slate-500 text-xs block">Overall Grade</span>
-                <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${overallGrade.color} ${overallGrade.bg}`} title={overallGrade.remarks ?? ""}>{overallGrade.label}</span>
+                <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-300 text-xl font-bold" title={overallGrade.remarks ?? ""}>{overallGrade.label}</span>
               </div>
             )}
           </div>
@@ -683,7 +728,7 @@ ${verdictSection}
                     <span className="text-white text-sm font-semibold">{subj.subject}</span>
                     <div className="flex items-center gap-2">
                       {subj.percentage !== null && <span className="text-yellow-400 font-bold text-sm">{subj.percentage}%</span>}
-                      {subj.status === "scored" && subj.percentage !== null && (() => { const g = computeGrade(subj.percentage, gradingRules); return <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${g.color} ${g.bg}`} title={g.remarks ?? ""}>{g.label}</span>; })()}
+                       {subj.grade && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-300" title={subj.remarks ?? ""}>{subj.grade}</span>}
                       {subj.passed === true && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                       {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                       {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">INCOMPLETE</span>}
@@ -741,7 +786,15 @@ ${verdictSection}
             </div>
           )}
 
-          {showPromoVerdict ? (
+          {student.promoted === null ? (
+            <div className="rounded-xl p-4 border border-amber-500/30 bg-amber-500/10 flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-300">Academic Result Incomplete</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">{student.promotionReason}</p>
+              </div>
+            </div>
+          ) : showPromoVerdict ? (
             promoEntry ? (
               <div className={`rounded-xl border overflow-hidden ${promoEntry.decision === "promoted" ? "border-emerald-500/30" : "border-red-500/30"}`}>
                 <div className={`px-5 py-4 flex items-center gap-3 ${promoEntry.decision === "promoted" ? "bg-emerald-500/15" : "bg-red-500/15"}`}>
@@ -906,31 +959,48 @@ export default function PerformanceAnalytics({
     refetchInterval: 30000,
   });
 
+  const { data: viewAuthoritativeResults = [], isLoading: viewAuthorityLoading } = useQuery<AuthoritativeAcademicResult[]>({
+    queryKey: ["/api/admin/academic-results", viewClass, viewSection, "view-marks", sessionId],
+    queryFn: async () => {
+      const r = await sessionFetch(`/api/admin/academic-results/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}`);
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.message || "Authoritative academic results are unavailable");
+      return body.results ?? [];
+    },
+    enabled: tab === "view" && !!viewClass && !!viewSection,
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+  });
+
   function generateProgressReport() {
-    const scored = viewScores.filter(s => !s.isAbsent);
-    const absent = viewScores.filter(s => s.isAbsent);
-    const totalMax = viewScores[0]?.totalMarks ?? 0;
-    const gradedScores = scored.map(s => {
-      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
-      return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
-    }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-    const passCount = gradedScores.filter(s => s.pct >= 33).length;
-    const failCount = gradedScores.filter(s => s.pct < 33).length;
-    const avgPct = scored.length > 0 ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length) : 0;
-    const topper = gradedScores[0];
+    const reportRows = viewScores.map(score => ({
+      score,
+      authority: findAuthoritativeComponent(
+        viewAuthoritativeResults.find(result => result.scope.studentId === score.studentId),
+        viewSubject,
+        viewExamType,
+      ),
+    }));
+    const absent = reportRows.filter(row => row.authority?.component.status === "absent");
+    const passCount = reportRows.filter(row => row.authority?.termResult.status === "pass").length;
+    const failCount = reportRows.filter(row => row.authority?.termResult.status === "fail").length;
     const generatedOn = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
-    const rows = viewScores.map((s, idx) => {
-      if (s.isAbsent) return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td>—</td><td>—</td><td>—</td><td><span class="badge absent">ABSENT</span></td><td>—</td></tr>`;
-      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
-      const isPass = pct >= 33;
-      return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td><td><span class="grade-badge">${g.label}</span></td><td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td><td class="remarks">${g.remarks ?? ""}</td></tr>`;
+    const rows = reportRows.map(({ score: s, authority }, idx) => {
+      const component = authority?.component;
+      const resultStatus = authority?.termResult.status;
+      const grade = authority?.termResult.grade;
+      const remarks = authority?.termResult.remarks ?? "";
+      if (!component || component.status !== "scored") {
+        const label = component?.status === "absent" ? "ABSENT" : "INCOMPLETE";
+        return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td>—</td><td>—</td><td>—</td><td><span class="badge absent">${label}</span></td><td>${remarks}</td></tr>`;
+      }
+      return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td><strong>${component.marks}/${component.totalMarks}</strong></td><td><strong>${component.pct?.toFixed(1) ?? "—"}%</strong></td><td>${grade ? `<span class="grade-badge">${grade}</span>` : "—"}</td><td>${resultStatus === "pass" || resultStatus === "fail" ? `<span class="badge ${resultStatus}">${resultStatus.toUpperCase()}</span>` : "—"}</td><td class="remarks">${remarks}</td></tr>`;
     });
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>Progress Report — ${viewSubject} ${viewExamType}</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:20px;}@media print{body{padding:0;}button{display:none!important;}}.page-header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:16px;}.school-name{font-size:20px;font-weight:800;color:#1e3a5f;}.report-label h1{font-size:15px;font-weight:700;color:#1e3a5f;text-align:right;}.report-label p{font-size:10px;color:#64748b;text-align:right;}.meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;background:#f0f4f8;border-radius:8px;padding:12px 16px;margin-bottom:16px;}.meta-item label{font-size:9px;text-transform:uppercase;color:#64748b;display:block;}.meta-item span{font-size:13px;font-weight:700;color:#1e3a5f;}.stat-bar{display:flex;gap:10px;margin-bottom:16px;}.stat-card{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;text-align:center;}.stat-card .val{font-size:20px;font-weight:800;color:#1e3a5f;}.stat-card .lbl{font-size:9px;text-transform:uppercase;color:#64748b;}.stat-card.green{border-color:#d1fae5;background:#f0fdf4;}.stat-card.green .val{color:#065f46;}.stat-card.red{border-color:#fee2e2;background:#fff5f5;}.stat-card.red .val{color:#991b1b;}.stat-card.blue .val{color:#1e40af;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}thead tr{background:#1e3a5f;color:#fff;}th{padding:9px 10px;text-align:left;font-size:10px;font-weight:600;}td{padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;}tr:nth-child(even) td{background:#f8fafc;}td.name{font-weight:600;color:#1e3a5f;}td.remarks{color:#64748b;font-style:italic;}.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;}.badge.pass{background:#dcfce7;color:#166534;}.badge.fail{background:#fee2e2;color:#991b1b;}.badge.absent{background:#f1f5f9;color:#64748b;}.grade-badge{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}.print-btn{position:fixed;bottom:20px;right:20px;background:#1e3a5f;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;}</style></head><body>
 <div class="page-header"><div><div class="school-name">Performance Report</div></div><div class="report-label"><h1>Progress Report</h1><p>Generated: ${generatedOn}</p></div></div>
 <div class="meta-grid"><div class="meta-item"><label>Class</label><span>${viewClass}</span></div><div class="meta-item"><label>Section</label><span>${viewSection}</span></div><div class="meta-item"><label>Subject</label><span>${viewSubject}</span></div><div class="meta-item"><label>Exam</label><span>${viewExamType}</span></div></div>
-<div class="stat-bar"><div class="stat-card blue"><div class="val">${viewScores.length}</div><div class="lbl">Total</div></div><div class="stat-card green"><div class="val">${passCount}</div><div class="lbl">Passed</div></div><div class="stat-card red"><div class="val">${failCount}</div><div class="lbl">Failed</div></div><div class="stat-card"><div class="val">${absent.length}</div><div class="lbl">Absent</div></div><div class="stat-card blue"><div class="val">${scored.length > 0 ? avgPct + "%" : "—"}</div><div class="lbl">Avg</div></div><div class="stat-card"><div class="val" style="font-size:13px">${topper ? topper.studentName.split(" ")[0] + " · " + topper.pct + "%" : "—"}</div><div class="lbl">Topper</div></div></div>
+<div class="stat-bar"><div class="stat-card blue"><div class="val">${viewScores.length}</div><div class="lbl">Total</div></div><div class="stat-card green"><div class="val">${passCount}</div><div class="lbl">Passed</div></div><div class="stat-card red"><div class="val">${failCount}</div><div class="lbl">Failed</div></div><div class="stat-card"><div class="val">${absent.length}</div><div class="lbl">Absent</div></div><div class="stat-card blue"><div class="val">—</div><div class="lbl">Class Avg Not Provided</div></div><div class="stat-card"><div class="val">—</div><div class="lbl">Ranking Not Provided</div></div></div>
 <table><thead><tr><th>#</th><th>DSID</th><th>Student Name</th><th>Marks</th><th>Score %</th><th>Grade</th><th>Result</th><th>Remarks</th></tr></thead><tbody>${rows.join("")}</tbody></table>
 <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button><script>setTimeout(()=>window.print(),400);</script></body></html>`;
     const win = window.open("", "_blank", "width=900,height=700");
@@ -1025,10 +1095,62 @@ export default function PerformanceAnalytics({
 
   useEffect(() => { if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]); }, [termNames, resTerm]);
 
-  const allResults = useMemo(() => {
+  const legacyResults = useMemo(() => {
     if (!policyTier || classScores.length === 0) return [];
     return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined);
   }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
+
+  const {
+    data: allResults = [],
+    isLoading: authoritativeLoading,
+    error: authoritativeErrorRaw,
+    refetch: refetchAuthoritative,
+  } = useQuery<ComputedStudentResult[]>({
+    queryKey: ["/api/admin/academic-results", resClass, resSection, resTerm, sessionId],
+    queryFn: async () => {
+      const r = await sessionFetch(
+        `/api/admin/academic-results/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}?term=${encodeURIComponent(resTerm)}`,
+      );
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const error = new Error(body.message || "Authoritative academic results are unavailable");
+        (error as Error & { code?: string }).code = body.code;
+        throw error;
+      }
+      return ((body.results ?? []) as AuthoritativeAcademicResult[]).map(result => mapAuthoritativeResult(result, resTerm));
+    },
+    enabled: !!resClass && !!resSection && !!resTerm,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const authoritativeError = authoritativeErrorRaw as (Error & { code?: string }) | null;
+  const hasIncompleteResults = allResults.some(result => result.promoted === null);
+
+  useEffect(() => {
+    if (!allResults.length || !legacyResults.length) return;
+    const differences: Array<Record<string, unknown>> = [];
+    for (const authoritative of allResults) {
+      const legacy = legacyResults.find(result => result.studentId === authoritative.studentId);
+      if (!legacy) {
+        differences.push({ studentId: authoritative.studentId, field: "student", legacy: "missing", authoritative: "present" });
+        continue;
+      }
+      const legacySubjects = legacy.termResults[resTerm] ?? [];
+      const scored = legacySubjects.filter(subject => subject.status === "scored");
+      const checks = [
+        ["termAverage", scored.length ? Math.round(scored.reduce((sum, subject) => sum + (subject.percentage ?? 0), 0) / scored.length * 10) / 10 : null, authoritative.termAverages[resTerm] ?? null],
+        ["failedSubjects", legacy.allTermFailCounts[resTerm] ?? 0, authoritative.allTermFailCounts[resTerm] ?? 0],
+        ["attendance", legacy.attendancePct, authoritative.attendancePct],
+        ["promoted", legacy.promoted, authoritative.promoted],
+      ] as const;
+      for (const [field, legacyValue, authoritativeValue] of checks) {
+        if (legacyValue !== authoritativeValue) differences.push({ studentId: authoritative.studentId, field, legacy: legacyValue, authoritative: authoritativeValue });
+      }
+    }
+    if (differences.length) console.warn("[academic-parity][admin]", { class: resClass, section: resSection, term: resTerm, differences });
+  }, [allResults, legacyResults, resClass, resSection, resTerm]);
 
   const filteredResults = useMemo(() => {
     const q = resSearch.toLowerCase().trim();
@@ -1036,7 +1158,7 @@ export default function PerformanceAnalytics({
     return allResults.filter(s => s.name.toLowerCase().includes(q) || s.digitalStudentId?.toLowerCase().includes(q) || String(s.rollNumber).includes(q));
   }, [allResults, resSearch]);
 
-  const isLoading = policyLoading || scoresLoading;
+  const isLoading = policyLoading || scoresLoading || authoritativeLoading;
   const ready = !!resClass && !!resSection && !!resTerm && !!policyTier;
   const isPromotionTerm = showCol.promotionGate;
 
@@ -1137,7 +1259,7 @@ export default function PerformanceAnalytics({
               </div>
             </div>
 
-            {viewLoading ? (
+            {viewLoading || viewAuthorityLoading ? (
               <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="rounded-xl border border-[#1e293b] bg-[#1e293b]/30 p-4 animate-pulse"><div className="h-4 bg-[#1e293b] rounded w-3/4 mb-2" /><div className="h-4 bg-[#1e293b] rounded w-1/2" /></div>)}</div>
             ) : viewExamType && viewScores.length === 0 ? (
               <div className="text-center py-8 text-slate-500 text-sm" data-testid="text-no-scores">
@@ -1150,7 +1272,7 @@ export default function PerformanceAnalytics({
                   <table className="w-full text-sm" data-testid="table-view-scores">
                     <thead>
                       <tr className="bg-[#1e293b]/60 border-b border-[#1e293b]">
-                        {["#", "DSID", "Name", "Marks", "%", "Grade", ""].map((h, i) => (
+                        {["#", "DSID", "Name", "Marks", "%", "Term Grade", ""].map((h, i) => (
                           <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-slate-400 ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 6 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
@@ -1158,8 +1280,13 @@ export default function PerformanceAnalytics({
                     <tbody>
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
-                        const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const authority = findAuthoritativeComponent(
+                          viewAuthoritativeResults.find(result => result.scope.studentId === s.studentId),
+                          viewSubject,
+                          viewExamType,
+                        );
+                        const pct = authority?.component.pct ?? null;
+                        const grade = authority?.termResult.grade ?? null;
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b border-[#1e293b]/60 last:border-0 hover:bg-[#1e293b]/40 cursor-pointer transition-colors" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -1167,9 +1294,9 @@ export default function PerformanceAnalytics({
                               <td className="py-2.5 px-3 font-mono text-xs text-slate-400">{s.dsid}</td>
                               <td className="py-2.5 px-3 text-sm font-semibold text-yellow-300 hover:text-yellow-200">{s.studentName}</td>
                               <td className="py-2.5 px-3 text-center text-xs text-slate-300">{s.isAbsent ? <span className="font-bold text-slate-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
-                              <td className="py-2.5 px-3 text-center text-xs font-semibold text-white">{s.isAbsent ? "—" : `${pct}%`}</td>
+                              <td className="py-2.5 px-3 text-center text-xs font-semibold text-white">{pct === null ? <span className="text-amber-400">Incomplete</span> : `${pct.toFixed(1)}%`}</td>
                               <td className="py-2.5 px-3 text-center">
-                                {s.isAbsent ? <span className="text-xs text-slate-600">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
+                                {grade ? <span className="px-1.5 py-0.5 rounded border border-blue-500/30 bg-blue-500/10 text-blue-300 text-[10px] font-bold">{grade}</span> : <span className="text-xs text-slate-600">—</span>}
                               </td>
                               <td className="py-2.5 px-3 text-center text-slate-500">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
                             </tr>
@@ -1256,6 +1383,13 @@ export default function PerformanceAnalytics({
               </div>
             )}
             {policyLoading && resClass && <div className="mt-3 flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-3 h-3 animate-spin" /><span>Loading policy…</span></div>}
+            {authoritativeError && resClass && resSection && resTerm && (
+              <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                <p className="font-semibold">Authoritative results unavailable{authoritativeError.code ? ` (${authoritativeError.code})` : ""}</p>
+                <p className="mt-1 text-xs text-red-200/80">{authoritativeError.message}</p>
+                <button onClick={() => refetchAuthoritative()} className="mt-2 text-xs font-semibold underline">Retry</button>
+              </div>
+            )}
             {resClass && !policyLoading && policyError && (
               <div className="mt-3 flex flex-col gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
                 <div className="flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /><span>{policyError.toLowerCase().startsWith("no policy") || policyError.toLowerCase().startsWith("no exam policy") ? `No Exam Policy configured for Class ${resClass}. Set one up in School Setup → Exam Aggregation & Promotion Policy.` : policyError}</span></div>
@@ -1317,24 +1451,11 @@ export default function PerformanceAnalytics({
                       </thead>
                       <tbody>
                         {filteredResults.map((student, idx) => {
-                          const termSubjects = student.termResults[resTerm] ?? [];
-                          const scoredSubjs = termSubjects.filter(s => s.status === "scored");
-                          const weightedAvg = scoredSubjs.length > 0 ? Math.round((scoredSubjs.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / scoredSubjs.length) * 10) / 10 : null;
+                          const weightedAvg = student.termAverages[resTerm] ?? null;
+                          const termGrade = student.termGrades[resTerm] ?? null;
                           const failCount = student.allTermFailCounts[resTerm] ?? 0;
                           const att = student.attendancePct;
-
-                          let cumulativePct: number | null = null;
-                          if (isCumulativeTerm && cumulConfig?.termWeights) {
-                            const twEntries = Object.entries(cumulConfig.termWeights);
-                            let totalContrib = 0, allHaveData = twEntries.length > 0;
-                            for (const [termName, weight] of twEntries) {
-                              const tSubjs = student.termResults[termName.trim()] ?? [];
-                              const tScored = tSubjs.filter(s => s.status === "scored");
-                              if (tScored.length === 0) { allHaveData = false; break; }
-                              totalContrib += (tScored.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
-                            }
-                            if (allHaveData) cumulativePct = Math.round(totalContrib * 10) / 10;
-                          }
+                          const cumulativePct = student.cumulativeAverage;
 
                           return (
                             <tr key={student.studentId} className="border-b border-[#1e293b]/60 hover:bg-[#1e293b]/30 transition-colors" data-testid={`result-row-${student.studentId}`}>
@@ -1356,9 +1477,9 @@ export default function PerformanceAnalytics({
                                 <td className="py-3 px-4 text-center">
                                   {weightedAvg !== null ? (
                                     <div>
-                                      <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>{weightedAvg}%</span>
+                                      <span className="text-base font-bold text-blue-300">{weightedAvg}%</span>
                                       <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                        <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${Math.min(100, weightedAvg)}%` }} />
+                                        <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                       </div>
                                     </div>
                                   ) : <span className="text-slate-600 text-xs italic">No data</span>}
@@ -1366,7 +1487,7 @@ export default function PerformanceAnalytics({
                               )}
                               {showCol.termGrade && (
                                 <td className="py-3 px-4 text-center">
-                                  {weightedAvg !== null ? (() => { const g = computeGrade(weightedAvg, gradingRules); return <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`} title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>{g.label}</span>; })() : <span className="text-slate-600 text-xs">—</span>}
+                                  {termGrade ? <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold" title={termGrade.remarks ?? ""} data-testid={`grade-${student.studentId}`}>{termGrade.label}</span> : <span className="text-slate-600 text-xs">—</span>}
                                 </td>
                               )}
                               {showCol.subjectFails && (
@@ -1385,20 +1506,20 @@ export default function PerformanceAnalytics({
                                   ) : <span className="text-slate-600 text-xs">—</span>}
                                 </td>
                               )}
-                              {showCol.promotionGate && <td className="py-3 px-4 text-center"><PromoCellReadOnly entry={promoMap[student.studentId]} /></td>}
+                              {showCol.promotionGate && <td className="py-3 px-4 text-center">{student.promoted === null ? <span className="inline-flex px-2.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-bold" title={student.promotionReason}>Incomplete</span> : <PromoCellReadOnly entry={promoMap[student.studentId]} />}</td>}
                               {showCol.cumulativeTotal && isCumulativeTerm && (
                                 <td className="py-3 px-4 text-center">
                                   {cumulativePct !== null ? (
                                     <div>
-                                      <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>{cumulativePct}%</span>
-                                      <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden"><div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`} style={{ width: `${Math.min(100, cumulativePct)}%` }} /></div>
+                                      <span className="text-base font-bold text-blue-300">{cumulativePct}%</span>
+                                      <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden"><div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, cumulativePct)}%` }} /></div>
                                     </div>
                                   ) : <span className="text-slate-600 text-xs italic" title="Scores for all contributing terms are required">Partial</span>}
                                 </td>
                               )}
                               {showCol.finalGrade && isCumulativeTerm && (
                                 <td className="py-3 px-4 text-center">
-                                  {cumulativePct !== null ? (() => { const g = computeGrade(cumulativePct, gradingRules); return <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`} title={g.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>{g.label}</span>; })() : <span className="text-slate-600 text-xs">—</span>}
+                                  {student.cumulativeGrade ? <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold" title={student.cumulativeGrade.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>{student.cumulativeGrade.label}</span> : <span className="text-slate-600 text-xs">—</span>}
                                 </td>
                               )}
                               {showCol.reportCard && (
@@ -1420,7 +1541,7 @@ export default function PerformanceAnalytics({
           )}
 
           {reportStudent && policyTier && (
-            <ReportCardModal student={reportStudent} term={resTerm} policy={policyTier} gradingRules={gradingRules} showPromoVerdict={isPromotionTerm} promoEntry={promoMap[reportStudent.studentId]} onClose={() => setReportStudent(null)} />
+            <ReportCardModal student={reportStudent} term={resTerm} policy={policyTier} showPromoVerdict={isPromotionTerm} promoEntry={promoMap[reportStudent.studentId]} onClose={() => setReportStudent(null)} />
           )}
         </div>
       )}

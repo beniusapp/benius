@@ -303,6 +303,47 @@ export function registerTeacherRoutes(app: Express) {
       res.status(500).json({ message: "Failed to calculate class academic results." });
     }
   });
+
+  app.get("/api/admin/academic-results/:class/:section", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "School context is missing." });
+    const className = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const sessionId = await resolveAcademicSessionId(req, schoolId);
+    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+    const term = typeof req.query.term === "string" ? req.query.term : undefined;
+    try {
+      const enrollmentRows = await db.select().from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, className),
+        eq(enrollments.sectionName, section),
+      ));
+      const results = await Promise.all(enrollmentRows.map(async enrollment => {
+        const student = await storage.getStudentById(enrollment.studentId);
+        if (!student) return null;
+        const result = await calculateStudentAcademicResult({
+          schoolId, sessionId, studentId: enrollment.studentId, currentTerm: term, publishedOnly: false,
+        });
+        return {
+          ...result,
+          name: student.name,
+          digitalStudentId: student.digitalStudentId,
+          rollNumber: student.rollNumber,
+        };
+      }));
+      res.json({ sessionId, results: results.filter(Boolean) });
+    } catch (error) {
+      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
+        return res.status(422).json({ code: error.code, message: error.message });
+      }
+      console.error("GET /api/admin/academic-results error:", error);
+      res.status(500).json({ message: "Failed to calculate class academic results." });
+    }
+  });
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
     try {
