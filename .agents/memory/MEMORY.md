@@ -31,3 +31,4 @@
 - [First-session onboarding](first-session-onboarding.md) — a newly created session defaults to draft/inactive, so first-session activation must be handled explicitly.
 - [Startup DDL deadlocks](startup-ddl-deadlocks.md) — concurrent Replit launches can deadlock startup ALTER TABLE work and surface as a misleading Preview network/DNS failure.
 - [Academic calculation authority](academic-calculation-authority.md) — authoritative results require exact school policies, enrollment scope, complete components, deterministic rounding, and nullable verdicts.
+- [Production read-only query wrapper](production-read-query-wrapper.md) — some grouped or joined production checks return only transaction wrapper text; never treat that as a zero-row result.
