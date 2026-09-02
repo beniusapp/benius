@@ -77,10 +77,6 @@ interface ComputedStudentResult {
   cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null;
   complete: boolean;
 }
-interface GradingRuleClient {
-  id: number; tierId: number; gradeLabel: string;
-  minPercent: number; maxPercent: number; remarks: string | null; sortOrder: number;
-}
 type CumulConfigShape = {
   enabled: boolean; triggerTerm: string;
   termWeights: Record<string, number>;
@@ -114,25 +110,6 @@ function gradeBg(label: string): string {
   if (l.startsWith("D")) return "bg-orange-500/15 border-orange-500/30";
   return "bg-red-500/15 border-red-500/30";
 }
-function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string; color: string; bg: string; remarks: string | null } {
-  if (rules.length > 0) {
-    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
-    for (const r of sorted) {
-      if (pct >= r.minPercent) return { label: r.gradeLabel, color: gradeColor(r.gradeLabel), bg: gradeBg(r.gradeLabel), remarks: r.remarks };
-    }
-    const last = sorted[sorted.length - 1];
-    return { label: last.gradeLabel, color: gradeColor(last.gradeLabel), bg: gradeBg(last.gradeLabel), remarks: last.remarks };
-  }
-  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
-  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
-  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
-  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
-  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
-  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
-}
-
 type AuthoritativeAcademicResult = {
   scope: { studentId: number };
   subjectResults: Array<{ subject: string; terms: Record<string, {
@@ -889,18 +866,6 @@ export default function PerformanceAnalytics({
   });
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
-  const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
-  const [gradingPassPct, setGradingPassPct] = useState(35);
-  useEffect(() => {
-    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
-    let cancelled = false;
-    sessionFetch(`/api/admin/analytics/grading-rules/${encodeURIComponent(resClass)}`)
-      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
-      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
-      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
-    return () => { cancelled = true; };
-  }, [resClass]);
-
   function handleResClassChange(cls: string) { setResClass(cls); setResSection(""); setResTerm(""); }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
@@ -946,11 +911,6 @@ export default function PerformanceAnalytics({
   }, [policyTier, resTerm]);
 
   const isCumulativeTerm = useMemo(() => cumulConfig?.enabled && cumulConfig.triggerTerm && resTerm ? resTerm.trim() === cumulConfig.triggerTerm.trim() : false, [cumulConfig, resTerm]);
-  const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
-    try { const pr = JSON.parse(policyTier?.promotionFailRules || "{}"); const rta = pr.rule_term_avg ?? {}; return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) }; }
-    catch { return { enabled: false, minPct: 35 }; }
-  }, [policyTier]);
-
   useEffect(() => { if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]); }, [termNames, resTerm]);
 
   const {

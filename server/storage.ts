@@ -77,6 +77,16 @@ export class AcademicSessionFinancialHistoryError extends Error {
   }
 }
 
+export class PromotionConflictError extends Error {
+  readonly status = 409;
+  readonly code = "PROMOTION_SCOPE_CHANGED";
+
+  constructor(message = "Promotion scope changed before execution; no records were updated.") {
+    super(message);
+    this.name = "PromotionConflictError";
+  }
+}
+
 const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
 
 /**
@@ -4086,6 +4096,23 @@ export class DatabaseStorage {
     term: string,
     sessionId: number,
   ): Promise<number> {
+    if (items.length !== historyRecords.length) {
+      throw new PromotionConflictError("Every promoted student must have exactly one academic history snapshot.");
+    }
+    const historyByStudent = new Map(historyRecords.map(record => [record.studentId, record]));
+    for (const item of items) {
+      const history = historyByStudent.get(item.studentId);
+      if (!history ||
+          history.schoolId !== schoolId ||
+          history.sessionId !== sessionId ||
+          history.fromClass !== item.fromClass ||
+          history.fromSection !== item.fromSection ||
+          history.toClass !== item.nextClass ||
+          history.toSection !== item.nextSection) {
+        throw new PromotionConflictError("Academic history scope does not match the selected promotion.");
+      }
+    }
+
     let promoted = 0;
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -4103,19 +4130,26 @@ export class DatabaseStorage {
           ))
           .returning();
         if (updated.length !== 1) {
-          throw new Error("Promotion scope changed before execution; no students were updated.");
+          throw new PromotionConflictError();
         }
         promoted++;
-      }
-      if (items.length > 0) {
-        await tx.update(promotionDecisions)
+
+        const ledgerUpdated = await tx.update(promotionDecisions)
           .set({ adminExecuted: true, adminExecutedAt: now })
           .where(and(
             eq(promotionDecisions.schoolId, schoolId),
             eq(promotionDecisions.term, term),
             eq(promotionDecisions.sessionId, sessionId),
-            inArray(promotionDecisions.studentId, items.map(item => item.studentId)),
-          ));
+            eq(promotionDecisions.studentId, item.studentId),
+            eq(promotionDecisions.class, item.fromClass),
+            eq(promotionDecisions.section, item.fromSection),
+            eq(promotionDecisions.locked, true),
+            eq(promotionDecisions.adminExecuted, false),
+          ))
+          .returning({ id: promotionDecisions.id });
+        if (ledgerUpdated.length !== 1) {
+          throw new PromotionConflictError("The locked promotion decision changed before execution.");
+        }
       }
     });
     return promoted;

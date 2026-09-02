@@ -70,7 +70,13 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
+      const containsSensitiveAcademicData =
+        path.includes("/academic") ||
+        path.includes("/promotion") ||
+        path.startsWith("/api/admin/exam") ||
+        path.startsWith("/api/admin/ledger") ||
+        path.startsWith("/api/teacher/promotion");
+      if (capturedJsonResponse && !containsSensitiveAcademicData) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 

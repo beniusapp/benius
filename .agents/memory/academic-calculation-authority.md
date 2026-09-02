@@ -14,3 +14,9 @@ Rule 2 term dates must come from tenant- and session-scoped academic term bounda
 **Why:** Schools and sessions can use different calendars; reusing global or inferred dates can count another tenant's or another term's attendance.
 
 **How to apply:** Resolve boundaries by school + session + term and treat missing or invalid required boundaries as incomplete data with no authoritative promotion verdict.
+
+Academic write operations may accept an expected calculation-engine version and must reject stale versions before persisting. Promotion history, student movement, and ledger execution form one transaction; every selected row must still match its locked source scope.
+
+**Why:** A client opened before a calculation-engine change can otherwise execute against assumptions it no longer represents, and partial promotion writes can corrupt immutable history.
+
+**How to apply:** Return a conflict for stale versions or changed enrollment/ledger scope. Log failures using a fixed academic event schema without names, identifiers such as DSIDs, marks, policy payloads, response bodies, or stack traces.

@@ -137,20 +137,11 @@ type CumulConfigShape = {
 
 function computeStudentSuggestion(
   s: ComputedStudentResult,
-  _resTerm: string,
-  _ruleTermAvg: { enabled: boolean; minPct: number },
-  _isCumulativeTerm: boolean,
-  _cumulConfig: CumulConfigShape,
 ): "promoted" | "retained" | null {
   return s.promoted === null ? null : s.promoted ? "promoted" : "retained";
 }
 
 // ── Grade types & helpers ─────────────────────────────────────────────────────
-interface GradingRuleClient {
-  id: number; tierId: number; gradeLabel: string;
-  minPercent: number; maxPercent: number; remarks: string | null; sortOrder: number;
-}
-
 function gradeColor(label: string): string {
   const l = label.toUpperCase();
   if (l === "O" || l === "A+") return "text-emerald-400";
@@ -173,24 +164,8 @@ function gradeBg(label: string): string {
   return "bg-red-500/15 border-red-500/30";
 }
 
-function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string; color: string; bg: string; remarks: string | null } {
-  if (rules.length > 0) {
-    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
-    for (const r of sorted) {
-      if (pct >= r.minPercent) return { label: r.gradeLabel, color: gradeColor(r.gradeLabel), bg: gradeBg(r.gradeLabel), remarks: r.remarks };
-    }
-    const last = sorted[sorted.length - 1];
-    return { label: last.gradeLabel, color: gradeColor(last.gradeLabel), bg: gradeBg(last.gradeLabel), remarks: last.remarks };
-  }
-  // Fallback static grades when no school rules configured
-  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
-  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
-  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
-  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
-  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
-  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
+function unavailableGrade(): { label: string; color: string; bg: string; remarks: string | null } {
+  return { label: "—", color: "text-slate-500", bg: "bg-slate-500/10 border-slate-500/20", remarks: "Authoritative grade unavailable" };
 }
 
 interface ClassAvgEntry { examType: string; avgPercentage: number; }
@@ -253,7 +228,7 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               <tbody>
                 {subjectScores.map((s, i) => {
                   const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = computeGrade(pct, []);
+                  const g = unavailableGrade();
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
@@ -304,7 +279,7 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
                       </div>
                     );
                     const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = computeGrade(pct, []);
+                    const g = unavailableGrade();
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
@@ -824,20 +799,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
-  // Grading rules fetch — same no-cache useEffect pattern
-  const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
-  const [gradingPassPct, setGradingPassPct] = useState(35);
-
-  useEffect(() => {
-    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
-    let cancelled = false;
-    fetch(`/api/teacher/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
-      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
-      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
-    return () => { cancelled = true; };
-  }, [resClass]);
-
   function handleResClassChange(cls: string) {
     setResClass(cls);
     setResSection("");
@@ -942,14 +903,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }, [cumulConfig, resTerm]);
 
   // Parse Rule 3 settings once — used by both runAutoSuggestion and saveLedgerMutation
-  const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
-    try {
-      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
-      const rta = pr.rule_term_avg ?? {};
-      return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
-    } catch { return { enabled: false, minPct: 35 }; }
-  }, [policyTier]);
-
   // Auto-select first term when policy loads
   useEffect(() => {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
@@ -1092,7 +1045,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
     const next: Record<number, PromoEntry> = {};
     for (const s of freshResults) {
-      const decision = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
+      const decision = computeStudentSuggestion(s);
       if (!decision) continue;
       next[s.studentId] = {
         decision,
@@ -1124,7 +1077,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
         editCount: promoMap[s.studentId]?.editCount ?? 0,
         // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
-        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig)!,
+        autoSuggestion: computeStudentSuggestion(s)!,
       }));
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,
@@ -1445,11 +1398,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {weightedAvg !== null ? (
                                 <div>
-                                  <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
+                                  <span className="text-base font-bold text-slate-200">
                                     {weightedAvg}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
+                                    <div className="h-full rounded-full bg-slate-500"
                                       style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                   </div>
                                 </div>
@@ -1520,11 +1473,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {cumulativePct !== null ? (
                                 <div>
-                                  <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>
+                                  <span className="text-base font-bold text-blue-300">
                                     {cumulativePct}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`}
+                                    <div className="h-full rounded-full bg-blue-500"
                                       style={{ width: `${Math.min(100, cumulativePct)}%` }} />
                                   </div>
                                 </div>
@@ -1702,7 +1655,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
     const gradedScores = scored.map(s => {
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = unavailableGrade();
       return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
     }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
 
@@ -1724,7 +1677,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
         </tr>`;
       }
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = unavailableGrade();
       const isPass = pct >= 33;
       return `<tr>
         <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
@@ -1973,7 +1926,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
                         const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const g = unavailableGrade();
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
@@ -2120,7 +2073,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
                         const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const g = unavailableGrade();
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>

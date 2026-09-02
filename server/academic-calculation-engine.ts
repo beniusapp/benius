@@ -10,7 +10,10 @@ export type AcademicErrorCode =
   | "INVALID_POLICY_WEIGHT_CONFIGURATION"
   | "DATA_SCOPE_MISMATCH"
   | "DUPLICATE_SCORE_DATA"
-  | "INVALID_SCORE_DATA";
+  | "INVALID_SCORE_DATA"
+  | "STALE_CALCULATION_VERSION";
+
+export const ACADEMIC_CALCULATION_VERSION = "academic-calculation-engine/v1";
 
 export class AcademicCalculationError extends Error {
   constructor(public readonly code: AcademicErrorCode, message: string) {
@@ -135,6 +138,9 @@ function passing(policy: GradingPolicy, percentage: number, grade: string): bool
 }
 
 export function calculateAcademicResults(input: CalculationInput) {
+  if (input.calculationVersion && input.calculationVersion !== ACADEMIC_CALCULATION_VERSION) {
+    fail("STALE_CALCULATION_VERSION", "The requested academic calculation version is no longer current.");
+  }
   const grading = resolveGradingPolicy(input.gradingPolicies, input.schoolId, input.className);
   const exam = resolveExamPolicy(input.examPolicies, input.schoolId, input.className);
   validateGradingRules(grading.gradingRules);
@@ -146,6 +152,9 @@ export function calculateAcademicResults(input: CalculationInput) {
   const rules = asObject(exam.promotionFailRules ?? {}, "Promotion rules");
   const resultsConfig = asObject(exam.resultsConfig ?? {}, "Results configuration");
   const configuredTerms = new Set(Object.keys(weights));
+  if (input.currentTerm && !configuredTerms.has(input.currentTerm)) {
+    fail("POLICY_CONFIGURATION_INCOMPLETE", "The selected term is not configured in the current exam policy.");
+  }
   if (!Array.isArray(input.requiredSubjects) || !input.requiredSubjects.length ||
       input.requiredSubjects.some(subject => typeof subject !== "string" || !subject.trim())) {
     fail("POLICY_CONFIGURATION_INCOMPLETE", "The class must have at least one configured subject.");
@@ -328,7 +337,7 @@ export function calculateAcademicResults(input: CalculationInput) {
   }
   const complete = !violations.some(v => v.rule === "data") && subjectResults.every(s => Object.values(s.terms).every(t => t.status !== "incomplete"));
   return {
-    calculationVersion: input.calculationVersion ?? "academic-calculation-engine/v1",
+    calculationVersion: ACADEMIC_CALCULATION_VERSION,
     scope: { schoolId: input.schoolId, sessionId: input.sessionId, studentId: input.studentId, className: input.className },
     policy: { gradingId: grading.id, examId: exam.id, gradingSnapshot: grading, examSnapshot: exam },
     subjectResults,

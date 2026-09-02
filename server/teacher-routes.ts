@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { storage } from "./storage";
+import { PromotionConflictError, storage } from "./storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
@@ -15,6 +15,7 @@ import { addCalendarDays, todayInIST } from "../shared/ist-time";
 import { AcademicCalculationError } from "./academic-calculation-engine";
 import { AcademicScopeError, calculateStudentAcademicResult } from "./academic-calculation-service";
 import { AcademicTermBoundaryError, validateAcademicTermBoundaries } from "./academic-term-boundaries";
+import { logAcademicFailure } from "./academic-logging";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -30,6 +31,54 @@ const diskUpload = multer({
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
 });
+
+function academicFailureStatus(error: unknown): number {
+  if (error instanceof PromotionConflictError) return 409;
+  if (error instanceof AcademicScopeError) {
+    if (error.code === "STUDENT_NOT_FOUND") return 404;
+    return 409;
+  }
+  if (error instanceof AcademicCalculationError &&
+      error.code === "STALE_CALCULATION_VERSION") return 409;
+  if (error instanceof AcademicCalculationError ||
+      error instanceof AcademicTermBoundaryError) return 422;
+  return 500;
+}
+
+function actorRole(req: any): "admin" | "teacher" | "student" | "unknown" {
+  if (req.session?.studentId) return "student";
+  if (req.session?.teacherId) return "teacher";
+  if (req.session?.userRole === "admin") return "admin";
+  return "unknown";
+}
+
+function respondAcademicFailure(
+  req: any,
+  res: any,
+  operation: string,
+  error: unknown,
+  sessionId?: number | null,
+  publicMessage?: string,
+) {
+  logAcademicFailure({
+    operation,
+    error,
+    schoolId: req.session?.schoolId,
+    sessionId,
+    actorRole: actorRole(req),
+  });
+  const status = academicFailureStatus(error);
+  const code = error instanceof AcademicCalculationError ||
+    error instanceof AcademicScopeError ||
+    error instanceof PromotionConflictError
+    ? error.code
+    : undefined;
+  return res.status(status).json({
+    ...(code ? { code } : {}),
+    message: publicMessage ??
+      (status === 500 ? "Academic operation failed." : (error as Error).message),
+  });
+}
 
 // Dedicated uploader for teacher profile pictures — hard 1 MB cap
 const teacherProfilePhotoUpload = multer({
@@ -127,6 +176,25 @@ export function registerTeacherRoutes(app: Express) {
       return session?.id ?? null;
     }
     return (await storage.getActiveSession(schoolId))?.id ?? null;
+  }
+
+  async function assertPromotionOverrideScope(input: {
+    schoolId: number;
+    sessionId: number;
+    studentId: number;
+    class: string;
+    section: string;
+  }): Promise<void> {
+    const enrollment = (await storage.getStudentEnrollmentHistory(input.schoolId, input.studentId))
+      .find(row => row.sessionId === input.sessionId);
+    if (!enrollment ||
+        enrollment.className !== input.class ||
+        enrollment.sectionName !== input.section) {
+      throw new AcademicScopeError(
+        "ENROLLMENT_NOT_FOUND",
+        "The selected student does not belong to this class-section in the selected session.",
+      );
+    }
   }
 
   app.get("/api/admin/academic-term-boundaries", async (req, res) => {
@@ -253,11 +321,12 @@ export function registerTeacherRoutes(app: Express) {
       });
       res.json(result);
     } catch (error) {
-      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
-        return res.status(422).json({ code: error.code, message: error.message });
-      }
-      console.error("GET /api/academic-calculation/:studentId error:", error);
-      res.status(500).json({ message: "Failed to calculate academic result." });
+      return respondAcademicFailure(
+        req, res, "calculate_student_result", error, sessionId,
+        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
+          ? undefined
+          : "Failed to calculate academic result.",
+      );
     }
   });
 
@@ -282,14 +351,10 @@ export function registerTeacherRoutes(app: Express) {
       });
       res.json(result);
     } catch (error) {
-      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
-        return res.status(422).json({
-          code: error.code,
-          message: "Your academic result is not available yet. Please contact your school administrator.",
-        });
-      }
-      console.error("GET /api/student/academic-result error:", error);
-      res.status(500).json({ message: "Your academic result could not be loaded." });
+      return respondAcademicFailure(
+        req, res, "calculate_student_self_result", error, sessionId,
+        "Your academic result is not available yet. Please contact your school administrator.",
+      );
     }
   });
 
@@ -328,11 +393,12 @@ export function registerTeacherRoutes(app: Express) {
       }));
       res.json({ sessionId, results: results.filter(Boolean) });
     } catch (error) {
-      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
-        return res.status(422).json({ code: error.code, message: error.message });
-      }
-      console.error("GET /api/teacher/academic-results error:", error);
-      res.status(500).json({ message: "Failed to calculate class academic results." });
+      return respondAcademicFailure(
+        req, res, "calculate_teacher_class_results", error, sessionId,
+        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
+          ? undefined
+          : "Failed to calculate class academic results.",
+      );
     }
   });
 
@@ -369,11 +435,12 @@ export function registerTeacherRoutes(app: Express) {
       }));
       res.json({ sessionId, results: results.filter(Boolean) });
     } catch (error) {
-      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
-        return res.status(422).json({ code: error.code, message: error.message });
-      }
-      console.error("GET /api/admin/academic-results error:", error);
-      res.status(500).json({ message: "Failed to calculate class academic results." });
+      return respondAcademicFailure(
+        req, res, "calculate_admin_class_results", error, sessionId,
+        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
+          ? undefined
+          : "Failed to calculate class academic results.",
+      );
     }
   });
   // ===== TEACHER CRUD (Principal) =====
@@ -2849,10 +2916,7 @@ export function registerTeacherRoutes(app: Express) {
       });
       res.json(result);
     } catch (error) {
-      if (error instanceof AcademicCalculationError || error instanceof AcademicScopeError) {
-        return res.status(422).json({ code: error.code, message: error.message });
-      }
-      throw error;
+      return respondAcademicFailure(req, res, "evaluate_exam_policy", error, sessionId);
     }
   });
 
@@ -3058,6 +3122,13 @@ Thank you for your prompt attention to this matter.
         };
       } catch (error) {
         if (!(error instanceof AcademicCalculationError || error instanceof AcademicScopeError)) throw error;
+        logAcademicFailure({
+          operation: "aggregate_exam_result",
+          error,
+          schoolId,
+          sessionId: resolvedSessionId,
+          actorRole: "admin",
+        });
         return {
           studentId: student.id,
           dsid: student.digitalStudentId,
@@ -3082,7 +3153,8 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const overrideSchema = z.object({
       studentId: z.number().int().positive(),
@@ -3097,12 +3169,22 @@ Thank you for your prompt attention to this matter.
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
-    res.json({ message: "Override saved" });
+    try {
+      await assertPromotionOverrideScope({
+        ...parsed.data,
+        schoolId: req.session.schoolId!,
+        sessionId,
+      });
+      await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
+      res.json({ message: "Override saved" });
+    } catch (error) {
+      return respondAcademicFailure(req, res, "save_promotion_override", error, sessionId);
+    }
   });
 
   app.post("/api/admin/exam/override/bulk", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const itemSchema = z.object({
       studentId: z.number().int().positive(),
@@ -3118,8 +3200,15 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const sessionId = await resolveAcademicSessionId(req, schoolId);
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId, sessionId })));
-    res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
+    try {
+      await Promise.all(parsed.data.items.map(item =>
+        assertPromotionOverrideScope({ ...item, schoolId, sessionId })
+      ));
+      await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId, sessionId })));
+      res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
+    } catch (error) {
+      return respondAcademicFailure(req, res, "save_bulk_promotion_overrides", error, sessionId);
+    }
   });
 
   app.delete("/api/admin/exam/override/cohort", async (req, res) => {
@@ -3156,10 +3245,12 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/promote", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const promoteSchema = z.object({
       term: z.string().optional(),
+      expectedCalculationVersion: z.string().min(1).optional(),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
@@ -3184,6 +3275,7 @@ Thank you for your prompt attention to this matter.
     const sessionId = await resolveAcademicSessionId(req, schoolId);
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
 
+    try {
     const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
     const authoritativeItems = await Promise.all(items.map(async item => {
       const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, item.studentId))
@@ -3200,6 +3292,7 @@ Thank you for your prompt attention to this matter.
           studentId: item.studentId,
           currentTerm: term,
           publishedOnly: false,
+          expectedCalculationVersion: parsed.data.expectedCalculationVersion,
         }),
         storage.getPromotionDecisions(schoolId, item.fromClass, item.fromSection, term, sessionId),
         storage.getPromotionOverrides(schoolId, item.fromClass, item.fromSection, item.examType, sessionId),
@@ -3327,6 +3420,9 @@ Thank you for your prompt attention to this matter.
         console.error("[promote pipeline]", pipelineErr);
       }
     })();
+    } catch (error) {
+      return respondAcademicFailure(req, res, "execute_promotion", error, sessionId);
+    }
   });
 
   // ===== CLEAR ID CARD REISSUE FLAG =====
@@ -3965,7 +4061,7 @@ Thank you for your prompt attention to this matter.
     try {
       const tiers = await storage.getGradingTiers(schoolId);
       const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      if (!tier) return res.status(404).json({ message: "No grading policy configured for this class" });
       const rules = await storage.getGradingRules(schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch { res.status(500).json({ message: "Failed to fetch grading rules" }); }
@@ -4572,7 +4668,7 @@ Thank you for your prompt attention to this matter.
     try {
       const tiers = await storage.getGradingTiers(teacher.schoolId);
       const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      if (!tier) return res.status(404).json({ message: "No grading policy configured for this class" });
       const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch (err) {

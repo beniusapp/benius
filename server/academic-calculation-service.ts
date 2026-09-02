@@ -13,6 +13,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import {
+  AcademicCalculationError,
   calculateAcademicResults,
   type AttendanceRecord,
   type ExamPolicy,
@@ -49,6 +50,7 @@ export async function calculateStudentAcademicResult(input: {
   studentId: number;
   currentTerm?: string;
   publishedOnly?: boolean;
+  expectedCalculationVersion?: string;
 }) {
   const [session, student, enrollment] = await Promise.all([
     db.query.academicSessions.findFirst({
@@ -153,8 +155,14 @@ export async function calculateStudentAcademicResult(input: {
   const termDateRanges: Record<string, TermDateRange> = Object.fromEntries(
     boundaryRows.map(boundary => [boundary.term, { start: boundary.startDate, end: boundary.endDate }]),
   );
-  let classSubjectMap: Record<string, string[]> = {};
-  try { classSubjectMap = JSON.parse(subjectMeta[0]?.metaValue ?? "{}"); } catch {}
+  const parsedSubjects = parseObject(subjectMeta[0]?.metaValue ?? "{}", "Class subject configuration");
+  if ("__invalidPolicyJson" in parsedSubjects) {
+    throw new AcademicCalculationError(
+      "POLICY_CONFIGURATION_INCOMPLETE",
+      "Class subject configuration is not valid JSON.",
+    );
+  }
+  const classSubjectMap = parsedSubjects as Record<string, string[]>;
   const normalizedClass = enrollment.className.trim().toLowerCase().replace(/^class\s+/, "");
   const requiredSubjects = Object.entries(classSubjectMap)
     .find(([className]) => className.trim().toLowerCase().replace(/^class\s+/, "") === normalizedClass)?.[1] ?? [];
@@ -171,5 +179,6 @@ export async function calculateStudentAcademicResult(input: {
     attendanceRecords: attendance,
     termDateRanges,
     currentTerm: input.currentTerm,
+    calculationVersion: input.expectedCalculationVersion,
   });
 }

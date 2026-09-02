@@ -852,7 +852,11 @@ export const academicHistory = pgTable("academic_history", {
   remarks: text("remarks"),
   snapshotJson: jsonb("snapshot_json"),
   archivedAt: timestamp("archived_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("academic_history_school_student_session_idx").on(
+    table.schoolId, table.studentId, table.sessionId,
+  ),
+]);
 
 export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
 export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;
