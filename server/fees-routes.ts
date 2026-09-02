@@ -3423,7 +3423,6 @@ export function registerFeesRoutes(app: Express) {
     if (!targetFee || (studentId && targetFee.studentId !== studentId)) {
       return res.status(404).json({ message: "Fee record not found" });
     }
-    if (!await activeFinancialSessionGuard(res, schoolId, targetFee.sessionId)) return;
     const requestedSessionId = (req as any).viewSessionId as number | null | undefined;
     if (studentId && requestedSessionId != null) {
       const feeSession = await db.execute(sql`
@@ -3442,6 +3441,7 @@ export function registerFeesRoutes(app: Express) {
         });
       }
     }
+    if (!await activeFinancialSessionGuard(res, schoolId, targetFee.sessionId)) return;
 
     // Build WHERE clause:
     //  • Always scope to school and fee record.

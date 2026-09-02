@@ -1408,6 +1408,9 @@ export async function registerRoutes(
     }
 
     req.session.studentId = student.id;
+    req.session.schoolId = student.schoolId;
+    req.session.userRole = "student";
+    await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
     res.json({ message: "Login successful" });
   });
 
