@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -846,7 +846,7 @@ export const academicHistory = pgTable("academic_history", {
   examType: text("exam_type").notNull(),
   totalObtained: integer("total_obtained").notNull(),
   totalMax: integer("total_max").notNull(),
-  percentage: integer("percentage").notNull(),
+  percentage: doublePrecision("percentage").notNull(),
   gradeLabel: text("grade_label"),
   gradePoint: text("grade_point"),
   remarks: text("remarks"),

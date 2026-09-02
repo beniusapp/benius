@@ -20,3 +20,15 @@ Academic write operations may accept an expected calculation-engine version and 
 **Why:** A client opened before a calculation-engine change can otherwise execute against assumptions it no longer represents, and partial promotion writes can corrupt immutable history.
 
 **How to apply:** Return a conflict for stale versions or changed enrollment/ledger scope. Log failures using a fixed academic event schema without names, identifiers such as DSIDs, marks, policy payloads, response bodies, or stack traces.
+
+Teacher faculty mappings are authoritative when any mappings exist; legacy assigned class/section/subject fields are fallback only for teachers with no mappings. Score publication must authorize every subject in the selected school/session/class/section/exam batch.
+
+**Why:** Treating legacy fields as additive makes revoked mappings remain effective, while class-level publication checks let a subject teacher publish another teacher's marks.
+
+**How to apply:** Scope every Teacher Examination request and cache key to the selected session. Validate score reads, writes, publication, and promotion-ledger access against current mappings and selected-session enrollment.
+
+A teacher ledger decision may differ from the system verdict, but it never replaces it. Student advancement requires an authoritative promoted verdict or an explicit Admin PASS/GRACE_PASS override; FAIL/REPEAT always blocks advancement.
+
+**Why:** Teacher judgment, Admin intervention, and the system policy verdict are separate audit concepts. Trusting any one client-supplied label as execution authority bypasses the calculation engine.
+
+**How to apply:** Recalculate ledger suggestions server-side, mark divergence as manual intervention, and recheck the system verdict plus Admin override inside the same transaction that writes history, moves enrollment, cleans overrides, and records the audit event.

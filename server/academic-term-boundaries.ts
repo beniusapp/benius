@@ -31,6 +31,7 @@ function day(value: string): number {
 export function validateAcademicTermBoundaries(
   boundaries: TermBoundaryInput[],
   session: Pick<AcademicSession, "startDate" | "endDate">,
+  /** Complete set of terms configured by the applicable exam policy. */
   configuredTerms: Set<string>,
 ): void {
   const sessionStart = day(session.startDate);
@@ -59,6 +60,15 @@ export function validateAcademicTermBoundaries(
     }
     return { term, start, end };
   });
+
+  for (const term of configuredTerms) {
+    if (!seen.has(term)) {
+      throw new AcademicTermBoundaryError(
+        "INVALID_TERM_BOUNDARY",
+        `A boundary is required for configured term "${term}".`,
+      );
+    }
+  }
 
   normalized.sort((a, b) => a.start - b.start || a.end - b.end);
   for (let index = 1; index < normalized.length; index++) {

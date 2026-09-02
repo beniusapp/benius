@@ -1593,6 +1593,25 @@ export class DatabaseStorage {
     return updated.length;
   }
 
+  async getExamScoreSubjectsForPublish(
+    schoolId: number,
+    cls: string,
+    section: string,
+    examType: string,
+    sessionId: number,
+  ): Promise<string[]> {
+    const rows = await db.selectDistinct({ subject: examScores.subject })
+      .from(examScores)
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.examType, examType),
+        eq(examScores.sessionId, sessionId),
+      ));
+    return rows.map(row => row.subject);
+  }
+
   async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string, sessionId?: number): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
     // When a sessionId is provided, strictly filter to that academic year's records.
     const result = await db.select().from(examScores)
@@ -4083,18 +4102,23 @@ export class DatabaseStorage {
   }
 
   /**
-   * Atomic promotion transaction — wraps all three critical writes in a single
+   * Atomic promotion transaction — wraps all critical writes in a single
    * DB transaction. If any step fails the entire operation rolls back automatically:
    *  1. Insert academic history snapshot records
    *  2. Update each student's class/section + flag id_card_pending_reissue = true
    *  3. Mark the promotion ledger as admin-executed
+   *  4. Remove the exact override consumed and record a non-PII audit event
    */
   async executePromotionTransaction(
     schoolId: number,
-    items: Array<{ studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string }>,
+    items: Array<{
+      studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string;
+      examType: string; teacherDecision: string; adminOverride: string | null; systemPolicyVerdict?: boolean;
+    }>,
     historyRecords: InsertAcademicHistory[],
     term: string,
     sessionId: number,
+    adminId: number,
   ): Promise<number> {
     if (items.length !== historyRecords.length) {
       throw new PromotionConflictError("Every promoted student must have exactly one academic history snapshot.");
@@ -4116,6 +4140,47 @@ export class DatabaseStorage {
     let promoted = 0;
     const now = new Date();
     await db.transaction(async (tx) => {
+      for (const item of items) {
+        // Re-read the decision and override inside the write transaction. This
+        // makes the authorization predicate identical to the route predicate,
+        // preventing a changed decision/override from being promoted.
+        const [ledger] = await tx.select().from(promotionDecisions).where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.term, term),
+          eq(promotionDecisions.sessionId, sessionId),
+          eq(promotionDecisions.studentId, item.studentId),
+          eq(promotionDecisions.class, item.fromClass),
+          eq(promotionDecisions.section, item.fromSection),
+        )).for("update");
+        const [override] = await tx.select().from(promotionOverrides).where(and(
+          eq(promotionOverrides.schoolId, schoolId),
+          eq(promotionOverrides.sessionId, sessionId),
+          eq(promotionOverrides.studentId, item.studentId),
+          eq(promotionOverrides.examType, item.examType),
+          eq(promotionOverrides.class, item.fromClass),
+          eq(promotionOverrides.section, item.fromSection),
+        )).for("update");
+        if (!ledger ||
+            !ledger.locked ||
+            ledger.adminExecuted ||
+            ledger.decision !== item.teacherDecision ||
+            (override?.overrideStatus ?? null) !== item.adminOverride ||
+            (override
+              ? override.nextClass !== item.nextClass || override.nextSection !== item.nextSection
+              : ledger.targetClass !== item.nextClass || ledger.targetSection !== item.nextSection)) {
+          throw new PromotionConflictError("The locked promotion decision changed before execution.");
+        }
+        const overrideAuthorizesPromotion =
+          override?.overrideStatus === "PASS" || override?.overrideStatus === "GRACE_PASS";
+        const overrideBlocksPromotion =
+          override?.overrideStatus === "FAIL" || override?.overrideStatus === "REPEAT";
+        // The route supplies the freshly calculated system result, while this
+        // transaction rechecks the locked ledger/override state. A teacher
+        // decision is audit evidence, never promotion authority.
+        if (overrideBlocksPromotion || (item.systemPolicyVerdict !== true && !overrideAuthorizesPromotion)) {
+          throw new PromotionConflictError("The authoritative result does not authorize upward promotion.");
+        }
+      }
       if (historyRecords.length > 0) {
         await tx.insert(academicHistory).values(historyRecords);
       }
@@ -4145,11 +4210,36 @@ export class DatabaseStorage {
             eq(promotionDecisions.section, item.fromSection),
             eq(promotionDecisions.locked, true),
             eq(promotionDecisions.adminExecuted, false),
+            eq(promotionDecisions.decision, item.teacherDecision),
           ))
           .returning({ id: promotionDecisions.id });
         if (ledgerUpdated.length !== 1) {
           throw new PromotionConflictError("The locked promotion decision changed before execution.");
         }
+        if (item.adminOverride !== null) {
+          const overrideDeleted = await tx.delete(promotionOverrides).where(and(
+            eq(promotionOverrides.schoolId, schoolId),
+            eq(promotionOverrides.sessionId, sessionId),
+            eq(promotionOverrides.studentId, item.studentId),
+            eq(promotionOverrides.examType, item.examType),
+            eq(promotionOverrides.class, item.fromClass),
+            eq(promotionOverrides.section, item.fromSection),
+            eq(promotionOverrides.overrideStatus, item.adminOverride),
+          )).returning({ id: promotionOverrides.id });
+          if (overrideDeleted.length !== 1) {
+            throw new PromotionConflictError("The promotion override changed before execution.");
+          }
+        }
+        await tx.insert(auditLogs).values({
+          schoolId,
+          sessionId,
+          actionType: "PROMOTION_EXECUTED",
+          entityType: "promotion_decision",
+          entityId: ledgerUpdated[0].id,
+          actionBy: adminId,
+          actionByRole: "admin",
+          details: `term=${term};from=${item.fromClass}/${item.fromSection};to=${item.nextClass}/${item.nextSection}`,
+        });
       }
     });
     return promoted;
@@ -4389,7 +4479,7 @@ export class DatabaseStorage {
     return { students: studentList, subjectAverages, subjectList, passThreshold };
   }
 
-  async getStudentJourneyData(studentId: number, schoolId: number): Promise<{
+  async getStudentJourneyData(studentId: number, schoolId: number, sessionId: number): Promise<{
     examTypes: string[];
     subjectRows: { subject: string; scores: (number | null)[] }[];
     totals: number[];
@@ -4398,6 +4488,7 @@ export class DatabaseStorage {
       .where(and(
         eq(examScores.studentId, studentId),
         eq(examScores.schoolId, schoolId),
+        eq(examScores.sessionId, sessionId),
       ))
       .orderBy(examScores.id);
 
@@ -5444,7 +5535,7 @@ export class DatabaseStorage {
   async savePromotionDecisions(
     schoolId: number, cls: string, section: string, term: string,
     teacherId: number, lock: boolean,
-    entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
+    entries: Array<{ studentId: number; decision: "promoted" | "retained"; targetClass: string; targetSection: string; autoSuggestion: string }>,
     sessionId?: number,
   ): Promise<void> {
     const now = new Date();
@@ -5467,6 +5558,15 @@ export class DatabaseStorage {
     }
 
     for (const e of entries) {
+      const [existing] = await db.select({ editCount: promotionDecisions.editCount }).from(promotionDecisions).where(and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.class, cls),
+        eq(promotionDecisions.section, section),
+        eq(promotionDecisions.term, term),
+        eq(promotionDecisions.studentId, e.studentId),
+        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
+      ));
+      const editCount = existing ? existing.editCount + 1 : 0;
       const isManual = !!e.autoSuggestion && e.autoSuggestion !== e.decision;
       await db.insert(promotionDecisions).values({
         schoolId, class: cls, section, term,
@@ -5474,7 +5574,7 @@ export class DatabaseStorage {
         decision: e.decision,
         targetClass: e.targetClass,
         targetSection: e.targetSection,
-        editCount: e.editCount,
+        editCount,
         processedByTeacherId: teacherId,
         locked: lock,
         lockedAt: lock ? now : null,
@@ -5490,7 +5590,7 @@ export class DatabaseStorage {
           decision: e.decision,
           targetClass: e.targetClass,
           targetSection: e.targetSection,
-          editCount: e.editCount,
+          editCount,
           processedByTeacherId: teacherId,
           locked: lock,
           lockedAt: lock ? now : null,

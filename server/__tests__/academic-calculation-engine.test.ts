@@ -74,6 +74,17 @@ describe("academic calculation engine", () => {
     expect(result.attendance.Term1).toBe(100);
     expect(result.promoted).toBe(true);
   });
+  it("rejects an invalid attendance date even when it falls outside the term range", () => {
+    const rules = { rule_attendance: { enabled: true, rules: [{ term: "Term1", min_pct: 100 }] } };
+    expect(() => calculateAcademicResults(input({
+      examPolicies: [exam(rules)],
+      termDateRanges: { Term1: { start: "2026-04-01", end: "2026-06-30" } },
+      attendanceRecords: [
+        { schoolId: 1, sessionId: 11, studentId: 7, date: "2026-04-01", status: "present" },
+        { schoolId: 1, sessionId: 11, studentId: 7, date: "not-a-date", status: "present" },
+      ],
+    }))).toThrow(expect.objectContaining({ code: "INVALID_SCORE_DATA" }));
+  });
   it("blocks Rule 2 when boundaries are missing and ignores attendance when Rule 2 is disabled", () => {
     const enabled = { rule_attendance: { enabled: true, rules: [{ term: "Term1", min_pct: 75 }] } };
     const blocked = calculateAcademicResults(input({ examPolicies: [exam(enabled)], attendanceRecords: [] }));
@@ -97,6 +108,9 @@ describe("academic calculation engine", () => {
       { term: "Term1", startDate: "2026-04-01", endDate: "2026-06-30" },
       { term: "Term2", startDate: "2026-07-01", endDate: "2026-10-31" },
     ], session, terms)).not.toThrow();
+    expect(() => validateAcademicTermBoundaries([
+      { term: "Term1", startDate: "2026-04-01", endDate: "2026-06-30" },
+    ], session, terms)).toThrow(expect.objectContaining({ code: "INVALID_TERM_BOUNDARY" }));
     expect(() => validateAcademicTermBoundaries([
       { term: "Term1", startDate: "2026-04-01", endDate: "2026-06-30" },
       { term: "Term1", startDate: "2026-07-01", endDate: "2026-10-31" },

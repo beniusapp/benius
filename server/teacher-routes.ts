@@ -178,6 +178,55 @@ export function registerTeacherRoutes(app: Express) {
     return (await storage.getActiveSession(schoolId))?.id ?? null;
   }
 
+  /**
+   * Faculty mappings are the source of truth for subject assignments, while
+   * assignedClass/assignedSection/subject remains the compatibility path for
+   * schools created before mappings were introduced.
+   */
+  async function isTeacherAuthorizedForAssignment(
+    teacher: { id: number; schoolId: number; assignedClass: string; assignedSection: string; subject: string },
+    className: string,
+    section: string,
+    subject?: string,
+  ): Promise<boolean> {
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    // Once mappings exist they revoke the legacy assignment as an authority.
+    // This prevents a removed mapping from silently retaining access through
+    // fields which only exist for pre-mapping schools.
+    if (mappings.length > 0) {
+      return mappings.some(mapping =>
+        mapping.className === className &&
+        mapping.section === section &&
+        (subject == null || mapping.subject === subject)
+      );
+    }
+    return (
+      teacher.assignedClass === className &&
+      teacher.assignedSection === section &&
+      (subject == null || teacher.subject === subject)
+    );
+  }
+
+  async function isStudentEnrolledInScope(
+    schoolId: number,
+    sessionId: number,
+    studentId: number,
+    className: string,
+    section: string,
+  ): Promise<boolean> {
+    const [student, enrollment] = await Promise.all([
+      storage.getStudentById(studentId),
+      db.select().from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.studentId, studentId),
+        eq(enrollments.className, className),
+        eq(enrollments.sectionName, section),
+      )).then(rows => rows[0]),
+    ]);
+    return !!student && student.schoolId === schoolId && !!enrollment;
+  }
+
   async function assertPromotionOverrideScope(input: {
     schoolId: number;
     sessionId: number;
@@ -301,12 +350,8 @@ export function registerTeacherRoutes(app: Express) {
       const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, studentId))
         .find(row => row.sessionId === sessionId);
       if (!teacher || !enrollment) return res.status(404).json({ message: "Teacher or enrollment not found." });
-      const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
-      const assigned = mappings.some(m =>
-        m.className === enrollment.className && m.section === enrollment.sectionName
-      ) || (
-        teacher.assignedClass === enrollment.className &&
-        teacher.assignedSection === enrollment.sectionName
+      const assigned = await isTeacherAuthorizedForAssignment(
+        teacher, enrollment.className, enrollment.sectionName,
       );
       if (!assigned) return res.status(403).json({ message: "Not authorized for this student's class-section." });
     }
@@ -364,9 +409,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const className = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
-    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
-    const assigned = mappings.some(m => m.className === className && m.section === section) ||
-      (teacher.assignedClass === className && teacher.assignedSection === section);
+    const assigned = await isTeacherAuthorizedForAssignment(teacher, className, section);
     if (!assigned) return res.status(403).json({ message: "Not authorized for this class-section." });
     const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
@@ -1392,16 +1435,27 @@ export function registerTeacherRoutes(app: Express) {
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
+      if (!resolvedClass || !resolvedSection) {
+        return res.status(400).json({ message: "class and section are required" });
+      }
+      if (!await isTeacherAuthorizedForAssignment(teacher, resolvedClass, resolvedSection, subject)) {
+        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
+      }
       const maxMarks = totalMarks;
       const pMarks = passMarks;
       // Tag each score with the academic session. Prefer the header value
       // (admin previewing an archived year); otherwise resolve the school's
       // active session so teacher-submitted scores are always year-tagged.
-      const activeSessionForTag = (req as any).viewSessionId
-        ? null
-        : await storage.getActiveSession(teacher.schoolId);
-      const scoreSessionId: number | null =
-        (req as any).viewSessionId ?? activeSessionForTag?.id ?? null;
+      const scoreSessionId = await resolveAcademicSessionId(req, teacher.schoolId);
+      if (!scoreSessionId) {
+        return res.status(409).json({ message: "No academic session is selected." });
+      }
+      const enrolled = await Promise.all(scores.map(score => isStudentEnrolledInScope(
+        teacher.schoolId, scoreSessionId, score.studentId, resolvedClass, resolvedSection,
+      )));
+      if (enrolled.some(value => !value)) {
+        return res.status(403).json({ message: "Every student must belong to this class-section in the selected session." });
+      }
 
       const formattedScores = scores.map((s: any) => ({
         studentId: parseInt(s.studentId),
@@ -1413,8 +1467,8 @@ export function registerTeacherRoutes(app: Express) {
         totalMarks: maxMarks,
         passMarks: pMarks,
         isAbsent: !!s.isAbsent,
-        class: resolvedClass || null,
-        section: resolvedSection || null,
+        class: resolvedClass,
+        section: resolvedSection,
         updatedBy: teacher.fullName,
         sessionId: scoreSessionId,
       }));
@@ -1437,13 +1491,33 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(400).json({ message: "class, section, examType, schoolId required" });
       }
       const sid = parseInt(schoolId);
+      const teacher = req.session.teacherId
+        ? await storage.getTeacherById(req.session.teacherId)
+        : undefined;
       if (req.session.teacherId) {
-        const teacher = await storage.getTeacherById(req.session.teacherId);
         if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
       } else if (req.session.schoolId !== sid) {
         return res.status(403).json({ message: "Not authorized for this school" });
       }
-      const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
+      const sessionId = await resolveAcademicSessionId(req, sid);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const subjects = await storage.getExamScoreSubjectsForPublish(
+        sid, cls, section, examType, sessionId,
+      );
+      if (subjects.length === 0) {
+        return res.status(404).json({ message: "No exam scores found for this class-section, exam type, and session." });
+      }
+      if (teacher) {
+        // Publishing remains cohort-wide, so a teacher must be assigned every
+        // subject represented by the exact batch before any score is changed.
+        const authorized = await Promise.all(subjects.map(subject =>
+          isTeacherAuthorizedForAssignment(teacher, cls, section, subject),
+        ));
+        if (authorized.some(value => !value)) {
+          return res.status(403).json({ message: "Not authorized for every subject in this publication batch" });
+        }
+      }
+      const count = await storage.publishExamScores(sid, cls, section, examType, sessionId);
       res.json({ message: `Published ${count} scores`, count });
     } catch (err: any) {
       console.error("POST /api/exam-scores/publish error:", err);
@@ -1459,8 +1533,15 @@ export function registerTeacherRoutes(app: Express) {
       const sid = parseInt(schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), viewSessionId);
+      const className = decodeURIComponent(cls);
+      const sectionName = decodeURIComponent(section);
+      const subjectName = decodeURIComponent(subject);
+      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subjectName)) {
+        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
+      }
+      const sessionId = await resolveAcademicSessionId(req, sid);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const averages = await storage.getClassAverages(sid, className, sectionName, subjectName, sessionId);
       res.json(averages);
     } catch (err: any) {
       console.error("GET /api/exam-scores/class-average error:", err);
@@ -1475,8 +1556,18 @@ export function registerTeacherRoutes(app: Express) {
       const schoolId = parseInt(req.params.schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
+      const sessionId = await resolveAcademicSessionId(req, schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const history = await storage.getStudentEnrollmentHistory(schoolId, studentId);
+      const enrollment = history.find(row => row.sessionId === sessionId);
+      if (!enrollment || !await isStudentEnrolledInScope(
+        schoolId, sessionId, studentId, enrollment.className, enrollment.sectionName,
+      ) || !await isTeacherAuthorizedForAssignment(
+        teacher, enrollment.className, enrollment.sectionName,
+      )) {
+        return res.status(403).json({ message: "Not authorized for this student's class-section" });
+      }
+      const list = await storage.getExamScoresByStudent(studentId, schoolId, sessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores/student error:", err);
@@ -1488,7 +1579,18 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const { schoolId, subject, examType, class: cls, section } = req.params;
-      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section, (req as any).viewSessionId ?? undefined);
+      const sid = parseInt(schoolId);
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+      const subjectName = decodeURIComponent(subject);
+      const className = decodeURIComponent(cls);
+      const sectionName = decodeURIComponent(section);
+      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subjectName)) {
+        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
+      }
+      const sessionId = await resolveAcademicSessionId(req, sid);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const list = await storage.getExamScores(sid, subjectName, decodeURIComponent(examType), className, sectionName, sessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores error:", err);
@@ -3107,8 +3209,12 @@ Thank you for your prompt attention to this matter.
           studentId: student.id,
           dsid: student.digitalStudentId,
           name: student.name,
-          totalObtained: rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0),
-          totalMax: rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0),
+          totalObtained: result.complete
+            ? rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0)
+            : null,
+          totalMax: result.complete
+            ? rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0)
+            : null,
           percentage: termAverage,
           subjects: result.subjectResults.map(subject => subject.subject),
           gradeLabel: termGrade?.label ?? null,
@@ -3133,8 +3239,8 @@ Thank you for your prompt attention to this matter.
           studentId: student.id,
           dsid: student.digitalStudentId,
           name: student.name,
-          totalObtained: 0,
-          totalMax: 0,
+          totalObtained: null,
+          totalMax: null,
           percentage: null,
           subjects: [],
           gradeLabel: null,
@@ -3191,7 +3297,7 @@ Thank you for your prompt attention to this matter.
       examType: z.string().min(1),
       class: z.string().min(1),
       section: z.string().min(1),
-      overrideStatus: z.string().min(1),
+      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
       nextClass: z.string().min(1),
       nextSection: z.string().min(1),
     });
@@ -3276,6 +3382,17 @@ Thank you for your prompt attention to this matter.
     if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
 
     try {
+    // Destinations are school-wide setup data, never inferred from a roster or
+    // the submitted request. Validate all of them before calculating or writing.
+    const metadata = await storage.getAllSchoolMetadata(schoolId);
+    const configuredClasses = Array.isArray(metadata.classes) ? metadata.classes : [];
+    const configuredSections = Array.isArray(metadata.sections) ? metadata.sections : [];
+    if (configuredClasses.length === 0 || configuredSections.length === 0) {
+      throw new AcademicScopeError(
+        "ENROLLMENT_NOT_FOUND",
+        "School class and section metadata must be configured before promotions can be executed.",
+      );
+    }
     const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
     const authoritativeItems = await Promise.all(items.map(async item => {
       const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, item.studentId))
@@ -3305,10 +3422,26 @@ Thank you for your prompt attention to this matter.
         throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected student does not have a locked, unexecuted promotion decision.");
       }
       const override = overrideRows.find(row => row.studentId === item.studentId);
+      const overrideAuthorizesPromotion =
+        override?.overrideStatus === "PASS" || override?.overrideStatus === "GRACE_PASS";
+      const overrideBlocksPromotion =
+        override?.overrideStatus === "FAIL" || override?.overrideStatus === "REPEAT";
+      if (overrideBlocksPromotion || (!result.promoted && !overrideAuthorizesPromotion)) {
+        throw new AcademicScopeError(
+          "ENROLLMENT_NOT_FOUND",
+          "Promotion requires a passing authoritative result or a PASS/GRACE_PASS admin override.",
+        );
+      }
       const finalNextClass = override?.nextClass ?? ledger.targetClass;
       const finalNextSection = override?.nextSection ?? ledger.targetSection;
       if (!finalNextClass || !finalNextSection) {
         throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected promotion decision has no valid destination.");
+      }
+      if (!configuredClasses.includes(finalNextClass) || !configuredSections.includes(finalNextSection)) {
+        throw new AcademicScopeError(
+          "ENROLLMENT_NOT_FOUND",
+          "A selected promotion has a destination that is not configured for this school.",
+        );
       }
       const termAverage = result.termAverages[term];
       const termGrade = result.termGrades[term];
@@ -3323,14 +3456,14 @@ Thank you for your prompt attention to this matter.
         nextSection: finalNextSection,
         totalObtained: rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0),
         totalMax: rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0),
-        percentage: Math.round(termAverage),
+        percentage: termAverage,
         gradeLabel: termGrade.label,
         gradePoint: termGrade.gradePoint,
         gradeRemarks: termGrade.remarks,
         authoritativeResult: result,
-        systemPolicyVerdict: result.promoted,
         teacherDecision: ledger.decision,
         adminOverride: override?.overrideStatus ?? null,
+        systemPolicyVerdict: result.promoted === true,
       };
     }));
 
@@ -3378,48 +3511,28 @@ Thank you for your prompt attention to this matter.
       };
     });
 
-    // ── 3. Execute atomic transaction: history + student update + ledger mark ──
-    //       Full automatic rollback on any failure — student records revert.     ─
+    // Execute the snapshots, student updates, decision transition, override
+    // cleanup, and audit records as one transaction.
     const promoted = await storage.executePromotionTransaction(
-      schoolId, authoritativeItems, historyRecords, term, sessionId,
+      schoolId,
+      authoritativeItems.map(item => ({
+        studentId: item.studentId,
+        nextClass: item.nextClass,
+        nextSection: item.nextSection,
+        fromClass: item.fromClass,
+        fromSection: item.fromSection,
+        examType: item.examType,
+        teacherDecision: item.teacherDecision,
+        adminOverride: item.adminOverride,
+        systemPolicyVerdict: item.systemPolicyVerdict,
+      })),
+      historyRecords,
+      term,
+      sessionId,
+      adminId,
     );
 
-    // ── 4. Respond immediately — post-pipeline runs without blocking client ───
-    res.json({ promoted, pipelineQueued: true });
-
-    // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
-    // All mutations below are tenant-isolated via schoolId guard.
-    (async () => {
-      try {
-        const now = new Date();
-        const ts  = now.toISOString().replace("T", " ").slice(0, 19);
-        const examType = authoritativeItems[0]?.examType ?? parsed.data.term ?? "—";
-
-        // 6a. Structured audit log per student
-        // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
-        for (const item of authoritativeItems) {
-          const info = dsidMap[item.studentId];
-          const dsid = info?.dsid ?? `ID:${item.studentId}`;
-          const name = info?.name ?? "Unknown";
-          await storage.createAuditLog({
-            schoolId,
-            actionType:    "PROMOTION_EXECUTED",
-            entityType:    "student",
-            entityId:      item.studentId,
-            actionBy:      adminId,
-            actionByRole:  "admin",
-            details: `[${ts}] - Admin ${adminId} successfully updated Student ${dsid} (${name}) from Class ${item.fromClass}-${item.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
-          });
-        }
-
-        // 6b. Clean up executed promotion override records (stale data prevention)
-        await storage.deletePromotionOverridesByStudentIds(schoolId, sessionId, studentIds, examType);
-
-      } catch (pipelineErr) {
-        // Pipeline errors are non-fatal — core promotion already succeeded
-        console.error("[promote pipeline]", pipelineErr);
-      }
-    })();
+    res.json({ promoted, pipelineQueued: false });
     } catch (error) {
       return respondAcademicFailure(req, res, "execute_promotion", error, sessionId);
     }
@@ -3998,8 +4111,15 @@ Thank you for your prompt attention to this matter.
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
     const schoolId = req.session.schoolId!;
     try {
-      const data = await storage.getStudentJourneyData(studentId, schoolId);
-      res.json(data);
+      const sessionId = await resolveAcademicSessionId(req, schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, studentId))
+        .find(row => row.sessionId === sessionId);
+      if (!enrollment) {
+        return res.status(404).json({ message: "Student is not enrolled in the selected academic session." });
+      }
+      const data = await storage.getStudentJourneyData(studentId, schoolId, sessionId);
+      res.json({ ...data, sessionId });
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to fetch student journey" });
     }
@@ -4012,14 +4132,12 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
-    // Scope student list and scores to the viewed session when in archive mode.
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const studentList = viewSessionId
-        ? await storage.getStudentsByClassSectionInSession(schoolId, cls, section, viewSessionId)
-        : await storage.getStudentsByClassSection(schoolId, cls, section);
+      const sessionId = await resolveAcademicSessionId(req, schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const studentList = await storage.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId);
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId, viewSessionId ?? null);
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, sessionId);
         return {
           studentId: s.id,
           name: s.name,
@@ -4028,9 +4146,11 @@ Thank you for your prompt attention to this matter.
           scores: scores.map(sc => ({
             subject: sc.subject,
             examType: sc.examType,
-            marks: sc.marks ?? 0,
-            totalMarks: sc.totalMarks ?? 100,
-            isAbsent: sc.isAbsent ?? false,
+            marks: sc.marks,
+            totalMarks: sc.totalMarks,
+            isAbsent: sc.isAbsent,
+            status: sc.isAbsent === true ? "absent" :
+              (sc.marks == null || sc.totalMarks == null ? "missing" : "scored"),
           })),
         };
       }));
@@ -4759,7 +4879,7 @@ Thank you for your prompt attention to this matter.
 
   /** GET /api/teacher/promotion-decisions/:class/:section/:term
    *  Returns all stored promotion decisions for the given class/section/term.
-   *  Any authenticated teacher can view (read-only unless they are the assigned teacher). */
+   *  Access is limited to the teacher's current authoritative assignment. */
   app.get("/api/teacher/promotion-decisions/:class/:section/:term", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -4768,7 +4888,12 @@ Thank you for your prompt attention to this matter.
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, (req as any).viewSessionId ?? undefined);
+      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
+        return res.status(403).json({ message: "Not authorized for this class-section." });
+      }
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, sessionId);
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
@@ -4784,27 +4909,54 @@ Thank you for your prompt attention to this matter.
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     try {
-      const { class: cls, section, term, lock, entries } = req.body;
-      if (!cls || !section || !term || !Array.isArray(entries)) {
+      const requestSchema = z.object({
+        class: z.string().trim().min(1),
+        section: z.string().trim().min(1),
+        term: z.string().trim().min(1),
+        lock: z.boolean().optional(),
+        entries: z.array(z.object({
+          studentId: z.number().int().positive(),
+          decision: z.enum(["promoted", "retained"]),
+          targetClass: z.string().trim().min(1),
+          targetSection: z.string().trim().min(1),
+        })).min(1),
+      });
+      const parsed = requestSchema.safeParse(req.body);
+      if (!parsed.success) {
         return res.status(400).json({ message: "class, section, term, and entries are required" });
       }
-      // Verify teacher is assigned to this class-section
-      const allMappings = await storage.getFacultyMappingsByTeacher(teacher.id);
-      const isAssigned = allMappings.some(m => m.className === cls && m.section === section)
-        || (teacher.assignedClass === cls && teacher.assignedSection === section);
-      if (!isAssigned) {
+      const { class: cls, section, term, lock, entries } = parsed.data;
+      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
         return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
       }
-      // Tag the ledger with the academic session. Prefer the header value
-      // (admin previewing a session); otherwise resolve the active session
-      // so teacher-submitted decisions are always year-tagged correctly.
-      const activeSessForTag = (req as any).viewSessionId
-        ? null
-        : await storage.getActiveSession(teacher.schoolId);
-      const ledgerSessionId: number | null =
-        (req as any).viewSessionId ?? activeSessForTag?.id ?? null;
-
-      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries, ledgerSessionId ?? undefined);
+      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const metadata = await storage.getAllSchoolMetadata(teacher.schoolId);
+      const configuredClasses = Array.isArray(metadata.classes) ? metadata.classes : [];
+      const configuredSections = Array.isArray(metadata.sections) ? metadata.sections : [];
+      if (configuredClasses.length === 0 || configuredSections.length === 0 ||
+          entries.some(entry => !configuredClasses.includes(entry.targetClass) || !configuredSections.includes(entry.targetSection))) {
+        return res.status(400).json({ message: "Each promotion destination must be configured for this school." });
+      }
+      if (new Set(entries.map(entry => entry.studentId)).size !== entries.length) {
+        return res.status(400).json({ message: "Each student may appear only once." });
+      }
+      const authoritativeEntries = await Promise.all(entries.map(async entry => {
+        if (!await isStudentEnrolledInScope(teacher.schoolId, sessionId, entry.studentId, cls, section)) {
+          throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "Every student must be enrolled in this class-section for the selected session.");
+        }
+        const result = await calculateStudentAcademicResult({
+          schoolId: teacher.schoolId, sessionId, studentId: entry.studentId, currentTerm: term, publishedOnly: false,
+        });
+        if (!result.complete || result.promoted === null) {
+          throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A student's authoritative academic result is incomplete.");
+        }
+        return {
+          ...entry,
+          autoSuggestion: result.promoted ? "promoted" : "retained",
+        };
+      }));
+      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, authoritativeEntries, sessionId);
       res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
@@ -4828,6 +4980,17 @@ Thank you for your prompt attention to this matter.
       if (!term || !cls || !section) {
         return res.status(400).json({ message: "term, class and section query params are required" });
       }
+      if (!Number.isInteger(studentId) || studentId <= 0) {
+        return res.status(400).json({ message: "Invalid student ID" });
+      }
+      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
+        return res.status(403).json({ message: "Not authorized for this class-section" });
+      }
+      if (!await isStudentEnrolledInScope(teacher.schoolId, sessionId, studentId, cls, section)) {
+        return res.status(403).json({ message: "Student is not enrolled in this class-section for the selected session." });
+      }
 
       // ── Step 1: check policy config to see if promotionGateVerdict is enabled ──
       const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
@@ -4847,7 +5010,7 @@ Thank you for your prompt attention to this matter.
       }
 
       // ── Step 2: fetch the verdict from the Promotion Ledger ──
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, sessionId);
       const verdict = decisions.find(d => d.studentId === studentId);
 
       if (!verdict) {

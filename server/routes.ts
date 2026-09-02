@@ -20,6 +20,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
+import { calculateStudentAcademicResult } from "./academic-calculation-service";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { calculateLateFee } from "./late-fee-engine";
@@ -2145,12 +2146,16 @@ export async function registerRoutes(
         rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id, rankSessionId);
       }
     }
-    const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
-    const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
-    const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
-    const grade = percentage >= 90 ? "A+" : percentage >= 80 ? "A" : percentage >= 70 ? "B+" :
-      percentage >= 60 ? "B" : percentage >= 50 ? "C" : percentage >= 40 ? "D" : "F";
-    res.json({ scores, summary: { totalObtained, totalMax, percentage, grade, rank } });
+    // This endpoint intentionally exposes only raw, published score components.
+    // Percentages and grades are policy-derived and belong to the authoritative
+    // academic-result calculation endpoint, not this score ledger.
+    const totalObtained = scores.length > 0
+      ? scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0)
+      : null;
+    const totalMax = scores.length > 0
+      ? scores.reduce((sum, s) => sum + s.totalMarks, 0)
+      : null;
+    res.json({ scores, summary: { totalObtained, totalMax, rank } });
   });
 
   app.get("/api/student/exam/journey", async (req, res) => {
@@ -2158,25 +2163,30 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const resolvedClass = await resolveStudentExamClass(student, viewSessionId);
+    const session = viewSessionId
+      ? await storage.getAcademicSessionByIdForSchool(viewSessionId, student.schoolId)
+      : await storage.getActiveSession(student.schoolId);
+    if (!session) return res.status(409).json({ message: "No academic session is selected." });
+    const resolvedClass = await resolveStudentExamClass(student, session.id);
     if (!resolvedClass) return res.status(404).json({ message: "Enrollment not found for this academic session." });
-    const allClasses = [resolvedClass];
-    const journey: { cls: string; examType: string; percentage: number }[] = [];
-    for (const cls of allClasses) {
-      const publishedScores = (await storage.getStudentAllExamScores(student.schoolId, student.id, cls, viewSessionId))
-        .filter(score => score.published);
-      const examTypes = [...new Set(publishedScores.map(score => score.examType))];
-      if (examTypes.length === 0) continue;
-      const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
-      const scores = (await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType, viewSessionId))
-        .filter(score => score.published);
-      if (scores.length === 0) continue;
-      const obtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
-      const total = scores.reduce((sum, s) => sum + s.totalMarks, 0);
-      const pct = total > 0 ? Math.round((obtained / total) * 100 * 10) / 10 : 0;
-      journey.push({ cls, examType: finalExamType, percentage: pct });
-    }
-    res.json({ journey });
+    const result = await calculateStudentAcademicResult({
+      schoolId: student.schoolId,
+      sessionId: session.id,
+      studentId: student.id,
+      publishedOnly: true,
+    });
+    const journey = Object.keys(result.termAverages).map(term => ({
+      cls: resolvedClass,
+      examType: term,
+      percentage: result.termAverages[term] ?? null,
+      grade: result.termGrades[term] ?? null,
+      complete: result.complete,
+    }));
+    res.json({
+      sessionId: session.id,
+      sessionName: session.sessionName,
+      journey,
+    });
   });
 
   // Student: exam policy for their enrollment-derived class.

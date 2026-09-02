@@ -1070,7 +1070,7 @@ function ResultsPanel({
           }}>
             <p className="text-[10px] text-slate-500 uppercase tracking-wide">Promotion Policy Result</p>
             <p className={`text-lg font-bold mt-1 ${result.promoted === null ? "text-amber-300" : result.promoted ? "text-emerald-400" : "text-red-400"}`}>
-              {result.promoted === null ? "Incomplete" : result.promoted ? "Promoted" : "Retained"}
+               {result.promoted === null ? "Pending evaluation" : result.promoted ? "Promoted" : "Retained"}
             </p>
             {result.promoted === null && (
               <p className="text-[11px] text-slate-500 mt-1">Your school must complete the required academic information before a verdict is available.</p>

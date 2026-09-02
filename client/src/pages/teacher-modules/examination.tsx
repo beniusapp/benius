@@ -12,13 +12,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { apiRequest, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherViewSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 interface StudentInfo { studentId: number; name: string; dsid: string; }
@@ -164,44 +161,21 @@ function gradeBg(label: string): string {
   return "bg-red-500/15 border-red-500/30";
 }
 
-function unavailableGrade(): { label: string; color: string; bg: string; remarks: string | null } {
-  return { label: "—", color: "text-slate-500", bg: "bg-slate-500/10 border-slate-500/20", remarks: "Authoritative grade unavailable" };
-}
-
-interface ClassAvgEntry { examType: string; avgPercentage: number; }
-
 function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes, viewClass, viewSection }: {
   studentId: number; studentName: string; schoolId: number; subject: string; examTypes: string[];
   viewClass: string; viewSection: string;
 }) {
+  const viewSessionId = useTeacherViewSession();
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
-    queryKey: ["/api/exam-scores/student", studentId, schoolId],
-    queryFn: async () => {
-      const res = await fetch(`/api/exam-scores/student/${studentId}/${schoolId}`, { credentials: "include" });
+    queryKey: ["/api/exam-scores/student", studentId, schoolId, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryStudentId, querySchoolId, capturedViewSessionId] = queryKey as [string, number, number, number | null];
+      const res = await sessionFetchForViewSession(`/api/exam-scores/student/${queryStudentId}/${querySchoolId}`, capturedViewSessionId, { signal });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-  });
-  const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
-    queryKey: ["/api/exam-scores/class-average", schoolId, viewClass, viewSection, subject],
-    queryFn: async () => {
-      const res = await fetch(`/api/exam-scores/class-average/${schoolId}/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    enabled: !!viewClass && !!viewSection && !!subject,
   });
   const subjectScores = useMemo(() => scores.filter(s => s.subject === subject && !s.isAbsent), [scores, subject]);
-  const chartData = useMemo(() => {
-    const avgMap = new Map(classAverages.map(a => [a.examType, a.avgPercentage]));
-    return examTypes.map(et => {
-      const s = subjectScores.find(sc => sc.examType === et);
-      const studentPct = s ? Math.round((s.marks / s.totalMarks) * 100) : null;
-      const classAvg = avgMap.get(et) ?? null;
-      if (studentPct === null && classAvg === null) return null;
-      return { exam: et, studentPct, classAvg };
-    }).filter(Boolean) as { exam: string; studentPct: number | null; classAvg: number | null }[];
-  }, [subjectScores, classAverages, examTypes]);
   const allSubjects = useMemo(() => {
     const map: Record<string, StudentExamScore[]> = {};
     for (const s of scores) { if (!map[s.subject]) map[s.subject] = []; map[s.subject].push(s); }
@@ -222,20 +196,16 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               <thead><tr className="border-b">
                 <th className="text-left py-1.5 px-2">Exam</th>
                 <th className="text-center py-1.5 px-2">Marks</th>
-                <th className="text-center py-1.5 px-2">%</th>
-                <th className="text-center py-1.5 px-2">Grade</th>
+                <th className="text-center py-1.5 px-2">Status</th>
               </tr></thead>
               <tbody>
                 {subjectScores.map((s, i) => {
-                  const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = unavailableGrade();
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
                       <td className="py-1.5 px-2 text-center">{s.marks}/{s.totalMarks}</td>
-                      <td className="py-1.5 px-2 text-center">{pct}%</td>
                       <td className="py-1.5 px-2 text-center">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${g.color} ${g.bg}`}>{g.label}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold border text-slate-500 bg-slate-500/10 border-slate-500/20">Recorded</span>
                       </td>
                     </tr>
                   );
@@ -243,21 +213,6 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               </tbody>
             </table>
           </div>
-          {chartData.length > 1 && (
-            <div className="h-52 w-full" data-testid={`chart-dual-line-${studentId}`}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                  <XAxis dataKey="exam" tick={{ fontSize: 10 }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
-                  <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Line type="monotone" dataKey="studentPct" stroke="#6366f1" strokeWidth={2} name={`${studentName}`} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
-                  <Line type="monotone" dataKey="classAvg" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5" name="Class Average" dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
         </>
       )}
       {allSubjects.length > 0 && (
@@ -278,15 +233,11 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
                         <span className="font-bold text-gray-500">AB</span>
                       </div>
                     );
-                    const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = unavailableGrade();
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{s.marks}/{s.totalMarks}</span>
-                          <span className="text-muted-foreground">({pct}%)</span>
-                          <span className={`px-1 py-0.5 rounded border text-[9px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                         </div>
                       </div>
                     );
@@ -605,7 +556,7 @@ function PromoCell({
   allSections, allClasses, onChange,
 }: {
   studentId: number;
-  entry: PromoEntry | undefined;
+  entry: PromoEntry;
   isLocked: boolean;
   canEdit: boolean;
   resClass: string;
@@ -615,9 +566,9 @@ function PromoCell({
   onChange: (id: number, next: PromoEntry) => void;
 }) {
   const isArchiveMode = useArchiveMode();
-  const decision = entry?.decision ?? "promoted";
-  const targetClass = entry?.targetClass ?? getNextClass(resClass, allClasses);
-  const targetSection = entry?.targetSection ?? resSection;
+  const decision = entry.decision;
+  const targetClass = entry.targetClass;
+  const targetSection = entry.targetSection;
 
   const [open, setOpen] = useState(false);
   const [draftDecision, setDraftDecision] = useState<"promoted" | "retained">(decision);
@@ -762,6 +713,7 @@ function PromoCell({
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const viewSessionId = useTeacherViewSession();
   const { toast } = useToast();
   const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
@@ -781,9 +733,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     error: policyErrorRaw,
     refetch: refetchPolicy,
   } = useQuery<ExamPolicyTier | null>({
-    queryKey: ["/api/teacher/exam-policy", resClass],
-    queryFn: async () => {
-      const r = await fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
+    queryKey: ["/api/teacher/exam-policy", resClass, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryClass, capturedViewSessionId] = queryKey as [string, string, number | null];
+      const r = await sessionFetchForViewSession(`/api/teacher/exam-policy/${encodeURIComponent(queryClass)}`, capturedViewSessionId, { signal });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.message || `No policy for class ${resClass}`);
@@ -806,9 +759,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/teacher/class-scores", resClass, resSection],
-    queryFn: async () => {
-      const res = await fetch(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+    queryKey: ["/api/teacher/class-scores", resClass, resSection, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryClass, querySection, capturedViewSessionId] = queryKey as [string, string, string, number | null];
+      const res = await sessionFetchForViewSession(`/api/teacher/class-scores/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}`, capturedViewSessionId, { signal });
       if (!res.ok) throw new Error("Failed to fetch scores");
       return res.json();
     },
@@ -818,9 +772,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/teacher/attendance-summary", resClass, resSection],
-    queryFn: async () => {
-      const res = await fetch(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+    queryKey: ["/api/teacher/attendance-summary", resClass, resSection, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryClass, querySection, capturedViewSessionId] = queryKey as [string, string, string, number | null];
+      const res = await sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}`, capturedViewSessionId, { signal });
       if (!res.ok) return [];
       return res.json();
     },
@@ -914,11 +869,13 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     error: authoritativeErrorRaw,
     refetch: refetchAuthoritative,
   } = useQuery<ComputedStudentResult[]>({
-    queryKey: ["/api/teacher/academic-results", resClass, resSection, resTerm],
-    queryFn: async () => {
-      const response = await fetch(
-        `/api/teacher/academic-results/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}?term=${encodeURIComponent(resTerm)}`,
-        { credentials: "include" },
+    queryKey: ["/api/teacher/academic-results", resClass, resSection, resTerm, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryClass, querySection, queryTerm, capturedViewSessionId] = queryKey as [string, string, string, string, number | null];
+      const response = await sessionFetchForViewSession(
+        `/api/teacher/academic-results/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}?term=${encodeURIComponent(queryTerm)}`,
+        capturedViewSessionId,
+        { signal },
       );
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -970,11 +927,13 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     studentId: number; decision: string; targetClass: string;
     targetSection: string; editCount: number; locked: boolean;
   }>>({
-    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm],
-    queryFn: async () => {
-      const r = await fetch(
-        `/api/teacher/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`,
-        { credentials: "include" },
+    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, queryClass, querySection, queryTerm, capturedViewSessionId] = queryKey as [string, string, string, string, number | null];
+      const r = await sessionFetchForViewSession(
+        `/api/teacher/promotion-decisions/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}/${encodeURIComponent(queryTerm)}`,
+        capturedViewSessionId,
+        { signal },
       );
       return r.ok ? r.json() : [];
     },
@@ -983,7 +942,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
 
   // Reset local state whenever the class/section/term selection changes
-  useEffect(() => { setPromoMap({}); setPromoLocked(false); }, [resClass, resSection, resTerm]);
+  useEffect(() => {
+    setPromoMap({});
+    setPromoLocked(false);
+    setReportStudent(null);
+  }, [resClass, resSection, resTerm, viewSessionId]);
 
   // Populate promoMap from DB on load; preserves any in-session edits already applied
   useEffect(() => {
@@ -1070,15 +1033,19 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   const saveLedgerMutation = useMutation({
     mutationFn: async (lock: boolean) => {
       if (hasIncompleteResults) throw new Error("Cannot save promotion decisions while authoritative results are incomplete.");
-      const entries = allResults.map(s => ({
-        studentId: s.studentId,
-        decision: promoMap[s.studentId]?.decision ?? "promoted",
-        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass, classes),
-        targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
-        editCount: promoMap[s.studentId]?.editCount ?? 0,
-        // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
-        autoSuggestion: computeStudentSuggestion(s)!,
-      }));
+      const entries = allResults.map(s => {
+        const authoritativeDecision = computeStudentSuggestion(s);
+        if (!authoritativeDecision) throw new Error("Cannot save a promotion decision before it has been evaluated.");
+        const decision = promoMap[s.studentId]?.decision ?? authoritativeDecision;
+        return {
+          studentId: s.studentId,
+          decision,
+          targetClass: promoMap[s.studentId]?.targetClass ?? (decision === "promoted" ? getNextClass(resClass, classes) : resClass),
+          targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
+          editCount: promoMap[s.studentId]?.editCount ?? 0,
+          autoSuggestion: authoritativeDecision,
+        };
+      });
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,
       });
@@ -1098,7 +1065,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
         duration: 4000,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm, viewSessionId] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -1452,11 +1419,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {student.promoted === null ? (
                                 <span className="inline-flex px-2.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-bold" title={student.promotionReason}>
-                                  Incomplete
+                                  Pending evaluation
                                 </span>
-                              ) : <PromoCell
+                              ) : promoMap[student.studentId] ? <PromoCell
                                 studentId={student.studentId}
-                                entry={promoMap[student.studentId]}
+                                entry={promoMap[student.studentId]!}
                                 isLocked={promoLocked}
                                 canEdit={isPromotionTerm && isAssignedTeacher}
                                 resClass={resClass}
@@ -1464,7 +1431,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                                 allSections={allSections}
                                 allClasses={classes}
                                 onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
-                              />}
+                              /> : (
+                                <span className="inline-flex px-2.5 py-1.5 rounded-full border border-slate-500/30 bg-slate-500/10 text-slate-400 text-xs font-bold">
+                                  Pending decision
+                                </span>
+                              )}
                             </td>
                           )}
 
@@ -1538,6 +1509,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 // ── Main Examination Module ───────────────────────────────────────────────────
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const viewSessionId = useTeacherViewSession();
   const { toast } = useToast();
   const {
     classes, subjects, examTypes, isLoading: configLoading,
@@ -1572,9 +1544,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   function handleViewClassChange(cls: string) { setViewClass(cls); setViewSection(""); setViewSubject(""); }
 
   const { data: students = [] } = useQuery<StudentInfo[]>({
-    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today],
-    queryFn: async () => {
-      const res = await fetch(`/api/attendance/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${today}`, { credentials: "include" });
+    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, queryClass, querySection, queryToday, capturedViewSessionId] = queryKey as [string, number, string, string, string, number | null];
+      const res = await sessionFetchForViewSession(`/api/attendance/${schoolId}/${encodeURIComponent(queryClass)}/${querySection}/${queryToday}`, capturedViewSessionId, { signal });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1582,10 +1555,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: existingScores = [] } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection],
-    queryFn: async () => {
-      if (!subject || !examType) return [];
-      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(subject)}/${encodeURIComponent(examType)}/${encodeURIComponent(selectedClass)}/${selectedSection}`, { credentials: "include" });
+    queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, querySubject, queryExamType, queryClass, querySection, capturedViewSessionId] = queryKey as [string, number, string, string, string, string, number | null];
+      if (!querySubject || !queryExamType) return [];
+      const res = await sessionFetchForViewSession(`/api/exam-scores/${schoolId}/${encodeURIComponent(querySubject)}/${encodeURIComponent(queryExamType)}/${encodeURIComponent(queryClass)}/${querySection}`, capturedViewSessionId, { signal });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1593,10 +1567,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, viewSubject, viewExamType, viewClass, viewSection],
-    queryFn: async () => {
-      if (!viewSubject || !viewExamType) return [];
-      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}/${encodeURIComponent(viewClass)}/${viewSection}`, { credentials: "include" });
+    queryKey: ["/api/exam-scores", teacher.schoolId, viewSubject, viewExamType, viewClass, viewSection, viewSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, schoolId, querySubject, queryExamType, queryClass, querySection, capturedViewSessionId] = queryKey as [string, number, string, string, string, string, number | null];
+      if (!querySubject || !queryExamType) return [];
+      const res = await sessionFetchForViewSession(`/api/exam-scores/${schoolId}/${encodeURIComponent(querySubject)}/${encodeURIComponent(queryExamType)}/${encodeURIComponent(queryClass)}/${querySection}`, capturedViewSessionId, { signal });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1617,8 +1592,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     const a: Record<number, boolean> = {};
     existingScores.forEach(s => { m[s.studentId] = String(s.marks); a[s.studentId] = s.isAbsent; });
     setMarks(m); setAbsentMap(a);
-    if (existingScores.length > 0) setTotalMarks(String(existingScores[0].totalMarks));
-    else setTotalMarks("");
+    const recordedTotals = [...new Set(existingScores.map(score => score.totalMarks))];
+    setTotalMarks(recordedTotals.length === 1 ? String(recordedTotals[0]) : "");
   }, [existingScores]);
 
   const maxMarks = parseInt(totalMarks) || 100;
@@ -1626,12 +1601,6 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     if (absentMap[s.studentId]) return false;
     return parseInt(marks[s.studentId] || "0") > maxMarks;
   }), [students, marks, absentMap, maxMarks]);
-
-  const classAverage = useMemo(() => {
-    const valid = students.filter(s => !absentMap[s.studentId] && marks[s.studentId] && marks[s.studentId] !== "");
-    if (valid.length === 0) return null;
-    return Math.round((valid.reduce((sum, s) => sum + (parseInt(marks[s.studentId]) || 0), 0) / valid.length / maxMarks) * 100);
-  }, [students, marks, absentMap, maxMarks]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -1643,7 +1612,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: (data) => {
       toast({ title: "Scores Saved", description: data.message });
-      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection, viewSessionId] });
     },
     onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
   });
@@ -1651,40 +1620,19 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   function generateProgressReport() {
     const scored = viewScores.filter(s => !s.isAbsent);
     const absent = viewScores.filter(s => s.isAbsent);
-    const totalMax = viewScores[0]?.totalMarks ?? 0;
-
-    const gradedScores = scored.map(s => {
-      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = unavailableGrade();
-      return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
-    }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-
-    const passCount = gradedScores.filter(s => s.pct >= 33).length;
-    const failCount = gradedScores.filter(s => s.pct < 33).length;
-    const avgPct = scored.length > 0
-      ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length)
-      : 0;
-    const topper = gradedScores[0];
     const generatedOn = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 
     const rows = viewScores.map((s, idx) => {
       if (s.isAbsent) {
         return `<tr>
           <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
-          <td>—</td><td>—</td><td>—</td>
+          <td>—</td><td>—</td>
           <td><span class="badge absent">ABSENT</span></td>
-          <td>—</td>
         </tr>`;
       }
-      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = unavailableGrade();
-      const isPass = pct >= 33;
       return `<tr>
         <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
-        <td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td>
-        <td><span class="grade-badge grade-${g.label.replace("+", "plus")}">${g.label}</span></td>
-        <td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td>
-        <td class="remarks">${g.remarks ?? ""}</td>
+        <td><strong>${s.marks}/${s.totalMarks}</strong></td><td><span class="badge recorded">RECORDED</span></td>
       </tr>`;
     });
 
@@ -1727,11 +1675,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   td.remarks{color:#64748b;font-style:italic;}
 
   .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;letter-spacing:0.5px;}
-  .badge.pass{background:#dcfce7;color:#166534;}
-  .badge.fail{background:#fee2e2;color:#991b1b;}
+  .badge.recorded{background:#eff6ff;color:#1d4ed8;}
   .badge.absent{background:#f1f5f9;color:#64748b;}
-
-  .grade-badge{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}
 
   .footer{margin-top:30px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;padding-top:14px;border-top:1px solid #e2e8f0;}
   .sig-block{text-align:center;}
@@ -1763,18 +1708,15 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
 <div class="stat-bar">
   <div class="stat-card blue"><div class="val">${viewScores.length}</div><div class="lbl">Total Students</div></div>
-  <div class="stat-card green"><div class="val">${passCount}</div><div class="lbl">Passed</div></div>
-  <div class="stat-card red"><div class="val">${failCount}</div><div class="lbl">Failed</div></div>
+  <div class="stat-card blue"><div class="val">${scored.length}</div><div class="lbl">Scores Recorded</div></div>
   <div class="stat-card"><div class="val">${absent.length}</div><div class="lbl">Absent</div></div>
-  <div class="stat-card blue"><div class="val">${scored.length > 0 ? avgPct + "%" : "—"}</div><div class="lbl">Class Average</div></div>
-  <div class="stat-card gold"><div class="val">${topper ? topper.studentName.split(" ")[0] + " · " + topper.pct + "%" : "—"}</div><div class="lbl">Class Topper</div></div>
 </div>
 
 <table>
   <thead>
     <tr>
       <th>#</th><th>DSID</th><th>Student Name</th>
-      <th>Marks</th><th>Score %</th><th>Grade</th><th>Result</th><th>Remarks</th>
+        <th>Marks</th><th>Status</th>
     </tr>
   </thead>
   <tbody>${rows.join("")}</tbody>
@@ -1916,8 +1858,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   <table className="w-full min-w-[560px] text-sm" data-testid="table-marks">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        {["#", "DSID", "Name", "Marks", "%", "Grade", "Ab"].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-8" : i === 1 ? "w-24" : i === 3 ? "w-24" : i === 4 || i === 5 ? "w-16" : i === 6 ? "w-10" : ""}`}>{h}</th>
+                        {["#", "DSID", "Name", "Marks", "Status", "Ab"].map((h, i) => (
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-8" : i === 1 ? "w-24" : i === 3 ? "w-24" : i === 4 ? "w-16" : i === 5 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1925,8 +1867,6 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                       {students.map((s, idx) => {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
-                        const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = unavailableGrade();
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
@@ -1955,11 +1895,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 data-testid={`input-marks-${s.studentId}`}
                               />
                             </td>
-                            <td className="py-2 px-3 text-center text-xs font-medium">{isAbsent ? "—" : `${pct}%`}</td>
                             <td className="py-2 px-3 text-center">
-                              {isAbsent ? <span className="text-xs text-muted-foreground">—</span> : (
-                                <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
-                              )}
+                              {isAbsent ? <span className="text-xs text-muted-foreground">Absent</span> : <span className="text-xs text-muted-foreground">Not evaluated</span>}
                             </td>
                             <td className="py-2 px-3 text-center">
                               <Checkbox checked={isAbsent}
@@ -1972,13 +1909,6 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     </tbody>
                   </table>
                 </div>
-
-                {classAverage !== null && (
-                  <div className="flex items-center gap-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-800 px-4 py-3" data-testid="class-average-bar">
-                    <BarChart3 className="w-4 h-4 text-indigo-500" />
-                    <span className="text-sm text-indigo-700 dark:text-indigo-300">Class average: <strong>{classAverage}%</strong></span>
-                  </div>
-                )}
 
                 {hasInvalidMarks && (
                   <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm text-red-700 dark:text-red-300" data-testid="alert-invalid-marks">
@@ -2064,16 +1994,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   <table className="w-full text-sm" data-testid="table-view-scores">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        {["#", "DSID", "Name", "Marks", "%", "Grade", ""].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 6 ? "w-10" : ""}`}>{h}</th>
+                        {["#", "DSID", "Name", "Marks", "Status", ""].map((h, i) => (
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 5 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
-                        const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = unavailableGrade();
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -2091,14 +2019,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 </div>
                               </td>
                               <td className="py-2 px-3 text-center text-xs">{s.isAbsent ? <span className="font-bold text-gray-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
-                              <td className="py-2 px-3 text-center text-xs font-medium">{s.isAbsent ? "—" : `${pct}%`}</td>
                               <td className="py-2 px-3 text-center">
-                                {s.isAbsent ? <span className="text-xs text-muted-foreground">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
+                                {s.isAbsent ? <span className="text-xs text-muted-foreground">Absent</span> : <span className="text-xs text-muted-foreground">Recorded</span>}
                               </td>
                               <td className="py-2 px-3 text-center">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
                             </tr>
                             {isExpanded && (
-                              <tr><td colSpan={7} className="p-0">
+                              <tr><td colSpan={6} className="p-0">
                                 <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} />
                               </td></tr>
                             )}

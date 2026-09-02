@@ -173,6 +173,13 @@ export function calculateAcademicResults(input: CalculationInput) {
   )) {
     fail("DATA_SCOPE_MISMATCH", "Attendance data does not match the requested school, session, and student.");
   }
+  // Validate the complete supplied attendance dataset before any term range
+  // can exclude a malformed record from policy evaluation.
+  for (const attendanceRecord of input.attendanceRecords ?? []) {
+    if (!Number.isFinite(new Date(attendanceRecord.date).getTime())) {
+      fail("INVALID_SCORE_DATA", `Invalid attendance date: ${attendanceRecord.date}`);
+    }
+  }
   const scores = input.scores;
   const requiredSubjects = [...new Set(input.requiredSubjects.map(subject => subject.trim()))].sort();
   if (scores.some(score => !requiredSubjects.includes(score.subject))) {
@@ -277,7 +284,6 @@ export function calculateAcademicResults(input: CalculationInput) {
     const values: Record<string, number> = { present: 1, late: 1, leave: 1, halfday: .5, half_day: .5, absent: 0 };
     let earned = 0;
     for (const a of records) {
-      if (!Number.isFinite(new Date(a.date).getTime())) fail("INVALID_SCORE_DATA", `Invalid attendance date: ${a.date}`);
       if (!(a.status in values)) fail("POLICY_CONFIGURATION_INCOMPLETE", `Unknown attendance status: ${a.status}`);
       earned += values[a.status];
     }

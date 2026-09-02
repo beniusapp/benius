@@ -9,6 +9,7 @@ import {
   enrollments,
   examPolicyTiers,
   examScores,
+  facultyMappings,
   gradingRules,
   gradingTiers,
   promotionDecisions,
@@ -156,6 +157,12 @@ beforeAll(async () => {
     { schoolId: schoolB.id, studentId: studentB.id, sessionId: sessionB.id, className: "1", sectionName: "A" },
   ]);
   await Promise.all([addAcademicPolicy(schoolA.id), addAcademicPolicy(schoolB.id)]);
+  await db.insert(schoolMetadata).values([
+    { schoolId: schoolA.id, metaKey: "classes", metaValue: JSON.stringify(["1", "2", "7"]) },
+    { schoolId: schoolA.id, metaKey: "sections", metaValue: JSON.stringify(["A", "B"]) },
+    { schoolId: schoolB.id, metaKey: "classes", metaValue: JSON.stringify(["1", "2"]) },
+    { schoolId: schoolB.id, metaKey: "sections", metaValue: JSON.stringify(["A"]) },
+  ]);
 
   await db.insert(examScores).values([
     { schoolId: schoolA.id, sessionId: sessionA.id, studentId: studentA.id, teacherId: teacherA.id, class: "1", section: "A", subject: "Math", examType: "Exam", marks: 80, totalMarks: 100, passMarks: 35, published: true },
@@ -214,6 +221,29 @@ afterAll(async () => {
 });
 
 describe.sequential("authenticated academic route isolation", () => {
+  it("preserves fractional percentages in immutable academic history", async () => {
+    const [inserted] = await db.insert(academicHistory).values({
+      schoolId: ids.schoolA,
+      sessionId: ids.sessionA,
+      studentId: ids.studentA,
+      fromClass: "1",
+      fromSection: "A",
+      toClass: "2",
+      toSection: "A",
+      examType: "Fractional persistence",
+      totalObtained: 161,
+      totalMax: 200,
+      percentage: 80.5,
+      snapshotJson: { authoritativePercentage: 80.5 },
+    }).returning();
+    const persisted = await db.query.academicHistory.findFirst({
+      where: eq(academicHistory.id, inserted.id),
+    });
+    expect(persisted?.percentage).toBe(80.5);
+    expect(persisted?.snapshotJson).toMatchObject({ authoritativePercentage: 80.5 });
+    await db.delete(academicHistory).where(eq(academicHistory.id, inserted.id));
+  });
+
   it("keeps admin cohort reads inside the authenticated school and selected session", async () => {
     const sessionA = await json("/api/admin/academic-results/1/A?term=Term1", {
       headers: headers("admin", ids.schoolA, ids.sessionA, ids.adminA),
@@ -267,6 +297,91 @@ describe.sequential("authenticated academic route isolation", () => {
       headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
     });
     expect(denied.response.status).toBe(403);
+  });
+
+  it("rejects unauthorized or out-of-session score writes before any score is saved", async () => {
+    const before = await db.select().from(examScores).where(and(
+      eq(examScores.schoolId, ids.schoolA),
+      eq(examScores.sessionId, ids.sessionA),
+      eq(examScores.examType, "Authorization Test"),
+    ));
+    const unauthorizedSubject = await json("/api/exam-scores", {
+      method: "POST",
+      headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
+      body: JSON.stringify({
+        class: "1", section: "A", subject: "Science", examType: "Authorization Test",
+        totalMarks: 100, passMarks: 35, scores: [{ studentId: ids.studentAIncomplete, marks: 70 }],
+      }),
+    });
+    expect(unauthorizedSubject.response.status).toBe(403);
+
+    const outsideSession = await json("/api/exam-scores", {
+      method: "POST",
+      headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
+      body: JSON.stringify({
+        class: "1", section: "A", subject: "Math", examType: "Authorization Test",
+        totalMarks: 100, passMarks: 35, scores: [{ studentId: ids.studentSessionA2Only, marks: 70 }],
+      }),
+    });
+    expect(outsideSession.response.status).toBe(403);
+    expect(await db.select().from(examScores).where(and(
+      eq(examScores.schoolId, ids.schoolA),
+      eq(examScores.sessionId, ids.sessionA),
+      eq(examScores.examType, "Authorization Test"),
+    ))).toHaveLength(before.length);
+  });
+
+  it("does not publish any cohort score when a mapped teacher lacks one batch subject", async () => {
+    await db.insert(facultyMappings).values({
+      schoolId: ids.schoolA,
+      teacherId: ids.teacherA,
+      className: "1",
+      section: "A",
+      subject: "Math",
+    });
+    await db.insert(examScores).values([
+      {
+        schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: ids.studentA,
+        teacherId: ids.teacherA, class: "1", section: "A", subject: "Math",
+        examType: "Subject publish authorization", marks: 80, totalMarks: 100, passMarks: 35, published: false,
+      },
+      {
+        schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: ids.studentAIncomplete,
+        teacherId: ids.teacherA, class: "1", section: "A", subject: "Science",
+        examType: "Subject publish authorization", marks: 75, totalMarks: 100, passMarks: 35, published: false,
+      },
+    ]);
+
+    const denied = await json("/api/exam-scores/publish", {
+      method: "POST",
+      headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
+      body: JSON.stringify({
+        schoolId: ids.schoolA, class: "1", section: "A", examType: "Subject publish authorization",
+      }),
+    });
+
+    expect(denied.response.status).toBe(403);
+    const batch = await db.select().from(examScores).where(and(
+      eq(examScores.schoolId, ids.schoolA),
+      eq(examScores.sessionId, ids.sessionA),
+      eq(examScores.class, "1"),
+      eq(examScores.section, "A"),
+      eq(examScores.examType, "Subject publish authorization"),
+    ));
+    expect(batch).toHaveLength(2);
+    expect(batch.every(score => !score.published)).toBe(true);
+  });
+
+  it("scopes teacher exam reads and promotion verdicts to the selected session", async () => {
+    const scoreRead = await json(`/api/exam-scores/student/${ids.studentSessionA2Only}/${ids.schoolA}`, {
+      headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
+    });
+    expect(scoreRead.response.status).toBe(403);
+
+    const verdict = await json(`/api/teacher/promotion-verdict/${ids.studentSessionA2Only}?term=Term1&class=1&section=A`, {
+      headers: headers("teacher", ids.schoolA, ids.sessionA, ids.teacherA),
+    });
+    expect(verdict.response.status).toBe(403);
   });
 
   it("evaluates percentage, grade, and both policies through the authenticated admin handler", async () => {
@@ -357,6 +472,88 @@ describe.sequential("authenticated academic route isolation", () => {
     expect(crossSession.response.status).toBe(409);
   });
 
+  it("rejects an invalid bulk override status before saving overrides", async () => {
+    const invalid = await json("/api/admin/exam/override/bulk", {
+      method: "POST",
+      headers: headers("admin", ids.schoolA, ids.sessionA, ids.adminA),
+      body: JSON.stringify({
+        items: [{
+          studentId: ids.studentA,
+          examType: "Term1",
+          class: "1",
+          section: "A",
+          overrideStatus: "PROMOTE_ANYWAY",
+          nextClass: "2",
+          nextSection: "A",
+        }],
+      }),
+    });
+    expect(invalid.response.status).toBe(400);
+    expect(await db.query.promotionOverrides.findFirst({ where: and(
+      eq(promotionOverrides.schoolId, ids.schoolA),
+      eq(promotionOverrides.studentId, ids.studentA),
+      eq(promotionOverrides.examType, "Term1"),
+    ) })).toBeUndefined();
+  });
+
+  it("requires a PASS or GRACE_PASS override to execute a retained ledger and consumes an authorized override atomically", async () => {
+    await db.insert(promotionDecisions).values([
+      {
+        schoolId: ids.schoolA, sessionId: ids.sessionA, class: "1", section: "A", term: "Override authorization",
+        studentId: ids.studentSessionA2Only, decision: "retained", targetClass: "1", targetSection: "A",
+        processedByTeacherId: ids.teacherA, locked: true,
+      },
+      {
+        schoolId: ids.schoolA, sessionId: ids.sessionA, class: "1", section: "A", term: "Override authorization",
+        studentId: ids.studentAIncomplete, decision: "retained", targetClass: "1", targetSection: "A",
+        processedByTeacherId: ids.teacherA, locked: true,
+      },
+    ]);
+    await storage.upsertPromotionOverride({
+      schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: ids.studentSessionA2Only,
+      examType: "Override authorization", class: "1", section: "A",
+      overrideStatus: "PASS", nextClass: "2", nextSection: "A",
+    });
+    await storage.upsertPromotionOverride({
+      schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: ids.studentAIncomplete,
+      examType: "Override authorization", class: "1", section: "A",
+      overrideStatus: "FAIL", nextClass: "2", nextSection: "A",
+    });
+    const history = (studentId: number) => ({
+      schoolId: ids.schoolA, sessionId: ids.sessionA, studentId,
+      fromClass: "1", fromSection: "A", toClass: "2", toSection: "A",
+      examType: "Override authorization", totalObtained: 161, totalMax: 200,
+      percentage: 80, gradeLabel: "C", gradePoint: "5", remarks: "Pass",
+      snapshotJson: { termAverage: 80 },
+    });
+    await expect(storage.executePromotionTransaction(ids.schoolA, [{
+      studentId: ids.studentSessionA2Only, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A",
+      examType: "Override authorization", teacherDecision: "retained", adminOverride: "PASS",
+    }], [history(ids.studentSessionA2Only)], "Override authorization", ids.sessionA, ids.adminA)).resolves.toBe(1);
+    expect(await db.query.promotionOverrides.findFirst({ where: and(
+      eq(promotionOverrides.studentId, ids.studentSessionA2Only),
+      eq(promotionOverrides.examType, "Override authorization"),
+    ) })).toBeUndefined();
+    expect((await db.query.promotionDecisions.findFirst({ where: and(
+      eq(promotionDecisions.studentId, ids.studentSessionA2Only),
+      eq(promotionDecisions.term, "Override authorization"),
+    ) }))?.adminExecuted).toBe(true);
+
+    await expect(storage.executePromotionTransaction(ids.schoolA, [{
+      studentId: ids.studentAIncomplete, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A",
+      examType: "Override authorization", teacherDecision: "retained", adminOverride: "FAIL",
+    }], [history(ids.studentAIncomplete)], "Override authorization", ids.sessionA, ids.adminA))
+      .rejects.toBeInstanceOf(PromotionConflictError);
+    expect((await db.query.promotionDecisions.findFirst({ where: and(
+      eq(promotionDecisions.studentId, ids.studentAIncomplete),
+      eq(promotionDecisions.term, "Override authorization"),
+    ) }))?.adminExecuted).toBe(false);
+    expect(await db.query.promotionOverrides.findFirst({ where: and(
+      eq(promotionOverrides.studentId, ids.studentAIncomplete),
+      eq(promotionOverrides.examType, "Override authorization"),
+    ) })).toMatchObject({ overrideStatus: "FAIL" });
+  });
+
   it("rejects a stale expected calculation version before promotion execution", async () => {
     const stale = await json("/api/admin/promote", {
       method: "POST", headers: headers("admin", ids.schoolA, ids.sessionA, ids.adminA),
@@ -419,6 +616,26 @@ describe.sequential("authenticated academic route isolation", () => {
     });
   });
 
+  it("rejects invalid configured destinations without writing history, students, or ledgers", async () => {
+    await storage.upsertPromotionOverride({
+      schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: ids.studentA,
+      examType: "Term1", class: "1", section: "A",
+      overrideStatus: "PASS", nextClass: "999", nextSection: "Z",
+    });
+    const rejected = await json("/api/admin/promote", {
+      method: "POST",
+      headers: headers("admin", ids.schoolA, ids.sessionA, ids.adminA),
+      body: JSON.stringify({ term: "Term1", items: [promotionItem(ids.studentA, "999", "Z")] }),
+    });
+    expect(rejected.response.status).toBe(409);
+    expect(await db.query.students.findFirst({ where: eq(students.id, ids.studentA) }))
+      .toMatchObject({ class: "2", section: "A" });
+    expect(await db.query.academicHistory.findFirst({ where: and(
+      eq(academicHistory.studentId, ids.studentA),
+      eq(academicHistory.toClass, "999"),
+    ) })).toBeUndefined();
+  });
+
   it("rolls back history, student changes, and ledger execution when a selected row changes", async () => {
     await db.insert(promotionDecisions).values([
       {
@@ -433,9 +650,9 @@ describe.sequential("authenticated academic route isolation", () => {
       },
     ]);
     const transactionItems = [
-      { studentId: ids.studentRollbackOne, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A" },
+      { studentId: ids.studentRollbackOne, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A", examType: "Rollback", teacherDecision: "promoted", adminOverride: null },
       // The student has changed to class 9 after the selection was assembled.
-      { studentId: ids.studentRollbackTwo, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A" },
+      { studentId: ids.studentRollbackTwo, fromClass: "1", fromSection: "A", nextClass: "2", nextSection: "A", examType: "Rollback", teacherDecision: "promoted", adminOverride: null },
     ];
     const historyRecords = transactionItems.map(item => ({
       schoolId: ids.schoolA, sessionId: ids.sessionA, studentId: item.studentId,
@@ -444,7 +661,7 @@ describe.sequential("authenticated academic route isolation", () => {
       gradeLabel: "C", gradePoint: "5", remarks: "Pass", snapshotJson: { fixture: "rollback" },
     }));
 
-    await expect(storage.executePromotionTransaction(ids.schoolA, transactionItems, historyRecords, "Rollback", ids.sessionA))
+    await expect(storage.executePromotionTransaction(ids.schoolA, transactionItems, historyRecords, "Rollback", ids.sessionA, ids.adminA))
       .rejects.toBeInstanceOf(PromotionConflictError);
     expect(await db.query.academicHistory.findFirst({ where: and(
       eq(academicHistory.sessionId, ids.sessionA), eq(academicHistory.studentId, ids.studentRollbackOne),

@@ -94,6 +94,10 @@ async function addPolicy(schoolId: number) {
   await db.insert(schoolMetadata).values({
     schoolId, metaKey: "class_subjects", metaValue: JSON.stringify({ "1": ["Math"] }),
   });
+  await db.insert(schoolMetadata).values([
+    { schoolId, metaKey: "classes", metaValue: JSON.stringify(["1", "2", "7"]) },
+    { schoolId, metaKey: "sections", metaValue: JSON.stringify(["A", "B"]) },
+  ]);
 }
 
 beforeAll(async () => {
@@ -192,6 +196,53 @@ describe.sequential("authenticated academic smoke", () => {
       method: "POST", body: JSON.stringify({ dsid: `${token}-student`, password }),
     })).response.status).toBe(200);
 
+    const invalidMarks = await request(teacher, "/api/exam-scores", {
+      method: "POST",
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+      body: JSON.stringify({
+        class: "1", section: "A", subject: "Math", examType: "Authenticated Smoke",
+        totalMarks: 20, passMarks: 7,
+        scores: [{ studentId: fixture.student, marks: 21, isAbsent: false }],
+      }),
+    });
+    expect(invalidMarks.response.status).toBe(400);
+
+    const enteredMarks = await request(teacher, "/api/exam-scores", {
+      method: "POST",
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+      body: JSON.stringify({
+        class: "1", section: "A", subject: "Math", examType: "Authenticated Smoke",
+        totalMarks: 20, passMarks: 7,
+        scores: [{ studentId: fixture.student, marks: 17, isAbsent: false }],
+      }),
+    });
+    expect(enteredMarks.response.status).toBe(200);
+    expect((await request(student, "/api/student/exam/types", {
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+    })).body.examTypes).not.toContain("Authenticated Smoke");
+
+    const published = await request(teacher, "/api/exam-scores/publish", {
+      method: "POST",
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+      body: JSON.stringify({
+        schoolId: fixture.schoolA, class: "1", section: "A",
+        examType: "Authenticated Smoke",
+      }),
+    });
+    expect(published.response.status).toBe(200);
+    expect((await request(student, "/api/student/exam/types", {
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+    })).body.examTypes).toContain("Authenticated Smoke");
+    const publishedScores = await request(
+      student,
+      "/api/student/exam/scores?examType=Authenticated%20Smoke",
+      { headers: { "x-view-session-id": String(fixture.sessionA) } },
+    );
+    expect(publishedScores.response.status).toBe(200);
+    expect(publishedScores.body.scores).toEqual(expect.arrayContaining([
+      expect.objectContaining({ marks: 17, totalMarks: 20, published: true }),
+    ]));
+
     expect((await request(teacher, "/api/admin/academic-results/1/A?term=Term1")).response.status).toBe(403);
     const crossSchool = await request(admin, "/api/admin/academic-results/1/A?term=Term1", {
       headers: { "x-view-session-id": String(fixture.sessionB) },
@@ -219,6 +270,49 @@ describe.sequential("authenticated academic smoke", () => {
     expect(studentA2.response.status).toBe(200);
     expect(studentA2.body.termAverages.Term1).toBeNull();
     expect(studentA2.body.promoted).toBeNull();
+
+    const rawPublishedScores = await request(student, "/api/student/exam/scores?examType=Exam");
+    expect(rawPublishedScores.response.status).toBe(200);
+    expect(rawPublishedScores.body.summary).toEqual(expect.objectContaining({
+      totalObtained: 80,
+      totalMax: 100,
+    }));
+    expect(rawPublishedScores.body.summary).toHaveProperty("rank");
+    expect(rawPublishedScores.body.summary).not.toHaveProperty("percentage");
+    expect(rawPublishedScores.body.summary).not.toHaveProperty("grade");
+
+    const publishedJourney = await request(student, "/api/student/exam/journey");
+    expect(publishedJourney.response.status).toBe(200);
+    expect(publishedJourney.body).toMatchObject({ sessionId: fixture.sessionA });
+    expect(publishedJourney.body.journey).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        cls: "1",
+        examType: "Term1",
+        percentage: 80,
+        grade: expect.objectContaining({ label: "C" }),
+        complete: true,
+      }),
+    ]));
+
+    const sessionA2Journey = await request(admin, `/api/admin/analytics/student-journey/${fixture.student}`, {
+      headers: { "x-view-session-id": String(fixture.sessionA2) },
+    });
+    expect(sessionA2Journey.response.status).toBe(200);
+    expect(sessionA2Journey.body).toMatchObject({
+      sessionId: fixture.sessionA2,
+      examTypes: ["Exam"],
+      totals: [20],
+    });
+    const sessionAClassScores = await request(admin, "/api/admin/analytics/class-scores/1/A");
+    expect(sessionAClassScores.response.status).toBe(200);
+    expect(sessionAClassScores.body.find((row: any) => row.studentId === fixture.student).scores)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ marks: 80, totalMarks: 100, isAbsent: false, status: "scored" })]));
+    const sessionA2ClassScores = await request(admin, "/api/admin/analytics/class-scores/1/A", {
+      headers: { "x-view-session-id": String(fixture.sessionA2) },
+    });
+    expect(sessionA2ClassScores.response.status).toBe(200);
+    expect(sessionA2ClassScores.body.find((row: any) => row.studentId === fixture.student).scores)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ marks: 20, totalMarks: 100, isAbsent: false, status: "scored" })]));
 
     expect((await request(teacher, "/api/teacher/academic-results/1/A?term=Term1")).response.status).toBe(200);
     expect((await request(teacher, "/api/teacher/academic-results/2/B?term=Term1")).response.status).toBe(403);
