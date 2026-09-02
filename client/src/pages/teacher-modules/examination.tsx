@@ -1625,7 +1625,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       const scores = students
         .filter(s => absentMap[s.studentId] || (marks[s.studentId] !== undefined && marks[s.studentId] !== ""))
         .map(s => ({ studentId: s.studentId, marks: absentMap[s.studentId] ? 0 : marks[s.studentId], isAbsent: !!absentMap[s.studentId] }));
-      const res = await apiRequest("POST", "/api/exam-scores", { scores, subject, examType, totalMarks: maxMarks, class: selectedClass, section: selectedSection });
+      const res = await apiRequest("POST", "/api/exam-scores", { scores, subject, examType, totalMarks: maxMarks, passMarks: 33, class: selectedClass, section: selectedSection });
       return res.json();
     },
     onSuccess: (data) => {
