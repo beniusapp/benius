@@ -1526,6 +1526,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const [marks, setMarks] = useState<Record<number, string>>({});
   const [absentMap, setAbsentMap] = useState<Record<number, boolean>>({});
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const hydratedExamSelectionRef = useRef<string | null>(null);
+  const totalMarksEditedRef = useRef(false);
 
   const [viewClass, setViewClass] = useState("");
   const [viewSection, setViewSection] = useState("");
@@ -1539,9 +1541,20 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const viewSubjectOpts = useMemo(() => getSubjectsForClass(viewClass), [viewClass, getSubjectsForClass]);
   const addExamTypeOpts = useMemo(() => getExamTypesForClass(selectedClass), [selectedClass, getExamTypesForClass]);
   const viewExamTypeOpts = useMemo(() => getExamTypesForClass(viewClass), [viewClass, getExamTypesForClass]);
+  const addExamSelectionKey = `${selectedClass}\u001f${selectedSection}\u001f${subject}\u001f${examType}`;
 
   function handleAddClassChange(cls: string) { setSelectedClass(cls); setSelectedSection(""); setSubject(""); setExamType(""); }
   function handleViewClassChange(cls: string) { setViewClass(cls); setViewSection(""); setViewSubject(""); }
+
+  // A new exam selection starts a new local editing session. The existing-score
+  // query hydrates that session separately once its data has actually resolved.
+  useEffect(() => {
+    hydratedExamSelectionRef.current = null;
+    totalMarksEditedRef.current = false;
+    setMarks({});
+    setAbsentMap({});
+    setTotalMarks("");
+  }, [addExamSelectionKey]);
 
   const { data: students = [] } = useQuery<StudentInfo[]>({
     queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today, viewSessionId],
@@ -1554,7 +1567,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     enabled: !!selectedClass && !!selectedSection,
   });
 
-  const { data: existingScores = [] } = useQuery<ExamScoreEntry[]>({
+  const { data: existingScores, isFetched: existingScoresFetched } = useQuery<ExamScoreEntry[]>({
     queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection, viewSessionId],
     queryFn: async ({ queryKey, signal }) => {
       const [, schoolId, querySubject, queryExamType, queryClass, querySection, capturedViewSessionId] = queryKey as [string, number, string, string, string, string, number | null];
@@ -1581,20 +1594,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
   const auditMap = useMemo(() => {
     const map: Record<number, { updatedBy: string; updatedAt: string }> = {};
-    existingScores.forEach(s => {
+    existingScores?.forEach(s => {
       if (s.updatedBy && s.updatedAt) map[s.studentId] = { updatedBy: s.updatedBy, updatedAt: s.updatedAt };
     });
     return map;
   }, [existingScores]);
 
   useEffect(() => {
+    if (!existingScoresFetched || !existingScores || hydratedExamSelectionRef.current === addExamSelectionKey) return;
+
+    hydratedExamSelectionRef.current = addExamSelectionKey;
     const m: Record<number, string> = {};
     const a: Record<number, boolean> = {};
     existingScores.forEach(s => { m[s.studentId] = String(s.marks); a[s.studentId] = s.isAbsent; });
     setMarks(m); setAbsentMap(a);
     const recordedTotals = [...new Set(existingScores.map(score => score.totalMarks))];
-    setTotalMarks(recordedTotals.length === 1 ? String(recordedTotals[0]) : "");
-  }, [existingScores]);
+    if (!totalMarksEditedRef.current) {
+      setTotalMarks(recordedTotals.length === 1 ? String(recordedTotals[0]) : "");
+    }
+  }, [existingScores, existingScoresFetched, addExamSelectionKey]);
 
   const maxMarks = parseInt(totalMarks) || 100;
   const hasInvalidMarks = useMemo(() => students.some(s => {
@@ -1838,7 +1856,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Total Marks *</label>
-                <Input type="number" value={totalMarks} onChange={e => setTotalMarks(e.target.value)}
+                <Input type="number" value={totalMarks} onChange={e => {
+                  totalMarksEditedRef.current = true;
+                  setTotalMarks(e.target.value);
+                }}
                   min="1" placeholder="e.g. 100"
                   className={`rounded-xl ${examType && selectedClass && selectedSection && !totalMarks ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
                   data-testid="input-total-marks" />
