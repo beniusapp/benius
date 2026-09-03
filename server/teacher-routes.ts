@@ -4750,7 +4750,11 @@ Thank you for your prompt attention to this matter.
 
   const facultyMappingSchema = z.object({
     teacherId: z.number().int().positive(),
-    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1), subject: z.string().optional().nullable() })),
+    mappings: z.array(z.object({
+      className: z.string().trim().min(1),
+      section: z.string().trim().min(1),
+      subject: z.string().trim().min(1),
+    })),
   });
 
   app.post("/api/admin/faculty-mappings", async (req, res) => {
@@ -4763,6 +4767,42 @@ Thank you for your prompt attention to this matter.
       const teacher = await storage.getTeacherById(parsed.data.teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
         return res.status(404).json({ message: "Teacher not found" });
+
+      const [meta, classSections, classSubjects] = await Promise.all([
+        storage.getAllSchoolMetadata(schoolId),
+        storage.getClassSectionsMap(schoolId),
+        storage.getClassSubjectsMap(schoolId),
+      ]);
+      const configuredClasses = new Set<string>(
+        meta.classes?.length ? meta.classes : [...new Set([...Object.keys(classSections), ...Object.keys(classSubjects)])],
+      );
+      const globalSubjects = meta.subjects ?? [];
+      const mappingKeys = new Set<string>();
+      for (const mapping of parsed.data.mappings) {
+        if (mapping.subject.includes(",")) {
+          return res.status(400).json({ message: `Subject must be one canonical value: ${mapping.subject}` });
+        }
+        if (!configuredClasses.has(mapping.className)) {
+          return res.status(400).json({ message: `Class ${mapping.className} is not configured for this school` });
+        }
+        const allowedSections = classSections[mapping.className]?.length
+          ? classSections[mapping.className]
+          : (meta.sections ?? []);
+        if (!allowedSections.includes(mapping.section)) {
+          return res.status(400).json({ message: `Section ${mapping.section} is not configured for Class ${mapping.className}` });
+        }
+        const allowedSubjects = classSubjects[mapping.className]?.length
+          ? classSubjects[mapping.className]
+          : globalSubjects;
+        if (!allowedSubjects.includes(mapping.subject)) {
+          return res.status(400).json({ message: `${mapping.subject} is not configured for Class ${mapping.className}` });
+        }
+        const key = `${mapping.className}\u001f${mapping.section}\u001f${mapping.subject}`;
+        if (mappingKeys.has(key)) {
+          return res.status(400).json({ message: `Duplicate mapping for Class ${mapping.className}, Section ${mapping.section}, ${mapping.subject}` });
+        }
+        mappingKeys.add(key);
+      }
       const rows = await storage.replaceFacultyMappings(parsed.data.teacherId, schoolId, parsed.data.mappings);
       res.json(rows);
     } catch (err: any) {

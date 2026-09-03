@@ -450,5 +450,84 @@ describe.sequential("authenticated academic smoke", () => {
     expect(history).toMatchObject({ toClass: "7", toSection: "B", snapshotJson: { teacherDecision: "promoted", adminOverride: "GRACE_PASS" } });
     expect(termLedger?.adminExecuted).toBe(true);
     expect(otherLedger?.adminExecuted).toBe(false);
+
+    const originalMappings = await db.select().from(facultyMappings).where(and(
+      eq(facultyMappings.schoolId, fixture.schoolA),
+      eq(facultyMappings.teacherId, fixture.teacher),
+    ));
+    const originalIds = new Map(originalMappings.map(mapping => [
+      `${mapping.className}/${mapping.section}/${mapping.subject}`,
+      mapping.id,
+    ]));
+    const commaRejected = await request(admin, "/api/admin/faculty-mappings", {
+      method: "POST",
+      body: JSON.stringify({
+        teacherId: fixture.teacher,
+        mappings: [
+          { className: "1", section: "A", subject: "Math" },
+          { className: "6", section: "A", subject: "Physics, Math" },
+        ],
+      }),
+    });
+    expect(commaRejected.response.status).toBe(400);
+
+    const classInvalidRejected = await request(admin, "/api/admin/faculty-mappings", {
+      method: "POST",
+      body: JSON.stringify({
+        teacherId: fixture.teacher,
+        mappings: [
+          { className: "1", section: "A", subject: "Math" },
+          { className: "6", section: "A", subject: "Math" },
+        ],
+      }),
+    });
+    expect(classInvalidRejected.response.status).toBe(400);
+
+    const duplicateRejected = await request(admin, "/api/admin/faculty-mappings", {
+      method: "POST",
+      body: JSON.stringify({
+        teacherId: fixture.teacher,
+        mappings: [
+          { className: "1", section: "A", subject: "Math" },
+          { className: "1", section: "A", subject: "Math" },
+        ],
+      }),
+    });
+    expect(duplicateRejected.response.status).toBe(400);
+
+    const addedMapping = await request(admin, "/api/admin/faculty-mappings", {
+      method: "POST",
+      body: JSON.stringify({
+        teacherId: fixture.teacher,
+        mappings: [
+          { className: "1", section: "A", subject: "Math" },
+          { className: "6", section: "A", subject: "Physics" },
+          { className: "6", section: "B", subject: "Physics" },
+        ],
+      }),
+    });
+    expect(addedMapping.response.status).toBe(200);
+    expect(addedMapping.body).toHaveLength(3);
+    expect(addedMapping.body.find((mapping: any) => mapping.className === "1")?.id)
+      .toBe(originalIds.get("1/A/Math"));
+    expect(addedMapping.body.find((mapping: any) => mapping.className === "6" && mapping.section === "A")?.id)
+      .toBe(originalIds.get("6/A/Physics"));
+
+    const removedOneMapping = await request(admin, "/api/admin/faculty-mappings", {
+      method: "POST",
+      body: JSON.stringify({
+        teacherId: fixture.teacher,
+        mappings: [
+          { className: "1", section: "A", subject: "Math" },
+          { className: "6", section: "A", subject: "Physics" },
+        ],
+      }),
+    });
+    expect(removedOneMapping.response.status).toBe(200);
+    expect(removedOneMapping.body).toHaveLength(2);
+    expect(removedOneMapping.body.find((mapping: any) => mapping.className === "1")?.id)
+      .toBe(originalIds.get("1/A/Math"));
+    expect(removedOneMapping.body.find((mapping: any) => mapping.className === "6")?.id)
+      .toBe(originalIds.get("6/A/Physics"));
   });
 });

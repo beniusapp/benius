@@ -4753,14 +4753,35 @@ export class DatabaseStorage {
 
   async replaceFacultyMappings(teacherId: number, schoolId: number, mappings: { className: string; section: string; subject?: string | null }[]): Promise<FacultyMapping[]> {
     return await db.transaction(async (tx) => {
-      await tx.delete(facultyMappings).where(
-        and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId))
+      const existing = await tx.select().from(facultyMappings).where(
+        and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)),
       );
-      if (mappings.length === 0) return [];
-      const rows = await tx.insert(facultyMappings).values(
-        mappings.map(m => ({ teacherId, schoolId, className: m.className, section: m.section, subject: m.subject ?? null }))
-      ).returning();
-      return rows;
+      const keyOf = (mapping: { className: string; section: string; subject?: string | null }) =>
+        `${mapping.className}\u001f${mapping.section}\u001f${mapping.subject ?? ""}`;
+      const existingByKey = new Map<string, FacultyMapping>();
+      for (const mapping of existing) {
+        const key = keyOf(mapping);
+        if (existingByKey.has(key)) {
+          throw new Error(`Duplicate existing faculty mapping requires review: ${mapping.className}-${mapping.section}-${mapping.subject ?? ""}`);
+        }
+        existingByKey.set(key, mapping);
+      }
+      const desiredByKey = new Map(mappings.map(mapping => [keyOf(mapping), mapping]));
+      const idsToDelete = existing
+        .filter(mapping => !desiredByKey.has(keyOf(mapping)))
+        .map(mapping => mapping.id);
+      if (idsToDelete.length > 0) {
+        await tx.delete(facultyMappings).where(inArray(facultyMappings.id, idsToDelete));
+      }
+      const toInsert = mappings.filter(mapping => !existingByKey.has(keyOf(mapping)));
+      if (toInsert.length > 0) {
+        await tx.insert(facultyMappings).values(
+          toInsert.map(mapping => ({ teacherId, schoolId, className: mapping.className, section: mapping.section, subject: mapping.subject ?? null })),
+        );
+      }
+      return tx.select().from(facultyMappings)
+        .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)))
+        .orderBy(facultyMappings.className, facultyMappings.section, facultyMappings.subject);
     });
   }
 

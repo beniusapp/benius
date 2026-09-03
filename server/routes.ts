@@ -2752,15 +2752,19 @@ export async function registerRoutes(
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     try {
       const meta = await storage.getAllSchoolMetadata(schoolId);
-      const classSections = await storage.getClassSectionsMap(schoolId);
+      const [classSections, classSubjects] = await Promise.all([
+        storage.getClassSectionsMap(schoolId),
+        storage.getClassSubjectsMap(schoolId),
+      ]);
       res.json({
         classes: meta["classes"] ?? [],
         sections: meta["sections"] ?? [],
         subjects: meta["subjects"] ?? [],
         classSections,
+        classSubjects,
       });
     } catch {
-      res.json({ classes: [], sections: [], subjects: [], classSections: {} });
+      res.json({ classes: [], sections: [], subjects: [], classSections: {}, classSubjects: {} });
     }
   });
 
