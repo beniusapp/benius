@@ -10,6 +10,7 @@ import {
   enrollments,
   examPolicyTiers,
   examScores,
+  facultyMappings,
   gradingRules,
   gradingTiers,
   promotionDecisions,
@@ -31,6 +32,8 @@ type Fixture = {
   admin: number;
   teacher: number;
   student: number;
+  classSixStudentA: number;
+  classSixStudentB: number;
   incomplete: number;
   override: number;
 };
@@ -83,6 +86,14 @@ async function addPolicy(schoolId: number) {
     { schoolId, tierId: tier.id, gradeLabel: "F", minPercent: 0, maxPercent: 34, gradePoint: "0", remarks: "Fail", sortOrder: 0 },
     { schoolId, tierId: tier.id, gradeLabel: "C", minPercent: 35, maxPercent: 100, gradePoint: "5", remarks: "Pass", sortOrder: 1 },
   ]);
+  await db.insert(gradingTiers).values({
+    schoolId,
+    name: `${token}-class-six-both`,
+    classes: ["6"],
+    passPercentage: 40,
+    gradingSystem: "both",
+    passingGrades: ["A", "B", "C", "D"],
+  });
   await db.insert(examPolicyTiers).values({
     schoolId,
     tierName: `${token}-exam`,
@@ -92,10 +103,10 @@ async function addPolicy(schoolId: number) {
     resultsConfig: "{}",
   });
   await db.insert(schoolMetadata).values({
-    schoolId, metaKey: "class_subjects", metaValue: JSON.stringify({ "1": ["Math"] }),
+    schoolId, metaKey: "class_subjects", metaValue: JSON.stringify({ "1": ["Math"], "6": ["Physics"] }),
   });
   await db.insert(schoolMetadata).values([
-    { schoolId, metaKey: "classes", metaValue: JSON.stringify(["1", "2", "7"]) },
+    { schoolId, metaKey: "classes", metaValue: JSON.stringify(["1", "2", "6", "7"]) },
     { schoolId, metaKey: "sections", metaValue: JSON.stringify(["A", "B"]) },
   ]);
 }
@@ -130,13 +141,21 @@ beforeAll(async () => {
     subject: "Math", assignedClass: "1", assignedSection: "A", mustChangePassword: false,
   }).returning();
   fixture.teacher = teacher.id;
+  await db.insert(facultyMappings).values([
+    { teacherId: teacher.id, schoolId: schoolA.id, className: "1", section: "A", subject: "Math" },
+    { teacherId: teacher.id, schoolId: schoolA.id, className: "6", section: "A", subject: "Physics" },
+  ]);
 
-  const [student, incomplete, override] = await db.insert(students).values([
+  const [student, incomplete, override, classSixStudentA, classSixStudentB] = await db.insert(students).values([
     { schoolId: schoolA.id, digitalStudentId: `${token}-student`, name: "Academic Smoke Student", class: "1", section: "A", phone: "8000000001", dob: "2015-01-01", passwordHash, isActivated: true },
     { schoolId: schoolA.id, digitalStudentId: `${token}-incomplete`, name: "Academic Smoke Incomplete", class: "1", section: "A", phone: "8000000002", dob: "2015-01-02", passwordHash, isActivated: true },
     { schoolId: schoolA.id, digitalStudentId: `${token}-override`, name: "Academic Smoke Override", class: "1", section: "A", phone: "8000000003", dob: "2015-01-03", passwordHash, isActivated: true },
+    { schoolId: schoolA.id, digitalStudentId: `${token}-class-six-a`, name: "Academic Smoke Class Six A", class: "6", section: "A", phone: "8000000004", dob: "2014-01-01", passwordHash, isActivated: true },
+    { schoolId: schoolA.id, digitalStudentId: `${token}-class-six-b`, name: "Academic Smoke Class Six B", class: "6", section: "A", phone: "8000000005", dob: "2014-01-02", passwordHash, isActivated: true },
   ]).returning();
   fixture.student = student.id;
+  fixture.classSixStudentA = classSixStudentA.id;
+  fixture.classSixStudentB = classSixStudentB.id;
   fixture.incomplete = incomplete.id;
   fixture.override = override.id;
   await db.insert(enrollments).values([
@@ -144,6 +163,8 @@ beforeAll(async () => {
     { schoolId: schoolA.id, studentId: student.id, sessionId: sessionA2.id, className: "1", sectionName: "A" },
     { schoolId: schoolA.id, studentId: incomplete.id, sessionId: sessionA.id, className: "1", sectionName: "A" },
     { schoolId: schoolA.id, studentId: override.id, sessionId: sessionA.id, className: "1", sectionName: "A" },
+    { schoolId: schoolA.id, studentId: classSixStudentA.id, sessionId: sessionA.id, className: "6", sectionName: "A" },
+    { schoolId: schoolA.id, studentId: classSixStudentB.id, sessionId: sessionA.id, className: "6", sectionName: "A" },
   ]);
   await Promise.all([addPolicy(schoolA.id), addPolicy(schoolB.id)]);
   await db.insert(examScores).values([
@@ -196,12 +217,52 @@ describe.sequential("authenticated academic smoke", () => {
       method: "POST", body: JSON.stringify({ dsid: `${token}-student`, password }),
     })).response.status).toBe(200);
 
+    for (const { totalMarks, expectedPassMarks, marks, clientPassMarks } of [
+      { totalMarks: 100, expectedPassMarks: 40, marks: [60, 80], clientPassMarks: 1 },
+      { totalMarks: 50, expectedPassMarks: 20, marks: [30, 40], clientPassMarks: 1 },
+      { totalMarks: 20, expectedPassMarks: 8, marks: [12, 18], clientPassMarks: 33 },
+      { totalMarks: 10, expectedPassMarks: 4, marks: [6, 8], clientPassMarks: 1 },
+    ]) {
+      const examType = `Configured 40 Percent ${totalMarks}`;
+      const saved = await request(teacher, "/api/exam-scores", {
+        method: "POST",
+        headers: { "x-view-session-id": String(fixture.sessionA) },
+        body: JSON.stringify({
+          class: "6", section: "A", subject: "Physics", examType, totalMarks,
+          passMarks: clientPassMarks,
+          scores: [
+            { studentId: fixture.classSixStudentA, marks: marks[0], isAbsent: false },
+            { studentId: fixture.classSixStudentB, marks: marks[1], isAbsent: false },
+          ],
+        }),
+      });
+      expect(saved.response.status).toBe(200);
+      const rows = await db.select().from(examScores).where(and(
+        eq(examScores.schoolId, fixture.schoolA),
+        eq(examScores.sessionId, fixture.sessionA),
+        eq(examScores.examType, examType),
+      ));
+      expect(rows).toHaveLength(2);
+      expect(rows.every(row => row.passMarks === expectedPassMarks && row.totalMarks === totalMarks)).toBe(true);
+    }
+
+    const classSixInvalidMarks = await request(teacher, "/api/exam-scores", {
+      method: "POST",
+      headers: { "x-view-session-id": String(fixture.sessionA) },
+      body: JSON.stringify({
+        class: "6", section: "A", subject: "Physics", examType: "Configured 40 Percent Invalid",
+        totalMarks: 20,
+        scores: [{ studentId: fixture.classSixStudentA, marks: 21, isAbsent: false }],
+      }),
+    });
+    expect(classSixInvalidMarks.response.status).toBe(400);
+
     const invalidMarks = await request(teacher, "/api/exam-scores", {
       method: "POST",
       headers: { "x-view-session-id": String(fixture.sessionA) },
       body: JSON.stringify({
         class: "1", section: "A", subject: "Math", examType: "Authenticated Smoke",
-        totalMarks: 20, passMarks: 7,
+        totalMarks: 20,
         scores: [{ studentId: fixture.student, marks: 21, isAbsent: false }],
       }),
     });
@@ -212,11 +273,25 @@ describe.sequential("authenticated academic smoke", () => {
       headers: { "x-view-session-id": String(fixture.sessionA) },
       body: JSON.stringify({
         class: "1", section: "A", subject: "Math", examType: "Authenticated Smoke",
-        totalMarks: 20, passMarks: 7,
+        totalMarks: 20, passMarks: 20,
         scores: [{ studentId: fixture.student, marks: 17, isAbsent: false }],
       }),
     });
     expect(enteredMarks.response.status).toBe(200);
+    const [configuredThirtyFivePercent] = await db.select().from(examScores).where(and(
+      eq(examScores.schoolId, fixture.schoolA),
+      eq(examScores.sessionId, fixture.sessionA),
+      eq(examScores.studentId, fixture.student),
+      eq(examScores.examType, "Authenticated Smoke"),
+    ));
+    expect(configuredThirtyFivePercent.passMarks).toBe(7);
+    const [unchangedExistingScore] = await db.select().from(examScores).where(and(
+      eq(examScores.schoolId, fixture.schoolA),
+      eq(examScores.sessionId, fixture.sessionA),
+      eq(examScores.studentId, fixture.student),
+      eq(examScores.examType, "Exam"),
+    ));
+    expect(unchangedExistingScore).toMatchObject({ marks: 80, totalMarks: 100, passMarks: 35 });
     expect((await request(student, "/api/student/exam/types", {
       headers: { "x-view-session-id": String(fixture.sessionA) },
     })).body.examTypes).not.toContain("Authenticated Smoke");

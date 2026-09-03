@@ -1418,11 +1418,9 @@ export function registerTeacherRoutes(app: Express) {
         subject: z.string().trim().min(1),
         examType: z.string().trim().min(1),
         totalMarks: z.coerce.number().int().positive(),
-        passMarks: z.coerce.number().int().min(0),
         class: z.string().trim().min(1).optional(),
         section: z.string().trim().min(1).optional(),
       }).superRefine((value, ctx) => {
-        if (value.passMarks > value.totalMarks) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pass marks cannot exceed total marks" });
         value.scores.forEach((score, index) => {
           if (!score.isAbsent && score.marks > value.totalMarks) {
             ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scores", index, "marks"], message: "Marks cannot exceed total marks" });
@@ -1431,7 +1429,7 @@ export function registerTeacherRoutes(app: Express) {
       });
       const parsed = bodySchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = parsed.data;
+      const { scores, subject, examType, totalMarks, class: cls, section } = parsed.data;
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
@@ -1442,7 +1440,23 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(403).json({ message: "Not authorized for this class-section and subject" });
       }
       const maxMarks = totalMarks;
-      const pMarks = passMarks;
+      const matchingGradingTiers = (await storage.getGradingTiers(teacher.schoolId))
+        .filter(tier => (tier.classes || []).map(String).includes(String(resolvedClass).trim()));
+      if (matchingGradingTiers.length !== 1) {
+        return res.status(409).json({ message: "Exactly one grading policy must be configured for this class." });
+      }
+      const gradingTier = matchingGradingTiers[0];
+      if (!["percentage", "both"].includes(gradingTier.gradingSystem)) {
+        return res.status(409).json({ message: "The grading policy for this class does not define a percentage pass threshold." });
+      }
+      const passPercentage = gradingTier.passPercentage;
+      if (!Number.isInteger(passPercentage) || passPercentage < 0 || passPercentage > 100) {
+        return res.status(409).json({ message: "The grading policy for this class has an invalid pass percentage." });
+      }
+      const pMarks = Math.ceil(maxMarks * passPercentage / 100);
+      if (pMarks < 0 || pMarks > maxMarks) {
+        return res.status(400).json({ message: "Pass marks cannot exceed total marks" });
+      }
       // Tag each score with the academic session. Prefer the header value
       // (admin previewing an archived year); otherwise resolve the school's
       // active session so teacher-submitted scores are always year-tagged.
