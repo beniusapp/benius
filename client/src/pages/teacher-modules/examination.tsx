@@ -1557,14 +1557,18 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   }, [addExamSelectionKey]);
 
   const { data: students = [] } = useQuery<StudentInfo[]>({
-    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today, viewSessionId],
+    queryKey: ["/api/examination/roster", teacher.schoolId, selectedClass, selectedSection, subject, viewSessionId],
     queryFn: async ({ queryKey, signal }) => {
-      const [, schoolId, queryClass, querySection, queryToday, capturedViewSessionId] = queryKey as [string, number, string, string, string, number | null];
-      const res = await sessionFetchForViewSession(`/api/attendance/${schoolId}/${encodeURIComponent(queryClass)}/${querySection}/${queryToday}`, capturedViewSessionId, { signal });
+      const [, schoolId, queryClass, querySection, querySubject, capturedViewSessionId] = queryKey as [string, number, string, string, string, number | null];
+      const res = await sessionFetchForViewSession(
+        `/api/examination/roster/${schoolId}/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}?subject=${encodeURIComponent(querySubject)}`,
+        capturedViewSessionId,
+        { signal },
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: !!selectedClass && !!selectedSection,
+    enabled: !!selectedClass && !!selectedSection && !!subject,
   });
 
   const { data: existingScores, isFetched: existingScoresFetched } = useQuery<ExamScoreEntry[]>({

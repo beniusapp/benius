@@ -1403,6 +1403,38 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== EXAMINATION =====
+  app.get("/api/examination/roster/:schoolId/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const sid = parseInt(req.params.schoolId);
+      if (!Number.isInteger(sid) || sid <= 0) return res.status(400).json({ message: "Invalid school" });
+      const className = decodeURIComponent(req.params.class).trim();
+      const sectionName = decodeURIComponent(req.params.section).trim();
+      const subject = typeof req.query.subject === "string" ? req.query.subject.trim() : "";
+      if (!className || !sectionName || !subject) {
+        return res.status(400).json({ message: "class, section, and subject are required" });
+      }
+
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subject)) {
+        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
+      }
+
+      const sessionId = await resolveAcademicSessionId(req, sid);
+      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
+      const studentList = await storage.getStudentsByClassSectionInSession(sid, className, sectionName, sessionId);
+      res.json(studentList.map(student => ({
+        studentId: student.id,
+        name: student.name,
+        dsid: student.digitalStudentId,
+      })));
+    } catch (err: any) {
+      console.error("GET /api/examination/roster error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch examination roster" });
+    }
+  });
+
   app.post("/api/exam-scores", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {

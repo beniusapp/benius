@@ -217,6 +217,42 @@ describe.sequential("authenticated academic smoke", () => {
       method: "POST", body: JSON.stringify({ dsid: `${token}-student`, password }),
     })).response.status).toBe(200);
 
+    const activeClassOneRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolA}/1/A?subject=Math`,
+    );
+    expect(activeClassOneRoster.response.status).toBe(200);
+    expect(activeClassOneRoster.body.map((row: any) => row.studentId).sort((a: number, b: number) => a - b))
+      .toEqual([fixture.student, fixture.incomplete, fixture.override].sort((a, b) => a - b));
+
+    const archivedClassOneRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolA}/1/A?subject=Math`,
+      { headers: { "x-view-session-id": String(fixture.sessionA2) } },
+    );
+    expect(archivedClassOneRoster.response.status).toBe(200);
+    expect(archivedClassOneRoster.body.map((row: any) => row.studentId)).toEqual([fixture.student]);
+
+    const activeClassSixRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolA}/6/A?subject=Physics`,
+    );
+    expect(activeClassSixRoster.response.status).toBe(200);
+    expect(activeClassSixRoster.body.map((row: any) => row.studentId).sort((a: number, b: number) => a - b))
+      .toEqual([fixture.classSixStudentA, fixture.classSixStudentB].sort((a, b) => a - b));
+
+    const unauthorizedSubjectRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolA}/6/A?subject=Math`,
+    );
+    expect(unauthorizedSubjectRoster.response.status).toBe(403);
+
+    const crossTenantRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolB}/1/A?subject=Math`,
+    );
+    expect(crossTenantRoster.response.status).toBe(403);
+
     for (const { totalMarks, expectedPassMarks, marks, clientPassMarks } of [
       { totalMarks: 100, expectedPassMarks: 40, marks: [60, 80], clientPassMarks: 1 },
       { totalMarks: 50, expectedPassMarks: 20, marks: [30, 40], clientPassMarks: 1 },
