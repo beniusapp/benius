@@ -1,0 +1,188 @@
+READ-ONLY AUDIT ONLY — DO NOT MODIFY CODE, DATABASE, DATA, MAPPINGS, ENROLLMENTS, OR UI
+
+We need to investigate the Examination teacher-subject mapping mismatch found during the latest development test.
+
+Do NOT implement any fix yet.
+Do NOT create/update/delete any records.
+Do NOT change teacher mappings.
+Do NOT change student enrollments.
+Do NOT change subjects.
+Do NOT run migrations.
+Do NOT alter frontend/backend code.
+
+The issue observed is:
+
+Teacher 6
+Class: 6
+Section: B
+Stored subject mapping: "Bengali, Computer"
+
+But the Examination → Add Marks Subject dropdown for Class 6/B currently shows individual subjects such as:
+- Physics
+- Math
+- Bengali
+
+The session-aware roster endpoint currently works correctly for the stored combined mapping:
+
+GET /api/examination/roster/1/6/B?subject=Bengali%2C%20Computer
+
+It returned HTTP 200 with the single enrolled student.
+
+We need to determine WHY the teacher mapping contains "Bengali, Computer" as one subject value while the Examination UI expects individual subjects.
+
+AUDIT THE ENTIRE FLOW:
+
+1. DATABASE SCHEMA
+   - Identify the exact teacher/faculty/class-section/subject mapping tables and columns involved.
+   - Determine the data type and meaning of the subject field.
+   - Determine whether subjects are stored as:
+     a) one subject per mapping row,
+     b) comma-separated text,
+     c) array/JSON,
+     d) subject IDs,
+     e) some other structure.
+   - Show the relevant schema definitions.
+
+2. EXISTING DATA
+   - Inspect Teacher 6's actual mapping records.
+   - Show the exact stored values for:
+     school_id
+     teacher_id
+     class
+     section
+     subject
+     subject_id (if applicable)
+     academic_session_id (if applicable)
+   - Do NOT modify anything.
+   - Also inspect a few other teacher mappings to determine whether "Bengali, Computer" is an isolated legacy/data-entry case or part of the normal data model.
+
+3. SUBJECT MASTER / SUBJECT REGISTRY
+   - Identify where Bengali, Computer, Physics, Math, etc. are defined.
+   - Determine whether "Bengali, Computer" exists as an actual subject record or is merely a combined mapping value.
+   - Determine whether Bengali and Computer have separate IDs.
+   - Do NOT create or modify subject records.
+
+4. BACKEND AUTHORIZATION
+   - Trace how Examination determines whether a teacher is authorized for:
+     Class + Section + Subject.
+   - Inspect the relevant teacher authorization/mapping logic.
+   - Explain whether the backend expects:
+     "Bengali"
+     "Computer"
+     or
+     "Bengali, Computer"
+   - Check whether a combined subject value can accidentally authorize or reject individual subjects.
+
+5. EXAMINATION ROSTER ENDPOINT
+   Trace:
+
+   GET /api/examination/roster/:schoolId/:class/:section?subject=...
+
+   Determine exactly how the `subject` query parameter is compared against the teacher's mapping.
+
+   Explain what happens when:
+   subject = "Bengali"
+   versus
+   subject = "Computer"
+   versus
+   subject = "Bengali, Computer"
+
+   Do NOT change the endpoint.
+
+6. EXAMINATION FRONTEND
+   Inspect:
+   client/src/pages/teacher-modules/examination.tsx
+
+   Determine exactly how the Subject dropdown is populated.
+
+   Answer:
+   - Where do the available subjects come from?
+   - Are they derived from teacher mappings?
+   - Are they derived from a subject master?
+   - Are they hard-coded?
+   - Does the frontend split combined values such as "Bengali, Computer"?
+   - Does the frontend use subject IDs or subject names?
+
+7. DATA MODEL CONSISTENCY
+   Determine whether the current system has a fundamental mismatch between:
+   Teacher subject mapping representation
+   AND
+   Examination subject selection representation.
+
+   Specifically determine whether the intended architecture is:
+
+   Teacher 6
+   → Class 6
+   → Section B
+   → Bengali
+
+   AND separately:
+
+   Teacher 6
+   → Class 6
+   → Section B
+   → Computer
+
+   rather than:
+
+   Teacher 6
+   → Class 6
+   → Section B
+   → "Bengali, Computer"
+
+8. LEGACY COMPATIBILITY
+   Determine whether "Bengali, Computer" could be legacy data created by an older version of the application.
+
+   Search the codebase for:
+   - "Bengali, Computer"
+   - comma-separated subject handling
+   - subject mapping serialization
+   - teacher subject assignment
+   - faculty mapping
+   - subject mapping
+
+   Report any relevant historical/legacy handling you find.
+
+9. SECURITY / AUTHORIZATION RISK
+   Check whether the current combined-subject representation creates any security problem.
+
+   For example:
+   Could a teacher mapped to "Bengali, Computer" accidentally gain access to:
+   - Bengali marks
+   - Computer marks
+   - unrelated subjects
+   - subjects belonging to another class/section
+
+   Do NOT exploit or modify anything. Just analyze the authorization logic.
+
+10. RECOMMENDED FIX — ANALYSIS ONLY
+   After completing the audit, recommend the safest architecture.
+
+   Prefer the existing intended model if supported by the codebase:
+   one teacher mapping = one class + one section + one subject.
+
+   But do NOT implement it yet.
+
+   If a migration/data cleanup would be required, explain exactly what would need to happen and whether it can be done safely without affecting valid existing teacher mappings.
+
+FINAL RESPONSE FORMAT:
+
+A. ROOT CAUSE
+B. CURRENT DATABASE MODEL
+C. CURRENT TEACHER MAPPING MODEL
+D. SUBJECT MASTER MODEL
+E. BACKEND AUTHORIZATION FLOW
+F. FRONTEND SUBJECT DROPDOWN FLOW
+G. WHY "Bengali, Computer" DOES NOT MATCH THE UI
+H. SECURITY IMPACT
+I. LEGACY DATA FINDINGS
+J. RECOMMENDED FIX
+K. EXACT FILES/TABLES THAT WOULD NEED CHANGES
+L. TEST PLAN AFTER THE FIX
+
+IMPORTANT:
+This is strictly an investigation.
+
+At the end explicitly confirm:
+
+"Audit completed. No code changed. No database records changed. No teacher mappings changed. No enrollments changed. No subject records changed."
