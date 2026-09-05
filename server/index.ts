@@ -70,13 +70,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      const containsSensitiveAcademicData =
-        path.includes("/academic") ||
-        path.includes("/promotion") ||
-        path.startsWith("/api/admin/exam") ||
-        path.startsWith("/api/admin/ledger") ||
-        path.startsWith("/api/teacher/promotion");
-      if (capturedJsonResponse && !containsSensitiveAcademicData) {
+      if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
@@ -141,21 +135,6 @@ app.use((req, res, next) => {
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS denomination_breakdown JSONB;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS cheque_date DATE;
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS branch_name VARCHAR(100);
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS academic_term_boundaries (
-      id SERIAL PRIMARY KEY,
-      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-      session_id INTEGER NOT NULL REFERENCES academic_sessions(id) ON DELETE CASCADE,
-      term VARCHAR(100) NOT NULL,
-      start_date DATE NOT NULL,
-      end_date DATE NOT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-      CONSTRAINT academic_term_boundaries_school_session_term_unique
-        UNIQUE (school_id, session_id, term)
-    );
   `);
 
   await pool.query(`
@@ -483,6 +462,31 @@ app.use((req, res, next) => {
     CREATE INDEX IF NOT EXISTS idx_payment_records_school_fee_received
       ON payment_records(school_id, fee_record_id, received_date);
     ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
+    CREATE TABLE IF NOT EXISTS receipt_sequences (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL,
+      prefix VARCHAR(10) NOT NULL,
+      current_number INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (school_id, prefix)
+    );
+    -- Older deployments used a global prefix-only counter. Keep those legacy
+    -- rows untouched, but provision the school-scoped sequence contract used by
+    -- invoice and payment creation before any current code writes to it.
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS id SERIAL;
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS school_id INTEGER;
+    ALTER TABLE receipt_sequences DROP CONSTRAINT IF EXISTS receipt_sequences_pkey;
+    CREATE UNIQUE INDEX IF NOT EXISTS receipt_sequences_school_prefix_uniq
+      ON receipt_sequences (school_id, prefix);
+    INSERT INTO receipt_sequences (school_id, prefix, current_number)
+      SELECT school_id, 'INV-', MAX((substring(invoice_number FROM '([0-9]+)$'))::integer)
+      FROM fee_records
+      WHERE invoice_number ~ '^INV-[0-9]+$'
+      GROUP BY school_id
+      ON CONFLICT (school_id, prefix) DO UPDATE
+      SET current_number = GREATEST(
+        receipt_sequences.current_number,
+        EXCLUDED.current_number
+      );
     CREATE TABLE IF NOT EXISTS notification_config (
       id SERIAL PRIMARY KEY,
       school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,

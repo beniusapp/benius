@@ -77,16 +77,6 @@ export class AcademicSessionFinancialHistoryError extends Error {
   }
 }
 
-export class PromotionConflictError extends Error {
-  readonly status = 409;
-  readonly code = "PROMOTION_SCOPE_CHANGED";
-
-  constructor(message = "Promotion scope changed before execution; no records were updated.") {
-    super(message);
-    this.name = "PromotionConflictError";
-  }
-}
-
 const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
 
 /**
@@ -431,23 +421,18 @@ export class DatabaseStorage {
   // ===== ATTENDANCE METHODS =====
   async getAttendanceByClassDate(schoolId: number, cls: string, section: string, date: string): Promise<AttendanceRecord[]> {
     return await db.select().from(attendanceRecords).where(
-      and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.class, cls),
-        eq(attendanceRecords.section, section),
-        eq(attendanceRecords.date, date),
-      )
-    );
+      and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+    ).then(records => {
+      return records;
+    });
   }
 
-  async getAttendanceForStudentsOnDate(schoolId: number, studentIds: number[], date: string, sessionId: number): Promise<AttendanceRecord[]> {
+  async getAttendanceForStudentsOnDate(studentIds: number[], date: string, sessionId?: number | null): Promise<AttendanceRecord[]> {
     if (studentIds.length === 0) return [];
-    return db.select().from(attendanceRecords).where(and(
-      eq(attendanceRecords.schoolId, schoolId),
-      eq(attendanceRecords.sessionId, sessionId),
-      eq(attendanceRecords.date, date),
-      inArray(attendanceRecords.studentId, studentIds),
-    ));
+    const conditions = [eq(attendanceRecords.date, date)];
+    if (sessionId) conditions.push(eq(attendanceRecords.sessionId, sessionId));
+    const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
+    return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
   async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string; sessionId?: number }[]): Promise<AttendanceRecord[]> {
@@ -459,24 +444,8 @@ export class DatabaseStorage {
         const active = await this.getActiveSession(rec.schoolId);
         resolvedSessionId = active?.id ?? undefined;
       }
-      if (!resolvedSessionId) {
-        throw new Error("An active academic session is required before attendance can be saved.");
-      }
-      const [student, teacher, session] = await Promise.all([
-        this.getStudentById(rec.studentId),
-        this.getTeacherById(rec.teacherId),
-        this.getAcademicSessionByIdForSchool(resolvedSessionId, rec.schoolId),
-      ]);
-      if (!student || student.schoolId !== rec.schoolId) throw new Error("Student does not belong to this school.");
-      if (!teacher || teacher.schoolId !== rec.schoolId) throw new Error("Teacher does not belong to this school.");
-      if (!session) throw new Error("Academic session does not belong to this school.");
       const existing = await db.select().from(attendanceRecords).where(
-        and(
-          eq(attendanceRecords.schoolId, rec.schoolId),
-          eq(attendanceRecords.sessionId, resolvedSessionId),
-          eq(attendanceRecords.studentId, rec.studentId),
-          eq(attendanceRecords.date, rec.date),
-        )
+        and(eq(attendanceRecords.studentId, rec.studentId), eq(attendanceRecords.date, rec.date))
       );
       if (existing.length > 0) {
         const current = existing[0];
@@ -1516,26 +1485,6 @@ export class DatabaseStorage {
   async upsertExamScores(scores: InsertExamScore[]): Promise<ExamScore[]> {
     const results: ExamScore[] = [];
     for (const score of scores) {
-      if (!score.sessionId) throw new Error("An academic session is required before exam scores can be saved.");
-      const totalMarks = score.totalMarks ?? 100;
-      const passMarks = score.passMarks ?? 33;
-      if (!Number.isInteger(score.marks) || !Number.isInteger(totalMarks) || !Number.isInteger(passMarks)) {
-        throw new Error("Marks, total marks, and pass marks must be whole numbers.");
-      }
-      if (totalMarks <= 0 || score.marks < 0 || score.marks > totalMarks) {
-        throw new Error("Marks must be between 0 and total marks, and total marks must be greater than zero.");
-      }
-      if (passMarks < 0 || passMarks > totalMarks) {
-        throw new Error("Pass marks must be between 0 and total marks.");
-      }
-      const [student, teacher, session] = await Promise.all([
-        this.getStudentById(score.studentId),
-        this.getTeacherById(score.teacherId),
-        this.getAcademicSessionByIdForSchool(score.sessionId, score.schoolId),
-      ]);
-      if (!student || student.schoolId !== score.schoolId) throw new Error("Student does not belong to this school.");
-      if (!teacher || teacher.schoolId !== score.schoolId) throw new Error("Teacher does not belong to this school.");
-      if (!session) throw new Error("Academic session does not belong to this school.");
       // ── Deduplication: match on student+subject+examType+class+section.
       // When a sessionId is present, also scope the lookup to that session so
       // records from different academic years never overwrite each other.
@@ -1553,8 +1502,8 @@ export class DatabaseStorage {
         const [updated] = await db.update(examScores)
           .set({
             marks: score.marks,
-            totalMarks,
-            passMarks,
+            totalMarks: score.totalMarks,
+            passMarks: score.passMarks ?? 33,
             isAbsent: score.isAbsent,
             class: score.class ?? existing[0].class,
             section: score.section ?? existing[0].section,
@@ -1593,25 +1542,6 @@ export class DatabaseStorage {
     return updated.length;
   }
 
-  async getExamScoreSubjectsForPublish(
-    schoolId: number,
-    cls: string,
-    section: string,
-    examType: string,
-    sessionId: number,
-  ): Promise<string[]> {
-    const rows = await db.selectDistinct({ subject: examScores.subject })
-      .from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.class, cls),
-        eq(examScores.section, section),
-        eq(examScores.examType, examType),
-        eq(examScores.sessionId, sessionId),
-      ));
-    return rows.map(row => row.subject);
-  }
-
   async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string, sessionId?: number): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
     // When a sessionId is provided, strictly filter to that academic year's records.
     const result = await db.select().from(examScores)
@@ -1648,13 +1578,12 @@ export class DatabaseStorage {
     return rows.map(r => r.class).filter((c): c is string => c !== null);
   }
 
-  // Student exam types are publication-gated; unpublished teacher drafts are private.
+  // Student exam types for a specific student+class — no published gate (real-time visibility)
   async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<string[]> {
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId),
       eq(examScores.studentId, studentId),
       eq(examScores.class, cls),
-      eq(examScores.published, true),
     ];
     if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
     const rows = await db.select({
@@ -1686,28 +1615,26 @@ export class DatabaseStorage {
     return rows.map(r => r.examType);
   }
 
-  // Student score fetch is publication-gated.
+  // Student score fetch — no published gate (real-time visibility)
   async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string, sessionId?: number | null): Promise<ExamScore[]> {
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId),
       eq(examScores.class, cls), eq(examScores.examType, examType),
-      eq(examScores.published, true),
     ];
     if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject);
   }
 
-  // All student-visible scores are publication-gated.
+  // All scores for a student in a class — no published gate (real-time visibility)
   async getStudentAllExamScores(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<ExamScore[]> {
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId), eq(examScores.class, cls),
-      eq(examScores.published, true),
     ];
     if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject, examScores.examType);
   }
 
-  async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number, sessionId: number): Promise<{ rank: number; total: number }> {
+  async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number): Promise<{ rank: number; total: number }> {
     const allScores = await db.select().from(examScores)
       .where(and(
         eq(examScores.schoolId, schoolId),
@@ -1715,7 +1642,6 @@ export class DatabaseStorage {
         eq(examScores.section, section),
         eq(examScores.examType, examType),
         eq(examScores.published, true),
-        eq(examScores.sessionId, sessionId),
       ));
 
     const byStudent: Record<number, { obtained: number; total: number }> = {};
@@ -3980,18 +3906,18 @@ export class DatabaseStorage {
 
   async upsertPromotionOverride(data: {
     schoolId: number; studentId: number; examType: string; class: string; section: string;
-    overrideStatus: string; nextClass: string; nextSection: string; sessionId: number;
+    overrideStatus: string; nextClass: string; nextSection: string;
   }): Promise<void> {
     await db.insert(promotionOverrides).values(data)
       .onConflictDoUpdate({
-        target: [promotionOverrides.schoolId, promotionOverrides.sessionId, promotionOverrides.studentId, promotionOverrides.examType, promotionOverrides.class, promotionOverrides.section],
+        target: [promotionOverrides.schoolId, promotionOverrides.studentId, promotionOverrides.examType, promotionOverrides.class, promotionOverrides.section],
         set: { overrideStatus: data.overrideStatus, nextClass: data.nextClass, nextSection: data.nextSection, overriddenAt: new Date() },
       });
   }
 
   async bulkUpsertPromotionOverrides(items: Array<{
     schoolId: number; studentId: number; examType: string; class: string; section: string;
-    overrideStatus: string; nextClass: string; nextSection: string; sessionId: number;
+    overrideStatus: string; nextClass: string; nextSection: string;
   }>): Promise<void> {
     for (const item of items) {
       await this.upsertPromotionOverride(item);
@@ -3999,19 +3925,18 @@ export class DatabaseStorage {
   }
 
   async deleteAllPromotionOverrides(data: {
-    schoolId: number; class: string; section: string; examType: string; sessionId: number;
+    schoolId: number; class: string; section: string; examType: string;
   }): Promise<void> {
     await db.delete(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, data.schoolId),
       eq(promotionOverrides.class, data.class),
       eq(promotionOverrides.section, data.section),
       eq(promotionOverrides.examType, data.examType),
-      eq(promotionOverrides.sessionId, data.sessionId),
     ));
   }
 
   async deletePromotionOverride(data: {
-    schoolId: number; studentId: number; examType: string; class: string; section: string; sessionId: number;
+    schoolId: number; studentId: number; examType: string; class: string; section: string;
   }): Promise<void> {
     await db.delete(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, data.schoolId),
@@ -4019,17 +3944,15 @@ export class DatabaseStorage {
       eq(promotionOverrides.examType, data.examType),
       eq(promotionOverrides.class, data.class),
       eq(promotionOverrides.section, data.section),
-      eq(promotionOverrides.sessionId, data.sessionId),
     ));
   }
 
-  async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string, sessionId: number): Promise<PromotionOverride[]> {
+  async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
     return await db.select().from(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, schoolId),
       eq(promotionOverrides.class, cls),
       eq(promotionOverrides.section, section),
       eq(promotionOverrides.examType, examType),
-      eq(promotionOverrides.sessionId, sessionId),
     ));
   }
 
@@ -4102,144 +4025,41 @@ export class DatabaseStorage {
   }
 
   /**
-   * Atomic promotion transaction — wraps all critical writes in a single
+   * Atomic promotion transaction — wraps all three critical writes in a single
    * DB transaction. If any step fails the entire operation rolls back automatically:
    *  1. Insert academic history snapshot records
    *  2. Update each student's class/section + flag id_card_pending_reissue = true
    *  3. Mark the promotion ledger as admin-executed
-   *  4. Remove the exact override consumed and record a non-PII audit event
    */
   async executePromotionTransaction(
     schoolId: number,
-    items: Array<{
-      studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string;
-      examType: string; teacherDecision: string; adminOverride: string | null; systemPolicyVerdict?: boolean;
-    }>,
+    items: Array<{ studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string }>,
     historyRecords: InsertAcademicHistory[],
-    term: string,
-    sessionId: number,
-    adminId: number,
+    term?: string,
   ): Promise<number> {
-    if (items.length !== historyRecords.length) {
-      throw new PromotionConflictError("Every promoted student must have exactly one academic history snapshot.");
-    }
-    const historyByStudent = new Map(historyRecords.map(record => [record.studentId, record]));
-    for (const item of items) {
-      const history = historyByStudent.get(item.studentId);
-      if (!history ||
-          history.schoolId !== schoolId ||
-          history.sessionId !== sessionId ||
-          history.fromClass !== item.fromClass ||
-          history.fromSection !== item.fromSection ||
-          history.toClass !== item.nextClass ||
-          history.toSection !== item.nextSection) {
-        throw new PromotionConflictError("Academic history scope does not match the selected promotion.");
-      }
-    }
-
     let promoted = 0;
     const now = new Date();
     await db.transaction(async (tx) => {
-      for (const item of items) {
-        // Re-read the decision and override inside the write transaction. This
-        // makes the authorization predicate identical to the route predicate,
-        // preventing a changed decision/override from being promoted.
-        const [ledger] = await tx.select().from(promotionDecisions).where(and(
-          eq(promotionDecisions.schoolId, schoolId),
-          eq(promotionDecisions.term, term),
-          eq(promotionDecisions.sessionId, sessionId),
-          eq(promotionDecisions.studentId, item.studentId),
-          eq(promotionDecisions.class, item.fromClass),
-          eq(promotionDecisions.section, item.fromSection),
-        )).for("update");
-        const [override] = await tx.select().from(promotionOverrides).where(and(
-          eq(promotionOverrides.schoolId, schoolId),
-          eq(promotionOverrides.sessionId, sessionId),
-          eq(promotionOverrides.studentId, item.studentId),
-          eq(promotionOverrides.examType, item.examType),
-          eq(promotionOverrides.class, item.fromClass),
-          eq(promotionOverrides.section, item.fromSection),
-        )).for("update");
-        if (!ledger ||
-            !ledger.locked ||
-            ledger.adminExecuted ||
-            ledger.decision !== item.teacherDecision ||
-            (override?.overrideStatus ?? null) !== item.adminOverride ||
-            (override
-              ? override.nextClass !== item.nextClass || override.nextSection !== item.nextSection
-              : ledger.targetClass !== item.nextClass || ledger.targetSection !== item.nextSection)) {
-          throw new PromotionConflictError("The locked promotion decision changed before execution.");
-        }
-        const overrideAuthorizesPromotion =
-          override?.overrideStatus === "PASS" || override?.overrideStatus === "GRACE_PASS";
-        const overrideBlocksPromotion =
-          override?.overrideStatus === "FAIL" || override?.overrideStatus === "REPEAT";
-        // The route supplies the freshly calculated system result, while this
-        // transaction rechecks the locked ledger/override state. A teacher
-        // decision is audit evidence, never promotion authority.
-        if (overrideBlocksPromotion || (item.systemPolicyVerdict !== true && !overrideAuthorizesPromotion)) {
-          throw new PromotionConflictError("The authoritative result does not authorize upward promotion.");
-        }
-      }
       if (historyRecords.length > 0) {
         await tx.insert(academicHistory).values(historyRecords);
       }
       for (const item of items) {
         const updated = await tx.update(students)
           .set({ class: item.nextClass, section: item.nextSection, idCardPendingReissue: true })
-          .where(and(
-            eq(students.id, item.studentId),
-            eq(students.schoolId, schoolId),
-            eq(students.class, item.fromClass),
-            eq(students.section, item.fromSection),
-          ))
+          .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
           .returning();
-        if (updated.length !== 1) {
-          throw new PromotionConflictError();
-        }
-        promoted++;
-
-        const ledgerUpdated = await tx.update(promotionDecisions)
+        if (updated.length > 0) promoted++;
+      }
+      if (term && items.length > 0) {
+        const { fromClass, fromSection } = items[0];
+        await tx.update(promotionDecisions)
           .set({ adminExecuted: true, adminExecutedAt: now })
           .where(and(
             eq(promotionDecisions.schoolId, schoolId),
+            eq(promotionDecisions.class, fromClass),
+            eq(promotionDecisions.section, fromSection),
             eq(promotionDecisions.term, term),
-            eq(promotionDecisions.sessionId, sessionId),
-            eq(promotionDecisions.studentId, item.studentId),
-            eq(promotionDecisions.class, item.fromClass),
-            eq(promotionDecisions.section, item.fromSection),
-            eq(promotionDecisions.locked, true),
-            eq(promotionDecisions.adminExecuted, false),
-            eq(promotionDecisions.decision, item.teacherDecision),
-          ))
-          .returning({ id: promotionDecisions.id });
-        if (ledgerUpdated.length !== 1) {
-          throw new PromotionConflictError("The locked promotion decision changed before execution.");
-        }
-        if (item.adminOverride !== null) {
-          const overrideDeleted = await tx.delete(promotionOverrides).where(and(
-            eq(promotionOverrides.schoolId, schoolId),
-            eq(promotionOverrides.sessionId, sessionId),
-            eq(promotionOverrides.studentId, item.studentId),
-            eq(promotionOverrides.examType, item.examType),
-            eq(promotionOverrides.class, item.fromClass),
-            eq(promotionOverrides.section, item.fromSection),
-            eq(promotionOverrides.overrideStatus, item.adminOverride),
-          )).returning({ id: promotionOverrides.id });
-          if (overrideDeleted.length !== 1) {
-            throw new PromotionConflictError("The promotion override changed before execution.");
-          }
-        }
-        await tx.insert(auditLogs).values({
-          schoolId,
-          sessionId,
-          actionType: "PROMOTION_EXECUTED",
-          entityType: "promotion_decision",
-          entityId: ledgerUpdated[0].id,
-          actionBy: adminId,
-          actionByRole: "admin",
-          details: `term=${term};from=${item.fromClass}/${item.fromSection};to=${item.nextClass}/${item.nextSection}`,
-        });
+          ));
       }
     });
     return promoted;
@@ -4253,7 +4073,7 @@ export class DatabaseStorage {
   }
 
   async getExamScoresForStudents(
-    schoolId: number, studentIds: number[], sessionId: number, examType?: string,
+    schoolId: number, studentIds: number[],
   ): Promise<Array<{ studentId: number; subject: string; examType: string; marks: number; totalMarks: number; isAbsent: boolean }>> {
     if (studentIds.length === 0) return [];
     return db
@@ -4266,12 +4086,7 @@ export class DatabaseStorage {
         isAbsent:  examScores.isAbsent,
       })
       .from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.sessionId, sessionId),
-        inArray(examScores.studentId, studentIds),
-        ...(examType ? [eq(examScores.examType, examType)] : []),
-      ));
+      .where(and(eq(examScores.schoolId, schoolId), inArray(examScores.studentId, studentIds)));
   }
 
   async getAcademicHistory(schoolId: number, studentId?: number, sessionId?: number | null): Promise<typeof academicHistory.$inferSelect[]> {
@@ -4425,8 +4240,8 @@ export class DatabaseStorage {
     }
 
     let overrideMap: Record<number, string> = {};
-    if (opts.section && opts.examType && opts.sessionId) {
-      const overrides = await this.getPromotionOverrides(schoolId, cls, opts.section, opts.examType, opts.sessionId);
+    if (opts.section && opts.examType) {
+      const overrides = await this.getPromotionOverrides(schoolId, cls, opts.section, opts.examType);
       for (const o of overrides) overrideMap[o.studentId] = o.overrideStatus;
     }
 
@@ -4479,7 +4294,7 @@ export class DatabaseStorage {
     return { students: studentList, subjectAverages, subjectList, passThreshold };
   }
 
-  async getStudentJourneyData(studentId: number, schoolId: number, sessionId: number): Promise<{
+  async getStudentJourneyData(studentId: number, schoolId: number): Promise<{
     examTypes: string[];
     subjectRows: { subject: string; scores: (number | null)[] }[];
     totals: number[];
@@ -4488,7 +4303,6 @@ export class DatabaseStorage {
       .where(and(
         eq(examScores.studentId, studentId),
         eq(examScores.schoolId, schoolId),
-        eq(examScores.sessionId, sessionId),
       ))
       .orderBy(examScores.id);
 
@@ -4753,35 +4567,14 @@ export class DatabaseStorage {
 
   async replaceFacultyMappings(teacherId: number, schoolId: number, mappings: { className: string; section: string; subject?: string | null }[]): Promise<FacultyMapping[]> {
     return await db.transaction(async (tx) => {
-      const existing = await tx.select().from(facultyMappings).where(
-        and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)),
+      await tx.delete(facultyMappings).where(
+        and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId))
       );
-      const keyOf = (mapping: { className: string; section: string; subject?: string | null }) =>
-        `${mapping.className}\u001f${mapping.section}\u001f${mapping.subject ?? ""}`;
-      const existingByKey = new Map<string, FacultyMapping>();
-      for (const mapping of existing) {
-        const key = keyOf(mapping);
-        if (existingByKey.has(key)) {
-          throw new Error(`Duplicate existing faculty mapping requires review: ${mapping.className}-${mapping.section}-${mapping.subject ?? ""}`);
-        }
-        existingByKey.set(key, mapping);
-      }
-      const desiredByKey = new Map(mappings.map(mapping => [keyOf(mapping), mapping]));
-      const idsToDelete = existing
-        .filter(mapping => !desiredByKey.has(keyOf(mapping)))
-        .map(mapping => mapping.id);
-      if (idsToDelete.length > 0) {
-        await tx.delete(facultyMappings).where(inArray(facultyMappings.id, idsToDelete));
-      }
-      const toInsert = mappings.filter(mapping => !existingByKey.has(keyOf(mapping)));
-      if (toInsert.length > 0) {
-        await tx.insert(facultyMappings).values(
-          toInsert.map(mapping => ({ teacherId, schoolId, className: mapping.className, section: mapping.section, subject: mapping.subject ?? null })),
-        );
-      }
-      return tx.select().from(facultyMappings)
-        .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)))
-        .orderBy(facultyMappings.className, facultyMappings.section, facultyMappings.subject);
+      if (mappings.length === 0) return [];
+      const rows = await tx.insert(facultyMappings).values(
+        mappings.map(m => ({ teacherId, schoolId, className: m.className, section: m.section, subject: m.subject ?? null }))
+      ).returning();
+      return rows;
     });
   }
 
@@ -5556,7 +5349,7 @@ export class DatabaseStorage {
   async savePromotionDecisions(
     schoolId: number, cls: string, section: string, term: string,
     teacherId: number, lock: boolean,
-    entries: Array<{ studentId: number; decision: "promoted" | "retained"; targetClass: string; targetSection: string; autoSuggestion: string }>,
+    entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
     sessionId?: number,
   ): Promise<void> {
     const now = new Date();
@@ -5574,20 +5367,10 @@ export class DatabaseStorage {
           eq(promotionDecisions.class, cls),
           eq(promotionDecisions.section, section),
           eq(promotionDecisions.term, term),
-          ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
         ));
     }
 
     for (const e of entries) {
-      const [existing] = await db.select({ editCount: promotionDecisions.editCount }).from(promotionDecisions).where(and(
-        eq(promotionDecisions.schoolId, schoolId),
-        eq(promotionDecisions.class, cls),
-        eq(promotionDecisions.section, section),
-        eq(promotionDecisions.term, term),
-        eq(promotionDecisions.studentId, e.studentId),
-        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
-      ));
-      const editCount = existing ? existing.editCount + 1 : 0;
       const isManual = !!e.autoSuggestion && e.autoSuggestion !== e.decision;
       await db.insert(promotionDecisions).values({
         schoolId, class: cls, section, term,
@@ -5595,7 +5378,7 @@ export class DatabaseStorage {
         decision: e.decision,
         targetClass: e.targetClass,
         targetSection: e.targetSection,
-        editCount,
+        editCount: e.editCount,
         processedByTeacherId: teacherId,
         locked: lock,
         lockedAt: lock ? now : null,
@@ -5606,12 +5389,12 @@ export class DatabaseStorage {
         // apply strict session-scoped WHERE session_id = ? filtering.
         sessionId: sessionId ?? null,
       }).onConflictDoUpdate({
-        target: [promotionDecisions.schoolId, promotionDecisions.sessionId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
+        target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
         set: {
           decision: e.decision,
           targetClass: e.targetClass,
           targetSection: e.targetSection,
-          editCount,
+          editCount: e.editCount,
           processedByTeacherId: teacherId,
           locked: lock,
           lockedAt: lock ? now : null,
@@ -5820,17 +5603,16 @@ export class DatabaseStorage {
   }
 
   // ── Delete promotion overrides for a specific set of student IDs ──────────
-  async deletePromotionOverridesByStudentIds(schoolId: number, sessionId: number, studentIds: number[], examType: string): Promise<void> {
+  async deletePromotionOverridesByStudentIds(schoolId: number, studentIds: number[], examType: string): Promise<void> {
     if (studentIds.length === 0) return;
     await db.delete(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, schoolId),
       eq(promotionOverrides.examType, examType),
-      eq(promotionOverrides.sessionId, sessionId),
       inArray(promotionOverrides.studentId, studentIds),
     ));
   }
 
-  async markLedgerExecuted(schoolId: number, sessionId: number, cls: string, section: string, term: string): Promise<void> {
+  async markLedgerExecuted(schoolId: number, cls: string, section: string, term: string): Promise<void> {
     await db.update(promotionDecisions)
       .set({ adminExecuted: true, adminExecutedAt: new Date() })
       .where(and(
@@ -5838,15 +5620,14 @@ export class DatabaseStorage {
         eq(promotionDecisions.class, cls),
         eq(promotionDecisions.section, section),
         eq(promotionDecisions.term, term),
-        eq(promotionDecisions.sessionId, sessionId),
       ));
   }
 
-  async getDistinctLedgerTerms(schoolId: number, sessionId: number): Promise<string[]> {
+  async getDistinctLedgerTerms(schoolId: number): Promise<string[]> {
     const rows = await db
       .selectDistinct({ term: promotionDecisions.term })
       .from(promotionDecisions)
-      .where(and(eq(promotionDecisions.schoolId, schoolId), eq(promotionDecisions.sessionId, sessionId)))
+      .where(eq(promotionDecisions.schoolId, schoolId))
       .orderBy(promotionDecisions.term);
     return rows.map(r => r.term);
   }
@@ -5884,12 +5665,11 @@ export class DatabaseStorage {
     return ordered;
   }
 
-  async deletePromotionDecisionsByTerm(schoolId: number, sessionId: number, term: string): Promise<number> {
+  async deletePromotionDecisionsByTerm(schoolId: number, term: string): Promise<number> {
     const deleted = await db.delete(promotionDecisions)
       .where(and(
         eq(promotionDecisions.schoolId, schoolId),
         eq(promotionDecisions.term, term),
-        eq(promotionDecisions.sessionId, sessionId),
       ))
       .returning();
     return deleted.length;
@@ -5901,14 +5681,6 @@ export class DatabaseStorage {
   /** Return a single session by its primary key. */
   async getAcademicSessionById(id: number): Promise<AcademicSession | undefined> {
     const [sess] = await db.select().from(academicSessions).where(eq(academicSessions.id, id));
-    return sess;
-  }
-
-  async getAcademicSessionByIdForSchool(id: number, schoolId: number): Promise<AcademicSession | undefined> {
-    const [sess] = await db.select().from(academicSessions).where(and(
-      eq(academicSessions.id, id),
-      eq(academicSessions.schoolId, schoolId),
-    ));
     return sess;
   }
 

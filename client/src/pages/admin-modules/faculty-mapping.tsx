@@ -98,7 +98,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
   /* ── selection & grid state ─── */
   const [selectedTeacher, setSelectedTeacher] = useState<TeacherWithEmail | null>(null);
   const [selectedCells,   setSelectedCells]   = useState<Set<string>>(new Set());
-  const [cellSubjects,    setCellSubjects]    = useState<Map<string, Set<string>>>(new Map());
+  const [cellSubjects,    setCellSubjects]    = useState<Map<string, string>>(new Map());
   const [savingFor,       setSavingFor]       = useState<number | null>(null);
 
   /* ── subject dialog (multi-select) ─── */
@@ -110,29 +110,17 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
   const [summaryFilter, setSummaryFilter] = useState<"all"|"mapped"|"unmapped">("all");
 
   /* ── data fetching ────────────────────────────────────────────── */
-  const { data: schoolConfig } = useQuery<{
-    classes: string[];
-    sections: string[];
-    subjects: string[];
-    classSections: Record<string, string[]>;
-    classSubjects: Record<string, string[]>;
-  }>({
+  const { data: schoolConfig } = useQuery<{ classes: string[]; sections: string[]; subjects: string[] }>({
     queryKey: ["/api/admin/school-config"],
     queryFn: async () => {
       const r = await fetch("/api/admin/school-config", { credentials: "include" });
-      return r.ok ? r.json() : { classes: [], sections: [], subjects: [], classSections: {}, classSubjects: {} };
+      return r.ok ? r.json() : { classes: [], sections: [], subjects: [] };
     },
   });
 
   const cfgClasses  = (schoolConfig?.classes  ?? []).length > 0 ? schoolConfig!.classes  : (classes.length  > 0 ? classes  : DEFAULT_CLASSES);
   const cfgSections = (schoolConfig?.sections ?? []).length > 0 ? schoolConfig!.sections : (sections.length > 0 ? sections : DEFAULT_SECTIONS);
   const cfgSubjects = schoolConfig?.subjects ?? [];
-  const classSubjects = schoolConfig?.classSubjects ?? {};
-
-  const getSubjectsForClass = useCallback((className: string) => {
-    const configured = classSubjects[className];
-    return configured?.length ? configured : cfgSubjects;
-  }, [classSubjects, cfgSubjects]);
 
   const { data: teachers = [], isLoading: teachersLoading } = useQuery<TeacherWithEmail[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
@@ -183,9 +171,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
   /* ── unique subjects already assigned (for filter dropdown) ─── */
   const assignedSubjects = useMemo(() => {
     const s = new Set<string>();
-    allMappings.forEach(m => {
-      m.subject?.split(",").map(subject => subject.trim()).filter(Boolean).forEach(subject => s.add(subject));
-    });
+    allMappings.forEach(m => { if (m.subject) s.add(m.subject); });
     cfgSubjects.forEach(s2 => s.add(s2));
     return Array.from(s).sort();
   }, [allMappings, cfgSubjects]);
@@ -202,7 +188,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     if (filterStatus === "mapped")   list = list.filter(t => (teacherMappingCounts.get(t.id) ?? 0) > 0);
     if (filterStatus === "unmapped") list = list.filter(t => (teacherMappingCounts.get(t.id) ?? 0) === 0);
     if (filterSubject) list = list.filter(t =>
-      allMappings.some(m => m.teacherId === t.id && m.subject?.split(",").map(subject => subject.trim()).includes(filterSubject)) ||
+      allMappings.some(m => m.teacherId === t.id && m.subject === filterSubject) ||
       (t.subject ?? "").toLowerCase().includes(filterSubject.toLowerCase())
     );
     if (filterClass) list = list.filter(t =>
@@ -216,13 +202,8 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     setSelectedTeacher(teacher);
     const existingMaps = allMappings.filter(m => m.teacherId === teacher.id);
     const cells = new Set(existingMaps.map(m => `${m.className}:${m.section}`));
-    const subjects = new Map<string, Set<string>>();
-    existingMaps.forEach(m => {
-      const key = `${m.className}:${m.section}`;
-      const values = subjects.get(key) ?? new Set<string>();
-      m.subject?.split(",").map(subject => subject.trim()).filter(Boolean).forEach(subject => values.add(subject));
-      subjects.set(key, values);
-    });
+    const subjects = new Map<string, string>();
+    existingMaps.forEach(m => { if (m.subject) subjects.set(`${m.className}:${m.section}`, m.subject); });
     setSelectedCells(cells);
     setCellSubjects(subjects);
   }, [allMappings]);
@@ -230,12 +211,15 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
   /* ── subject dialog (multi-select) ─────────────────────────── */
   const openSubjectDialogForCells = useCallback((
     cells: { cls: string; section: string }[],
-    existingSubjects?: Set<string>
+    existingSubject?: string
   ) => {
     if (cells.length === 0) return;
     setPendingCells(cells);
     // Pre-populate with existing subjects when editing a single cell
-    const initial = new Set<string>(existingSubjects ?? []);
+    const initial = new Set<string>();
+    if (existingSubject) {
+      existingSubject.split(",").map(s => s.trim()).filter(Boolean).forEach(s => initial.add(s));
+    }
     setPendingSubjects(initial);
     setSubjectSearchQ("");
   }, []);
@@ -251,20 +235,17 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
 
   const confirmSubjectDialog = useCallback(() => {
     if (!pendingCells) return;
+    const subjectStr = Array.from(pendingSubjects).join(", ");
     setSelectedCells(prev => {
       const next = new Set(prev);
-      pendingCells.forEach(({ cls, section }) => {
-        const key = `${cls}:${section}`;
-        if (pendingSubjects.size > 0) next.add(key);
-        else next.delete(key);
-      });
+      pendingCells.forEach(({ cls, section }) => next.add(`${cls}:${section}`));
       return next;
     });
     setCellSubjects(prev => {
       const next = new Map(prev);
       pendingCells.forEach(({ cls, section }) => {
         const key = `${cls}:${section}`;
-        if (pendingSubjects.size > 0) next.set(key, new Set(pendingSubjects));
+        if (subjectStr) next.set(key, subjectStr);
         else next.delete(key);
       });
       return next;
@@ -273,31 +254,6 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     setPendingSubjects(new Set());
     setSubjectSearchQ("");
   }, [pendingCells, pendingSubjects]);
-
-  const pendingSubjectOptions = useMemo(() => {
-    if (!pendingCells?.length) return [];
-    const [first, ...rest] = pendingCells;
-    const initial = new Set(getSubjectsForClass(first.cls));
-    for (const cell of rest) {
-      const allowed = new Set(getSubjectsForClass(cell.cls));
-      for (const subject of initial) {
-        if (!allowed.has(subject)) initial.delete(subject);
-      }
-    }
-    return Array.from(initial);
-  }, [pendingCells, getSubjectsForClass]);
-
-  const invalidSelectedAssignments = useMemo(() => {
-    const invalid: string[] = [];
-    for (const key of selectedCells) {
-      const [className, section] = key.split(":");
-      const allowed = new Set(getSubjectsForClass(className));
-      for (const subject of cellSubjects.get(key) ?? []) {
-        if (!allowed.has(subject) || subject.includes(",")) invalid.push(`${className}-${section}: ${subject}`);
-      }
-    }
-    return invalid;
-  }, [selectedCells, cellSubjects, getSubjectsForClass]);
 
   const cancelSubjectDialog = useCallback(() => {
     setPendingCells(null);
@@ -341,12 +297,9 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
     mutationFn: async () => {
       if (!selectedTeacher) return;
       setSavingFor(selectedTeacher.id);
-      if (invalidSelectedAssignments.length > 0) {
-        throw new Error(`Resolve subjects not configured for their class: ${invalidSelectedAssignments.join("; ")}`);
-      }
-      const mappings = Array.from(selectedCells).flatMap(key => {
+      const mappings = Array.from(selectedCells).map(key => {
         const [className, section] = key.split(":");
-        return Array.from(cellSubjects.get(key) ?? []).map(subject => ({ className, section, subject }));
+        return { className, section, subject: cellSubjects.get(key) ?? null };
       });
       const r = await apiRequest("POST", "/api/admin/faculty-mappings", { teacherId: selectedTeacher.id, mappings });
       return r.json();
@@ -533,9 +486,9 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
             </div>
 
             {/* subject grid — filtered, multi-toggle */}
-            {pendingSubjectOptions.length > 0 ? (
+            {cfgSubjects.length > 0 ? (
               (() => {
-                const filtered = pendingSubjectOptions.filter(s =>
+                const filtered = cfgSubjects.filter(s =>
                   s.toLowerCase().includes(subjectSearchQ.toLowerCase())
                 );
                 return filtered.length > 0 ? (
@@ -593,7 +546,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
               data-testid="button-confirm-subject-dialog"
             >
               {pendingSubjects.size === 0
-                ? "Remove Assignment"
+                ? "Assign (no subject)"
                 : `Assign ${pendingSubjects.size} Subject${pendingSubjects.size > 1 ? "s" : ""}`
               }
             </Button>
@@ -777,14 +730,8 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                     size="sm"
                     className="h-8 bg-gradient-to-r from-[#D4AF37] to-amber-500 hover:from-[#B8962E] hover:to-amber-600 text-[#0A1628] font-bold text-xs px-4 rounded-xl shadow-lg shadow-[#D4AF37]/20 disabled:opacity-40 disabled:cursor-not-allowed"
                     onClick={() => !isArchiveMode && saveMutation.mutate()}
-                    disabled={saveMutation.isPending || !canAssign || isArchiveMode || invalidSelectedAssignments.length > 0}
-                    title={
-                      isArchiveMode
-                        ? "View only in archive mode"
-                        : invalidSelectedAssignments.length > 0
-                          ? `Resolve invalid subjects: ${invalidSelectedAssignments.join("; ")}`
-                          : undefined
-                    }
+                    disabled={saveMutation.isPending || !canAssign || isArchiveMode}
+                    title={isArchiveMode ? "View only in archive mode" : undefined}
                     data-testid="button-save-faculty-mapping"
                   >
                     {saveMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1.5" /> : <Save className="w-3 h-3 mr-1.5" />}
@@ -851,9 +798,8 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                             {cfgSections.map(sec => {
                               const key            = `${cls}:${sec}`;
                               const isOn           = selectedCells.has(key);
-                              const subjList       = Array.from(cellSubjects.get(key) ?? []);
-                              const allowedSubjects = new Set(getSubjectsForClass(cls));
-                              const hasInvalidSubject = subjList.some(subject => !allowedSubjects.has(subject) || subject.includes(","));
+                              const subj           = cellSubjects.get(key);
+                              const subjList       = subj ? subj.split(",").map(s => s.trim()).filter(Boolean) : [];
                               const owner          = cellOwnerMap.get(key);
                               const isOwnedByOther = owner && owner.teacherId !== selectedTeacher.id;
                               const isCollision    = isOwnedByOther && isOn;
@@ -894,7 +840,7 @@ export default function FacultyMapping({ schoolId, classes, sections, allowedSub
                                             ))
                                           : <span className="text-[8px] opacity-50 italic">No subject</span>
                                         }
-                                        {(isCollision || hasInvalidSubject) && <AlertTriangle className="w-2.5 h-2.5 text-amber-400 mt-0.5" />}
+                                        {isCollision && <AlertTriangle className="w-2.5 h-2.5 text-amber-400 mt-0.5" />}
                                       </>
                                     )}
                                   </button>

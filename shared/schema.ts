@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, smallint, boolean, date, timestamp, unique, uniqueIndex, index, jsonb, check, primaryKey, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -189,11 +189,7 @@ export const attendanceRecords = pgTable("attendance_records", {
   class: varchar("class", { length: 20 }),
   section: varchar("section", { length: 10 }),
   academicYear: varchar("academic_year", { length: 20 }),
-}, (table) => [
-  uniqueIndex("attendance_records_session_student_date_uidx").on(
-    table.schoolId, table.sessionId, table.studentId, table.date,
-  ),
-]);
+});
 
 export const homework = pgTable("homework", {
   id: serial("id").primaryKey(),
@@ -332,12 +328,7 @@ export const examScores = pgTable("exam_scores", {
   updatedBy: text("updated_by"),
   updatedAt: timestamp("updated_at"),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
-}, (table) => [
-  uniqueIndex("exam_scores_session_student_subject_exam_uidx").on(
-    table.schoolId, table.sessionId, table.studentId,
-    table.subject, table.examType, table.class, table.section,
-  ),
-]);
+});
 
 export const promotionDecisions = pgTable("promotion_decisions", {
   id: serial("id").primaryKey(),
@@ -360,11 +351,7 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
-}, (table) => [
-  uniqueIndex("promotion_decisions_session_student_uidx").on(
-    table.schoolId, table.sessionId, table.class, table.section, table.term, table.studentId,
-  ),
-]);
+});
 export type PromotionDecision = typeof promotionDecisions.$inferSelect;
 
 export const galleryItems = pgTable("gallery_items", {
@@ -758,12 +745,9 @@ export const promotionOverrides = pgTable("promotion_overrides", {
   overrideStatus: text("override_status").notNull(),
   nextClass: text("next_class").notNull(),
   nextSection: text("next_section").notNull(),
-  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
   overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
 }, (table) => [
-  uniqueIndex("promotion_override_unique").on(
-    table.schoolId, table.sessionId, table.studentId, table.examType, table.class, table.section,
-  ),
+  uniqueIndex("promotion_override_unique").on(table.schoolId, table.studentId, table.examType, table.class, table.section),
 ]);
 
 export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
@@ -846,17 +830,13 @@ export const academicHistory = pgTable("academic_history", {
   examType: text("exam_type").notNull(),
   totalObtained: integer("total_obtained").notNull(),
   totalMax: integer("total_max").notNull(),
-  percentage: doublePrecision("percentage").notNull(),
+  percentage: integer("percentage").notNull(),
   gradeLabel: text("grade_label"),
   gradePoint: text("grade_point"),
   remarks: text("remarks"),
   snapshotJson: jsonb("snapshot_json"),
   archivedAt: timestamp("archived_at").notNull().defaultNow(),
-}, (table) => [
-  index("academic_history_school_student_session_idx").on(
-    table.schoolId, table.studentId, table.sessionId,
-  ),
-]);
+});
 
 export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
 export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;
@@ -1038,28 +1018,6 @@ export const insertAcademicSessionSchema = createInsertSchema(academicSessions).
 export type InsertAcademicSession = z.infer<typeof insertAcademicSessionSchema>;
 export type AcademicSession = typeof academicSessions.$inferSelect;
 
-// ── ACADEMIC TERM BOUNDARIES ──────────────────────────────────────────────────
-// Authoritative calendar boundaries for promotion/attendance terms. Boundaries
-// are tenant- and session-scoped; the unique key prevents duplicate terms.
-export const academicTermBoundaries = pgTable("academic_term_boundaries", {
-  id: serial("id").primaryKey(),
-  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
-  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
-  term: varchar("term", { length: 100 }).notNull(),
-  startDate: date("start_date").notNull(),
-  endDate: date("end_date").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-}, (table) => ({
-  schoolSessionTermUnique: uniqueIndex("academic_term_boundaries_school_session_term_uidx")
-    .on(table.schoolId, table.sessionId, table.term),
-}));
-
-export const insertAcademicTermBoundarySchema = createInsertSchema(academicTermBoundaries)
-  .omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertAcademicTermBoundary = z.infer<typeof insertAcademicTermBoundarySchema>;
-export type AcademicTermBoundary = typeof academicTermBoundaries.$inferSelect;
-
 // ── ENROLLMENTS ───────────────────────────────────────────────────────────────
 // Links a student to an academic session with their class/section for that year.
 // Unique constraint on (schoolId, studentId, sessionId) prevents double-enrollment
@@ -1134,7 +1092,6 @@ export const feeStructures = pgTable("fee_structures", {
   autoGenerate: boolean("auto_generate").notNull().default(false),
   autoGenDueDay: integer("auto_gen_due_day"),
   lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
-  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
   lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig>().default({ enabled: false, type: "NONE", grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }),
@@ -1335,7 +1292,6 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
   isEnabled: boolean("is_enabled").notNull().default(false),
   gatewayUrl: text("gateway_url"),
   bannerMessage: text("banner_message"),
-  maxOvercollectionPercent: integer("max_overcollection_percent").notNull().default(150),
   lastUpdatedBy: integer("last_updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   // ── Razorpay gateway ──────────────────────────────────────────────────────
@@ -1347,23 +1303,6 @@ export const externalPaymentSettings = pgTable("external_payment_settings", {
 });
 export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;
 
-// Retained for production data compatibility after the monthly email feature
-// was retired. The application does not read or write this legacy table.
-export const legacyReportEmailSchedule = pgTable("report_email_schedule", {
-  id: serial("id").primaryKey(),
-  schoolId: integer("school_id").notNull().unique().references(() => schools.id, { onDelete: "cascade" }),
-  enabled: boolean("enabled").notNull().default(false),
-  recipients: text("recipients").array().notNull().default([]),
-  dayOfMonth: smallint("day_of_month").notNull().default(1),
-  sendTime: varchar("send_time", { length: 5 }).notNull().default("09:00"),
-  lastSentAt: timestamp("last_sent_at"),
-  lastSentMonth: varchar("last_sent_month", { length: 7 }),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-}, (table) => [
-  check("report_email_schedule_day_of_month_check", sql`${table.dayOfMonth} BETWEEN 1 AND 31`),
-  check("report_email_schedule_send_time_check", sql`${table.sendTime} ~ '^[0-2][0-9]:[0-5][0-9]$'`),
-]);
-
 // Monotonically-increasing receipt sequence counters — one row per school/prefix.
 // Deletion of any ledger row NEVER decrements these counters.
 export const receiptSequences = pgTable("receipt_sequences", {
@@ -1371,9 +1310,7 @@ export const receiptSequences = pgTable("receipt_sequences", {
   schoolId: integer("school_id").notNull(),
   prefix: varchar("prefix", { length: 10 }).notNull(),
   currentNumber: integer("current_number").notNull().default(0),
-}, (table) => [
-  unique("receipt_sequences_school_prefix_key").on(table.schoolId, table.prefix),
-]);
+});
 
 // ── Notification provider config (per school) ─────────────────────────────────
 export const notificationConfig = pgTable("notification_config", {

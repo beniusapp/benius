@@ -39,15 +39,11 @@ interface ExamScoreRow {
 }
 
 interface ExamSummary {
-  totalObtained: number | null;
-  totalMax: number | null;
-}
-
-interface ArchivedAcademicResult {
-  scope: { className: string; sectionName: string };
-  complete: boolean;
-  termAverages: Record<string, number | null>;
-  termGrades: Record<string, { label: string; gradePoint: string; remarks: string } | null>;
+  totalObtained: number;
+  totalMax: number;
+  percentage: number;
+  grade: string;
+  rank: { rank: number; total: number } | null;
 }
 
 interface FeeRecord {
@@ -89,12 +85,6 @@ function gradeColor(g: string) {
   return map[g] || "#ef4444";
 }
 
-function rawScoreSummaryLabel(summary: ExamSummary | null | undefined, scoreCount: number) {
-  if (scoreCount === 0) return "Not available";
-  if (summary?.totalObtained == null || summary.totalMax == null) return "Incomplete";
-  return `${summary.totalObtained}/${summary.totalMax}`;
-}
-
 const TABS = [
   { id: "report-cards", label: "Report Cards",     shortLabel: "Reports",    Icon: BookOpen,  color: "#7c3aed" },
   { id: "fee-ledger",   label: "Fee Ledger",        shortLabel: "Fees",       Icon: CreditCard, color: "#0891b2" },
@@ -134,20 +124,18 @@ export default function StudentArchivesPage() {
     return r.json();
   }, [selectedSession?.id]);
 
-  const { data: academicResult, isLoading: journeyLoading } = useQuery<ArchivedAcademicResult>({
-    queryKey: ["/api/student/archive/academic-result", selectedSession?.id],
-    queryFn: () => archiveFetch("/api/student/academic-result"),
+  const { data: journeyData, isLoading: journeyLoading } = useQuery<{ journey: { cls: string; examType: string; percentage: number }[] }>({
+    queryKey: ["/api/student/archive/journey", selectedSession?.id],
+    queryFn: () => archiveFetch("/api/student/exam/journey"),
     enabled: !!selectedSession && activeTab === "report-cards",
   });
-  const examTypes = academicResult ? Object.keys(academicResult.termAverages) : [];
-  const journeyData = {
-    journey: examTypes.map(examType => ({
-      cls: academicResult?.scope.className ?? "—",
-      examType,
-      percentage: academicResult?.termAverages[examType] ?? null,
-      grade: academicResult?.termGrades[examType]?.label ?? null,
-    })),
-  };
+
+  const { data: examTypesData } = useQuery<{ examTypes: string[] }>({
+    queryKey: ["/api/student/archive/exam-types", selectedSession?.id],
+    queryFn: () => archiveFetch("/api/student/exam/types"),
+    enabled: !!selectedSession && activeTab === "report-cards",
+  });
+  const examTypes = examTypesData?.examTypes || [];
 
   const { data: scoresData, isLoading: scoresLoading } = useQuery<{ scores: ExamScoreRow[]; summary: ExamSummary }>({
     queryKey: ["/api/student/archive/scores", selectedSession?.id, selectedExamType],
@@ -166,11 +154,13 @@ export default function StudentArchivesPage() {
 
   const filteredFees = useMemo(() => {
     if (!feeRecords) return [];
-    return feeRecords.filter(f =>
-      f.academicYear?.startsWith(sessionYear ?? "__x__") ||
+    const matched = feeRecords.filter(f =>
+      !f.academicYear ||
+      f.academicYear.startsWith(sessionYear ?? "__x__") ||
       f.academicYear === shortYear ||
       f.academicYear === selectedSession?.sessionName,
     );
+    return matched.length > 0 ? matched : feeRecords;
   }, [feeRecords, sessionYear, shortYear, selectedSession?.sessionName]);
 
   const { data: attendStats, isLoading: attendLoading } = useQuery<AttendanceStats>({
@@ -181,12 +171,10 @@ export default function StudentArchivesPage() {
 
   const handlePrint = () => {
     if (!scoresData || !student || !selectedSession) return;
-    const { scores } = scoresData;
-    const summary = scoresData.summary;
-    const totalMarksLabel = rawScoreSummaryLabel(summary, scores.length);
+    const { scores, summary } = scoresData;
     const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const rows = scores.map(sc =>
-      `<tr><td>${esc(sc.subject)}</td><td style="text-align:center">${sc.isAbsent ? "—" : sc.marks}</td><td style="text-align:center">${sc.totalMarks}</td><td style="text-align:center">${sc.isAbsent ? "Absent" : "Recorded"}</td></tr>`,
+      `<tr><td>${esc(sc.subject)}</td><td style="text-align:center">${sc.isAbsent ? "ABS" : sc.marks}</td><td style="text-align:center">${sc.totalMarks}</td><td style="text-align:center">${sc.isAbsent ? "—" : ((sc.marks / sc.totalMarks) * 100).toFixed(1) + "%"}</td></tr>`,
     ).join("");
     const w = window.open("", "_blank");
     if (!w) return;
@@ -206,10 +194,13 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
 <div class="hd"><h1>${esc(student.schoolName)}</h1><h2>Academic Transcript · ${esc(selectedSession.sessionName)} · ${esc(selectedExamType)}</h2></div>
 <p style="margin:0 0 4px"><strong>${esc(student.name)}</strong></p>
 <p style="margin:0;font-size:12px;color:#64748b">ID: ${esc(student.digitalStudentId)} &nbsp;|&nbsp; Class: ${esc(student.class)}-${esc(student.section)}</p>
-<table><thead><tr><th>Subject</th><th style="text-align:center">Marks</th><th style="text-align:center">Max</th><th style="text-align:center">Status</th></tr></thead>
+<table><thead><tr><th>Subject</th><th style="text-align:center">Marks</th><th style="text-align:center">Max</th><th style="text-align:center">%</th></tr></thead>
 <tbody>${rows}</tbody></table>
 <div class="sum">
-<div class="sr"><span>Total Marks</span><span><b>${totalMarksLabel}</b></span></div>
+<div class="sr"><span>Total Marks</span><span><b>${summary.totalObtained} / ${summary.totalMax}</b></span></div>
+<div class="sr"><span>Percentage</span><span><b>${summary.percentage}%</b></span></div>
+<div class="sr"><span>Grade</span><span class="grd">${summary.grade}</span></div>
+${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank.rank} / ${summary.rank.total}</b></span></div>` : ""}
 </div>
 <p style="margin-top:20px;font-size:10px;color:#94a3b8;text-align:center">Generated by BENIUS · Read-Only Archived Record</p>
 <div style="text-align:center;margin-top:14px"><button onclick="window.print()" style="padding:8px 22px;background:#7c3aed;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨 Print / Save as PDF</button></div>
@@ -426,7 +417,7 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
                         <tbody>
                           {journeyData.journey.map((j, i) => {
                             const pct = j.percentage;
-                            const g = j.grade;
+                            const g = pct >= 90 ? "A+" : pct >= 80 ? "A" : pct >= 70 ? "B+" : pct >= 60 ? "B" : pct >= 50 ? "C" : pct >= 40 ? "D" : "F";
                             return (
                               <tr key={i} style={{ borderBottom: "1px solid #f8fafc" }}>
                                 <td className="py-3 pr-4 text-sm font-bold text-slate-700">{j.cls}</td>
@@ -434,13 +425,13 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
                                 <td className="py-3 pr-4">
                                   <div className="flex items-center gap-2">
                                     <div className="h-1.5 w-20 rounded-full" style={{ background: "#f1f5f9" }}>
-                                      <div className="h-1.5 rounded-full" style={{ width: `${pct ?? 0}%`, background: gradeColor(g ?? "") }} />
+                                      <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: gradeColor(g) }} />
                                     </div>
-                                    <span className="text-xs font-bold text-slate-600">{pct === null ? "Not evaluated" : `${pct}%`}</span>
+                                    <span className="text-xs font-bold text-slate-600">{pct}%</span>
                                   </div>
                                 </td>
                                 <td className="py-3">
-                                  <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: `${gradeColor(g ?? "")}18`, color: gradeColor(g ?? "") }}>{g ?? "Not evaluated"}</span>
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: `${gradeColor(g)}18`, color: gradeColor(g) }}>{g}</span>
                                 </td>
                               </tr>
                             );
@@ -504,11 +495,12 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
                       ) : scoresData ? (
                         <>
                           {/* Summary pills */}
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             {[
-                              { label: "Total Marks", value: rawScoreSummaryLabel(scoresData.summary, scoresData.scores.length), color: "#7c3aed" },
-                              { label: "Percentage",  value: academicResult?.termAverages[selectedExamType] == null ? "Not evaluated" : `${academicResult.termAverages[selectedExamType]}%`, color: "#3b82f6" },
-                              { label: "Grade",       value: academicResult?.termGrades[selectedExamType]?.label ?? "Not evaluated", color: gradeColor(academicResult?.termGrades[selectedExamType]?.label ?? "") },
+                              { label: "Total Marks", value: `${scoresData.summary.totalObtained}/${scoresData.summary.totalMax}`, color: "#7c3aed" },
+                              { label: "Percentage",  value: `${scoresData.summary.percentage}%`,                                  color: "#3b82f6" },
+                              { label: "Grade",       value: scoresData.summary.grade,                                             color: gradeColor(scoresData.summary.grade) },
+                              { label: "Class Rank",  value: scoresData.summary.rank ? `${scoresData.summary.rank.rank}/${scoresData.summary.rank.total}` : "—", color: "#10b981" },
                             ].map(stat => (
                               <div key={stat.label} className="rounded-xl p-3 text-center" style={{ background: `${stat.color}0d`, border: `1.5px solid ${stat.color}28` }}>
                                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-0.5">{stat.label}</p>
@@ -522,27 +514,34 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
                             <table className="w-full text-sm" role="table" data-testid="table-exam-scores">
                               <thead>
                                 <tr style={{ background: "#f8fafc" }}>
-                                  {["Subject", "Marks", "Max", "Status"].map(h => (
+                                  {["Subject", "Marks", "Max", "%", "Status"].map(h => (
                                     <th key={h} className="px-3 sm:px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide text-left first:text-left">{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {scoresData.scores.map((sc, i) => (
+                                {scoresData.scores.map((sc, i) => {
+                                  const pct = sc.isAbsent ? 0 : Math.round((sc.marks / sc.totalMarks) * 100);
+                                  const sg = pct >= 90 ? "A+" : pct >= 80 ? "A" : pct >= 70 ? "B+" : pct >= 60 ? "B" : pct >= 50 ? "C" : pct >= 40 ? "D" : "F";
+                                  return (
                                     <tr key={sc.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa", borderBottom: "1px solid #f1f5f9" }} data-testid={`row-score-${sc.id}`}>
                                       <td className="px-3 sm:px-4 py-3 font-semibold text-slate-700">{sc.subject}</td>
-                                      <td className="px-3 sm:px-4 py-3 font-bold text-slate-700 text-center">{sc.isAbsent ? "—" : sc.marks}</td>
+                                      <td className="px-3 sm:px-4 py-3 font-bold text-slate-700 text-center">{sc.isAbsent ? "ABS" : sc.marks}</td>
                                       <td className="px-3 sm:px-4 py-3 text-slate-500 text-center">{sc.totalMarks}</td>
+                                      <td className="px-3 sm:px-4 py-3 text-center">
+                                        {sc.isAbsent ? <span className="text-slate-300">—</span> : <span className="font-semibold" style={{ color: gradeColor(sg) }}>{pct}%</span>}
+                                      </td>
                                       <td className="px-3 sm:px-4 py-3 text-center">
                                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
                                           style={sc.isAbsent
                                             ? { background: "#fef2f2", color: "#ef4444" }
-                                            : { background: "#eff6ff", color: "#2563eb" }}>
-                                          {sc.isAbsent ? "Absent" : "Recorded"}
+                                            : { background: `${gradeColor(sg)}18`, color: gradeColor(sg) }}>
+                                          {sc.isAbsent ? "Absent" : sg}
                                         </span>
                                       </td>
                                     </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

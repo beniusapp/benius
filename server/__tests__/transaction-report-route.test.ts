@@ -23,13 +23,12 @@ import express from "express";
 import http from "http";
 import { registerFeesRoutes } from "../fees-routes";
 import { db } from "../db";
-import { academicSessions, schools } from "@shared/schema";
+import { schools } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 let server: http.Server;
 let baseUrl = "";
 let schoolId = 0;
-let sessionId = 0;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -43,15 +42,6 @@ beforeAll(async () => {
     .values({ name: "Tx Route Test School", code: `TXRR-${uid()}` })
     .returning();
   schoolId = school.id;
-  const [session] = await db.insert(academicSessions).values({
-    schoolId,
-    sessionName: "Transaction report fixture session",
-    startDate: "2026-04-01",
-    endDate: "2027-03-31",
-    isActive: true,
-    status: "active",
-  }).returning();
-  sessionId = session.id;
 
   const app = express();
   app.use(express.json());
@@ -76,10 +66,7 @@ afterAll(async () => {
 async function post(body: unknown) {
   return fetch(`${baseUrl}${ENDPOINT}`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-view-session-id": String(sessionId),
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }

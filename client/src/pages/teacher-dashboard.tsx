@@ -39,11 +39,6 @@ interface AcademicSessionItem {
 export const ArchiveModeContext = createContext<boolean>(false);
 export function useArchiveMode(): boolean { return useContext(ArchiveModeContext); }
 
-// The exact session selected in the dashboard picker. Query functions use this
-// captured value rather than the mutable global request header during refetches.
-export const TeacherViewSessionContext = createContext<number | null>(null);
-export function useTeacherViewSession(): number | null { return useContext(TeacherViewSessionContext); }
-
 export interface TeacherMe {
   id: number;
   userId: number;
@@ -635,11 +630,9 @@ export default function TeacherDashboard() {
       <div className="relative z-10 pt-16">
         {ActiveComponent ? (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 text-foreground">
-            <TeacherViewSessionContext.Provider value={viewingSessionId}>
-              <ArchiveModeContext.Provider value={viewingSessionId != null}>
-                <ActiveComponent teacher={teacher} />
-              </ArchiveModeContext.Provider>
-            </TeacherViewSessionContext.Provider>
+            <ArchiveModeContext.Provider value={viewingSessionId != null}>
+              <ActiveComponent teacher={teacher} />
+            </ArchiveModeContext.Provider>
           </div>
         ) : (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">

@@ -12,10 +12,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
-import { useArchiveMode, useTeacherViewSession, type TeacherMe } from "@/pages/teacher-dashboard";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 interface StudentInfo { studentId: number; name: string; dsid: string; }
@@ -48,79 +51,201 @@ interface CompBreakdown {
 interface SubjectTermResult {
   subject: string; percentage: number | null; passed: boolean | null;
   breakdown: CompBreakdown[]; status: "scored" | "absent" | "incomplete";
-  grade: string | null; gradePoint: string | null; remarks: string | null;
 }
 interface ComputedStudentResult {
   studentId: number; name: string; digitalStudentId: string; rollNumber: number | null;
   termResults: Record<string, SubjectTermResult[]>;
   allTermFailCounts: Record<string, number>;
   attendancePct: number | null;
-  promoted: boolean | null; promotionReason: string;
+  promoted: boolean; promotionReason: string;
   /** Every policy rule that fired against this student — all four rules evaluated independently. */
   detentionViolations: string[];
-  termAverages: Record<string, number | null>;
-  termGrades: Record<string, { label: string; gradePoint: string | null; remarks: string | null } | null>;
-  cumulativeAverage: number | null;
-  cumulativeGrade: { label: string; gradePoint: string | null; remarks: string | null } | null;
-  complete: boolean;
 }
 
-type AuthoritativeAcademicResult = {
-  scope: { studentId: number };
-  subjectResults: Array<{ subject: string; terms: Record<string, {
-    percentage: number | null; grade: string | null; gradePoint: string | null; remarks: string | null;
-    status: "pass" | "fail" | "absent" | "incomplete"; breakdown: CompBreakdown[];
-  }> }>;
-  termAverages: Record<string, number | null>;
-  termGrades: ComputedStudentResult["termGrades"];
-  cumulativeAverage: number | null;
-  cumulativeGrade: ComputedStudentResult["cumulativeGrade"];
-  attendance: Record<string, number | null>;
-  failedSubjectCounts: Record<string, number>;
-  violations: Array<{ rule: string; term?: string; reason: string }>;
-  promoted: boolean | null;
-  complete: boolean;
-  name: string; digitalStudentId: string; rollNumber: number | null;
-};
+// ── Promotion engine (runs on frontend) ───────────────────────────────────────
+// All four active rules are evaluated independently — every violation is collected
+// and stored in detentionViolations[]. A student is retained if ANY rule fires.
+function computeAllStudentResults(
+  students: RawStudentScore[],
+  policy: ExamPolicyTier,
+  attendanceSummary: AttendanceSummary[],
+  passPercentage: number = 35,
+  ruleTermAvg?: { enabled: boolean; minPct: number },
+  currentTerm?: string,
+  cumulConfig?: CumulConfigShape,
+): ComputedStudentResult[] {
+  let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
+  let rules: any = {};
+  try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
+  try { rules = JSON.parse(policy.promotionFailRules || "{}"); } catch {}
 
-function mapAuthoritativeResult(result: AuthoritativeAcademicResult, selectedTerm: string): ComputedStudentResult {
-  const termResults: Record<string, SubjectTermResult[]> = {};
-  for (const subject of result.subjectResults) {
-    for (const [term, value] of Object.entries(subject.terms)) {
-      (termResults[term] ??= []).push({
-        subject: subject.subject,
-        percentage: value.percentage,
-        passed: value.status === "pass" ? true : value.status === "fail" ? false : null,
-        breakdown: value.breakdown,
-        status: value.status === "pass" || value.status === "fail" ? "scored" : value.status,
-        grade: value.grade,
-        gradePoint: value.gradePoint,
-        remarks: value.remarks,
-      });
+  // Normalise term names: trim whitespace so "Finally term " === "Finally term"
+  const weights: Record<string, { source_exam: string; weight: number }[]> = {};
+  for (const [k, v] of Object.entries(rawWeights)) weights[k.trim()] = v;
+
+  const termNames = Object.keys(weights);
+  const attendanceMap = new Map(attendanceSummary.map(a => [a.studentId, a]));
+
+  return students.map(student => {
+    const bySubject: Record<string, RawStudentScore["scores"]> = {};
+    for (const sc of student.scores) {
+      if (!bySubject[sc.subject]) bySubject[sc.subject] = [];
+      bySubject[sc.subject].push(sc);
     }
-  }
-  const violations = result.violations.map(violation =>
-    `${violation.term ? `${violation.term}: ` : ""}${violation.reason}`
-  );
-  return {
-    studentId: result.scope.studentId,
-    name: result.name,
-    digitalStudentId: result.digitalStudentId,
-    rollNumber: result.rollNumber,
-    termResults,
-    allTermFailCounts: result.failedSubjectCounts,
-    attendancePct: result.attendance[selectedTerm] ?? null,
-    promoted: result.promoted,
-    promotionReason: result.promoted === null
-      ? "No authoritative promotion verdict is available until the academic data or policy configuration is complete."
-      : violations[0] ?? "Meets all promotion criteria.",
-    detentionViolations: violations,
-    termAverages: result.termAverages,
-    termGrades: result.termGrades,
-    cumulativeAverage: result.cumulativeAverage,
-    cumulativeGrade: result.cumulativeGrade,
-    complete: result.complete,
-  };
+
+    const termResults: Record<string, SubjectTermResult[]> = {};
+    const allTermFailCounts: Record<string, number> = {};
+
+    for (const termName of termNames) {
+      const components = weights[termName] || [];
+      const subjectResults: SubjectTermResult[] = [];
+
+      for (const subject of Object.keys(bySubject)) {
+        const subjectScores = bySubject[subject];
+        let weightedSum = 0, totalWeight = 0;
+        let hasAbsent = false, hasData = false;
+        const breakdown: CompBreakdown[] = [];
+
+        for (const comp of components) {
+          const record = subjectScores.find(s => s.examType === comp.source_exam);
+          if (!record) {
+            breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: null, totalMarks: null, isAbsent: false, pct: null, contribution: null, status: "missing" });
+            continue;
+          }
+          hasData = true;
+          if (record.isAbsent) {
+            hasAbsent = true;
+            breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: 0, totalMarks: record.totalMarks, isAbsent: true, pct: null, contribution: null, status: "absent" });
+            continue;
+          }
+          const pct = record.totalMarks > 0 ? (record.marks / record.totalMarks) * 100 : 0;
+          const contribution = pct * (comp.weight / 100);
+          weightedSum += contribution;
+          totalWeight += comp.weight;
+          breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: record.marks, totalMarks: record.totalMarks, isAbsent: false, pct, contribution, status: "scored" });
+        }
+
+        let percentage: number | null = null, passed: boolean | null = null;
+        let status: SubjectTermResult["status"] = "incomplete";
+        if (!hasData) { status = "incomplete"; }
+        else if (hasAbsent) { status = "absent"; percentage = 0; passed = false; }
+        else {
+          const ep = totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0;
+          percentage = Math.round(ep * 10) / 10;
+          passed = ep >= passPercentage;
+          status = "scored";
+        }
+        subjectResults.push({ subject, percentage, passed, breakdown, status });
+      }
+
+      termResults[termName] = subjectResults;
+      allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
+    }
+
+    // ── Multi-rule evaluation: ALL active rules run independently ─────────────
+    // Every violation is collected. A student is retained if ANY rule fires.
+    const violations: string[] = [];
+    const rule1   = rules.rule1   ?? {};
+    const ruleAtt = rules.rule_attendance ?? {};
+    const attPct  = attendanceMap.get(student.studentId)?.attendancePct ?? null;
+
+    // ── Rule 1: Max Failed Subjects per Term ───────────────────────────────────
+    if (rule1.enabled !== false && termNames.length > 0) {
+      type TermRule = { term: string; fail_count: number };
+      const termRules: TermRule[] =
+        Array.isArray(rule1.rules) && rule1.rules.length > 0
+          ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
+          : rule1.term
+            ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
+            : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
+
+      // Evaluate EVERY term row — no break on first hit
+      for (const tr of termRules) {
+        if (tr.fail_count <= 0) continue; // 0 = no restriction for this term
+        const fails = allTermFailCounts[tr.term] ?? 0;
+        if (fails >= tr.fail_count) {
+          const failedNames = (termResults[tr.term] ?? [])
+            .filter(s => s.passed === false)
+            .map(s => s.subject);
+          const maxAllowed = tr.fail_count - 1;
+          const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
+          violations.push(
+            `The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`,
+          );
+        }
+      }
+    }
+
+    // ── Rule 2: Minimum Attendance % ──────────────────────────────────────────
+    // Evaluated independently — fires even if Rule 1 already fired.
+    if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0 && attPct !== null) {
+      for (const r of ruleAtt.rules as any[]) {
+        const minPct = Number(r.min_pct ?? 0);
+        if (minPct <= 0) continue;
+        if (attPct < minPct) {
+          const termLabel = r.term ? ` in ${r.term}` : "";
+          violations.push(
+            `The student achieved an attendance rate of ${attPct.toFixed(1)}%${termLabel}, falling below the required minimum threshold of ${minPct}%.`,
+          );
+          break; // one attendance violation message is enough (most-strict row already caught)
+        }
+      }
+    }
+
+    // ── Rule 3: Minimum Term Weighted Average Score ────────────────────────────
+    // Requires currentTerm to be known; evaluated only for the selected term.
+    if (ruleTermAvg?.enabled && currentTerm) {
+      const scoredSubjects = (termResults[currentTerm] ?? []).filter(s => s.status === "scored");
+      if (scoredSubjects.length > 0) {
+        const avg = scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length;
+        const rounded = Math.round(avg * 10) / 10;
+        if (rounded < ruleTermAvg.minPct) {
+          violations.push(
+            `The student's weighted average score for ${currentTerm} was ${rounded}%, which falls below the configured pass threshold of ${ruleTermAvg.minPct}%.`,
+          );
+        }
+      }
+    }
+
+    // ── Rule 4: Minimum Cumulative Percentage (trigger-term only) ─────────────
+    const isCumulTerm = cumulConfig?.enabled && cumulConfig.triggerTerm && currentTerm
+      ? currentTerm.trim() === cumulConfig.triggerTerm.trim()
+      : false;
+    if (isCumulTerm && cumulConfig?.promotionEnabled) {
+      const minPct = cumulConfig.minPercent ?? 0;
+      if (minPct > 0) {
+        const twEntries = Object.entries(cumulConfig.termWeights ?? {});
+        let totalContrib = 0, allHaveData = twEntries.length > 0;
+        for (const [termName, weight] of twEntries) {
+          const tScored = (termResults[termName.trim()] ?? []).filter(s => s.status === "scored");
+          if (tScored.length === 0) { allHaveData = false; break; }
+          totalContrib += (tScored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
+        }
+        if (allHaveData) {
+          const cumPct = Math.round(totalContrib * 10) / 10;
+          if (cumPct < minPct) {
+            violations.push(
+              `The student's cumulative year-end percentage of ${cumPct}% falls below the required minimum threshold of ${minPct}%.`,
+            );
+          }
+        }
+      }
+    }
+
+    const promoted = violations.length === 0;
+    const promotionReason = violations.length > 0 ? violations[0] : "Meets all promotion criteria.";
+
+    return {
+      studentId: student.studentId,
+      name: student.name,
+      digitalStudentId: student.digitalStudentId,
+      rollNumber: student.rollNumber,
+      termResults, allTermFailCounts,
+      attendancePct: attPct,
+      promoted, promotionReason,
+      detentionViolations: violations,
+    };
+  });
 }
 
 // ── Four-rule suggestion engine (module-level helper) ─────────────────────────
@@ -134,11 +259,22 @@ type CumulConfigShape = {
 
 function computeStudentSuggestion(
   s: ComputedStudentResult,
-): "promoted" | "retained" | null {
-  return s.promoted === null ? null : s.promoted ? "promoted" : "retained";
+  _resTerm: string,
+  _ruleTermAvg: { enabled: boolean; minPct: number },
+  _isCumulativeTerm: boolean,
+  _cumulConfig: CumulConfigShape,
+): "promoted" | "retained" {
+  // All four rules are now evaluated inside computeAllStudentResults and encoded
+  // in s.promoted / s.detentionViolations. Simply reflect that result here.
+  return s.promoted ? "promoted" : "retained";
 }
 
 // ── Grade types & helpers ─────────────────────────────────────────────────────
+interface GradingRuleClient {
+  id: number; tierId: number; gradeLabel: string;
+  minPercent: number; maxPercent: number; remarks: string | null; sortOrder: number;
+}
+
 function gradeColor(label: string): string {
   const l = label.toUpperCase();
   if (l === "O" || l === "A+") return "text-emerald-400";
@@ -161,21 +297,60 @@ function gradeBg(label: string): string {
   return "bg-red-500/15 border-red-500/30";
 }
 
+function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string; color: string; bg: string; remarks: string | null } {
+  if (rules.length > 0) {
+    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
+    for (const r of sorted) {
+      if (pct >= r.minPercent) return { label: r.gradeLabel, color: gradeColor(r.gradeLabel), bg: gradeBg(r.gradeLabel), remarks: r.remarks };
+    }
+    const last = sorted[sorted.length - 1];
+    return { label: last.gradeLabel, color: gradeColor(last.gradeLabel), bg: gradeBg(last.gradeLabel), remarks: last.remarks };
+  }
+  // Fallback static grades when no school rules configured
+  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
+  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
+  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
+  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
+  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
+  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
+  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
+  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
+}
+
+interface ClassAvgEntry { examType: string; avgPercentage: number; }
+
 function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes, viewClass, viewSection }: {
   studentId: number; studentName: string; schoolId: number; subject: string; examTypes: string[];
   viewClass: string; viewSection: string;
 }) {
-  const viewSessionId = useTeacherViewSession();
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
-    queryKey: ["/api/exam-scores/student", studentId, schoolId, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryStudentId, querySchoolId, capturedViewSessionId] = queryKey as [string, number, number, number | null];
-      const res = await sessionFetchForViewSession(`/api/exam-scores/student/${queryStudentId}/${querySchoolId}`, capturedViewSessionId, { signal });
+    queryKey: ["/api/exam-scores/student", studentId, schoolId],
+    queryFn: async () => {
+      const res = await fetch(`/api/exam-scores/student/${studentId}/${schoolId}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
   });
+  const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
+    queryKey: ["/api/exam-scores/class-average", schoolId, viewClass, viewSection, subject],
+    queryFn: async () => {
+      const res = await fetch(`/api/exam-scores/class-average/${schoolId}/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: !!viewClass && !!viewSection && !!subject,
+  });
   const subjectScores = useMemo(() => scores.filter(s => s.subject === subject && !s.isAbsent), [scores, subject]);
+  const chartData = useMemo(() => {
+    const avgMap = new Map(classAverages.map(a => [a.examType, a.avgPercentage]));
+    return examTypes.map(et => {
+      const s = subjectScores.find(sc => sc.examType === et);
+      const studentPct = s ? Math.round((s.marks / s.totalMarks) * 100) : null;
+      const classAvg = avgMap.get(et) ?? null;
+      if (studentPct === null && classAvg === null) return null;
+      return { exam: et, studentPct, classAvg };
+    }).filter(Boolean) as { exam: string; studentPct: number | null; classAvg: number | null }[];
+  }, [subjectScores, classAverages, examTypes]);
   const allSubjects = useMemo(() => {
     const map: Record<string, StudentExamScore[]> = {};
     for (const s of scores) { if (!map[s.subject]) map[s.subject] = []; map[s.subject].push(s); }
@@ -196,16 +371,20 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               <thead><tr className="border-b">
                 <th className="text-left py-1.5 px-2">Exam</th>
                 <th className="text-center py-1.5 px-2">Marks</th>
-                <th className="text-center py-1.5 px-2">Status</th>
+                <th className="text-center py-1.5 px-2">%</th>
+                <th className="text-center py-1.5 px-2">Grade</th>
               </tr></thead>
               <tbody>
                 {subjectScores.map((s, i) => {
+                  const pct = Math.round((s.marks / s.totalMarks) * 100);
+                  const g = computeGrade(pct, []);
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
                       <td className="py-1.5 px-2 text-center">{s.marks}/{s.totalMarks}</td>
+                      <td className="py-1.5 px-2 text-center">{pct}%</td>
                       <td className="py-1.5 px-2 text-center">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold border text-slate-500 bg-slate-500/10 border-slate-500/20">Recorded</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${g.color} ${g.bg}`}>{g.label}</span>
                       </td>
                     </tr>
                   );
@@ -213,6 +392,21 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
               </tbody>
             </table>
           </div>
+          {chartData.length > 1 && (
+            <div className="h-52 w-full" data-testid={`chart-dual-line-${studentId}`}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                  <XAxis dataKey="exam" tick={{ fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+                  <Tooltip formatter={(value: number, name: string) => [`${value}%`, name]} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line type="monotone" dataKey="studentPct" stroke="#6366f1" strokeWidth={2} name={`${studentName}`} dot={{ r: 4 }} activeDot={{ r: 6 }} connectNulls />
+                  <Line type="monotone" dataKey="classAvg" stroke="#f59e0b" strokeWidth={2} strokeDasharray="5 5" name="Class Average" dot={{ r: 3 }} activeDot={{ r: 5 }} connectNulls />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </>
       )}
       {allSubjects.length > 0 && (
@@ -233,11 +427,15 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
                         <span className="font-bold text-gray-500">AB</span>
                       </div>
                     );
+                    const pct = Math.round((s.marks / s.totalMarks) * 100);
+                    const g = computeGrade(pct, []);
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{s.marks}/{s.totalMarks}</span>
+                          <span className="text-muted-foreground">({pct}%)</span>
+                          <span className={`px-1 py-0.5 rounded border text-[9px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                         </div>
                       </div>
                     );
@@ -254,6 +452,9 @@ function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes,
 
 // ── Report Card Modal ─────────────────────────────────────────────────────────
 // ── Detention reason builder ───────────────────────────────────────────────────
+// All violation messages are pre-computed by computeAllStudentResults and stored
+// in student.detentionViolations. This function just surfaces them, plus handles
+// the manual-override case where a teacher detained an otherwise-passing student.
 function buildDetentionReasons(
   student: ComputedStudentResult,
   isManualOverride: boolean,
@@ -268,10 +469,11 @@ function buildDetentionReasons(
   return [];
 }
 
-function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, onClose }: {
+function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
+  gradingRules: GradingRuleClient[];
   /** Whether the active term has the Promotion Gate verdict enabled in policy config. */
   showPromoVerdict: boolean;
   /** The teacher's manually-set ledger entry for this student, if any. */
@@ -291,8 +493,11 @@ function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, 
     ? buildDetentionReasons(student, isManualOverride)
     : [];
 
-  const overallAvg = student.termAverages[term] ?? null;
-  const overallGrade = student.termGrades[term] ?? null;
+  const subjectsWithScores = termSubjects.filter(s => s.status === "scored");
+  const overallAvg = subjectsWithScores.length > 0
+    ? Math.round((subjectsWithScores.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / subjectsWithScores.length) * 10) / 10
+    : null;
+  const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -334,7 +539,7 @@ function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, 
             {overallGrade && (
               <div className="text-right">
                 <span className="text-slate-500 text-xs block">Overall Grade</span>
-                <span className="inline-flex items-center justify-center px-3 py-1 rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-300 text-xl font-bold"
+                <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${overallGrade.color} ${overallGrade.bg}`}
                   title={overallGrade.remarks ?? ""}>
                   {overallGrade.label}
                 </span>
@@ -359,10 +564,13 @@ function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, 
                       {subj.percentage !== null && (
                         <span className="text-yellow-400 font-bold text-sm">{subj.percentage}%</span>
                       )}
-                      {subj.grade && (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-300"
-                          title={subj.remarks ?? ""}>{subj.grade}</span>
-                      )}
+                      {subj.status === "scored" && subj.percentage !== null && (() => {
+                        const g = computeGrade(subj.percentage, gradingRules);
+                        return (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${g.color} ${g.bg}`}
+                            title={g.remarks ?? ""}>{g.label}</span>
+                        );
+                      })()}
                       {subj.passed === true && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                       {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                       {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">INCOMPLETE</span>}
@@ -556,7 +764,7 @@ function PromoCell({
   allSections, allClasses, onChange,
 }: {
   studentId: number;
-  entry: PromoEntry;
+  entry: PromoEntry | undefined;
   isLocked: boolean;
   canEdit: boolean;
   resClass: string;
@@ -566,9 +774,9 @@ function PromoCell({
   onChange: (id: number, next: PromoEntry) => void;
 }) {
   const isArchiveMode = useArchiveMode();
-  const decision = entry.decision;
-  const targetClass = entry.targetClass;
-  const targetSection = entry.targetSection;
+  const decision = entry?.decision ?? "promoted";
+  const targetClass = entry?.targetClass ?? getNextClass(resClass, allClasses);
+  const targetSection = entry?.targetSection ?? resSection;
 
   const [open, setOpen] = useState(false);
   const [draftDecision, setDraftDecision] = useState<"promoted" | "retained">(decision);
@@ -713,7 +921,6 @@ function PromoCell({
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
-  const viewSessionId = useTeacherViewSession();
   const { toast } = useToast();
   const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
@@ -733,10 +940,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     error: policyErrorRaw,
     refetch: refetchPolicy,
   } = useQuery<ExamPolicyTier | null>({
-    queryKey: ["/api/teacher/exam-policy", resClass, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryClass, capturedViewSessionId] = queryKey as [string, string, number | null];
-      const r = await sessionFetchForViewSession(`/api/teacher/exam-policy/${encodeURIComponent(queryClass)}`, capturedViewSessionId, { signal });
+    queryKey: ["/api/teacher/exam-policy", resClass],
+    queryFn: async () => {
+      const r = await fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.message || `No policy for class ${resClass}`);
@@ -752,6 +958,20 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
+  // Grading rules fetch — same no-cache useEffect pattern
+  const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
+  const [gradingPassPct, setGradingPassPct] = useState(35);
+
+  useEffect(() => {
+    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
+    let cancelled = false;
+    fetch(`/api/teacher/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
+      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
+      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
+      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
+    return () => { cancelled = true; };
+  }, [resClass]);
+
   function handleResClassChange(cls: string) {
     setResClass(cls);
     setResSection("");
@@ -759,10 +979,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/teacher/class-scores", resClass, resSection, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryClass, querySection, capturedViewSessionId] = queryKey as [string, string, string, number | null];
-      const res = await sessionFetchForViewSession(`/api/teacher/class-scores/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}`, capturedViewSessionId, { signal });
+    queryKey: ["/api/teacher/class-scores", resClass, resSection],
+    queryFn: async () => {
+      const res = await fetch(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch scores");
       return res.json();
     },
@@ -772,10 +991,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/teacher/attendance-summary", resClass, resSection, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryClass, querySection, capturedViewSessionId] = queryKey as [string, string, string, number | null];
-      const res = await sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}`, capturedViewSessionId, { signal });
+    queryKey: ["/api/teacher/attendance-summary", resClass, resSection],
+    queryFn: async () => {
+      const res = await fetch(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
@@ -858,41 +1076,27 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }, [cumulConfig, resTerm]);
 
   // Parse Rule 3 settings once — used by both runAutoSuggestion and saveLedgerMutation
+  const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
+    try {
+      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
+      const rta = pr.rule_term_avg ?? {};
+      return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+    } catch { return { enabled: false, minPct: 35 }; }
+  }, [policyTier]);
+
   // Auto-select first term when policy loads
   useEffect(() => {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  const {
-    data: allResults = [],
-    isLoading: authoritativeLoading,
-    error: authoritativeErrorRaw,
-    refetch: refetchAuthoritative,
-  } = useQuery<ComputedStudentResult[]>({
-    queryKey: ["/api/teacher/academic-results", resClass, resSection, resTerm, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryClass, querySection, queryTerm, capturedViewSessionId] = queryKey as [string, string, string, string, number | null];
-      const response = await sessionFetchForViewSession(
-        `/api/teacher/academic-results/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}?term=${encodeURIComponent(queryTerm)}`,
-        capturedViewSessionId,
-        { signal },
-      );
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const error = new Error(body.message || "Authoritative academic results are unavailable");
-        (error as Error & { code?: string }).code = body.code;
-        throw error;
-      }
-      return ((body.results ?? []) as AuthoritativeAcademicResult[])
-        .map(result => mapAuthoritativeResult(result, resTerm));
-    },
-    enabled: !!resClass && !!resSection && !!resTerm,
-    staleTime: 0,
-    refetchOnMount: "always",
-    retry: false,
-  });
-  const authoritativeError = authoritativeErrorRaw as (Error & { code?: string }) | null;
-  const hasIncompleteResults = allResults.some(result => result.promoted === null);
+  // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
+  const allResults = useMemo(() => {
+    if (!policyTier || classScores.length === 0) return [];
+    return computeAllStudentResults(
+      classScores, policyTier, attendanceSummary, gradingPassPct,
+      ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined,
+    );
+  }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -905,7 +1109,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     );
   }, [allResults, resSearch]);
 
-  const isLoading = policyLoading || scoresLoading || authoritativeLoading;
+  const isLoading = policyLoading || scoresLoading;
   const ready = !!resClass && !!resSection && !!resTerm && !!policyTier;
 
   // ── Promotion Ledger state ─────────────────────────────────────────────────
@@ -927,13 +1131,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     studentId: number; decision: string; targetClass: string;
     targetSection: string; editCount: number; locked: boolean;
   }>>({
-    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, queryClass, querySection, queryTerm, capturedViewSessionId] = queryKey as [string, string, string, string, number | null];
-      const r = await sessionFetchForViewSession(
-        `/api/teacher/promotion-decisions/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}/${encodeURIComponent(queryTerm)}`,
-        capturedViewSessionId,
-        { signal },
+    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm],
+    queryFn: async () => {
+      const r = await fetch(
+        `/api/teacher/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`,
+        { credentials: "include" },
       );
       return r.ok ? r.json() : [];
     },
@@ -942,11 +1144,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
 
   // Reset local state whenever the class/section/term selection changes
-  useEffect(() => {
-    setPromoMap({});
-    setPromoLocked(false);
-    setReportStudent(null);
-  }, [resClass, resSection, resTerm, viewSessionId]);
+  useEffect(() => { setPromoMap({}); setPromoLocked(false); }, [resClass, resSection, resTerm]);
 
   // Populate promoMap from DB on load; preserves any in-session edits already applied
   useEffect(() => {
@@ -974,10 +1172,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    *
    * Four independently-toggled rules from Section B of the admin policy panel:
    *
-   * Rule 1 — Max Failed Subjects:
+   * Rule 1 — Max Failed Subjects (s.promoted encodes this via computeAllStudentResults):
    *   Enabled/disabled by the admin's Rule 1 toggle (rule1.enabled in promotionFailRules).
    *
-   * Rule 2 — Minimum Attendance %:
+   * Rule 2 — Minimum Attendance % (s.promoted encodes this via computeAllStudentResults):
    *   Enabled/disabled by the admin's Rule 2 toggle (rule_attendance.enabled).
    *
    * Rule 3 — Minimum Term Weighted Average Score (applied here directly):
@@ -992,24 +1190,45 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
    * A student is retained if ANY enabled rule flags them.
    */
   async function runAutoSuggestion() {
+    // Always pull the latest policy from the server before computing
+    // so admin changes in school-setup are immediately reflected here
     setIsSyncingPolicy(true);
-    let freshResults = allResults;
+    let freshPolicy: ExamPolicyTier | null = policyTier;
     try {
-      await refetchPolicy();
-      const result = await refetchAuthoritative();
-      freshResults = result.data ?? [];
+      const result = await refetchPolicy();
+      freshPolicy = result.data ?? policyTier;
+    } catch {
+      /* use cached policyTier as fallback */
     } finally {
       setIsSyncingPolicy(false);
     }
-    if (!freshResults.length || freshResults.some(student => student.promoted === null)) {
-      toast({ title: "Suggestion unavailable", description: "Complete the required scores, attendance, term boundaries, and policy configuration before creating promotion suggestions.", variant: "destructive" });
+
+    if (!freshPolicy) {
+      toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
       return;
     }
 
+    // Re-derive rule settings from the freshly fetched policy
+    let freshRuleTermAvg = ruleTermAvg;
+    let freshCumulConfig = cumulConfig;
+    try {
+      const pr = JSON.parse(freshPolicy.promotionFailRules || "{}");
+      const rta = pr.rule_term_avg ?? {};
+      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+      const rc = JSON.parse(freshPolicy.resultsConfig || "{}");
+      freshCumulConfig = rc.cumulative ?? null;
+    } catch { /* use existing derived values */ }
+
+    // Re-compute results using fresh policy + all 4 rules baked in
+    const freshResults = computeAllStudentResults(
+      classScores, freshPolicy, attendanceSummary, gradingPassPct,
+      freshRuleTermAvg, resTerm || undefined, freshCumulConfig ?? undefined,
+    );
+
     const next: Record<number, PromoEntry> = {};
     for (const s of freshResults) {
-      const decision = computeStudentSuggestion(s);
-      if (!decision) continue;
+      // computeStudentSuggestion now simply reads s.promoted (all rules in engine)
+      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, false, freshCumulConfig);
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
@@ -1032,20 +1251,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const saveLedgerMutation = useMutation({
     mutationFn: async (lock: boolean) => {
-      if (hasIncompleteResults) throw new Error("Cannot save promotion decisions while authoritative results are incomplete.");
-      const entries = allResults.map(s => {
-        const authoritativeDecision = computeStudentSuggestion(s);
-        if (!authoritativeDecision) throw new Error("Cannot save a promotion decision before it has been evaluated.");
-        const decision = promoMap[s.studentId]?.decision ?? authoritativeDecision;
-        return {
-          studentId: s.studentId,
-          decision,
-          targetClass: promoMap[s.studentId]?.targetClass ?? (decision === "promoted" ? getNextClass(resClass, classes) : resClass),
-          targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
-          editCount: promoMap[s.studentId]?.editCount ?? 0,
-          autoSuggestion: authoritativeDecision,
-        };
-      });
+      const entries = allResults.map(s => ({
+        studentId: s.studentId,
+        decision: promoMap[s.studentId]?.decision ?? "promoted",
+        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass, classes),
+        targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
+        editCount: promoMap[s.studentId]?.editCount ?? 0,
+        // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
+        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig),
+      }));
       const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
         class: resClass, section: resSection, term: resTerm, lock, entries,
       });
@@ -1065,7 +1279,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
         duration: 4000,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm, viewSessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -1152,12 +1366,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
             <Loader2 className="w-3 h-3 animate-spin" />
             <span>Loading policy…</span>
-          </div>
-        )}
-        {authoritativeError && resClass && resSection && resTerm && (
-          <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-            <p className="font-semibold">Authoritative results unavailable{authoritativeError.code ? ` (${authoritativeError.code})` : ""}</p>
-            <p className="mt-1 text-xs text-red-200/80">{authoritativeError.message}</p>
           </div>
         )}
 
@@ -1260,7 +1468,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       )}
                       <button
                         onClick={runAutoSuggestion}
-                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || hasIncompleteResults || isSyncingPolicy}
+                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || isSyncingPolicy}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
                         data-testid="btn-auto-suggest">
                         {isSyncingPolicy
@@ -1269,7 +1477,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0 || hasIncompleteResults}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-save-ledger">
                         {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1277,7 +1485,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(true)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0 || hasIncompleteResults}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-lock-ledger">
                         <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
@@ -1334,11 +1542,30 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </thead>
                   <tbody>
                     {filteredResults.map((student, idx) => {
-                      const weightedAvg = student.termAverages[resTerm] ?? null;
-                      const termGrade = student.termGrades[resTerm] ?? null;
+                      const termSubjects = student.termResults[resTerm] ?? [];
+                      const scoredSubjs = termSubjects.filter(s => s.status === "scored");
+                      const weightedAvg = scoredSubjs.length > 0
+                        ? Math.round((scoredSubjs.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / scoredSubjs.length) * 10) / 10
+                        : null;
                       const failCount = student.allTermFailCounts[resTerm] ?? 0;
                       const att = student.attendancePct;
-                      const cumulativePct = student.cumulativeAverage;
+
+                      // Cumulative calculation: Σ(termAvg × termWeight / 100)
+                      let cumulativePct: number | null = null;
+                      if (isCumulativeTerm && cumulConfig?.termWeights) {
+                        const twEntries = Object.entries(cumulConfig.termWeights);
+                        let totalContrib = 0;
+                        let allHaveData = twEntries.length > 0;
+                        for (const [termName, weight] of twEntries) {
+                          const w = Number(weight);
+                          const tSubjs = student.termResults[termName.trim()] ?? [];
+                          const tScored = tSubjs.filter(s => s.status === "scored");
+                          if (tScored.length === 0) { allHaveData = false; break; }
+                          const avg = tScored.reduce((s, sub) => s + (sub.percentage ?? 0), 0) / tScored.length;
+                          totalContrib += avg * (w / 100);
+                        }
+                        if (allHaveData) cumulativePct = Math.round(totalContrib * 10) / 10;
+                      }
 
                       return (
                         <tr key={student.studentId} className="border-b border-[#1e293b]/60 hover:bg-[#1e293b]/30 transition-colors" data-testid={`result-row-${student.studentId}`}>
@@ -1365,11 +1592,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {weightedAvg !== null ? (
                                 <div>
-                                  <span className="text-base font-bold text-slate-200">
+                                  <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
                                     {weightedAvg}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className="h-full rounded-full bg-slate-500"
+                                    <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
                                       style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                   </div>
                                 </div>
@@ -1380,12 +1607,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Term Grade */}
                           {showCol.termGrade && (
                             <td className="py-3 px-4 text-center">
-                              {termGrade ? (
-                                <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold"
-                                  title={termGrade.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
-                                  {termGrade.label}
-                                </span>
-                              ) : <span className="text-slate-600 text-xs">—</span>}
+                              {weightedAvg !== null ? (() => {
+                                const g = computeGrade(weightedAvg, gradingRules);
+                                return (
+                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
+                                    title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
+                                    {g.label}
+                                  </span>
+                                );
+                              })() : <span className="text-slate-600 text-xs">—</span>}
                             </td>
                           )}
 
@@ -1417,13 +1647,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Promotion Gate — interactive ledger cell */}
                           {showCol.promotionGate && (
                             <td className="py-3 px-4 text-center">
-                              {student.promoted === null ? (
-                                <span className="inline-flex px-2.5 py-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-bold" title={student.promotionReason}>
-                                  Pending evaluation
-                                </span>
-                              ) : promoMap[student.studentId] ? <PromoCell
+                              <PromoCell
                                 studentId={student.studentId}
-                                entry={promoMap[student.studentId]!}
+                                entry={promoMap[student.studentId]}
                                 isLocked={promoLocked}
                                 canEdit={isPromotionTerm && isAssignedTeacher}
                                 resClass={resClass}
@@ -1431,11 +1657,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                                 allSections={allSections}
                                 allClasses={classes}
                                 onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
-                              /> : (
-                                <span className="inline-flex px-2.5 py-1.5 rounded-full border border-slate-500/30 bg-slate-500/10 text-slate-400 text-xs font-bold">
-                                  Pending decision
-                                </span>
-                              )}
+                              />
                             </td>
                           )}
 
@@ -1444,11 +1666,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {cumulativePct !== null ? (
                                 <div>
-                                  <span className="text-base font-bold text-blue-300">
+                                  <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>
                                     {cumulativePct}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className="h-full rounded-full bg-blue-500"
+                                    <div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`}
                                       style={{ width: `${Math.min(100, cumulativePct)}%` }} />
                                   </div>
                                 </div>
@@ -1461,12 +1683,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Final Cumulative Grade */}
                           {showCol.finalGrade && isCumulativeTerm && (
                             <td className="py-3 px-4 text-center">
-                              {student.cumulativeGrade ? (
-                                <span className="inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-300 text-sm font-bold"
-                                  title={student.cumulativeGrade.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
-                                  {student.cumulativeGrade.label}
-                                </span>
-                              ) : <span className="text-slate-600 text-xs">—</span>}
+                              {cumulativePct !== null ? (() => {
+                                const g = computeGrade(cumulativePct, gradingRules);
+                                return (
+                                  <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
+                                    title={g.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
+                                    {g.label}
+                                  </span>
+                                );
+                              })() : <span className="text-slate-600 text-xs">—</span>}
                             </td>
                           )}
 
@@ -1497,6 +1722,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           student={reportStudent}
           term={resTerm}
           policy={policyTier}
+          gradingRules={gradingRules}
           showPromoVerdict={isPromotionTerm}
           promoEntry={promoMap[reportStudent.studentId]}
           onClose={() => setReportStudent(null)}
@@ -1509,7 +1735,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 // ── Main Examination Module ───────────────────────────────────────────────────
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
-  const viewSessionId = useTeacherViewSession();
   const { toast } = useToast();
   const {
     classes, subjects, examTypes, isLoading: configLoading,
@@ -1526,8 +1751,6 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const [marks, setMarks] = useState<Record<number, string>>({});
   const [absentMap, setAbsentMap] = useState<Record<number, boolean>>({});
   const inputRefs = useRef<Record<number, HTMLInputElement | null>>({});
-  const hydratedExamSelectionRef = useRef<string | null>(null);
-  const totalMarksEditedRef = useRef(false);
 
   const [viewClass, setViewClass] = useState("");
   const [viewSection, setViewSection] = useState("");
@@ -1541,42 +1764,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const viewSubjectOpts = useMemo(() => getSubjectsForClass(viewClass), [viewClass, getSubjectsForClass]);
   const addExamTypeOpts = useMemo(() => getExamTypesForClass(selectedClass), [selectedClass, getExamTypesForClass]);
   const viewExamTypeOpts = useMemo(() => getExamTypesForClass(viewClass), [viewClass, getExamTypesForClass]);
-  const addExamSelectionKey = `${selectedClass}\u001f${selectedSection}\u001f${subject}\u001f${examType}`;
 
   function handleAddClassChange(cls: string) { setSelectedClass(cls); setSelectedSection(""); setSubject(""); setExamType(""); }
   function handleViewClassChange(cls: string) { setViewClass(cls); setViewSection(""); setViewSubject(""); }
 
-  // A new exam selection starts a new local editing session. The existing-score
-  // query hydrates that session separately once its data has actually resolved.
-  useEffect(() => {
-    hydratedExamSelectionRef.current = null;
-    totalMarksEditedRef.current = false;
-    setMarks({});
-    setAbsentMap({});
-    setTotalMarks("");
-  }, [addExamSelectionKey]);
-
   const { data: students = [] } = useQuery<StudentInfo[]>({
-    queryKey: ["/api/examination/roster", teacher.schoolId, selectedClass, selectedSection, subject, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, schoolId, queryClass, querySection, querySubject, capturedViewSessionId] = queryKey as [string, number, string, string, string, number | null];
-      const res = await sessionFetchForViewSession(
-        `/api/examination/roster/${schoolId}/${encodeURIComponent(queryClass)}/${encodeURIComponent(querySection)}?subject=${encodeURIComponent(querySubject)}`,
-        capturedViewSessionId,
-        { signal },
-      );
+    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today],
+    queryFn: async () => {
+      const res = await fetch(`/api/attendance/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${today}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: !!selectedClass && !!selectedSection && !!subject,
+    enabled: !!selectedClass && !!selectedSection,
   });
 
-  const { data: existingScores, isFetched: existingScoresFetched } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, schoolId, querySubject, queryExamType, queryClass, querySection, capturedViewSessionId] = queryKey as [string, number, string, string, string, string, number | null];
-      if (!querySubject || !queryExamType) return [];
-      const res = await sessionFetchForViewSession(`/api/exam-scores/${schoolId}/${encodeURIComponent(querySubject)}/${encodeURIComponent(queryExamType)}/${encodeURIComponent(queryClass)}/${querySection}`, capturedViewSessionId, { signal });
+  const { data: existingScores = [] } = useQuery<ExamScoreEntry[]>({
+    queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection],
+    queryFn: async () => {
+      if (!subject || !examType) return [];
+      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(subject)}/${encodeURIComponent(examType)}/${encodeURIComponent(selectedClass)}/${selectedSection}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1584,11 +1790,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, viewSubject, viewExamType, viewClass, viewSection, viewSessionId],
-    queryFn: async ({ queryKey, signal }) => {
-      const [, schoolId, querySubject, queryExamType, queryClass, querySection, capturedViewSessionId] = queryKey as [string, number, string, string, string, string, number | null];
-      if (!querySubject || !queryExamType) return [];
-      const res = await sessionFetchForViewSession(`/api/exam-scores/${schoolId}/${encodeURIComponent(querySubject)}/${encodeURIComponent(queryExamType)}/${encodeURIComponent(queryClass)}/${querySection}`, capturedViewSessionId, { signal });
+    queryKey: ["/api/exam-scores", teacher.schoolId, viewSubject, viewExamType, viewClass, viewSection],
+    queryFn: async () => {
+      if (!viewSubject || !viewExamType) return [];
+      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}/${encodeURIComponent(viewClass)}/${viewSection}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -1598,31 +1803,32 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
   const auditMap = useMemo(() => {
     const map: Record<number, { updatedBy: string; updatedAt: string }> = {};
-    existingScores?.forEach(s => {
+    existingScores.forEach(s => {
       if (s.updatedBy && s.updatedAt) map[s.studentId] = { updatedBy: s.updatedBy, updatedAt: s.updatedAt };
     });
     return map;
   }, [existingScores]);
 
   useEffect(() => {
-    if (!existingScoresFetched || !existingScores || hydratedExamSelectionRef.current === addExamSelectionKey) return;
-
-    hydratedExamSelectionRef.current = addExamSelectionKey;
     const m: Record<number, string> = {};
     const a: Record<number, boolean> = {};
     existingScores.forEach(s => { m[s.studentId] = String(s.marks); a[s.studentId] = s.isAbsent; });
     setMarks(m); setAbsentMap(a);
-    const recordedTotals = [...new Set(existingScores.map(score => score.totalMarks))];
-    if (!totalMarksEditedRef.current) {
-      setTotalMarks(recordedTotals.length === 1 ? String(recordedTotals[0]) : "");
-    }
-  }, [existingScores, existingScoresFetched, addExamSelectionKey]);
+    if (existingScores.length > 0) setTotalMarks(String(existingScores[0].totalMarks));
+    else setTotalMarks("");
+  }, [existingScores]);
 
   const maxMarks = parseInt(totalMarks) || 100;
   const hasInvalidMarks = useMemo(() => students.some(s => {
     if (absentMap[s.studentId]) return false;
     return parseInt(marks[s.studentId] || "0") > maxMarks;
   }), [students, marks, absentMap, maxMarks]);
+
+  const classAverage = useMemo(() => {
+    const valid = students.filter(s => !absentMap[s.studentId] && marks[s.studentId] && marks[s.studentId] !== "");
+    if (valid.length === 0) return null;
+    return Math.round((valid.reduce((sum, s) => sum + (parseInt(marks[s.studentId]) || 0), 0) / valid.length / maxMarks) * 100);
+  }, [students, marks, absentMap, maxMarks]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -1634,7 +1840,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     },
     onSuccess: (data) => {
       toast({ title: "Scores Saved", description: data.message });
-      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection, viewSessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection] });
     },
     onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
   });
@@ -1642,19 +1848,40 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   function generateProgressReport() {
     const scored = viewScores.filter(s => !s.isAbsent);
     const absent = viewScores.filter(s => s.isAbsent);
+    const totalMax = viewScores[0]?.totalMarks ?? 0;
+
+    const gradedScores = scored.map(s => {
+      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
+      const g = computeGrade(pct, []);
+      return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
+    }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
+
+    const passCount = gradedScores.filter(s => s.pct >= 33).length;
+    const failCount = gradedScores.filter(s => s.pct < 33).length;
+    const avgPct = scored.length > 0
+      ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length)
+      : 0;
+    const topper = gradedScores[0];
     const generatedOn = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 
     const rows = viewScores.map((s, idx) => {
       if (s.isAbsent) {
         return `<tr>
           <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
-          <td>—</td><td>—</td>
+          <td>—</td><td>—</td><td>—</td>
           <td><span class="badge absent">ABSENT</span></td>
+          <td>—</td>
         </tr>`;
       }
+      const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
+      const g = computeGrade(pct, []);
+      const isPass = pct >= 33;
       return `<tr>
         <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
-        <td><strong>${s.marks}/${s.totalMarks}</strong></td><td><span class="badge recorded">RECORDED</span></td>
+        <td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td>
+        <td><span class="grade-badge grade-${g.label.replace("+", "plus")}">${g.label}</span></td>
+        <td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td>
+        <td class="remarks">${g.remarks ?? ""}</td>
       </tr>`;
     });
 
@@ -1697,8 +1924,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   td.remarks{color:#64748b;font-style:italic;}
 
   .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;letter-spacing:0.5px;}
-  .badge.recorded{background:#eff6ff;color:#1d4ed8;}
+  .badge.pass{background:#dcfce7;color:#166534;}
+  .badge.fail{background:#fee2e2;color:#991b1b;}
   .badge.absent{background:#f1f5f9;color:#64748b;}
+
+  .grade-badge{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}
 
   .footer{margin-top:30px;display:grid;grid-template-columns:repeat(3,1fr);gap:30px;padding-top:14px;border-top:1px solid #e2e8f0;}
   .sig-block{text-align:center;}
@@ -1730,15 +1960,18 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
 <div class="stat-bar">
   <div class="stat-card blue"><div class="val">${viewScores.length}</div><div class="lbl">Total Students</div></div>
-  <div class="stat-card blue"><div class="val">${scored.length}</div><div class="lbl">Scores Recorded</div></div>
+  <div class="stat-card green"><div class="val">${passCount}</div><div class="lbl">Passed</div></div>
+  <div class="stat-card red"><div class="val">${failCount}</div><div class="lbl">Failed</div></div>
   <div class="stat-card"><div class="val">${absent.length}</div><div class="lbl">Absent</div></div>
+  <div class="stat-card blue"><div class="val">${scored.length > 0 ? avgPct + "%" : "—"}</div><div class="lbl">Class Average</div></div>
+  <div class="stat-card gold"><div class="val">${topper ? topper.studentName.split(" ")[0] + " · " + topper.pct + "%" : "—"}</div><div class="lbl">Class Topper</div></div>
 </div>
 
 <table>
   <thead>
     <tr>
       <th>#</th><th>DSID</th><th>Student Name</th>
-        <th>Marks</th><th>Status</th>
+      <th>Marks</th><th>Score %</th><th>Grade</th><th>Result</th><th>Remarks</th>
     </tr>
   </thead>
   <tbody>${rows.join("")}</tbody>
@@ -1860,10 +2093,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Total Marks *</label>
-                <Input type="number" value={totalMarks} onChange={e => {
-                  totalMarksEditedRef.current = true;
-                  setTotalMarks(e.target.value);
-                }}
+                <Input type="number" value={totalMarks} onChange={e => setTotalMarks(e.target.value)}
                   min="1" placeholder="e.g. 100"
                   className={`rounded-xl ${examType && selectedClass && selectedSection && !totalMarks ? "border-amber-400 focus-visible:ring-amber-400" : ""}`}
                   data-testid="input-total-marks" />
@@ -1883,8 +2113,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   <table className="w-full min-w-[560px] text-sm" data-testid="table-marks">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        {["#", "DSID", "Name", "Marks", "Status", "Ab"].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-8" : i === 1 ? "w-24" : i === 3 ? "w-24" : i === 4 ? "w-16" : i === 5 ? "w-10" : ""}`}>{h}</th>
+                        {["#", "DSID", "Name", "Marks", "%", "Grade", "Ab"].map((h, i) => (
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-8" : i === 1 ? "w-24" : i === 3 ? "w-24" : i === 4 || i === 5 ? "w-16" : i === 6 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -1892,6 +2122,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                       {students.map((s, idx) => {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
+                        const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
+                        const g = computeGrade(pct, []);
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
@@ -1920,8 +2152,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 data-testid={`input-marks-${s.studentId}`}
                               />
                             </td>
+                            <td className="py-2 px-3 text-center text-xs font-medium">{isAbsent ? "—" : `${pct}%`}</td>
                             <td className="py-2 px-3 text-center">
-                              {isAbsent ? <span className="text-xs text-muted-foreground">Absent</span> : <span className="text-xs text-muted-foreground">Not evaluated</span>}
+                              {isAbsent ? <span className="text-xs text-muted-foreground">—</span> : (
+                                <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-center">
                               <Checkbox checked={isAbsent}
@@ -1934,6 +2169,13 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     </tbody>
                   </table>
                 </div>
+
+                {classAverage !== null && (
+                  <div className="flex items-center gap-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-800 px-4 py-3" data-testid="class-average-bar">
+                    <BarChart3 className="w-4 h-4 text-indigo-500" />
+                    <span className="text-sm text-indigo-700 dark:text-indigo-300">Class average: <strong>{classAverage}%</strong></span>
+                  </div>
+                )}
 
                 {hasInvalidMarks && (
                   <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm text-red-700 dark:text-red-300" data-testid="alert-invalid-marks">
@@ -2019,14 +2261,16 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                   <table className="w-full text-sm" data-testid="table-view-scores">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        {["#", "DSID", "Name", "Marks", "Status", ""].map((h, i) => (
-                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 5 ? "w-10" : ""}`}>{h}</th>
+                        {["#", "DSID", "Name", "Marks", "%", "Grade", ""].map((h, i) => (
+                          <th key={i} className={`py-2.5 px-3 text-xs font-semibold text-muted-foreground ${i > 2 ? "text-center" : "text-left"} ${i === 0 ? "w-10" : i === 6 ? "w-10" : ""}`}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
+                        const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
+                        const g = computeGrade(pct, []);
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -2044,13 +2288,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 </div>
                               </td>
                               <td className="py-2 px-3 text-center text-xs">{s.isAbsent ? <span className="font-bold text-gray-500">AB</span> : `${s.marks}/${s.totalMarks}`}</td>
+                              <td className="py-2 px-3 text-center text-xs font-medium">{s.isAbsent ? "—" : `${pct}%`}</td>
                               <td className="py-2 px-3 text-center">
-                                {s.isAbsent ? <span className="text-xs text-muted-foreground">Absent</span> : <span className="text-xs text-muted-foreground">Recorded</span>}
+                                {s.isAbsent ? <span className="text-xs text-muted-foreground">—</span> : <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>}
                               </td>
                               <td className="py-2 px-3 text-center">{isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</td>
                             </tr>
                             {isExpanded && (
-                              <tr><td colSpan={6} className="p-0">
+                              <tr><td colSpan={7} className="p-0">
                                 <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} />
                               </td></tr>
                             )}

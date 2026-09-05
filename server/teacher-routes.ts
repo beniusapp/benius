@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { PromotionConflictError, storage } from "./storage";
+import { storage, evaluatePromotion } from "./storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
@@ -8,14 +8,10 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
-import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, academicTermBoundaries, examPolicyTiers, enrollments, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
-import { AcademicCalculationError } from "./academic-calculation-engine";
-import { AcademicScopeError, calculateStudentAcademicResult } from "./academic-calculation-service";
-import { AcademicTermBoundaryError, validateAcademicTermBoundaries } from "./academic-term-boundaries";
-import { logAcademicFailure } from "./academic-logging";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -31,54 +27,6 @@ const diskUpload = multer({
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
 });
-
-function academicFailureStatus(error: unknown): number {
-  if (error instanceof PromotionConflictError) return 409;
-  if (error instanceof AcademicScopeError) {
-    if (error.code === "STUDENT_NOT_FOUND") return 404;
-    return 409;
-  }
-  if (error instanceof AcademicCalculationError &&
-      error.code === "STALE_CALCULATION_VERSION") return 409;
-  if (error instanceof AcademicCalculationError ||
-      error instanceof AcademicTermBoundaryError) return 422;
-  return 500;
-}
-
-function actorRole(req: any): "admin" | "teacher" | "student" | "unknown" {
-  if (req.session?.studentId) return "student";
-  if (req.session?.teacherId) return "teacher";
-  if (req.session?.userRole === "admin") return "admin";
-  return "unknown";
-}
-
-function respondAcademicFailure(
-  req: any,
-  res: any,
-  operation: string,
-  error: unknown,
-  sessionId?: number | null,
-  publicMessage?: string,
-) {
-  logAcademicFailure({
-    operation,
-    error,
-    schoolId: req.session?.schoolId,
-    sessionId,
-    actorRole: actorRole(req),
-  });
-  const status = academicFailureStatus(error);
-  const code = error instanceof AcademicCalculationError ||
-    error instanceof AcademicScopeError ||
-    error instanceof PromotionConflictError
-    ? error.code
-    : undefined;
-  return res.status(status).json({
-    ...(code ? { code } : {}),
-    message: publicMessage ??
-      (status === 500 ? "Academic operation failed." : (error as Error).message),
-  });
-}
 
 // Dedicated uploader for teacher profile pictures — hard 1 MB cap
 const teacherProfilePhotoUpload = multer({
@@ -169,323 +117,6 @@ const resetPasswordSchema = z.object({
 });
 
 export function registerTeacherRoutes(app: Express) {
-  async function resolveAcademicSessionId(req: any, schoolId: number): Promise<number | null> {
-    const selected = req.viewSessionId as number | undefined;
-    if (selected) {
-      const session = await storage.getAcademicSessionByIdForSchool(selected, schoolId);
-      return session?.id ?? null;
-    }
-    return (await storage.getActiveSession(schoolId))?.id ?? null;
-  }
-
-  /**
-   * Faculty mappings are the source of truth for subject assignments, while
-   * assignedClass/assignedSection/subject remains the compatibility path for
-   * schools created before mappings were introduced.
-   */
-  async function isTeacherAuthorizedForAssignment(
-    teacher: { id: number; schoolId: number; assignedClass: string; assignedSection: string; subject: string },
-    className: string,
-    section: string,
-    subject?: string,
-  ): Promise<boolean> {
-    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
-    // Once mappings exist they revoke the legacy assignment as an authority.
-    // This prevents a removed mapping from silently retaining access through
-    // fields which only exist for pre-mapping schools.
-    if (mappings.length > 0) {
-      return mappings.some(mapping =>
-        mapping.className === className &&
-        mapping.section === section &&
-        (subject == null || mapping.subject === subject)
-      );
-    }
-    return (
-      teacher.assignedClass === className &&
-      teacher.assignedSection === section &&
-      (subject == null || teacher.subject === subject)
-    );
-  }
-
-  async function isStudentEnrolledInScope(
-    schoolId: number,
-    sessionId: number,
-    studentId: number,
-    className: string,
-    section: string,
-  ): Promise<boolean> {
-    const [student, enrollment] = await Promise.all([
-      storage.getStudentById(studentId),
-      db.select().from(enrollments).where(and(
-        eq(enrollments.schoolId, schoolId),
-        eq(enrollments.sessionId, sessionId),
-        eq(enrollments.studentId, studentId),
-        eq(enrollments.className, className),
-        eq(enrollments.sectionName, section),
-      )).then(rows => rows[0]),
-    ]);
-    return !!student && student.schoolId === schoolId && !!enrollment;
-  }
-
-  async function assertPromotionOverrideScope(input: {
-    schoolId: number;
-    sessionId: number;
-    studentId: number;
-    class: string;
-    section: string;
-  }): Promise<void> {
-    const enrollment = (await storage.getStudentEnrollmentHistory(input.schoolId, input.studentId))
-      .find(row => row.sessionId === input.sessionId);
-    if (!enrollment ||
-        enrollment.className !== input.class ||
-        enrollment.sectionName !== input.section) {
-      throw new AcademicScopeError(
-        "ENROLLMENT_NOT_FOUND",
-        "The selected student does not belong to this class-section in the selected session.",
-      );
-    }
-  }
-
-  app.get("/api/admin/academic-term-boundaries", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-    const requested = Number(req.query.sessionId);
-    const sessionId = Number.isInteger(requested) && requested > 0
-      ? requested
-      : await resolveAcademicSessionId(req, req.session.schoolId!);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const [session] = await db.select().from(academicSessions).where(and(
-      eq(academicSessions.id, sessionId),
-      eq(academicSessions.schoolId, req.session.schoolId!),
-    ));
-    if (!session) return res.status(404).json({ message: "Academic session not found." });
-    const rows = await db.select().from(academicTermBoundaries).where(and(
-      eq(academicTermBoundaries.schoolId, req.session.schoolId!),
-      eq(academicTermBoundaries.sessionId, sessionId),
-    ));
-    res.json({ sessionId, sessionStartDate: session.startDate, sessionEndDate: session.endDate, boundaries: rows });
-  });
-
-  app.put("/api/admin/academic-term-boundaries", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-    const bodySchema = z.object({
-      sessionId: z.number().int().positive(),
-      boundaries: z.array(z.object({
-        term: z.string().trim().min(1).max(100),
-        startDate: z.string(),
-        endDate: z.string(),
-      })),
-    });
-    const parsed = bodySchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(issue => issue.message).join(", ") });
-    const schoolId = req.session.schoolId!;
-    try {
-      const result = await db.transaction(async tx => {
-        const [session] = await tx.select().from(academicSessions).where(and(
-          eq(academicSessions.id, parsed.data.sessionId),
-          eq(academicSessions.schoolId, schoolId),
-        ));
-        if (!session) throw new AcademicScopeError("SESSION_NOT_FOUND", "Academic session not found.");
-        const policies = await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId));
-        const configuredTerms = new Set<string>();
-        for (const policy of policies) {
-          try {
-            const weights = JSON.parse(policy.examWeights || "{}");
-            Object.keys(weights).forEach(term => configuredTerms.add(term));
-          } catch {
-            throw new AcademicTermBoundaryError("TERM_NOT_IN_POLICY", `Exam policy "${policy.tierName}" has invalid term configuration.`);
-          }
-        }
-        for (const term of configuredTerms) {
-          if (!parsed.data.boundaries.some(boundary => boundary.term.trim() === term)) {
-            throw new AcademicTermBoundaryError("INVALID_TERM_BOUNDARY", `A boundary is required for configured term "${term}".`);
-          }
-        }
-        validateAcademicTermBoundaries(parsed.data.boundaries, session, configuredTerms);
-        await tx.delete(academicTermBoundaries).where(and(
-          eq(academicTermBoundaries.schoolId, schoolId),
-          eq(academicTermBoundaries.sessionId, parsed.data.sessionId),
-        ));
-        return tx.insert(academicTermBoundaries).values(parsed.data.boundaries.map(boundary => ({
-          schoolId,
-          sessionId: parsed.data.sessionId,
-          term: boundary.term.trim(),
-          startDate: boundary.startDate,
-          endDate: boundary.endDate,
-        }))).returning();
-      });
-      res.json({ sessionId: parsed.data.sessionId, boundaries: result });
-    } catch (error) {
-      if (error instanceof AcademicScopeError || error instanceof AcademicTermBoundaryError) {
-        return res.status(422).json({ code: error.code, message: error.message });
-      }
-      console.error("PUT /api/admin/academic-term-boundaries error:", error);
-      res.status(500).json({ message: "Failed to save academic term boundaries." });
-    }
-  });
-
-  app.get("/api/academic-calculation/:studentId", async (req, res) => {
-    const schoolId = req.session.schoolId;
-    if (!schoolId || (!req.session.userId && !req.session.teacherId && !req.session.studentId)) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-    if (req.session.userId && !req.session.teacherId && !req.session.studentId && req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required." });
-    }
-    const studentId = Number(req.params.studentId);
-    if (!Number.isInteger(studentId) || studentId <= 0) {
-      return res.status(400).json({ message: "Invalid student ID" });
-    }
-    if (req.session.studentId && req.session.studentId !== studentId) {
-      return res.status(403).json({ message: "Students may only view their own academic result." });
-    }
-    const sessionId = await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, studentId))
-        .find(row => row.sessionId === sessionId);
-      if (!teacher || !enrollment) return res.status(404).json({ message: "Teacher or enrollment not found." });
-      const assigned = await isTeacherAuthorizedForAssignment(
-        teacher, enrollment.className, enrollment.sectionName,
-      );
-      if (!assigned) return res.status(403).json({ message: "Not authorized for this student's class-section." });
-    }
-
-    try {
-      const result = await calculateStudentAcademicResult({
-        schoolId,
-        sessionId,
-        studentId,
-        currentTerm: typeof req.query.term === "string" ? req.query.term : undefined,
-        publishedOnly: Boolean(req.session.studentId),
-      });
-      res.json(result);
-    } catch (error) {
-      return respondAcademicFailure(
-        req, res, "calculate_student_result", error, sessionId,
-        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
-          ? undefined
-          : "Failed to calculate academic result.",
-      );
-    }
-  });
-
-  app.get("/api/student/academic-result", async (req, res) => {
-    const studentId = req.session.studentId;
-    const schoolId = req.session.schoolId;
-    if (!studentId || !schoolId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-    const sessionId = await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) {
-      return res.status(409).json({ message: "No academic session is selected." });
-    }
-
-    try {
-      const result = await calculateStudentAcademicResult({
-        schoolId,
-        sessionId,
-        studentId,
-        currentTerm: typeof req.query.term === "string" ? req.query.term : undefined,
-        publishedOnly: true,
-      });
-      res.json(result);
-    } catch (error) {
-      return respondAcademicFailure(
-        req, res, "calculate_student_self_result", error, sessionId,
-        "Your academic result is not available yet. Please contact your school administrator.",
-      );
-    }
-  });
-
-  app.get("/api/teacher/academic-results/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const className = decodeURIComponent(req.params.class);
-    const section = decodeURIComponent(req.params.section);
-    const assigned = await isTeacherAuthorizedForAssignment(teacher, className, section);
-    if (!assigned) return res.status(403).json({ message: "Not authorized for this class-section." });
-    const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const term = typeof req.query.term === "string" ? req.query.term : undefined;
-    try {
-      const enrollmentRows = await db.select().from(enrollments).where(and(
-        eq(enrollments.schoolId, teacher.schoolId),
-        eq(enrollments.sessionId, sessionId),
-        eq(enrollments.className, className),
-        eq(enrollments.sectionName, section),
-      ));
-      const results = await Promise.all(enrollmentRows.map(async enrollment => {
-        const student = await storage.getStudentById(enrollment.studentId);
-        if (!student) return null;
-        const result = await calculateStudentAcademicResult({
-          schoolId: teacher.schoolId, sessionId, studentId: enrollment.studentId, currentTerm: term, publishedOnly: false,
-        });
-        return {
-          ...result,
-          name: student.name,
-          digitalStudentId: student.digitalStudentId,
-          rollNumber: student.rollNumber,
-        };
-      }));
-      res.json({ sessionId, results: results.filter(Boolean) });
-    } catch (error) {
-      return respondAcademicFailure(
-        req, res, "calculate_teacher_class_results", error, sessionId,
-        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
-          ? undefined
-          : "Failed to calculate class academic results.",
-      );
-    }
-  });
-
-  app.get("/api/admin/academic-results/:class/:section", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-    const schoolId = req.session.schoolId;
-    if (!schoolId) return res.status(403).json({ message: "School context is missing." });
-    const className = decodeURIComponent(req.params.class);
-    const section = decodeURIComponent(req.params.section);
-    const sessionId = await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const term = typeof req.query.term === "string" ? req.query.term : undefined;
-    try {
-      const enrollmentRows = await db.select().from(enrollments).where(and(
-        eq(enrollments.schoolId, schoolId),
-        eq(enrollments.sessionId, sessionId),
-        eq(enrollments.className, className),
-        eq(enrollments.sectionName, section),
-      ));
-      const results = await Promise.all(enrollmentRows.map(async enrollment => {
-        const student = await storage.getStudentById(enrollment.studentId);
-        if (!student) return null;
-        const result = await calculateStudentAcademicResult({
-          schoolId, sessionId, studentId: enrollment.studentId, currentTerm: term, publishedOnly: false,
-        });
-        return {
-          ...result,
-          name: student.name,
-          digitalStudentId: student.digitalStudentId,
-          rollNumber: student.rollNumber,
-        };
-      }));
-      res.json({ sessionId, results: results.filter(Boolean) });
-    } catch (error) {
-      return respondAcademicFailure(
-        req, res, "calculate_admin_class_results", error, sessionId,
-        error instanceof AcademicCalculationError || error instanceof AcademicScopeError
-          ? undefined
-          : "Failed to calculate class academic results.",
-      );
-    }
-  });
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
     try {
@@ -737,10 +368,7 @@ export function registerTeacherRoutes(app: Express) {
     const studentList = viewSessionId
       ? await storage.getStudentsByClassSectionInSession(sid, cls, section, viewSessionId)
       : await storage.getStudentsByClassSection(sid, cls, section);
-    const activeSession = viewSessionId ? null : await storage.getActiveSession(sid);
-    const attendanceSessionId = viewSessionId ?? activeSession?.id;
-    if (!attendanceSessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const records = await storage.getAttendanceForStudentsOnDate(sid, studentList.map(s => s.id), date, attendanceSessionId);
+    const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date, viewSessionId);
 
     const result = studentList.map(student => {
       const record = records.find(r => r.studentId === student.id);
@@ -1403,102 +1031,27 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== EXAMINATION =====
-  app.get("/api/examination/roster/:schoolId/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    try {
-      const sid = parseInt(req.params.schoolId);
-      if (!Number.isInteger(sid) || sid <= 0) return res.status(400).json({ message: "Invalid school" });
-      const className = decodeURIComponent(req.params.class).trim();
-      const sectionName = decodeURIComponent(req.params.section).trim();
-      const subject = typeof req.query.subject === "string" ? req.query.subject.trim() : "";
-      if (!className || !sectionName || !subject) {
-        return res.status(400).json({ message: "class, section, and subject are required" });
-      }
-
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-
-      const sessionId = await resolveAcademicSessionId(req, sid);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const studentList = await storage.getStudentsByClassSection(sid, className, sectionName);
-      res.json(studentList.map(student => ({
-        studentId: student.id,
-        name: student.name,
-        dsid: student.digitalStudentId,
-      })));
-    } catch (err: any) {
-      console.error("GET /api/examination/roster error:", err);
-      res.status(500).json({ message: err?.message || "Failed to fetch examination roster" });
-    }
-  });
-
   app.post("/api/exam-scores", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-      const bodySchema = z.object({
-        scores: z.array(z.object({
-          studentId: z.coerce.number().int().positive(),
-          marks: z.coerce.number().int().min(0),
-          isAbsent: z.boolean().optional().default(false),
-        })).min(1),
-        subject: z.string().trim().min(1),
-        examType: z.string().trim().min(1),
-        totalMarks: z.coerce.number().int().positive(),
-        class: z.string().trim().min(1).optional(),
-        section: z.string().trim().min(1).optional(),
-      }).superRefine((value, ctx) => {
-        value.scores.forEach((score, index) => {
-          if (!score.isAbsent && score.marks > value.totalMarks) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["scores", index, "marks"], message: "Marks cannot exceed total marks" });
-          }
-        });
-      });
-      const parsed = bodySchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-      const { scores, subject, examType, totalMarks, class: cls, section } = parsed.data;
+      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
+      if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
-      if (!resolvedClass || !resolvedSection) {
-        return res.status(400).json({ message: "class and section are required" });
-      }
-      if (!await isTeacherAuthorizedForAssignment(teacher, resolvedClass, resolvedSection, subject)) {
-        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
-      }
-      const maxMarks = totalMarks;
-      const matchingGradingTiers = (await storage.getGradingTiers(teacher.schoolId))
-        .filter(tier => (tier.classes || []).map(String).includes(String(resolvedClass).trim()));
-      if (matchingGradingTiers.length !== 1) {
-        return res.status(409).json({ message: "Exactly one grading policy must be configured for this class." });
-      }
-      const gradingTier = matchingGradingTiers[0];
-      if (!["percentage", "both"].includes(gradingTier.gradingSystem)) {
-        return res.status(409).json({ message: "The grading policy for this class does not define a percentage pass threshold." });
-      }
-      const passPercentage = gradingTier.passPercentage;
-      if (!Number.isInteger(passPercentage) || passPercentage < 0 || passPercentage > 100) {
-        return res.status(409).json({ message: "The grading policy for this class has an invalid pass percentage." });
-      }
-      const pMarks = Math.ceil(maxMarks * passPercentage / 100);
-      if (pMarks < 0 || pMarks > maxMarks) {
-        return res.status(400).json({ message: "Pass marks cannot exceed total marks" });
-      }
+      const maxMarks = parseInt(totalMarks) || 100;
+      const pMarks = parseInt(passMarks) || 33;
       // Tag each score with the academic session. Prefer the header value
       // (admin previewing an archived year); otherwise resolve the school's
       // active session so teacher-submitted scores are always year-tagged.
-      const scoreSessionId = await resolveAcademicSessionId(req, teacher.schoolId);
-      if (!scoreSessionId) {
-        return res.status(409).json({ message: "No academic session is selected." });
-      }
-      const enrolled = await Promise.all(scores.map(score => isStudentEnrolledInScope(
-        teacher.schoolId, scoreSessionId, score.studentId, resolvedClass, resolvedSection,
-      )));
-      if (enrolled.some(value => !value)) {
-        return res.status(403).json({ message: "Every student must belong to this class-section in the selected session." });
-      }
+      const activeSessionForTag = (req as any).viewSessionId
+        ? null
+        : await storage.getActiveSession(teacher.schoolId);
+      const scoreSessionId: number | null =
+        (req as any).viewSessionId ?? activeSessionForTag?.id ?? null;
 
       const formattedScores = scores.map((s: any) => ({
         studentId: parseInt(s.studentId),
@@ -1506,12 +1059,12 @@ export function registerTeacherRoutes(app: Express) {
         schoolId: teacher.schoolId,
         subject,
         examType,
-        marks: s.isAbsent ? 0 : s.marks,
+        marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
         totalMarks: maxMarks,
         passMarks: pMarks,
         isAbsent: !!s.isAbsent,
-        class: resolvedClass,
-        section: resolvedSection,
+        class: resolvedClass || null,
+        section: resolvedSection || null,
         updatedBy: teacher.fullName,
         sessionId: scoreSessionId,
       }));
@@ -1534,33 +1087,13 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(400).json({ message: "class, section, examType, schoolId required" });
       }
       const sid = parseInt(schoolId);
-      const teacher = req.session.teacherId
-        ? await storage.getTeacherById(req.session.teacherId)
-        : undefined;
       if (req.session.teacherId) {
+        const teacher = await storage.getTeacherById(req.session.teacherId);
         if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
       } else if (req.session.schoolId !== sid) {
         return res.status(403).json({ message: "Not authorized for this school" });
       }
-      const sessionId = await resolveAcademicSessionId(req, sid);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const subjects = await storage.getExamScoreSubjectsForPublish(
-        sid, cls, section, examType, sessionId,
-      );
-      if (subjects.length === 0) {
-        return res.status(404).json({ message: "No exam scores found for this class-section, exam type, and session." });
-      }
-      if (teacher) {
-        // Publishing remains cohort-wide, so a teacher must be assigned every
-        // subject represented by the exact batch before any score is changed.
-        const authorized = await Promise.all(subjects.map(subject =>
-          isTeacherAuthorizedForAssignment(teacher, cls, section, subject),
-        ));
-        if (authorized.some(value => !value)) {
-          return res.status(403).json({ message: "Not authorized for every subject in this publication batch" });
-        }
-      }
-      const count = await storage.publishExamScores(sid, cls, section, examType, sessionId);
+      const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
       res.json({ message: `Published ${count} scores`, count });
     } catch (err: any) {
       console.error("POST /api/exam-scores/publish error:", err);
@@ -1576,15 +1109,8 @@ export function registerTeacherRoutes(app: Express) {
       const sid = parseInt(schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      const className = decodeURIComponent(cls);
-      const sectionName = decodeURIComponent(section);
-      const subjectName = decodeURIComponent(subject);
-      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subjectName)) {
-        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
-      }
-      const sessionId = await resolveAcademicSessionId(req, sid);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const averages = await storage.getClassAverages(sid, className, sectionName, subjectName, sessionId);
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), viewSessionId);
       res.json(averages);
     } catch (err: any) {
       console.error("GET /api/exam-scores/class-average error:", err);
@@ -1599,18 +1125,8 @@ export function registerTeacherRoutes(app: Express) {
       const schoolId = parseInt(req.params.schoolId);
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
-      const sessionId = await resolveAcademicSessionId(req, schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const history = await storage.getStudentEnrollmentHistory(schoolId, studentId);
-      const enrollment = history.find(row => row.sessionId === sessionId);
-      if (!enrollment || !await isStudentEnrolledInScope(
-        schoolId, sessionId, studentId, enrollment.className, enrollment.sectionName,
-      ) || !await isTeacherAuthorizedForAssignment(
-        teacher, enrollment.className, enrollment.sectionName,
-      )) {
-        return res.status(403).json({ message: "Not authorized for this student's class-section" });
-      }
-      const list = await storage.getExamScoresByStudent(studentId, schoolId, sessionId);
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores/student error:", err);
@@ -1622,18 +1138,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const { schoolId, subject, examType, class: cls, section } = req.params;
-      const sid = parseInt(schoolId);
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      const subjectName = decodeURIComponent(subject);
-      const className = decodeURIComponent(cls);
-      const sectionName = decodeURIComponent(section);
-      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subjectName)) {
-        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
-      }
-      const sessionId = await resolveAcademicSessionId(req, sid);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const list = await storage.getExamScores(sid, subjectName, decodeURIComponent(examType), className, sectionName, sessionId);
+      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section, (req as any).viewSessionId ?? undefined);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores error:", err);
@@ -3042,27 +2547,28 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schema = z.object({
-      studentId: z.number().int().positive(),
-      sessionId: z.number().int().positive().optional(),
-      currentTerm: z.string().min(1).optional(),
+      studentClass: z.string().min(1),
+      scores: z.array(z.object({
+        subject: z.string(),
+        examType: z.string(),
+        marks: z.number(),
+        totalMarks: z.number(),
+        isAbsent: z.boolean().default(false),
+      })),
+      passPercentage: z.number().min(0).max(100).optional(),
+      termAttendance: z.record(z.string(), z.number()).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    const sessionId = parsed.data.sessionId ?? await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    try {
-      const result = await calculateStudentAcademicResult({
-        schoolId,
-        sessionId,
-        studentId: parsed.data.studentId,
-        currentTerm: parsed.data.currentTerm,
-        publishedOnly: false,
-      });
-      res.json(result);
-    } catch (error) {
-      return respondAcademicFailure(req, res, "evaluate_exam_policy", error, sessionId);
-    }
+    const tiers = await storage.getExamPolicyTiers(schoolId);
+    const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
+    if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
+    const gradingTiers = await storage.getGradingTiers(schoolId);
+    const matchingGradingTier = gradingTiers.find(t => (t.classes || []).includes(parsed.data.studentClass));
+    const passPercentage = parsed.data.passPercentage ?? matchingGradingTier?.passPercentage ?? 35;
+    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage, parsed.data.termAttendance);
+    res.json({ tier: matchingTier.tierName, passPercentage, ...result });
   });
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
@@ -3102,9 +2608,7 @@ export function registerTeacherRoutes(app: Express) {
     const term = decodeURIComponent(req.params.term);
     if (!term) return res.status(400).json({ message: "term is required" });
     try {
-      const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, sessionId, term);
+      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, term);
       res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
@@ -3219,91 +2723,58 @@ Thank you for your prompt attention to this matter.
     // Extract the view session so both score aggregation and ledger decisions
     // are scoped to the same academic year when the admin is in archive mode.
     const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
-    const resolvedSessionId = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
-    if (!resolvedSessionId) return res.status(409).json({ message: "No academic session is selected." });
-    const [enrollmentRows, overrides, ledgerDecisions] = await Promise.all([
-      db.select().from(enrollments).where(and(
-        eq(enrollments.schoolId, schoolId),
-        eq(enrollments.sessionId, resolvedSessionId),
-        eq(enrollments.className, cls),
-        eq(enrollments.sectionName, section),
-      )),
-      storage.getPromotionOverrides(schoolId, cls, section, examType, resolvedSessionId),
-      term ? storage.getPromotionDecisions(schoolId, cls, section, term, resolvedSessionId) : Promise.resolve([]),
+    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
+      storage.getExamAggregated(schoolId, cls, section, examType, viewSessionId),
+      storage.getPromotionOverrides(schoolId, cls, section, examType),
+      storage.getAllSchoolMetadata(schoolId),
+      storage.getClassSubjectsMap(schoolId),
     ]);
-    const ledgerMap = new Map(ledgerDecisions.map(decision => [decision.studentId, decision]));
-    const studentsEnriched = (await Promise.all(enrollmentRows.map(async enrollment => {
-      const student = await storage.getStudentById(enrollment.studentId);
-      if (!student || student.schoolId !== schoolId) return null;
-      try {
-        const result = await calculateStudentAcademicResult({
-          schoolId,
-          sessionId: resolvedSessionId,
-          studentId: enrollment.studentId,
-          currentTerm: term,
-          publishedOnly: false,
-        });
-        const selectedTerm = term || Object.keys(result.termAverages).at(-1) || "";
-        const termAverage = result.termAverages[selectedTerm] ?? null;
-        const termGrade = result.termGrades[selectedTerm] ?? null;
-        const termSubjects = result.subjectResults.map(subject => subject.terms[selectedTerm]).filter(Boolean);
-        const rawComponents = termSubjects.flatMap(subject => subject.breakdown);
-        return {
-          studentId: student.id,
-          dsid: student.digitalStudentId,
-          name: student.name,
-          totalObtained: result.complete
-            ? rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0)
-            : null,
-          totalMax: result.complete
-            ? rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0)
-            : null,
-          percentage: termAverage,
-          subjects: result.subjectResults.map(subject => subject.subject),
-          gradeLabel: termGrade?.label ?? null,
-          gradePoint: termGrade?.gradePoint ?? null,
-          gradeRemarks: termGrade?.remarks ?? null,
-          systemPolicyVerdict: result.promoted,
-          complete: result.complete,
-          calculationVersion: result.calculationVersion,
-          calculationError: null,
-          ledger: ledgerMap.get(student.id) ?? null,
-        };
-      } catch (error) {
-        if (!(error instanceof AcademicCalculationError || error instanceof AcademicScopeError)) throw error;
-        logAcademicFailure({
-          operation: "aggregate_exam_result",
-          error,
-          schoolId,
-          sessionId: resolvedSessionId,
-          actorRole: "admin",
-        });
-        return {
-          studentId: student.id,
-          dsid: student.digitalStudentId,
-          name: student.name,
-          totalObtained: null,
-          totalMax: null,
-          percentage: null,
-          subjects: [],
-          gradeLabel: null,
-          gradePoint: null,
-          gradeRemarks: null,
-          systemPolicyVerdict: null,
-          complete: false,
-          calculationVersion: null,
-          calculationError: error.code,
-          ledger: ledgerMap.get(student.id) ?? null,
-        };
-      }
-    }))).filter((student): student is NonNullable<typeof student> => student !== null);
 
-    res.json({ students: studentsEnriched, overrides, missingSubjects: [], passThreshold: null });
+    // Resolve the subjects that are actually mapped to this class.
+    // Keys in classSubjectsMap may be "Class 6" or "6" — normalise before comparing.
+    const clsNoPrefix = cls.trim().toLowerCase().replace(/^class\s+/, "");
+    let mappedSubjectsForClass: string[] | null = null;
+    for (const [key, subjects] of Object.entries(classSubjectsMap)) {
+      if (key.trim().toLowerCase().replace(/^class\s+/, "") === clsNoPrefix) {
+        mappedSubjectsForClass = subjects;
+        break;
+      }
+    }
+    // Audit only the subjects that are mapped to this class.
+    // Fall back to the school-wide list if no per-class mapping has been configured.
+    const configuredSubjects: string[] =
+      mappedSubjectsForClass !== null && mappedSubjectsForClass.length > 0
+        ? mappedSubjectsForClass
+        : (meta.subjects || []);
+
+    const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
+    const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
+    const rawThreshold = meta.pass_threshold;
+    const legacyThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
+      ? (parseInt(rawThreshold[0]) || 35)
+      : 35;
+    const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
+      const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
+      return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
+    }));
+    const passThreshold = studentsWithGrades.length > 0 ? studentsWithGrades[0].tierPassThreshold : legacyThreshold;
+
+    // If a term is provided, enrich each student with their ledger row
+    let ledgerDecisions: import("../shared/schema").PromotionDecision[] = [];
+    if (term) {
+      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
+    }
+    const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
+    const studentsEnriched = studentsWithGrades.map(s => ({
+      ...s,
+      ledger: ledgerMap.get(s.studentId) ?? null,
+    }));
+
+    res.json({ students: studentsEnriched, overrides, missingSubjects, passThreshold });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    if (req.session.userRole !== "admin")
+    if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const overrideSchema = z.object({
       studentId: z.number().int().positive(),
@@ -3316,48 +2787,27 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = overrideSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    try {
-      await assertPromotionOverrideScope({
-        ...parsed.data,
-        schoolId: req.session.schoolId!,
-        sessionId,
-      });
-      await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
-      res.json({ message: "Override saved" });
-    } catch (error) {
-      return respondAcademicFailure(req, res, "save_promotion_override", error, sessionId);
-    }
+    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "Override saved" });
   });
 
   app.post("/api/admin/exam/override/bulk", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    if (req.session.userRole !== "admin")
+    if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const itemSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
       class: z.string().min(1),
       section: z.string().min(1),
-      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      overrideStatus: z.string().min(1),
       nextClass: z.string().min(1),
       nextSection: z.string().min(1),
     });
     const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
-    const sessionId = await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    try {
-      await Promise.all(parsed.data.items.map(item =>
-        assertPromotionOverrideScope({ ...item, schoolId, sessionId })
-      ));
-      await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId, sessionId })));
-      res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
-    } catch (error) {
-      return respondAcademicFailure(req, res, "save_bulk_promotion_overrides", error, sessionId);
-    }
+    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId })));
+    res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
   });
 
   app.delete("/api/admin/exam/override/cohort", async (req, res) => {
@@ -3370,9 +2820,7 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
+    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId! });
     res.json({ message: "All overrides cleared" });
   });
 
@@ -3387,19 +2835,15 @@ Thank you for your prompt attention to this matter.
     });
     const parsed = clearSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const sessionId = await resolveAcademicSessionId(req, req.session.schoolId!);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId!, sessionId });
+    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
     res.json({ message: "Override cleared" });
   });
 
   app.post("/api/admin/promote", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    if (req.session.userRole !== "admin")
+    if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const promoteSchema = z.object({
       term: z.string().optional(),
-      expectedCalculationVersion: z.string().min(1).optional(),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
@@ -3407,6 +2851,12 @@ Thank you for your prompt attention to this matter.
         fromClass: z.string().min(1),
         fromSection: z.string().min(1),
         examType: z.string().min(1),
+        totalObtained: z.number().int().min(0),
+        totalMax: z.number().int().min(0),
+        percentage: z.number().int().min(0),
+        gradeLabel: z.string().nullable().optional(),
+        gradePoint: z.string().nullable().optional(),
+        gradeRemarks: z.string().nullable().optional(),
       })).min(1),
     });
     const parsed = promoteSchema.safeParse(req.body);
@@ -3416,105 +2866,27 @@ Thank you for your prompt attention to this matter.
     const adminId   = req.session.userId!;
     const items     = parsed.data.items;
     const studentIds = items.map(i => i.studentId);
-    if (new Set(studentIds).size !== studentIds.length) {
-      return res.status(400).json({ message: "Each selected student may appear only once." });
-    }
     const term      = parsed.data.term;
-    if (!term) return res.status(400).json({ message: "term is required for promotion execution" });
-    const sessionId = await resolveAcademicSessionId(req, schoolId);
-    if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
 
-    try {
-    // Destinations are school-wide setup data, never inferred from a roster or
-    // the submitted request. Validate all of them before calculating or writing.
-    const metadata = await storage.getAllSchoolMetadata(schoolId);
-    const configuredClasses = Array.isArray(metadata.classes) ? metadata.classes : [];
-    const configuredSections = Array.isArray(metadata.sections) ? metadata.sections : [];
-    if (configuredClasses.length === 0 || configuredSections.length === 0) {
-      throw new AcademicScopeError(
-        "ENROLLMENT_NOT_FOUND",
-        "School class and section metadata must be configured before promotions can be executed.",
-      );
-    }
-    const dsidMap = await storage.getStudentDsidMap(schoolId, studentIds);
-    const authoritativeItems = await Promise.all(items.map(async item => {
-      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, item.studentId))
-        .find(row => row.sessionId === sessionId);
-      if (!enrollment ||
-          enrollment.className !== item.fromClass ||
-          enrollment.sectionName !== item.fromSection) {
-        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected student does not belong to this class-section in the selected session.");
-      }
-      const [result, decisions, overrideRows] = await Promise.all([
-        calculateStudentAcademicResult({
-          schoolId,
-          sessionId,
-          studentId: item.studentId,
-          currentTerm: term,
-          publishedOnly: false,
-          expectedCalculationVersion: parsed.data.expectedCalculationVersion,
-        }),
-        storage.getPromotionDecisions(schoolId, item.fromClass, item.fromSection, term, sessionId),
-        storage.getPromotionOverrides(schoolId, item.fromClass, item.fromSection, item.examType, sessionId),
-      ]);
-      if (!result.complete || result.promoted === null) {
-        throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A selected student has an incomplete authoritative academic result.");
-      }
-      const ledger = decisions.find(decision => decision.studentId === item.studentId);
-      if (!ledger?.locked || ledger.adminExecuted) {
-        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected student does not have a locked, unexecuted promotion decision.");
-      }
-      const override = overrideRows.find(row => row.studentId === item.studentId);
-      const overrideAuthorizesPromotion =
-        override?.overrideStatus === "PASS" || override?.overrideStatus === "GRACE_PASS";
-      const overrideBlocksPromotion =
-        override?.overrideStatus === "FAIL" || override?.overrideStatus === "REPEAT";
-      if (overrideBlocksPromotion || (!result.promoted && !overrideAuthorizesPromotion)) {
-        throw new AcademicScopeError(
-          "ENROLLMENT_NOT_FOUND",
-          "Promotion requires a passing authoritative result or a PASS/GRACE_PASS admin override.",
-        );
-      }
-      const finalNextClass = override?.nextClass ?? ledger.targetClass;
-      const finalNextSection = override?.nextSection ?? ledger.targetSection;
-      if (!finalNextClass || !finalNextSection) {
-        throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "A selected promotion decision has no valid destination.");
-      }
-      if (!configuredClasses.includes(finalNextClass) || !configuredSections.includes(finalNextSection)) {
-        throw new AcademicScopeError(
-          "ENROLLMENT_NOT_FOUND",
-          "A selected promotion has a destination that is not configured for this school.",
-        );
-      }
-      const termAverage = result.termAverages[term];
-      const termGrade = result.termGrades[term];
-      if (termAverage === null || termAverage === undefined || !termGrade) {
-        throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A selected student's term result is incomplete.");
-      }
-      const termSubjects = result.subjectResults.map(subject => subject.terms[term]).filter(Boolean);
-      const rawComponents = termSubjects.flatMap(subject => subject.breakdown);
-      return {
-        ...item,
-        nextClass: finalNextClass,
-        nextSection: finalNextSection,
-        totalObtained: rawComponents.reduce((sum, component) => sum + (component.marks ?? 0), 0),
-        totalMax: rawComponents.reduce((sum, component) => sum + (component.totalMarks ?? 0), 0),
-        percentage: termAverage,
-        gradeLabel: termGrade.label,
-        gradePoint: termGrade.gradePoint,
-        gradeRemarks: termGrade.remarks,
-        authoritativeResult: result,
-        teacherDecision: ledger.decision,
-        adminOverride: override?.overrideStatus ?? null,
-        systemPolicyVerdict: result.promoted === true,
-      };
-    }));
+    // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
+    //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
+    const [dsidMap, rawScores] = await Promise.all([
+      storage.getStudentDsidMap(schoolId, studentIds),
+      storage.getExamScoresForStudents(schoolId, studentIds),
+    ]);
 
-    const historyRecords = authoritativeItems.map(item => {
+    // ── 2. Build enriched academic history records with cold-storage snapshot ──
+    //       snapshotJson packs student metadata + per-subject score breakdown    ─
+    const historyRecords = items.map(item => {
       const info = dsidMap[item.studentId];
+      const scoreBreakdown = rawScores
+        .filter(s => s.studentId === item.studentId)
+        .map(s => ({
+          subject: s.subject, examType: s.examType,
+          marks: s.marks, totalMarks: s.totalMarks, isAbsent: s.isAbsent,
+        }));
       return {
         schoolId,
-        sessionId,
         studentId:     item.studentId,
         fromClass:     item.fromClass,
         fromSection:   item.fromSection,
@@ -3545,40 +2917,53 @@ Thank you for your prompt attention to this matter.
           gradeLabel:    item.gradeLabel ?? null,
           gradePoint:    item.gradePoint ?? null,
           gradeRemarks:  item.gradeRemarks ?? null,
-          systemPolicyVerdict: item.systemPolicyVerdict,
-          teacherDecision: item.teacherDecision,
-          adminOverride: item.adminOverride,
-          calculationVersion: item.authoritativeResult.calculationVersion,
-          authoritativeResult: item.authoritativeResult,
+          examBreakdown: scoreBreakdown,
         },
       };
     });
 
-    // Execute the snapshots, student updates, decision transition, override
-    // cleanup, and audit records as one transaction.
+    // ── 3. Execute atomic transaction: history + student update + ledger mark ──
+    //       Full automatic rollback on any failure — student records revert.     ─
     const promoted = await storage.executePromotionTransaction(
-      schoolId,
-      authoritativeItems.map(item => ({
-        studentId: item.studentId,
-        nextClass: item.nextClass,
-        nextSection: item.nextSection,
-        fromClass: item.fromClass,
-        fromSection: item.fromSection,
-        examType: item.examType,
-        teacherDecision: item.teacherDecision,
-        adminOverride: item.adminOverride,
-        systemPolicyVerdict: item.systemPolicyVerdict,
-      })),
-      historyRecords,
-      term,
-      sessionId,
-      adminId,
+      schoolId, items, historyRecords, term,
     );
 
-    res.json({ promoted, pipelineQueued: false });
-    } catch (error) {
-      return respondAcademicFailure(req, res, "execute_promotion", error, sessionId);
-    }
+    // ── 4. Respond immediately — post-pipeline runs without blocking client ───
+    res.json({ promoted, pipelineQueued: true });
+
+    // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
+    // All mutations below are tenant-isolated via schoolId guard.
+    (async () => {
+      try {
+        const now = new Date();
+        const ts  = now.toISOString().replace("T", " ").slice(0, 19);
+        const examType = items[0]?.examType ?? parsed.data.term ?? "—";
+
+        // 6a. Structured audit log per student
+        // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
+        for (const item of items) {
+          const info = dsidMap[item.studentId];
+          const dsid = info?.dsid ?? `ID:${item.studentId}`;
+          const name = info?.name ?? "Unknown";
+          await storage.createAuditLog({
+            schoolId,
+            actionType:    "PROMOTION_EXECUTED",
+            entityType:    "student",
+            entityId:      item.studentId,
+            actionBy:      adminId,
+            actionByRole:  "admin",
+            details: `[${ts}] - Admin ${adminId} successfully updated Student ${dsid} (${name}) from Class ${item.fromClass}-${item.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+          });
+        }
+
+        // 6b. Clean up executed promotion override records (stale data prevention)
+        await storage.deletePromotionOverridesByStudentIds(schoolId, studentIds, examType);
+
+      } catch (pipelineErr) {
+        // Pipeline errors are non-fatal — core promotion already succeeded
+        console.error("[promote pipeline]", pipelineErr);
+      }
+    })();
   });
 
   // ===== CLEAR ID CARD REISSUE FLAG =====
@@ -4154,15 +3539,8 @@ Thank you for your prompt attention to this matter.
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
     const schoolId = req.session.schoolId!;
     try {
-      const sessionId = await resolveAcademicSessionId(req, schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const enrollment = (await storage.getStudentEnrollmentHistory(schoolId, studentId))
-        .find(row => row.sessionId === sessionId);
-      if (!enrollment) {
-        return res.status(404).json({ message: "Student is not enrolled in the selected academic session." });
-      }
-      const data = await storage.getStudentJourneyData(studentId, schoolId, sessionId);
-      res.json({ ...data, sessionId });
+      const data = await storage.getStudentJourneyData(studentId, schoolId);
+      res.json(data);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to fetch student journey" });
     }
@@ -4175,12 +3553,14 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
+    // Scope student list and scores to the viewed session when in archive mode.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const sessionId = await resolveAcademicSessionId(req, schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const studentList = await storage.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId);
+      const studentList = viewSessionId
+        ? await storage.getStudentsByClassSectionInSession(schoolId, cls, section, viewSessionId)
+        : await storage.getStudentsByClassSection(schoolId, cls, section);
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId, sessionId);
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, viewSessionId ?? null);
         return {
           studentId: s.id,
           name: s.name,
@@ -4189,11 +3569,9 @@ Thank you for your prompt attention to this matter.
           scores: scores.map(sc => ({
             subject: sc.subject,
             examType: sc.examType,
-            marks: sc.marks,
-            totalMarks: sc.totalMarks,
-            isAbsent: sc.isAbsent,
-            status: sc.isAbsent === true ? "absent" :
-              (sc.marks == null || sc.totalMarks == null ? "missing" : "scored"),
+            marks: sc.marks ?? 0,
+            totalMarks: sc.totalMarks ?? 100,
+            isAbsent: sc.isAbsent ?? false,
           })),
         };
       }));
@@ -4224,7 +3602,7 @@ Thank you for your prompt attention to this matter.
     try {
       const tiers = await storage.getGradingTiers(schoolId);
       const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.status(404).json({ message: "No grading policy configured for this class" });
+      if (!tier) return res.json({ rules: [], passPercentage: 35 });
       const rules = await storage.getGradingRules(schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch { res.status(500).json({ message: "Failed to fetch grading rules" }); }
@@ -4747,11 +4125,7 @@ Thank you for your prompt attention to this matter.
 
   const facultyMappingSchema = z.object({
     teacherId: z.number().int().positive(),
-    mappings: z.array(z.object({
-      className: z.string().trim().min(1),
-      section: z.string().trim().min(1),
-      subject: z.string().trim().min(1),
-    })),
+    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1), subject: z.string().optional().nullable() })),
   });
 
   app.post("/api/admin/faculty-mappings", async (req, res) => {
@@ -4764,42 +4138,6 @@ Thank you for your prompt attention to this matter.
       const teacher = await storage.getTeacherById(parsed.data.teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
         return res.status(404).json({ message: "Teacher not found" });
-
-      const [meta, classSections, classSubjects] = await Promise.all([
-        storage.getAllSchoolMetadata(schoolId),
-        storage.getClassSectionsMap(schoolId),
-        storage.getClassSubjectsMap(schoolId),
-      ]);
-      const configuredClasses = new Set<string>(
-        meta.classes?.length ? meta.classes : [...new Set([...Object.keys(classSections), ...Object.keys(classSubjects)])],
-      );
-      const globalSubjects = meta.subjects ?? [];
-      const mappingKeys = new Set<string>();
-      for (const mapping of parsed.data.mappings) {
-        if (mapping.subject.includes(",")) {
-          return res.status(400).json({ message: `Subject must be one canonical value: ${mapping.subject}` });
-        }
-        if (!configuredClasses.has(mapping.className)) {
-          return res.status(400).json({ message: `Class ${mapping.className} is not configured for this school` });
-        }
-        const allowedSections = classSections[mapping.className]?.length
-          ? classSections[mapping.className]
-          : (meta.sections ?? []);
-        if (!allowedSections.includes(mapping.section)) {
-          return res.status(400).json({ message: `Section ${mapping.section} is not configured for Class ${mapping.className}` });
-        }
-        const allowedSubjects = classSubjects[mapping.className]?.length
-          ? classSubjects[mapping.className]
-          : globalSubjects;
-        if (!allowedSubjects.includes(mapping.subject)) {
-          return res.status(400).json({ message: `${mapping.subject} is not configured for Class ${mapping.className}` });
-        }
-        const key = `${mapping.className}\u001f${mapping.section}\u001f${mapping.subject}`;
-        if (mappingKeys.has(key)) {
-          return res.status(400).json({ message: `Duplicate mapping for Class ${mapping.className}, Section ${mapping.section}, ${mapping.subject}` });
-        }
-        mappingKeys.add(key);
-      }
       const rows = await storage.replaceFacultyMappings(parsed.data.teacherId, schoolId, parsed.data.mappings);
       res.json(rows);
     } catch (err: any) {
@@ -4871,7 +4209,7 @@ Thank you for your prompt attention to this matter.
     try {
       const tiers = await storage.getGradingTiers(teacher.schoolId);
       const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.status(404).json({ message: "No grading policy configured for this class" });
+      if (!tier) return res.json({ rules: [], passPercentage: 35 });
       const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch (err) {
@@ -4962,7 +4300,7 @@ Thank you for your prompt attention to this matter.
 
   /** GET /api/teacher/promotion-decisions/:class/:section/:term
    *  Returns all stored promotion decisions for the given class/section/term.
-   *  Access is limited to the teacher's current authoritative assignment. */
+   *  Any authenticated teacher can view (read-only unless they are the assigned teacher). */
   app.get("/api/teacher/promotion-decisions/:class/:section/:term", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -4971,12 +4309,7 @@ Thank you for your prompt attention to this matter.
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
-        return res.status(403).json({ message: "Not authorized for this class-section." });
-      }
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, sessionId);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, (req as any).viewSessionId ?? undefined);
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
@@ -4992,54 +4325,27 @@ Thank you for your prompt attention to this matter.
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     try {
-      const requestSchema = z.object({
-        class: z.string().trim().min(1),
-        section: z.string().trim().min(1),
-        term: z.string().trim().min(1),
-        lock: z.boolean().optional(),
-        entries: z.array(z.object({
-          studentId: z.number().int().positive(),
-          decision: z.enum(["promoted", "retained"]),
-          targetClass: z.string().trim().min(1),
-          targetSection: z.string().trim().min(1),
-        })).min(1),
-      });
-      const parsed = requestSchema.safeParse(req.body);
-      if (!parsed.success) {
+      const { class: cls, section, term, lock, entries } = req.body;
+      if (!cls || !section || !term || !Array.isArray(entries)) {
         return res.status(400).json({ message: "class, section, term, and entries are required" });
       }
-      const { class: cls, section, term, lock, entries } = parsed.data;
-      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
+      // Verify teacher is assigned to this class-section
+      const allMappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const isAssigned = allMappings.some(m => m.className === cls && m.section === section)
+        || (teacher.assignedClass === cls && teacher.assignedSection === section);
+      if (!isAssigned) {
         return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
       }
-      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const metadata = await storage.getAllSchoolMetadata(teacher.schoolId);
-      const configuredClasses = Array.isArray(metadata.classes) ? metadata.classes : [];
-      const configuredSections = Array.isArray(metadata.sections) ? metadata.sections : [];
-      if (configuredClasses.length === 0 || configuredSections.length === 0 ||
-          entries.some(entry => !configuredClasses.includes(entry.targetClass) || !configuredSections.includes(entry.targetSection))) {
-        return res.status(400).json({ message: "Each promotion destination must be configured for this school." });
-      }
-      if (new Set(entries.map(entry => entry.studentId)).size !== entries.length) {
-        return res.status(400).json({ message: "Each student may appear only once." });
-      }
-      const authoritativeEntries = await Promise.all(entries.map(async entry => {
-        if (!await isStudentEnrolledInScope(teacher.schoolId, sessionId, entry.studentId, cls, section)) {
-          throw new AcademicScopeError("ENROLLMENT_NOT_FOUND", "Every student must be enrolled in this class-section for the selected session.");
-        }
-        const result = await calculateStudentAcademicResult({
-          schoolId: teacher.schoolId, sessionId, studentId: entry.studentId, currentTerm: term, publishedOnly: false,
-        });
-        if (!result.complete || result.promoted === null) {
-          throw new AcademicCalculationError("POLICY_CONFIGURATION_INCOMPLETE", "A student's authoritative academic result is incomplete.");
-        }
-        return {
-          ...entry,
-          autoSuggestion: result.promoted ? "promoted" : "retained",
-        };
-      }));
-      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, authoritativeEntries, sessionId);
+      // Tag the ledger with the academic session. Prefer the header value
+      // (admin previewing a session); otherwise resolve the active session
+      // so teacher-submitted decisions are always year-tagged correctly.
+      const activeSessForTag = (req as any).viewSessionId
+        ? null
+        : await storage.getActiveSession(teacher.schoolId);
+      const ledgerSessionId: number | null =
+        (req as any).viewSessionId ?? activeSessForTag?.id ?? null;
+
+      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries, ledgerSessionId ?? undefined);
       res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
@@ -5063,17 +4369,6 @@ Thank you for your prompt attention to this matter.
       if (!term || !cls || !section) {
         return res.status(400).json({ message: "term, class and section query params are required" });
       }
-      if (!Number.isInteger(studentId) || studentId <= 0) {
-        return res.status(400).json({ message: "Invalid student ID" });
-      }
-      const sessionId = await resolveAcademicSessionId(req, teacher.schoolId);
-      if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      if (!await isTeacherAuthorizedForAssignment(teacher, cls, section)) {
-        return res.status(403).json({ message: "Not authorized for this class-section" });
-      }
-      if (!await isStudentEnrolledInScope(teacher.schoolId, sessionId, studentId, cls, section)) {
-        return res.status(403).json({ message: "Student is not enrolled in this class-section for the selected session." });
-      }
 
       // ── Step 1: check policy config to see if promotionGateVerdict is enabled ──
       const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
@@ -5093,7 +4388,7 @@ Thank you for your prompt attention to this matter.
       }
 
       // ── Step 2: fetch the verdict from the Promotion Ledger ──
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, sessionId);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
       const verdict = decisions.find(d => d.studentId === studentId);
 
       if (!verdict) {
