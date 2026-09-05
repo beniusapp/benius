@@ -3973,6 +3973,19 @@ export class DatabaseStorage {
       .orderBy(gradingTiers.sortOrder);
   }
 
+  /**
+   * Resolves the examination pass policy from the authenticated tenant's
+   * class-scoped grading tier. Callers must treat an absent result as a
+   * configuration error; there is deliberately no universal fallback.
+   */
+  async resolveClassPassPolicy(schoolId: number, studentClass: string): Promise<GradingTier | undefined> {
+    const normalizedClass = String(studentClass).trim();
+    const tiers = await this.getGradingTiers(schoolId);
+    return tiers.find(tier =>
+      (tier.classes || []).map(value => String(value).trim()).includes(normalizedClass)
+    );
+  }
+
   async upsertGradingTier(data: InsertGradingTier & { id?: number }): Promise<GradingTier> {
     if (data.id) {
       const { id, ...rest } = data;
@@ -4197,6 +4210,8 @@ export class DatabaseStorage {
     subjectList: string[];
     passThreshold: number;
   }> {
+    const passPolicy = await this.resolveClassPassPolicy(schoolId, cls);
+    if (!passPolicy) throw new Error(`No grading tier configured for class ${cls}.`);
     // Admin analytics shows ALL scores regardless of published status —
     // the published flag gates student-facing views only, not principal oversight.
     const conditions: SQL<unknown>[] = [
@@ -4284,7 +4299,7 @@ export class DatabaseStorage {
     const subjectSet = new Set<string>();
     for (const d of Object.values(byStudent)) for (const s of Object.keys(d.subjectScores)) subjectSet.add(s);
     const subjectList = Array.from(subjectSet);
-    const passThreshold = studentList.length > 0 ? studentList[0].tierPassThreshold : 35;
+    const passThreshold = passPolicy.passPercentage;
 
     return { students: studentList, subjectAverages, subjectList, passThreshold };
   }
@@ -4343,7 +4358,7 @@ export class DatabaseStorage {
     const tiers = await this.getGradingTiers(schoolId);
     const allRules = await this.getGradingRules(schoolId);
     const matchedTier = tiers.find(t => Array.isArray(t.classes) && t.classes.includes(studentClass));
-    if (!matchedTier) return { passPercentage: 35, gradeLabel: null, gradePoint: null, remarks: null };
+    if (!matchedTier) throw new Error(`No grading tier configured for class ${studentClass}.`);
     const tierRules = allRules.filter(r => r.tierId === matchedTier.id)
       .sort((a, b) => b.minPercent - a.minPercent);
     const matchedRule = tierRules.find(r => percentage >= r.minPercent && percentage <= r.maxPercent);

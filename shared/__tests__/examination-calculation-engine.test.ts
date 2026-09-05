@@ -94,4 +94,55 @@ describe("examination calculation engine", () => {
       policy: { ...input().policy, schoolId: 99 },
     }))).toThrow("Examination policy school 99 does not match calculation school 11.");
   });
+
+  it("uses the supplied configured pass percentage at exact boundaries without a fallback", () => {
+    const boundaryStudents = [{
+      ...students[0],
+      scores: [{ subject: "Math", examType: "Unit", marks: 39, totalMarks: 100, isAbsent: false }],
+    }];
+    const policy = {
+      schoolId: 11,
+      examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }),
+      promotionFailRules: JSON.stringify({ rule1: { enabled: false } }),
+    };
+    expect(computeAllStudentResults(input({ students: boundaryStudents, policy, passPercentage: 40 }))[0]
+      .termResults.Term[0].passed).toBe(false);
+    expect(computeAllStudentResults(input({
+      students: [{ ...boundaryStudents[0], scores: [{ subject: "Math", examType: "Unit", marks: 40, totalMarks: 100, isAbsent: false }] }],
+      policy, passPercentage: 40,
+    }))[0].termResults.Term[0].passed).toBe(true);
+    expect(computeAllStudentResults(input({
+      students: [{ ...boundaryStudents[0], scores: [{ subject: "Math", examType: "Unit", marks: 49, totalMarks: 100, isAbsent: false }] }],
+      policy, passPercentage: 50,
+    }))[0].termResults.Term[0].passed).toBe(false);
+    expect(computeAllStudentResults(input({
+      students: [{ ...boundaryStudents[0], scores: [{ subject: "Math", examType: "Unit", marks: 50, totalMarks: 100, isAbsent: false }] }],
+      policy, passPercentage: 50,
+    }))[0].termResults.Term[0].passed).toBe(true);
+  });
+
+  it("requires a caller-supplied valid pass percentage", () => {
+    expect(() => computeAllStudentResults(input({ passPercentage: Number.NaN })))
+      .toThrow("configured examination pass percentage");
+  });
+
+  it("keeps distinct school policy contexts independent", () => {
+    const schoolAScore = [{ ...students[0], scores: [{ subject: "Math", examType: "Unit", marks: 45, totalMarks: 100, isAbsent: false }] }];
+    const schoolBScore = [{ ...students[0], scores: [{ subject: "Math", examType: "Unit", marks: 45, totalMarks: 100, isAbsent: false }] }];
+    const policy = (schoolId: number) => ({
+      schoolId,
+      examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }),
+      promotionFailRules: JSON.stringify({ rule1: { enabled: false } }),
+    });
+    const schoolA = computeAllStudentResults(input({
+      context: { schoolId: 11, sessionId: 101 }, students: schoolAScore, policy: policy(11), passPercentage: 40,
+    }))[0];
+    const schoolB = computeAllStudentResults(input({
+      context: { schoolId: 22, sessionId: 202 }, students: schoolBScore, policy: policy(22), passPercentage: 50,
+    }))[0];
+    expect(schoolA.termResults.Term[0].passed).toBe(true);
+    expect(schoolB.termResults.Term[0].passed).toBe(false);
+    expect(schoolA.schoolId).toBe(11);
+    expect(schoolB.schoolId).toBe(22);
+  });
 });

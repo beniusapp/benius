@@ -31,3 +31,4 @@
 - [First-session onboarding](first-session-onboarding.md) — a newly created session defaults to draft/inactive, so first-session activation must be handled explicitly.
 - [Startup DDL deadlocks](startup-ddl-deadlocks.md) — concurrent Replit launches can deadlock startup ALTER TABLE work and surface as a misleading Preview network/DNS failure.
 - [Teacher Examination isolation](teacher-examination-isolation.md) — all score reads/writes/calculations require authenticated school plus a validated school-owned academic session.
+- [Examination pass-policy authority](examination-pass-policy-authority.md) — pass/fail uses the tenant/class grading-tier percentage; missing policy fails explicitly, while stored pass marks are legacy only.

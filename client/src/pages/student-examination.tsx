@@ -96,7 +96,7 @@ function resolveSessionsWithEnrollments(
 
 // ─────────────────────────── Term Computation ──────────────────────────────────
 function computeStudentTermResults(
-  scores: ExamScore[], policy: ExamPolicyTier, passThreshold = 35,
+  scores: ExamScore[], policy: ExamPolicyTier, passThreshold: number,
 ): StudentTermResults {
   let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
@@ -296,11 +296,12 @@ function PrintStyles() {
 }
 
 // ─────────────────────────── Score status badge ─────────────────────────────────
-function StatusBadge({ score }: { score: ExamScore | undefined }) {
+function StatusBadge({ score, passThreshold }: { score: ExamScore | undefined; passThreshold: number | null }) {
   if (!score) return <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-700/40 text-slate-500 border border-slate-700">Pending</span>;
   if (score.isAbsent) return <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-orange-500/15 text-orange-400 border border-orange-500/30">Absent</span>;
+  if (passThreshold === null) return <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-700/40 text-slate-500 border border-slate-700">Policy unavailable</span>;
   const pct = score.totalMarks > 0 ? (score.marks / score.totalMarks) * 100 : 0;
-  return pct >= (score.passMarks / score.totalMarks * 100)
+  return pct >= passThreshold
     ? <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Pass</span>
     : <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-500/15 text-red-400 border border-red-500/30">Fail</span>;
 }
@@ -322,7 +323,7 @@ const selectStyle = { background: "#020617", borderColor: "#1e293b", colorScheme
 function ViewMarksPanel({
   allScores, policy, passThreshold, isLoading, selectedClass, section, schoolId,
 }: {
-  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
+  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number | null;
   isLoading: boolean; selectedClass: string; section: string; schoolId: number;
 }) {
   const [viewSubject,  setViewSubject]  = useState("");
@@ -558,7 +559,7 @@ function ViewMarksPanel({
             {[
               { label: "Exams Taken", value: `${scored.length} / ${examTypeOptions.length}`, color: "text-white" },
               { label: "Average %",   value: avgPct !== null ? `${avgPct}%` : "—",
-                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : avgPct >= 33 ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
+                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : passThreshold !== null && avgPct >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
               { label: "Best Exam",   value: bestRow ? `${bestRow.et} · ${bestRow.pct}%` : "—", color: "text-yellow-400" },
             ].map(s => (
               <div key={s.label} className="px-4 py-3" style={{ background: "#0f172a" }}>
@@ -606,7 +607,7 @@ function ViewMarksPanel({
                     <td className="py-3 px-4 text-slate-400 text-sm">{score ? score.totalMarks : "—"}</td>
                     <td className="py-3 px-4">
                       {pct !== null
-                        ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+                        ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : passThreshold !== null && pct >= passThreshold ? "text-yellow-400" : "text-red-400"}`}>
                             {pct.toFixed(1)}%
                           </span>
                         : <span className="text-slate-600 text-xs">—</span>}
@@ -617,7 +618,7 @@ function ViewMarksPanel({
                         : <span className="text-slate-600 text-xs">—</span>}
                     </td>
                     <td className="py-3 px-4">
-                      <StatusBadge score={score} />
+                      <StatusBadge score={score} passThreshold={passThreshold} />
                     </td>
                     <td className="py-3 px-4">
                       {contribs.length > 0
@@ -667,7 +668,7 @@ function ViewMarksPanel({
     const avgPct = scored.length > 0
       ? Math.round(scored.reduce((s, r) => s + (r.pct ?? 0), 0) / scored.length * 10) / 10
       : null;
-    const passCount = scored.filter(r => r.pct !== null && r.score && r.pct >= (r.score.passMarks / r.score.totalMarks * 100)).length;
+    const passCount = passThreshold === null ? 0 : scored.filter(r => r.pct !== null && r.pct >= passThreshold).length;
     const failCount = scored.length - passCount;
     const absentCount = rows.filter(r => r.score?.isAbsent).length;
 
@@ -695,7 +696,7 @@ function ViewMarksPanel({
             {[
               { label: "Subjects Taken",  value: `${rows.filter(r => r.score).length} / ${subjectOptions.length}`, color: "text-white" },
               { label: "Average %",       value: avgPct !== null ? `${avgPct}%` : "—",
-                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : avgPct >= 33 ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
+                color: avgPct !== null ? (avgPct >= 60 ? "text-emerald-400" : passThreshold !== null && avgPct >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
               { label: "Passed",          value: String(passCount), color: "text-emerald-400" },
               { label: "Failed / Absent", value: `${failCount} / ${absentCount}`, color: failCount + absentCount === 0 ? "text-slate-400" : "text-red-400" },
             ].map(s => (
@@ -748,7 +749,7 @@ function ViewMarksPanel({
                       <td className="py-3 px-4 text-slate-400 text-sm">{score ? score.totalMarks : "—"}</td>
                       <td className="py-3 px-4">
                         {pct !== null
-                          ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+                          ? <span className={`font-bold ${pct >= 60 ? "text-emerald-400" : passThreshold !== null && pct >= passThreshold ? "text-yellow-400" : "text-red-400"}`}>
                               {pct.toFixed(1)}%
                             </span>
                           : <span className="text-slate-600 text-xs">—</span>}
@@ -759,7 +760,7 @@ function ViewMarksPanel({
                           : <span className="text-slate-600 text-xs">—</span>}
                       </td>
                       <td className="py-3 px-4">
-                        <StatusBadge score={score} />
+                        <StatusBadge score={score} passThreshold={passThreshold} />
                       </td>
                       <td className="py-3 px-4">
                         {termPctContrib
@@ -824,12 +825,12 @@ function ViewMarksPanel({
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {score && !score.isAbsent && pct !== null && (
-              <span className={`text-2xl font-extrabold ${pct >= 60 ? "text-emerald-400" : pct >= 33 ? "text-yellow-400" : "text-red-400"}`}>
+              <span className={`text-2xl font-extrabold ${pct >= 60 ? "text-emerald-400" : passThreshold !== null && pct >= passThreshold ? "text-yellow-400" : "text-red-400"}`}>
                 {pct.toFixed(1)}%
               </span>
             )}
             {g && <span className={`text-sm font-bold px-3 py-1 rounded-xl border ${g.color} ${g.bg}`} title={g.remarks}>{g.label}</span>}
-            <StatusBadge score={score} />
+            <StatusBadge score={score} passThreshold={passThreshold} />
           </div>
         </div>
 
@@ -853,7 +854,7 @@ function ViewMarksPanel({
                 { label: "Marks Obtained", value: score.isAbsent ? "Absent" : String(score.marks),
                   color: score.isAbsent ? "text-orange-400" : "text-white" },
                 { label: "Full Marks",  value: String(score.totalMarks), color: "text-slate-300" },
-                { label: "Pass Marks",  value: String(score.passMarks),  color: "text-slate-300" },
+                { label: "Pass Threshold", value: passThreshold === null ? "—" : `${passThreshold}%`, color: "text-slate-300" },
               ].map(s => (
                 <div key={s.label} className="rounded-xl px-4 py-3" style={{ background: "rgba(30,41,59,0.5)", border: "1px solid #1e293b" }}>
                   <p className="text-[10px] text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -872,13 +873,13 @@ function ViewMarksPanel({
               </div>
               <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: "#1e293b" }}>
                 <div
-                  className={`h-full rounded-full transition-all ${pct >= 60 ? "bg-emerald-500" : pct >= 33 ? "bg-yellow-500" : "bg-red-500"}`}
+                  className={`h-full rounded-full transition-all ${pct >= 60 ? "bg-emerald-500" : passThreshold !== null && pct >= passThreshold ? "bg-yellow-500" : "bg-red-500"}`}
                   style={{ width: `${Math.min(100, pct)}%` }}
                 />
               </div>
               <div className="flex justify-between text-[10px] text-slate-600">
                 <span>0</span>
-                <span className="text-slate-500">Pass: {score.passMarks}/{score.totalMarks} ({Math.round(score.passMarks / score.totalMarks * 100)}%)</span>
+                <span className="text-slate-500">Pass threshold: {passThreshold ?? "—"}%</span>
                 <span>{score.totalMarks}</span>
               </div>
             </div>
@@ -942,7 +943,7 @@ function ResultsPanel({
   allScores, policy, passThreshold, isLoading, attendancePct,
   selectedClass, section, sessionLabel, studentName, dsid, onPrint,
 }: {
-  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number;
+  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number | null;
   isLoading: boolean; attendancePct: number | null; selectedClass: string;
   section: string; sessionLabel: string; studentName: string; dsid: string;
   onPrint: () => void;
@@ -961,7 +962,7 @@ function ResultsPanel({
   }, [termNames, resTerm]);
 
   const { termResults, allTermFailCounts } = useMemo<StudentTermResults>(() => {
-    if (!policy || allScores.length === 0) return { termResults: {}, allTermFailCounts: {} };
+    if (!policy || passThreshold === null || allScores.length === 0) return { termResults: {}, allTermFailCounts: {} };
     return computeStudentTermResults(allScores, policy, passThreshold);
   }, [allScores, policy, passThreshold]);
 
@@ -1051,7 +1052,7 @@ function ResultsPanel({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ background: "#1e293b" }}>
           {[
             { label: "Term Avg",   value: termAvg !== null ? `${termAvg}%` : "—",
-              color: termAvg !== null ? (termAvg >= 60 ? "text-emerald-400" : termAvg >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
+              color: termAvg !== null ? (termAvg >= 60 ? "text-emerald-400" : passThreshold !== null && termAvg >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
             { label: "Grade",      value: termGrade?.label ?? "—", color: termGrade ? termGrade.color : "text-slate-600" },
             { label: "Fails",      value: String(failCount),
               color: failCount === 0 ? "text-emerald-400" : failCount <= 2 ? "text-amber-400" : "text-red-400" },
@@ -1315,7 +1316,7 @@ export default function StudentExamination() {
       staleTime: 60000,
     });
 
-  const passThreshold = policyData?.passPercentage ?? 35;
+  const passThreshold = policyData?.passPercentage ?? null;
 
   // ── All scores — cache key includes sessionId to prevent cross-session bleed ──
   const { data: allScoresData, isLoading: scoresLoading } =

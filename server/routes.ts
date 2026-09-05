@@ -2165,7 +2165,9 @@ export async function registerRoutes(
       (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
     );
     if (!tier) return res.status(404).json({ message: `No exam policy configured for Class ${cls}` });
-    res.json(tier);
+    const passPolicy = await storage.resolveClassPassPolicy(student.schoolId, cls);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for Class ${cls}` });
+    res.json({ ...tier, passPercentage: passPolicy.passPercentage });
   });
 
   // Student: enrollment history — exact class/section per academic session

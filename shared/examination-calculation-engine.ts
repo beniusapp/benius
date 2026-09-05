@@ -120,6 +120,9 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
   if (policy.schoolId !== context.schoolId) {
     throw new Error(`Examination policy school ${policy.schoolId} does not match calculation school ${context.schoolId}.`);
   }
+  if (!Number.isFinite(passPercentage) || passPercentage < 0 || passPercentage > 100) {
+    throw new Error("A configured examination pass percentage between 0 and 100 is required.");
+  }
   let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: any = {};
   try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}

@@ -731,15 +731,23 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   // Grading rules fetch — same no-cache useEffect pattern
   const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
-  const [gradingPassPct, setGradingPassPct] = useState(35);
+  const [gradingPassPct, setGradingPassPct] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
+    if (!resClass) { setGradingRules([]); setGradingPassPct(null); return; }
     let cancelled = false;
     fetch(`/api/teacher/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
-      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
-      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
+      .then(async r => {
+        if (!r.ok) throw new Error("No grading tier configured for this class");
+        return r.json();
+      })
+      .then(d => {
+        if (!cancelled && typeof d.passPercentage === "number") {
+          setGradingRules(d.rules ?? []);
+          setGradingPassPct(d.passPercentage);
+        }
+      })
+      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(null); } });
     return () => { cancelled = true; };
   }, [resClass]);
 
@@ -862,7 +870,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
   const allResults = useMemo(() => {
-    if (!selectedSessionId || !policyTier || classScores.length === 0) return [];
+    if (!selectedSessionId || !policyTier || gradingPassPct === null || classScores.length === 0) return [];
     return calculateExaminationResults({
       context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
       students: classScores, policy: policyTier, attendance: attendanceSummary,
@@ -977,7 +985,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       setIsSyncingPolicy(false);
     }
 
-    if (!freshPolicy) {
+    if (!freshPolicy || gradingPassPct === null) {
       toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
       return;
     }
@@ -1353,11 +1361,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {weightedAvg !== null ? (
                                 <div>
-                                  <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
+                                  <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : gradingPassPct !== null && weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>
                                     {weightedAvg}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
+                                    <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : gradingPassPct !== null && weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`}
                                       style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                   </div>
                                 </div>
@@ -1427,11 +1435,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                             <td className="py-3 px-4 text-center">
                               {cumulativePct !== null ? (
                                 <div>
-                                  <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>
+                                  <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : gradingPassPct !== null && cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>
                                     {cumulativePct}%
                                   </span>
                                   <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                    <div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`}
+                                    <div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : gradingPassPct !== null && cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`}
                                       style={{ width: `${Math.min(100, cumulativePct)}%` }} />
                                   </div>
                                 </div>
@@ -1562,6 +1570,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     enabled: tab === "view" && !!selectedSessionId && !!viewSubject && !!viewExamType && !!viewClass && !!viewSection,
   });
 
+  // Progress reports are calculated in this parent (not ResultsTab), so obtain
+  // the tenant-derived class pass policy here as well. A missing tier is never
+  // replaced with a universal percentage.
+  const [viewPassPercentage, setViewPassPercentage] = useState<number | null>(null);
+  useEffect(() => {
+    if (!viewClass) { setViewPassPercentage(null); return; }
+    let cancelled = false;
+    fetch(`/api/teacher/grading-rules/${encodeURIComponent(viewClass)}`, { credentials: "include" })
+      .then(async response => {
+        if (!response.ok) throw new Error("No grading tier configured for this class");
+        return response.json();
+      })
+      .then(data => {
+        if (!cancelled) setViewPassPercentage(typeof data.passPercentage === "number" ? data.passPercentage : null);
+      })
+      .catch(() => { if (!cancelled) setViewPassPercentage(null); });
+    return () => { cancelled = true; };
+  }, [viewClass]);
+
   // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
   const auditMap = useMemo(() => {
     const map: Record<number, { updatedBy: string; updatedAt: string }> = {};
@@ -1617,6 +1644,10 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   function generateProgressReport() {
+    if (viewPassPercentage === null) {
+      toast({ title: "Pass policy unavailable", description: "Configure a grading tier for this class before generating a report.", variant: "destructive" });
+      return;
+    }
     const scored = viewScores.filter(s => !s.isAbsent);
     const absent = viewScores.filter(s => s.isAbsent);
     const totalMax = viewScores[0]?.totalMarks ?? 0;
@@ -1627,8 +1658,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
     }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
 
-    const passCount = gradedScores.filter(s => s.pct >= 33).length;
-    const failCount = gradedScores.filter(s => s.pct < 33).length;
+    const passCount = gradedScores.filter(s => s.pct >= viewPassPercentage).length;
+    const failCount = gradedScores.filter(s => s.pct < viewPassPercentage).length;
     const avgPct = scored.length > 0
       ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length)
       : 0;
@@ -1646,7 +1677,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       }
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
       const g = computeGrade(pct, []);
-      const isPass = pct >= 33;
+      const isPass = pct >= viewPassPercentage;
       return `<tr>
         <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
         <td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td>

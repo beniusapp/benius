@@ -51,7 +51,7 @@ interface RawStudentScore {
 interface AttendanceSummary { studentId: number; attendancePct: number | null; presentDays: number; totalDays: number; }
 interface ExamPolicyTier {
   id: number; tierName: string; applicableClasses: string[]; examWeights: string;
-  promotionFailRules: string; resultsConfig?: string;
+  promotionFailRules: string; resultsConfig?: string; passPercentage?: number;
 }
 interface CompBreakdown {
   sourceExam: string; weight: number;
@@ -132,7 +132,7 @@ function computeAllStudentResults(
   students: RawStudentScore[],
   policy: ExamPolicyTier,
   attendanceSummary: AttendanceSummary[],
-  passPercentage: number = 35,
+  passPercentage: number,
   ruleTermAvg?: { enabled: boolean; minPct: number },
   currentTerm?: string,
   cumulConfig?: CumulConfigShape,
@@ -830,6 +830,7 @@ export default function PerformanceAnalytics({
   classes, sections: allSections, classSections, classSubjects, classExamTypes, examTypes: globalExamTypes,
   initialTab, onNavigateTab, allowedSubs,
 }: Props) {
+  const { toast } = useToast();
   const allAnalyticsTabs = [
     { key: "view" as const, label: "View Marks", Icon: BarChart3 },
     { key: "results" as const, label: "Results", Icon: Award },
@@ -907,6 +908,10 @@ export default function PerformanceAnalytics({
   });
 
   function generateProgressReport() {
+    if (gradingPassPct === null) {
+      toast({ title: "Pass policy unavailable", description: "Configure a grading tier for this class before generating a report.", variant: "destructive" });
+      return;
+    }
     const scored = viewScores.filter(s => !s.isAbsent);
     const absent = viewScores.filter(s => s.isAbsent);
     const totalMax = viewScores[0]?.totalMarks ?? 0;
@@ -915,8 +920,8 @@ export default function PerformanceAnalytics({
       const g = computeGrade(pct, []);
       return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
     }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
-    const passCount = gradedScores.filter(s => s.pct >= 33).length;
-    const failCount = gradedScores.filter(s => s.pct < 33).length;
+    const passCount = gradedScores.filter(s => s.pct >= gradingPassPct).length;
+    const failCount = gradedScores.filter(s => s.pct < gradingPassPct).length;
     const avgPct = scored.length > 0 ? Math.round(scored.reduce((sum, s) => sum + (totalMax > 0 ? (s.marks / totalMax) * 100 : 0), 0) / scored.length) : 0;
     const topper = gradedScores[0];
     const generatedOn = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
@@ -924,7 +929,7 @@ export default function PerformanceAnalytics({
       if (s.isAbsent) return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td>—</td><td>—</td><td>—</td><td><span class="badge absent">ABSENT</span></td><td>—</td></tr>`;
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
       const g = computeGrade(pct, []);
-      const isPass = pct >= 33;
+      const isPass = pct >= gradingPassPct;
       return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td><td><span class="grade-badge">${g.label}</span></td><td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td><td class="remarks">${g.remarks ?? ""}</td></tr>`;
     });
     const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><title>Progress Report — ${viewSubject} ${viewExamType}</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#1a1a2e;background:#fff;padding:20px;}@media print{body{padding:0;}button{display:none!important;}}.page-header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1e3a5f;padding-bottom:12px;margin-bottom:16px;}.school-name{font-size:20px;font-weight:800;color:#1e3a5f;}.report-label h1{font-size:15px;font-weight:700;color:#1e3a5f;text-align:right;}.report-label p{font-size:10px;color:#64748b;text-align:right;}.meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;background:#f0f4f8;border-radius:8px;padding:12px 16px;margin-bottom:16px;}.meta-item label{font-size:9px;text-transform:uppercase;color:#64748b;display:block;}.meta-item span{font-size:13px;font-weight:700;color:#1e3a5f;}.stat-bar{display:flex;gap:10px;margin-bottom:16px;}.stat-card{flex:1;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;text-align:center;}.stat-card .val{font-size:20px;font-weight:800;color:#1e3a5f;}.stat-card .lbl{font-size:9px;text-transform:uppercase;color:#64748b;}.stat-card.green{border-color:#d1fae5;background:#f0fdf4;}.stat-card.green .val{color:#065f46;}.stat-card.red{border-color:#fee2e2;background:#fff5f5;}.stat-card.red .val{color:#991b1b;}.stat-card.blue .val{color:#1e40af;}table{width:100%;border-collapse:collapse;margin-bottom:16px;}thead tr{background:#1e3a5f;color:#fff;}th{padding:9px 10px;text-align:left;font-size:10px;font-weight:600;}td{padding:8px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;}tr:nth-child(even) td{background:#f8fafc;}td.name{font-weight:600;color:#1e3a5f;}td.remarks{color:#64748b;font-style:italic;}.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:9px;font-weight:700;}.badge.pass{background:#dcfce7;color:#166534;}.badge.fail{background:#fee2e2;color:#991b1b;}.badge.absent{background:#f1f5f9;color:#64748b;}.grade-badge{display:inline-block;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#e0f2fe;color:#0c4a6e;}.print-btn{position:fixed;bottom:20px;right:20px;background:#1e3a5f;color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;}</style></head><body>
@@ -962,14 +967,22 @@ export default function PerformanceAnalytics({
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
   const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
-  const [gradingPassPct, setGradingPassPct] = useState(35);
+  const [gradingPassPct, setGradingPassPct] = useState<number | null>(null);
   useEffect(() => {
-    if (!resClass) { setGradingRules([]); setGradingPassPct(35); return; }
+    if (!resClass) { setGradingRules([]); setGradingPassPct(null); return; }
     let cancelled = false;
     sessionFetch(`/api/admin/analytics/grading-rules/${encodeURIComponent(resClass)}`)
-      .then(r => r.ok ? r.json() : { rules: [], passPercentage: 35 })
-      .then(d => { if (!cancelled) { setGradingRules(d.rules ?? []); setGradingPassPct(d.passPercentage ?? 35); } })
-      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(35); } });
+      .then(async r => {
+        if (!r.ok) throw new Error("No grading tier configured for this class");
+        return r.json();
+      })
+      .then(d => {
+        if (!cancelled && typeof d.passPercentage === "number") {
+          setGradingRules(d.rules ?? []);
+          setGradingPassPct(d.passPercentage);
+        }
+      })
+      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(null); } });
     return () => { cancelled = true; };
   }, [resClass]);
 
@@ -1026,7 +1039,7 @@ export default function PerformanceAnalytics({
   useEffect(() => { if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]); }, [termNames, resTerm]);
 
   const allResults = useMemo(() => {
-    if (!policyTier || classScores.length === 0) return [];
+    if (!policyTier || gradingPassPct === null || classScores.length === 0) return [];
     return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined);
   }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
 
@@ -1356,9 +1369,9 @@ export default function PerformanceAnalytics({
                                 <td className="py-3 px-4 text-center">
                                   {weightedAvg !== null ? (
                                     <div>
-                                      <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>{weightedAvg}%</span>
+                                      <span className={`text-base font-bold ${weightedAvg >= 60 ? "text-emerald-400" : gradingPassPct !== null && weightedAvg >= gradingPassPct ? "text-yellow-400" : "text-red-400"}`}>{weightedAvg}%</span>
                                       <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden">
-                                        <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${Math.min(100, weightedAvg)}%` }} />
+                                        <div className={`h-full rounded-full ${weightedAvg >= 60 ? "bg-emerald-500" : gradingPassPct !== null && weightedAvg >= gradingPassPct ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                       </div>
                                     </div>
                                   ) : <span className="text-slate-600 text-xs italic">No data</span>}
@@ -1390,8 +1403,8 @@ export default function PerformanceAnalytics({
                                 <td className="py-3 px-4 text-center">
                                   {cumulativePct !== null ? (
                                     <div>
-                                      <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>{cumulativePct}%</span>
-                                      <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden"><div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`} style={{ width: `${Math.min(100, cumulativePct)}%` }} /></div>
+                                      <span className={`text-base font-bold ${cumulativePct >= 60 ? "text-blue-300" : gradingPassPct !== null && cumulativePct >= gradingPassPct ? "text-blue-400" : "text-red-400"}`}>{cumulativePct}%</span>
+                                      <div className="w-20 mx-auto mt-1 h-1.5 rounded-full bg-[#1e293b] overflow-hidden"><div className={`h-full rounded-full ${cumulativePct >= 60 ? "bg-blue-500" : gradingPassPct !== null && cumulativePct >= gradingPassPct ? "bg-blue-400" : "bg-red-500"}`} style={{ width: `${Math.min(100, cumulativePct)}%` }} /></div>
                                     </div>
                                   ) : <span className="text-slate-600 text-xs italic" title="Scores for all contributing terms are required">Partial</span>}
                                 </td>

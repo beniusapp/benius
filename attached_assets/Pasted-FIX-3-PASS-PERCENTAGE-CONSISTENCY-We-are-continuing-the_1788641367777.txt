@@ -1,0 +1,405 @@
+FIX 3 — PASS PERCENTAGE CONSISTENCY
+
+We are continuing the School MIS Examination calculation stabilization work.
+
+IMPORTANT PERMANENT ARCHITECTURE RULE:
+This is a TRUE MULTI-TENANT School MIS.
+
+Tenant isolation is mandatory in every change.
+
+A teacher/user from School A must never access, retrieve, calculate with, save, update, or infer School B's students, examination scores, academic sessions, policies, grading rules, results, attendance, faculty data, or other school-owned data.
+
+The authenticated teacher's school context is authoritative.
+
+NEVER trust a client-supplied schoolId as authorization.
+
+==================================================
+CURRENT STATUS
+==================================================
+
+FIX 1 — COMPLETE:
+A shared Examination calculation engine was established in:
+
+shared/examination-calculation-engine.ts
+
+Tests were added.
+
+Teacher Examination now uses the shared calculation engine.
+
+FIX 2 — COMPLETE:
+Academic Session is now a real validated Examination data boundary.
+
+Teacher Examination resolves:
+
+authenticated teacher
+→ authenticated teacher.schoolId
+→ x-view-session-id
+→ validated academic session belonging to that school
+→ session-scoped Examination data
+→ shared calculation engine
+
+Do NOT regress any Fix 1 or Fix 2 behavior.
+
+==================================================
+FIX 3 GOAL
+==================================================
+
+Fix PASS PERCENTAGE inconsistency.
+
+The application currently has competing pass thresholds/logic, including historically identified values such as:
+
+- 33%
+- 35%
+- passMarks
+- configured Examination policy passPercentage
+- hardcoded/fallback thresholds in different screens
+
+This can cause the same student's result to be Pass in one place and Fail in another.
+
+We need ONE AUTHORITATIVE PASS PERCENTAGE for Examination calculations.
+
+The school's configured Examination policy passPercentage must be authoritative.
+
+Do NOT impose a universal 33%, 35%, or any other percentage.
+
+==================================================
+REQUIRED AUTHORITY FLOW
+==================================================
+
+The intended authority chain is:
+
+authenticated teacher
+→ authenticated teacher.schoolId
+→ Examination policy belonging to that school
+→ configured passPercentage
+→ shared Examination calculation engine
+→ subject pass/fail
+→ downstream Examination results
+
+A client-supplied schoolId MUST NOT select the policy.
+
+A teacher must never be able to calculate using another school's policy.
+
+Preserve strict tenant isolation.
+
+==================================================
+FIRST: INSPECT CURRENT CODE
+==================================================
+
+Before changing anything, inspect the current repository state after Fix 2.
+
+Inspect at minimum:
+
+- shared/examination-calculation-engine.ts
+- shared/__tests__/examination-calculation-engine.test.ts
+- client/src/pages/teacher-modules/examination.tsx
+- server/teacher-routes.ts
+- server/storage.ts
+- Examination policy/schema definitions
+- policy/session helper code
+- any Teacher Examination Results calculation paths
+- Performance Analytics calculation code if it contains pass/fail thresholds
+- any printable/report result calculation code
+- any Admin/Teacher Examination calculation paths that determine Pass/Fail
+- existing Examination tests
+
+Search the repository for:
+
+- passPercentage
+- pass percentage
+- passMarks
+- 33
+- 35
+- passed
+- pass/fail
+- Fail
+- failed
+- promotion
+- computeGrade
+- computeAllStudentResults
+
+Do not blindly replace every occurrence of 33 or 35.
+
+Determine which occurrences are actually Examination pass/fail thresholds.
+
+==================================================
+CORE REQUIREMENT
+==================================================
+
+There must be one authoritative pass percentage for Examination calculation.
+
+The shared Examination calculation engine should receive the authoritative configured pass percentage as calculation input.
+
+Subject pass/fail must use:
+
+percentage >= configured passPercentage
+
+Do not introduce another fallback threshold inside the engine.
+
+Do not make 33 or 35 a hidden default inside the calculation engine.
+
+Do not let passMarks silently override the configured Examination policy unless the current application architecture explicitly defines passMarks as the authoritative policy value.
+
+If passMarks is only historical/storage/display data, do not treat it as a competing calculation authority.
+
+Do not rewrite historical database data merely to make this fix work.
+
+==================================================
+MULTI-TENANT POLICY RESOLUTION
+==================================================
+
+When resolving the pass percentage:
+
+1. Obtain the authenticated teacher identity.
+2. Resolve the teacher's authoritative schoolId from the authenticated server-side teacher record.
+3. Resolve the Examination policy for that school.
+4. Verify the policy belongs to the authenticated teacher's school.
+5. Use that policy's configured passPercentage.
+6. Pass that value into the shared calculation engine.
+
+Never do:
+
+client schoolId
+→ policy lookup
+→ calculation
+
+Never allow:
+
+client schoolId
+→ another school's policy
+
+If a policy belongs to another school, reject it rather than using it.
+
+Do not leak the existence or details of another school's policy.
+
+==================================================
+ACADEMIC SESSION
+==================================================
+
+Preserve FIX 2.
+
+Pass percentage policy resolution must remain tenant-scoped.
+
+Examination calculations must continue to use the already validated Academic Session.
+
+Do not reintroduce:
+
+- session mixing
+- NULL-session fallback
+- unscoped score retrieval
+- client-selected school authorization
+
+Do not change the roster model.
+
+==================================================
+ROSTER / FACULTY / ENROLLMENT
+==================================================
+
+Do NOT change the existing Examination roster rule.
+
+The Teacher Examination roster remains the live Student Registry roster:
+
+students.school_id = authenticated teacher school
+students.is_active = true
+students.class = selected class
+students.section = selected section
+
+Enrollment is NOT required merely to display the Examination roster.
+
+Faculty Mapping is NOT an Examination permission prerequisite.
+
+Do not change these behaviors during Fix 3.
+
+==================================================
+CALCULATION RULES
+==================================================
+
+Do NOT change:
+
+- exam component weighting
+- missing component handling
+- absent behavior
+- subject percentage calculation
+- term averaging
+- cumulative calculation
+- grading rules
+- promotion rule interpretation
+- attendance calculation
+- Academic Session semantics
+
+This fix is ONLY about making the pass percentage authoritative and consistent.
+
+If an existing calculation already does:
+
+percentage >= policy.passPercentage
+
+keep that behavior.
+
+Only remove competing thresholds/fallbacks that cause inconsistency.
+
+==================================================
+GRADE VS PASS/FAIL
+==================================================
+
+Do not confuse grade boundaries with pass percentage.
+
+Grade calculation remains governed by the configured grading rules.
+
+Pass/fail remains governed by the configured Examination passPercentage.
+
+For example, a student can have a particular grade according to grading rules while Pass/Fail is determined independently by the configured pass percentage.
+
+Do not change grade boundaries in this fix.
+
+==================================================
+PROMOTION
+==================================================
+
+Inspect promotion-related logic because pass/fail may feed promotion calculations.
+
+Do not redesign promotion rules.
+
+Ensure that where promotion logic depends on Examination subject pass/fail, it receives the same authoritative pass/fail result produced using the configured passPercentage.
+
+Do not introduce a new promotion policy.
+
+==================================================
+PERFORMANCE ANALYTICS / OTHER SCREENS
+==================================================
+
+If another Examination-related screen contains a duplicate pass/fail threshold, determine whether it is currently calculating independently.
+
+If it is an Examination calculation path, make it consume the same authoritative policy/engine result where practical.
+
+Do not perform the larger calculation consolidation task planned for later.
+
+Keep the change narrowly scoped to pass-percentage consistency.
+
+If Performance Analytics is intentionally deferred because it belongs to the later consolidation task, document that clearly and do not make unrelated refactors.
+
+==================================================
+TESTS REQUIRED
+==================================================
+
+Add or update focused tests.
+
+At minimum test:
+
+1. Configured 40%:
+   39% = Fail
+   40% = Pass
+
+2. Configured 50%:
+   49% = Fail
+   50% = Pass
+
+3. Different schools can have different pass percentages.
+
+Example:
+
+School A:
+passPercentage = 40
+
+School B:
+passPercentage = 50
+
+Verify each calculation uses its own school's policy.
+
+4. Cross-school policy cannot be used.
+
+A teacher authenticated to School A must not be able to calculate using School B's policy.
+
+5. No hidden 33% fallback.
+
+6. No hidden 35% fallback.
+
+7. Existing Academic Session scoping remains intact.
+
+8. Existing tenant/school score scoping remains intact.
+
+9. Existing live Student Registry roster behavior remains unchanged.
+
+10. Faculty Mapping is still not required for Examination roster/mark entry.
+
+11. Enrollment is still not required for Examination roster/mark entry.
+
+12. Shared engine receives the actual configured passPercentage.
+
+If the current test architecture makes some of these better suited to route/integration tests rather than pure engine tests, use the appropriate test layer.
+
+==================================================
+DATABASE / DATA SAFETY
+==================================================
+
+Do NOT:
+
+- change database schema
+- create migrations
+- modify historical scores
+- rewrite existing passMarks data
+- delete data
+- backfill data
+- alter academic sessions
+- alter student enrollment
+- alter faculty mappings
+
+This is a calculation-policy consistency fix.
+
+==================================================
+NO UI REDESIGN
+==================================================
+
+Do not redesign the Teacher Examination UI.
+
+Only make UI changes if absolutely necessary to ensure it displays the authoritative calculation result.
+
+Do not add new unrelated controls.
+
+==================================================
+VALIDATION
+==================================================
+
+After implementation:
+
+1. Run npm run check
+2. Run the relevant Examination tests
+3. Run the existing test suite if practical
+4. Run git diff --check
+5. Inspect the final diff carefully
+
+Confirm:
+
+- one authoritative Examination passPercentage
+- no hidden 33% threshold
+- no hidden 35% threshold
+- tenant isolation preserved
+- authenticated teacher school remains authoritative
+- Academic Session isolation preserved
+- roster unchanged
+- Faculty Mapping unchanged
+- Enrollment not required
+- calculation formulas otherwise unchanged
+- no DB/schema/data changes
+
+==================================================
+FINAL REPORT
+==================================================
+
+Report:
+
+1. Files changed
+2. Every pass/fail threshold location found
+3. Which threshold became authoritative
+4. Any 33%/35% fallbacks removed or replaced
+5. How school/tenant policy isolation is enforced
+6. Tests added/updated and results
+7. npm run check result
+8. git diff --check result
+9. Explicit confirmation that no database/schema/data changes were made
+10. Any intentionally deferred calculation paths
+
+Do NOT make unrelated fixes.
+
+Do NOT proceed to Fix 4 (grade calculation) yet.
+
+Stop after Fix 3 and report the results.

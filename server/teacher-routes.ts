@@ -1056,7 +1056,7 @@ export function registerTeacherRoutes(app: Express) {
       if (!context) return;
       const { teacher } = context;
 
-      const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
+      const { scores, subject, examType, totalMarks, class: cls, section } = req.body;
       if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
       const submittedStudentIds = scores.map((s: any) => parseInt(s.studentId));
       if (submittedStudentIds.some((id: number) => !Number.isInteger(id))) {
@@ -1069,8 +1069,13 @@ export function registerTeacherRoutes(app: Express) {
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
+      if (!resolvedClass) return res.status(400).json({ message: "Class is required to resolve the examination pass policy" });
+      const passPolicy = await storage.resolveClassPassPolicy(context.schoolId, resolvedClass);
+      if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${resolvedClass}` });
       const maxMarks = parseInt(totalMarks) || 100;
-      const pMarks = parseInt(passMarks) || 33;
+      // passMarks is retained only for legacy display/storage compatibility.
+      // Its value is always derived from the server-resolved class policy.
+      const pMarks = Math.ceil(maxMarks * passPolicy.passPercentage / 100);
       const formattedScores = scores.map((s: any) => ({
         studentId: parseInt(s.studentId),
         teacherId: teacher.id,
@@ -2449,7 +2454,7 @@ export function registerTeacherRoutes(app: Express) {
       id: z.number().int().positive().optional(),
       name: z.string().min(1),
       classes: z.array(z.string()).min(1, "At least one class must be selected"),
-      passPercentage: z.number().int().min(0).max(100).default(35),
+      passPercentage: z.number().int().min(0).max(100),
       gradingSystem: z.enum(["percentage", "grade", "both"]).default("percentage"),
       passingGrades: z.array(z.string()).default([]),
       sortOrder: z.number().int().default(0),
@@ -2574,7 +2579,6 @@ export function registerTeacherRoutes(app: Express) {
         totalMarks: z.number(),
         isAbsent: z.boolean().default(false),
       })),
-      passPercentage: z.number().min(0).max(100).optional(),
       termAttendance: z.record(z.string(), z.number()).optional(),
     });
     const parsed = schema.safeParse(req.body);
@@ -2583,9 +2587,9 @@ export function registerTeacherRoutes(app: Express) {
     const tiers = await storage.getExamPolicyTiers(schoolId);
     const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
     if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
-    const gradingTiers = await storage.getGradingTiers(schoolId);
-    const matchingGradingTier = gradingTiers.find(t => (t.classes || []).includes(parsed.data.studentClass));
-    const passPercentage = parsed.data.passPercentage ?? matchingGradingTier?.passPercentage ?? 35;
+    const passPolicy = await storage.resolveClassPassPolicy(schoolId, parsed.data.studentClass);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class "${parsed.data.studentClass}"` });
+    const passPercentage = passPolicy.passPercentage;
     const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage, parsed.data.termAttendance);
     res.json({ tier: matchingTier.tierName, passPercentage, ...result });
   });
@@ -2768,15 +2772,13 @@ Thank you for your prompt attention to this matter.
 
     const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
     const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
-    const rawThreshold = meta.pass_threshold;
-    const legacyThreshold = (Array.isArray(rawThreshold) && rawThreshold.length > 0)
-      ? (parseInt(rawThreshold[0]) || 35)
-      : 35;
+    const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${cls}` });
     const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
       const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
       return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
     }));
-    const passThreshold = studentsWithGrades.length > 0 ? studentsWithGrades[0].tierPassThreshold : legacyThreshold;
+    const passThreshold = passPolicy.passPercentage;
 
     // If a term is provided, enrich each student with their ledger row
     let ledgerDecisions: import("../shared/schema").PromotionDecision[] = [];
@@ -3536,6 +3538,8 @@ Thank you for your prompt attention to this matter.
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
     try {
+      const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
+      if (!passPolicy) return res.status(404).json({ message: "No grading tier configured for this class" });
       const viewSessionId: number | null = (req as any).viewSessionId ?? null;
       const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? undefined;
       const data = await storage.getAnalyticsData(schoolId, cls, {
@@ -3619,9 +3623,8 @@ Thank you for your prompt attention to this matter.
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     try {
-      const tiers = await storage.getGradingTiers(schoolId);
-      const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      const tier = await storage.resolveClassPassPolicy(schoolId, cls);
+      if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
       const rules = await storage.getGradingRules(schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch { res.status(500).json({ message: "Failed to fetch grading rules" }); }
@@ -4226,9 +4229,8 @@ Thank you for your prompt attention to this matter.
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
     const cls = decodeURIComponent(req.params.class);
     try {
-      const tiers = await storage.getGradingTiers(teacher.schoolId);
-      const tier = tiers.find(t => (t.classes || []).map(String).includes(String(cls).trim()));
-      if (!tier) return res.json({ rules: [], passPercentage: 35 });
+      const tier = await storage.resolveClassPassPolicy(teacher.schoolId, cls);
+      if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
       const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
       res.json({ rules, passPercentage: tier.passPercentage });
     } catch (err) {
