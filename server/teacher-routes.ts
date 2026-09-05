@@ -12,6 +12,7 @@ import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
+import { resolveTeacherExaminationSession } from "./teacher-examination-session";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -117,6 +118,24 @@ const resetPasswordSchema = z.object({
 });
 
 export function registerTeacherRoutes(app: Express) {
+  /**
+   * Teacher Examination's authoritative data boundary. The selected session is
+   * required and is resolved together with the authenticated teacher's school,
+   * so an invalid or foreign session has the same non-enumerating response.
+   */
+  const resolveTeacherExaminationContext = async (req: any, res: any) => {
+    const context = await resolveTeacherExaminationSession(
+      req.session.teacherId,
+      req.viewSessionId,
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return null;
+    }
+    return context;
+  };
+
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
     try {
@@ -1032,31 +1051,30 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== EXAMINATION =====
   app.post("/api/exam-scores", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { teacher } = context;
 
       const { scores, subject, examType, totalMarks, passMarks, class: cls, section } = req.body;
       if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
+      const submittedStudentIds = scores.map((s: any) => parseInt(s.studentId));
+      if (submittedStudentIds.some((id: number) => !Number.isInteger(id))) {
+        return res.status(400).json({ message: "Invalid student ID" });
+      }
+      const submittedStudents = await Promise.all(submittedStudentIds.map(id => storage.getStudentById(id)));
+      if (submittedStudents.some(student => !student || student.schoolId !== context.schoolId)) {
+        return res.status(403).json({ message: "Not authorized for submitted students" });
+      }
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
       const maxMarks = parseInt(totalMarks) || 100;
       const pMarks = parseInt(passMarks) || 33;
-      // Tag each score with the academic session. Prefer the header value
-      // (admin previewing an archived year); otherwise resolve the school's
-      // active session so teacher-submitted scores are always year-tagged.
-      const activeSessionForTag = (req as any).viewSessionId
-        ? null
-        : await storage.getActiveSession(teacher.schoolId);
-      const scoreSessionId: number | null =
-        (req as any).viewSessionId ?? activeSessionForTag?.id ?? null;
-
       const formattedScores = scores.map((s: any) => ({
         studentId: parseInt(s.studentId),
         teacherId: teacher.id,
-        schoolId: teacher.schoolId,
+        schoolId: context.schoolId,
         subject,
         examType,
         marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
@@ -1066,7 +1084,7 @@ export function registerTeacherRoutes(app: Express) {
         class: resolvedClass || null,
         section: resolvedSection || null,
         updatedBy: teacher.fullName,
-        sessionId: scoreSessionId,
+        sessionId: context.sessionId,
       }));
 
       const saved = await storage.upsertExamScores(formattedScores);
@@ -1083,14 +1101,20 @@ export function registerTeacherRoutes(app: Express) {
     }
     try {
       const { class: cls, section, examType, schoolId } = req.body;
-      if (!cls || !section || !examType || !schoolId) {
+      if (!cls || !section || !examType) {
+        return res.status(400).json({ message: "class, section, examType, schoolId required" });
+      }
+      if (req.session.teacherId) {
+        const context = await resolveTeacherExaminationContext(req, res);
+        if (!context) return;
+        const count = await storage.publishExamScores(context.schoolId, cls, section, examType, context.sessionId);
+        return res.json({ message: `Published ${count} scores`, count });
+      }
+      if (!schoolId) {
         return res.status(400).json({ message: "class, section, examType, schoolId required" });
       }
       const sid = parseInt(schoolId);
-      if (req.session.teacherId) {
-        const teacher = await storage.getTeacherById(req.session.teacherId);
-        if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      } else if (req.session.schoolId !== sid) {
+      if (req.session.schoolId !== sid) {
         return res.status(403).json({ message: "Not authorized for this school" });
       }
       const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
@@ -1103,14 +1127,11 @@ export function registerTeacherRoutes(app: Express) {
 
   // IMPORTANT: specific routes must be registered before the parameterized wildcard route
   app.get("/api/exam-scores/class-average/:schoolId/:class/:section/:subject", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const { schoolId, class: cls, section, subject } = req.params;
-      const sid = parseInt(schoolId);
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const averages = await storage.getClassAverages(sid, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), viewSessionId);
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { class: cls, section, subject } = req.params;
+      const averages = await storage.getClassAverages(context.schoolId, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), context.sessionId);
       res.json(averages);
     } catch (err: any) {
       console.error("GET /api/exam-scores/class-average error:", err);
@@ -1119,14 +1140,11 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const studentId = parseInt(req.params.studentId);
-      const schoolId = parseInt(req.params.schoolId);
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized for this school" });
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const list = await storage.getExamScoresByStudent(studentId, context.schoolId, context.sessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores/student error:", err);
@@ -1135,10 +1153,11 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/exam-scores/:schoolId/:subject/:examType/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const { schoolId, subject, examType, class: cls, section } = req.params;
-      const list = await storage.getExamScores(parseInt(schoolId), decodeURIComponent(subject), decodeURIComponent(examType), cls, section, (req as any).viewSessionId ?? undefined);
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { subject, examType, class: cls, section } = req.params;
+      const list = await storage.getExamScores(context.schoolId, decodeURIComponent(subject), decodeURIComponent(examType), cls, section, context.sessionId);
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores error:", err);
@@ -4236,16 +4255,15 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/teacher/class-scores/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const cls = decodeURIComponent(req.params.class);
-    const section = decodeURIComponent(req.params.section);
-    const schoolId = teacher.schoolId;
     try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const schoolId = context.schoolId;
       const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId);
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, context.sessionId);
         return {
           studentId: s.id,
           name: s.name,
@@ -4266,19 +4284,18 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/teacher/attendance-summary/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const cls = decodeURIComponent(req.params.class);
-    const section = decodeURIComponent(req.params.section);
-    const schoolId = teacher.schoolId;
     try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const schoolId = context.schoolId;
       const today = todayInIST();
       const year = new Date().getFullYear();
       const aprThisYear = `${year}-04-01`;
       const aprLastYear = `${year - 1}-04-01`;
       const yearStart = today >= aprThisYear ? aprThisYear : aprLastYear;
-      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today);
+      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today, context.sessionId);
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
         const sid = (r as any).studentId as number;

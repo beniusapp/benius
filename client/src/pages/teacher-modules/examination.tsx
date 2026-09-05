@@ -12,8 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
 import {
@@ -92,22 +92,22 @@ function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string;
 
 interface ClassAvgEntry { examType: string; avgPercentage: number; }
 
-function StudentTimeline({ studentId, studentName, schoolId, subject, examTypes, viewClass, viewSection }: {
-  studentId: number; studentName: string; schoolId: number; subject: string; examTypes: string[];
+function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject, examTypes, viewClass, viewSection }: {
+  studentId: number; studentName: string; schoolId: number; sessionId: number; subject: string; examTypes: string[];
   viewClass: string; viewSection: string;
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
-    queryKey: ["/api/exam-scores/student", studentId, schoolId],
+    queryKey: ["/api/exam-scores/student", studentId, schoolId, sessionId],
     queryFn: async () => {
-      const res = await fetch(`/api/exam-scores/student/${studentId}/${schoolId}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/exam-scores/student/${studentId}/${schoolId}`, sessionId);
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
   });
   const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
-    queryKey: ["/api/exam-scores/class-average", schoolId, viewClass, viewSection, subject],
+    queryKey: ["/api/exam-scores/class-average", schoolId, sessionId, viewClass, viewSection, subject],
     queryFn: async () => {
-      const res = await fetch(`/api/exam-scores/class-average/${schoolId}/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/exam-scores/class-average/${schoolId}/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`, sessionId);
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -691,6 +691,7 @@ function PromoCell({
 // ── Results Tab ───────────────────────────────────────────────────────────────
 function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSessionId = useTeacherSelectedSession()?.id;
   const { toast } = useToast();
   const { classes, sections: allSections, getSectionsForClass } = useSchoolConfigStrict(teacher.schoolId);
   const [resClass, setResClass] = useState("");
@@ -749,25 +750,25 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/teacher/class-scores", resClass, resSection],
+    queryKey: ["/api/teacher/class-scores", selectedSessionId, resClass, resSection],
     queryFn: async () => {
-      const res = await fetch(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
       if (!res.ok) throw new Error("Failed to fetch scores");
       return res.json();
     },
-    enabled: !!resClass && !!resSection,
+    enabled: !!selectedSessionId && !!resClass && !!resSection,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/teacher/attendance-summary", resClass, resSection],
+    queryKey: ["/api/teacher/attendance-summary", selectedSessionId, resClass, resSection],
     queryFn: async () => {
-      const res = await fetch(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!resClass && !!resSection,
+    enabled: !!selectedSessionId && !!resClass && !!resSection,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -861,15 +862,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
   const allResults = useMemo(() => {
-    if (!policyTier || classScores.length === 0) return [];
+    if (!selectedSessionId || !policyTier || classScores.length === 0) return [];
     return calculateExaminationResults({
-      context: { schoolId: teacher.schoolId, sessionId: null },
+      context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
       students: classScores, policy: policyTier, attendance: attendanceSummary,
       passPercentage: gradingPassPct, gradingRules,
       termAverageRule: ruleTermAvg, currentTerm: resTerm || undefined,
       cumulativeConfig: cumulConfig ?? undefined,
     });
-  }, [policyTier, classScores, attendanceSummary, gradingPassPct, gradingRules, ruleTermAvg, resTerm, cumulConfig, teacher.schoolId]);
+  }, [policyTier, classScores, attendanceSummary, gradingPassPct, gradingRules, ruleTermAvg, resTerm, cumulConfig, teacher.schoolId, selectedSessionId]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -904,20 +905,20 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     studentId: number; decision: string; targetClass: string;
     targetSection: string; editCount: number; locked: boolean;
   }>>({
-    queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm],
+    queryKey: ["/api/teacher/promotion-decisions", selectedSessionId, resClass, resSection, resTerm],
     queryFn: async () => {
-      const r = await fetch(
+      const r = await sessionFetchForViewSession(
         `/api/teacher/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`,
-        { credentials: "include" },
+        selectedSessionId,
       );
       return r.ok ? r.json() : [];
     },
-    enabled: !!resClass && !!resSection && !!resTerm,
+    enabled: !!selectedSessionId && !!resClass && !!resSection && !!resTerm,
     staleTime: 0,
   });
 
   // Reset local state whenever the class/section/term selection changes
-  useEffect(() => { setPromoMap({}); setPromoLocked(false); }, [resClass, resSection, resTerm]);
+  useEffect(() => { setPromoMap({}); setPromoLocked(false); }, [selectedSessionId, resClass, resSection, resTerm]);
 
   // Populate promoMap from DB on load; preserves any in-session edits already applied
   useEffect(() => {
@@ -994,7 +995,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
     // Re-compute results using fresh policy + all 4 rules baked in
     const freshResults = calculateExaminationResults({
-      context: { schoolId: teacher.schoolId, sessionId: null },
+      context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
       students: classScores, policy: freshPolicy, attendance: attendanceSummary,
       passPercentage: gradingPassPct, gradingRules,
       termAverageRule: freshRuleTermAvg, currentTerm: resTerm || undefined,
@@ -1036,8 +1037,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
         autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig),
       }));
-      const res = await apiRequest("POST", "/api/teacher/promotion-decisions", {
-        class: resClass, section: resSection, term: resTerm, lock, entries,
+      if (!selectedSessionId) throw new Error("A selected academic session is required");
+      const res = await sessionFetchForViewSession("/api/teacher/promotion-decisions", selectedSessionId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class: resClass, section: resSection, term: resTerm, lock, entries }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -1055,7 +1059,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
         duration: 4000,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", resClass, resSection, resTerm] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", selectedSessionId, resClass, resSection, resTerm] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -1492,6 +1496,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 // ── Main Examination Module ───────────────────────────────────────────────────
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSessionId = useTeacherSelectedSession()?.id;
   const { toast } = useToast();
   const {
     classes, subjects, examTypes, isLoading: configLoading,
@@ -1536,25 +1541,25 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: existingScores = [] } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection],
+    queryKey: ["/api/exam-scores", teacher.schoolId, selectedSessionId, subject, examType, selectedClass, selectedSection],
     queryFn: async () => {
       if (!subject || !examType) return [];
-      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(subject)}/${encodeURIComponent(examType)}/${encodeURIComponent(selectedClass)}/${selectedSection}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(subject)}/${encodeURIComponent(examType)}/${encodeURIComponent(selectedClass)}/${selectedSection}`, selectedSessionId);
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: !!subject && !!examType && !!selectedClass && !!selectedSection,
+    enabled: !!selectedSessionId && !!subject && !!examType && !!selectedClass && !!selectedSection,
   });
 
   const { data: viewScores = [], isLoading: viewLoading } = useQuery<ExamScoreEntry[]>({
-    queryKey: ["/api/exam-scores", teacher.schoolId, viewSubject, viewExamType, viewClass, viewSection],
+    queryKey: ["/api/exam-scores", teacher.schoolId, selectedSessionId, viewSubject, viewExamType, viewClass, viewSection],
     queryFn: async () => {
       if (!viewSubject || !viewExamType) return [];
-      const res = await fetch(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}/${encodeURIComponent(viewClass)}/${viewSection}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/exam-scores/${teacher.schoolId}/${encodeURIComponent(viewSubject)}/${encodeURIComponent(viewExamType)}/${encodeURIComponent(viewClass)}/${viewSection}`, selectedSessionId);
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: tab === "view" && !!viewSubject && !!viewExamType && !!viewClass && !!viewSection,
+    enabled: tab === "view" && !!selectedSessionId && !!viewSubject && !!viewExamType && !!viewClass && !!viewSection,
   });
 
   // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
@@ -1592,12 +1597,21 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       const scores = students
         .filter(s => absentMap[s.studentId] || (marks[s.studentId] !== undefined && marks[s.studentId] !== ""))
         .map(s => ({ studentId: s.studentId, marks: absentMap[s.studentId] ? 0 : marks[s.studentId], isAbsent: !!absentMap[s.studentId] }));
-      const res = await apiRequest("POST", "/api/exam-scores", { scores, subject, examType, totalMarks: maxMarks, class: selectedClass, section: selectedSection });
+      if (!selectedSessionId) throw new Error("A selected academic session is required");
+      const res = await sessionFetchForViewSession("/api/exam-scores", selectedSessionId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scores, subject, examType, totalMarks: maxMarks, class: selectedClass, section: selectedSection }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message ?? "Failed to save scores");
+      }
       return res.json();
     },
     onSuccess: (data) => {
       toast({ title: "Scores Saved", description: data.message });
-      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, subject, examType, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, selectedSessionId, subject, examType, selectedClass, selectedSection] });
     },
     onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
   });
@@ -2053,7 +2067,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             </tr>
                             {isExpanded && (
                               <tr><td colSpan={7} className="p-0">
-                                <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} />
+                                {selectedSessionId && <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} sessionId={selectedSessionId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} />}
                               </td></tr>
                             )}
                           </Fragment>

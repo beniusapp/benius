@@ -1,0 +1,770 @@
+FIX 2 — MULTI-TENANT + ACADEMIC SESSION ISOLATION FOR TEACHER EXAMINATION
+
+We are working in BUILDING/DEVELOPMENT mode, not production.
+
+GREEN SIGNAL: Implement FIX 2 only.
+
+============================================================
+NON-NEGOTIABLE SYSTEM REQUIREMENT — MULTI-TENANCY
+============================================================
+
+THIS APPLICATION IS A TRUE MULTI-TENANT SCHOOL MIS.
+
+Each school is a separate tenant.
+
+Tenant isolation is mandatory and must be preserved in every change.
+
+A user/teacher belonging to School A must NEVER be able to:
+
+- retrieve School B students
+- retrieve School B examination scores
+- retrieve School B academic sessions
+- retrieve School B examination policies
+- retrieve School B grading rules
+- retrieve School B results
+- calculate School B results
+- save/update School B examination data
+- use School B's session with School A data
+- use School B's policy with School A data
+- mix School A and School B data in any calculation
+
+The authenticated user's/teacher's school is the authoritative tenant boundary.
+
+Never trust a client-supplied schoolId as authorization by itself.
+
+Every server-side operation must derive or validate the tenant from authenticated context.
+
+This requirement applies to FIX 2 and ALL future fixes.
+
+============================================================
+FIX 1 STATUS
+============================================================
+
+FIX 1 is already complete.
+
+FIX 1 established:
+
+    shared/examination-calculation-engine.ts
+
+This is the single Teacher Examination calculation brain.
+
+FIX 2 must NOT replace or redesign that engine.
+
+FIX 2 must make sure that the engine receives:
+
+    authenticated teacher's tenant/school
+    +
+    correct Academic Session
+    +
+    only scores belonging to that tenant and session
+    +
+    correct policy for that tenant/session
+
+============================================================
+PRIMARY GOAL
+============================================================
+
+Make Academic Session a real, validated data boundary for:
+
+Teacher Portal → Examination
+
+The selected Academic Session must not merely be UI context.
+
+It must determine which examination score records are retrieved and supplied to the shared calculation engine.
+
+The intended flow is:
+
+    Authenticated Teacher
+            ↓
+    Authenticated Teacher's School/Tenant
+            ↓
+    Selected Academic Session
+            ↓
+    Validate session belongs to that tenant
+            ↓
+    Class / Section / Subject / Exam Type
+            ↓
+    Retrieve ONLY:
+        authenticated school
+        +
+        selected session
+        +
+        existing relevant filters
+            ↓
+    Shared Examination Calculation Engine
+            ↓
+    Correct session-specific result
+
+============================================================
+SECURITY MODEL
+============================================================
+
+For every relevant Teacher Examination request:
+
+    authenticatedTeacher.schoolId
+             ↓
+       authoritative tenant
+
+The requested Academic Session must satisfy:
+
+    academicSession.schoolId
+        =
+    authenticatedTeacher.schoolId
+
+If not:
+
+    reject the request.
+
+Do NOT merely check that a session exists.
+
+Do NOT allow:
+
+    Teacher from School A
+        +
+    Session belonging to School B
+
+Do NOT allow the frontend to select a School B session and then use it.
+
+Do not leak whether another school's session exists.
+
+Use the application's existing authorization/error conventions.
+
+============================================================
+IMPORTANT: SCHOOL + SESSION ARE BOTH REQUIRED
+============================================================
+
+A correct examination query is conceptually:
+
+    WHERE
+        exam_scores.school_id = authenticatedTeacher.schoolId
+        AND
+        exam_scores.session_id = validatedSessionId
+
+plus the existing appropriate filters:
+
+    student
+    subject
+    examType
+    class
+    section
+
+as applicable.
+
+Do NOT use sessionId alone.
+
+Do NOT use schoolId alone.
+
+The examination data boundary is:
+
+    TENANT + ACADEMIC SESSION
+
+============================================================
+FIRST: INSPECT CURRENT CODE
+============================================================
+
+Before modifying code, inspect the CURRENT repository state.
+
+Do not assume post-target files exist.
+
+Inspect at minimum:
+
+1. client/src/pages/teacher-modules/examination.tsx
+2. server/teacher-routes.ts
+3. server/storage.ts
+4. shared/schema.ts
+5. shared/examination-calculation-engine.ts
+6. existing Academic Session helpers/middleware
+7. existing Teacher Examination score retrieval routes
+8. existing Teacher Examination score save route
+9. existing session context/view-session mechanism
+10. existing authentication/teacher authorization helpers
+11. relevant examination/session tests
+
+Determine exactly:
+
+- how authenticated teacher schoolId is obtained
+- how selected Academic Session is stored in the frontend
+- how session context reaches backend
+- how req.viewSessionId or equivalent works
+- how the selected session is validated
+- how score retrieval currently works
+- how existing marks are loaded
+- how class scores/results are loaded
+- how Teacher Examination passes data to the shared calculation engine
+- whether any score query omits session filtering
+- whether any score query omits school filtering
+- whether any route trusts client schoolId
+- whether sessionId becomes null anywhere in Teacher Examination Results
+- whether multiple sessions can currently enter one calculation
+
+Do not make changes during this initial inspection.
+
+============================================================
+ACADEMIC SESSION VALIDATION
+============================================================
+
+For Teacher Examination operations requiring a session:
+
+1. Determine the selected/requested session.
+2. Resolve it using the existing session mechanism where possible.
+3. Verify the session belongs to authenticated teacher's school.
+4. Reject a mismatched-school session.
+5. Use the validated sessionId for downstream retrieval/calculation.
+
+Do not create a new session architecture if an existing helper can safely be reused.
+
+Do not duplicate session-resolution logic unnecessarily.
+
+============================================================
+EXAMINATION SCORE RETRIEVAL
+============================================================
+
+This is the core of FIX 2.
+
+Every Teacher Examination score retrieval used for Results must be scoped to:
+
+    authenticated schoolId
+    +
+    validated sessionId
+
+The filtering must happen at the authoritative backend/storage retrieval boundary.
+
+Do NOT:
+
+    retrieve all historical scores
+    ↓
+    filter sessions in the browser
+
+Do NOT:
+
+    retrieve multiple sessions
+    ↓
+    let the calculation engine guess which one is correct
+
+Instead:
+
+    backend/storage query
+        ↓
+    only authenticated school + selected session
+        ↓
+    calculation engine
+
+Conceptually:
+
+    WHERE
+        school_id = authenticatedTeacher.schoolId
+        AND
+        session_id = validatedSessionId
+
+Preserve all existing relevant filters.
+
+============================================================
+EXISTING MARKS / ADD MARKS
+============================================================
+
+When Teacher Examination loads existing marks for:
+
+    Class
+    Section
+    Subject
+    Exam Type
+
+the selected Academic Session must also be included.
+
+Example:
+
+Student 6 / School 1 / Bengali / Unit Test 1
+
+Historical records:
+
+    Session 41:
+        65/100
+
+    Session 30375:
+        80/100
+
+Teacher selects:
+
+    Session 30375
+
+The UI must receive:
+
+    80/100
+
+and NOT:
+
+    65/100
+
+If teacher switches to Session 41:
+
+    65/100
+
+must be returned instead.
+
+The score itself must not be changed.
+
+Only retrieval scope is being fixed.
+
+============================================================
+RESULTS CALCULATION INPUT
+============================================================
+
+FIX 1's engine accepts session context.
+
+Teacher Examination must now supply the ACTUAL validated sessionId.
+
+Do not intentionally pass:
+
+    sessionId: null
+
+when a valid selected session exists.
+
+The calculation input must represent:
+
+    context.schoolId
+        =
+    authenticated teacher school
+
+    context.sessionId
+        =
+    validated selected session
+
+The score collection supplied to the engine must already be restricted to:
+
+    same school
+    +
+    same session
+
+Therefore the engine receives internally consistent data.
+
+============================================================
+SCHOOL-SPECIFIC POLICY
+============================================================
+
+Because this is multi-tenant:
+
+The policy supplied to the calculation engine must belong to the same school/tenant.
+
+The calculation boundary should conceptually be:
+
+    authenticatedTeacher.schoolId
+            ↓
+    validated session.schoolId
+            ↓
+    applicable policy.schoolId
+            ↓
+    exam scores.schoolId
+            ↓
+    all equal
+
+Do NOT retrieve a policy from another school.
+
+Do NOT use a global policy.
+
+Do NOT change policy values.
+
+Do NOT redesign School Setup.
+
+Fix 1 already established policy ownership validation inside the calculation engine.
+
+Preserve that behavior.
+
+============================================================
+STUDENT ROSTER — DO NOT CHANGE
+============================================================
+
+Do NOT change the established Teacher Examination roster rule.
+
+The Examination roster remains based on the live active Student Registry:
+
+    students.school_id = authenticated teacher school
+    students.is_active = true
+    students.class = selected class
+    students.section = selected section
+
+Enrollment is NOT a prerequisite for displaying the roster.
+
+Faculty Mapping is NOT to be changed as part of this fix.
+
+Do not introduce session enrollment requirements for roster display.
+
+This fix concerns:
+
+    examination score/result session isolation
+
+NOT:
+
+    roster membership policy
+
+============================================================
+SCORE SAVE PATH
+============================================================
+
+Inspect the existing Teacher Examination score save route.
+
+Ensure a newly saved examination score uses the validated selected session.
+
+The saved record must belong to:
+
+    authenticated teacher's school
+    +
+    validated selected Academic Session
+
+Do not allow a client to submit another school's session and save against it.
+
+Do not change:
+
+- mark validation rules
+- grading
+- pass/fail
+- absent behavior
+- promotion
+- attendance
+- Faculty Mapping
+- Enrollment
+
+The only change here is correct tenant + session ownership.
+
+============================================================
+NULL SESSION RECORDS
+============================================================
+
+Some historical exam_scores may have:
+
+    sessionId = NULL
+
+Do NOT:
+
+- guess their session
+- assign them to the selected session
+- mass-update them
+- delete them
+- migrate them
+- fabricate session ownership
+- treat NULL as automatically matching every session
+
+For strict session-scoped retrieval:
+
+    exam_scores.session_id = validatedSessionId
+
+should be the normal behavior.
+
+Do not use:
+
+    session_id IS NULL OR session_id = selectedSessionId
+
+unless existing architecture proves this is explicitly required and safe.
+
+If NULL-session historical records create a compatibility issue:
+
+    preserve the records
+    do not rewrite them
+    report the issue clearly
+
+============================================================
+SESSION SWITCHING
+============================================================
+
+Changing the selected Academic Session must change the examination data scope.
+
+Example:
+
+    Select 2026–2027
+        ↓
+    retrieve only 2026–2027 scores
+
+then:
+
+    Select 2028–2029
+        ↓
+    retrieve only 2028–2029 scores
+
+The previous session's scores must not remain in the new calculation input.
+
+Check existing frontend query/cache behavior.
+
+Ensure stale results from a previous session are not reused.
+
+Do not redesign the frontend.
+
+Use existing session/query mechanisms where possible.
+
+============================================================
+CRITICAL NO-MIXING EXAMPLE
+============================================================
+
+Assume:
+
+    Student A
+    School 1
+
+has:
+
+    Session 41:
+        Bengali Unit Test 1 = 65
+
+    Session 30375:
+        Bengali Unit Test 1 = 80
+
+Teacher belongs to:
+
+    School 1
+
+Teacher selects:
+
+    Session 30375
+    Class 6
+    Section B
+    Bengali
+    Unit Test 1
+
+The score collection supplied to the calculation engine must contain:
+
+    80
+
+and must NOT contain:
+
+    65
+
+It must NEVER calculate:
+
+    65 + 80
+
+or combine components from different sessions.
+
+For multi-exam Results, every score supplied to the engine must belong to:
+
+    selected school
+    +
+    selected session
+
+============================================================
+CROSS-SCHOOL EXAMPLE
+============================================================
+
+Assume:
+
+    School 1 → Session 30375
+    School 2 → Session 40400
+
+Teacher belongs to:
+
+    School 1
+
+A request attempting:
+
+    School 1 teacher
+    +
+    Session 40400
+
+must be rejected.
+
+The teacher must not be able to:
+
+- retrieve School 2's session
+- retrieve School 2's scores
+- calculate School 2's results
+- save scores under School 2's session
+
+============================================================
+TEST REQUIREMENTS
+============================================================
+
+Add focused tests for both TENANT isolation and SESSION isolation.
+
+At minimum:
+
+1. School 1 teacher + School 1 session
+   → allowed.
+
+2. School 1 teacher + School 2 session
+   → rejected.
+
+3. School 1 + Session 30375 score retrieval
+   → only School 1 / Session 30375 records.
+
+4. Same student with scores in two sessions
+   → selected session returns only that session.
+
+5. Switching selected session
+   → corresponding session's scores only.
+
+6. NULL-session historical score
+   → not silently treated as belonging to selected session.
+
+7. Teacher Examination passes actual selected sessionId to the calculation engine.
+
+8. Calculation input contains one tenant + one session.
+
+9. School A policy cannot be used for School B context.
+
+10. Active Student Registry roster behavior remains unchanged.
+
+11. Enrollment is not introduced as a roster prerequisite.
+
+12. Faculty Mapping behavior remains unchanged.
+
+13. A client-supplied schoolId cannot override authenticated teacher school.
+
+14. A client-supplied sessionId cannot bypass session-school ownership validation.
+
+============================================================
+NO DATABASE CHANGES
+============================================================
+
+Do NOT make database changes.
+
+Do NOT:
+
+- create migrations
+- alter schema
+- add columns
+- remove columns
+- add constraints
+- rewrite exam_scores
+- rewrite students
+- rewrite enrollments
+- rewrite academic sessions
+- rewrite policies
+- rewrite grading rules
+- rewrite promotion records
+- rewrite attendance
+- execute SQL writes
+
+Read-only inspection is allowed if necessary.
+
+Existing NULL-session records must remain untouched.
+
+============================================================
+CALCULATION RULES MUST NOT CHANGE
+============================================================
+
+FIX 2 is a DATA-SCOPE correction.
+
+Do not change:
+
+- percentage formulas
+- grade thresholds
+- pass/fail thresholds
+- exam weights
+- term averaging
+- cumulative calculation
+- absent behavior
+- missing behavior
+- promotion rules
+- attendance rules
+- rounding
+
+The calculation brain from FIX 1 must behave the same.
+
+Only the data supplied to it becomes properly:
+
+    tenant-scoped
+    +
+    session-scoped
+
+============================================================
+NO UNRELATED CHANGES
+============================================================
+
+Do not:
+
+- upgrade dependencies
+- change authentication architecture
+- redesign the database
+- migrate Performance Analytics
+- modify Admin Examination
+- modify Student Examination
+- modify Promotion execution
+- modify Attendance
+- modify Faculty Mapping
+- modify Enrollment
+- modify Student Registry
+- redesign Teacher Examination UI
+
+Only make changes necessary for FIX 2.
+
+============================================================
+VERIFICATION
+============================================================
+
+After implementation:
+
+1. Run relevant unit tests.
+2. Run relevant integration tests.
+3. Run TypeScript/type checking.
+4. Run git diff --check.
+5. Verify Teacher Examination starts successfully.
+6. Verify actual selected sessionId reaches the calculation engine.
+7. Verify score retrieval uses authenticated school + selected session.
+8. Verify existing marks are session-scoped.
+9. Verify switching sessions cannot mix scores.
+10. Verify School A cannot use School B's session.
+11. Verify School A cannot retrieve School B's scores.
+12. Verify policy remains tenant-correct.
+13. Verify NULL-session records are not silently assigned.
+14. Verify calculation formulas did not change.
+15. Verify roster behavior did not change.
+16. Verify Faculty Mapping did not change.
+17. Verify Enrollment did not become mandatory.
+18. Verify no database/schema/migration/data changes.
+19. Verify no production changes.
+20. Review git diff carefully for unrelated changes.
+
+If a test requires database records that do not currently exist, do NOT create or modify data just to make the test pass.
+
+Instead, report the limitation.
+
+============================================================
+IMPORTANT STOP CONDITION
+============================================================
+
+STOP after FIX 2.
+
+Do NOT proceed to FIX 3.
+
+Do NOT fix:
+
+- pass percentage inconsistencies
+- grading inconsistencies
+- absent/missing behavior
+- promotion rules
+- cumulative weighting
+- mark validation
+- Faculty Mapping
+- Enrollment
+- Performance Analytics duplication
+
+Do not perform additional cleanup.
+
+============================================================
+FINAL REPORT
+============================================================
+
+After implementation, report:
+
+A. Exact files changed
+B. Exact authenticated tenant/school resolution path
+C. Exact Academic Session resolution path
+D. How session ownership is validated
+E. Exact score retrieval path changed
+F. How tenant + session filtering is enforced
+G. How existing marks are now session-scoped
+H. How Teacher Examination passes the actual sessionId to the calculation engine
+I. How session switching is handled
+J. How NULL-session historical records are handled
+K. Cross-school security tests
+L. Cross-session isolation tests
+M. All tests added/changed and results
+N. TypeScript/build results
+O. git diff --check result
+P. Confirmation that calculation formulas were NOT changed
+Q. Confirmation that roster rules were NOT changed
+R. Confirmation Faculty Mapping was NOT changed
+S. Confirmation Enrollment was NOT made mandatory
+T. Confirmation no database/schema/migration/data changes were made
+U. Confirmation no production changes were made
+V. Git diff/stat summary
+W. Any limitations or unresolved issues
+
+STOP after this report.

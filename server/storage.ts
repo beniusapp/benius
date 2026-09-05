@@ -1482,20 +1482,20 @@ export class DatabaseStorage {
   }
 
   // ===== EXAM SCORE METHODS =====
-  async upsertExamScores(scores: InsertExamScore[]): Promise<ExamScore[]> {
+  async upsertExamScores(scores: Array<InsertExamScore & { sessionId: number }>): Promise<ExamScore[]> {
     const results: ExamScore[] = [];
     for (const score of scores) {
-      // ── Deduplication: match on student+subject+examType+class+section.
-      // When a sessionId is present, also scope the lookup to that session so
-      // records from different academic years never overwrite each other.
+      // The authoritative route supplies a required school + session boundary.
+      // Both are part of the lookup so another tenant/year can never be updated.
       const conditions: SQL<unknown>[] = [
         eq(examScores.studentId, score.studentId),
+        eq(examScores.schoolId, score.schoolId),
         eq(examScores.subject, score.subject),
         eq(examScores.examType, score.examType),
+        eq(examScores.sessionId, score.sessionId),
       ];
       if (score.class != null) conditions.push(eq(examScores.class, score.class));
       if (score.section != null) conditions.push(eq(examScores.section, score.section));
-      if (score.sessionId != null) conditions.push(eq(examScores.sessionId, score.sessionId));
 
       const existing = await db.select().from(examScores).where(and(...conditions));
       if (existing.length > 0) {
@@ -1509,8 +1509,7 @@ export class DatabaseStorage {
             section: score.section ?? existing[0].section,
             updatedBy: score.updatedBy ?? null,
             updatedAt: new Date(),
-            // Preserve the original sessionId tag (never overwrite with null)
-            sessionId: score.sessionId ?? existing[0].sessionId,
+            sessionId: score.sessionId,
           })
           .where(eq(examScores.id, existing[0].id)).returning();
         results.push(updated);
@@ -1543,7 +1542,6 @@ export class DatabaseStorage {
   }
 
   async getExamScores(schoolId: number, subject: string, examType: string, cls: string, section: string, sessionId?: number): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
-    // When a sessionId is provided, strictly filter to that academic year's records.
     const result = await db.select().from(examScores)
       .innerJoin(students, eq(examScores.studentId, students.id))
       .where(and(
@@ -1563,8 +1561,7 @@ export class DatabaseStorage {
   }
 
   async getExamScoresByStudent(studentId: number, schoolId: number, sessionId?: number | null): Promise<ExamScore[]> {
-    const conditions = [eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId)];
-    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    const conditions = [eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId), ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : [])];
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.examType);
   }
 
@@ -1661,14 +1658,12 @@ export class DatabaseStorage {
   }
 
   async getClassAverages(schoolId: number, cls: string, section: string, subject: string, sessionId?: number | null): Promise<{ examType: string; avgPercentage: number }[]> {
-    const studentList = sessionId
-      ? await this.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId)
-      : await this.getStudentsByClassSection(schoolId, cls, section);
+    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
 
     const scoreConditions = [eq(examScores.schoolId, schoolId), eq(examScores.subject, subject), eq(examScores.isAbsent, false)];
-    if (sessionId) scoreConditions.push(eq(examScores.sessionId, sessionId));
+    if (sessionId != null) scoreConditions.push(eq(examScores.sessionId, sessionId));
     const allScores = await db.select().from(examScores).where(and(...scoreConditions));
 
     const filtered = allScores.filter(s => studentIds.includes(s.studentId));
@@ -5681,6 +5676,15 @@ export class DatabaseStorage {
   /** Return a single session by its primary key. */
   async getAcademicSessionById(id: number): Promise<AcademicSession | undefined> {
     const [sess] = await db.select().from(academicSessions).where(eq(academicSessions.id, id));
+    return sess;
+  }
+
+  /** Resolve a session inside its tenant boundary without exposing other tenants' rows. */
+  async getAcademicSessionForSchool(id: number, schoolId: number): Promise<AcademicSession | undefined> {
+    const [sess] = await db.select().from(academicSessions).where(and(
+      eq(academicSessions.id, id),
+      eq(academicSessions.schoolId, schoolId),
+    ));
     return sess;
   }
 

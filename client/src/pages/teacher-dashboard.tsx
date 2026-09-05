@@ -38,6 +38,11 @@ interface AcademicSessionItem {
 // false → normal active session (default)
 export const ArchiveModeContext = createContext<boolean>(false);
 export function useArchiveMode(): boolean { return useContext(ArchiveModeContext); }
+/** Teacher-only selected session source for session-scoped module requests. */
+export const TeacherSelectedSessionContext = createContext<AcademicSessionItem | null>(null);
+export function useTeacherSelectedSession(): AcademicSessionItem | null {
+  return useContext(TeacherSelectedSessionContext);
+}
 
 export interface TeacherMe {
   id: number;
@@ -421,6 +426,7 @@ export default function TeacherDashboard() {
   const initials = teacher.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
+    <TeacherSelectedSessionContext.Provider value={viewingSession ?? activeSession}>
     <div className="min-h-screen" style={{ background: "#0f172a" }}>
 
       {/* Decorative radial blobs */}
@@ -933,5 +939,6 @@ export default function TeacherDashboard() {
         )}
       </AnimatePresence>
     </div>
+    </TeacherSelectedSessionContext.Provider>
   );
 }
