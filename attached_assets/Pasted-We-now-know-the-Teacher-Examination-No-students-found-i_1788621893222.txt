@@ -1,0 +1,275 @@
+We now know the Teacher Examination "No students found" issue is caused by zero enrollment records for:
+
+School 1
+Academic Session 30375 (2028-2029)
+Class 6
+Section A
+
+DO NOT MODIFY ANY CODE OR DATABASE DATA.
+
+I now want you to investigate the ROOT CAUSE of the missing academic-session enrollment records.
+
+The goal is to understand how this application's enrollment lifecycle is SUPPOSED to work before we make any fix.
+
+==================================================
+1. TRACE HOW ENROLLMENTS ARE CREATED
+==================================================
+
+Inspect the entire codebase and identify every place where records in the `enrollments` table are:
+
+- created
+- inserted
+- updated
+- deleted
+- copied
+- promoted
+- migrated
+- backfilled
+- synchronized
+
+Find the exact functions, routes, services, UI actions, and database queries involved.
+
+Give me:
+
+File:
+Function:
+Route/UI:
+Purpose:
+When it runs:
+What enrollment fields it creates/updates:
+
+==================================================
+2. TRACE ACADEMIC SESSION CREATION / ACTIVATION
+==================================================
+
+Investigate what happens when a new academic session is:
+
+- created
+- activated
+- switched to active
+- archived
+- selected for viewing
+
+Specifically determine:
+
+When session 30375 (2028-2029) became active, were enrollment records automatically created?
+
+If yes:
+- Which function did it?
+- Which students were processed?
+- What class/section was assigned?
+- What happens if enrollment creation fails?
+
+If no:
+- What is the intended mechanism for creating the new session's enrollments?
+
+==================================================
+3. STUDENT PROMOTION / CARRY-FORWARD
+
+Inspect the student promotion and academic advancement workflow.
+
+Determine exactly how a student moves from one academic session to another.
+
+For example, determine whether the actual flow is:
+
+2026-2027
+→ promotion
+→ 2027-2028 enrollment
+→ promotion
+→ 2028-2029 enrollment
+
+or something different.
+
+Trace the actual code.
+
+I want to know whether promotion execution creates the next session's enrollment.
+
+Also determine what happens to:
+
+- promoted students
+- retained students
+- newly admitted students
+- students who change section
+- students who are inactive
+- students who leave the school
+
+==================================================
+4. CURRENT STUDENTS ID 4 AND ID 7
+
+Investigate these two currently active students:
+
+Student ID 4
+Student ID 7
+
+Both currently appear as:
+
+School 1
+Class 6
+Section A
+Active
+
+Determine:
+
+- Their complete enrollment history
+- Which academic sessions they are enrolled in
+- Their class/section for each session
+- Whether they have an enrollment for 2028-2029
+- Whether they should have one according to the application's intended workflow
+- How they got their current `students.class = 6` and `students.section = A`
+
+Do NOT modify anything.
+
+Create a table like:
+
+Student | Current class | Current section | Session | Enrollment class | Enrollment section | Enrollment status
+
+==================================================
+5. COMPARE STUDENT PROFILE VS ENROLLMENT
+
+We need to understand why the following can currently disagree:
+
+students.class
+students.section
+
+versus:
+
+enrollments.class_name
+enrollments.section_name
+
+Explain:
+
+- Which is authoritative for current academic context?
+- Which is authoritative for historical academic context?
+- Is `students.class` supposed to be mutable current placement?
+- Is `enrollments` supposed to be the authoritative session-specific placement?
+
+Look for comments, code conventions, helper functions, or existing documentation that establish the intended design.
+
+==================================================
+6. FIND THE OFFICIAL ENROLLMENT WORKFLOW
+
+Search the entire codebase for anything related to:
+
+- enrollment
+- enrollments
+- academic session
+- session enrollment
+- promote
+- promotion
+- advance
+- carry forward
+- next session
+- student migration
+- class assignment
+- section assignment
+- session activation
+
+Identify the intended workflow.
+
+Do not infer from the database alone.
+
+I want the actual application workflow.
+
+==================================================
+7. CHECK WHETHER THERE IS A BUG IN SESSION ACTIVATION
+
+Determine whether creating/activating session 30375 should have automatically created enrollments for existing active students.
+
+If yes, identify:
+
+- The code responsible
+- Whether it was executed
+- Whether it failed
+- Whether it was skipped
+- Whether there is an existing bug
+- Whether there are logs/errors indicating failure
+
+If no, explain how the administrator is expected to populate the new session.
+
+==================================================
+8. CHECK ADMIN UI
+
+Find the Admin UI responsible for:
+
+- Academic sessions
+- Student enrollment
+- Promotion
+- Class/section assignment
+- Session transition
+- Student migration
+
+Tell me exactly what an administrator is currently supposed to do to get a student into:
+
+2028-2029
+Class 6
+Section A
+
+If there is no UI for this, say so clearly.
+
+==================================================
+9. CHECK WHETHER THE CURRENT TEST DATA IS SIMPLY INCOMPLETE
+
+Determine whether this is:
+
+A. An actual application bug
+
+B. Missing test/setup data
+
+C. A broken academic-session activation workflow
+
+D. A broken promotion/enrollment workflow
+
+E. A design issue where current students are not automatically enrolled into a new session
+
+F. Multiple issues
+
+Rank the possibilities based on evidence from the code.
+
+==================================================
+10. IMPORTANT: DO NOT FIX
+
+Do NOT:
+
+- create enrollment records
+- modify student records
+- change session status
+- modify frontend
+- modify backend
+- create migrations
+- run data fixes
+
+This is READ-ONLY investigation only.
+
+==================================================
+11. FINAL ANSWER
+
+Give me:
+
+ROOT CAUSE OF MISSING ENROLLMENTS:
+...
+
+INTENDED ENROLLMENT LIFECYCLE:
+...
+
+CURRENT ACTUAL LIFECYCLE:
+...
+
+WHERE THE TWO DIFFER:
+...
+
+STUDENT 4 ENROLLMENT HISTORY:
+...
+
+STUDENT 7 ENROLLMENT HISTORY:
+...
+
+HOW 2028-2029 ENROLLMENTS ARE SUPPOSED TO BE CREATED:
+...
+
+WHETHER THIS IS A CODE BUG OR MISSING DATA:
+...
+
+SAFEST NEXT ACTION:
+...
+
+Also provide exact file paths and function names for every important finding.
