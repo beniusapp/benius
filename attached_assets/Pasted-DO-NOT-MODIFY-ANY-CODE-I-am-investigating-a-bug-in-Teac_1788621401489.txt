@@ -1,0 +1,232 @@
+DO NOT MODIFY ANY CODE.
+
+I am investigating a bug in:
+
+Teacher Dashboard → Examination → Add Marks
+
+When I select:
+
+Class: 6
+Section: A
+Subject: Physics
+Exam Type: Unit Test 1
+
+the screen displays:
+
+"No students found for this class/section."
+
+I want you to ONLY investigate and explain the exact current logic causing this.
+
+Do not fix anything yet.
+
+Trace the complete code path from the Teacher Examination frontend to the database.
+
+Specifically inspect:
+
+1. FRONTEND
+
+Find the exact code in:
+
+client/src/pages/teacher-modules/examination.tsx
+
+that loads/displays the student list for Add Marks.
+
+Tell me:
+
+- What API is called when Class/Section/Subject are selected?
+- What exact parameters are sent?
+- What conditions cause the frontend to display:
+  "No students found for this class/section."
+- Is the API call dependent on Subject?
+- Is it dependent on Exam Type?
+- Is it dependent on Academic Session?
+- Is there any frontend filtering after the API response?
+- Show the relevant function names and file locations.
+
+2. API
+
+Identify the exact backend endpoint called by Add Marks.
+
+I believe it may be something similar to:
+
+GET /api/examination/roster/:schoolId/:class/:section
+
+But verify this from the actual code.
+
+Explain:
+
+- Exact route
+- HTTP method
+- Parameters
+- Query parameters
+- Session/authentication requirements
+- Teacher authorization checks
+- Class/section validation
+- Subject validation
+- Academic-session resolution
+- Database query
+
+3. DATABASE QUERY
+
+Trace the exact query used to retrieve students.
+
+I want to know:
+
+- Which table/model is queried?
+- Is it querying students directly?
+- Is it querying enrollments?
+- Is it filtering by academic session?
+- Is it filtering by school_id?
+- Is it filtering by class?
+- Is it filtering by section?
+- Is it filtering by active status?
+- Is it filtering by student status?
+- Is it filtering by teacher assignment?
+- Is it filtering by subject?
+
+Show the actual relevant query/function and explain it in plain English.
+
+4. COMPARE WITH THE ACTUAL DATA
+
+For the exact selection:
+
+School = current logged-in teacher's school
+Academic Session = currently selected/active session
+Class = 6
+Section = A
+Subject = Physics
+
+determine whether students actually exist in the database for:
+
+school + academic_session + class 6 + section A
+
+If possible, inspect the database/data through the existing application/storage layer.
+
+DO NOT modify data.
+
+Tell me exactly how many matching students/enrollments exist.
+
+If there are students in the database but the API returns zero, identify exactly which condition/filter is eliminating them.
+
+5. TEACHER AUTHORIZATION
+
+Determine whether the teacher's assignment affects the student roster.
+
+For this teacher, inspect:
+
+teacher
+→ faculty mapping
+→ class
+→ section
+→ subject
+
+Determine whether the selected combination:
+
+Class 6
+Section A
+Physics
+
+is actually authorized for this teacher.
+
+If authorization fails, explain exactly where and why.
+
+Also distinguish between:
+
+A. Authorization failure
+B. No enrolled students
+C. Wrong academic session
+D. Frontend filtering bug
+E. API parameter mismatch
+F. Database query bug
+G. Class/section data mismatch
+H. Subject mismatch
+
+6. ACADEMIC SESSION
+
+This is especially important.
+
+The application currently uses academic sessions and enrollment records.
+
+Determine:
+
+- Which academic session is being sent by the frontend?
+- Which session does the backend resolve?
+- Which session_id is used in the student/enrollment query?
+- Does Class 6 / Section A have students enrolled in that exact session?
+
+Check whether the UI shows one session while the API is resolving another session.
+
+7. DATA FORMAT / VALUE MISMATCH
+
+Check for possible mismatches such as:
+
+class:
+"6" vs 6
+
+section:
+"A" vs "a"
+
+subject:
+"Physics" vs another canonical subject value
+
+school ID mismatch
+
+session ID mismatch
+
+teacher ID mismatch
+
+Also check whether the student enrollment stores class/section differently from the school metadata.
+
+8. IMPORTANT: COMPARE WITH THE ADMIN STUDENT LIST
+
+The screenshot shows that the Admin portal currently has students, including students in Class 6 / Section A.
+
+Determine why those students are visible in the Admin student list but are not appearing in Teacher Examination → Add Marks.
+
+Do not assume they are the same dataset.
+
+Trace both queries and explain the difference.
+
+9. GIVE ME THE ROOT CAUSE
+
+At the end, give me a clear diagnosis:
+
+ROOT CAUSE:
+...
+
+EXPECTED BEHAVIOR:
+...
+
+ACTUAL BEHAVIOR:
+...
+
+EXACT CODE PATH:
+Frontend
+→ API
+→ authorization
+→ session resolution
+→ database query
+→ response
+→ frontend rendering
+
+If there are multiple possible causes, rank them:
+
+1. Most likely
+2. Second most likely
+3. Third most likely
+
+For each, provide evidence from the actual code/data.
+
+10. DO NOT FIX IT
+
+Again:
+
+DO NOT modify any files.
+DO NOT change database records.
+DO NOT create migrations.
+DO NOT change frontend logic.
+DO NOT apply a workaround.
+
+I only want the investigation and exact explanation first.
+
+After the investigation, tell me the smallest/safest fix that WOULD be appropriate, but do not implement it.
