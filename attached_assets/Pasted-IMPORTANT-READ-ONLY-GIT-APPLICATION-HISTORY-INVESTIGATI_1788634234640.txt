@@ -1,0 +1,397 @@
+IMPORTANT — READ-ONLY GIT / APPLICATION HISTORY INVESTIGATION
+
+DO NOT MODIFY ANYTHING.
+
+DO NOT:
+- reset Git
+- revert commits
+- checkout another branch
+- restore a checkpoint
+- modify code
+- modify database
+- run migrations
+- run rollback migrations
+- delete files
+- change configuration
+- restart with modifications
+
+I am considering rolling the application back to this exact Git commit:
+
+COMMIT:
+d4b11e6
+
+COMMIT MESSAGE:
+"Add investigation prompt asset"
+
+PARENT:
+bb6f62
+
+I need a COMPLETE READ-ONLY investigation of everything that changed AFTER commit d4b11e6 up to the current HEAD / current application state.
+
+The purpose is to determine whether d4b11e6 is a safe restoration point.
+
+IMPORTANT:
+This is an investigation only.
+Do not make any changes.
+
+==================================================
+1. VERIFY THE BASE COMMIT
+==================================================
+
+Confirm:
+
+- commit hash
+- commit message
+- author
+- timestamp
+- parent commit(s)
+- current branch
+- current HEAD commit
+
+Confirm that d4b11e6 exists in the current repository history.
+
+Also show:
+
+d4b11e6
+    ↓
+its parent bb6f62
+    ↓
+all subsequent commits
+    ↓
+current HEAD
+
+==================================================
+2. LIST EVERY COMMIT AFTER d4b11e6
+==================================================
+
+Run a complete Git history inspection.
+
+I want EVERY commit after d4b11e6 up to current HEAD.
+
+For each commit report:
+
+- commit hash
+- date/time
+- commit message
+- author
+- number of files changed
+- insertions
+- deletions
+
+Do not summarize only the major commits.
+
+I want the complete list.
+
+==================================================
+3. SHOW THE CUMULATIVE CODE DIFFERENCE
+==================================================
+
+Calculate the complete cumulative difference between:
+
+BASE:
+d4b11e6
+
+and:
+
+CURRENT:
+HEAD
+
+Use the equivalent of:
+
+git diff d4b11e6..HEAD
+
+but READ-ONLY.
+
+Report:
+
+- every changed file
+- files added
+- files deleted
+- files modified
+- renamed files
+- total insertions
+- total deletions
+
+Do not apply the diff.
+
+==================================================
+4. GROUP ALL CHANGES BY APPLICATION AREA
+==================================================
+
+For every changed file after d4b11e6, classify it into categories such as:
+
+- Authentication
+- Multi-tenancy / school isolation
+- Teacher Registry
+- Student Registry
+- Academic Sessions
+- Enrollment
+- Promotion
+- Examination
+- Exam Scores
+- Teacher Portal
+- Admin Portal
+- Student Portal
+- Database schema
+- Database migrations
+- API routes
+- Storage layer
+- Frontend
+- Configuration
+- Dependencies
+- Tests
+- UI
+- Other
+
+For each category explain exactly what changed.
+
+==================================================
+5. EXAMINE DATABASE / SCHEMA CHANGES
+==================================================
+
+This is extremely important.
+
+Determine whether anything after d4b11e6 changed:
+
+- database schema
+- tables
+- columns
+- indexes
+- constraints
+- migrations
+- seed data
+- database initialization
+- database scripts
+- triggers
+- stored procedures
+- data transformation logic
+
+List every migration or database-related file changed after d4b11e6.
+
+For each one explain:
+
+- what it changes
+- whether it changes schema
+- whether it changes existing data
+- whether it is reversible
+- whether it has already been executed against the current database
+
+DO NOT execute anything.
+
+==================================================
+6. DETERMINE WHETHER DATABASE DATA CHANGED
+==================================================
+
+Do NOT modify the database.
+
+Inspect available application/database audit information and determine whether application actions after d4b11e6 may have changed actual database data.
+
+Specifically investigate whether the following may have changed after d4b11e6:
+
+- students
+- teachers
+- faculty mappings
+- enrollments
+- academic sessions
+- promotion decisions
+- academic history
+- exam scores
+- school/tenant data
+- users/authentication records
+
+If possible, report:
+
+- what data was changed
+- when it was changed
+- whether the change was caused by code/application actions
+- whether the change is represented in Git or exists only in the database
+
+IMPORTANT:
+
+Do not modify any data just to investigate this.
+
+If the database does not contain timestamps/audit information sufficient to determine this, explicitly say:
+
+"Cannot determine from available database history."
+
+Do not guess.
+
+==================================================
+7. CHECK REPLIT CHECKPOINTS / GIT STATE
+==================================================
+
+Identify whether there are Replit checkpoints, snapshots, or other restoration mechanisms associated with the period after d4b11e6.
+
+Do NOT restore anything.
+
+Simply report:
+
+- available checkpoint identifiers/names if accessible
+- approximate timestamps
+- whether they correspond to Git commits or workspace states
+- whether restoring one would affect files only or potentially other workspace state
+
+Do not assume a Replit checkpoint is equivalent to a Git commit unless verified.
+
+==================================================
+8. VERY IMPORTANT — WHAT WOULD A GIT ROLLBACK ACTUALLY DO?
+==================================================
+
+Analyze the consequence of returning the working codebase to:
+
+d4b11e6
+
+WITHOUT actually doing it.
+
+Explain exactly:
+
+A. Which source-code changes after d4b11e6 would disappear from the working tree.
+
+B. Which files would return to their d4b11e6 contents.
+
+C. Which new files would disappear.
+
+D. Which deleted/modified files would be restored.
+
+E. Which database changes would NOT automatically be reversed by a Git rollback.
+
+F. Which migrations, if already executed, would remain applied to the database.
+
+G. Which user-created database records would remain.
+
+H. Which environment variables/secrets/configuration changes would remain outside Git, if applicable.
+
+I. Whether package/dependency state would also need separate consideration.
+
+==================================================
+9. CHECK FOR DEPENDENCIES BETWEEN CHANGES
+==================================================
+
+Determine whether any changes after d4b11e6 depend on earlier changes after d4b11e6.
+
+For example:
+
+Commit A changes database schema
+Commit B changes storage code to depend on that schema
+Commit C changes API to depend on B
+
+Identify such chains.
+
+This is important because if I return to d4b11e6, I need to know whether the application at d4b11e6 is internally consistent.
+
+==================================================
+10. CHECK WHETHER d4b11e6 ITSELF IS A COMPLETE WORKING STATE
+==================================================
+
+Without modifying anything, inspect the repository at d4b11e6 conceptually or using a read-only Git worktree if necessary.
+
+Determine whether:
+
+- package files are consistent
+- imports are present
+- referenced files exist
+- schema files are consistent
+- routes referenced by frontend exist
+- frontend/backend contracts are consistent
+- TypeScript would be expected to compile
+- tests are compatible
+
+Do NOT checkout/reset the actual working tree.
+
+If necessary, use a temporary read-only Git worktree or equivalent safe mechanism.
+
+==================================================
+11. IDENTIFY ANY CHANGES THAT WOULD BE LOST
+==================================================
+
+Give me a concise but complete list:
+
+"These are the application features/logic introduced after d4b11e6."
+
+For example:
+
+- feature X
+- API Y
+- database migration Z
+- UI change A
+- bug fix B
+
+Do not omit small changes.
+
+==================================================
+12. PRODUCE A ROLLBACK RISK ASSESSMENT
+==================================================
+
+At the end classify the rollback as:
+
+LOW RISK
+MEDIUM RISK
+HIGH RISK
+or
+CANNOT DETERMINE
+
+Explain why.
+
+Do NOT perform the rollback.
+
+==================================================
+13. FINAL REPORT FORMAT
+==================================================
+
+Give me this exact structure:
+
+A. BASE COMMIT
+- hash
+- message
+- date
+- parent
+
+B. CURRENT HEAD
+- hash
+- message
+- date
+- branch
+
+C. ALL COMMITS AFTER BASE
+Complete chronological list.
+
+D. CUMULATIVE FILE CHANGES
+Complete list of added/modified/deleted/renamed files.
+
+E. APPLICATION LOGIC CHANGES
+Grouped by area.
+
+F. DATABASE / MIGRATION CHANGES
+Complete details.
+
+G. POSSIBLE DATABASE DATA CHANGES
+What can and cannot be determined.
+
+H. REPLIT CHECKPOINTS / SNAPSHOTS
+Read-only information only.
+
+I. WHAT A ROLLBACK TO d4b11e6 WOULD RESTORE
+Exact explanation.
+
+J. WHAT A GIT ROLLBACK WOULD NOT RESTORE
+Especially database data, executed migrations, secrets/configuration, etc.
+
+K. FEATURES/LOGIC THAT WOULD BE LOST
+Complete list.
+
+L. ROLLBACK RISK
+LOW / MEDIUM / HIGH / CANNOT DETERMINE.
+
+M. RECOMMENDATION
+Tell me whether we should:
+1. Roll back to d4b11e6,
+2. Create a safety branch/checkpoint first and then roll back,
+3. Not roll back,
+4. Or investigate something else first.
+
+IMPORTANT:
+DO NOT PERFORM ANY ROLLBACK.
+
+DO NOT MODIFY ANYTHING.
+
+STOP after producing this report.
