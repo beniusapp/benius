@@ -1,0 +1,627 @@
+READ-ONLY INVESTIGATION — ACTUAL EXAMINATION / EXAM POLICY CONFIGURATION AND SAMPLE DATA
+
+IMPORTANT:
+This is a READ-ONLY investigation.
+
+DO NOT modify source code.
+DO NOT modify the database.
+DO NOT INSERT, UPDATE, DELETE, DROP, ALTER, MIGRATE, SEED, BACKFILL, or CLEAN any data.
+DO NOT change configuration or environment variables.
+DO NOT change Git HEAD.
+DO NOT checkout, reset, revert, cherry-pick, or commit anything.
+DO NOT create fixes or implementation changes.
+
+The historical target to inspect is:
+
+d4b11e6f46a5a87c6b87c267edeb5f17aca7a634
+
+Message:
+Add investigation prompt asset
+
+The workspace may currently be on another commit. That is acceptable.
+
+You may inspect the historical source tree at d4b11e6 directly.
+
+For DATABASE inspection:
+- Read existing data only.
+- Do not change any records.
+- If the available database is a development/test database, clearly identify it.
+- Do not inspect or modify production data.
+- Do not create test records.
+- If a query cannot safely be executed read-only, do not execute it; report that limitation.
+
+GOAL:
+
+I want to understand the ACTUAL Examination configuration and sample data that the application uses.
+
+We already know from the previous code investigation that the Examination calculation system uses things such as:
+
+- Exam Policy
+- examWeights
+- grading rules
+- pass percentage
+- promotion rules
+- attendance rules
+- cumulative/term configuration
+
+Now I want to see the actual configured values and representative existing records.
+
+Do not redesign anything.
+Do not decide what the values SHOULD be.
+Report what actually exists.
+
+==================================================
+1. IDENTIFY THE EXAMINATION POLICY TABLES
+==================================================
+
+Inspect the historical schema at d4b11e6 and identify all database tables/entities related to:
+
+- exam policies
+- exam policy tiers
+- exam weights
+- grading rules
+- pass percentages
+- promotion rules
+- cumulative result rules
+- attendance rules
+- academic sessions
+- classes
+- sections
+- subjects
+- exam types
+- exam scores
+
+For each relevant table/entity report:
+
+- table name
+- schema/model name
+- important columns
+- relationships
+- whether the table is actually populated in the available database
+
+Do not change anything.
+
+==================================================
+2. ACTUAL EXAM POLICY RECORDS
+==================================================
+
+Read the existing Exam Policy / Exam Policy Tier records.
+
+Report every relevant existing policy record, including:
+
+- ID
+- school ID
+- class applicability
+- policy/tier name
+- examWeights
+- promotionFailRules
+- promotionEnabled
+- cumulative configuration
+- minimum percentages
+- attendance configuration
+- grading configuration
+- any other fields used by Teacher Examination
+
+If JSON is stored in text/JSON columns, decode it and show the actual structure in readable form.
+
+Do not invent missing values.
+
+If there are multiple schools, separate them by school.
+
+==================================================
+3. ACTUAL EXAM WEIGHTS
+==================================================
+
+Extract the actual configured exam weights.
+
+For each school and applicable class/policy, show:
+
+Term
+↓
+Exam Type / source_exam
+↓
+Weight
+
+Example format:
+
+School 1
+Policy: ______
+
+Term: ______
+- Unit Test 1 → 20%
+- Mid Term → 30%
+- Final → 50%
+
+BUT:
+Use ONLY the actual database values.
+
+Also calculate, without modifying anything:
+
+- sum of component weights within each term
+- whether they total 100
+- whether they are below 100
+- whether they are above 100
+
+Clearly distinguish:
+
+- component exam weights
+- cumulative term weights
+
+==================================================
+4. ACTUAL GRADING RULES
+==================================================
+
+Read the actual grading rules used by Teacher Examination.
+
+Report:
+
+- class
+- school
+- minimum percentage
+- maximum percentage
+- grade
+- grade point if present
+- any description/label
+
+Determine whether the rules are:
+
+- school-wide
+- class-specific
+- policy-specific
+- exam-specific
+
+Do not assume that the configured maximum percentage is actually respected by the current code.
+
+Just report the stored configuration AND separately explain how the current Teacher Examination code uses it.
+
+==================================================
+5. ACTUAL PASS PERCENTAGES
+==================================================
+
+Find all actual configured pass percentages relevant to Examination.
+
+Report:
+
+- source table
+- school
+- class/policy
+- value
+- whether it appears to be subject pass percentage, exam pass mark, promotion threshold, or something else
+
+Specifically compare:
+
+- exam_scores.passMarks
+- grading/policy pass percentage
+- any fixed 33% threshold
+- any other configured pass threshold
+
+Do not reconcile them yet.
+
+Just show the actual values and where they come from.
+
+==================================================
+6. ACTUAL PROMOTION RULES
+==================================================
+
+Read the actual configured promotion rules.
+
+Report the exact existing values for:
+
+### Failed-subject rule
+
+- enabled/disabled
+- term
+- maximum allowed failures / fail_count
+
+### Attendance rule
+
+- enabled/disabled
+- minimum percentage
+
+### Current-term average rule
+
+- enabled/disabled
+- minimum percentage
+
+### Cumulative rule
+
+- enabled/disabled
+- trigger term
+- minimum percentage
+- term weights
+
+Show the raw configuration and a human-readable interpretation.
+
+Do not alter anything.
+
+==================================================
+7. ACTUAL ATTENDANCE CONFIGURATION
+==================================================
+
+Find the actual attendance settings used by Examination/promotion.
+
+Report:
+
+- configured attendance threshold(s)
+- any class-specific values
+- any policy-specific values
+- whether there are multiple competing values
+
+Also inspect the actual attendance data structure sufficiently to determine what statuses are stored.
+
+Do not modify attendance records.
+
+==================================================
+8. ACTUAL ACADEMIC SESSIONS
+==================================================
+
+Read existing academic session records relevant to the sample school(s).
+
+Report:
+
+- session ID
+- school ID
+- session name/year
+- active/selected/archived status
+- start date
+- end date if present
+
+Pay special attention to:
+
+Session 30375
+
+Report its actual record if it exists.
+
+Do not modify sessions.
+
+==================================================
+9. ACTUAL CLASSES / SECTIONS / SUBJECTS / EXAM TYPES
+==================================================
+
+Read the actual school configuration used by Teacher Examination.
+
+For School 1, identify:
+
+- configured classes
+- sections
+- subjects
+- exam types
+
+Pay particular attention to:
+
+Class 6
+Section B
+Subject Bengali
+Exam Type Unit Test 1
+
+Report whether each actually exists in configuration.
+
+If configuration is stored as JSON, decode it.
+
+==================================================
+10. ACTUAL STUDENT SAMPLE DATA
+==================================================
+
+Read a SMALL representative sample only.
+
+Do not dump the entire student table.
+
+For School 1, inspect:
+
+Student 6
+
+Report only the fields needed to understand Examination:
+
+- student ID
+- school ID
+- active status
+- current class
+- current section
+
+Also inspect the other active students in:
+
+School 1
+Class 6
+Section B
+
+Return:
+
+- student ID
+- current class
+- current section
+- active status
+
+Do not expose unrelated personal information.
+
+==================================================
+11. ACTUAL ENROLLMENT DATA
+==================================================
+
+For the representative School 1 / Class 6 / Section B students, inspect existing enrollment records.
+
+Especially inspect Student 6.
+
+Report:
+
+- student ID
+- enrollment ID
+- school ID
+- session ID
+- class
+- section
+- active status if present
+
+Pay particular attention to:
+
+Session 30375
+
+Determine whether Student 6 is enrolled in session 30375.
+
+Do not create or modify enrollments.
+
+==================================================
+12. ACTUAL FACULTY MAPPING DATA
+==================================================
+
+Inspect existing Faculty Mapping records relevant to:
+
+- School 1
+- Teacher 6
+- Class 6
+- Section B
+- Bengali
+- any relevant exam subject mapping
+
+Report:
+
+- mapping ID
+- teacher ID
+- school ID
+- class
+- section
+- subject
+- active status if present
+
+Do not modify mappings.
+
+The purpose is only to compare the actual mapping data with the Examination code behavior.
+
+==================================================
+13. ACTUAL EXAM SCORE SAMPLE DATA
+==================================================
+
+Read existing `exam_scores` records for a SMALL representative sample.
+
+Prioritize:
+
+School 1
+Student 6
+Class 6
+Section B
+Bengali
+Unit Test 1
+
+If records exist, report:
+
+- score ID
+- student ID
+- teacher ID
+- school ID
+- session ID
+- subject
+- exam type
+- marks
+- total marks
+- pass marks
+- isAbsent
+- class
+- section
+- published
+- created/updated timestamps if useful
+
+Do not expose unrelated student information.
+
+Do not modify scores.
+
+==================================================
+14. CHECK FOR MULTIPLE SCORES / DUPLICATES
+==================================================
+
+For the representative School 1 / Student 6 / Bengali / Unit Test 1 combination, determine whether multiple logical score rows exist.
+
+Use the application's apparent logical identity:
+
+student
++ subject
++ exam type
++ class
++ section
++ session
+
+Report:
+
+- number of matching rows
+- IDs
+- whether values differ
+
+Do not delete or merge duplicates.
+
+==================================================
+15. CHECK CROSS-SESSION SAMPLE DATA
+==================================================
+
+For Student 6, determine whether Bengali examination scores exist in:
+
+- session 30375
+- other sessions
+
+Report the session IDs and score dimensions.
+
+The purpose is to understand whether the current Teacher Examination Results calculation could combine scores from multiple academic sessions.
+
+Do not modify anything.
+
+==================================================
+16. CHECK CROSS-SCHOOL SAMPLE DATA
+==================================================
+
+Do NOT attempt unauthorized access.
+
+Instead, inspect existing database records read-only to determine whether there are logically similar score records in other schools.
+
+Use only normal database reads.
+
+For example, determine whether another school has:
+
+- a student with the same subject
+- same exam type
+- same class/section
+- same or similar student ID if relevant
+
+Do not attempt to exploit any route.
+
+The purpose is only to understand whether the database contains data that makes the previously identified tenant-isolation risk concrete.
+
+==================================================
+17. RECONCILE CODE WITH ACTUAL CONFIGURATION
+==================================================
+
+Now compare the actual database configuration with the historical code.
+
+For each item below, report:
+
+CODE BEHAVIOR
+ACTUAL CONFIGURATION
+MATCH / DIFFERENCE
+
+Items:
+
+1. Exam weights
+2. Grade rules
+3. Pass percentage
+4. Exam pass marks
+5. Failed-subject rule
+6. Attendance rule
+7. Current-term minimum
+8. Cumulative rule
+9. Cumulative term weights
+10. Exam types
+11. Classes
+12. Sections
+13. Subjects
+14. Academic Session 30375
+15. Student 6
+16. Faculty Mapping for Teacher 6
+17. Enrollment for Student 6
+18. Existing exam scores for Student 6
+
+==================================================
+18. BUILD ONE ACTUAL END-TO-END EXAMPLE
+==================================================
+
+Using ONLY existing database records, if sufficient data exists, construct one real example for:
+
+School 1
+Teacher 6
+Student 6
+Class 6
+Section B
+Subject Bengali
+Exam Type Unit Test 1
+Session 30375
+
+Show:
+
+1. Student Registry state
+2. Enrollment state
+3. Faculty Mapping state
+4. Exam Policy applicable to the class
+5. Exam weight
+6. Pass percentage
+7. Existing score, if any
+8. What percentage the current code would calculate
+9. What grade the current code would calculate
+10. Whether the current code would consider the result pass/fail
+11. Whether this score would participate in term/cumulative calculation
+
+If there is insufficient actual data to calculate a result, say exactly what is missing.
+
+Do NOT create sample records.
+
+==================================================
+19. IMPORTANT: DO NOT CONFUSE CONFIGURATION WITH CODE
+==================================================
+
+Clearly separate:
+
+A. What the database actually contains.
+
+B. What the code does with that data.
+
+C. What the code does when configuration is missing.
+
+D. What is hardcoded.
+
+Do not call a fallback value "configured."
+
+For example:
+
+- If database pass percentage = 40 but report code uses hardcoded 33, state both.
+- If grading rules exist but `computeGrade()` ignores maxPercent, state both.
+- If no policy exists, do not invent a policy.
+
+==================================================
+20. FINAL REPORT FORMAT
+==================================================
+
+Return exactly these sections:
+
+A. Database/environment inspected
+B. Examination policy tables
+C. Actual Exam Policy records
+D. Actual exam weights
+E. Actual grading rules
+F. Actual pass percentages / pass marks
+G. Actual promotion rules
+H. Actual attendance configuration
+I. Actual academic sessions
+J. Actual School 1 Examination configuration
+K. Actual Student 6 data
+L. Actual Enrollment data
+M. Actual Faculty Mapping data
+N. Actual Exam Score sample
+O. Duplicate/collision observations
+P. Cross-session observations
+Q. Cross-school observations
+R. Code vs actual configuration comparison
+S. Actual end-to-end Student 6 example
+T. Important contradictions
+U. Simple plain-English summary
+
+For every important database claim, include:
+
+- table name
+- record ID where useful
+- relevant field/value
+
+For every important code claim, include:
+
+- file path
+- function
+- line range where possible
+
+IMPORTANT FINAL RULES:
+
+READ-ONLY ONLY.
+
+No source changes.
+No database changes.
+No Git changes.
+No migrations.
+No test data.
+No fixes.
+No redesign.
+
+If you discover a problem, REPORT it only.
+
+Stop after producing the report.
