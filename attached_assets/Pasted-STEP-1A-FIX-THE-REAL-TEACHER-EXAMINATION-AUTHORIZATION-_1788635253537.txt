@@ -1,0 +1,368 @@
+STEP 1A — FIX THE REAL TEACHER EXAMINATION AUTHORIZATION GLITCH
+
+IMPORTANT:
+Do NOT proceed to STEP 2.
+This step is ONLY to fix the Teacher Examination roster authorization problem discovered during verification.
+
+MULTI-TENANT REQUIREMENT — NON-NEGOTIABLE:
+
+This is a MULTI-TENANT application.
+
+A teacher from School A must NEVER be able to access students, exams, marks, or other data belonging to School B.
+
+We are changing ONLY the Teacher Examination authorization policy.
+
+BUSINESS RULE FOR TEACHER EXAMINATION:
+
+Any authenticated teacher who belongs to a school may use the Teacher Examination module for that school.
+
+For Examination roster access, DO NOT require an exact faculty-mapping/class-section-subject match.
+
+In other words:
+
+Teacher Registry membership + authenticated session + same school
+is sufficient to access the Examination roster.
+
+Faculty assignment mappings must NOT block a teacher from seeing the roster.
+
+EXAMPLE:
+
+Teacher 6 belongs to School 1.
+
+Teacher 6 selects:
+
+Class: 6
+Section: B
+Subject: Bengali
+Exam Type: Unit Test 1
+
+The system must allow the roster request to proceed.
+
+Then the live Student Registry query must return:
+
+Student 6
+Student 28892
+
+because they are active students in:
+
+School 1
+Class 6
+Section B
+
+The stored faculty mapping:
+
+"Bengali, Computer"
+
+must NOT cause a 403.
+
+IMPORTANT:
+
+DO NOT modify the faculty mapping data itself.
+
+Do NOT change:
+
+"Bengali, Computer"
+
+to separate records.
+
+The problem is the Examination authorization policy, not the stored faculty data.
+
+AUTHORIZATION MODEL AFTER THIS CHANGE:
+
+The Examination roster endpoint should enforce:
+
+1. Teacher is authenticated.
+2. Teacher exists in Teacher Registry/session.
+3. Teacher belongs to the requested school.
+4. Requested school matches teacher's school.
+5. Then allow the live Student Registry roster query.
+
+The roster query remains:
+
+students.school_id = authenticated teacher's school
+AND students.is_active = true
+AND students.class = requested class
+AND students.section = requested section
+
+There must be NO faculty assignment requirement between the teacher and:
+
+- class
+- section
+- subject
+
+for Teacher Examination roster access.
+
+SUBJECT:
+
+Subject is Examination context only.
+
+It must NOT determine whether the teacher can retrieve the student roster.
+
+For example, for the same:
+
+School 1
+Class 6
+Section B
+
+these should all retrieve the same live roster:
+
+Physics
+Bengali
+Computer
+Mathematics
+
+provided those subjects are available in the Examination UI.
+
+Do not filter students by subject.
+
+EXAM TYPE:
+
+Exam type must not affect roster access.
+
+Academic Session:
+
+Academic Session must remain part of Examination context.
+
+The route should still resolve/require a valid academic session as it currently does.
+
+DO NOT remove academic-session context.
+
+However, academic-session enrollment must NOT be required merely to display the live roster.
+
+MULTI-TENANT SECURITY:
+
+This is extremely important.
+
+Do NOT replace the existing school authorization with generic authentication.
+
+The following must remain enforced:
+
+authenticated teacher.schoolId === requested schoolId
+
+and:
+
+students.schoolId === authenticated teacher.schoolId
+
+A teacher from School 1 requesting School 2 must still receive 403.
+
+A teacher must NEVER be able to manipulate:
+
+/api/examination/roster/2/...
+
+and receive School 2 students.
+
+DO NOT weaken school/tenant isolation.
+
+DO NOT change student ownership.
+
+DO NOT change Teacher Registry records.
+
+DO NOT change Student Registry records.
+
+DO NOT change enrollment records.
+
+DO NOT change academic-session records.
+
+DO NOT change exam scores.
+
+DO NOT change score-saving logic.
+
+DO NOT change POST /api/exam-scores yet.
+
+This step is ONLY about the Examination roster authorization gate.
+
+FRONTEND ERROR MESSAGE:
+
+Do not redesign the Examination UI in this step.
+
+However, verify the current Class 6/B problem no longer produces the misleading:
+
+"No students found"
+
+because the backend should no longer reject the request due to the faculty mapping.
+
+If the roster request succeeds, the frontend should receive the actual students.
+
+Do not make unrelated frontend changes.
+
+EXPECTED TEST:
+
+Teacher:
+Teacher 6
+
+School:
+1
+
+Academic Session:
+2028-2029
+
+Class:
+6
+
+Section:
+B
+
+Subject:
+Bengali
+
+Exam Type:
+Unit Test 1
+
+EXPECTED RESULT:
+
+HTTP 200
+
+Roster:
+
+Student 6 — student5mis — MIS-0006
+Student 28892 — Error student — MIS-0024
+
+Student 18 must NOT appear because that student is inactive.
+
+SECOND TEST:
+
+Same teacher:
+
+School 1
+Class 6
+Section B
+
+Change subject to another subject available in the Examination UI.
+
+Expected:
+The same Class 6/B student roster.
+
+The subject must not change roster membership.
+
+THIRD TEST:
+
+Teacher 6 attempts:
+
+School 2
+Class 6
+Section B
+
+Expected:
+HTTP 403.
+
+No School 2 students may be returned.
+
+FOURTH TEST:
+
+Use a different authenticated teacher from School 1, if such a teacher exists in the test environment.
+
+Select:
+
+Class 6
+Section B
+Any available subject
+Any exam type
+
+Expected:
+The teacher is allowed to retrieve School 1's Class 6/B live roster.
+
+This is important because the business rule is:
+
+ANY AUTHENTICATED TEACHER FROM THAT SCHOOL.
+
+If there is no second School 1 teacher available for testing, report that instead of modifying data.
+
+REGRESSION TESTS:
+
+Verify Class 6/A still returns:
+
+Student 4
+Student 7
+
+Verify Class 6/B returns:
+
+Student 6
+Student 28892
+
+Verify inactive Student 18 remains excluded.
+
+Verify another school cannot be accessed.
+
+Verify unauthenticated requests remain 401.
+
+Verify faculty mappings are NOT modified.
+
+Verify enrollment rows are NOT modified.
+
+Verify exam-score rows are NOT modified.
+
+IMPORTANT ARCHITECTURAL RULE:
+
+Do not solve this by creating or modifying enrollments.
+
+Do not solve this by modifying faculty mappings.
+
+Do not solve this by copying students into another table.
+
+Do not solve this by removing school authorization.
+
+The intended architecture is:
+
+Authenticated Teacher
+        ↓
+Same School / Tenant
+        ↓
+Academic Session context
+        ↓
+Class + Section
+        ↓
+LIVE Student Registry
+        ↓
+Student roster
+
+Faculty assignment is NOT a prerequisite for Examination roster access.
+
+FILES:
+
+First inspect the current implementation and modify only the minimum necessary files.
+
+Likely:
+
+server/teacher-routes.ts
+
+and tests if necessary.
+
+Do not modify storage.getStudentsByClassSection() because the investigation proved that function is already correct.
+
+DO NOT CHANGE:
+
+- Student Registry
+- Teacher Registry
+- Faculty mapping records
+- Enrollment logic
+- Academic session logic
+- Promotion logic
+- Exam score saving
+- exam_scores schema
+- Student portal
+- Admin portal
+- unrelated teacher APIs
+
+STOP CONDITION:
+
+After implementing this authorization change and running the tests, STOP.
+
+Do NOT proceed to Step 2.
+
+Report:
+
+1. Exact files changed.
+2. Exact authorization logic changed.
+3. Old authorization behavior.
+4. New authorization behavior.
+5. Confirmation that school/tenant isolation remains enforced.
+6. Confirmation that faculty mapping data was not changed.
+7. Confirmation that enrollment data was not changed.
+8. Confirmation that score-saving logic was not changed.
+9. Class 6/B test result.
+10. Class 6/A regression result.
+11. Cross-school security test result.
+12. Whether a second School 1 teacher was tested.
+13. Any remaining issue you detect.
+
+Then STOP and wait for my next instruction.

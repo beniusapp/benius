@@ -1417,9 +1417,6 @@ export function registerTeacherRoutes(app: Express) {
 
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-      if (!await isTeacherAuthorizedForAssignment(teacher, className, sectionName, subject)) {
-        return res.status(403).json({ message: "Not authorized for this class-section and subject" });
-      }
 
       const sessionId = await resolveAcademicSessionId(req, sid);
       if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
