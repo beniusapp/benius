@@ -144,6 +144,7 @@ beforeAll(async () => {
   await db.insert(facultyMappings).values([
     { teacherId: teacher.id, schoolId: schoolA.id, className: "1", section: "A", subject: "Math" },
     { teacherId: teacher.id, schoolId: schoolA.id, className: "6", section: "A", subject: "Physics" },
+    { teacherId: teacher.id, schoolId: schoolA.id, className: "6", section: "A", subject: "Chemistry" },
   ]);
 
   const [student, incomplete, override, classSixStudentA, classSixStudentB] = await db.insert(students).values([
@@ -152,6 +153,10 @@ beforeAll(async () => {
     { schoolId: schoolA.id, digitalStudentId: `${token}-override`, name: "Academic Smoke Override", class: "1", section: "A", phone: "8000000003", dob: "2015-01-03", passwordHash, isActivated: true },
     { schoolId: schoolA.id, digitalStudentId: `${token}-class-six-a`, name: "Academic Smoke Class Six A", class: "6", section: "A", phone: "8000000004", dob: "2014-01-01", passwordHash, isActivated: true },
     { schoolId: schoolA.id, digitalStudentId: `${token}-class-six-b`, name: "Academic Smoke Class Six B", class: "6", section: "A", phone: "8000000005", dob: "2014-01-02", passwordHash, isActivated: true },
+    { schoolId: schoolA.id, digitalStudentId: `${token}-i6a`, name: "Inactive Class Six A", class: "6", section: "A", phone: "8000000006", dob: "2014-01-03", passwordHash, isActivated: true, isActive: false },
+    { schoolId: schoolA.id, digitalStudentId: `${token}-6c`, name: "Other Section Student", class: "6", section: "C", phone: "8000000007", dob: "2014-01-04", passwordHash, isActivated: true },
+    { schoolId: schoolA.id, digitalStudentId: `${token}-5a`, name: "Other Class Student", class: "5", section: "A", phone: "8000000008", dob: "2015-01-04", passwordHash, isActivated: true },
+    { schoolId: schoolB.id, digitalStudentId: `${token}-b6a`, name: "Other School Student", class: "6", section: "A", phone: "8000000009", dob: "2014-01-05", passwordHash, isActivated: true },
   ]).returning();
   fixture.student = student.id;
   fixture.classSixStudentA = classSixStudentA.id;
@@ -217,6 +222,11 @@ describe.sequential("authenticated academic smoke", () => {
       method: "POST", body: JSON.stringify({ dsid: `${token}-student`, password }),
     })).response.status).toBe(200);
 
+    const enrollmentRowsBeforeRoster = await db.select({ id: enrollments.id }).from(enrollments)
+      .where(eq(enrollments.schoolId, fixture.schoolA));
+    const examScoreRowsBeforeRoster = await db.select({ id: examScores.id }).from(examScores)
+      .where(eq(examScores.schoolId, fixture.schoolA));
+
     const activeClassOneRoster = await request(
       teacher,
       `/api/examination/roster/${fixture.schoolA}/1/A?subject=Math`,
@@ -231,7 +241,8 @@ describe.sequential("authenticated academic smoke", () => {
       { headers: { "x-view-session-id": String(fixture.sessionA2) } },
     );
     expect(archivedClassOneRoster.response.status).toBe(200);
-    expect(archivedClassOneRoster.body.map((row: any) => row.studentId)).toEqual([fixture.student]);
+    expect(archivedClassOneRoster.body.map((row: any) => row.studentId).sort((a: number, b: number) => a - b))
+      .toEqual([fixture.student, fixture.incomplete, fixture.override].sort((a, b) => a - b));
 
     const activeClassSixRoster = await request(
       teacher,
@@ -239,6 +250,14 @@ describe.sequential("authenticated academic smoke", () => {
     );
     expect(activeClassSixRoster.response.status).toBe(200);
     expect(activeClassSixRoster.body.map((row: any) => row.studentId).sort((a: number, b: number) => a - b))
+      .toEqual([fixture.classSixStudentA, fixture.classSixStudentB].sort((a, b) => a - b));
+
+    const alternateAuthorizedSubjectRoster = await request(
+      teacher,
+      `/api/examination/roster/${fixture.schoolA}/6/A?subject=Chemistry`,
+    );
+    expect(alternateAuthorizedSubjectRoster.response.status).toBe(200);
+    expect(alternateAuthorizedSubjectRoster.body.map((row: any) => row.studentId).sort((a: number, b: number) => a - b))
       .toEqual([fixture.classSixStudentA, fixture.classSixStudentB].sort((a, b) => a - b));
 
     const unauthorizedSubjectRoster = await request(
@@ -252,6 +271,19 @@ describe.sequential("authenticated academic smoke", () => {
       `/api/examination/roster/${fixture.schoolB}/1/A?subject=Math`,
     );
     expect(crossTenantRoster.response.status).toBe(403);
+
+    const unauthenticatedRoster = await request(
+      new CookieJar(),
+      `/api/examination/roster/${fixture.schoolA}/6/A?subject=Physics`,
+    );
+    expect(unauthenticatedRoster.response.status).toBe(401);
+
+    const enrollmentRowsAfterRoster = await db.select({ id: enrollments.id }).from(enrollments)
+      .where(eq(enrollments.schoolId, fixture.schoolA));
+    const examScoreRowsAfterRoster = await db.select({ id: examScores.id }).from(examScores)
+      .where(eq(examScores.schoolId, fixture.schoolA));
+    expect(enrollmentRowsAfterRoster).toEqual(enrollmentRowsBeforeRoster);
+    expect(examScoreRowsAfterRoster).toEqual(examScoreRowsBeforeRoster);
 
     for (const { totalMarks, expectedPassMarks, marks, clientPassMarks } of [
       { totalMarks: 100, expectedPassMarks: 40, marks: [60, 80], clientPassMarks: 1 },

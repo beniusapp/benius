@@ -1423,7 +1423,7 @@ export function registerTeacherRoutes(app: Express) {
 
       const sessionId = await resolveAcademicSessionId(req, sid);
       if (!sessionId) return res.status(409).json({ message: "No academic session is selected." });
-      const studentList = await storage.getStudentsByClassSectionInSession(sid, className, sectionName, sessionId);
+      const studentList = await storage.getStudentsByClassSection(sid, className, sectionName);
       res.json(studentList.map(student => ({
         studentId: student.id,
         name: student.name,
