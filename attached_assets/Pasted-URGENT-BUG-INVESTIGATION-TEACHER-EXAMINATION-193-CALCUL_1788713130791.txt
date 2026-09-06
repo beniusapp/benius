@@ -1,0 +1,511 @@
+URGENT BUG INVESTIGATION — TEACHER EXAMINATION 193% CALCULATION ERROR
+
+The Teacher Portal → Examination → Add Marks is now reaching the
+configured grading policy correctly, but the calculation engine crashes with:
+
+"No configured grading rule matches percentage 193."
+
+The stack trace points to:
+
+shared/examination-calculation-engine.ts
+→ selectGrade()
+→ computeGrade()
+→ client/src/pages/teacher-modules/examination.tsx
+
+Current test context:
+
+Academic Session: 2028–2029 Active
+Class: 6
+Section: A
+Subject: Physics
+Exam Type: Unit Test 1
+
+Class 6 has a valid configured grading policy:
+
+A = 80–100
+B = 60–79
+C = 35–59
+D = 0–34
+
+The grading policy MUST NOT be changed to accommodate 193%.
+
+==================================================
+IMPORTANT — INVESTIGATION ONLY
+==================================================
+
+DO NOT FIX THE BUG YET.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE DATA.
+DO NOT MODIFY SCHEMA.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE grading rules.
+DO NOT CHANGE Fix 4.
+DO NOT CHANGE Fix 10A.
+DO NOT CHANGE the shared calculation engine.
+
+This is a READ-ONLY ROOT-CAUSE INVESTIGATION.
+
+Do not insert, update, delete, or save any marks.
+
+==================================================
+GOAL
+==================================================
+
+Determine exactly why the Teacher Examination Add Marks calculation is
+producing:
+
+percentage = 193
+
+A percentage above 100 is unexpected for ordinary marks entry.
+
+We need the actual input values and calculation path that produced 193.
+
+Do NOT guess.
+
+==================================================
+STEP 1 — REPRODUCE THE ERROR
+==================================================
+
+Reproduce the problem using:
+
+Academic Session: 2028–2029
+Class: 6
+Section: A
+Subject: Physics
+Exam Type: Unit Test 1
+
+Follow the Add Marks workflow exactly.
+
+Identify the FIRST user action that causes:
+
+"No configured grading rule matches percentage 193."
+
+Determine whether it happens:
+
+- immediately after entering Total Marks
+- when the student roster renders
+- when existing marks are loaded
+- when a mark is entered
+- when a mark is changed
+- when a student is marked Absent
+- when moving between students
+- during automatic calculation
+- or during another action
+
+Do not save marks to the database.
+
+==================================================
+STEP 2 — CAPTURE TOTAL MARKS
+==================================================
+
+Determine the exact Total Marks value used by the calculation.
+
+Report:
+
+- value displayed in the UI
+- React/state value
+- type of value (string/number/etc.)
+- value passed to calculation
+- any parsing/conversion applied
+
+For example, determine whether:
+
+"100"
+
+becomes:
+
+100
+
+or something unexpected.
+
+==================================================
+STEP 3 — CAPTURE THE MARK VALUE
+==================================================
+
+Determine the exact mark value that causes the 193% result.
+
+For the affected student, report:
+
+- student ID
+- student name only if necessary for debugging
+- entered mark
+- stored/existing mark if any
+- totalMarks associated with that score
+- isAbsent
+- subject
+- examType
+- class
+- section
+- sessionId
+
+READ ONLY.
+
+Do not modify the record.
+
+==================================================
+STEP 4 — TRACE THE EXACT PERCENTAGE FORMULA
+==================================================
+
+Trace the code path from the student's mark to:
+
+computeGrade()
+
+and then:
+
+selectGrade()
+
+Identify the exact percentage calculation.
+
+Report the actual mathematical operation.
+
+For example:
+
+percentage = marks / totalMarks * 100
+
+or whatever the application actually uses.
+
+Show the actual runtime values substituted into the formula.
+
+Example format:
+
+marks = ?
+totalMarks = ?
+percentage calculation = ?
+result = 193
+
+Do not change the calculation.
+
+==================================================
+STEP 5 — CHECK FOR DUPLICATION / AGGREGATION
+==================================================
+
+Investigate whether the 193% is caused by multiple scores being combined.
+
+Check for:
+
+- duplicate student scores
+- duplicate subject components
+- duplicate exam components
+- duplicate array entries
+- repeated map/reduce operations
+- existing score + entered score being added together
+- score being counted more than once
+- marks from another exam type
+- marks from another subject
+- marks from another session
+- marks from another class/section
+
+The selected context must be:
+
+School 1
+Session 30375 / 2028–2029
+Class 6
+Section A
+Physics
+Unit Test 1
+
+Determine exactly what score records enter the calculation.
+
+==================================================
+STEP 6 — CHECK SESSION ISOLATION
+==================================================
+
+Verify that Fix 10A remains intact.
+
+The calculation must use only scores belonging to:
+
+authenticated teacher school
++
+selected Academic Session
++
+selected class
++
+selected section
++
+selected subject/exam context where applicable.
+
+Check whether any:
+
+- other-session score
+- NULL-session score
+- other-school score
+
+is entering the Add Marks calculation.
+
+Do not change Fix 10A.
+
+==================================================
+STEP 7 — CHECK TOTAL MARKS MISMATCH
+==================================================
+
+Investigate whether the calculation is mixing different Total Marks values.
+
+For every score entering the affected calculation, report:
+
+marks
+totalMarks
+percentage contribution
+
+Specifically check for cases such as:
+
+entered mark uses Total Marks = 100
+
+but existing score uses:
+
+totalMarks = 50
+
+or another value.
+
+Determine whether the calculation assumes one common totalMarks while individual score records contain different totals.
+
+==================================================
+STEP 8 — CHECK ADD MARKS STATE
+==================================================
+
+Inspect:
+
+client/src/pages/teacher-modules/examination.tsx
+
+Trace these states/values:
+
+- selectedClass
+- selectedSection
+- selectedSubject
+- selectedExamType
+- totalMarks
+- studentScores
+- existing scores
+- calculated percentage
+- grading rules
+
+Determine whether any state contains stale or duplicated values.
+
+Pay special attention to:
+
+- React state updates
+- query results
+- query keys
+- useMemo
+- useEffect
+- map/reduce
+- object merging
+- score initialization
+- existing-score hydration
+- totalMarks parsing
+
+Do not modify the file.
+
+==================================================
+STEP 9 — CHECK RECENT GRADING-POLICY FIX
+==================================================
+
+The previous bug was:
+
+Add Marks was passing empty View Marks grading rules.
+
+That was corrected by loading Add Marks-specific grading rules.
+
+Verify that the correction did not accidentally alter the marks/percentage calculation.
+
+Do not undo the grading-policy fix.
+
+The correct architecture remains:
+
+selectedClass
+→ selected class grading policy
+→ calculate percentage
+→ selectGrade()
+
+The grading policy must not influence the percentage calculation itself.
+
+==================================================
+STEP 10 — CHECK calculate / computeGrade INPUT
+==================================================
+
+At the exact crash point, identify the complete input passed into:
+
+computeGrade()
+
+Report:
+
+percentage = ?
+rules = ?
+
+Also identify where `percentage` was calculated immediately before the call.
+
+If there are intermediate calculation objects, report their relevant fields.
+
+==================================================
+STEP 11 — CHECK FOR IMPOSSIBLE VALUES
+==================================================
+
+Determine whether any of these are occurring:
+
+- marks > totalMarks
+- totalMarks = 0
+- totalMarks is undefined
+- totalMarks is NaN
+- marks is a string causing concatenation
+- percentage is calculated twice
+- percentage is multiplied by 100 twice
+- percentage is based on the wrong denominator
+- percentage is summed across students
+- percentage is summed across subjects
+- percentage is summed across exams
+- duplicate score rows
+- stale score state
+- mixed totalMarks
+- wrong student score
+- wrong session score
+
+Do not fix any of them.
+
+Only identify which one, if any, is responsible.
+
+==================================================
+STEP 12 — CHECK DATABASE READS
+==================================================
+
+If database inspection is necessary, READ ONLY.
+
+Inspect relevant existing exam-score records for:
+
+School 1
+Session 30375 / 2028–2029
+Class 6
+Section A
+Physics
+Unit Test 1
+
+Also check whether there are duplicate rows for the same logical student/exam context.
+
+Do not modify anything.
+
+Do not insert test data.
+
+Do not save marks.
+
+==================================================
+STEP 13 — CHECK SERVER VS FRONTEND
+==================================================
+
+Determine whether the 193% is generated:
+
+A. by the frontend
+
+B. by the backend
+
+C. by shared calculation code
+
+D. by data returned from the backend
+
+E. by a combination of these
+
+The stack trace currently suggests the exception occurs in the shared
+calculation engine called from the frontend, but the source of the
+incorrect percentage must be identified.
+
+==================================================
+STEP 14 — DO NOT MASK THE ERROR
+==================================================
+
+DO NOT solve this by:
+
+- allowing grades above 100%
+- adding a 193% grading rule
+- expanding A to 193%
+- changing grading boundaries
+- clamping 193 to 100 without identifying the cause
+- ignoring the exception
+- disabling validation
+- restoring fallback grades
+
+The grading validator is correctly rejecting an impossible percentage.
+
+The percentage calculation must be investigated instead.
+
+==================================================
+DATABASE SAFETY
+==================================================
+
+Absolutely no database mutations.
+
+No:
+
+INSERT
+UPDATE
+DELETE
+migration
+schema change
+mark save
+grading-rule change
+
+Use read-only inspection only.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return a detailed but focused report containing:
+
+1. EXACT BUG
+
+2. EXACT REPRODUCTION STEPS
+
+3. FIRST ACTION THAT TRIGGERS THE ERROR
+
+4. EXACT STUDENT/SCORE CONTEXT
+
+5. TOTAL MARKS VALUE
+
+6. MARKS VALUE
+
+7. TOTALMARKS VALUE ASSOCIATED WITH THE SCORE
+
+8. EXACT PERCENTAGE FORMULA
+
+9. ACTUAL VALUES USED IN THE FORMULA
+
+10. WHY THE RESULT BECOMES 193%
+
+11. WHETHER DUPLICATION EXISTS
+
+12. WHETHER TOTAL-MARKS MISMATCH EXISTS
+
+13. WHETHER WRONG SESSION DATA ENTERS THE CALCULATION
+
+14. WHETHER NULL-SESSION DATA ENTERS THE CALCULATION
+
+15. WHETHER WRONG SUBJECT/EXAM/CLASS DATA ENTERS THE CALCULATION
+
+16. FRONTEND STATE INVOLVED
+
+17. BACKEND/API DATA INVOLVED
+
+18. SHARED CALCULATION ENGINE INVOLVED
+
+19. ROOT CAUSE
+
+20. MINIMAL PROPOSED FIX
+
+21. FILES THAT WOULD NEED TO CHANGE
+
+22. DATABASE/SCHEMA IMPACT
+
+23. REGRESSION TEST PLAN
+
+24. SCOPE CHECK
+
+Explicitly confirm:
+
+Code changes: NONE
+Database changes: NONE
+Schema changes: NONE
+Migration: NONE
+Marks changed: NO
+Grading rules changed: NO
+Fix 4 changed: NO
+Fix 10A changed: NO
+Calculation engine changed: NO
+Fallback
