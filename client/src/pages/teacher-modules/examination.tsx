@@ -1527,6 +1527,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const [viewSubject, setViewSubject] = useState("");
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
+  const [addMarksGradingRules, setAddMarksGradingRules] = useState<GradingRuleClient[]>([]);
+  const [addMarksGradingLoading, setAddMarksGradingLoading] = useState(false);
+  const [addMarksGradingError, setAddMarksGradingError] = useState<string | null>(null);
 
   const addSectionOpts = useMemo(() => getSectionsForClass(selectedClass), [selectedClass, getSectionsForClass]);
   const viewSectionOpts = useMemo(() => getSectionsForClass(viewClass), [viewClass, getSectionsForClass]);
@@ -1535,8 +1538,55 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const addExamTypeOpts = useMemo(() => getExamTypesForClass(selectedClass), [selectedClass, getExamTypesForClass]);
   const viewExamTypeOpts = useMemo(() => getExamTypesForClass(viewClass), [viewClass, getExamTypesForClass]);
 
-  function handleAddClassChange(cls: string) { setSelectedClass(cls); setSelectedSection(""); setSubject(""); setExamType(""); }
+  function handleAddClassChange(cls: string) {
+    setSelectedClass(cls);
+    setSelectedSection("");
+    setSubject("");
+    setExamType("");
+    setAddMarksGradingRules([]);
+    setAddMarksGradingError(null);
+  }
   function handleViewClassChange(cls: string) { setViewClass(cls); setViewSection(""); setViewSubject(""); }
+
+  useEffect(() => {
+    if (!selectedClass) {
+      setAddMarksGradingRules([]);
+      setAddMarksGradingLoading(false);
+      setAddMarksGradingError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAddMarksGradingRules([]);
+    setAddMarksGradingLoading(true);
+    setAddMarksGradingError(null);
+
+    fetch(`/api/teacher/grading-rules/${encodeURIComponent(selectedClass)}`, { credentials: "include" })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.message || "No valid grading policy is configured for this class.");
+        }
+        if (!Array.isArray(data.rules) || data.rules.length === 0) {
+          throw new Error("No valid grading policy is configured for this class.");
+        }
+        return data.rules as GradingRuleClient[];
+      })
+      .then(rules => {
+        if (!cancelled) setAddMarksGradingRules(rules);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setAddMarksGradingRules([]);
+          setAddMarksGradingError(error instanceof Error ? error.message : "No valid grading policy is configured for this class.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAddMarksGradingLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedClass]);
 
   const { data: students = [] } = useQuery<StudentInfo[]>({
     queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today],
@@ -1913,7 +1963,24 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
               </div>
             )}
 
-            {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && (
+            {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && addMarksGradingLoading && (
+              <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 dark:border-indigo-800 dark:bg-indigo-950/20 dark:text-indigo-300" data-testid="add-marks-grading-loading">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading the grading policy for Class {selectedClass}…
+              </div>
+            )}
+
+            {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && !addMarksGradingLoading && addMarksGradingError && (
+              <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/20 dark:text-red-300" data-testid="add-marks-grading-error">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div>
+                  <p className="font-semibold">Grading policy unavailable for Class {selectedClass}</p>
+                  <p className="mt-0.5 text-xs">{addMarksGradingError}</p>
+                </div>
+              </div>
+            )}
+
+            {examType && selectedClass && selectedSection && !!totalMarks && students.length > 0 && !addMarksGradingLoading && !addMarksGradingError && addMarksGradingRules.length > 0 && (
               <>
                 <div className="overflow-x-auto rounded-xl border">
                   <table className="w-full min-w-[560px] text-sm" data-testid="table-marks">
@@ -1929,7 +1996,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
                         const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = computeGrade(pct, viewGradingRules);
+                        const g = computeGrade(pct, addMarksGradingRules);
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
