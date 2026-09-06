@@ -1,0 +1,190 @@
+URGENT BUG — TEACHER EXAMINATION ADD MARKS CRASH
+
+The real Teacher Portal → Examination → Add Marks page crashes when adding marks.
+
+Exact runtime error shown in the browser:
+
+"A non-empty configured grading policy is required."
+
+Stack trace points to:
+
+shared/examination-calculation-engine.ts
+→ validateGradingRules()
+→ selectGrade()
+→ computeGrade()
+→ client/src/pages/teacher-modules/examination.tsx
+→ ExaminationModule
+
+Current test context:
+
+Academic Session: 2028–2029 Active
+Class: 6
+Section: A
+Subject: Physics
+Exam Type: Unit Test 1
+
+IMPORTANT:
+INVESTIGATION ONLY.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE.
+DO NOT MODIFY SCHEMA.
+DO NOT CREATE MIGRATIONS.
+DO NOT RESTORE UNIVERSAL FALLBACK GRADES.
+DO NOT CHANGE Fix 4.
+DO NOT CHANGE Fix 10A.
+
+==================================================
+GOAL
+==================================================
+
+Determine exactly WHY Teacher Examination is reaching:
+
+validateGradingRules()
+
+with an empty, missing, undefined, or otherwise invalid grading policy.
+
+We need the ROOT CAUSE, not a workaround.
+
+==================================================
+STEP 1 — TRACE THE DATA
+==================================================
+
+Trace the complete flow when Teacher Examination Add Marks is opened and a mark is entered:
+
+Teacher Examination
+→ grading policy request/load
+→ selected class
+→ school/tenant
+→ grading tier
+→ grading rules
+→ calculation input
+→ computeGrade()
+→ validateGradingRules()
+
+Determine exactly where the grading rules become empty or missing.
+
+==================================================
+STEP 2 — INSPECT THE ACTUAL POLICY
+==================================================
+
+For the authenticated school and Class 6, inspect how the application determines the configured grading policy.
+
+Determine:
+
+- authenticated schoolId
+- Class 6 policy/tier
+- gradingTiers
+- gradingRules
+- minPercent
+- maxPercent
+- configured pass percentage if relevant
+
+DO NOT MODIFY DATABASE DATA.
+
+If database inspection is needed, perform READ-ONLY inspection only.
+
+Do not create/update/delete records.
+
+==================================================
+STEP 3 — DETERMINE WHICH CASE THIS IS
+==================================================
+
+Identify whether the problem is:
+
+A. The school genuinely has no grading policy configured for Class 6.
+
+B. A grading policy exists in the database but the Teacher Examination frontend is not loading it.
+
+C. The frontend loads the policy but passes the wrong property/shape to computeGrade().
+
+D. The policy is loaded for the wrong class/tier.
+
+E. The policy is loaded for the wrong school.
+
+F. The policy API is returning an error or empty response.
+
+G. The policy exists but validation incorrectly considers it empty.
+
+H. Another cause.
+
+Do not guess. Prove which case is occurring.
+
+==================================================
+STEP 4 — CHECK NETWORK REQUESTS
+==================================================
+
+Inspect the browser network requests when opening Teacher Examination and entering a mark.
+
+Identify the request responsible for loading grading policy/rules.
+
+Report:
+
+- endpoint
+- method
+- status code
+- request parameters
+- response shape
+- whether authenticated school context is used
+- whether Class 6 is included
+- whether grading rules are actually returned
+
+==================================================
+STEP 5 — CHECK TENANT AUTHORITY
+==================================================
+
+Verify that grading policy selection is still tenant-safe.
+
+The authenticated teacher's school must be authoritative.
+
+A client-provided schoolId must NOT be trusted to select another school's grading policy.
+
+Verify:
+
+authenticated teacher
+→ authenticated school
+→ Class 6
+→ school's configured grading tier
+→ school's grading rules
+
+Do not modify anything.
+
+==================================================
+STEP 6 — CHECK FIX 4
+==================================================
+
+Fix 4 intentionally established:
+
+- school-owned gradingTiers
+- school-owned gradingRules
+- class-matching tier
+- authoritative selectGrade()
+- no universal A+/A/B+/B/C+/C/D/F fallback
+- invalid/empty grading configuration should fail explicitly
+
+DO NOT undo this design.
+
+We need to determine whether:
+
+1. the configuration is genuinely missing, OR
+2. the application has a wiring/loading bug.
+
+Do not add fallback grades.
+
+==================================================
+STEP 7 — CHECK TEACHER EXAMINATION
+==================================================
+
+Inspect:
+
+client/src/pages/teacher-modules/examination.tsx
+
+Determine exactly what grading rules are passed into:
+
+computeGrade()
+
+when the teacher enters a mark.
+
+Report the actual object/value being passed.
+
+If possible, trace it back to the source API/query/state.
