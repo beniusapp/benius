@@ -1,0 +1,247 @@
+FIX 10A-1 — TEACHER EXAMINATION ADD MARKS: PREVENT ABOVE-100% GRADING CRASH
+
+We have completed a read-only investigation of a Teacher Examination → Add Marks runtime crash.
+
+IMPORTANT:
+This is a narrowly scoped FRONTEND VALIDATION-ORDER FIX.
+
+DO NOT change the shared grading engine.
+DO NOT weaken grading validation.
+DO NOT add fallback grades.
+DO NOT clamp percentages.
+DO NOT change database data.
+DO NOT change schema or migrations.
+DO NOT change session isolation.
+DO NOT change Fix 4.
+DO NOT change Fix 10A.
+DO NOT change promotion, cumulative calculation, attendance, or any other Examination behavior.
+
+==================================================
+CONFIRMED ROOT CAUSE
+==================================================
+
+Teacher Examination → Add Marks currently calculates a grade before checking whether the entered mark exceeds Total Marks.
+
+The current conceptual order is:
+
+const pct = Math.round((val / maxMarks) * 100);
+const g = computeGrade(pct, addMarksGradingRules);
+const isOverMax = val > maxMarks;
+
+If the teacher enters a mark greater than Total Marks, the percentage can become greater than 100.
+
+Example:
+
+mark > totalMarks
+→ percentage = 193
+→ computeGrade(193, valid 0–100 grading rules)
+→ strict grading selector correctly throws:
+   "No configured grading rule matches percentage 193."
+
+The grading engine is behaving correctly.
+
+The Add Marks UI is performing validation in the wrong order.
+
+==================================================
+EXPECTED BEHAVIOR
+==================================================
+
+For every student row in Add Marks:
+
+1. Parse the mark.
+2. Parse Total Marks.
+3. Validate the mark BEFORE calling computeGrade().
+4. If the mark is invalid:
+   - below 0
+   - above Total Marks
+   - non-finite
+   - otherwise invalid
+
+   then DO NOT call computeGrade().
+
+5. Show the existing controlled validation state/warning.
+6. Do not display a grade badge for the invalid row.
+7. Save must remain disabled while any mark is invalid.
+8. Do not clamp the mark or percentage.
+9. Do not invent a grade.
+10. Do not modify the grading rules.
+
+For valid marks:
+
+0 <= mark <= Total Marks
+
+the existing percentage calculation and strict configured grading policy must continue unchanged.
+
+==================================================
+IMPORTANT BOUNDARY BEHAVIOR
+==================================================
+
+These must remain valid:
+
+0/20   → 0%   → D
+6/20   → 30%  → D
+7/20   → 35%  → C
+12/20  → 60%  → B
+16/20  → 80%  → A
+20/20  → 100% → A
+
+This must NOT crash:
+
+21/20 → invalid input, no grade calculation
+
+A value producing 193% must NOT crash.
+
+It must instead produce the normal controlled invalid-mark state.
+
+==================================================
+EMPTY MARK BEHAVIOR
+==================================================
+
+Preserve the existing intended behavior for an empty mark.
+
+Do not turn an empty input into an artificial grade.
+
+If the current UI treats an empty mark as 0 for display/calculation, preserve that behavior unless doing so would cause an invalid grade calculation.
+
+The important requirement is:
+
+NO impossible percentage may reach computeGrade().
+
+==================================================
+ABSENT BEHAVIOR
+==================================================
+
+Preserve existing Absent behavior.
+
+An absent student does not need normal grade selection.
+
+Do not change absent persistence or score semantics.
+
+Do not implement Fix 5 (Scored vs Missing vs Absent).
+
+==================================================
+TENANT / SESSION SAFETY
+==================================================
+
+Do not modify any tenant or Academic Session logic.
+
+The existing selected-session transport must remain untouched.
+
+Do not remove or bypass:
+
+x-view-session-id
+
+Do not introduce any client-supplied schoolId authorization.
+
+Do not modify server session validation.
+
+==================================================
+EXPECTED FILE SCOPE
+==================================================
+
+Primary production file:
+
+client/src/pages/teacher-modules/examination.tsx
+
+Add a focused regression test if the existing project test structure supports it:
+
+client/src/lib/__tests__/teacher-examination-add-marks-grading.test.ts
+
+Do not modify other production files unless absolutely necessary.
+
+If another production file appears necessary, STOP and report why before changing it.
+
+==================================================
+IMPLEMENTATION GUIDANCE
+==================================================
+
+Find the Add Marks student-row rendering/calculation path where the code currently does approximately:
+
+const pct = Math.round((val / maxMarks) * 100);
+const g = computeGrade(pct, addMarksGradingRules);
+const isOverMax = val > maxMarks;
+
+Change the logic so validation occurs BEFORE grade selection.
+
+Conceptually:
+
+const isValidMark =
+  Number.isFinite(val) &&
+  val >= 0 &&
+  val <= maxMarks;
+
+const pct = isValidMark
+  ? Math.round((val / maxMarks) * 100)
+  : null;
+
+const g =
+  isValidMark
+    ? computeGrade(pct, addMarksGradingRules)
+    : null;
+
+Use the project's existing validation conventions where appropriate.
+
+Do not blindly copy this pseudocode if the surrounding code requires a slightly different implementation.
+
+The key invariant is:
+
+computeGrade() MUST NEVER receive a percentage outside 0–100 from Add Marks.
+
+Also ensure maxMarks itself is valid before performing division.
+
+Do not hide a genuine configuration error.
+
+For example, if the selected class has no configured grading policy, preserve the existing controlled configuration behavior. Do not catch the error and silently assign a grade.
+
+The fix is specifically for invalid student mark input occurring before grade selection.
+
+==================================================
+SAVE SAFETY
+==================================================
+
+Inspect the existing Add Marks Save button disabled logic.
+
+If invalid marks are already included in the disabled condition, preserve it.
+
+If necessary, make the smallest focused adjustment so:
+
+- mark > Total Marks → Save disabled
+- mark < 0 → Save disabled
+- non-finite invalid mark → Save disabled
+
+Do not redesign Save Marks.
+
+Do not change the POST payload format.
+
+Do not change server validation.
+
+==================================================
+REGRESSION TESTS
+==================================================
+
+Add focused tests for the Add Marks calculation behavior if practical.
+
+At minimum verify:
+
+1. 0/20:
+   - percentage 0
+   - grade D
+
+2. 7/20:
+   - percentage 35
+   - grade C
+
+3. 12/20:
+   - percentage 60
+   - grade B
+
+4. 16/20:
+   - percentage 80
+   - grade A
+
+5. 20/20:
+   - percentage 100
+   - grade A
+
+6. 21/20:
+   - invalid

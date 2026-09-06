@@ -90,6 +90,20 @@ function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string;
   return { ...grade, color: gradeColor(grade.label), bg: gradeBg(grade.label) };
 }
 
+export function calculateAddMarksPercentage(markValue: string | undefined, totalMarks: number): number | null {
+  const parsedMark = Number.parseInt(markValue || "0", 10);
+  if (
+    !Number.isFinite(totalMarks) ||
+    totalMarks <= 0 ||
+    !Number.isFinite(parsedMark) ||
+    parsedMark < 0 ||
+    parsedMark > totalMarks
+  ) {
+    return null;
+  }
+  return Math.round((parsedMark / totalMarks) * 100);
+}
+
 interface ClassAvgEntry { examType: string; avgPercentage: number; }
 
 function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject, examTypes, viewClass, viewSection, gradingRules }: {
@@ -1661,11 +1675,15 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     else setTotalMarks("");
   }, [existingScores]);
 
-  const maxMarks = parseInt(totalMarks) || 100;
+  const parsedTotalMarks = Number.parseInt(totalMarks, 10);
+  const hasValidTotalMarks = Number.isFinite(parsedTotalMarks) && parsedTotalMarks > 0;
+  const maxMarks = hasValidTotalMarks ? parsedTotalMarks : 100;
   const hasInvalidMarks = useMemo(() => students.some(s => {
     if (absentMap[s.studentId]) return false;
-    return parseInt(marks[s.studentId] || "0") > maxMarks;
-  }), [students, marks, absentMap, maxMarks]);
+    const markValue = marks[s.studentId];
+    if (markValue === undefined || markValue === "") return false;
+    return calculateAddMarksPercentage(markValue, parsedTotalMarks) === null;
+  }), [students, marks, absentMap, parsedTotalMarks]);
 
   const classAverage = useMemo(() => {
     const valid = students.filter(s => !absentMap[s.studentId] && marks[s.studentId] && marks[s.studentId] !== "");
@@ -1860,7 +1878,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     }
   }, [students]);
 
-  const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && !!totalMarks && !hasInvalidMarks;
+  const readyToSave = !!selectedClass && !!selectedSection && !!subject && !!examType && hasValidTotalMarks && !hasInvalidMarks;
   const notConfigured = !configLoading && (!hasClasses || !hasSections);
 
   if (configLoading) return (
@@ -1994,12 +2012,11 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                     <tbody>
                       {students.map((s, idx) => {
                         const isAbsent = !!absentMap[s.studentId];
-                        const val = parseInt(marks[s.studentId] || "0");
-                        const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = computeGrade(pct, addMarksGradingRules);
-                        const isOverMax = !isAbsent && val > maxMarks;
+                        const pct = isAbsent ? null : calculateAddMarksPercentage(marks[s.studentId], parsedTotalMarks);
+                        const g = pct !== null ? computeGrade(pct, addMarksGradingRules) : null;
+                        const isInvalidMark = !isAbsent && pct === null;
                         return (
-                          <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
+                          <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isInvalidMark ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
                             data-testid={`row-student-${s.studentId}`}>
                             <td className="py-2 px-3 text-xs text-muted-foreground">{idx + 1}</td>
                             <td className="py-2 px-3 font-mono text-xs">{s.dsid}</td>
@@ -2020,14 +2037,14 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                                 disabled={isArchiveMode || isAbsent}
                                 onChange={e => setMarks(prev => ({ ...prev, [s.studentId]: e.target.value }))}
                                 onKeyDown={e => handleTabNav(s.studentId, idx, e)}
-                                className={`w-full min-w-[72px] text-center h-8 text-sm ${isOverMax ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+                              className={`w-full min-w-[72px] text-center h-8 text-sm ${isInvalidMark ? "border-red-400 focus-visible:ring-red-400" : ""}`}
                                 placeholder="—"
                                 data-testid={`input-marks-${s.studentId}`}
                               />
                             </td>
-                            <td className="py-2 px-3 text-center text-xs font-medium">{isAbsent ? "—" : `${pct}%`}</td>
+                            <td className="py-2 px-3 text-center text-xs font-medium">{isAbsent || pct === null ? "—" : `${pct}%`}</td>
                             <td className="py-2 px-3 text-center">
-                              {isAbsent ? <span className="text-xs text-muted-foreground">—</span> : (
+                              {isAbsent || !g ? <span className="text-xs text-muted-foreground">—</span> : (
                                 <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${g.color} ${g.bg}`}>{g.label}</span>
                               )}
                             </td>
@@ -2052,7 +2069,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
                 {hasInvalidMarks && (
                   <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm text-red-700 dark:text-red-300" data-testid="alert-invalid-marks">
-                    Some students have marks exceeding the total ({maxMarks}). Please correct before saving.
+                    Some students have invalid marks or marks exceeding the total ({maxMarks}). Please correct before saving.
                   </div>
                 )}
 
