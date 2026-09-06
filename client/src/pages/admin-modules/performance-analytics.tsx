@@ -15,7 +15,7 @@ import { useSessionView } from "@/contexts/session-view-context";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
-import { selectGrade } from "@shared/examination-calculation-engine";
+import { evaluatePromotionRules, selectGrade } from "@shared/examination-calculation-engine";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
@@ -51,7 +51,7 @@ interface RawStudentScore {
 }
 interface AttendanceSummary { studentId: number; attendancePct: number | null; presentDays: number; totalDays: number; }
 interface ExamPolicyTier {
-  id: number; tierName: string; applicableClasses: string[]; examWeights: string;
+  id: number; schoolId: number; tierName: string; applicableClasses: string[]; examWeights: string;
   promotionFailRules: string; resultsConfig?: string; passPercentage?: number;
 }
 interface CompBreakdown {
@@ -123,6 +123,7 @@ function computeAllStudentResults(
   ruleTermAvg?: { enabled: boolean; minPct: number },
   currentTerm?: string,
   cumulConfig?: CumulConfigShape,
+  context?: { schoolId: number; sessionId: number | null },
 ): ComputedStudentResult[] {
   let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: any = {};
@@ -181,46 +182,16 @@ function computeAllStudentResults(
       allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
     }
 
-    const violations: string[] = [];
     const rule1 = rules.rule1 ?? {}, ruleAtt = rules.rule_attendance ?? {};
     const attPct = attendanceMap.get(student.studentId)?.attendancePct ?? null;
-
-    if (rule1.enabled !== false && termNames.length > 0) {
-      type TR = { term: string; fail_count: number };
-      const termRules: TR[] = Array.isArray(rule1.rules) && rule1.rules.length > 0
-        ? (rule1.rules as any[]).map((r: any) => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
-        : rule1.term ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
-          : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
-      for (const tr of termRules) {
-        if (tr.fail_count <= 0) continue;
-        const fails = allTermFailCounts[tr.term] ?? 0;
-        if (fails >= tr.fail_count) {
-          const failedNames = (termResults[tr.term] ?? []).filter(s => s.passed === false).map(s => s.subject);
-          const maxAllowed = tr.fail_count - 1;
-          const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
-          violations.push(`The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`);
-        }
-      }
+    const termAverages: Record<string, number | null> = {};
+    for (const termName of termNames) {
+      const scored = (termResults[termName] ?? []).filter(s => s.status === "scored");
+      termAverages[termName] = scored.length
+        ? Math.round((scored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scored.length) * 10) / 10
+        : null;
     }
-    if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0 && attPct !== null) {
-      for (const r of ruleAtt.rules as any[]) {
-        const minPct = Number(r.min_pct ?? 0);
-        if (minPct <= 0) continue;
-        if (attPct < minPct) {
-          violations.push(`The student achieved an attendance rate of ${attPct.toFixed(1)}%${r.term ? ` in ${r.term}` : ""}, falling below the required minimum threshold of ${minPct}%.`);
-          break;
-        }
-      }
-    }
-    if (ruleTermAvg?.enabled && currentTerm) {
-      const scoredSubjects = (termResults[currentTerm] ?? []).filter(s => s.status === "scored");
-      if (scoredSubjects.length > 0) {
-        const avg = scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length;
-        const rounded = Math.round(avg * 10) / 10;
-        if (rounded < ruleTermAvg.minPct)
-          violations.push(`The student's weighted average score for ${currentTerm} was ${rounded}%, which falls below the configured pass threshold of ${ruleTermAvg.minPct}%.`);
-      }
-    }
+    let cumulativePercentage: number | null = null;
     const isCumulTerm = cumulConfig?.enabled && cumulConfig.triggerTerm && currentTerm
       ? currentTerm.trim() === cumulConfig.triggerTerm.trim() : false;
     if (isCumulTerm && cumulConfig?.promotionEnabled) {
@@ -233,20 +204,30 @@ function computeAllStudentResults(
           if (tScored.length === 0) { allHaveData = false; break; }
           totalContrib += (tScored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / tScored.length) * (Number(weight) / 100);
         }
-        if (allHaveData) {
-          const cumPct = Math.round(totalContrib * 10) / 10;
-          if (cumPct < minPct)
-            violations.push(`The student's cumulative year-end percentage of ${cumPct}% falls below the required minimum threshold of ${minPct}%.`);
-        }
+        if (allHaveData) cumulativePercentage = Math.round(totalContrib * 10) / 10;
       }
     }
-    const promoted = violations.length === 0;
+    const promotion = evaluatePromotionRules({
+      context: context ?? { schoolId: policy.schoolId, sessionId: null },
+      policySchoolId: policy.schoolId,
+      maxFailedSubjectRules: rule1.enabled === false ? undefined
+        : Array.isArray(rule1.rules) && rule1.rules.length
+          ? rule1.rules.map((r: any) => ({ term: String(r.term ?? "").trim(), failCount: Number(r.fail_count) }))
+          : undefined,
+      attendanceRules: ruleAtt.enabled === true
+        ? (Array.isArray(ruleAtt.rules) ? ruleAtt.rules.map((r: any) => ({ term: String(r.term ?? "").trim(), minPercent: Number(r.min_pct) })) : [])
+        : undefined,
+      termAverageRule: ruleTermAvg,
+      cumulativeRule: cumulConfig?.promotionEnabled ? { enabled: true, triggerTerm: cumulConfig.triggerTerm, minPercent: Number(cumulConfig.minPercent) } : undefined,
+      termFailCounts: allTermFailCounts, termAverages, attendancePct: attPct,
+      currentTerm, cumulativePercentage, termResults: termResults as any,
+    });
     return {
       studentId: student.studentId, name: student.name,
       digitalStudentId: student.digitalStudentId, rollNumber: student.rollNumber,
       termResults, allTermFailCounts, attendancePct: attPct,
-      promoted, promotionReason: violations.length > 0 ? violations[0] : "Meets all promotion criteria.",
-      detentionViolations: violations,
+      promoted: promotion.promoted, promotionReason: promotion.promotionReason,
+      detentionViolations: promotion.violations,
     };
   });
 }
@@ -500,7 +481,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
         ? `<div class="detention-reasons"><p class="detention-title">Reason${detentionReasons.length > 1 ? "s" : ""} for Detention</p><ol>${
             detentionReasons.map(r => `<li>${esc(r)}</li>`).join("")}</ol></div>` : "";
       const attLine = student.attendancePct !== null
-        ? `<span class="meta-att ${student.attendancePct < 75 ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</span>` : "";
+        ? `<span class="meta-att ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</span>` : "";
       verdictSection = `
         <div class="verdict-box ${isP ? "verdict-promoted" : "verdict-retained"}">
           <div class="verdict-header">
@@ -519,7 +500,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
         <div class="policy-box">
           <p class="policy-title">Policy Criteria Assessment</p>
           <p class="policy-reason">${esc(student.promotionReason)}</p>
-          ${student.attendancePct !== null ? `<p class="policy-att ${student.attendancePct < 75 ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</p>` : ""}
+          ${student.attendancePct !== null ? `<p class="policy-att ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "att-warn" : "att-ok"}">Attendance: ${esc(student.attendancePct)}%</p>` : ""}
         </div>`;
     }
 
@@ -763,7 +744,7 @@ ${verdictSection}
                   </div>
                 )}
                 <div className="px-5 py-3 border-t border-[#1e293b] bg-[#0f172a] flex flex-wrap gap-4 text-xs text-slate-400">
-                  {student.attendancePct !== null && <span>Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>}
+                  {student.attendancePct !== null && <span>Attendance: <span className={`font-semibold ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>}
                   {promoEntry.decision === "promoted" && <span className="text-slate-600 text-[10px] italic flex-1 text-right">{student.promotionReason}</span>}
                 </div>
                 <div className="px-5 py-4 grid grid-cols-3 gap-6 border-t border-[#1e293b] bg-[#0f172a]">
@@ -790,7 +771,7 @@ ${verdictSection}
                 <TrendingUp className="w-3.5 h-3.5 text-yellow-400" /> Policy Criteria Assessment
               </p>
               <p className="text-xs text-slate-400">{student.promotionReason}</p>
-              {student.attendancePct !== null && <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>}
+              {student.attendancePct !== null && <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>}
               <p className="text-[10px] text-slate-600 italic mt-2">Promotion routing is determined in the Final Term Promotion Ledger.</p>
             </div>
           )}
@@ -814,7 +795,7 @@ function PromoCellReadOnly({ entry }: { entry: PromoEntry | undefined }) {
 
 // ── Main Admin Performance Analytics ──────────────────────────────────────────
 export default function PerformanceAnalytics({
-  classes, sections: allSections, classSections, classSubjects, classExamTypes, examTypes: globalExamTypes,
+  schoolId, classes, sections: allSections, classSections, classSubjects, classExamTypes, examTypes: globalExamTypes,
   initialTab, onNavigateTab, allowedSubs,
 }: Props) {
   const { toast } = useToast();
@@ -1029,16 +1010,16 @@ export default function PerformanceAnalytics({
 
   const isCumulativeTerm = useMemo(() => cumulConfig?.enabled && cumulConfig.triggerTerm && resTerm ? resTerm.trim() === cumulConfig.triggerTerm.trim() : false, [cumulConfig, resTerm]);
   const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
-    try { const pr = JSON.parse(policyTier?.promotionFailRules || "{}"); const rta = pr.rule_term_avg ?? {}; return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) }; }
-    catch { return { enabled: false, minPct: 35 }; }
+    try { const pr = JSON.parse(policyTier?.promotionFailRules || "{}"); const rta = pr.rule_term_avg ?? {}; return { enabled: rta.enabled === true, minPct: Number(rta.minPct) }; }
+    catch { return { enabled: false, minPct: Number.NaN }; }
   }, [policyTier]);
 
   useEffect(() => { if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]); }, [termNames, resTerm]);
 
   const allResults = useMemo(() => {
     if (!policyTier || gradingPassPct === null || classScores.length === 0) return [];
-    return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined);
-  }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig]);
+    return computeAllStudentResults(classScores, policyTier, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm || undefined, cumulConfig ?? undefined, { schoolId, sessionId });
+  }, [policyTier, classScores, attendanceSummary, gradingPassPct, ruleTermAvg, resTerm, cumulConfig, schoolId, sessionId]);
 
   const filteredResults = useMemo(() => {
     const q = resSearch.toLowerCase().trim();

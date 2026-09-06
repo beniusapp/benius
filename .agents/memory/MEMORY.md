@@ -33,3 +33,4 @@
 - [Teacher Examination isolation](teacher-examination-isolation.md) — all score reads/writes/calculations require authenticated school plus a validated school-owned academic session.
 - [Examination pass-policy authority](examination-pass-policy-authority.md) — pass/fail uses the tenant/class grading-tier percentage; missing policy fails explicitly, while stored pass marks are legacy only.
 - [Examination grade-policy authority](examination-grade-policy-authority.md) — grades use tenant/class configured inclusive ranges; invalid, missing, or unmatched policies fail instead of using a universal scale.
+- [Examination promotion-policy authority](examination-promotion-policy-authority.md) — four tenant-owned promotion rules share one boundary contract; missing policy never receives universal defaults.

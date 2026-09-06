@@ -2579,26 +2579,35 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole !== "admin")
       return res.status(403).json({ message: "Admin access required" });
     const schema = z.object({
+      studentId: z.number().int().positive(),
       studentClass: z.string().min(1),
-      scores: z.array(z.object({
-        subject: z.string(),
-        examType: z.string(),
-        marks: z.number(),
-        totalMarks: z.number(),
-        isAbsent: z.boolean().default(false),
-      })),
-      termAttendance: z.record(z.string(), z.number()).optional(),
+      currentTerm: z.string().min(1),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
+    const selectedSessionId = (req as any).viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
+    if (!selectedSessionId || !await storage.getAcademicSessionForSchool(selectedSessionId, schoolId)) {
+      return res.status(403).json({ message: "Invalid academic session" });
+    }
+    const student = await storage.getStudentById(parsed.data.studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ message: "Student not found" });
+    }
     const tiers = await storage.getExamPolicyTiers(schoolId);
     const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
     if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
     const passPolicy = await storage.resolveClassPassPolicy(schoolId, parsed.data.studentClass);
     if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class "${parsed.data.studentClass}"` });
     const passPercentage = passPolicy.passPercentage;
-    const result = evaluatePromotion(parsed.data.scores, matchingTier, passPercentage, parsed.data.termAttendance);
+    const scores = (await storage.getExamScoresByStudent(student.id, schoolId, selectedSessionId)).map(score => ({
+      subject: score.subject,
+      examType: score.examType,
+      marks: score.marks ?? 0,
+      totalMarks: score.totalMarks ?? 100,
+      isAbsent: score.isAbsent ?? false,
+    }));
+    const result = evaluatePromotion(scores, matchingTier, passPercentage, undefined, schoolId, parsed.data.currentTerm);
     res.json({ tier: matchingTier.tierName, passPercentage, ...result });
   });
 

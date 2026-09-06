@@ -28,7 +28,7 @@ describe("Teacher Examination selected-session transport", () => {
     const [result] = computeAllStudentResults({
       context: { schoolId: 11, sessionId: 30375 },
       students: [{ studentId: 1, name: "A", digitalStudentId: "DS1", rollNumber: null, scores: [] }],
-      policy: { schoolId: 11, examWeights: "{}", promotionFailRules: "{}" },
+      policy: { schoolId: 11, examWeights: "{}", promotionFailRules: JSON.stringify({ rule1: { enabled: true, rules: [{ term: "Term", fail_count: 99 }] } }) },
       attendance: [],
       passPercentage: 35,
       gradingPolicy: { schoolId: 11 },

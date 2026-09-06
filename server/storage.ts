@@ -62,7 +62,7 @@ import {
   safeFeeAuditDescription,
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
-import { selectGrade } from "@shared/examination-calculation-engine";
+import { evaluatePromotionRules, selectGrade } from "@shared/examination-calculation-engine";
 
 /**
  * Financial history cannot be detached from its original academic session.
@@ -5934,6 +5934,7 @@ export interface SubjectAggregate {
 export interface PromotionResult {
   promoted: boolean;
   reason: string;
+  violations: string[];
   subjectAggregates: SubjectAggregate[];
   termFailCounts: Record<string, number>;
 }
@@ -5942,8 +5943,13 @@ export function evaluatePromotion(
   scores: StudentScoreForEngine[],
   tier: ExamPolicyTier,
   passPercentage: number,
-  termAttendance?: Record<string, number>
+  termAttendance?: Record<string, number>,
+  contextSchoolId: number = tier.schoolId,
+  currentTerm?: string,
 ): PromotionResult {
+  if (tier.schoolId !== contextSchoolId) {
+    throw new Error(`Promotion policy school ${tier.schoolId} does not match calculation school ${contextSchoolId}.`);
+  }
   let weights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: {
     max_failed_subjects_final?: number;
@@ -5960,6 +5966,10 @@ export function evaluatePromotion(
     composite_fail_rules?: {
       half_yearly_fails_threshold?: number;
       final_fails_allowance_if_half_yearly_tripped?: number;
+    };
+    rule_term_avg?: {
+      enabled?: boolean;
+      minPct?: number;
     };
   } = {};
 
@@ -6021,53 +6031,41 @@ export function evaluatePromotion(
   }
 
   const rule1 = rules.rule1;
-  const rule1Enabled = rule1?.enabled !== false;
-
-  // ── Rule 1: Max Failed Subjects — supports multiple term-threshold pairs ────
-  if (rule1Enabled && termNames.length > 0) {
-    const termRules: { term: string; fail_count: number }[] =
-      Array.isArray(rule1?.rules) && rule1.rules.length > 0
-        ? rule1.rules
-        // backward-compat: legacy single-field format
-        : rule1?.term
-          ? [{ term: rule1.term, fail_count: rule1.max_fails ?? rules.max_failed_subjects_final ?? 3 }]
-          : rules.max_failed_subjects_final != null
-            ? [{ term: termNames[termNames.length - 1], fail_count: rules.max_failed_subjects_final }]
-            : [];
-
-    for (const tr of termRules) {
-      const fails = termFailCounts[tr.term] ?? 0;
-      if (fails >= tr.fail_count) {
-        return {
-          promoted: false,
-          reason: `Failed ${fails} subject(s) in "${tr.term}" — retention threshold is ${tr.fail_count}.`,
-          subjectAggregates,
-          termFailCounts,
-        };
-      }
-    }
-  }
-
-  // ── Rule 2: Minimum Attendance % ─────────────────────────────────────────
-  const ruleAtt = rules.rule_attendance;
-  const ruleAttEnabled = ruleAtt?.enabled === true;
-  if (ruleAttEnabled && termAttendance && Array.isArray(ruleAtt?.rules)) {
-    for (const ar of ruleAtt.rules) {
-      const pct = termAttendance[ar.term];
-      if (pct !== undefined && pct < ar.min_pct) {
-        return {
-          promoted: false,
-          reason: `Attendance in "${ar.term}" is ${pct.toFixed(1)}% — minimum required is ${ar.min_pct}%.`,
-          subjectAggregates,
-          termFailCounts,
-        };
-      }
-    }
-  }
-
+  const maxFailedSubjectRules = rule1?.enabled === false ? undefined
+    : Array.isArray(rule1?.rules) && rule1.rules.length > 0
+      ? rule1.rules.map(rule => ({ term: String(rule.term).trim(), failCount: Number(rule.fail_count) }))
+      : rule1?.term && rule1.max_fails !== undefined
+        ? [{ term: String(rule1.term).trim(), failCount: Number(rule1.max_fails) }]
+        : rules.max_failed_subjects_final !== undefined && termNames.length
+          ? [{ term: termNames[termNames.length - 1], failCount: Number(rules.max_failed_subjects_final) }]
+          : undefined;
+  const attendanceRules = rules.rule_attendance?.enabled === true
+    ? (rules.rule_attendance.rules ?? []).map(rule => ({ term: String(rule.term).trim(), minPercent: Number(rule.min_pct) }))
+    : undefined;
+  const termAverages = Object.fromEntries(termNames.map(term => {
+    const scored = subjectAggregates.map(subject => subject.termResults[term])
+      .filter(result => result?.status === "pass" || result?.status === "fail");
+    return [term, scored.length ? Math.round((scored.reduce((sum, result) => sum + result.percentage, 0) / scored.length) * 10) / 10 : null];
+  }));
+  const promotion = evaluatePromotionRules({
+    context: { schoolId: contextSchoolId, sessionId: null },
+    policySchoolId: tier.schoolId,
+    maxFailedSubjectRules,
+    attendanceRules,
+    termAverageRule: rules.rule_term_avg?.enabled === true
+      ? { enabled: true, minPct: Number(rules.rule_term_avg.minPct) }
+      : undefined,
+    termFailCounts,
+    termAverages,
+    attendancePct: null,
+    attendanceByTerm: termAttendance,
+    currentTerm,
+    cumulativePercentage: null,
+  });
   return {
-    promoted: true,
-    reason: "Student meets all promotion criteria.",
+    promoted: promotion.promoted,
+    reason: promotion.promotionReason,
+    violations: promotion.violations,
     subjectAggregates,
     termFailCounts,
   };

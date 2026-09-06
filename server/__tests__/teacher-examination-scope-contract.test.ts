@@ -80,4 +80,15 @@ describe("Teacher Examination isolation source contract", () => {
     expect(analyticsClientSource).not.toContain("computeGrade(pct, [])");
     expect(studentRoutesSource).toContain("gradingRules");
   });
+
+  it("keeps the server promotion utility inside authenticated tenant and selected-session boundaries", () => {
+    const evaluate = routeBlock('app.post("/api/admin/exam-policy-tiers/evaluate"', '// ===== ACADEMIC ADVANCEMENT WIZARD');
+    expect(evaluate).toContain("const schoolId = req.session.schoolId!");
+    expect(evaluate).toContain("(req as any).viewSessionId");
+    expect(evaluate).toContain("getAcademicSessionForSchool(selectedSessionId, schoolId)");
+    expect(evaluate).toContain("student.schoolId !== schoolId");
+    expect(evaluate).toContain("getExamScoresByStudent(student.id, schoolId, selectedSessionId)");
+    expect(evaluate).not.toContain("parsed.data.scores");
+    expect(evaluate).not.toContain("parsed.data.schoolId");
+  });
 });

@@ -192,13 +192,23 @@ function validateExamPolicyTiers(tiers: ExamPolicyTierLocal[]): string[] {
       if (t.maxFailedRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 1.`);
       t.maxFailedRules.forEach((r, i) => {
         if (!r.term) errors.push(`"${t.tierName}": Rule 1 — Row ${i + 1} needs a term.`);
+        const threshold = Number(r.failCount);
+        if (!Number.isInteger(threshold) || threshold < 0) errors.push(`"${t.tierName}": Rule 1 — Row ${i + 1} needs a non-negative whole-number threshold.`);
       });
     }
     if (t.enableAttendanceRule) {
       if (t.attendanceRules.length === 0) errors.push(`"${t.tierName}": Add at least one term rule for Rule 2.`);
       t.attendanceRules.forEach((r, i) => {
         if (!r.term) errors.push(`"${t.tierName}": Rule 2 — Row ${i + 1} needs a term.`);
+        const threshold = Number(r.minPct);
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) errors.push(`"${t.tierName}": Rule 2 — Row ${i + 1} needs a percentage from 0 to 100.`);
       });
+    }
+    if (t.enableTermAvgRule && (!Number.isFinite(Number(t.termAvgMinPct)) || Number(t.termAvgMinPct) < 0 || Number(t.termAvgMinPct) > 100)) {
+      errors.push(`"${t.tierName}": Rule 3 needs a percentage from 0 to 100.`);
+    }
+    if (t.cumulativePromotionEnabled && (!Number.isFinite(Number(t.cumulativeMinPercent)) || Number(t.cumulativeMinPercent) < 0 || Number(t.cumulativeMinPercent) > 100)) {
+      errors.push(`"${t.tierName}": Rule 4 needs a percentage from 0 to 100.`);
     }
   }
   return Array.from(new Set(errors));
@@ -1509,11 +1519,11 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection, isAr
           targetTerms: targetTerms.length > 0 ? targetTerms : [emptyTargetTerm()],
           enableMaxFailed: r1.enabled !== false,
           maxFailedRules: Array.isArray(r1.rules) && r1.rules.length > 0
-            ? r1.rules.map((r: any) => ({ term: r.term ?? "", failCount: String(r.fail_count ?? 3) }))
-            : [{ term: r1.term ?? "", failCount: String(r1.max_fails ?? rules.max_failed_subjects_final ?? 3) }],
+            ? r1.rules.map((r: any) => ({ term: r.term ?? "", failCount: r.fail_count === undefined ? "" : String(r.fail_count) }))
+            : [{ term: r1.term ?? "", failCount: r1.max_fails !== undefined ? String(r1.max_fails) : rules.max_failed_subjects_final !== undefined ? String(rules.max_failed_subjects_final) : "" }],
           enableAttendanceRule: (rules as any).rule_attendance?.enabled === true,
           attendanceRules: Array.isArray((rules as any).rule_attendance?.rules) && (rules as any).rule_attendance.rules.length > 0
-            ? (rules as any).rule_attendance.rules.map((r: any) => ({ term: r.term ?? "", minPct: String(r.min_pct ?? 75) }))
+            ? (rules as any).rule_attendance.rules.map((r: any) => ({ term: r.term ?? "", minPct: r.min_pct === undefined ? "" : String(r.min_pct) }))
             : [{ term: "", minPct: "75" }],
           expanded: false,
           termColumnConfigs,
@@ -1655,12 +1665,12 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection, isAr
           enabled: tier.enableAttendanceRule,
           rules: tier.attendanceRules.map(r => ({
             term: r.term,
-            min_pct: parseFloat(r.minPct) || 75,
+            min_pct: Number(r.minPct),
           })),
         },
         rule_term_avg: {
           enabled: tier.enableTermAvgRule,
-          minPct: parseFloat(tier.termAvgMinPct) || 35,
+          minPct: Number(tier.termAvgMinPct),
         },
       };
       const resultsConfig = {
@@ -1672,7 +1682,7 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection, isAr
             tier.cumulativeTermWeights.map(tw => [tw.termName, parseFloat(tw.weight) || 0])
           ),
           promotionEnabled: tier.cumulativePromotionEnabled,
-          minPercent: parseFloat(tier.cumulativeMinPercent) || 35,
+          minPercent: Number(tier.cumulativeMinPercent),
         },
       };
       const payload = {

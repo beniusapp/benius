@@ -35,6 +35,7 @@ export interface ExaminationPolicy {
   schoolId: number;
   examWeights: string;
   promotionFailRules: string;
+  resultsConfig?: string;
 }
 
 /** The tenant identity of the class grading tier selected by the server. */
@@ -118,6 +119,116 @@ export interface ComputedStudentResult {
 export interface ComputedGrade {
   label: string;
   remarks: string | null;
+}
+
+export interface PromotionRuleEvaluationInput {
+  context: ExaminationCalculationContext;
+  policySchoolId: number;
+  maxFailedSubjectRules?: Array<{ term: string; failCount: number }>;
+  attendanceRules?: Array<{ term: string; minPercent: number }>;
+  termAverageRule?: TermAverageRule;
+  cumulativeRule?: {
+    enabled: boolean;
+    triggerTerm: string;
+    minPercent: number;
+  };
+  termFailCounts: Record<string, number>;
+  termAverages: Record<string, number | null>;
+  attendancePct: number | null;
+  attendanceByTerm?: Record<string, number | null>;
+  currentTerm?: string;
+  cumulativePercentage: number | null;
+  termResults?: Record<string, SubjectTermResult[]>;
+}
+
+export interface PromotionRuleEvaluationResult {
+  promoted: boolean;
+  promotionReason: string;
+  violations: string[];
+}
+
+function requirePercentage(value: number, label: string): void {
+  if (!Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error(`${label} must be a configured percentage between 0 and 100.`);
+  }
+}
+
+/**
+ * Authoritative interpretation of the four existing promotion rules.
+ * A failed-subject threshold is a retention trigger (fails >= N); percentage
+ * minimums are inclusive eligibility boundaries (value < minimum is retained).
+ */
+export function evaluatePromotionRules(input: PromotionRuleEvaluationInput): PromotionRuleEvaluationResult {
+  if (input.policySchoolId !== input.context.schoolId) {
+    throw new Error(`Promotion policy school ${input.policySchoolId} does not match calculation school ${input.context.schoolId}.`);
+  }
+
+  const activeRuleCount =
+    (input.maxFailedSubjectRules ? 1 : 0) +
+    (input.attendanceRules ? 1 : 0) +
+    (input.termAverageRule?.enabled ? 1 : 0) +
+    (input.cumulativeRule?.enabled ? 1 : 0);
+  if (activeRuleCount === 0) {
+    throw new Error("At least one configured promotion rule is required.");
+  }
+
+  const violations: string[] = [];
+  if (input.maxFailedSubjectRules) {
+    if (input.maxFailedSubjectRules.length === 0) throw new Error("The enabled failed-subject promotion rule requires at least one term threshold.");
+    for (const rule of input.maxFailedSubjectRules) {
+      if (!rule.term.trim() || !Number.isInteger(rule.failCount) || rule.failCount < 0) {
+        throw new Error("Each failed-subject promotion rule requires a term and a non-negative integer threshold.");
+      }
+      const fails = input.termFailCounts[rule.term];
+      if (fails === undefined) continue;
+      if (fails >= rule.failCount) {
+        const failedNames = (input.termResults?.[rule.term] ?? []).filter(s => s.passed === false).map(s => s.subject);
+        const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
+        violations.push(`The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${rule.term}, meeting the school's retention threshold of ${rule.failCount} failed subject${rule.failCount !== 1 ? "s" : ""}.`);
+      }
+    }
+  }
+
+  if (input.attendanceRules) {
+    if (input.attendanceRules.length === 0) throw new Error("The enabled attendance promotion rule requires at least one term threshold.");
+    for (const rule of input.attendanceRules) {
+      if (!rule.term.trim()) throw new Error("Each attendance promotion rule requires a term.");
+      requirePercentage(rule.minPercent, "The attendance promotion threshold");
+      const attendance = input.attendanceByTerm?.[rule.term] ?? input.attendancePct;
+      if (attendance !== null && attendance !== undefined && attendance < rule.minPercent) {
+        violations.push(`The student achieved an attendance rate of ${attendance.toFixed(1)}% in ${rule.term}, falling below the required minimum threshold of ${rule.minPercent}%.`);
+        break;
+      }
+    }
+  }
+
+  if (input.termAverageRule?.enabled) {
+    requirePercentage(input.termAverageRule.minPct, "The term-average promotion threshold");
+    if (input.currentTerm) {
+      const average = input.termAverages[input.currentTerm];
+      if (average !== null && average !== undefined && average < input.termAverageRule.minPct) {
+        violations.push(`The student's weighted average score for ${input.currentTerm} was ${average}%, which falls below the configured pass threshold of ${input.termAverageRule.minPct}%.`);
+      }
+    }
+  }
+
+  if (input.cumulativeRule?.enabled) {
+    if (!input.cumulativeRule.triggerTerm.trim()) throw new Error("The enabled cumulative promotion rule requires a trigger term.");
+    requirePercentage(input.cumulativeRule.minPercent, "The cumulative promotion threshold");
+    if (
+      input.currentTerm?.trim() === input.cumulativeRule.triggerTerm.trim() &&
+      input.cumulativePercentage !== null &&
+      input.cumulativePercentage < input.cumulativeRule.minPercent
+    ) {
+      violations.push(`The student's cumulative year-end percentage of ${input.cumulativePercentage}% falls below the required minimum threshold of ${input.cumulativeRule.minPercent}%.`);
+    }
+  }
+
+  return {
+    promoted: violations.length === 0,
+    promotionReason: violations[0] ?? "Meets all promotion criteria.",
+    violations,
+  };
 }
 
 /** Calculates all supplied students without fetching policy or tenant state. */
@@ -211,61 +322,45 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
       if (allHaveData) cumulativePercentage = Math.round(totalContrib * 10) / 10;
     }
 
-    const violations: string[] = [];
     const rule1 = rules.rule1 ?? {};
     const ruleAtt = rules.rule_attendance ?? {};
     const attPct = attendanceMap.get(student.studentId)?.attendancePct ?? null;
-    if (rule1.enabled !== false && termNames.length > 0) {
-      const termRules = Array.isArray(rule1.rules) && rule1.rules.length > 0
-        ? (rule1.rules as any[]).map(r => ({ term: String(r.term ?? "").trim(), fail_count: Number(r.fail_count ?? 3) }))
-        : rule1.term ? [{ term: String(rule1.term).trim(), fail_count: Number(rule1.max_fails) || 3 }]
-          : [{ term: termNames[termNames.length - 1], fail_count: Number(rule1.max_fails) || 3 }];
-      for (const tr of termRules) {
-        if (tr.fail_count <= 0) continue;
-        const fails = allTermFailCounts[tr.term] ?? 0;
-        if (fails >= tr.fail_count) {
-          const failedNames = (termResults[tr.term] ?? []).filter(s => s.passed === false).map(s => s.subject);
-          const maxAllowed = tr.fail_count - 1;
-          const nameList = failedNames.length > 0 ? ` (${failedNames.join(", ")})` : "";
-          violations.push(`The student failed ${fails} subject${fails !== 1 ? "s" : ""}${nameList} in ${tr.term}, which exceeds the maximum allowed limit of ${maxAllowed} failing subject${maxAllowed !== 1 ? "s" : ""} set by the school board.`);
-        }
-      }
-    }
-    if (ruleAtt.enabled === true && Array.isArray(ruleAtt.rules) && ruleAtt.rules.length > 0 && attPct !== null) {
-      for (const r of ruleAtt.rules as any[]) {
-        const minPct = Number(r.min_pct ?? 0);
-        if (minPct <= 0) continue;
-        if (attPct < minPct) {
-          const termLabel = r.term ? ` in ${r.term}` : "";
-          violations.push(`The student achieved an attendance rate of ${attPct.toFixed(1)}%${termLabel}, falling below the required minimum threshold of ${minPct}%.`);
-          break;
-        }
-      }
-    }
-    if (termAverageRule?.enabled && currentTerm) {
-      const scored = (termResults[currentTerm] ?? []).filter(s => s.status === "scored");
-      if (scored.length > 0) {
-        const rounded = Math.round((scored.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scored.length) * 10) / 10;
-        if (rounded < termAverageRule.minPct) violations.push(`The student's weighted average score for ${currentTerm} was ${rounded}%, which falls below the configured pass threshold of ${termAverageRule.minPct}%.`);
-      }
-    }
-    const isCumulTerm = cumulativeConfig?.enabled && cumulativeConfig.triggerTerm && currentTerm
-      ? currentTerm.trim() === cumulativeConfig.triggerTerm.trim() : false;
-    if (isCumulTerm && cumulativeConfig?.promotionEnabled) {
-      const minPct = cumulativeConfig.minPercent ?? 0;
-      if (minPct > 0) {
-        if (cumulativePercentage !== null && cumulativePercentage < minPct) {
-          violations.push(`The student's cumulative year-end percentage of ${cumulativePercentage}% falls below the required minimum threshold of ${minPct}%.`);
-        }
-      }
-    }
+    const maxFailedSubjectRules = rule1.enabled === false ? undefined
+      : Array.isArray(rule1.rules) && rule1.rules.length > 0
+        ? (rule1.rules as any[]).map(r => ({ term: String(r.term ?? "").trim(), failCount: Number(r.fail_count) }))
+        : rule1.term && rule1.max_fails !== undefined
+          ? [{ term: String(rule1.term).trim(), failCount: Number(rule1.max_fails) }]
+          : undefined;
+    const attendanceRules = ruleAtt.enabled === true
+      ? (Array.isArray(ruleAtt.rules) ? (ruleAtt.rules as any[]).map(r => ({
+          term: String(r.term ?? "").trim(), minPercent: Number(r.min_pct),
+        })) : [])
+      : undefined;
+    const promotion = evaluatePromotionRules({
+      context,
+      policySchoolId: policy.schoolId,
+      maxFailedSubjectRules,
+      attendanceRules,
+      termAverageRule,
+      cumulativeRule: cumulativeConfig?.promotionEnabled ? {
+        enabled: true,
+        triggerTerm: cumulativeConfig.triggerTerm,
+        minPercent: Number(cumulativeConfig.minPercent),
+      } : undefined,
+      termFailCounts: allTermFailCounts,
+      termAverages,
+      attendancePct: attPct,
+      currentTerm,
+      cumulativePercentage,
+      termResults,
+    });
     return {
       schoolId: context.schoolId, sessionId: context.sessionId,
       studentId: student.studentId, name: student.name, digitalStudentId: student.digitalStudentId, rollNumber: student.rollNumber,
       termResults, termAverages, cumulativePercentage, allTermFailCounts, attendancePct: attPct,
-      promoted: violations.length === 0,
-      promotionReason: violations.length > 0 ? violations[0] : "Meets all promotion criteria.",
-      detentionViolations: violations,
+      promoted: promotion.promoted,
+      promotionReason: promotion.promotionReason,
+      detentionViolations: promotion.violations,
     };
   });
 }

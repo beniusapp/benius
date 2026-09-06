@@ -457,7 +457,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                 {/* Summary strip — attendance + promoted-student-manual-override note */}
                 <div className="px-5 py-3 border-t border-[#1e293b] bg-[#0f172a] flex flex-wrap gap-4 text-xs text-slate-400">
                   {student.attendancePct !== null && (
-                    <span>Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>
+                    <span>Attendance: <span className={`font-semibold ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></span>
                   )}
                   {promoEntry.decision === "promoted" && (
                     <span className="text-slate-600 text-[10px] italic flex-1 text-right">{student.promotionReason}</span>
@@ -494,7 +494,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
               </p>
               <p className="text-xs text-slate-400">{student.promotionReason}</p>
               {student.attendancePct !== null && (
-                <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>
+                <p className="text-xs text-slate-500 mt-1">Attendance: <span className={`font-semibold ${student.detentionViolations.some(v => v.includes("attendance rate")) ? "text-red-400" : "text-emerald-400"}`}>{student.attendancePct}%</span></p>
               )}
               <p className="text-[10px] text-slate-600 italic mt-2">Promotion routing is determined in the Final Term Promotion Ledger.</p>
             </div>
@@ -859,8 +859,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     try {
       const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
       const rta = pr.rule_term_avg ?? {};
-      return { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
-    } catch { return { enabled: false, minPct: 35 }; }
+      return { enabled: rta.enabled === true, minPct: Number(rta.minPct) };
+    } catch { return { enabled: false, minPct: Number.NaN }; }
   }, [policyTier]);
 
   // Auto-select first term when policy loads
@@ -996,7 +996,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     try {
       const pr = JSON.parse(freshPolicy.promotionFailRules || "{}");
       const rta = pr.rule_term_avg ?? {};
-      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct ?? 35) };
+      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct) };
       const rc = JSON.parse(freshPolicy.resultsConfig || "{}");
       freshCumulConfig = rc.cumulative ?? null;
     } catch { /* use existing derived values */ }

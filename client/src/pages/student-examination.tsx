@@ -948,6 +948,23 @@ function ResultsPanel({
   onPrint: () => void;
 }) {
   const [resTerm, setResTerm] = useState("");
+  const promotionThresholds = useMemo(() => {
+    if (!policy) return { failCount: null as number | null, attendance: null as number | null };
+    try {
+      const config = JSON.parse(policy.promotionFailRules || "{}");
+      const failRule = config.rule1?.enabled === false ? undefined
+        : config.rule1?.rules?.find((rule: any) => String(rule.term ?? "").trim() === resTerm.trim());
+      const attendanceRule = config.rule_attendance?.enabled === true
+        ? config.rule_attendance?.rules?.find((rule: any) => String(rule.term ?? "").trim() === resTerm.trim())
+        : undefined;
+      return {
+        failCount: failRule ? Number(failRule.fail_count) : null,
+        attendance: attendanceRule ? Number(attendanceRule.min_pct) : null,
+      };
+    } catch {
+      return { failCount: null, attendance: null };
+    }
+  }, [policy, resTerm]);
 
   const termNames = useMemo(() => {
     if (!policy) return [];
@@ -1054,9 +1071,9 @@ function ResultsPanel({
               color: termAvg !== null ? (termAvg >= 60 ? "text-emerald-400" : passThreshold !== null && termAvg >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
             { label: "Grade",      value: termGrade?.label ?? "—", color: termGrade ? termGrade.color : "text-slate-600" },
             { label: "Fails",      value: String(failCount),
-              color: failCount === 0 ? "text-emerald-400" : failCount <= 2 ? "text-amber-400" : "text-red-400" },
+              color: promotionThresholds.failCount === null ? "text-slate-300" : failCount >= promotionThresholds.failCount ? "text-red-400" : "text-emerald-400" },
             { label: "Attendance", value: attendancePct !== null ? `${attendancePct}%` : "—",
-              color: attendancePct !== null ? (attendancePct < 75 ? "text-red-400" : attendancePct < 85 ? "text-yellow-400" : "text-emerald-400") : "text-slate-600" },
+              color: attendancePct === null || promotionThresholds.attendance === null ? "text-slate-600" : attendancePct < promotionThresholds.attendance ? "text-red-400" : "text-emerald-400" },
           ].map(stat => (
             <div key={stat.label} className="px-5 py-4" style={{ background: "#0f172a" }}>
               <p className="text-[10px] text-slate-500 uppercase tracking-wide">{stat.label}</p>
@@ -1173,8 +1190,10 @@ function ResultsPanel({
             </p>
             {attendancePct !== null && (
               <p className="text-xs text-slate-500 mt-1">
-                Attendance: <span className={`font-semibold ${attendancePct < 75 ? "text-red-400" : "text-emerald-400"}`}>{attendancePct}%</span>
-                {attendancePct < 75 && <span className="text-red-400 ml-1 text-[10px]">⚠ Below 75% minimum</span>}
+                Attendance: <span className={`font-semibold ${promotionThresholds.attendance !== null && attendancePct < promotionThresholds.attendance ? "text-red-400" : "text-emerald-400"}`}>{attendancePct}%</span>
+                {promotionThresholds.attendance !== null && attendancePct < promotionThresholds.attendance && (
+                  <span className="text-red-400 ml-1 text-[10px]">⚠ Below {promotionThresholds.attendance}% minimum</span>
+                )}
               </p>
             )}
           </div>

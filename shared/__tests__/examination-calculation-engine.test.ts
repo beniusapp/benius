@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAllStudentResults, computeGrade, selectGrade, type ExaminationCalculationInput } from "../examination-calculation-engine";
+import { computeAllStudentResults, computeGrade, evaluatePromotionRules, selectGrade, type ExaminationCalculationInput, type PromotionRuleEvaluationInput } from "../examination-calculation-engine";
 
 const students = [{
   studentId: 7, name: "Asha", digitalStudentId: "DS-7", rollNumber: 1,
@@ -68,7 +68,7 @@ describe("examination calculation engine", () => {
       policy: {
         schoolId: 22,
         examWeights: JSON.stringify({ Term1: [{ source_exam: "Final", weight: 100 }] }),
-        promotionFailRules: JSON.stringify({ rule1: { enabled: false } }),
+        promotionFailRules: JSON.stringify({ rule1: { enabled: true, rules: [{ term: "Term1", fail_count: 99 }] } }),
       },
       attendance: [{ studentId: 7, attendancePct: 99, presentDays: 198, totalDays: 200 }],
       passPercentage: 50,
@@ -129,7 +129,7 @@ describe("examination calculation engine", () => {
     expect(selectGrade(75, schoolARules).label).toBe("A grade");
     expect(selectGrade(75, schoolBRules).label).toBe("D grade");
     const oneScore = [{ ...students[0], scores: [{ subject: "Math", examType: "Unit", marks: 75, totalMarks: 100, isAbsent: false }] }];
-    const policy = { schoolId: 11, examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }), promotionFailRules: JSON.stringify({ rule1: { enabled: false } }) };
+    const policy = { schoolId: 11, examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }), promotionFailRules: JSON.stringify({ rule1: { enabled: true, rules: [{ term: "Term", fail_count: 99 }] } }) };
     const [result] = computeAllStudentResults(input({ students: oneScore, policy, passPercentage: 40, gradingPolicy: { schoolId: 11 }, gradingRules: schoolBRules }));
     expect(result.termResults.Term[0]).toMatchObject({ grade: { label: "D grade" }, passed: true });
   });
@@ -142,7 +142,7 @@ describe("examination calculation engine", () => {
     const policy = {
       schoolId: 11,
       examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }),
-      promotionFailRules: JSON.stringify({ rule1: { enabled: false } }),
+      promotionFailRules: JSON.stringify({ rule1: { enabled: true, rules: [{ term: "Term", fail_count: 99 }] } }),
     };
     expect(computeAllStudentResults(input({ students: boundaryStudents, policy, passPercentage: 40 }))[0]
       .termResults.Term[0].passed).toBe(false);
@@ -183,5 +183,120 @@ describe("examination calculation engine", () => {
     expect(schoolB.termResults.Term[0].passed).toBe(false);
     expect(schoolA.schoolId).toBe(11);
     expect(schoolB.schoolId).toBe(22);
+  });
+});
+
+function promotionInput(overrides: Partial<PromotionRuleEvaluationInput> = {}): PromotionRuleEvaluationInput {
+  return {
+    context: { schoolId: 11, sessionId: 101 },
+    policySchoolId: 11,
+    maxFailedSubjectRules: [{ term: "Final", failCount: 2 }],
+    attendanceRules: [{ term: "Final", minPercent: 75 }],
+    termAverageRule: { enabled: true, minPct: 40 },
+    cumulativeRule: { enabled: true, triggerTerm: "Final", minPercent: 45 },
+    termFailCounts: { Final: 1 },
+    termAverages: { Final: 40 },
+    attendancePct: 75,
+    currentTerm: "Final",
+    cumulativePercentage: 45,
+    ...overrides,
+  };
+}
+
+describe("authoritative promotion rule evaluator", () => {
+  it("promotes when every configured requirement is met exactly at its boundary", () => {
+    expect(evaluatePromotionRules(promotionInput())).toEqual({
+      promoted: true,
+      promotionReason: "Meets all promotion criteria.",
+      violations: [],
+    });
+  });
+
+  it("treats the failed-subject threshold as an inclusive retention trigger", () => {
+    expect(evaluatePromotionRules(promotionInput({ termFailCounts: { Final: 2 } })).promoted).toBe(false);
+    expect(evaluatePromotionRules(promotionInput({ termFailCounts: { Final: 3 } })).promoted).toBe(false);
+    expect(evaluatePromotionRules(promotionInput({ termFailCounts: { Final: 1 } })).promoted).toBe(true);
+  });
+
+  it("allows exact percentage minimums and retains below them", () => {
+    expect(evaluatePromotionRules(promotionInput({ termAverages: { Final: 40 } })).promoted).toBe(true);
+    expect(evaluatePromotionRules(promotionInput({ termAverages: { Final: 39.9 } })).violations)
+      .toContain("The student's weighted average score for Final was 39.9%, which falls below the configured pass threshold of 40%.");
+    expect(evaluatePromotionRules(promotionInput({ cumulativePercentage: 44.9 })).violations)
+      .toContain("The student's cumulative year-end percentage of 44.9% falls below the required minimum threshold of 45%.");
+    expect(evaluatePromotionRules(promotionInput({ attendancePct: 74.9 })).violations[0]).toContain("74.9%");
+  });
+
+  it("accumulates simultaneous violations while preserving the first reason", () => {
+    const result = evaluatePromotionRules(promotionInput({
+      termFailCounts: { Final: 2 },
+      termAverages: { Final: 39 },
+      attendancePct: 70,
+      cumulativePercentage: 44,
+    }));
+    expect(result.violations).toHaveLength(4);
+    expect(result.promotionReason).toBe(result.violations[0]);
+  });
+
+  it("ignores disabled optional rules but rejects a wholly missing required policy", () => {
+    expect(evaluatePromotionRules(promotionInput({
+      attendanceRules: undefined,
+      termAverageRule: undefined,
+      cumulativeRule: undefined,
+    })).promoted).toBe(true);
+    expect(() => evaluatePromotionRules(promotionInput({
+      maxFailedSubjectRules: undefined,
+      attendanceRules: undefined,
+      termAverageRule: undefined,
+      cumulativeRule: undefined,
+    }))).toThrow("At least one configured promotion rule");
+  });
+
+  it("does not invent a violation when configured result data is unavailable", () => {
+    expect(evaluatePromotionRules(promotionInput({
+      termFailCounts: {},
+      termAverages: { Final: null },
+      attendancePct: null,
+      cumulativePercentage: null,
+    })).promoted).toBe(true);
+  });
+
+  it("preserves explicit zero thresholds without substituting defaults", () => {
+    expect(evaluatePromotionRules(promotionInput({
+      maxFailedSubjectRules: [{ term: "Final", failCount: 0 }],
+      attendanceRules: undefined,
+      termAverageRule: undefined,
+      cumulativeRule: undefined,
+      termFailCounts: { Final: 0 },
+    })).promoted).toBe(false);
+    expect(evaluatePromotionRules(promotionInput({
+      maxFailedSubjectRules: undefined,
+      attendanceRules: [{ term: "Final", minPercent: 0 }],
+      termAverageRule: undefined,
+      cumulativeRule: undefined,
+      attendancePct: 0,
+    })).promoted).toBe(true);
+  });
+
+  it("rejects missing or invalid enabled-rule configuration instead of using a fallback", () => {
+    expect(() => evaluatePromotionRules(promotionInput({ maxFailedSubjectRules: [] })))
+      .toThrow("requires at least one term threshold");
+    expect(() => evaluatePromotionRules(promotionInput({
+      maxFailedSubjectRules: undefined,
+      attendanceRules: undefined,
+      cumulativeRule: undefined,
+      termAverageRule: { enabled: true, minPct: Number.NaN },
+    }))).toThrow("configured percentage");
+  });
+
+  it("rejects a promotion policy from another tenant", () => {
+    expect(() => evaluatePromotionRules(promotionInput({ policySchoolId: 22 })))
+      .toThrow("Promotion policy school 22 does not match calculation school 11");
+  });
+
+  it("keeps the selected session in the surrounding examination result", () => {
+    const [result] = computeAllStudentResults(input());
+    expect(result.sessionId).toBe(101);
+    expect(result.schoolId).toBe(11);
   });
 });
