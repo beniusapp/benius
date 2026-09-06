@@ -22,6 +22,7 @@ import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
+import { resolveStudentExaminationSession } from "./student-examination-session";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
@@ -2111,24 +2112,27 @@ export async function registerRoutes(
   });
 
   app.get("/api/student/exam/scores", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    const context = await resolveStudentExaminationSession(
+      req.session.studentId,
+      (req as any).viewSessionId,
+      storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { student, schoolId, sessionId } = context;
     const cls = (req.query.class as string) || student.class;
     const examType = req.query.examType as string;
     if (!examType) return res.status(400).json({ message: "examType is required" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Real-time: no published filter — studentId isolation guarantees tenant security
-    const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, examType, viewSessionId);
+    const scores = await storage.getStudentExamScores(schoolId, student.id, cls, examType, sessionId);
     let rank: { rank: number; total: number } | null = null;
     if (scores.length > 0) {
-      rank = await storage.getClassRank(student.schoolId, cls, student.section, examType, student.id);
+      rank = await storage.getClassRank(schoolId, cls, student.section, examType, student.id, sessionId);
     }
     const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
     const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
     const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
     try {
-      const grade = await storage.resolveGrade(student.schoolId, cls, percentage);
+      const grade = await storage.resolveGrade(schoolId, cls, percentage);
       res.json({ scores, summary: { totalObtained, totalMax, percentage, grade: grade.gradeLabel, rank } });
     } catch (error: any) {
       return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
@@ -2219,12 +2223,15 @@ export async function registerRoutes(
 
   // Student: all exam scores for a class — real-time, no published gate
   app.get("/api/student/exam/all-scores", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    const context = await resolveStudentExaminationSession(
+      req.session.studentId,
+      (req as any).viewSessionId,
+      storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { student, schoolId, sessionId } = context;
     const cls = (req.query.class as string) || student.class;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const scores = await storage.getStudentAllExamScores(student.schoolId, student.id, cls, viewSessionId);
+    const scores = await storage.getStudentAllExamScores(schoolId, student.id, cls, sessionId);
     res.json({ scores, cls });
   });
 

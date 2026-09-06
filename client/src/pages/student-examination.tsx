@@ -7,7 +7,7 @@ import {
   BarChart3, ChevronDown, Filter, X,
   MoreVertical, Check, History,
 } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useSessionView } from "@/contexts/session-view-context";
 import { selectGrade, type GradingRule } from "@shared/examination-calculation-engine";
@@ -1341,9 +1341,9 @@ export default function StudentExamination() {
     useQuery<{ scores: ExamScore[]; cls: string }>({
       queryKey: ["/api/student/exam/all-scores", selectedClass, selectedSessionId],
       queryFn: async () => {
-        const r = await fetch(
+        const r = await sessionFetchForViewSession(
           `/api/student/exam/all-scores?class=${encodeURIComponent(selectedClass)}`,
-          { credentials: "include" },
+          selectedSessionId,
         );
         if (!r.ok) throw new Error("Failed");
         return r.json();

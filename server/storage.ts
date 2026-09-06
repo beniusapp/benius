@@ -1619,7 +1619,7 @@ export class DatabaseStorage {
       eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId),
       eq(examScores.class, cls), eq(examScores.examType, examType),
     ];
-    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    if (sessionId != null) conditions.push(eq(examScores.sessionId, sessionId));
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject);
   }
 
@@ -1628,17 +1628,18 @@ export class DatabaseStorage {
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId), eq(examScores.class, cls),
     ];
-    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+    if (sessionId != null) conditions.push(eq(examScores.sessionId, sessionId));
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject, examScores.examType);
   }
 
-  async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number): Promise<{ rank: number; total: number }> {
+  async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number, sessionId: number): Promise<{ rank: number; total: number }> {
     const allScores = await db.select().from(examScores)
       .where(and(
         eq(examScores.schoolId, schoolId),
         eq(examScores.class, cls),
         eq(examScores.section, section),
         eq(examScores.examType, examType),
+        eq(examScores.sessionId, sessionId),
         eq(examScores.published, true),
       ));
 

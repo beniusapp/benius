@@ -32,3 +32,11 @@ Homework, Homework Pending Dates, Classwork, Noticeboard (+ unread-count + mark-
 ## Archive-mode leave POST guard
 
 Leave POST already had its own archive guard before this work (checks `x-view-session-id` header and rejects if that session is not active). The GET for leave is now session-scoped by `sessionId` param, consistent with all other modules.
+
+## Examination result boundary
+
+Student Examination score and rank requests are stricter than ordinary dashboard reads: they require an explicit selected-session header and must fail closed when it is missing, malformed, unknown, or owned by another school. The authenticated student determines the school; client school identifiers are never authority.
+
+**Why:** A session-aware cache key previously masked a raw HTTP request that omitted the session header, causing selected-session results to receive all-session scores, including legacy NULL-session rows.
+
+**How to apply:** Use captured-session request transport for every Student Examination result dataset. Resolve the session inside the authenticated student's school before querying, then pass that exact session to both score retrieval and rank. Exact equality excludes other and NULL sessions; do not fall back to an unscoped query.
