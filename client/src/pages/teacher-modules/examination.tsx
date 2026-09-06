@@ -92,9 +92,9 @@ function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string;
 
 interface ClassAvgEntry { examType: string; avgPercentage: number; }
 
-function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject, examTypes, viewClass, viewSection }: {
+function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject, examTypes, viewClass, viewSection, gradingRules }: {
   studentId: number; studentName: string; schoolId: number; sessionId: number; subject: string; examTypes: string[];
-  viewClass: string; viewSection: string;
+  viewClass: string; viewSection: string; gradingRules: GradingRuleClient[];
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
     queryKey: ["/api/exam-scores/student", studentId, schoolId, sessionId],
@@ -150,7 +150,7 @@ function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject,
               <tbody>
                 {subjectScores.map((s, i) => {
                   const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = computeGrade(pct, []);
+                  const g = computeGrade(pct, gradingRules);
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
@@ -201,7 +201,7 @@ function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject,
                       </div>
                     );
                     const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = computeGrade(pct, []);
+                    const g = computeGrade(pct, gradingRules);
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
@@ -870,11 +870,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
   const allResults = useMemo(() => {
-    if (!selectedSessionId || !policyTier || gradingPassPct === null || classScores.length === 0) return [];
+    if (!selectedSessionId || !policyTier || gradingPassPct === null || gradingRules.length === 0 || classScores.length === 0) return [];
     return calculateExaminationResults({
       context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
       students: classScores, policy: policyTier, attendance: attendanceSummary,
-      passPercentage: gradingPassPct, gradingRules,
+      passPercentage: gradingPassPct, gradingPolicy: { schoolId: teacher.schoolId }, gradingRules,
       termAverageRule: ruleTermAvg, currentTerm: resTerm || undefined,
       cumulativeConfig: cumulConfig ?? undefined,
     });
@@ -985,7 +985,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       setIsSyncingPolicy(false);
     }
 
-    if (!freshPolicy || gradingPassPct === null) {
+    if (!freshPolicy || gradingPassPct === null || gradingRules.length === 0) {
       toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
       return;
     }
@@ -1005,7 +1005,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     const freshResults = calculateExaminationResults({
       context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
       students: classScores, policy: freshPolicy, attendance: attendanceSummary,
-      passPercentage: gradingPassPct, gradingRules,
+      passPercentage: gradingPassPct, gradingPolicy: { schoolId: teacher.schoolId }, gradingRules,
       termAverageRule: freshRuleTermAvg, currentTerm: resTerm || undefined,
       cumulativeConfig: freshCumulConfig ?? undefined,
     });
@@ -1574,8 +1574,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   // the tenant-derived class pass policy here as well. A missing tier is never
   // replaced with a universal percentage.
   const [viewPassPercentage, setViewPassPercentage] = useState<number | null>(null);
+  const [viewGradingRules, setViewGradingRules] = useState<GradingRuleClient[]>([]);
   useEffect(() => {
-    if (!viewClass) { setViewPassPercentage(null); return; }
+    if (!viewClass) { setViewPassPercentage(null); setViewGradingRules([]); return; }
     let cancelled = false;
     fetch(`/api/teacher/grading-rules/${encodeURIComponent(viewClass)}`, { credentials: "include" })
       .then(async response => {
@@ -1583,9 +1584,12 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
         return response.json();
       })
       .then(data => {
-        if (!cancelled) setViewPassPercentage(typeof data.passPercentage === "number" ? data.passPercentage : null);
+        if (!cancelled) {
+          setViewPassPercentage(typeof data.passPercentage === "number" ? data.passPercentage : null);
+          setViewGradingRules(Array.isArray(data.rules) ? data.rules : []);
+        }
       })
-      .catch(() => { if (!cancelled) setViewPassPercentage(null); });
+      .catch(() => { if (!cancelled) { setViewPassPercentage(null); setViewGradingRules([]); } });
     return () => { cancelled = true; };
   }, [viewClass]);
 
@@ -1644,8 +1648,8 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   function generateProgressReport() {
-    if (viewPassPercentage === null) {
-      toast({ title: "Pass policy unavailable", description: "Configure a grading tier for this class before generating a report.", variant: "destructive" });
+    if (viewPassPercentage === null || viewGradingRules.length === 0) {
+      toast({ title: "Grading policy unavailable", description: "Configure valid grading rules for this class before generating a report.", variant: "destructive" });
       return;
     }
     const scored = viewScores.filter(s => !s.isAbsent);
@@ -1654,7 +1658,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
 
     const gradedScores = scored.map(s => {
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = computeGrade(pct, viewGradingRules);
       return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
     }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
 
@@ -1676,7 +1680,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
         </tr>`;
       }
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = computeGrade(pct, viewGradingRules);
       const isPass = pct >= viewPassPercentage;
       return `<tr>
         <td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td>
@@ -1925,7 +1929,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                         const isAbsent = !!absentMap[s.studentId];
                         const val = parseInt(marks[s.studentId] || "0");
                         const pct = isAbsent ? 0 : Math.round((val / maxMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const g = computeGrade(pct, viewGradingRules);
                         const isOverMax = !isAbsent && val > maxMarks;
                         return (
                           <tr key={s.studentId} className={`border-b last:border-0 ${isAbsent ? "bg-muted/20" : isOverMax ? "bg-red-50 dark:bg-red-950/20" : "hover:bg-muted/20"}`}
@@ -2072,7 +2076,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
                         const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const g = computeGrade(pct, viewGradingRules);
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b last:border-0 hover:bg-muted/20 cursor-pointer" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -2098,7 +2102,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
                             </tr>
                             {isExpanded && (
                               <tr><td colSpan={7} className="p-0">
-                                {selectedSessionId && <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} sessionId={selectedSessionId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} />}
+                                {selectedSessionId && viewGradingRules.length > 0 && <StudentTimeline studentId={s.studentId} studentName={s.studentName} schoolId={teacher.schoolId} sessionId={selectedSessionId} subject={viewSubject} examTypes={examTypes} viewClass={viewClass} viewSection={viewSection} gradingRules={viewGradingRules} />}
                               </td></tr>
                             )}
                           </Fragment>

@@ -8,6 +8,7 @@ const studentRoutesSource = readFileSync(resolve(process.cwd(), "server/routes.t
 const teacherClientSource = readFileSync(resolve(process.cwd(), "client/src/pages/teacher-modules/examination.tsx"), "utf8");
 const studentClientSource = readFileSync(resolve(process.cwd(), "client/src/pages/student-examination.tsx"), "utf8");
 const analyticsClientSource = readFileSync(resolve(process.cwd(), "client/src/pages/admin-modules/performance-analytics.tsx"), "utf8");
+const engineSource = readFileSync(resolve(process.cwd(), "shared/examination-calculation-engine.ts"), "utf8");
 
 function routeBlock(route: string, nextMarker: string): string {
   const start = routesSource.indexOf(route);
@@ -64,5 +65,19 @@ describe("Teacher Examination isolation source contract", () => {
     expect(studentClientSource).not.toContain("passThreshold = 35");
     expect(storageSource).toContain("const passThreshold = passPolicy.passPercentage");
     expect(storageSource).not.toContain("tierPassThreshold : 35");
+  });
+
+  it("uses configured shared grade selection and never sends empty rules through core examination paths", () => {
+    const teacherGrade = teacherClientSource.slice(teacherClientSource.indexOf("function computeGrade("), teacherClientSource.indexOf("interface ClassAvgEntry"));
+    const studentGrade = studentClientSource.slice(studentClientSource.indexOf("function computeGrade("), studentClientSource.indexOf("function PrintStyles"));
+    const analyticsGrade = analyticsClientSource.slice(analyticsClientSource.indexOf("function computeGrade("), analyticsClientSource.indexOf("// ── Compute engine"));
+    expect(engineSource).toContain("export function selectGrade");
+    expect(engineSource).not.toContain('return { label: "A+"');
+    expect(teacherGrade).toContain("calculateExaminationGrade(pct, rules)");
+    expect(studentGrade).toContain("selectGrade(pct, rules)");
+    expect(analyticsGrade).toContain("selectGrade(pct, rules)");
+    expect(teacherClientSource).not.toContain("computeGrade(pct, [])");
+    expect(analyticsClientSource).not.toContain("computeGrade(pct, [])");
+    expect(studentRoutesSource).toContain("gradingRules");
   });
 });

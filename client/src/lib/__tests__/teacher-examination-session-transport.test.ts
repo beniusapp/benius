@@ -31,7 +31,8 @@ describe("Teacher Examination selected-session transport", () => {
       policy: { schoolId: 11, examWeights: "{}", promotionFailRules: "{}" },
       attendance: [],
       passPercentage: 35,
-      gradingRules: [],
+      gradingPolicy: { schoolId: 11 },
+      gradingRules: [{ id: 1, tierId: 1, gradeLabel: "Pass", minPercent: 0, maxPercent: 100, remarks: null, sortOrder: 1 }],
     });
     expect(result.sessionId).toBe(30375);
   });

@@ -37,6 +37,11 @@ export interface ExaminationPolicy {
   promotionFailRules: string;
 }
 
+/** The tenant identity of the class grading tier selected by the server. */
+export interface ExaminationGradingPolicy {
+  schoolId: number;
+}
+
 export interface TermAverageRule {
   enabled: boolean;
   minPct: number;
@@ -66,6 +71,7 @@ export interface ExaminationCalculationInput {
   policy: ExaminationPolicy;
   attendance: ExaminationAttendance[];
   passPercentage: number;
+  gradingPolicy: ExaminationGradingPolicy;
   gradingRules: GradingRule[];
   termAverageRule?: TermAverageRule;
   currentTerm?: string;
@@ -116,13 +122,17 @@ export interface ComputedGrade {
 
 /** Calculates all supplied students without fetching policy or tenant state. */
 export function computeAllStudentResults(input: ExaminationCalculationInput): ComputedStudentResult[] {
-  const { context, students, policy, attendance, passPercentage, termAverageRule, currentTerm, cumulativeConfig } = input;
+  const { context, students, policy, attendance, passPercentage, gradingPolicy, termAverageRule, currentTerm, cumulativeConfig } = input;
   if (policy.schoolId !== context.schoolId) {
     throw new Error(`Examination policy school ${policy.schoolId} does not match calculation school ${context.schoolId}.`);
+  }
+  if (!gradingPolicy || gradingPolicy.schoolId !== context.schoolId) {
+    throw new Error(`Grading policy school ${gradingPolicy?.schoolId ?? "missing"} does not match calculation school ${context.schoolId}.`);
   }
   if (!Number.isFinite(passPercentage) || passPercentage < 0 || passPercentage > 100) {
     throw new Error("A configured examination pass percentage between 0 and 100 is required.");
   }
+  validateGradingRules(input.gradingRules);
   let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
   let rules: any = {};
   try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
@@ -175,7 +185,7 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
         }
         subjectResults.push({
           subject, percentage, passed,
-          grade: percentage === null ? null : computeGrade(percentage, input.gradingRules),
+          grade: percentage === null ? null : selectGrade(percentage, input.gradingRules),
           breakdown, status,
         });
       }
@@ -260,20 +270,55 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
   });
 }
 
-/** Grade labels and remarks use supplied rules, preserving the former fallback scale. */
-export function computeGrade(pct: number, rules: GradingRule[]): ComputedGrade {
-  if (rules.length > 0) {
-    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
-    for (const rule of sorted) if (pct >= rule.minPercent) return { label: rule.gradeLabel, remarks: rule.remarks };
-    const last = sorted[sorted.length - 1];
-    return { label: last.gradeLabel, remarks: last.remarks };
+/**
+ * Validates the persisted class-tier rules. Ranges are inclusive at both ends,
+ * therefore equal endpoints across two rows are an overlap.
+ */
+export function validateGradingRules(rules: GradingRule[]): void {
+  if (!Array.isArray(rules) || rules.length === 0) {
+    throw new Error("A non-empty configured grading policy is required.");
   }
-  if (pct >= 90) return { label: "A+", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A", remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", remarks: "Very Good" };
-  if (pct >= 60) return { label: "B", remarks: "Good" };
-  if (pct >= 50) return { label: "C+", remarks: "Average" };
-  if (pct >= 40) return { label: "C", remarks: "Below Average" };
-  if (pct >= 33) return { label: "D", remarks: "Poor" };
-  return { label: "F", remarks: "Fail" };
+  for (const rule of rules) {
+    if (
+      !Number.isFinite(rule.minPercent) ||
+      !Number.isInteger(rule.minPercent) ||
+      !Number.isFinite(rule.maxPercent) ||
+      !Number.isInteger(rule.maxPercent) ||
+      rule.minPercent < 0 ||
+      rule.maxPercent > 100 ||
+      rule.minPercent >= rule.maxPercent
+    ) {
+      throw new Error("Configured grading rules must use integer min/max percentages from 0 to 100 with min less than max.");
+    }
+  }
+  const sorted = [...rules].sort((a, b) => a.minPercent - b.minPercent);
+  for (let index = 1; index < sorted.length; index++) {
+    if (sorted[index].minPercent <= sorted[index - 1].maxPercent) {
+      throw new Error("Configured grading rule ranges must not overlap.");
+    }
+    if (sorted[index].minPercent > sorted[index - 1].maxPercent + 1) {
+      throw new Error("Configured grading rule ranges must not contain gaps.");
+    }
+  }
+}
+
+/**
+ * The authoritative, pure grade selector. It never supplies a default scale:
+ * a percentage outside an intentionally configured range is a policy error.
+ */
+export function selectGrade(pct: number, rules: GradingRule[]): ComputedGrade {
+  validateGradingRules(rules);
+  if (!Number.isFinite(pct)) {
+    throw new Error("A finite percentage is required to select a configured grade.");
+  }
+  const match = rules.find(rule => pct >= rule.minPercent && pct <= rule.maxPercent);
+  if (!match) {
+    throw new Error(`No configured grading rule matches percentage ${pct}.`);
+  }
+  return { label: match.gradeLabel, remarks: match.remarks };
+}
+
+/** @deprecated Use selectGrade for authoritative configured grade selection. */
+export function computeGrade(pct: number, rules: GradingRule[]): ComputedGrade {
+  return selectGrade(pct, rules);
 }

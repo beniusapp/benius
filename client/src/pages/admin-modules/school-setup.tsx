@@ -234,6 +234,7 @@ function validateTiers(tiers: TierLocal[]): string[] {
         classTierMap.set(cls, t.name || "Unnamed");
       }
     }
+    if (t.rules.length === 0) errors.push(`"${t.name}": At least one grade row is required.`);
     for (const r of t.rules) {
       const mn = parseInt(r.minPercent); const mx = parseInt(r.maxPercent);
       if (!r.gradeLabel.trim()) { errors.push(`"${t.name}": Grade label is required for all rows.`); }
@@ -244,7 +245,8 @@ function validateTiers(tiers: TierLocal[]): string[] {
     for (let i = 1; i < sortedRules.length; i++) {
       const prev = parseInt(sortedRules[i - 1].maxPercent);
       const cur = parseInt(sortedRules[i].minPercent);
-      if (cur < prev) { errors.push(`"${t.name}": Grade ranges overlap.`); break; }
+      // Both endpoints are inclusive, so sharing a boundary is an overlap.
+      if (cur <= prev) { errors.push(`"${t.name}": Grade ranges overlap.`); break; }
       if (cur > prev + 1) { errors.push(`"${t.name}": Gap between grade ranges (${prev} to ${cur}).`); break; }
     }
   }

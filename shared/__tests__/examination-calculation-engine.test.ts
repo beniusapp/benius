@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeAllStudentResults, computeGrade, type ExaminationCalculationInput } from "../examination-calculation-engine";
+import { computeAllStudentResults, computeGrade, selectGrade, type ExaminationCalculationInput } from "../examination-calculation-engine";
 
 const students = [{
   studentId: 7, name: "Asha", digitalStudentId: "DS-7", rollNumber: 1,
@@ -28,6 +28,7 @@ function input(overrides: Partial<ExaminationCalculationInput> = {}): Examinatio
       }),
     },
     passPercentage: 65,
+    gradingPolicy: { schoolId: 11 },
     gradingRules: [
       { id: 1, tierId: 1, gradeLabel: "Distinction", minPercent: 70, maxPercent: 100, remarks: "Great", sortOrder: 1 },
       { id: 2, tierId: 1, gradeLabel: "Pass", minPercent: 0, maxPercent: 69, remarks: "Keep going", sortOrder: 2 },
@@ -71,6 +72,7 @@ describe("examination calculation engine", () => {
       },
       attendance: [{ studentId: 7, attendancePct: 99, presentDays: 198, totalDays: 200 }],
       passPercentage: 50,
+      gradingPolicy: { schoolId: 22 },
       gradingRules: [{ id: 3, tierId: 2, gradeLabel: "School Two Merit", minPercent: 50, maxPercent: 100, remarks: "School two", sortOrder: 1 }],
       termAverageRule: { enabled: false, minPct: 0 },
       currentTerm: "Term1",
@@ -86,13 +88,50 @@ describe("examination calculation engine", () => {
     expect(first.cumulativePercentage).toBe(74);
     expect(second.promoted).toBe(true);
     expect(computeGrade(68, input().gradingRules)).toEqual({ label: "Pass", remarks: "Keep going" });
-    expect(computeGrade(90, [])).toEqual({ label: "A+", remarks: "Outstanding" });
+    expect(() => computeGrade(90, [])).toThrow("non-empty configured grading policy");
   });
 
   it("rejects a policy from another school before calculating", () => {
     expect(() => computeAllStudentResults(input({
       policy: { ...input().policy, schoolId: 99 },
     }))).toThrow("Examination policy school 99 does not match calculation school 11.");
+  });
+
+  it("rejects a grading policy from another school independently of the examination policy", () => {
+    expect(() => computeAllStudentResults(input({
+      gradingPolicy: { schoolId: 99 },
+    }))).toThrow("Grading policy school 99 does not match calculation school 11.");
+  });
+
+  it("selects only inclusive configured ranges and rejects gaps or invalid configuration", () => {
+    const rules = input().gradingRules;
+    expect(selectGrade(0, rules).label).toBe("Pass");
+    expect(selectGrade(69, rules).label).toBe("Pass");
+    expect(selectGrade(70, rules).label).toBe("Distinction");
+    expect(selectGrade(100, rules).label).toBe("Distinction");
+    expect(() => selectGrade(69.5, rules)).toThrow("No configured grading rule");
+    expect(() => selectGrade(50, [{ ...rules[0], minPercent: 70.5 }])).toThrow("integer min/max");
+    expect(() => selectGrade(50, [{ ...rules[0], minPercent: 60, maxPercent: 80 }, { ...rules[1], minPercent: 0, maxPercent: 70 }]))
+      .toThrow("must not overlap");
+    expect(() => selectGrade(65, [{ ...rules[0], minPercent: 70, maxPercent: 100 }, { ...rules[1], minPercent: 0, maxPercent: 60 }]))
+      .toThrow("must not contain gaps");
+  });
+
+  it("keeps grade selection school-scoped while pass/fail remains independent", () => {
+    const schoolARules = [
+      { id: 1, tierId: 1, gradeLabel: "A grade", minPercent: 70, maxPercent: 100, remarks: null, sortOrder: 1 },
+      { id: 2, tierId: 1, gradeLabel: "D grade", minPercent: 0, maxPercent: 69, remarks: null, sortOrder: 2 },
+    ];
+    const schoolBRules = [
+      { id: 3, tierId: 2, gradeLabel: "A grade", minPercent: 80, maxPercent: 100, remarks: null, sortOrder: 1 },
+      { id: 4, tierId: 2, gradeLabel: "D grade", minPercent: 0, maxPercent: 79, remarks: null, sortOrder: 2 },
+    ];
+    expect(selectGrade(75, schoolARules).label).toBe("A grade");
+    expect(selectGrade(75, schoolBRules).label).toBe("D grade");
+    const oneScore = [{ ...students[0], scores: [{ subject: "Math", examType: "Unit", marks: 75, totalMarks: 100, isAbsent: false }] }];
+    const policy = { schoolId: 11, examWeights: JSON.stringify({ Term: [{ source_exam: "Unit", weight: 100 }] }), promotionFailRules: JSON.stringify({ rule1: { enabled: false } }) };
+    const [result] = computeAllStudentResults(input({ students: oneScore, policy, passPercentage: 40, gradingPolicy: { schoolId: 11 }, gradingRules: schoolBRules }));
+    expect(result.termResults.Term[0]).toMatchObject({ grade: { label: "D grade" }, passed: true });
   });
 
   it("uses the supplied configured pass percentage at exact boundaries without a fallback", () => {
@@ -138,7 +177,7 @@ describe("examination calculation engine", () => {
       context: { schoolId: 11, sessionId: 101 }, students: schoolAScore, policy: policy(11), passPercentage: 40,
     }))[0];
     const schoolB = computeAllStudentResults(input({
-      context: { schoolId: 22, sessionId: 202 }, students: schoolBScore, policy: policy(22), passPercentage: 50,
+      context: { schoolId: 22, sessionId: 202 }, students: schoolBScore, policy: policy(22), gradingPolicy: { schoolId: 22 }, passPercentage: 50,
     }))[0];
     expect(schoolA.termResults.Term[0].passed).toBe(true);
     expect(schoolB.termResults.Term[0].passed).toBe(false);

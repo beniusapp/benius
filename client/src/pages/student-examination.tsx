@@ -10,6 +10,7 @@ import {
 import { getQueryFn } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useSessionView } from "@/contexts/session-view-context";
+import { selectGrade, type GradingRule } from "@shared/examination-calculation-engine";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
 interface AcademicSession {
@@ -40,6 +41,7 @@ interface ExamScore {
 interface ExamPolicyTier {
   id: number; tierName: string; applicableClasses: string[];
   examWeights: string; promotionFailRules: string; passPercentage?: number;
+  gradingRules: GradingRule[];
 }
 interface AttendanceStatsResponse {
   overallPercent: number; workingDays: number; daysPresent: number;
@@ -168,15 +170,12 @@ function computeStudentTermResults(
 }
 
 // ─────────────────────────── Helpers ───────────────────────────────────────────
-function computeGrade(pct: number) {
-  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
-  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
-  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
-  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
-  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
-  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
+function computeGrade(pct: number, rules: GradingRule[]) {
+  const grade = selectGrade(pct, rules);
+  const label = grade.label.toUpperCase();
+  const color = label.startsWith("A") ? "text-emerald-400" : label.startsWith("B") ? "text-blue-400" : label.startsWith("C") ? "text-yellow-400" : label.startsWith("D") ? "text-orange-400" : "text-red-400";
+  const bg = label.startsWith("A") ? "bg-emerald-500/15 border-emerald-500/30" : label.startsWith("B") ? "bg-blue-500/15 border-blue-500/30" : label.startsWith("C") ? "bg-yellow-500/15 border-yellow-500/30" : label.startsWith("D") ? "bg-orange-500/15 border-orange-500/30" : "bg-red-500/15 border-red-500/30";
+  return { ...grade, remarks: grade.remarks ?? "", color, bg };
 }
 
 function PrintStyles() {
@@ -536,7 +535,7 @@ function ViewMarksPanel({
     const rows = examTypeOptions.map(et => {
       const score = scoreFor(viewSubject, et);
       const pct   = renderPct(score);
-      const g     = pct !== null ? computeGrade(pct) : null;
+      const g     = pct !== null && policy?.gradingRules?.length ? computeGrade(pct, policy.gradingRules) : null;
       const contribs = termContributionsFor(et);
       return { et, score, pct, g, contribs };
     });
@@ -660,7 +659,7 @@ function ViewMarksPanel({
     const rows = subjectOptions.map(sub => {
       const score = scoreFor(sub, viewExamType);
       const pct   = renderPct(score);
-      const g     = pct !== null ? computeGrade(pct) : null;
+      const g     = pct !== null && policy?.gradingRules?.length ? computeGrade(pct, policy.gradingRules) : null;
       return { sub, score, pct, g };
     });
 
@@ -800,7 +799,7 @@ function ViewMarksPanel({
   // ══════════════════════════════════════════════════════════════════════════════
   const score = scoreFor(viewSubject, viewExamType);
   const pct   = renderPct(score);
-  const g     = pct !== null ? computeGrade(pct) : null;
+  const g     = pct !== null && policy?.gradingRules?.length ? computeGrade(pct, policy.gradingRules) : null;
   const contribsC = termContributionsFor(viewExamType);
 
   return (
@@ -972,7 +971,7 @@ function ResultsPanel({
     ? Math.round((scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length) * 10) / 10
     : null;
   const failCount = allTermFailCounts[resTerm] ?? 0;
-  const termGrade = termAvg !== null ? computeGrade(termAvg) : null;
+  const termGrade = termAvg !== null && policy?.gradingRules?.length ? computeGrade(termAvg, policy.gradingRules) : null;
 
   if (isLoading) return (
     <div className="flex justify-center py-14">
@@ -1082,7 +1081,7 @@ function ResultsPanel({
               </p>
             </div>
           ) : activeTermSubjects.map(subj => {
-            const gS = subj.percentage !== null ? computeGrade(subj.percentage) : null;
+            const gS = subj.percentage !== null && policy?.gradingRules?.length ? computeGrade(subj.percentage, policy.gradingRules) : null;
             return (
               <div key={subj.subject} className="rounded-xl overflow-hidden"
                 style={{ border: "1px solid #1e293b" }} data-testid={`results-subject-${subj.subject}`}>

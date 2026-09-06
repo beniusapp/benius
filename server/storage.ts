@@ -62,6 +62,7 @@ import {
   safeFeeAuditDescription,
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
+import { selectGrade } from "@shared/examination-calculation-engine";
 
 /**
  * Financial history cannot be detached from its original academic session.
@@ -4359,14 +4360,17 @@ export class DatabaseStorage {
     const allRules = await this.getGradingRules(schoolId);
     const matchedTier = tiers.find(t => Array.isArray(t.classes) && t.classes.includes(studentClass));
     if (!matchedTier) throw new Error(`No grading tier configured for class ${studentClass}.`);
-    const tierRules = allRules.filter(r => r.tierId === matchedTier.id)
-      .sort((a, b) => b.minPercent - a.minPercent);
-    const matchedRule = tierRules.find(r => percentage >= r.minPercent && percentage <= r.maxPercent);
+    const tierRules = allRules.filter(r => r.tierId === matchedTier.id);
+    const matchedGrade = selectGrade(percentage, tierRules);
+    const matchedRule = tierRules.find(r =>
+      r.gradeLabel === matchedGrade.label && r.remarks === matchedGrade.remarks &&
+      percentage >= r.minPercent && percentage <= r.maxPercent
+    );
     return {
       passPercentage: matchedTier.passPercentage,
-      gradeLabel: matchedRule?.gradeLabel ?? null,
+      gradeLabel: matchedGrade.label,
       gradePoint: matchedRule?.gradePoint ?? null,
-      remarks: matchedRule?.remarks ?? null,
+      remarks: matchedGrade.remarks,
     };
   }
 

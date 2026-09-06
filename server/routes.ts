@@ -2127,9 +2127,12 @@ export async function registerRoutes(
     const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
     const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
     const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
-    const grade = percentage >= 90 ? "A+" : percentage >= 80 ? "A" : percentage >= 70 ? "B+" :
-      percentage >= 60 ? "B" : percentage >= 50 ? "C" : percentage >= 40 ? "D" : "F";
-    res.json({ scores, summary: { totalObtained, totalMax, percentage, grade, rank } });
+    try {
+      const grade = await storage.resolveGrade(student.schoolId, cls, percentage);
+      res.json({ scores, summary: { totalObtained, totalMax, percentage, grade: grade.gradeLabel, rank } });
+    } catch (error: any) {
+      return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
+    }
   });
 
   app.get("/api/student/exam/journey", async (req, res) => {
@@ -2167,7 +2170,19 @@ export async function registerRoutes(
     if (!tier) return res.status(404).json({ message: `No exam policy configured for Class ${cls}` });
     const passPolicy = await storage.resolveClassPassPolicy(student.schoolId, cls);
     if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for Class ${cls}` });
-    res.json({ ...tier, passPercentage: passPolicy.passPercentage });
+    try {
+      const gradingRules = await storage.getGradingRules(student.schoolId, passPolicy.id);
+      const { validateGradingRules } = await import("@shared/examination-calculation-engine");
+      validateGradingRules(gradingRules);
+      res.json({
+        ...tier,
+        passPercentage: passPolicy.passPercentage,
+        gradingRules,
+        gradingPolicy: { schoolId: student.schoolId, tierId: passPolicy.id },
+      });
+    } catch (error: any) {
+      return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
+    }
   });
 
   // Student: enrollment history — exact class/section per academic session

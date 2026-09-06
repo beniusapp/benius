@@ -15,6 +15,7 @@ import { useSessionView } from "@/contexts/session-view-context";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
+import { selectGrade } from "@shared/examination-calculation-engine";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
@@ -109,22 +110,8 @@ function gradeBg(label: string): string {
   return "bg-red-500/15 border-red-500/30";
 }
 function computeGrade(pct: number, rules: GradingRuleClient[]): { label: string; color: string; bg: string; remarks: string | null } {
-  if (rules.length > 0) {
-    const sorted = [...rules].sort((a, b) => b.minPercent - a.minPercent);
-    for (const r of sorted) {
-      if (pct >= r.minPercent) return { label: r.gradeLabel, color: gradeColor(r.gradeLabel), bg: gradeBg(r.gradeLabel), remarks: r.remarks };
-    }
-    const last = sorted[sorted.length - 1];
-    return { label: last.gradeLabel, color: gradeColor(last.gradeLabel), bg: gradeBg(last.gradeLabel), remarks: last.remarks };
-  }
-  if (pct >= 90) return { label: "A+", color: "text-emerald-400", bg: "bg-emerald-500/15 border-emerald-500/30", remarks: "Outstanding" };
-  if (pct >= 80) return { label: "A",  color: "text-green-400",   bg: "bg-green-500/15 border-green-500/30",   remarks: "Excellent" };
-  if (pct >= 70) return { label: "B+", color: "text-teal-400",    bg: "bg-teal-500/15 border-teal-500/30",    remarks: "Very Good" };
-  if (pct >= 60) return { label: "B",  color: "text-blue-400",    bg: "bg-blue-500/15 border-blue-500/30",    remarks: "Good" };
-  if (pct >= 50) return { label: "C+", color: "text-yellow-400",  bg: "bg-yellow-500/15 border-yellow-500/30", remarks: "Average" };
-  if (pct >= 40) return { label: "C",  color: "text-amber-400",   bg: "bg-amber-500/15 border-amber-500/30",  remarks: "Below Average" };
-  if (pct >= 33) return { label: "D",  color: "text-orange-400",  bg: "bg-orange-500/15 border-orange-500/30", remarks: "Poor" };
-  return { label: "F", color: "text-red-400", bg: "bg-red-500/15 border-red-500/30", remarks: "Fail" };
+  const grade = selectGrade(pct, rules);
+  return { ...grade, color: gradeColor(grade.label), bg: gradeBg(grade.label) };
 }
 
 // ── Compute engine (exact copy from teacher examination.tsx) ──────────────────
@@ -274,10 +261,10 @@ function buildDetentionReasons(student: ComputedStudentResult, isManualOverride:
 
 // ── Admin Student Timeline (mirrors teacher's StudentTimeline) ─────────────────
 function AdminStudentTimeline({
-  studentId, studentName, subject, examTypes: allExamTypes, viewClass, viewSection,
+  studentId, studentName, subject, examTypes: allExamTypes, viewClass, viewSection, gradingRules,
 }: {
   studentId: number; studentName: string; subject: string;
-  examTypes: string[]; viewClass: string; viewSection: string;
+  examTypes: string[]; viewClass: string; viewSection: string; gradingRules: GradingRuleClient[];
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
     queryKey: ["/api/admin/analytics/student-scores", studentId],
@@ -341,7 +328,7 @@ function AdminStudentTimeline({
               <tbody>
                 {subjectScores.map((s, i) => {
                   const pct = Math.round((s.marks / s.totalMarks) * 100);
-                  const g = computeGrade(pct, []);
+                  const g = computeGrade(pct, gradingRules);
                   return (
                     <tr key={i} className="border-b last:border-0">
                       <td className="py-1.5 px-2 font-medium">{s.examType}</td>
@@ -392,7 +379,7 @@ function AdminStudentTimeline({
                       </div>
                     );
                     const pct = Math.round((s.marks / s.totalMarks) * 100);
-                    const g = computeGrade(pct, []);
+                    const g = computeGrade(pct, gradingRules);
                     return (
                       <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                         <span className="text-muted-foreground">{s.examType}</span>
@@ -863,6 +850,7 @@ export default function PerformanceAnalytics({
   const [viewSubject, setViewSubject] = useState("");
   const [viewExamType, setViewExamType] = useState("");
   const [expandedStudent, setExpandedStudent] = useState<number | null>(null);
+  const [viewGradingRules, setViewGradingRules] = useState<GradingRuleClient[]>([]);
 
   const viewSectionOpts = useMemo(() => {
     if (!viewClass) return [];
@@ -906,10 +894,19 @@ export default function PerformanceAnalytics({
     refetchOnWindowFocus: true,
     refetchInterval: 30000,
   });
+  useEffect(() => {
+    if (!viewClass) { setViewGradingRules([]); return; }
+    let cancelled = false;
+    sessionFetch(`/api/admin/analytics/grading-rules/${encodeURIComponent(viewClass)}`)
+      .then(async r => { if (!r.ok) throw new Error("No grading tier configured"); return r.json(); })
+      .then(data => { if (!cancelled) setViewGradingRules(Array.isArray(data.rules) ? data.rules : []); })
+      .catch(() => { if (!cancelled) setViewGradingRules([]); });
+    return () => { cancelled = true; };
+  }, [viewClass, sessionId]);
 
   function generateProgressReport() {
-    if (gradingPassPct === null) {
-      toast({ title: "Pass policy unavailable", description: "Configure a grading tier for this class before generating a report.", variant: "destructive" });
+    if (gradingPassPct === null || viewGradingRules.length === 0) {
+      toast({ title: "Grading policy unavailable", description: "Configure valid grading rules for this class before generating a report.", variant: "destructive" });
       return;
     }
     const scored = viewScores.filter(s => !s.isAbsent);
@@ -917,7 +914,7 @@ export default function PerformanceAnalytics({
     const totalMax = viewScores[0]?.totalMarks ?? 0;
     const gradedScores = scored.map(s => {
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = computeGrade(pct, viewGradingRules);
       return { ...s, pct, grade: g.label, remarks: g.remarks ?? "" };
     }).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
     const passCount = gradedScores.filter(s => s.pct >= gradingPassPct).length;
@@ -928,7 +925,7 @@ export default function PerformanceAnalytics({
     const rows = viewScores.map((s, idx) => {
       if (s.isAbsent) return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td>—</td><td>—</td><td>—</td><td><span class="badge absent">ABSENT</span></td><td>—</td></tr>`;
       const pct = totalMax > 0 ? Math.round((s.marks / totalMax) * 100) : 0;
-      const g = computeGrade(pct, []);
+      const g = computeGrade(pct, viewGradingRules);
       const isPass = pct >= gradingPassPct;
       return `<tr><td>${idx + 1}</td><td>${s.dsid}</td><td class="name">${s.studentName}</td><td><strong>${s.marks}/${totalMax}</strong></td><td><strong>${pct}%</strong></td><td><span class="grade-badge">${g.label}</span></td><td><span class="badge ${isPass ? "pass" : "fail"}">${isPass ? "PASS" : "FAIL"}</span></td><td class="remarks">${g.remarks ?? ""}</td></tr>`;
     });
@@ -1172,7 +1169,7 @@ export default function PerformanceAnalytics({
                       {viewScores.map((s, idx) => {
                         const isExpanded = expandedStudent === s.studentId;
                         const pct = s.isAbsent ? 0 : Math.round((s.marks / s.totalMarks) * 100);
-                        const g = computeGrade(pct, []);
+                        const g = computeGrade(pct, viewGradingRules);
                         return (
                           <Fragment key={s.studentId}>
                             <tr className="border-b border-[#1e293b]/60 last:border-0 hover:bg-[#1e293b]/40 cursor-pointer transition-colors" onClick={() => setExpandedStudent(isExpanded ? null : s.studentId)} data-testid={`row-view-${s.studentId}`}>
@@ -1188,7 +1185,7 @@ export default function PerformanceAnalytics({
                             </tr>
                             {isExpanded && (
                               <tr><td colSpan={7} className="p-0 bg-[#020617]">
-                                <AdminStudentTimeline studentId={s.studentId} studentName={s.studentName} subject={viewSubject} examTypes={viewExamTypeOpts} viewClass={viewClass} viewSection={viewSection} />
+                                {viewGradingRules.length > 0 && <AdminStudentTimeline studentId={s.studentId} studentName={s.studentName} subject={viewSubject} examTypes={viewExamTypeOpts} viewClass={viewClass} viewSection={viewSection} gradingRules={viewGradingRules} />}
                               </td></tr>
                             )}
                           </Fragment>

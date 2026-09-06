@@ -13,6 +13,7 @@ import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
+import { validateGradingRules } from "@shared/examination-calculation-engine";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -2495,13 +2496,20 @@ export function registerTeacherRoutes(app: Express) {
       gradePoint: z.string().default(""),
       remarks: z.string().default(""),
       sortOrder: z.number().int().default(0),
-    }));
+    })).min(1, "At least one grading rule is required");
     const parsed = ruleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
     const tierCheck = await storage.getGradingTiers(schoolId);
     const validTier = tierCheck.find(t => t.id === tierId);
     if (!validTier) return res.status(403).json({ message: "Tier not found for this school" });
+    try {
+      validateGradingRules(parsed.data.map((rule, index) => ({
+        ...rule, id: index, tierId, remarks: rule.remarks || null,
+      })));
+    } catch (error: any) {
+      return res.status(400).json({ message: error.message });
+    }
     const rules = await storage.replaceGradingRules(tierId, schoolId, parsed.data);
     res.json(rules);
   });
@@ -3626,8 +3634,9 @@ Thank you for your prompt attention to this matter.
       const tier = await storage.resolveClassPassPolicy(schoolId, cls);
       if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
       const rules = await storage.getGradingRules(schoolId, tier.id);
-      res.json({ rules, passPercentage: tier.passPercentage });
-    } catch { res.status(500).json({ message: "Failed to fetch grading rules" }); }
+      validateGradingRules(rules);
+      res.json({ rules, passPercentage: tier.passPercentage, gradingPolicy: { schoolId, tierId: tier.id } });
+    } catch (err: any) { res.status(409).json({ message: err?.message || "Grading policy is not configured correctly." }); }
   });
 
   app.get("/api/admin/analytics/promotion-decisions/:class/:section/:term", async (req, res) => {
@@ -4232,10 +4241,11 @@ Thank you for your prompt attention to this matter.
       const tier = await storage.resolveClassPassPolicy(teacher.schoolId, cls);
       if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
       const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
-      res.json({ rules, passPercentage: tier.passPercentage });
-    } catch (err) {
+      validateGradingRules(rules);
+      res.json({ rules, passPercentage: tier.passPercentage, gradingPolicy: { schoolId: teacher.schoolId, tierId: tier.id } });
+    } catch (err: any) {
       console.error("[grading-rules] error:", err);
-      res.status(500).json({ message: "Failed to fetch grading rules" });
+      res.status(409).json({ message: err?.message || "Grading policy is not configured correctly." });
     }
   });
 
