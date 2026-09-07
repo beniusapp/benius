@@ -1,0 +1,494 @@
+FIX 10A-FOLLOW-UP INVESTIGATION — TEACHER EXAMINATION RESULTS 59.7% GRADING ERROR
+
+IMPORTANT:
+This is an INVESTIGATION ONLY.
+DO NOT modify code.
+DO NOT modify the database.
+DO NOT modify schema.
+DO NOT create migrations.
+DO NOT modify grading rules.
+DO NOT change calculation logic.
+DO NOT change Fix 4.
+DO NOT change Fix 10A.
+DO NOT add fallback grades.
+DO NOT round or clamp values as a proposed fix.
+DO NOT make any production changes.
+
+I am getting this runtime error in:
+
+Teacher Portal → Examination → Results
+
+Error:
+
+"No configured grading rule matches percentage 59.7."
+
+The stack trace points to:
+
+shared/examination-calculation-engine.ts
+selectGrade()
+computeGrade()
+
+The configured Class 6 grading policy is believed to be:
+
+A: 80–100
+B: 60–79
+C: 35–59
+D: 0–34
+
+Therefore 59.7 does not match any configured rule.
+
+However, DO NOT assume that the correct solution is to round 59.7 to 60 or change the grading ranges. We need to determine the actual root cause and intended precision behavior first.
+
+==================================================
+INVESTIGATION OBJECTIVE
+==================================================
+
+Determine exactly why Teacher Examination → Results is producing a decimal percentage of 59.7 and then passing that value into the strict grading selector.
+
+I need a forensic, read-only investigation.
+
+Determine whether this is:
+
+A. A legitimate decimal percentage that exposes a grading-policy precision gap
+
+B. A calculation/rounding inconsistency between percentage calculation and grade selection
+
+C. A difference between subject-level and term-level percentage calculations
+
+D. A difference between raw percentage and displayed percentage
+
+E. A weighting/normalization issue
+
+F. A Total Marks / obtained Marks calculation issue
+
+G. A duplicate or aggregation issue
+
+H. A missing/absent score handling issue
+
+I. A session-scoping issue
+
+J. A tenant/policy selection issue
+
+K. A stale or wrong grading-policy state issue
+
+L. Another issue
+
+Do not choose a conclusion without tracing the actual code and data.
+
+==================================================
+1. TRACE THE EXACT RESULTS CALCULATION PATH
+==================================================
+
+Inspect:
+
+- client/src/pages/teacher-modules/examination.tsx
+- shared/examination-calculation-engine.ts
+- any Teacher Results-specific calculation code
+- any helper functions called by Teacher Results
+- any percentage/average/weighting helpers
+- any grade-selection calls
+
+Identify the exact function that produces the 59.7 value.
+
+Show the complete calculation chain:
+
+scores
+→ obtained marks
+→ total marks
+→ subject percentage
+→ term percentage/average
+→ any weighting
+→ any rounding
+→ grade selection
+
+Identify the exact line where 59.7 is created.
+
+Do not modify anything.
+
+==================================================
+2. DETERMINE WHETHER 59.7 IS RAW OR ROUNDED
+==================================================
+
+Determine whether the value passed to selectGrade() is:
+
+- raw decimal percentage
+- rounded percentage
+- truncated percentage
+- weighted percentage
+- averaged percentage
+- normalized percentage
+- percentage produced from already-rounded values
+
+For example, determine whether the actual flow is something like:
+
+59.65 → 59.7
+
+or:
+
+59.74 → 59.7
+
+or:
+
+59 → 59.7
+
+or some other transformation.
+
+Do not invent the original value.
+
+If the exact underlying values cannot be proven from the code/data, explicitly say so.
+
+==================================================
+3. TRACE THE EXACT INPUT DATA
+==================================================
+
+For the affected Teacher Results context, identify the actual:
+
+- authenticated school
+- Academic Session
+- class
+- section
+- subject(s)
+- exam type(s)
+- student(s)
+- obtained marks
+- total marks
+- configured weights, if any
+- absent states
+- missing states
+- existing score records
+
+Determine which exact data produces 59.7%.
+
+Do not alter any records.
+
+If the exact affected student cannot be determined from available evidence, state that clearly.
+
+==================================================
+4. VERIFY ACADEMIC SESSION ISOLATION
+==================================================
+
+Confirm that Teacher Results is using ONLY the explicitly selected Academic Session.
+
+Verify:
+
+- selected session ID
+- x-view-session-id transport
+- server session validation
+- authenticated teacher school
+- exact session filtering
+- NULL-session exclusion
+- no fallback to another session
+- no all-session aggregation
+
+Do not change Fix 10A or Teacher session architecture.
+
+If session isolation is already correct, state that explicitly.
+
+==================================================
+5. VERIFY TENANT ISOLATION
+==================================================
+
+Confirm the grading policy belongs to:
+
+authenticated teacher
+→ authenticated teacher.schoolId
+→ selected class
+→ correct grading tier
+→ same school
+
+Verify that no client-provided schoolId is being trusted for policy selection.
+
+Confirm that another school's grading rules cannot enter this calculation.
+
+Do not modify anything.
+
+==================================================
+6. INSPECT THE ACTUAL GRADING POLICY
+==================================================
+
+Read the actual configured grading policy for the affected class.
+
+Report:
+
+- school ID
+- tier ID
+- tier name
+- class assignment
+- pass percentage
+- grading system
+- every grading rule
+- minimum percentage
+- maximum percentage
+- rule ordering
+
+Verify whether the rules truly have a gap such as:
+
+C: 35–59
+B: 60–79
+
+Also verify whether the database stores integer boundaries or decimal boundaries.
+
+DO NOT change the policy.
+
+==================================================
+7. INVESTIGATE PRECISION / ROUNDING SEMANTICS
+==================================================
+
+This is especially important.
+
+Search the entire relevant Examination calculation path for:
+
+- Math.round
+- Math.floor
+- Math.ceil
+- toFixed
+- parseInt
+- Number(...)
+- percentage rounding
+- average rounding
+- weighted average rounding
+- grade percentage normalization
+
+Compare:
+
+Teacher Examination Results
+Teacher Add Marks
+Student Results
+Admin Performance Analytics
+Reports
+
+Determine whether they use the same percentage precision.
+
+Identify any situation where:
+
+one part of the system uses 59.7
+while another part displays or grades it as 60.
+
+DO NOT change the behavior.
+
+==================================================
+8. INVESTIGATE WEIGHTING / AVERAGING
+==================================================
+
+If 59.7 is a term average or weighted result, trace the formula.
+
+Determine:
+
+- component percentages
+- component weights
+- whether weights total 100
+- whether weights are normalized
+- whether missing components are excluded
+- whether absent components are included
+- whether intermediate values are rounded
+- whether final values are rounded
+
+Do not assume the cumulative calculation policy is correct or incorrect.
+
+Do not change Fix 7.
+
+If the 59.7 value does not involve weighting, state that clearly.
+
+==================================================
+9. INVESTIGATE ABSENT / MISSING HANDLING
+==================================================
+
+Do not implement Fix 5.
+
+Only investigate whether the affected 59.7 result is affected by:
+
+- absent scores
+- missing scores
+- zero marks
+- incomplete components
+
+Determine exactly how those values enter the calculation.
+
+Do not change their semantics.
+
+==================================================
+10. INVESTIGATE DUPLICATION / AGGREGATION
+==================================================
+
+Check whether the affected result could be caused by:
+
+- duplicate exam scores
+- duplicate subject components
+- duplicate student records
+- duplicate term components
+- accidental aggregation
+- counting a component twice
+- incorrect total marks aggregation
+
+Use read-only inspection.
+
+Do not modify records.
+
+==================================================
+11. TRACE THE EXACT selectGrade() INPUT
+==================================================
+
+Find the exact call that eventually does:
+
+selectGrade(59.7, rules)
+
+Report:
+
+- percentage argument
+- grading rule array
+- school
+- class
+- tier
+- session
+- student
+- calculation stage
+
+Confirm whether 59.7 is expected to reach selectGrade() under the current architecture.
+
+==================================================
+12. IMPORTANT: DO NOT WEAKEN FIX 4
+==================================================
+
+Fix 4 established strict grading policy behavior.
+
+The investigation must NOT recommend:
+
+- universal fallback grades
+- "nearest grade"
+- automatic acceptance of unmatched percentages
+- silently assigning C to 59.7
+- expanding ranges automatically
+- changing A/B/C/D defaults
+- clamping percentages
+- hiding configuration errors
+
+If the policy precision is the problem, identify it clearly, but do not change it.
+
+==================================================
+13. CHECK FOR SAME BUG ELSEWHERE
+==================================================
+
+Search for other possible percentages that could fall into the same gap:
+
+59.1
+59.2
+59.5
+59.7
+59.9
+79.1
+79.5
+79.9
+34.1
+34.5
+34.9
+
+Determine whether the issue is systemic whenever decimal percentages are passed to integer-boundary grading rules.
+
+Do not modify anything.
+
+==================================================
+14. DETERMINE INTENDED BUSINESS SEMANTICS — DO NOT DECIDE IT
+==================================================
+
+Identify what the existing code/documentation/UI appears to imply about grading precision.
+
+Possible interpretations include:
+
+1. Grade using raw decimal percentage.
+2. Round percentage before grade selection.
+3. Truncate percentage before grade selection.
+4. Store/display one decimal but grade using an integer.
+5. Configure grading boundaries with decimals.
+
+DO NOT choose one unless the existing application clearly establishes it.
+
+If the existing application does not establish the intended behavior, explicitly report:
+
+"Business rule decision required."
+
+==================================================
+15. CHECK FOR REGRESSION FROM FIXES 1–10A
+==================================================
+
+Verify that this issue is not caused by:
+
+- Fix 1 shared calculation engine
+- Fix 2 session isolation
+- Fix 3 pass/fail authority
+- Fix 4 grading policy authority
+- Fix 10A Student session isolation
+
+Do not modify any of those fixes.
+
+==================================================
+16. REQUIRED FINAL REPORT
+==================================================
+
+Return a structured report with exactly these sections:
+
+1. EXECUTIVE SUMMARY
+
+2. EXACT ERROR PATH
+
+3. EXACT 59.7% CALCULATION
+
+4. ACTUAL INPUT DATA
+
+5. EXACT selectGrade() INPUT
+
+6. GRADING POLICY USED
+
+7. ROUNDING / PRECISION ANALYSIS
+
+8. WEIGHTING / AVERAGING ANALYSIS
+
+9. ABSENT / MISSING ANALYSIS
+
+10. DUPLICATION / AGGREGATION ANALYSIS
+
+11. ACADEMIC SESSION ISOLATION CHECK
+
+12. TENANT ISOLATION CHECK
+
+13. FIX 4 REGRESSION CHECK
+
+14. OTHER PAGES AFFECTED
+
+15. ROOT CAUSE CLASSIFICATION
+
+16. MINIMAL PROPOSED FIX
+
+17. ALTERNATIVE FIXES, IF ANY
+
+18. BUSINESS RULE DECISION REQUIRED
+
+19. FILES THAT WOULD NEED TO CHANGE
+
+20. DATABASE / SCHEMA IMPACT
+
+21. REGRESSION TEST PLAN
+
+22. SCOPE SAFETY CHECK
+
+==================================================
+FINAL SAFETY REQUIREMENT
+==================================================
+
+At the end, explicitly state:
+
+CODE CHANGES: NONE
+DATABASE CHANGES: NONE
+SCHEMA CHANGES: NONE
+MIGRATIONS: NONE
+DATA CHANGES: NONE
+FIX 4 CHANGED: NO
+FIX 10A CHANGED: NO
+FIX 5 CHANGED: NO
+FIX 7 CHANGED: NO
+FIX 9 CHANGED: NO
+
+Do not implement anything.
+
+If you discover that a fix requires a business-rule decision, STOP at investigation and report the decision required.
+
+This investigation must remain completely read-only.
