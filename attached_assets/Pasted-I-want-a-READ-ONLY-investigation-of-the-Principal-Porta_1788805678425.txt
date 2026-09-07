@@ -1,0 +1,108 @@
+I want a READ-ONLY investigation of the Principal Portal → School Setup → Academic Policy / Grading configuration.
+
+DO NOT MODIFY ANY CODE.
+DO NOT MODIFY THE DATABASE.
+DO NOT MODIFY ANY GRADING POLICY DATA.
+DO NOT RUN INSERT, UPDATE, DELETE, ALTER, migration, or any other mutating operation.
+DO NOT fix anything yet.
+DO NOT change the UI.
+DO NOT change Fix 4, Fix 10A, or any Examination calculation logic.
+
+The purpose of this investigation is ONLY to understand exactly what “Academic Policy” defines in this application and how the Principal Portal saves and reloads it.
+
+I am seeing this behavior:
+
+1. Principal Portal → School Setup → Academic Policy.
+2. Open the “Higher School” grading tier.
+3. Change a grading value, for example a Max % value from 59 to 59.99.
+4. Click “Save Tier”.
+5. UI says:
+   “Tier saved”
+   “Higher School updated successfully.”
+6. Close/reopen the Higher School tier.
+7. The value is not retained and the old value appears again.
+
+The screenshots show Higher School currently applies to Classes 5, 6, 7, 8 and has:
+- Percentage-Based passing enabled
+- Grade-Based passing enabled
+- Pass Percentage = 40
+- Passing Grades = A, B, C, D
+- Grade brackets currently shown as:
+  A: 80–100
+  B: 60–79
+  C: 35–59
+  D: 0–34
+
+I need a complete technical investigation before any implementation.
+
+==================================================
+PART 1 — DEFINE WHAT ACADEMIC POLICY MEANS
+==================================================
+
+Trace the complete Academic Policy / Grading feature and explain exactly what it defines.
+
+Identify every field/configuration stored in an Academic Policy / grading tier, including but not limited to:
+
+- Tier name
+- From Class
+- To Class / selected classes
+- Pass Percentage
+- Percentage-Based passing
+- Grade-Based passing
+- Passing Grades
+- Grade brackets
+- Grade
+- Minimum percentage
+- Maximum percentage
+- Grade point
+- Remarks
+- Any results configuration
+- Term configuration
+- Component weights
+- Cumulative configuration
+- Promotion configuration
+- Attendance-related configuration
+- Any other JSON/configuration stored with the tier
+
+For every field, explain:
+
+1. Where it is stored.
+2. Exact database table.
+3. Exact database column.
+4. Data type.
+5. Whether it is school/tenant-owned.
+6. Whether it is class/tier-specific.
+7. Whether it is session-specific or NOT session-specific.
+8. Which application modules consume it.
+9. Whether it affects Examination Add Marks.
+10. Whether it affects Teacher Results.
+11. Whether it affects Student Results.
+12. Whether it affects Admin Performance Analytics.
+13. Whether it affects reports.
+14. Whether it affects promotion decisions.
+
+Do not infer behavior from field names. Trace actual code usage.
+
+==================================================
+PART 2 — DATABASE STRUCTURE
+==================================================
+
+Identify the exact Academic Policy / grading-related database tables.
+
+For each relevant table, provide:
+
+- Table name
+- Primary key
+- Foreign keys
+- school_id / tenant ownership
+- Academic Session relationship, if any
+- Tier relationship
+- Class relationship
+- Important columns
+- Column data types
+- Nullable/non-nullable status
+- Defaults
+- Unique constraints
+- Indexes relevant to loading/saving policies
+
+Especially
