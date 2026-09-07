@@ -3,6 +3,8 @@
  * carried with every result so callers cannot accidentally treat a calculation
  * from another school or academic session as interchangeable.
  */
+import { percentageToHundredths } from "./grading-percentage";
+
 export interface ExaminationCalculationContext {
   schoolId: number;
   sessionId: number | null;
@@ -373,25 +375,23 @@ export function validateGradingRules(rules: GradingRule[]): void {
   if (!Array.isArray(rules) || rules.length === 0) {
     throw new Error("A non-empty configured grading policy is required.");
   }
-  for (const rule of rules) {
-    if (
-      !Number.isFinite(rule.minPercent) ||
-      !Number.isInteger(rule.minPercent) ||
-      !Number.isFinite(rule.maxPercent) ||
-      !Number.isInteger(rule.maxPercent) ||
-      rule.minPercent < 0 ||
-      rule.maxPercent > 100 ||
-      rule.minPercent >= rule.maxPercent
-    ) {
-      throw new Error("Configured grading rules must use integer min/max percentages from 0 to 100 with min less than max.");
+  const normalized = rules.map(rule => {
+    const min = percentageToHundredths(rule.minPercent, "Configured grading rule minimum");
+    const max = percentageToHundredths(rule.maxPercent, "Configured grading rule maximum");
+    if (min > max) {
+      throw new Error("Configured grading rules must use min/max percentages from 0.00 to 100.00 with min less than or equal to max.");
     }
-  }
-  const sorted = [...rules].sort((a, b) => a.minPercent - b.minPercent);
+    return { rule, min, max };
+  });
+  // Preserve existing whole-number policy semantics until a tenant explicitly
+  // edits a boundary to use the two-decimal closed-band model.
+  const continuityStep = normalized.some(({ min, max }) => min % 100 !== 0 || max % 100 !== 0) ? 1 : 100;
+  const sorted = [...normalized].sort((a, b) => a.min - b.min);
   for (let index = 1; index < sorted.length; index++) {
-    if (sorted[index].minPercent <= sorted[index - 1].maxPercent) {
+    if (sorted[index].min <= sorted[index - 1].max) {
       throw new Error("Configured grading rule ranges must not overlap.");
     }
-    if (sorted[index].minPercent > sorted[index - 1].maxPercent + 1) {
+    if (sorted[index].min > sorted[index - 1].max + continuityStep) {
       throw new Error("Configured grading rule ranges must not contain gaps.");
     }
   }
@@ -403,10 +403,11 @@ export function validateGradingRules(rules: GradingRule[]): void {
  */
 export function selectGrade(pct: number, rules: GradingRule[]): ComputedGrade {
   validateGradingRules(rules);
-  if (!Number.isFinite(pct)) {
-    throw new Error("A finite percentage is required to select a configured grade.");
-  }
-  const match = rules.find(rule => pct >= rule.minPercent && pct <= rule.maxPercent);
+  const percentage = percentageToHundredths(pct, "Grade-selection percentage");
+  const match = rules.find(rule =>
+    percentage >= percentageToHundredths(rule.minPercent) &&
+    percentage <= percentageToHundredths(rule.maxPercent)
+  );
   if (!match) {
     throw new Error(`No configured grading rule matches percentage ${pct}.`);
   }

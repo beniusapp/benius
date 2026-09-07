@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -774,8 +774,8 @@ export const gradingRules = pgTable("grading_rules", {
   tierId: integer("tier_id").notNull().references(() => gradingTiers.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   gradeLabel: text("grade_label").notNull(),
-  minPercent: integer("min_percent").notNull(),
-  maxPercent: integer("max_percent").notNull(),
+  minPercent: numeric("min_percent", { precision: 5, scale: 2 }).notNull(),
+  maxPercent: numeric("max_percent", { precision: 5, scale: 2 }).notNull(),
   gradePoint: text("grade_point").notNull().default(""),
   remarks: text("remarks").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),

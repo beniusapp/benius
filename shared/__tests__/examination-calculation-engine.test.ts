@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeAllStudentResults, computeGrade, evaluatePromotionRules, selectGrade, type ExaminationCalculationInput, type PromotionRuleEvaluationInput } from "../examination-calculation-engine";
+import { percentageToHundredths } from "../grading-percentage";
 
 const students = [{
   studentId: 7, name: "Asha", digitalStudentId: "DS-7", rollNumber: 1,
@@ -41,6 +42,17 @@ function input(overrides: Partial<ExaminationCalculationInput> = {}): Examinatio
 }
 
 describe("examination calculation engine", () => {
+  it("parses grading percentages without truncating or rounding", () => {
+    expect(percentageToHundredths("59.9")).toBe(5990);
+    expect(percentageToHundredths("59.90")).toBe(5990);
+    expect(percentageToHundredths("59.99")).toBe(5999);
+    expect(percentageToHundredths("100.00")).toBe(10000);
+    expect(() => percentageToHundredths("59.999")).toThrow("at most 2 decimal places");
+    expect(() => percentageToHundredths("-0.01")).toThrow("between 0.00 and 100.00");
+    expect(() => percentageToHundredths("100.01")).toThrow("between 0.00 and 100.00");
+    expect(() => percentageToHundredths("not-a-number")).toThrow("finite number");
+  });
+
   it("uses supplied weights and policies, retaining existing scored/missing/absent arithmetic", () => {
     const [result] = computeAllStudentResults(input());
     const term1 = result.termResults["Term 1"];
@@ -110,11 +122,39 @@ describe("examination calculation engine", () => {
     expect(selectGrade(70, rules).label).toBe("Distinction");
     expect(selectGrade(100, rules).label).toBe("Distinction");
     expect(() => selectGrade(69.5, rules)).toThrow("No configured grading rule");
-    expect(() => selectGrade(50, [{ ...rules[0], minPercent: 70.5 }])).toThrow("integer min/max");
+    expect(() => selectGrade(50, [{ ...rules[0], minPercent: 70.555 }])).toThrow("at most 2 decimal places");
     expect(() => selectGrade(50, [{ ...rules[0], minPercent: 60, maxPercent: 80 }, { ...rules[1], minPercent: 0, maxPercent: 70 }]))
       .toThrow("must not overlap");
     expect(() => selectGrade(65, [{ ...rules[0], minPercent: 70, maxPercent: 100 }, { ...rules[1], minPercent: 0, maxPercent: 60 }]))
       .toThrow("must not contain gaps");
+  });
+
+  it("selects inclusive two-decimal grading boundaries without rounding configured values", () => {
+    const rules = [
+      { id: 1, tierId: 1, gradeLabel: "D", minPercent: 0, maxPercent: 34.99, remarks: null, sortOrder: 4 },
+      { id: 2, tierId: 1, gradeLabel: "C", minPercent: 35, maxPercent: 59.99, remarks: null, sortOrder: 3 },
+      { id: 3, tierId: 1, gradeLabel: "B", minPercent: 60, maxPercent: 79.99, remarks: null, sortOrder: 2 },
+      { id: 4, tierId: 1, gradeLabel: "A", minPercent: 80, maxPercent: 100, remarks: null, sortOrder: 1 },
+    ];
+    expect(selectGrade(34.99, rules).label).toBe("D");
+    expect(selectGrade(35, rules).label).toBe("C");
+    expect(selectGrade(59.7, rules).label).toBe("C");
+    expect(selectGrade(59.99, rules).label).toBe("C");
+    expect(selectGrade(60, rules).label).toBe("B");
+    expect(selectGrade(80, rules).label).toBe("A");
+    expect(() => selectGrade(-0.01, rules)).toThrow("between 0.00 and 100.00");
+    expect(() => selectGrade(100.01, rules)).toThrow("between 0.00 and 100.00");
+    expect(() => selectGrade(59.999, rules)).toThrow("at most 2 decimal places");
+  });
+
+  it("rejects decimal overlaps and gaps while preserving legacy integer policies", () => {
+    const base = [
+      { id: 1, tierId: 1, gradeLabel: "C", minPercent: 0, maxPercent: 59.99, remarks: null, sortOrder: 2 },
+      { id: 2, tierId: 1, gradeLabel: "B", minPercent: 60, maxPercent: 100, remarks: null, sortOrder: 1 },
+    ];
+    expect(() => selectGrade(59, input().gradingRules)).not.toThrow();
+    expect(() => selectGrade(50, [{ ...base[0], maxPercent: 60 }, base[1]])).toThrow("must not overlap");
+    expect(() => selectGrade(50, [{ ...base[0], maxPercent: 59.98 }, base[1]])).toThrow("must not contain gaps");
   });
 
   it("keeps grade selection school-scoped while pass/fail remains independent", () => {

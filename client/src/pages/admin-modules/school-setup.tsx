@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { percentageToHundredths } from "@shared/grading-percentage";
 
 interface Props { schoolId: number; section?: string; onNavigateSection?: (section: string | null) => void; isArchiveMode?: boolean; }
 
@@ -245,19 +246,29 @@ function validateTiers(tiers: TierLocal[]): string[] {
       }
     }
     if (t.rules.length === 0) errors.push(`"${t.name}": At least one grade row is required.`);
+    const normalizedRules: Array<{ min: number; max: number }> = [];
     for (const r of t.rules) {
-      const mn = parseInt(r.minPercent); const mx = parseInt(r.maxPercent);
       if (!r.gradeLabel.trim()) { errors.push(`"${t.name}": Grade label is required for all rows.`); }
-      if (isNaN(mn) || isNaN(mx)) { errors.push(`"${t.name}": Min/Max % must be numbers.`); }
-      else if (mn >= mx) { errors.push(`"${t.name}": Min % must be less than Max % in each grade row.`); }
+      try {
+        const min = percentageToHundredths(r.minPercent, "Min %");
+        const max = percentageToHundredths(r.maxPercent, "Max %");
+        if (min > max) errors.push(`"${t.name}": Min % must be less than or equal to Max % in each grade row.`);
+        normalizedRules.push({ min, max });
+      } catch (error) {
+        errors.push(`"${t.name}": ${error instanceof Error ? error.message : "Min/Max % must be valid percentages."}`);
+      }
     }
-    const sortedRules = [...t.rules].sort((a, b) => parseInt(a.minPercent) - parseInt(b.minPercent));
+    const continuityStep = normalizedRules.some(({ min, max }) => min % 100 !== 0 || max % 100 !== 0) ? 1 : 100;
+    const sortedRules = [...normalizedRules].sort((a, b) => a.min - b.min);
     for (let i = 1; i < sortedRules.length; i++) {
-      const prev = parseInt(sortedRules[i - 1].maxPercent);
-      const cur = parseInt(sortedRules[i].minPercent);
+      const prev = sortedRules[i - 1].max;
+      const cur = sortedRules[i].min;
       // Both endpoints are inclusive, so sharing a boundary is an overlap.
       if (cur <= prev) { errors.push(`"${t.name}": Grade ranges overlap.`); break; }
-      if (cur > prev + 1) { errors.push(`"${t.name}": Gap between grade ranges (${prev} to ${cur}).`); break; }
+      if (cur > prev + continuityStep) {
+        errors.push(`"${t.name}": Gap between grade ranges (${prev / 100} to ${cur / 100}).`);
+        break;
+      }
     }
   }
   return Array.from(new Set(errors));
@@ -530,13 +541,13 @@ function TierAccordion({ tier, classesList, onChange, onDelete, onSave, isSaving
                           data-testid={`input-grade-label-${tier.tempId}-${idx}`} />
                       </td>
                       <td className="py-1.5 px-2">
-                        <Input type="number" min={0} max={100} value={r.minPercent}
+                        <Input type="number" min={0} max={100} step="0.01" value={r.minPercent}
                           onChange={e => setRule(idx, "minPercent", e.target.value)}
                           placeholder="0" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
                           data-testid={`input-min-pct-${tier.tempId}-${idx}`} />
                       </td>
                       <td className="py-1.5 px-2">
-                        <Input type="number" min={0} max={100} value={r.maxPercent}
+                        <Input type="number" min={0} max={100} step="0.01" value={r.maxPercent}
                           onChange={e => setRule(idx, "maxPercent", e.target.value)}
                           placeholder="100" className="h-7 bg-[#0A1628] border-white/20 text-white text-xs w-16"
                           data-testid={`input-max-pct-${tier.tempId}-${idx}`} />
@@ -1763,8 +1774,8 @@ export default function SchoolSetup({ schoolId, section, onNavigateSection, isAr
       const saved = await tierRes.json();
       await apiRequest("POST", `/api/admin/grading-rules/${saved.id}`,
         tier.rules.map((r, i) => ({
-          gradeLabel: r.gradeLabel, minPercent: parseInt(r.minPercent),
-          maxPercent: parseInt(r.maxPercent), gradePoint: r.gradePoint,
+          gradeLabel: r.gradeLabel, minPercent: percentageToHundredths(r.minPercent, "Min %") / 100,
+          maxPercent: percentageToHundredths(r.maxPercent, "Max %") / 100, gradePoint: r.gradePoint,
           remarks: r.remarks, sortOrder: i,
         }))
       );

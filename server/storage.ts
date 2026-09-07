@@ -36,7 +36,7 @@ import {
   type StudentProfile, type InsertStudentProfile,
   type PromotionOverride,
   type GradingTier, type InsertGradingTier,
-  type GradingRule,
+  type GradingRule as StoredGradingRule,
   type InsertAcademicHistory,
   type SchoolAsset, type InsertSchoolAsset,
   type InsertAssetLog,
@@ -63,6 +63,22 @@ import {
   safeFeeAuditRecordLabel,
 } from "./fee-audit";
 import { evaluatePromotionRules, selectGrade } from "@shared/examination-calculation-engine";
+import { percentageToDatabaseValue, percentageToHundredths } from "@shared/grading-percentage";
+
+type GradingRule = Omit<StoredGradingRule, "minPercent" | "maxPercent"> & {
+  minPercent: number;
+  maxPercent: number;
+};
+
+type GradingRuleWrite = Omit<GradingRule, "id" | "tierId" | "schoolId">;
+
+function normalizeStoredGradingRule(rule: StoredGradingRule): GradingRule {
+  const minPercent = Number(rule.minPercent);
+  const maxPercent = Number(rule.maxPercent);
+  percentageToHundredths(minPercent, "Stored grading rule minimum");
+  percentageToHundredths(maxPercent, "Stored grading rule maximum");
+  return { ...rule, minPercent, maxPercent };
+}
 
 /**
  * Financial history cannot be detached from its original academic session.
@@ -4012,19 +4028,27 @@ export class DatabaseStorage {
     const conditions = tierId
       ? and(eq(gradingRules.schoolId, schoolId), eq(gradingRules.tierId, tierId))
       : eq(gradingRules.schoolId, schoolId);
-    return await db.select().from(gradingRules)
+    const rows = await db.select().from(gradingRules)
       .where(conditions)
       .orderBy(gradingRules.tierId, gradingRules.sortOrder);
+    return rows.map(normalizeStoredGradingRule);
   }
 
-  async replaceGradingRules(tierId: number, schoolId: number, rules: Omit<GradingRule, "id" | "tierId" | "schoolId">[]): Promise<GradingRule[]> {
+  async replaceGradingRules(tierId: number, schoolId: number, rules: GradingRuleWrite[]): Promise<GradingRule[]> {
     await db.delete(gradingRules)
       .where(and(eq(gradingRules.tierId, tierId), eq(gradingRules.schoolId, schoolId)));
     if (rules.length === 0) return [];
     const inserted = await db.insert(gradingRules)
-      .values(rules.map((r, i) => ({ ...r, tierId, schoolId, sortOrder: i })))
+      .values(rules.map((r, i) => ({
+        ...r,
+        minPercent: percentageToDatabaseValue(r.minPercent),
+        maxPercent: percentageToDatabaseValue(r.maxPercent),
+        tierId,
+        schoolId,
+        sortOrder: i,
+      })))
       .returning();
-    return inserted;
+    return inserted.map(normalizeStoredGradingRule);
   }
 
   // ===== ACADEMIC HISTORY =====

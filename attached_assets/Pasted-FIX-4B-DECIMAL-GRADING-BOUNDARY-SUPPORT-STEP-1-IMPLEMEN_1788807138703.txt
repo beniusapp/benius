@@ -1,0 +1,271 @@
+FIX 4B — DECIMAL GRADING BOUNDARY SUPPORT
+STEP 1: IMPLEMENTATION
+
+We have completed a read-only investigation of the current Academic Policy / grading system.
+
+Root cause confirmed:
+The Examination calculation engine can produce decimal percentages such as 59.7, but grading_rules currently support only integer min/max boundaries. Therefore selectGrade(59.7) fails against a policy such as C = 35–59 and B = 60–79.
+
+Implement ONLY the decimal grading-boundary capability described below.
+
+LOCKED BUSINESS CONTRACT
+========================
+
+1. Grading rule min_percent and max_percent must support values from 0.00 to 100.00.
+
+2. Maximum precision is exactly 2 decimal places.
+
+3. Grade ranges are inclusive:
+   percentage >= minPercent AND percentage <= maxPercent
+
+4. The intended two-decimal closed-band model is supported, for example:
+   D = 0.00–34.99
+   C = 35.00–59.99
+   B = 60.00–79.99
+   A = 80.00–100.00
+
+5. Grade-selection input must be canonically normalized to at most 2 decimal places before matching.
+
+6. Validation must NOT use floating-point +0.01 arithmetic to determine continuity.
+   Prefer integer hundredths internally:
+   59.99 => 5999
+   60.00 => 6000
+
+7. Existing integer policy values such as 35, 59, 60 must remain exactly equivalent:
+   35 => 35.00
+   59 => 59.00
+   60 => 60.00
+
+8. DO NOT automatically transform existing policies such as:
+   C = 35–59
+   into:
+   C = 35.00–59.99
+
+   Existing tenant policy data must remain unchanged unless a user explicitly edits it.
+
+9. pass_percentage remains INTEGER for this fix.
+   Do not convert pass_percentage to decimal.
+
+10. Do not change:
+    - Absent/Missing semantics
+    - cumulative calculation
+    - calculation-engine consolidation
+    - Academic Session isolation
+    - promotion rules
+    - weighting rules
+    - attendance rules
+
+MULTI-TENANT REQUIREMENT
+========================
+
+This is a true multi-tenant SaaS application.
+
+Every grading policy remains owned by its authenticated school/tenant.
+
+Never trust a client-supplied schoolId for authorization.
+
+Preserve the existing authenticated-user -> schoolId ownership model.
+
+A grading tier/rule from School A must never be readable, editable, or applied to School B.
+
+Do not weaken any existing tenant/session authorization.
+
+IMPLEMENTATION SCOPE
+====================
+
+Inspect the current implementation first, then make the smallest coordinated changes necessary in:
+
+- shared/schema.ts
+- the appropriate database migration
+- client/src/pages/admin-modules/school-setup.tsx
+- server/teacher-routes.ts
+- server/storage.ts
+- shared/examination-calculation-engine.ts
+- relevant existing grading-policy tests
+- any directly necessary API/schema validation code
+
+Do NOT modify unrelated modules.
+
+DATABASE
+========
+
+Change grading_rules.min_percent and grading_rules.max_percent from integer-only storage to an appropriate PostgreSQL NUMERIC representation supporting 0.00–100.00 with 2 decimal places.
+
+NUMERIC(5,2) is acceptable if consistent with the existing schema conventions.
+
+Preserve all existing values exactly.
+
+Before running any migration:
+
+- inspect the existing schema
+- inspect the existing migration setup
+- verify how Drizzle/PostgreSQL numeric values are returned by the current project
+- make the application mapping explicit and safe
+
+Do not silently round or truncate values.
+
+If the existing migration architecture cannot safely support this change without a destructive or ambiguous operation, STOP and report the blocker instead of improvising.
+
+API / VALIDATION
+================
+
+Grading-rule API input must:
+
+- accept integers and valid decimal values
+- accept at most 2 decimal places
+- accept 0.00 through 100.00
+- reject values below 0
+- reject values above 100
+- reject more than 2 decimal places
+- reject NaN/infinite/non-numeric values
+- never silently round excessive precision
+
+Use strict decimal parsing rather than parseFloat() alone.
+
+Do not change pass_percentage behavior in this fix.
+
+SHARED GRADING ENGINE
+=====================
+
+Update validateGradingRules() so it supports the new decimal contract.
+
+Use integer hundredths for boundary comparisons/continuity validation where appropriate.
+
+Continue enforcing:
+
+- min <= max
+- no overlaps
+- no gaps when complete coverage is required
+- valid 0.00–100.00 bounds
+- valid grading policy structure
+
+Update selectGrade() so a percentage such as:
+
+59.7
+
+is normalized to:
+
+59.70
+
+before selecting a grade.
+
+Use inclusive comparison.
+
+Do not introduce a universal fallback grade.
+
+Do not invent a grade when no configured rule matches.
+
+If no rule matches, continue treating it as a grading-policy/configuration error.
+
+PRINCIPAL / SCHOOL SETUP UI
+===========================
+
+Update grading-rule inputs so decimal values up to 2 places can be entered.
+
+Use an appropriate decimal input configuration such as step="0.01" where applicable.
+
+Do not use parseInt() for grading boundaries.
+
+Do not silently convert:
+
+59.99 -> 59
+
+Do not silently convert:
+
+59.999 -> 59.99
+
+Invalid precision should be rejected and clearly reported.
+
+When existing integer values are loaded, display them correctly as their numeric values without changing the underlying policy.
+
+TESTS
+=====
+
+Add/update focused tests for:
+
+1. 59.70 selects the 35.00–59.99 grade.
+
+2. 59.99 selects the 35.00–59.99 grade.
+
+3. 60.00 selects the 60.00–79.99 grade.
+
+4. 34.99 selects the 0.00–34.99 grade.
+
+5. 35.00 selects the 35.00–59.99 grade.
+
+6. 80.00 selects the 80.00–100.00 grade.
+
+7. Values above 100 are rejected.
+
+8. Negative values are rejected.
+
+9. More than 2 decimal places are rejected.
+
+10. Overlapping decimal ranges are rejected.
+
+11. Decimal gaps are rejected when complete coverage is required.
+
+12. Existing integer rules continue to behave exactly as before.
+
+13. Existing tenant ownership checks continue to work.
+
+14. A policy from another school cannot be used by the calculation engine.
+
+15. No automatic conversion of existing integer policy data to .99 boundaries occurs.
+
+16. The actual PostgreSQL/Drizzle numeric representation is handled consistently when values are read back.
+
+IMPORTANT
+=========
+
+Before making changes, inspect the existing implementation and identify exactly which files/functions will change.
+
+Do not refactor unrelated code.
+
+Do not modify examination score schema.
+
+Do not modify exam_scores.session_id.
+
+Do not modify promotion schema.
+
+Do not modify cumulative calculation.
+
+Do not modify Absent/Missing handling.
+
+Do not modify Academic Session logic.
+
+Do not modify pass_percentage from integer to decimal.
+
+Do not change existing tenant authorization behavior except where necessary to preserve it through the grading-rule numeric change.
+
+Do not automatically rewrite existing school grading policies.
+
+After implementation run:
+
+1. focused grading-policy/engine tests
+2. npm run check
+3. git diff --check
+
+Also inspect the final git diff for accidental unrelated changes.
+
+If a database migration is required, create it but do NOT make unrelated schema changes.
+
+If any requirement above is ambiguous or cannot be implemented safely without making a new business decision, STOP before making that decision and report the exact ambiguity.
+
+FINAL RESPONSE FORMAT
+=====================
+
+Report:
+
+A. Files changed
+B. Database migration created/applied
+C. Existing data preserved
+D. Decimal validation behavior
+E. Grade-selection behavior
+F. Tenant-isolation verification
+G. Tests and results
+H. npm run check result
+I. git diff --check result
+J. Any blockers or decisions that still require approval
+
+Do not claim success unless the commands actually passed.

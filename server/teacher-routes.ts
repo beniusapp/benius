@@ -14,6 +14,7 @@ import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, 
 import { addCalendarDays, todayInIST } from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
+import { percentageToHundredths } from "@shared/grading-percentage";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -2489,10 +2490,20 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Admin access required" });
     const tierId = parseInt(req.params.tierId as string);
     if (isNaN(tierId)) return res.status(400).json({ message: "Invalid tierId" });
+    const gradingBoundarySchema = z.number().superRefine((value, context) => {
+      try {
+        percentageToHundredths(value, "Grading boundary");
+      } catch (error) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: error instanceof Error ? error.message : "Invalid grading boundary",
+        });
+      }
+    });
     const ruleSchema = z.array(z.object({
       gradeLabel: z.string().min(1),
-      minPercent: z.number().int().min(0).max(100),
-      maxPercent: z.number().int().min(0).max(100),
+      minPercent: gradingBoundarySchema,
+      maxPercent: gradingBoundarySchema,
       gradePoint: z.string().default(""),
       remarks: z.string().default(""),
       sortOrder: z.number().int().default(0),
