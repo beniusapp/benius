@@ -1,0 +1,643 @@
+READ-ONLY INVESTIGATION — ADMIN EXAM CONTROLLER ONLY
+
+I want to understand the CURRENT step-by-step logic of the Admin "Exam Controller".
+
+DO NOT make any changes.
+
+Do not modify:
+- code
+- database
+- schema
+- migrations
+- data
+- tests
+- configuration
+
+Do not fix anything.
+Do not refactor anything.
+Do not make recommendations for implementation.
+
+Only inspect the existing code and explain exactly what the Admin Exam Controller currently does.
+
+==================================================
+1. ENTRY POINT
+==================================================
+
+Identify the exact:
+
+- frontend file
+- React component
+- backend routes
+- storage/service functions
+- database tables
+- shared functions
+- hooks/context used by Admin Exam Controller
+
+Confirm whether the main component is:
+
+client/src/pages/admin-modules/exam-controller.tsx
+
+If not, identify the actual entry point.
+
+==================================================
+2. WHAT IS THE PURPOSE OF ADMIN EXAM CONTROLLER?
+==================================================
+
+Explain in simple terms what this module is actually designed to do.
+
+Do NOT rely on the dashboard description.
+
+Determine from the actual code whether it handles:
+
+- examination creation
+- marks entry
+- result calculation
+- result review
+- promotion decisions
+- pass/repeat decisions
+- grace marks
+- overrides
+- final promotion
+- academic history
+- report cards
+- publishing
+- anything else
+
+Separate:
+
+CONFIRMED CURRENT BEHAVIOR
+
+from:
+
+POTENTIAL RISK
+
+==================================================
+3. COMPLETE STEP-BY-STEP USER FLOW
+==================================================
+
+Trace the exact Admin Exam Controller flow from opening the page until final action.
+
+Explain sequentially:
+
+STEP 1
+Admin opens Exam Controller.
+
+STEP 2
+What data is loaded?
+
+STEP 3
+How are terms/exams selected?
+
+STEP 4
+How are classes/cohorts selected?
+
+STEP 5
+How are sections determined?
+
+STEP 6
+How are students determined?
+
+STEP 7
+How are marks/results loaded?
+
+STEP 8
+How are percentages calculated?
+
+STEP 9
+How is pass/fail determined?
+
+STEP 10
+How are failed subjects determined?
+
+STEP 11
+How is attendance considered?
+
+STEP 12
+How are promotion rules considered?
+
+STEP 13
+How are teacher promotion decisions loaded?
+
+STEP 14
+How are overrides/grace decisions handled?
+
+STEP 15
+How is the final promotion decision determined?
+
+STEP 16
+What happens when Admin clicks the final Promote/Execute action?
+
+STEP 17
+How is academic history created?
+
+For every step give:
+
+- frontend file/function
+- API endpoint
+- backend function
+- database tables queried
+- important filters
+- calculation/decision logic
+- next step
+
+==================================================
+4. TERM / EXAM SELECTION
+==================================================
+
+Explain exactly what the Admin selects at the top of Exam Controller.
+
+Determine:
+
+- What is a term?
+- What is an exam type?
+- Are they the same thing or different?
+- Where do terms come from?
+- Where do exam types come from?
+- How are they related?
+- Are they stored in the database?
+- Are they configuration values?
+- How does changing the selected term change the data shown?
+
+Show the actual data flow.
+
+==================================================
+5. COHORT / CLASS / SECTION LOGIC
+==================================================
+
+Explain exactly how Exam Controller creates or loads cohorts.
+
+Determine:
+
+- class source
+- section source
+- academic session source
+- school/tenant source
+- enrollment source
+- student registry source
+- current class vs historical class
+- whether session affects class/section
+
+Explain the exact filtering conditions.
+
+==================================================
+6. STUDENT SELECTION / ROSTER
+==================================================
+
+Explain exactly which students appear in Admin Exam Controller.
+
+Determine whether students come from:
+
+- students table
+- enrollments
+- exam_scores
+- academic_history
+- another source
+
+Show the exact logical filter.
+
+For example, if applicable:
+
+school_id = authenticated school
+AND session_id = selected session
+AND class = selected class
+AND section = selected section
+
+But ONLY state conditions confirmed by the code.
+
+==================================================
+7. MARKS / SCORE DATA
+==================================================
+
+Explain exactly where Admin Exam Controller gets marks from.
+
+Determine:
+
+- Does it read exam_scores?
+- Does it calculate marks?
+- Does it modify marks?
+- Does it create marks?
+- Does it only aggregate marks?
+
+Explain:
+
+- subject
+- exam type
+- total marks
+- obtained marks
+- absent
+- pass marks
+- session
+- class
+- section
+
+Show the exact database query/filter path.
+
+==================================================
+8. PERCENTAGE CALCULATION
+==================================================
+
+Explain the exact formula used by Admin Exam Controller.
+
+Determine:
+
+- raw percentage formula
+- rounding
+- weighted percentage
+- subject average
+- term average
+- cumulative percentage
+- whether shared examination-calculation-engine.ts is used
+- whether Admin has its own calculation
+
+If multiple calculations exist, list each one separately.
+
+DO NOT consolidate them.
+
+==================================================
+9. GRADE CALCULATION
+==================================================
+
+Explain exactly how Admin Exam Controller determines grades.
+
+Trace:
+
+Admin Exam Controller
+→ school
+→ grading tier
+→ grading rules
+→ percentage
+→ selected grade
+
+Explain:
+
+- min/max comparison
+- decimal handling
+- pass percentage
+- what happens when no rule matches
+- tenant ownership
+
+==================================================
+10. PASS / FAIL LOGIC
+==================================================
+
+Explain exactly how Admin Exam Controller decides whether a student passes.
+
+Determine whether it uses:
+
+- Pass Percentage
+- failed subjects
+- attendance
+- cumulative percentage
+- promotion rules
+- another condition
+
+Show the exact sequence.
+
+==================================================
+11. FAILED SUBJECT LOGIC
+==================================================
+
+Explain:
+
+- how subjects are identified
+- how subject percentage is calculated
+- what makes a subject failed
+- whether absent counts as failed
+- whether missing marks count as failed
+- whether zero marks count as failed
+- whether configured Pass Percentage is used
+- how the total failed-subject count is calculated
+
+Do not change Absent/Missing behavior.
+
+Only report current behavior.
+
+==================================================
+12. PROMOTION RULE LOGIC
+==================================================
+
+Trace exactly how promotion eligibility is calculated.
+
+Check each configured rule:
+
+- Maximum failed subjects
+- Minimum attendance
+- Minimum current-term weighted average
+- Minimum cumulative year-end percentage
+
+For each rule explain:
+
+INPUT
+→ COMPARISON
+→ RESULT
+→ VIOLATION
+→ FINAL PROMOTION EFFECT
+
+Also explain:
+
+- exact threshold behavior
+- enabled/disabled behavior
+- missing data behavior
+- multiple violations
+- final eligible/ineligible result
+
+==================================================
+13. TEACHER PROMOTION DECISION
+==================================================
+
+Explain how Admin Exam Controller obtains teacher decisions.
+
+Determine:
+
+- API
+- table
+- student identity
+- class/section
+- term
+- session
+- teacher identity
+- decision values
+
+Explain what happens if:
+
+- teacher approved promotion
+- teacher recommended repeat
+- teacher decision is missing
+- teacher decision conflicts with calculated eligibility
+
+==================================================
+14. OVERRIDE / GRACE LOGIC
+==================================================
+
+This is very important.
+
+Explain exactly how Admin can override a result.
+
+Determine:
+
+- who can create an override
+- what types of override exist
+- where it is stored
+- whether it is session-scoped
+- whether it is term-scoped
+- whether it is student-scoped
+- whether it changes calculated marks
+- whether it changes only the final promotion decision
+- whether it changes grade/pass/fail
+- precedence between calculated result and override
+
+Show the exact decision order.
+
+==================================================
+15. FINAL PROMOTION DECISION
+==================================================
+
+Determine the exact final decision hierarchy.
+
+For example, ONLY if confirmed:
+
+Calculated eligibility
+↓
+Teacher decision
+↓
+Admin override
+↓
+Final promotion decision
+
+Do not assume this.
+
+Find the actual code and explain the exact precedence.
+
+==================================================
+16. FINAL PROMOTE / EXECUTE ACTION
+==================================================
+
+Trace exactly what happens when Admin executes promotion.
+
+Determine:
+
+- API endpoint
+- authorization
+- session validation
+- class/section validation
+- student validation
+- source class
+- source section
+- target class
+- target section
+- academic year/session
+- database writes
+- academic history writes
+- student record updates
+- enrollment updates
+- promotion decision updates
+
+Explain every database mutation.
+
+==================================================
+17. ACADEMIC HISTORY
+==================================================
+
+Explain exactly how Exam Controller creates academic history.
+
+Determine:
+
+- when history is created
+- what data is copied
+- source session
+- destination session
+- class/section
+- subjects
+- marks
+- percentage
+- grade
+- promotion status
+- teacher/admin decisions
+
+Also determine whether history is immutable or can later be changed.
+
+==================================================
+18. ACADEMIC SESSION INTEGRITY
+==================================================
+
+For Admin Exam Controller specifically, trace session handling.
+
+Determine:
+
+- where selected session comes from
+- how it reaches the API
+- whether `x-view-session-id` is sent
+- how server validates it
+- whether session belongs to authenticated school
+- which queries filter exact session
+- which queries do not filter session
+- whether NULL session rows can be included
+- whether active-session fallback exists
+
+Create two lists:
+
+CORRECTLY SESSION-SCOPED
+
+and
+
+NOT SESSION-SCOPED / POTENTIAL RISK
+
+Do not fix anything.
+
+==================================================
+19. MULTI-TENANT ISOLATION
+==================================================
+
+For EVERY Admin Exam Controller operation verify:
+
+- authenticated school source
+- client schoolId, if supplied
+- whether client schoolId is trusted
+- database school filter
+- cross-school risk
+
+Check:
+
+- term loading
+- cohort loading
+- student loading
+- marks loading
+- grading policy
+- teacher decisions
+- overrides
+- promotion execution
+- academic history
+
+Do not modify anything.
+
+==================================================
+20. DATABASE TABLE FLOW
+==================================================
+
+Create a table:
+
+TABLE | WHY USED | READ/WRITE | IMPORTANT FILTERS
+
+Include only tables actually used by Admin Exam Controller.
+
+Pay special attention to:
+
+- exam_scores
+- promotion_decisions
+- promotion_overrides
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- academic_sessions
+- enrollments
+- students
+- academic_history
+
+==================================================
+21. API FLOW
+==================================================
+
+List every API endpoint used by Admin Exam Controller.
+
+For each:
+
+METHOD
+ENDPOINT
+PURPOSE
+AUTHORIZATION
+SESSION FILTER
+TENANT FILTER
+DATABASE OPERATION
+
+==================================================
+22. ERROR / FAILURE PATHS
+==================================================
+
+Explain what happens when:
+
+- no term exists
+- invalid term
+- no cohort
+- no students
+- no marks
+- missing subject
+- failed student
+- missing teacher decision
+- missing grading policy
+- invalid grading rule
+- invalid session
+- foreign-school session
+- override exists
+- promotion execution fails
+
+==================================================
+23. COMPLETE DECISION TREE
+==================================================
+
+Create a simple text decision tree for one student.
+
+For example:
+
+Student
+ ↓
+Scores loaded
+ ↓
+Percentage
+ ↓
+Grade
+ ↓
+Failed subjects
+ ↓
+Attendance
+ ↓
+Promotion rules
+ ↓
+Teacher decision
+ ↓
+Admin override
+ ↓
+Final decision
+ ↓
+Promote / Repeat
+ ↓
+Academic history
+
+Replace this example with the ACTUAL current code logic.
+
+==================================================
+24. MOST IMPORTANT FINAL SUMMARY
+==================================================
+
+Finish with a simple explanation:
+
+"What exactly does Admin Exam Controller do?"
+
+Then provide:
+
+1. Its purpose
+2. Its complete step-by-step flow
+3. What data it reads
+4. What data it calculates
+5. What data it changes
+6. How promotion is decided
+7. How overrides work
+8. How promotion execution works
+9. How academic history works
+10. Session-isolation status
+11. Tenant-isolation status
+12. Important risks
+
+IMPORTANT:
+
+This is strictly READ-ONLY.
+
+DO NOT CHANGE ANYTHING.
+
+Do not create migrations.
+Do not modify database data.
+Do not modify code.
+Do not modify tests.
+
+If you find a problem, report it only.
+
+Do not propose an implementation unless explicitly asked later.
