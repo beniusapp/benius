@@ -1,0 +1,498 @@
+READ-ONLY INVESTIGATION — EXAM CONTROLLER COMPLETE STEP-BY-STEP LOGIC
+
+I do NOT want any code changes, fixes, refactoring, migrations, database changes, or behavior changes.
+
+I only want you to investigate the existing application and explain the COMPLETE step-by-step logic of the "Exam Controller".
+
+IMPORTANT:
+This is a TRUE MULTI-TENANT school MIS application.
+
+Do not assume anything.
+Trace the actual current code, API routes, storage/database queries, frontend flow, and calculation paths.
+
+The purpose of this investigation is simply:
+
+"I want to understand exactly what the Exam Controller currently does, step by step."
+
+DO NOT IMPLEMENT ANY FIX.
+
+==================================================
+1. FIRST IDENTIFY THE EXAM CONTROLLER
+==================================================
+
+Find exactly what the application currently considers the:
+
+- Exam Controller
+- Examination Controller
+- Exam Management
+- Examination setup/control module
+- Any equivalent module
+
+Tell me:
+
+- Exact frontend file(s)
+- Exact backend route file(s)
+- Exact storage/service file(s)
+- Relevant shared/schema files
+- Relevant database tables
+- Important functions/classes/hooks
+- API endpoints involved
+
+If there are multiple components that together form the Exam Controller, explain how they connect.
+
+==================================================
+2. COMPLETE USER FLOW
+==================================================
+
+Trace the actual user journey step by step.
+
+Start from:
+
+A user opens Exam Controller.
+
+Then explain exactly what happens when the user:
+
+1. Opens the module
+2. Selects an Academic Session
+3. Selects a Class
+4. Selects a Section, if applicable
+5. Selects/creates an Examination
+6. Selects Exam Type / Term / Component, if applicable
+7. Configures subjects
+8. Configures marks / total marks / pass marks, if applicable
+9. Saves the examination
+10. Publishes/activates it, if applicable
+11. Enters or receives student marks
+12. Calculates results
+13. Views results
+14. Publishes results
+15. Generates reports/result cards, if applicable
+
+Do not assume all these steps exist.
+
+For every step, explicitly say:
+
+- Does this step actually exist?
+- What file/function handles it?
+- What API is called?
+- What database query happens?
+- What data is read?
+- What data is written?
+- What validation happens?
+- What happens if validation fails?
+- What happens next?
+
+==================================================
+3. EXAM CREATION / CONFIGURATION LOGIC
+==================================================
+
+Explain exactly how an examination is created.
+
+Determine:
+
+- What identifies an examination?
+- Is it tenant/school scoped?
+- Is it session scoped?
+- Is it class scoped?
+- Is it section scoped?
+- Is it subject scoped?
+- Is it exam-type scoped?
+- What fields are stored?
+- What defaults are used?
+- What values are calculated automatically?
+- What values are entered by the user?
+
+Show the exact logical sequence.
+
+For example, if applicable:
+
+School
+→ Academic Session
+→ Class
+→ Exam
+→ Exam Type
+→ Subject
+→ Marks configuration
+
+But ONLY use this sequence if the actual code confirms it.
+
+==================================================
+4. STUDENT ROSTER LOGIC
+==================================================
+
+Explain exactly how Exam Controller determines which students belong to an examination.
+
+Determine whether it uses:
+
+- Student Registry
+- Enrollment
+- Class
+- Section
+- Academic Session
+- Current student placement
+- Historical enrollment
+- Faculty Mapping
+- Subject assignment
+- Exam registration
+- Any other mechanism
+
+Explain the exact query/filter logic.
+
+For example:
+
+students.school_id = authenticated school
+AND students.class = selected class
+AND students.section = selected section
+AND ...
+
+Do not invent conditions.
+
+Also explain whether Academic Session affects the roster.
+
+==================================================
+5. MARK ENTRY LOGIC
+==================================================
+
+Trace exactly what happens when marks are entered.
+
+Explain:
+
+- Student selection
+- Subject selection
+- Exam selection
+- Total marks
+- Pass marks
+- Obtained marks
+- Absent handling
+- Validation
+- Zero marks
+- Maximum marks validation
+- Decimal marks, if supported
+- Save/upsert behavior
+- Existing mark lookup
+- Duplicate handling
+
+Show the complete sequence from UI input → API → backend → database.
+
+==================================================
+6. RESULT CALCULATION LOGIC
+==================================================
+
+This is extremely important.
+
+Identify EVERY calculation path used by Exam Controller.
+
+Determine:
+
+- Where percentage is calculated
+- Where pass/fail is calculated
+- Where grade is calculated
+- Where subject result is calculated
+- Where term result is calculated
+- Where average is calculated
+- Where failed-subject count is calculated
+- Where attendance affects result
+- Where promotion is evaluated
+- Where cumulative result is calculated
+
+For each calculation:
+
+- Exact file
+- Exact function
+- Input data
+- Formula/logic
+- Output
+- Whether it is frontend or backend
+- Whether it uses the shared examination calculation engine
+- Whether it duplicates another calculation
+
+Do NOT fix duplicate calculations.
+I only want them identified and explained.
+
+==================================================
+7. GRADING POLICY LOGIC
+==================================================
+
+Explain exactly how Exam Controller obtains the grading policy.
+
+Trace:
+
+Authenticated user
+→ school/tenant
+→ grading tier
+→ class assignment
+→ grading rules
+→ grade selection
+
+Explain:
+
+- How the correct school's policy is selected
+- How the class gets its grading tier
+- How min/max percentages are used
+- How pass percentage is obtained
+- How decimal percentages are handled
+- What happens when no grading rule matches
+- What happens when the policy is missing or invalid
+
+Do not change anything.
+
+==================================================
+8. ACADEMIC SESSION LOGIC
+==================================================
+
+Explain exactly how Academic Session participates in Exam Controller.
+
+Determine:
+
+- How the selected session reaches the frontend
+- How it reaches the backend
+- Whether `x-view-session-id` is used
+- How the backend validates the session
+- How the session is connected to the authenticated school
+- Which database queries filter by session
+- Which queries do NOT filter by session
+- Whether NULL session records can be returned
+- Whether active-session fallback exists
+
+Clearly distinguish:
+
+CORRECTLY SESSION-SCOPED
+
+from:
+
+NOT SESSION-SCOPED / POTENTIAL CROSS-SESSION BEHAVIOR
+
+Do not fix anything.
+
+==================================================
+9. MULTI-TENANT LOGIC
+==================================================
+
+Trace tenant isolation throughout Exam Controller.
+
+Explain exactly how the application determines:
+
+"Which school does this user belong to?"
+
+Then verify every important operation:
+
+- Exam read
+- Exam creation
+- Exam update
+- Exam deletion
+- Student roster
+- Marks read
+- Marks save
+- Results
+- Grading policy
+- Publishing
+- Reports
+
+For each operation state:
+
+- Authenticated tenant source
+- Client-supplied tenant fields, if any
+- Whether client values are trusted
+- Database school filter
+- Whether cross-school access is possible
+
+DO NOT MODIFY ANYTHING.
+
+==================================================
+10. PUBLISHING LOGIC
+==================================================
+
+Explain exactly what "Publish" means in the current system.
+
+Determine:
+
+- What gets published?
+- Is publication per exam?
+- Per subject?
+- Per student?
+- Per result?
+- What database field changes?
+- Who can publish?
+- What authorization is checked?
+- Can an unpublished result be viewed?
+- Can marks be changed after publication?
+- Is publication session-scoped?
+- Is publication reversible?
+
+Trace the actual code.
+
+==================================================
+11. REPORT / RESULT CARD LOGIC
+==================================================
+
+Explain what happens after calculation.
+
+Trace:
+
+Exam Controller
+→ Results
+→ Result Card / Report
+→ Student view
+→ Teacher view
+→ Admin view
+
+Identify whether each output uses:
+
+- Shared calculation engine
+- Local calculation
+- Stored calculated values
+- Raw exam scores
+- Mixed-session data
+
+Again, do not fix anything.
+
+==================================================
+12. DATABASE FLOW
+==================================================
+
+Identify all important database tables involved.
+
+For each table explain:
+
+- Purpose
+- Important columns
+- school_id / tenant relationship
+- session_id relationship
+- class/section relationship
+- How Exam Controller reads it
+- How Exam Controller writes it
+
+Pay special attention to:
+
+- exams / examination tables
+- exam_scores
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- students
+- enrollments
+- academic_sessions
+- promotion-related tables
+
+Only include tables actually used by Exam Controller.
+
+==================================================
+13. ERROR / FAILURE PATHS
+==================================================
+
+Explain what happens when:
+
+- No Academic Session is selected
+- Invalid session is selected
+- Foreign school's session is supplied
+- No students are found
+- No grading policy exists
+- Grading rule does not match percentage
+- Marks exceed maximum
+- Student does not belong to school
+- Student does not belong to selected class/section
+- Duplicate marks exist
+- Existing marks are updated
+- Exam is published
+- Archived session is used
+
+Use actual current behavior.
+
+==================================================
+14. COMPLETE LOGIC DIAGRAM
+==================================================
+
+At the end, produce a simple text flow diagram showing the entire current Exam Controller.
+
+For example:
+
+User
+ ↓
+Exam Controller
+ ↓
+Authenticated School
+ ↓
+Academic Session
+ ↓
+Class / Section
+ ↓
+Exam Configuration
+ ↓
+Student Roster
+ ↓
+Marks
+ ↓
+Validation
+ ↓
+Calculation Engine(s)
+ ↓
+Grading Policy
+ ↓
+Pass/Fail
+ ↓
+Promotion
+ ↓
+Publish
+ ↓
+Result / Report
+
+BUT replace this example with the ACTUAL flow discovered from the code.
+
+==================================================
+15. MOST IMPORTANT: SEPARATE FACT FROM INTERPRETATION
+==================================================
+
+For every major part, clearly distinguish:
+
+A. CONFIRMED CURRENT CODE BEHAVIOR
+
+B. POTENTIAL ISSUE / RISK
+
+C. UNKNOWN / AMBIGUOUS BEHAVIOR
+
+Do NOT silently correct anything.
+
+Do NOT recommend implementation yet.
+
+==================================================
+16. FINAL SUMMARY
+==================================================
+
+Finish with:
+
+1. Exact Exam Controller entry point
+2. Complete step-by-step flow
+3. All APIs involved
+4. All important database tables
+5. All calculation functions
+6. Grading-policy flow
+7. Academic-session flow
+8. Tenant-isolation flow
+9. Publishing flow
+10. Result/report flow
+11. Duplicate calculation paths
+12. Potential session-isolation gaps
+13. Potential tenant-isolation gaps
+14. Any other important logic/risk discovered
+
+IMPORTANT FINAL RULE:
+
+THIS IS A READ-ONLY INVESTIGATION.
+
+DO NOT CHANGE:
+
+- Code
+- Database
+- Schema
+- Migrations
+- Data
+- Tests
+- Configuration
+- Routes
+- UI
+
+Do not run any command that modifies the application or database.
+
+If you discover a problem, REPORT it only.
+
+No implementation is authorized.
