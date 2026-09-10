@@ -1,0 +1,537 @@
+STEP 2 — READ-ONLY AUDIT
+ADMIN EXAM CONTROLLER → PROMOTION LIFECYCLE + ACADEMIC SESSION OWNERSHIP
+
+IMPORTANT:
+DO NOT MODIFY ANYTHING.
+
+This is a READ-ONLY investigation only.
+
+Do NOT:
+- change code
+- change database
+- change schema
+- create migrations
+- change data
+- change APIs
+- change UI
+- refactor
+- fix bugs
+- modify tests
+
+I want to understand exactly what Academic Session should own in the Admin Exam Controller promotion lifecycle BEFORE we implement anything.
+
+==================================================
+BACKGROUND
+==================================================
+
+The current architecture is:
+
+Teacher Examination
+→ Teacher enters marks
+→ Teacher creates promotion recommendation
+→ Admin Exam Controller reviews the promotion ledger
+→ Admin may override
+→ Admin executes final promotion
+→ Student current class/section changes
+→ Academic history is created
+
+The Admin Exam Controller is therefore primarily a:
+
+PROMOTION-LEDGER REVIEW + ADMIN OVERRIDE + FINAL PROMOTION EXECUTION
+
+module.
+
+The important architectural boundary we are considering is:
+
+AUTHENTICATED SCHOOL/TENANT
++
+VALIDATED ACADEMIC SESSION
++
+STUDENT
++
+PROMOTION EVENT
+
+However, we do NOT want to blindly make every student field session-specific.
+
+We need to determine exactly which DATA and OPERATIONS belong to the Academic Session and which remain current/global.
+
+==================================================
+PART 1 — TRACE ONE COMPLETE PROMOTION
+==================================================
+
+Trace ONE student from beginning to end.
+
+Use this conceptual example:
+
+School A
+Academic Session A = 2025–2026
+Class = 6
+Section = A
+Student = Student 10
+Promotion Term = Annual
+Teacher Decision = Promoted
+Admin Override = Promote
+Target Class = 7
+Target Section = A
+
+Trace:
+
+Teacher decision
+→ Admin Exam Controller
+→ Admin review
+→ Admin override
+→ Final execution
+→ Student placement
+→ Academic history
+→ Audit
+
+For every step identify:
+
+- frontend file
+- API endpoint
+- backend route
+- storage function
+- database table
+- relevant columns
+- sessionId/session_id if any
+- schoolId/school_id
+- studentId/student_id
+- class
+- section
+- term/examType
+- targetClass
+- targetSection
+
+Do not implement anything.
+
+==================================================
+PART 2 — IDENTIFY THE PROMOTION EVENT IDENTITY
+==================================================
+
+Determine what uniquely identifies ONE promotion event today.
+
+Is it:
+
+school + student
+
+or:
+
+school + student + term
+
+or:
+
+school + student + session
+
+or:
+
+school + student + session + term
+
+or something else?
+
+Show the actual current identity used by the code/database.
+
+Then answer:
+
+WHAT SHOULD UNIQUELY IDENTIFY A PROMOTION EVENT?
+
+Do NOT implement the answer.
+
+Only recommend the identity based on the current business workflow.
+
+==================================================
+PART 3 — PROMOTION DECISION OWNERSHIP
+==================================================
+
+Inspect:
+
+promotion_decisions
+
+Determine:
+
+1. Is a Teacher promotion decision inherently associated with an Academic Session?
+2. Does the table already contain sessionId?
+3. Can sessionId currently be NULL?
+4. Can two identical decisions exist for:
+   - Session A
+   - Session B
+5. What queries read these decisions?
+6. What queries update them?
+7. What queries delete them?
+8. Which operations currently omit session filtering?
+
+Then give a recommendation:
+
+Should the operational identity be:
+
+school + session + student + class + section + term
+
+or another structure?
+
+Explain why.
+
+DO NOT change anything.
+
+==================================================
+PART 4 — ADMIN OVERRIDE OWNERSHIP
+==================================================
+
+Inspect:
+
+promotion_overrides
+
+This is especially important because the table currently has NO sessionId.
+
+Determine:
+
+1. Current columns.
+2. Current unique/identity logic.
+3. Current read queries.
+4. Current write queries.
+5. Current update queries.
+6. Current delete queries.
+7. Bulk operations.
+8. Post-promotion cleanup.
+9. Whether the same student/class/section/examType combination can exist in multiple Academic Sessions.
+
+Use this exact scenario:
+
+Session A:
+Student 10
+Class 6A
+Annual
+Admin Override = Promote
+
+Session B:
+Student 10
+Class 6A
+Annual
+No override
+
+Explain exactly what happens today.
+
+Then answer:
+
+Should promotion_overrides contain sessionId?
+
+If yes, explain what the logical identity should become.
+
+DO NOT implement.
+
+==================================================
+PART 5 — FINAL PROMOTION EXECUTION
+==================================================
+
+Trace:
+
+POST /api/admin/promote
+
+from frontend to database transaction.
+
+Determine:
+
+- How does it identify the school?
+- How does it identify the session?
+- Does it receive sessionId?
+- Does it validate sessionId?
+- Does it verify that sessionId belongs to the authenticated school?
+- Does it verify the student belongs to the authenticated school?
+- Does it verify the promotion decision belongs to the same session?
+- Does it verify the override belongs to the same session?
+- Does it retrieve scores for the same session?
+- Does it write academic_history with the same session?
+- Does it update promotion_decisions for the same session?
+- Does it clean up overrides for the same session?
+- Does it write audit information containing the session?
+
+For every missing session boundary, report it.
+
+DO NOT FIX.
+
+==================================================
+PART 6 — STUDENT CURRENT CLASS/SECTION
+==================================================
+
+This is extremely important.
+
+The students table contains current:
+
+class
+section
+
+I do NOT want these fields blindly converted into session-specific fields.
+
+Determine:
+
+1. Are students.class and students.section intended to represent CURRENT placement?
+2. What does changing them during promotion mean?
+3. Is this a current-state mutation rather than historical session data?
+4. How does the application preserve historical placement?
+5. Does academic_history preserve fromClass/fromSection and toClass/toSection?
+6. Does enrollment preserve session-specific placement?
+7. Does promotion execution update enrollment?
+8. Could changing students.class/section accidentally destroy information needed for historical sessions?
+
+Then recommend the correct architecture.
+
+Possible distinction:
+
+CURRENT STATE:
+students.class
+students.section
+
+SESSION HISTORY:
+academic_history
+enrollments
+promotion event
+
+Do not change anything.
+
+==================================================
+PART 7 — ACADEMIC HISTORY
+==================================================
+
+Inspect:
+
+academic_history
+
+Determine:
+
+1. Does it have sessionId?
+2. Can sessionId be NULL?
+3. Does Admin promotion execution populate it?
+4. What information is stored about:
+   - source class
+   - source section
+   - destination class
+   - destination section
+   - student
+   - exam
+   - percentage
+   - grade
+   - marks
+5. Does it preserve the Academic Session?
+6. Does its snapshot contain scores from multiple sessions?
+7. Does it contain Teacher decision?
+8. Does it contain Admin override?
+9. Does it contain Grace Pass?
+10. Does it contain promotion eligibility/reasons?
+
+Then determine:
+
+What MINIMUM session identity must an academic-history promotion record contain?
+
+Do NOT implement.
+
+==================================================
+PART 8 — ENROLLMENT RELATIONSHIP
+==================================================
+
+Inspect:
+
+enrollments
+
+Determine:
+
+- Does enrollment have sessionId?
+- Does it represent a student's class/section for a specific Academic Session?
+- Is it used during promotion?
+- Is it updated when students are promoted?
+- What happens when a student moves from Class 6 to Class 7?
+- Does the new Academic Session require a new enrollment?
+- Is enrollment authoritative for historical class/section?
+
+I am NOT asking you to change Examination roster logic.
+
+This is ONLY about understanding promotion/history architecture.
+
+Do not modify anything.
+
+==================================================
+PART 9 — SESSION A → SESSION B TEST
+==================================================
+
+Create this conceptual test:
+
+School A
+
+Session A:
+2025–2026
+
+Student 10:
+Class 6A
+
+Teacher:
+Promoted
+
+Admin:
+Override = GRACE_PASS
+
+Target:
+Class 7A
+
+Execute promotion.
+
+Then switch to:
+
+Session B:
+2026–2027
+
+The student may now be in Class 7A as CURRENT placement.
+
+But Session A promotion data must remain identifiable as belonging to Session A.
+
+Determine what happens today to:
+
+- Teacher decision
+- Admin override
+- promotion ledger
+- academic history
+- exam scores
+- current student placement
+- enrollment
+- audit log
+
+Then determine what SHOULD happen architecturally.
+
+==================================================
+PART 10 — SESSION B → SESSION A
+==================================================
+
+Switch back from:
+
+Session B
+→
+Session A
+
+Determine whether the application can correctly reconstruct the Session A promotion event.
+
+Specifically:
+
+Can it still identify:
+
+Student 10
+was promoted from 6A
+to 7A
+during Session A?
+
+Or does it rely on today's:
+
+students.class = 7
+students.section = A
+
+?
+
+Explain exactly.
+
+==================================================
+PART 11 — MULTI-TENANT + SESSION BOUNDARY
+==================================================
+
+The permanent security boundary is:
+
+authenticated school_id
++
+validated session_id
+
+Test conceptually:
+
+School A Admin
+Session A
+
+must NOT be able to:
+
+- use School B Session A
+- see School B promotion decisions
+- see School B overrides
+- execute School B promotion
+- read School B academic history
+- use School B scores
+
+Also test:
+
+School A Session A
+must NOT accidentally access:
+
+School A Session B
+
+when an operation is supposed to be session-specific.
+
+Do NOT fix anything.
+
+==================================================
+PART 12 — DEFINE DATA OWNERSHIP
+==================================================
+
+Create a table:
+
+| DATA | SCHOOL-OWNED | SESSION-OWNED | CURRENT-STATE | HISTORICAL | SHOULD SESSION ID BE REQUIRED? | REASON |
+
+Include at least:
+
+- students
+- exam_scores
+- promotion_decisions
+- promotion_overrides
+- academic_history
+- enrollments
+- audit_logs
+- classes
+- sections
+- subjects
+- exam types
+- grading tiers
+- grading rules
+- exam policy tiers
+
+Do not assume every table needs sessionId.
+
+Use actual business meaning.
+
+==================================================
+PART 13 — DEFINE OPERATION OWNERSHIP
+==================================================
+
+Create:
+
+| OPERATION | GLOBAL | SESSION-SPECIFIC | MUST VALIDATE SESSION? | REASON |
+
+Include:
+
+- View ledger
+- View score aggregate
+- View Teacher decision
+- Create override
+- Update override
+- Delete override
+- Bulk override
+- Execute promotion
+- Create academic history
+- Update promotion ledger
+- Delete ledger
+- Clean up overrides
+- Write promotion audit
+
+==================================================
+PART 14 — FINAL ARCHITECTURE RECOMMENDATION
+==================================================
+
+Based on the actual codebase, propose the cleanest architecture.
+
+I want you to explicitly describe:
+
+```text
+SCHOOL / TENANT
+        ↓
+ACADEMIC SESSION
+        ↓
+PROMOTION EVENT
+        ↓
+STUDENT
+        ↓
+Teacher Decision
+        ↓
+Admin Override
+        ↓
+Final Promotion
+        ↓
+Academic History
