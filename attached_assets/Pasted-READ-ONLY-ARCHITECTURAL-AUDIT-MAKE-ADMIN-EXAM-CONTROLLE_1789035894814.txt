@@ -1,0 +1,509 @@
+READ-ONLY ARCHITECTURAL AUDIT — MAKE ADMIN EXAM CONTROLLER 100% ACADEMIC-SESSION-ID FOCUSED
+
+IMPORTANT: DO NOT IMPLEMENT ANYTHING YET.
+
+I have made a final architectural decision:
+
+ADMIN → EXAM CONTROLLER MUST BE STRONGLY ACADEMIC-SESSION-ID BASED.
+
+This is a NON-NEGOTIABLE requirement.
+
+The entire Admin Exam Controller must operate inside this boundary:
+
+AUTHENTICATED SCHOOL/TENANT ID
++
+VALIDATED SELECTED ACADEMIC SESSION ID
++
+EXAM CONTROLLER CONTEXT
+
+Every examination and promotion operation inside Admin Exam Controller must be explicitly scoped to BOTH:
+
+1. authenticated school/tenant
+2. selected Academic Session ID
+
+The Academic Session ID must NEVER be optional inside the Admin Exam Controller workflow.
+
+==================================================
+CORE REQUIREMENT
+==================================================
+
+For Admin Exam Controller, the rule must be:
+
+school_id = authenticated Admin's school
+AND
+session_id = validated selected Academic Session ID
+
+The client must NEVER be allowed to choose another school's session.
+
+The backend must derive/validate the school from the authenticated Admin session.
+
+The selected Academic Session ID must be validated as belonging to that same school.
+
+No Admin Exam Controller operation should silently fall back to:
+
+- current/active session
+- previous session
+- all sessions
+- NULL session
+- session-independent data
+- global promotion state
+
+==================================================
+IMPORTANT DISTINCTION
+==================================================
+
+School-global CONFIGURATION may remain school-level where appropriate.
+
+For example, configuration such as:
+
+- available classes
+- sections
+- subjects
+- exam-type definitions
+- grading configuration
+
+may remain school-owned if that is the existing architecture.
+
+BUT:
+
+ALL EXAMINATION / RESULT / PROMOTION OPERATIONAL DATA inside Admin Exam Controller must be Academic-Session-ID scoped.
+
+Do not automatically convert legitimate school-global configuration into session data.
+
+We are specifically making the EXAM CONTROLLER workflow session-focused.
+
+==================================================
+NO IMPLEMENTATION
+==================================================
+
+This is ONLY an investigation/audit.
+
+DO NOT:
+
+- modify code
+- modify database
+- modify schema
+- create migrations
+- modify data
+- modify tests
+- refactor
+- fix anything
+- delete anything
+- rename anything
+
+Do not implement a solution.
+
+Report what would need to change later.
+
+==================================================
+AUDIT EVERY ADMIN EXAM CONTROLLER OPERATION
+==================================================
+
+Inspect the complete Admin Exam Controller and determine whether the selected Academic Session ID is enforced for EACH of these:
+
+1. Entry into Exam Controller
+2. Academic Session selection
+3. Ledger Terms
+4. Ledger Status
+5. Cohort discovery
+6. Class
+7. Section
+8. Exam Type / Term
+9. Student roster
+10. Exam-score retrieval
+11. Aggregate calculation
+12. Percentage
+13. Grade
+14. Pass/fail display
+15. Teacher promotion decisions
+16. Promotion eligibility
+17. Admin override
+18. Promote
+19. Retain
+20. Grace Pass
+21. Target class
+22. Target section
+23. Promotion execution
+24. Academic history
+25. Promotion ledger state
+26. Override deletion
+27. Ledger deletion
+28. Audit logging
+29. Print/export
+30. Any other Admin Exam Controller API/function
+
+For EVERY item answer:
+
+SESSION ID REQUIRED?
+SESSION ID VALIDATED?
+SESSION ID USED IN DATABASE QUERY?
+SESSION ID USED IN WRITE?
+SESSION ID USED IN DELETE?
+SESSION ID CAN BE NULL?
+CAN IT FALL BACK TO ANOTHER SESSION?
+CAN IT ACCESS ALL SESSIONS?
+CAN DATA FROM ANOTHER SESSION APPEAR?
+
+==================================================
+DATABASE AUDIT
+==================================================
+
+Inspect every table used by Admin Exam Controller.
+
+Especially:
+
+- exam_scores
+- promotion_decisions
+- promotion_overrides
+- academic_history
+- academic_sessions
+- students
+- school_metadata
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- audit_logs
+- enrollments
+- teachers
+- faculty_mappings
+
+For each table create:
+
+| TABLE | EXAM CONTROLLER PURPOSE | SESSION COLUMN | SESSION REQUIRED? | READ SESSION FILTER | WRITE SESSION FILTER | DELETE SESSION FILTER | SCHOOL FILTER | RISK |
+
+Clearly distinguish:
+
+GLOBAL SCHOOL CONFIGURATION
+
+from:
+
+SESSION-OWNED OPERATIONAL DATA.
+
+==================================================
+CRITICAL SESSION-LEAK CHECK
+==================================================
+
+Search the entire Admin Exam Controller code path for:
+
+- optional sessionId
+- nullable sessionId
+- undefined sessionId
+- NULL session
+- active session fallback
+- getActiveAcademicSession
+- viewSessionId
+- sessionFetch
+- x-view-session-id
+- queries where session predicate is conditional
+- queries where session predicate is missing
+- writes where session_id is omitted
+- deletes where session_id is omitted
+- updates where session_id is omitted
+
+List every occurrence.
+
+For each occurrence explain whether it is:
+
+SAFE GLOBAL CONFIGURATION
+
+or
+
+MUST BECOME SESSION-SCOPED
+
+==================================================
+CRITICAL OVERRIDE CHECK
+==================================================
+
+We already know:
+
+promotion_overrides currently has no sessionId.
+
+Investigate this carefully.
+
+Determine exactly what must happen if:
+
+Session A:
+Student 10
+Class 6
+Section A
+Unit Test 1
+Admin Override = Promote
+
+Then Admin switches to:
+
+Session B:
+Student 10
+Class 6
+Section A
+Unit Test 1
+
+The Session A override MUST NOT affect Session B.
+
+Determine all code/database locations involved.
+
+DO NOT FIX.
+
+==================================================
+CRITICAL PROMOTION EXECUTION CHECK
+==================================================
+
+Inspect:
+
+POST /api/admin/promote
+
+and the complete execution transaction.
+
+Determine whether the selected Academic Session ID is:
+
+- received
+- validated
+- passed into storage
+- used in every relevant query
+- used in every update
+- used in every insert
+- used in ledger updates
+- used in academic history
+
+Especially inspect:
+
+students
+promotion_decisions
+academic_history
+promotion_overrides
+audit_logs
+exam_scores
+
+Identify every place where session_id is currently missing.
+
+DO NOT FIX.
+
+==================================================
+CRITICAL ACADEMIC HISTORY CHECK
+==================================================
+
+Current investigation showed:
+
+academic_history.sessionId can be NULL.
+
+Determine whether Admin Exam Controller promotion history should instead be:
+
+school_id + session_id + student_id + promotion event
+
+and whether the current implementation violates that requirement.
+
+Also inspect the snapshot score query.
+
+Determine whether it can include scores from:
+
+- selected session
+- previous sessions
+- future sessions
+- NULL-session records
+
+DO NOT FIX.
+
+==================================================
+CURRENT STUDENT PLACEMENT
+==================================================
+
+The students table contains current class/section.
+
+Determine how Admin Exam Controller can safely use:
+
+students.class
+students.section
+
+while still maintaining historical Academic Session integrity.
+
+Do NOT redesign it.
+
+Just report:
+
+- what current code does
+- what session information exists
+- where session isolation is missing
+- what would need session-aware handling later
+
+==================================================
+SESSION SWITCH TEST
+==================================================
+
+Use this exact conceptual test:
+
+Session A = 2025–2026
+Session B = 2026–2027
+
+Session A contains:
+
+Class 6A
+Physics
+Unit Test 1
+Student 10
+Scores
+Teacher decision
+Admin override
+
+Session B contains:
+
+No Exam Controller data.
+
+Now perform a CODE-TRACE thought experiment.
+
+When Admin changes:
+
+Session A
+→
+Session B
+
+Determine exactly what happens to:
+
+- cohort
+- students
+- scores
+- percentage
+- grade
+- Teacher decision
+- Admin override
+- promotion status
+- target class
+- target section
+- execution
+- history
+
+Then:
+
+Session B
+→
+Session A
+
+Determine whether Session A returns without contamination from Session B.
+
+==================================================
+NEW SESSION TEST
+==================================================
+
+If a completely new Academic Session is created:
+
+2027–2028
+
+with zero:
+
+- exam scores
+- teacher promotion decisions
+- admin overrides
+- promotion executions
+
+what exactly does Admin Exam Controller show?
+
+Clearly separate:
+
+GLOBAL CONFIGURATION
+
+from:
+
+SESSION-SPECIFIC DATA.
+
+==================================================
+MULTI-TENANT + SESSION TEST
+==================================================
+
+The final security boundary must be:
+
+authenticated school_id
++
+validated session_id belonging to that school
+
+Test these conceptual attacks:
+
+School A Admin + School B session
+School A Admin + School B student
+School A Admin + School B score
+School A Admin + School B promotion decision
+School A Admin + School B override
+
+Determine exactly what the current code does.
+
+DO NOT FIX.
+
+==================================================
+REQUIRED FINAL REPORT
+==================================================
+
+Finish with these sections:
+
+### 1. CURRENT ARCHITECTURE
+
+Explain how Admin Exam Controller currently works.
+
+### 2. REQUIRED ARCHITECTURE
+
+Explain what it must become under this requirement:
+
+School/Tenant
+→ Academic Session
+→ Exam Controller
+→ Session-specific examination/promotion data
+
+### 3. CONFIRMED SESSION-SCOPED
+
+List what is already correct.
+
+### 4. CONFIRMED NOT SESSION-SCOPED
+
+List every confirmed problem.
+
+### 5. GLOBAL CONFIGURATION THAT SHOULD REMAIN GLOBAL
+
+Do not incorrectly classify configuration as a defect.
+
+### 6. DATA THAT MUST BECOME SESSION-SCOPED
+
+List every operational data type.
+
+### 7. API CHANGES THAT WILL EVENTUALLY BE REQUIRED
+
+Read-only identification only.
+
+### 8. DATABASE CHANGES THAT WILL EVENTUALLY BE REQUIRED
+
+Read-only identification only.
+
+### 9. SECURITY / TENANT RISKS
+
+Only confirmed risks.
+
+### 10. SESSION-INTEGRITY RISKS
+
+Only confirmed risks.
+
+### 11. FINAL ARCHITECTURAL VERDICT
+
+Answer exactly:
+
+"Under the new requirement, is the current Admin Exam Controller fully compliant?"
+
+Answer:
+
+YES or NO
+
+If NO, list the exact reasons.
+
+==================================================
+ABSOLUTE RULE
+==================================================
+
+Do not implement anything.
+
+Do not make any changes.
+
+This report is being used to design the implementation later.
+
+The permanent requirement is:
+
+AUTHENTICATED SCHOOL/TENANT ID
++
+VALIDATED ACADEMIC SESSION ID
+=
+THE COMPLETE ADMIN EXAM CONTROLLER DATA BOUNDARY.
+
+No Admin Exam Controller operational data may cross Academic Sessions.
