@@ -1,0 +1,224 @@
+READ-ONLY QUESTION — ADMIN EXAM CONTROLLER: GLOBAL OR ACADEMIC-SESSION BASED?
+
+I need one very specific answer about the current Admin Exam Controller.
+
+DO NOT modify anything.
+DO NOT fix anything.
+DO NOT change code, database, schema, migrations, or data.
+
+I need you to determine from the ACTUAL CURRENT CODE and DATABASE MODEL whether:
+
+OPTION A — GLOBAL / SESSION-INDEPENDENT
+
+Admin Exam Controller is a global school-level module.
+
+Meaning:
+
+- The same Exam Controller data remains available when Admin switches Academic Session.
+- Changing from Academic Session A → Academic Session B does NOT make the Exam Controller empty.
+- Existing cohorts, exam data, teacher decisions, overrides, promotion information, etc. remain visible regardless of the selected Academic Session.
+- Academic Session is only a viewing/filtering context, not the ownership/identity of the Exam Controller data.
+
+OR:
+
+OPTION B — ACADEMIC-SESSION BASED
+
+Admin Exam Controller is Academic-Session-specific.
+
+Meaning:
+
+- Exam Controller data belongs to a specific Academic Session.
+- Switching from Academic Session A → Academic Session B shows only Session B's data.
+- If Session B has no Exam Controller data yet, the Exam Controller becomes empty.
+- Teacher decisions, exam scores, overrides, promotion records, etc. from Session A must not appear in Session B.
+- Creating/switching to a new Academic Session should effectively start a fresh Exam Controller context.
+
+==================================================
+IMPORTANT: DO NOT ASSUME
+==================================================
+
+Determine the answer strictly from the current implementation.
+
+Trace the COMPLETE data flow:
+
+Admin Academic Session selection
+→ SessionViewContext
+→ selected session ID
+→ request/header
+→ backend middleware
+→ Admin Exam Controller APIs
+→ storage queries
+→ database tables
+→ final UI data
+
+==================================================
+CHECK THESE TABLES
+==================================================
+
+Specifically inspect:
+
+- exam_scores
+- promotion_decisions
+- promotion_overrides
+- academic_history
+- academic_sessions
+- school_metadata
+- students
+
+For EACH table answer:
+
+TABLE:
+SESSION_ID COLUMN:
+IS SESSION_ID USED BY ADMIN EXAM CONTROLLER?:
+IS IT FILTERED BY SELECTED SESSION?:
+IS IT REQUIRED?:
+CAN NULL MEAN ALL SESSIONS?:
+CAN DATA FROM ANOTHER SESSION APPEAR?:
+
+==================================================
+CHECK EACH ADMIN EXAM CONTROLLER FUNCTION
+==================================================
+
+Determine whether the selected Academic Session affects:
+
+1. Ledger Terms
+2. Ledger Status
+3. Cohort List
+4. Exam Aggregation
+5. Student List
+6. Exam Scores
+7. Teacher Promotion Decisions
+8. Admin Overrides
+9. Grade Calculation
+10. Pass/Fail display
+11. Final Promotion
+12. Target Class/Section
+13. Academic History
+14. Promotion Ledger Execution
+15. Audit Logs
+
+For each, explicitly say:
+
+SESSION-BASED
+or
+GLOBAL / SESSION-INDEPENDENT
+or
+MIXED
+
+and explain why.
+
+==================================================
+MOST IMPORTANT TEST
+==================================================
+
+Assume:
+
+Academic Session A = 2025-2026
+Academic Session B = 2026-2027
+
+Suppose Session A contains:
+
+Class 6A
+Physics
+Unit Test 1
+Students
+Exam Scores
+Teacher Promotion Decisions
+Admin Overrides
+
+and Session B contains nothing yet.
+
+Now answer:
+
+When Admin switches:
+
+2025-2026
+→
+2026-2027
+
+What EXACTLY will Admin Exam Controller show?
+
+Will it:
+
+A. Show the same Session A data?
+B. Show an empty Exam Controller?
+C. Show a mixture of Session A and Session B?
+D. Show only whatever data belongs to Session B?
+
+Do not guess. Trace the code.
+
+==================================================
+SECOND IMPORTANT TEST
+==================================================
+
+If Admin switches:
+
+Session A
+→
+Session B
+→
+Session A
+
+Will the original Session A Exam Controller data still be exactly available?
+
+Explain which tables/queries make that possible or prevent it.
+
+==================================================
+THIRD IMPORTANT TEST
+==================================================
+
+If a NEW Academic Session is created tomorrow and there are:
+
+- no exam scores
+- no teacher promotion decisions
+- no overrides
+- no promotion ledger
+
+for that new session,
+
+will Admin Exam Controller be:
+
+1. Empty
+2. Partially populated
+3. Fully populated with previous session data
+
+Explain exactly why.
+
+==================================================
+FINAL ANSWER FORMAT
+==================================================
+
+Start with ONLY ONE of these:
+
+"ANSWER: GLOBAL / SESSION-INDEPENDENT"
+
+OR
+
+"ANSWER: ACADEMIC-SESSION BASED"
+
+OR
+
+"ANSWER: MIXED"
+
+Then explain in simple language.
+
+After that provide:
+
+### What changes when Academic Session changes?
+
+### What remains global?
+
+### What becomes empty in a new Academic Session?
+
+### What data can leak between sessions?
+
+### Final verdict
+
+Give me a clear YES/NO answer to:
+
+"Is Admin Exam Controller supposed to become empty/fresh when I switch to a brand-new Academic Session that has no examination/promotion data?"
+
+Again:
+
+READ-ONLY ONLY.
+DO NOT IMPLEMENT OR FIX ANYTHING.
