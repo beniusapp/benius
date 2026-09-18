@@ -205,6 +205,19 @@ export function minutesSinceMidnightIST(now: Date = new Date()): number {
   return get("hour") * 60 + get("minute");
 }
 
+/** Milliseconds until the next occurrence of an Asia/Kolkata wall-clock hour. */
+export function millisecondsUntilNextISTHour(hour: number, now: Date = new Date()): number {
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    throw new Error(`Expected an IST hour from 0 to 23, received ${hour}`);
+  }
+  const currentMinutes = minutesSinceMidnightIST(now);
+  const targetDate = currentMinutes < hour * 60
+    ? todayInIST(now)
+    : addCalendarDays(todayInIST(now), 1);
+  const target = Date.parse(`${targetDate}T${String(hour).padStart(2, "0")}:00:00+05:30`);
+  return Math.max(0, target - now.getTime());
+}
+
 /** Milliseconds until the next Asia/Kolkata calendar day begins. */
 export function millisecondsUntilNextISTMidnight(now: Date = new Date()): number {
   const nextDate = addCalendarDays(todayInIST(now), 1);

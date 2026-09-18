@@ -6,6 +6,16 @@ import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper
 import { apiRequest, queryClient, getQueryFn, sessionFetch } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  nextStudentDashboardGreetingHour,
+  studentDashboardAcademicYear,
+  studentDashboardGreeting,
+} from "@/lib/student-dashboard-time";
+import {
+  millisecondsUntilNextISTHour,
+  minutesSinceMidnightIST,
+} from "@shared/ist-time";
 
 interface StudentMeResponse {
   id: number;
@@ -26,13 +36,6 @@ interface AttendanceStatsResponse {
   overallPercent: number;
   workingDays: number;
   daysPresent: number;
-}
-
-function getCurrentAcademicYear(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const startYear = now.getMonth() >= 3 ? y : y - 1;
-  return `${startYear}-${String(startYear + 1).slice(-2)}`;
 }
 
 interface FeeRecord {
@@ -111,13 +114,6 @@ const cardVariants = {
   show:   { opacity: 1, y: 0,  transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] } },
 };
 
-function getGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return "Good Morning";
-  if (h < 17) return "Good Afternoon";
-  return "Good Evening";
-}
-
 // ── Session-based modules (reset to empty on new session) ───────────────────
 const SESSION_MODULES = [
   { emoji: "✅", label: "Attendance" },
@@ -144,8 +140,22 @@ export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading, pendingActivation, confirmActivation } = useSessionView();
+  const today = useISTToday();
+  const fallbackAcademicYear = studentDashboardAcademicYear(today);
+  const [greetingMinutes, setGreetingMinutes] = useState(minutesSinceMidnightIST);
   const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
+
+  const greeting = studentDashboardGreeting(greetingMinutes);
+
+  useEffect(() => {
+    const nextHour = nextStudentDashboardGreetingHour(greetingMinutes);
+    const timeout = window.setTimeout(
+      () => setGreetingMinutes(minutesSinceMidnightIST()),
+      millisecondsUntilNextISTHour(nextHour) + 25,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [greetingMinutes]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -172,11 +182,11 @@ export default function StudentDashboard() {
   });
 
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? "default"],
+    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? fallbackAcademicYear],
     queryFn: async () => {
       const params = selectedSession
         ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}`
-        : `academicYear=${encodeURIComponent(getCurrentAcademicYear())}`;
+        : `academicYear=${encodeURIComponent(fallbackAcademicYear)}`;
       const r = await fetch(`/api/student/attendance/stats?${params}`, { credentials: "include" });
       if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
       return r.json() as Promise<AttendanceStatsResponse>;
@@ -262,7 +272,6 @@ export default function StudentDashboard() {
   }
 
   const firstName = student.name.split(" ")[0];
-  const greeting   = getGreeting();
 
   const handleTileClick = (label: string, route: string | null) => {
     if (route) { setLocation(route); return; }
