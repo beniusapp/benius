@@ -1,0 +1,124 @@
+STEP 2 — READ-ONLY ATTENDANCE IST TIMEZONE AUDIT
+
+IMPORTANT:
+This is a READ-ONLY investigation.
+
+DO NOT modify any code.
+DO NOT modify database/schema/migrations.
+DO NOT change environment variables.
+DO NOT change configuration.
+DO NOT change production or development data.
+DO NOT restart the application.
+DO NOT implement any fixes.
+
+STEP 1 — APPLICATION-WIDE IST FOUNDATION — IS ALREADY COMPLETE.
+
+The application-wide business timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+Cron wall-clock schedules have already been made explicitly Asia/Kolkata.
+
+The PostgreSQL persistence convention remains UTC and MUST NOT be changed.
+
+Now perform a COMPLETE, READ-ONLY AUDIT of the ATTENDANCE module only.
+
+==================================================
+1. ATTENDANCE BUSINESS TIMEZONE REQUIREMENT
+==================================================
+
+For the entire Attendance module:
+
+The school's business day MUST be based on:
+
+Asia/Kolkata
+
+NOT:
+- browser-local timezone
+- server/container-local timezone
+- BST
+- GMT
+- UTC as a displayed/business date
+- any other timezone
+
+A school attendance date such as:
+
+2026-09-18
+
+must always mean the Indian calendar date:
+
+2026-09-18 in Asia/Kolkata.
+
+==================================================
+2. TRACE THE COMPLETE ATTENDANCE FLOW
+==================================================
+
+Trace Attendance end-to-end:
+
+Teacher Portal
+→ Attendance UI
+→ API request
+→ backend route
+→ validation
+→ storage/database
+→ attendance policy/calculation
+→ reports/history
+→ displayed result
+
+Also inspect relevant Admin and Student Attendance functionality if present.
+
+Identify the exact files/functions involved.
+
+Do not assume anything.
+Trace the actual implementation.
+
+==================================================
+3. ATTENDANCE "TODAY"
+==================================================
+
+Find every place where Attendance determines:
+
+- today
+- current date
+- current school day
+- attendance date
+- current attendance period
+
+Inspect:
+
+new Date()
+Date.now()
+getFullYear()
+getMonth()
+getDate()
+getDay()
+setHours()
+setDate()
+
+and any helper functions.
+
+Determine whether "today" is calculated using:
+
+Asia/Kolkata
+
+or:
+
+server/process timezone
+browser timezone
+UTC
+another timezone.
+
+Give exact file and line/function references.
+
+==================================================
+4. ATTENDANCE DATE STORAGE
+==================================================
+
+Inspect the database schema and actual Attendance persistence.
+
+Determine:
+
+- Attendance date column type
+- whether it is Postgre
