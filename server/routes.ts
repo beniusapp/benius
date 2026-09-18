@@ -44,7 +44,7 @@ import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
-import { dateOnlyParts, replaceCalendarYear, todayInIST } from "@shared/ist-time";
+import { dateOnlyParts, getAcademicYearForISTDate, replaceCalendarYear, todayInIST } from "@shared/ist-time";
 import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
 import {
   buildLedgerFilterPredicates,
@@ -1952,8 +1952,7 @@ export async function registerRoutes(
     } else {
       const academicYear = (req.query.academicYear as string) || "";
       const dates = academicYear ? getAcademicYearDates(academicYear) : null;
-      const now = new Date();
-      const academicStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      const academicStartYear = Number(getAcademicYearForISTDate(todayInIST()).split("-")[0]);
       startDate = dates ? dates.startDate : `${academicStartYear}-04-01`;
       endDate   = dates ? dates.endDate : undefined;
     }

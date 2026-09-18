@@ -108,6 +108,30 @@ export function dateOnlyParts(value: string): { year: number; month: number; day
   return parts.month >= 1 && parts.month <= 12 && parts.day >= 1 && parts.day <= 31 ? parts : null;
 }
 
+/** Validates an exact Gregorian calendar DATE without parsing it as an instant. */
+export function isValidDateOnly(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const dateParts = dateOnlyParts(value);
+  if (!dateParts) return false;
+  const { year, month, day } = dateParts;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+/**
+ * Calendar-day distance from `fromDate` to `toDate`.
+ * Positive means `fromDate` is earlier; negative means it is later.
+ */
+export function calendarDayDifference(fromDate: string, toDate: string): number | null {
+  if (!isValidDateOnly(fromDate) || !isValidDateOnly(toDate)) return null;
+  const from = dateOnlyParts(fromDate)!;
+  const to = dateOnlyParts(toDate)!;
+  return Math.round(
+    (Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) / 86_400_000,
+  );
+}
+
 /** Adds calendar days without using the host timezone. */
 export function addCalendarDays(dateOnly: string, days: number): string {
   const value = dateOnlyParts(dateOnly);

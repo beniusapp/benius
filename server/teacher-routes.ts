@@ -11,7 +11,14 @@ import { db } from "./db";
 import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@shared/schema";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
-import { addCalendarDays, todayInIST } from "../shared/ist-time";
+import {
+  addCalendarDays,
+  calendarDayDifference,
+  calendarWeekday,
+  getAcademicYearForISTDate,
+  isValidDateOnly,
+  todayInIST,
+} from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
@@ -414,6 +421,9 @@ export function registerTeacherRoutes(app: Express) {
 
     const { date, records, class: cls, section } = req.body;
     if (!date || !Array.isArray(records)) return res.status(400).json({ message: "Invalid data" });
+    if (!isValidDateOnly(date)) {
+      return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
+    }
 
     const today = todayInIST();
     if (date > today) return res.status(400).json({ message: "Cannot mark attendance for future dates" });
@@ -435,11 +445,9 @@ export function registerTeacherRoutes(app: Express) {
       });
     }
 
-    // Compute academic year from the date (Indian academic year: April–March)
-    const dateObj = new Date(date);
-    const yr = dateObj.getFullYear();
-    const mo = dateObj.getMonth(); // 0-indexed; March=2, April=3
-    const academicYear = mo >= 3 ? `${yr}-${String(yr + 1).slice(-2)}` : `${yr - 1}-${String(yr).slice(-2)}`;
+    // Compute the April–March academic year directly from the school calendar date.
+    const [academicStartYear, academicEndYear] = getAcademicYearForISTDate(date).split("-");
+    const academicYear = `${academicStartYear}-${academicEndYear.slice(-2)}`;
 
     const markedBy = `${teacher.fullName} at ${new Date().toISOString()}`;
     const formattedRecords = records.map((r: any) => ({
@@ -4323,10 +4331,8 @@ Thank you for your prompt attention to this matter.
       const section = decodeURIComponent(req.params.section);
       const schoolId = context.schoolId;
       const today = todayInIST();
-      const year = new Date().getFullYear();
-      const aprThisYear = `${year}-04-01`;
-      const aprLastYear = `${year - 1}-04-01`;
-      const yearStart = today >= aprThisYear ? aprThisYear : aprLastYear;
+      const academicYear = getAcademicYearForISTDate(today);
+      const yearStart = `${academicYear.split("-")[0]}-04-01`;
       const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today, context.sessionId);
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
@@ -4670,7 +4676,11 @@ Thank you for your prompt attention to this matter.
       const { date, requestedCheckIn, requestedCheckOut, reason } = req.body;
       if (!date || !requestedCheckIn || !requestedCheckOut || !reason?.trim())
         return res.status(400).json({ message: "All fields are required" });
-      const diffDays = Math.floor((Date.now() - new Date(date + "T00:00:00").getTime()) / 86400000);
+      if (!isValidDateOnly(date))
+        return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
+      const diffDays = calendarDayDifference(date, todayInIST());
+      if (diffDays === null)
+        return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
       if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
 
       // Parse times as IST (teachers enter local Indian time)
@@ -4799,7 +4809,8 @@ Thank you for your prompt attention to this matter.
       const sorted = [...records].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
       let streak = 0, longestStreak = 0, cur = 0;
       for (const r of sorted) {
-        const dow = new Date(r.attendanceDate + "T12:00:00").getDay();
+        const dow = calendarWeekday(r.attendanceDate);
+        if (dow === null) continue;
         if (dow === 0 || dow === 6) continue;
         const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
         if (ok) { cur++; if (cur > longestStreak) longestStreak = cur; }

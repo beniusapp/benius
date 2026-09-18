@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   addCalendarDays,
+  calendarDayDifference,
+  calendarWeekday,
   dateOnlyInIST,
   formatDateOnly,
   formatDateTimeIST,
   formatInstantIST,
   getAcademicYearForISTDate,
   instantEpochMillis,
+  isValidDateOnly,
   todayInIST,
 } from "../ist-time";
 
@@ -47,6 +50,49 @@ describe("IST date/time policy", () => {
     expect(todayInIST(new Date("2026-03-31T18:30:00Z"))).toBe("2026-04-01");
     expect(getAcademicYearForISTDate("2026-03-31")).toBe("2025-2026");
     expect(getAcademicYearForISTDate("2026-04-01")).toBe("2026-2027");
+  });
+
+  it.each([
+    "2026-04-01",
+    "2026-03-31",
+    "2024-02-29",
+  ])("accepts the valid calendar date %s", date => {
+    expect(isValidDateOnly(date)).toBe(true);
+  });
+
+  it.each([
+    "2026-02-30",
+    "2026-13-01",
+    "2026-00-01",
+    "2026-2-01",
+    "not-a-date",
+  ])("rejects the invalid calendar date %s", date => {
+    expect(isValidDateOnly(date)).toBe(false);
+  });
+
+  it("calculates the seven-day correction window using calendar dates", () => {
+    expect(calendarDayDifference("2026-09-18", "2026-09-18")).toBe(0);
+    expect(calendarDayDifference("2026-09-17", "2026-09-18")).toBe(1);
+    expect(calendarDayDifference("2026-09-11", "2026-09-18")).toBe(7);
+    expect(calendarDayDifference("2026-09-10", "2026-09-18")).toBe(8);
+    expect(calendarDayDifference("2026-09-19", "2026-09-18")).toBe(-1);
+    expect(calendarDayDifference("2026-02-30", "2026-09-18")).toBeNull();
+  });
+
+  it("keeps attendance calendar calculations independent of the host timezone", () => {
+    const original = process.env.TZ;
+    try {
+      for (const timezone of ["UTC", "Asia/Kolkata", "Europe/London", "America/New_York"]) {
+        process.env.TZ = timezone;
+        expect(getAcademicYearForISTDate("2026-03-31")).toBe("2025-2026");
+        expect(getAcademicYearForISTDate("2026-04-01")).toBe("2026-2027");
+        expect(calendarDayDifference("2026-09-11", "2026-09-18")).toBe(7);
+        expect(calendarWeekday("2026-09-18")).toBe(5);
+      }
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
   });
 
   it.each([
