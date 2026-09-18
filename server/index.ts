@@ -10,7 +10,7 @@ import cron from "node-cron";
 import { recalculateLateFees } from "./late-fee-engine";
 import { assertNoSchemaDrift } from "./schema-validator";
 import path from "path";
-import { formatTimeIST } from "../shared/ist-time";
+import { formatTimeIST, SCHOOL_TIME_ZONE } from "../shared/ist-time";
 import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 
@@ -1287,19 +1287,20 @@ app.use((req, res, next) => {
   });
 
   // ===== HOURLY DUNNING JOB (SMS / WhatsApp / Email) =====
-  // Runs at :05 past every hour. Idempotent — skips already-sent (fee, channel, stage) triplets.
+  // Runs at :05 past every hour in the application's business timezone.
+  // Idempotent — skips already-sent (fee, channel, stage) triplets.
   const { runDunningJob } = await import("./dunning");
   cron.schedule("5 * * * *", async () => {
     log("Dunning job starting…", "cron");
     try { await runDunningJob(); }
     catch (err) { log(`Dunning job error: ${String(err)}`, "cron"); }
-  });
+  }, { timezone: SCHOOL_TIME_ZONE });
   // Also run once on startup to catch any fees that fell due during downtime
   runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
 
   // ===== NIGHTLY OVERDUE-FEE SWEEP =====
-  // Runs at 01:00 every night. Marks all "Due" fee records whose due_date has
-  // passed as "Overdue" and writes an audit log entry for each change.
+  // Runs at 01:00 Asia/Kolkata every night. Marks all "Due" fee records whose
+  // due_date has passed as "Overdue" and writes an audit log entry for each change.
   cron.schedule("0 1 * * *", async () => {
     log("Nightly overdue-fee sweep starting…", "cron");
     try {
@@ -1345,7 +1346,7 @@ app.use((req, res, next) => {
     } catch (err) {
       log(`Overdue sweep error: ${String(err)}`, "cron");
     }
-  });
+  }, { timezone: SCHOOL_TIME_ZONE });
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

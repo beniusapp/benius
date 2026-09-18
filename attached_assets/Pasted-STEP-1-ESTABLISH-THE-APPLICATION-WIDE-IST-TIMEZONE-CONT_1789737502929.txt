@@ -1,0 +1,206 @@
+STEP 1 — ESTABLISH THE APPLICATION-WIDE IST TIMEZONE CONTRACT
+
+IMPORTANT:
+This is an IMPLEMENTATION task, but ONLY for the timezone foundation described below.
+
+Do NOT fix frontend date formatting, attendance, calendars, examination, fees, invoices, or other individual modules yet.
+
+Do NOT modify database schema.
+Do NOT change database timestamp storage conventions.
+Do NOT change existing business logic unrelated to timezone configuration.
+
+APPLICATION REQUIREMENT — NON-NEGOTIABLE:
+
+This is an Indian school MIS application.
+
+The application's business/user-facing timezone is:
+
+Asia/Kolkata
+
+IST (UTC+05:30)
+
+The application must NEVER depend on the server/container/browser timezone for Indian business dates or times.
+
+1. CREATE ONE CLEAR APPLICATION-WIDE TIMEZONE CONTRACT
+
+Use:
+
+Asia/Kolkata
+
+as the canonical application/business timezone.
+
+If `shared/ist-time.ts` already defines:
+
+SCHOOL_TIME_ZONE = "Asia/Kolkata"
+
+keep and reuse that existing constant.
+
+Do NOT create competing timezone constants.
+
+2. RUNTIME TIMEZONE
+
+Inspect the current Node.js/runtime configuration.
+
+Determine whether setting:
+
+TZ=Asia/Kolkata
+
+at the application runtime level is safe with the current architecture.
+
+IMPORTANT:
+
+Before changing it, verify whether existing database code relies on:
+
+SET TIME ZONE 'UTC'
+
+or any UTC-based persistence convention.
+
+The database currently uses UTC as its persistence convention.
+
+DO NOT change:
+
+SET TIME ZONE 'UTC'
+
+Do NOT change timestamp storage semantics.
+
+If an application-level TZ setting could alter legacy timestamp persistence behavior or cause data corruption/interpretation changes, STOP and report the conflict instead of implementing it.
+
+If it is safe, configure the application runtime so local JavaScript date operations use Asia/Kolkata.
+
+3. SCHEDULER TIMEZONE FOUNDATION
+
+Inspect all cron/background scheduler definitions.
+
+For every scheduler that represents a wall-clock business time, determine whether it currently depends on the process/server timezone.
+
+Do NOT redesign the jobs yet.
+
+For now, only establish a reliable mechanism for explicitly specifying:
+
+Asia/Kolkata
+
+for scheduler wall-clock execution.
+
+Do NOT change the actual intended schedule times unless the current code clearly indicates the intended time.
+
+Example:
+
+If the existing job is intended to run at 01:00, preserve 01:00 but ensure that it means:
+
+01:00 Asia/Kolkata
+
+not server-local time.
+
+4. DO NOT CHANGE UTC PERSISTENCE
+
+This is extremely important.
+
+The following model remains acceptable:
+
+Application instant
+→ UTC persistence
+→ explicit Asia/Kolkata conversion when displayed/calculated for Indian business purposes
+
+Do NOT convert all database timestamps to IST storage merely because the application is Indian.
+
+Do NOT change:
+
+- PostgreSQL timezone convention
+- existing timestamp column types
+- migrations
+- historical timestamp data
+
+5. DO NOT FIX INDIVIDUAL MODULES YET
+
+Do NOT modify these yet:
+
+- Attendance
+- Examination
+- Academic Sessions
+- Student Registry
+- Teacher Portal
+- Student Portal
+- Admin Portal
+- Fees
+- Invoices
+- Calendars
+- Reports
+- Notifications
+- Audit log formatting
+
+Those will be handled in separate steps after this foundation is verified.
+
+6. SEARCH FOR CONFLICTS
+
+After implementing only the foundation, search the codebase for:
+
+TZ=
+process.env.TZ
+getTimezoneOffset
+toLocaleString
+toLocaleDateString
+toLocaleTimeString
+new Date(
+getFullYear
+getMonth
+getDate
+getDay
+setHours
+setDate
+CURRENT_TIMESTAMP
+NOW()
+cron
+schedule
+
+Do NOT fix those usages yet.
+
+Produce a list of remaining usages that will need explicit IST handling later.
+
+7. MULTI-TENANT REQUIREMENT
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+Timezone changes must not alter tenant isolation.
+
+Do not introduce any school-specific timezone configuration.
+
+All schools use:
+
+Asia/Kolkata
+
+as the application timezone.
+
+Do NOT add a timezone field to schools/tenants.
+
+8. VALIDATION
+
+After the implementation:
+
+- run the existing type check
+- run the relevant existing tests
+- run git diff --check
+- verify the application starts successfully
+
+Do NOT modify production.
+
+Do NOT run production migrations.
+
+Do NOT change production data.
+
+9. FINAL REPORT
+
+Return:
+
+A. What was changed
+B. Whether `TZ=Asia/Kolkata` was added
+C. Whether database UTC persistence remains unchanged
+D. How scheduler timezone handling works
+E. Any conflicts discovered
+F. List of remaining timezone-sensitive code that should be fixed in later steps
+G. Tests/checks performed
+
+MOST IMPORTANT:
+
+Do not fix the individual findings from the audit yet.
+
+This step is ONLY the application-wide IST foundation.
