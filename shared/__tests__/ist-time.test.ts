@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   addCalendarDays,
   calendarDayDifference,
+  calendarMonthEndDate,
   calendarWeekday,
+  calendarWeekStartMonday,
   dateOnlyInIST,
   formatDateOnly,
+  formatDateOnlyWithWeekday,
   formatDateTimeIST,
   formatInstantIST,
   getAcademicYearForISTDate,
   instantEpochMillis,
   isValidDateOnly,
+  millisecondsUntilNextISTMidnight,
   todayInIST,
 } from "../ist-time";
 
@@ -79,6 +83,15 @@ describe("IST date/time policy", () => {
     expect(calendarDayDifference("2026-02-30", "2026-09-18")).toBeNull();
   });
 
+  it("builds Attendance daily, weekly, and monthly periods as calendar dates", () => {
+    expect(addCalendarDays("2026-09-18", -29)).toBe("2026-08-20");
+    expect(calendarWeekStartMonday("2026-09-18")).toBe("2026-09-14");
+    expect(calendarWeekStartMonday("2026-09-20")).toBe("2026-09-14");
+    expect(calendarMonthEndDate(2026, 2)).toBe("2026-02-28");
+    expect(calendarMonthEndDate(2024, 2)).toBe("2024-02-29");
+    expect(calendarMonthEndDate(2026, 12)).toBe("2026-12-31");
+  });
+
   it("keeps attendance calendar calculations independent of the host timezone", () => {
     const original = process.env.TZ;
     try {
@@ -88,11 +101,25 @@ describe("IST date/time policy", () => {
         expect(getAcademicYearForISTDate("2026-04-01")).toBe("2026-2027");
         expect(calendarDayDifference("2026-09-11", "2026-09-18")).toBe(7);
         expect(calendarWeekday("2026-09-18")).toBe(5);
+        expect(calendarWeekStartMonday("2026-09-18")).toBe("2026-09-14");
+        expect(calendarMonthEndDate(2026, 2)).toBe("2026-02-28");
+        expect(formatDateOnlyWithWeekday("2026-09-18", { weekday: "long", includeYear: true }))
+          .toBe("Friday, 18 Sep 2026");
       }
     } finally {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
     }
+  });
+
+  it.each([
+    ["2026-09-18T18:29:59.000Z", 1000],
+    ["2026-09-18T18:30:00.000Z", 86_400_000],
+    ["2026-09-18T18:30:01.000Z", 86_399_000],
+    ["2026-03-31T18:29:59.000Z", 1000],
+    ["2026-12-31T18:29:59.000Z", 1000],
+  ])("calculates the next IST midnight from %s", (instant, expectedMs) => {
+    expect(millisecondsUntilNextISTMidnight(new Date(instant))).toBe(expectedMs);
   });
 
   it.each([

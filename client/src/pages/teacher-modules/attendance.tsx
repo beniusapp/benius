@@ -6,11 +6,12 @@ import {
   ClipboardCheck, User, Edit3, History, Calendar, Clock
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useISTToday } from "@/hooks/use-ist-today";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
 import MyAttendanceModule from "./my-attendance";
-import { addCalendarDays, todayInIST } from "@shared/ist-time";
+import { addCalendarDays, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentAttendance {
   studentId: number;
@@ -167,7 +168,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     hasSections,
     getSectionsForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
-  const today = todayInIST();
+  const today = useISTToday();
 
   const [view, setView] = useState<ViewState>("landing");
   const [selectedClass, setSelectedClass] = useState("");
@@ -186,10 +187,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, string>>({});
 
-  const [historyStartDate, setHistoryStartDate] = useState(() => addCalendarDays(todayInIST(), -7));
+  const [historyStartDate, setHistoryStartDate] = useState(() => addCalendarDays(today, -7));
   const [historyEndDate, setHistoryEndDate] = useState(today);
 
-  const sevenDaysAgo = useMemo(() => addCalendarDays(todayInIST(), -7), []);
+  const sevenDaysAgo = useMemo(() => addCalendarDays(today, -7), [today]);
 
   const isEditable = selectedDate >= sevenDaysAgo && selectedDate <= today;
 
@@ -227,9 +228,9 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   // Holiday lockdown — fetch calendar events for the selected month so we can
   // detect holidays before the teacher even tries to submit.
-  const selectedDateObj = useMemo(() => new Date(selectedDate + "T00:00:00"), [selectedDate]);
-  const calMonth = selectedDateObj.getMonth() + 1;
-  const calYear = selectedDateObj.getFullYear();
+  const selectedDateParts = dateOnlyParts(selectedDate);
+  const calMonth = selectedDateParts?.month ?? 0;
+  const calYear = selectedDateParts?.year ?? 0;
 
   const { data: calendarEventsForMonth = [] } = useQuery<{ id: number; date: string; eventType: string; title: string }[]>({
     queryKey: ["/api/teacher/calendar", calYear, calMonth],

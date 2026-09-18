@@ -1,0 +1,736 @@
+STEP 2B — ATTENDANCE FRONTEND IST CORRECTION
+
+IMPORTANT:
+Step 2A — Attendance Backend IST Business-Date Correction — is COMPLETE and ACCEPTED.
+
+Now implement ONLY Step 2B.
+
+This step is strictly for Attendance FRONTEND timezone/business-date handling.
+
+Do NOT modify the Attendance backend business-date logic that was completed in Step 2A unless a minimal frontend compatibility change is absolutely required.
+
+Do NOT modify database schema.
+Do NOT create migrations.
+Do NOT modify database timezone.
+Do NOT add process-level TZ=Asia/Kolkata.
+Do NOT modify production.
+Do NOT modify production data.
+
+==================================================
+1. GLOBAL TIMEZONE REQUIREMENT
+==================================================
+
+The entire MIS application is an Indian school application.
+
+The canonical application/business timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+Every application-facing Attendance date/time must use IST.
+
+The browser's local timezone MUST NOT determine Attendance business dates or business periods.
+
+A user opening the application from:
+
+India
+UK/BST
+UTC
+USA
+or any other timezone
+
+must see the same Attendance business date and IST wall-clock times.
+
+IMPORTANT:
+
+Using:
+
+toLocaleDateString("en-IN")
+toLocaleTimeString("en-IN")
+
+alone is NOT sufficient.
+
+The locale controls formatting language/region, but does NOT force IST.
+
+Use:
+
+timeZone: "Asia/Kolkata"
+
+or the existing canonical IST helpers.
+
+==================================================
+2. FIRST — INSPECT EXISTING FRONTEND IMPLEMENTATION
+==================================================
+
+Before editing, inspect the actual current code.
+
+Focus on the Attendance frontend files identified during the Step 2 audit, including:
+
+client/src/pages/teacher-modules/my-attendance.tsx
+
+client/src/pages/teacher-modules/attendance-history.tsx
+
+client/src/pages/teacher-modules/attendance.tsx
+
+Relevant Student Attendance frontend files.
+
+Relevant Attendance report/export frontend code.
+
+Also inspect:
+
+shared/ist-time.ts
+
+Use the existing canonical IST utilities wherever possible.
+
+Do NOT create duplicate timezone/date utilities if an existing shared helper already supports the requirement.
+
+==================================================
+3. TEACHER — MY ATTENDANCE
+==================================================
+
+Fix all browser-local business-date logic in:
+
+client/src/pages/teacher-modules/my-attendance.tsx
+
+The Step 2 audit identified logic similar to:
+
+new Date().toLocaleDateString("en-CA")
+
+being used to determine "today".
+
+This MUST be replaced with the canonical IST business-date helper.
+
+Use the existing:
+
+todayInIST()
+
+or the appropriate existing shared IST helper.
+
+The Attendance "today" must mean:
+
+today in Asia/Kolkata.
+
+It must NOT mean:
+
+today in the browser's timezone.
+
+==================================================
+4. MY ATTENDANCE MIDNIGHT ROLLOVER
+==================================================
+
+The current frontend uses browser-local midnight/timer behavior.
+
+Fix this so that Attendance UI rollover follows IST midnight.
+
+Example:
+
+At:
+
+2026-09-18 23:59:59 IST
+
+the UI's Attendance date must be:
+
+2026-09-18
+
+Immediately after:
+
+2026-09-19 00:00:00 IST
+
+the UI must use:
+
+2026-09-19
+
+This must work even when the browser timezone is:
+
+UTC
+Europe/London
+America/New_York
+or another timezone.
+
+Do NOT use browser-local:
+
+new Date()
+setHours()
+setDate()
+
+for determining the Attendance business day if that makes the result browser-timezone dependent.
+
+Use the existing IST date helpers.
+
+==================================================
+5. MY ATTENDANCE TIMESTAMP DISPLAY
+==================================================
+
+Fix timestamp display in My Attendance.
+
+The audit identified code similar to:
+
+new Date(iso).toLocaleTimeString("en-IN")
+
+without an explicit timezone.
+
+This must explicitly display timestamps in:
+
+Asia/Kolkata
+
+For example, use the appropriate equivalent of:
+
+new Date(iso).toLocaleTimeString("en-IN", {
+  timeZone: "Asia/Kolkata",
+  ...
+})
+
+Use the existing shared formatter if one exists.
+
+Do NOT change the stored timestamp.
+
+The backend/database may continue storing the absolute instant using the existing UTC persistence convention.
+
+Only the frontend presentation must explicitly convert that instant to IST.
+
+==================================================
+6. MY ATTENDANCE DATE HEADER
+==================================================
+
+Fix any Attendance date headers or labels that use browser-local formatting.
+
+The audit identified logic similar to:
+
+toLocaleDateString("en-IN")
+
+without:
+
+timeZone: "Asia/Kolkata"
+
+Make all Attendance business-date presentation explicitly IST-aware.
+
+If the displayed value is a date-only YYYY-MM-DD value, prefer displaying the date directly or using a canonical date-only helper rather than converting it through a JavaScript Date.
+
+IMPORTANT:
+
+Do NOT introduce a timezone conversion to a DATE-only value unnecessarily.
+
+==================================================
+7. MY ATTENDANCE CORRECTION-DATE LIMITS
+==================================================
+
+The audit identified browser-local date manipulation for the correction-date minimum/maximum.
+
+Fix this.
+
+The frontend correction-date limits must be based on the same IST calendar-day interpretation as the backend.
+
+The backend remains authoritative.
+
+Frontend restrictions are only UX validation.
+
+Do NOT duplicate or alter the backend's authorization/business rule.
+
+Ensure:
+
+Today
+Yesterday
+Seven days ago
+Future dates
+
+are interpreted according to IST.
+
+Do not use browser-local:
+
+new Date()
+setDate()
+setHours()
+
+to determine the business date.
+
+Use canonical date-only/IST helpers.
+
+==================================================
+8. TEACHER — ATTENDANCE HISTORY
+==================================================
+
+Fix:
+
+client/src/pages/teacher-modules/attendance-history.tsx
+
+The Step 2 audit identified:
+
+- browser-local "today"
+- browser-local daily periods
+- browser-local weekly periods
+- browser-local monthly periods
+- timestamp display without explicit IST
+
+Correct these.
+
+==================================================
+9. ATTENDANCE HISTORY "TODAY"
+==================================================
+
+Any logic similar to:
+
+new Date().toLocaleDateString("en-CA")
+
+must not determine the Attendance business date.
+
+Use:
+
+todayInIST()
+
+or the canonical equivalent.
+
+==================================================
+10. ATTENDANCE HISTORY DAILY/WEEKLY/MONTHLY PERIODS
+==================================================
+
+The Attendance History daily/weekly/monthly period calculations currently use browser-local Date operations.
+
+Fix them so the business period is based on IST.
+
+This includes the relevant logic around:
+
+daily period
+weekly period
+monthly period
+session/date clamping
+date navigation
+
+Do NOT change the meaning of the periods.
+
+Only make the calendar calculations timezone-independent and IST-based.
+
+For example:
+
+If it is Monday in IST, the weekly period must be the IST week.
+
+A user in London or New York viewing the same school data must get the same Attendance period.
+
+==================================================
+11. ATTENDANCE HISTORY TIMESTAMP DISPLAY
+==================================================
+
+Any check-in/check-out/attendance timestamp displayed in Attendance History must explicitly use:
+
+Asia/Kolkata
+
+Do not rely on browser timezone.
+
+Do not use:
+
+toLocaleTimeString("en-IN")
+
+without a timezone.
+
+Do not change stored timestamps.
+
+==================================================
+12. TEACHER CLASS ATTENDANCE FRONTEND
+==================================================
+
+Inspect:
+
+client/src/pages/teacher-modules/attendance.tsx
+
+The Step 2 audit found some lower-risk browser-local Date construction around selected dates/month/year.
+
+Review these carefully.
+
+The Attendance date selection must remain a date-only calendar value.
+
+Do not allow browser timezone conversion to shift:
+
+YYYY-MM-DD
+
+to the previous or next calendar date.
+
+If an existing IST/date-only helper already solves this, use it.
+
+Do not perform an unnecessary rewrite of the entire component.
+
+Change only the date logic that can violate the IST requirement.
+
+==================================================
+13. STUDENT ATTENDANCE FRONTEND
+==================================================
+
+Inspect the Student Attendance frontend.
+
+Fix any browser-local current:
+
+- date
+- month
+- year
+- month boundaries
+- Attendance period
+
+calculations.
+
+The current month/year for Attendance must be based on:
+
+Asia/Kolkata
+
+not the browser timezone.
+
+This is especially important around:
+
+IST midnight
+month-end
+month-start
+year-end
+year-start
+
+Example:
+
+At:
+
+2026-03-31 23:59:59 IST
+
+the Attendance business month is March 2026.
+
+Immediately after:
+
+2026-04-01 00:00:00 IST
+
+the Attendance business month is April 2026.
+
+This must remain true regardless of browser timezone.
+
+==================================================
+14. ATTENDANCE REPORTS / EXPORTS
+==================================================
+
+Inspect frontend Attendance reports and export-related code.
+
+Find any Attendance-generated:
+
+- report dates
+- generated-at timestamps
+- displayed timestamps
+- current date
+- current month
+- current year
+
+that rely on browser-local timezone.
+
+Correct only Attendance-related paths.
+
+All application-facing Attendance report dates/times must be IST.
+
+If a report contains an absolute timestamp, format it explicitly in:
+
+Asia/Kolkata
+
+If it contains a business calendar date, derive it from the IST date rather than converting it through a browser-local Date.
+
+Do NOT change unrelated reporting modules.
+
+==================================================
+15. DO NOT CHANGE BACKEND AUTHORITY
+==================================================
+
+Step 2A already corrected backend Attendance business-date logic.
+
+The backend remains authoritative.
+
+Frontend changes must NOT:
+
+- bypass backend validation
+- change API contracts unnecessarily
+- change authorization
+- change schoolId handling
+- change tenant checks
+- change session checks
+- change Attendance permissions
+- change correction approval behavior
+
+Frontend validation should only improve user experience.
+
+==================================================
+16. MULTI-TENANT REQUIREMENT
+==================================================
+
+This application is TRUE MULTI-TENANT SaaS.
+
+Every Attendance API request and data operation must continue to operate within the authenticated school/tenant.
+
+Do not introduce:
+
+- client-controlled school access
+- cross-school queries
+- cross-school date calculations
+- cross-school data display
+
+Timezone changes must not weaken tenant isolation.
+
+==================================================
+17. ACADEMIC SESSION REQUIREMENT
+==================================================
+
+Preserve all existing Academic Session handling.
+
+Do not redesign Academic Session.
+
+Do not change session creation, switching, or deletion.
+
+If Attendance UI filters data by Academic Session, preserve that behavior exactly.
+
+Only correct the timezone-dependent date calculations.
+
+==================================================
+18. DO NOT CHANGE UTC PERSISTENCE
+==================================================
+
+IMPORTANT:
+
+Do NOT change:
+
+PostgreSQL timezone
+timestamp column types
+UTC persistence
+server-side timestamp storage
+SET TIME ZONE 'UTC'
+
+The architecture remains:
+
+Absolute timestamp:
+→ persist according to existing UTC convention
+
+Display:
+→ convert to Asia/Kolkata
+
+Business date:
+→ calculate as IST calendar date
+
+==================================================
+19. DO NOT ADD PROCESS TZ
+==================================================
+
+Do NOT add:
+
+TZ=Asia/Kolkata
+
+to:
+
+- package.json
+- Replit configuration
+- Node startup
+- shell environment
+- workflow configuration
+
+Step 1 deliberately avoided this because of legacy PostgreSQL timestamp behavior.
+
+Keep that decision unchanged.
+
+==================================================
+20. SHARED IST UTILITIES
+==================================================
+
+Before creating any helper:
+
+inspect:
+
+shared/ist-time.ts
+
+Reuse existing utilities such as appropriate:
+
+todayInIST()
+addCalendarDays()
+calendarWeekday()
+getAcademicYearForISTDate()
+isValidDateOnly()
+calendarDayDifference()
+
+Use the canonical shared implementation.
+
+If a tiny missing helper is genuinely required, add it to:
+
+shared/ist-time.ts
+
+rather than creating another timezone utility inside a page component.
+
+If you add a helper, add focused tests.
+
+Do not duplicate timezone logic across multiple components.
+
+==================================================
+21. IMPORTANT DATE-ONLY RULE
+==================================================
+
+Attendance calendar dates such as:
+
+2026-09-18
+
+are DATE-ONLY values.
+
+Do not unnecessarily do:
+
+new Date("2026-09-18")
+
+because that can introduce timezone conversion behavior.
+
+Keep date-only values as:
+
+YYYY-MM-DD
+
+strings whenever possible.
+
+Only use JavaScript Date objects for actual instants when appropriate.
+
+==================================================
+22. TESTING REQUIREMENTS
+==================================================
+
+Add or update focused frontend/shared tests for:
+
+A. IST "today"
+
+B. IST midnight rollover
+
+C. IST month rollover
+
+D. IST year rollover
+
+E. Attendance History daily period
+
+F. Attendance History weekly period
+
+G. Attendance History monthly period
+
+H. Correction-date frontend limits
+
+I. Timestamp formatting
+
+J. Date-only handling
+
+K. Browser timezone independence
+
+Where practical, test under:
+
+TZ=UTC
+TZ=Asia/Kolkata
+TZ=Europe/London
+TZ=America/New_York
+
+Expected Attendance business dates must remain identical.
+
+For absolute timestamps, expected displayed time must always be IST.
+
+==================================================
+23. IMPORTANT REGRESSION CASES
+==================================================
+
+Explicitly test scenarios around:
+
+IST midnight:
+
+2026-09-18 23:59:59 IST
+2026-09-19 00:00:00 IST
+2026-09-19 00:00:01 IST
+
+Month boundary:
+
+2026-03-31 23:59:59 IST
+2026-04-01 00:00:00 IST
+
+Year boundary:
+
+2026-12-31 23:59:59 IST
+2027-01-01 00:00:00 IST
+
+Also test a browser configured to:
+
+Europe/London
+
+because BST/GMT browser timezone must never change the school's Attendance business date.
+
+==================================================
+24. DO NOT OVER-REFACTOR
+==================================================
+
+Do not rewrite entire Attendance components.
+
+Do not perform general date-library migration.
+
+Do not replace every Date object in the application.
+
+Only correct Attendance frontend code where browser timezone can affect:
+
+- business date
+- business period
+- month/year
+- correction-date boundaries
+- displayed Attendance timestamps
+
+Pure UI rendering that does not affect business meaning may remain unchanged.
+
+==================================================
+25. VERIFICATION
+==================================================
+
+After implementation run:
+
+npm run check
+
+Run all relevant Attendance/frontend/timezone tests.
+
+Run the existing IST/timezone tests.
+
+Run:
+
+git diff --check
+
+Verify the application starts successfully.
+
+Do NOT run production migrations.
+
+Do NOT modify production data.
+
+==================================================
+26. REQUIRED FINAL REPORT
+==================================================
+
+After implementation, report:
+
+1. Exact files changed
+2. Exact functions/components changed
+3. All browser-local Attendance date calculations removed/replaced
+4. How "today" is now determined
+5. How Attendance History periods are now determined
+6. How correction-date limits are now determined
+7. How Attendance timestamps are displayed
+8. How Student Attendance month/year is now determined
+9. Whether Attendance reports/exports required changes
+10. Which shared IST helpers were reused
+11. Any new shared helper added, if any
+12. Tests added/updated
+13. Test results
+14. npm run check result
+15. git diff --check result
+16. Application startup result
+17. Confirmation that PostgreSQL UTC persistence is unchanged
+18. Confirmation that no schema/migration changes were made
+19. Confirmation that no production data was touched
+20. Confirmation that multi-tenant isolation was preserved
+21. Confirmation that Academic Session handling was preserved
+22. Any remaining Attendance timezone issues, if any
+
+MOST IMPORTANT:
+
+IMPLEMENT ONLY STEP 2B.
+
+Do not modify unrelated modules.
+
+Do not modify the Step 2A backend logic unnecessarily.
+
+Do not modify database/schema/migrations.
+
+Do not add process-level TZ=Asia/Kolkata.
+
+Do not change UTC persistence.
+
+Do not change tenant isolation.
+
+Do not change Academic Session architecture.
+
+The final result must ensure that Attendance business dates and displayed Attendance times are consistently based on IST, regardless of the user's browser timezone.

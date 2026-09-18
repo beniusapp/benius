@@ -11,6 +11,13 @@ import { getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  calendarWeekday,
+  dateOnlyParts,
+  dayOfMonthFromDateOnly,
+  formatDateOnly,
+} from "@shared/ist-time";
 
 interface StudentMeResponse {
   id: number;
@@ -130,9 +137,12 @@ export default function StudentAttendance() {
   const [, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState<"monthly" | "yearly">("monthly");
 
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const today = useISTToday();
+  const todayParts = dateOnlyParts(today)!;
+  const [selectedYear, setSelectedYear] = useState(todayParts.year);
+  const [selectedMonth, setSelectedMonth] = useState(todayParts.month);
+  const currentMonthIndex = todayParts.year * 12 + todayParts.month - 1;
+  const previousCurrentMonthIndex = useRef(currentMonthIndex);
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{ day: DayData; x: number; y: number } | null>(null);
 
@@ -170,6 +180,17 @@ export default function StudentAttendance() {
       setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
     }
   }, [sessions, selectedSessionId]);
+
+  useEffect(() => {
+    const previous = previousCurrentMonthIndex.current;
+    if (previous !== currentMonthIndex) {
+      if (selectedYear * 12 + selectedMonth - 1 === previous) {
+        setSelectedYear(todayParts.year);
+        setSelectedMonth(todayParts.month);
+      }
+      previousCurrentMonthIndex.current = currentMonthIndex;
+    }
+  }, [currentMonthIndex, selectedMonth, selectedYear, todayParts.month, todayParts.year]);
 
   const sessionStartDate = currentSession?.startDate ?? "";
   const sessionEndDate   = currentSession?.endDate   ?? "";
@@ -220,15 +241,14 @@ export default function StudentAttendance() {
   }, []);
 
   const goToNextMonth = useCallback(() => {
-    const nextDate = new Date(selectedYear, selectedMonth, 1);
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    if (nextDate > todayDate) return;
+    const nextMonthIndex = selectedYear * 12 + selectedMonth;
+    if (nextMonthIndex > currentMonthIndex) return;
     setSelectedMonth(m => {
       if (m === 12) { setSelectedYear(y => y + 1); return 1; }
       return m + 1;
     });
     setTooltip(null);
-  }, [selectedYear, selectedMonth]);
+  }, [selectedYear, selectedMonth, currentMonthIndex]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
@@ -272,7 +292,7 @@ export default function StudentAttendance() {
   if (!student) return null;
 
   const days = monthlyData?.days || [];
-  const firstDayOfMonth = days.length > 0 ? new Date(days[0].date + "T00:00:00").getDay() : 0;
+  const firstDayOfMonth = days.length > 0 ? calendarWeekday(days[0].date) ?? 0 : 0;
 
   const monthlySummary = days.reduce(
     (acc, d) => {
@@ -292,9 +312,8 @@ export default function StudentAttendance() {
   const maxWorkingDays = Math.max(...yearMonths.map(m => m.workingDays), 1);
 
   const isNextDisabled = (() => {
-    const nextDate = new Date(selectedYear, selectedMonth, 1);
-    const todayDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    return nextDate > todayDate;
+    const nextMonthIndex = selectedYear * 12 + selectedMonth;
+    return nextMonthIndex > currentMonthIndex;
   })();
 
   return (
@@ -361,7 +380,7 @@ export default function StudentAttendance() {
           <div>
             <h1 className="text-xl font-bold text-emerald-700">BENIUS — Attendance Report</h1>
             <p className="text-sm text-slate-600">{student.name} ({student.digitalStudentId}) · Class {student.class}–{student.section}</p>
-            <p className="text-xs text-slate-400">{student.schoolName} · Generated {new Date().toLocaleDateString("en-GB")}</p>
+            <p className="text-xs text-slate-400">{student.schoolName} · Generated {formatDateOnly(today)}</p>
           </div>
         </div>
 
@@ -467,7 +486,7 @@ export default function StudentAttendance() {
                   className="border border-emerald-100 rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 min-h-[44px]"
                   data-testid="select-year"
                 >
-                  {[now.getFullYear() - 2, now.getFullYear() - 1, now.getFullYear()].map(y => (
+                  {[todayParts.year - 2, todayParts.year - 1, todayParts.year].map(y => (
                     <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
@@ -519,7 +538,7 @@ export default function StudentAttendance() {
                   {/* Date cells */}
                   {days.map((day) => {
                     const { bg, ring, dot, textColor } = getDayCell(day);
-                    const dayNum = new Date(day.date + "T00:00:00").getDate();
+                    const dayNum = dayOfMonthFromDateOnly(day.date) ?? 0;
                     return (
                       <button
                         key={day.date}
@@ -558,7 +577,7 @@ export default function StudentAttendance() {
                   data-testid="tooltip-day"
                 >
                   <p className="font-bold text-emerald-300 mb-1">
-                    {new Date(tooltip.day.date + "T00:00:00").toLocaleDateString("en-GB")}
+                    {formatDateOnly(tooltip.day.date)}
                   </p>
                   {tooltip.day.isHoliday && (
                     <p className="text-slate-300">🏖️ {tooltip.day.holidayName || "School Holiday"}</p>

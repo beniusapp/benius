@@ -8,6 +8,8 @@
 export const SCHOOL_TIME_ZONE = "Asia/Kolkata";
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const WEEKDAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 type InstantInput = string | Date | null | undefined;
 
@@ -80,6 +82,19 @@ export function formatDateOnly(value: string | null | undefined, long = false): 
   return `${day} ${monthName} ${year}`;
 }
 
+/** Formats a calendar DATE with its weekday without browser-local conversion. */
+export function formatDateOnlyWithWeekday(
+  value: string,
+  options: { weekday?: "short" | "long"; includeYear?: boolean } = {},
+): string {
+  const dateParts = dateOnlyParts(String(value).slice(0, 10));
+  const weekday = calendarWeekday(String(value).slice(0, 10));
+  if (!dateParts || weekday === null) return String(value);
+  const weekdayName = (options.weekday === "long" ? WEEKDAYS_LONG : WEEKDAYS_SHORT)[weekday];
+  const monthName = MONTHS_SHORT[dateParts.month - 1];
+  return `${weekdayName}, ${dateParts.day} ${monthName}${options.includeYear ? ` ${dateParts.year}` : ""}`;
+}
+
 /** Month/year label ("August 2026") for a calendar DATE without timezone conversion. */
 export function formatMonthYearFromDateOnly(value: string, long = true): string {
   const parts = dateOnlyParts(String(value).slice(0, 10));
@@ -145,6 +160,21 @@ export function calendarWeekday(dateOnly: string): number | null {
   return value ? new Date(Date.UTC(value.year, value.month - 1, value.day)).getUTCDay() : null;
 }
 
+/** Monday starting the calendar week that contains the supplied DATE. */
+export function calendarWeekStartMonday(dateOnly: string): string {
+  const weekday = calendarWeekday(dateOnly);
+  if (weekday === null) return dateOnly;
+  return addCalendarDays(dateOnly, weekday === 0 ? -6 : 1 - weekday);
+}
+
+/** Last calendar date in a year/month, with month numbered 1–12. */
+export function calendarMonthEndDate(year: number, month: number): string | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  return addCalendarDays(`${nextYear}-${String(nextMonth).padStart(2, "0")}-01`, -1);
+}
+
 export function replaceCalendarYear(dateOnly: string, year: number): string {
   const value = dateOnlyParts(dateOnly);
   if (!value || !Number.isInteger(year)) return dateOnly;
@@ -161,6 +191,13 @@ export function todayInIST(now: Date = new Date()): string {
   const values = new Intl.DateTimeFormat("en-CA", { timeZone: SCHOOL_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
   const get = (type: string) => values.find(part => part.type === type)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** Milliseconds until the next Asia/Kolkata calendar day begins. */
+export function millisecondsUntilNextISTMidnight(now: Date = new Date()): number {
+  const nextDate = addCalendarDays(todayInIST(now), 1);
+  const nextMidnight = Date.parse(`${nextDate}T00:00:00+05:30`);
+  return Math.max(0, nextMidnight - now.getTime());
 }
 
 export function getAcademicYearForISTDate(date: string = todayInIST()): string {

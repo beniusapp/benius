@@ -10,6 +10,17 @@ import {
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useArchiveMode } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  addCalendarDays,
+  calendarDayDifference,
+  calendarMonthEndDate,
+  calendarWeekday,
+  dateOnlyParts,
+  formatDateOnlyWithWeekday,
+  formatMonthYearFromDateOnly,
+  formatTimeIST,
+} from "@shared/ist-time";
 
 interface AcademicSession {
   id: number;
@@ -49,8 +60,7 @@ interface CorrectionReq {
 }
 
 function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return formatTimeIST(iso);
 }
 
 function fmtDuration(mins: number): string {
@@ -81,44 +91,27 @@ function correctionStatusStyle(s: string) {
   return "bg-amber-500/20 text-amber-300 border-amber-500/30";
 }
 
-/** Returns today's date as YYYY-MM-DD in the browser's local timezone (IST for Indian users) */
-function getLocalDateStr(): string {
-  return new Date().toLocaleDateString("en-CA"); // en-CA locale → YYYY-MM-DD
-}
-
 function getDayLabel(dateStr: string): string {
-  const d = new Date(dateStr + "T12:00:00");
-  return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+  return formatDateOnlyWithWeekday(dateStr);
 }
 
 function isWeekend(dateStr: string): boolean {
-  const d = new Date(dateStr + "T12:00:00");
-  return d.getDay() === 0 || d.getDay() === 6;
+  const weekday = calendarWeekday(dateStr);
+  return weekday === 0 || weekday === 6;
 }
 
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
   const isArchiveMode = useArchiveMode();
 
-  // ── Reactive today date — updates automatically at local midnight ─────────────
-  const [today, setToday] = useState(getLocalDateStr);
+  // ── Reactive school date — updates automatically at IST midnight ──────────────
+  const today = useISTToday();
 
   useEffect(() => {
-    const now = new Date();
-    // Compute ms until next midnight in local (browser) timezone
-    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-    const msUntilMidnight = midnight.getTime() - now.getTime();
-
-    const id = setTimeout(() => {
-      // Date has rolled over — update state and flush all attendance caches
-      setToday(getLocalDateStr());
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
-    }, msUntilMidnight);
-
-    return () => clearTimeout(id);
-  }, [today]); // re-schedules each time `today` changes (i.e., after each midnight tick)
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
+  }, [today]);
 
   // ── Geolocation ─────────────────────────────────────────────────────────────
   const [geo, setGeo] = useState<{ lat: number | null; lng: number | null; verified: boolean }>({ lat: null, lng: null, verified: false });
@@ -263,59 +256,59 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   }, [history, today]);
 
   function isPrevWorkday(earlier: string, later: string): boolean {
-    const e = new Date(earlier + "T12:00:00"), l = new Date(later + "T12:00:00");
-    const diff = Math.round((l.getTime() - e.getTime()) / 86400000);
-    return diff <= 3;
+    const diff = calendarDayDifference(earlier, later);
+    return diff !== null && diff <= 3;
   }
 
   // ── 7-day timeline data ──────────────────────────────────────────────────────
   const timeline = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(); d.setDate(d.getDate() - (6 - i));
-      const dateStr = d.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
+      const dateStr = addCalendarDays(today, -(6 - i));
       const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
       return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isWeekend: isWeekend(dateStr), rec };
     });
   }, [history, todayRec, today]);
 
   // ── Navigable monthly calendar ───────────────────────────────────────────────
-  const [calYear,  setCalYear]  = useState(() => new Date().getFullYear());
-  const [calMonth, setCalMonth] = useState(() => new Date().getMonth()); // 0-indexed
+  const initialTodayParts = dateOnlyParts(today)!;
+  const [calYear,  setCalYear]  = useState(initialTodayParts.year);
+  const [calMonth, setCalMonth] = useState(initialTodayParts.month - 1); // 0-indexed
 
   // Keep calendar within session bounds when session changes
   useEffect(() => {
     if (!sessionStartDate) return;
-    const start = new Date(sessionStartDate + "T12:00:00");
-    const end   = new Date(sessionEndDate   + "T12:00:00");
-    const now   = new Date();
+    const start = dateOnlyParts(sessionStartDate);
+    const target = today >= sessionStartDate && today <= sessionEndDate ? dateOnlyParts(today) : start;
     // Default to today if within session, else clamp to session start
-    if (now >= start && now <= end) {
-      setCalYear(now.getFullYear()); setCalMonth(now.getMonth());
-    } else {
-      setCalYear(start.getFullYear()); setCalMonth(start.getMonth());
+    if (target) {
+      setCalYear(target.year);
+      setCalMonth(target.month - 1);
     }
-  }, [sessionStartDate, sessionEndDate]);
+  }, [sessionStartDate, sessionEndDate, today]);
 
   const calPrevMonthDisabled = useMemo(() => {
     if (!sessionStartDate) return false;
-    const s = new Date(sessionStartDate + "T12:00:00");
-    return calYear < s.getFullYear() || (calYear === s.getFullYear() && calMonth <= s.getMonth());
+    const start = dateOnlyParts(sessionStartDate);
+    return !!start && calYear * 12 + calMonth <= start.year * 12 + start.month - 1;
   }, [calYear, calMonth, sessionStartDate]);
 
   const calNextMonthDisabled = useMemo(() => {
     if (!sessionEndDate) return false;
-    const e = new Date(sessionEndDate + "T12:00:00");
-    return calYear > e.getFullYear() || (calYear === e.getFullYear() && calMonth >= e.getMonth());
+    const end = dateOnlyParts(sessionEndDate);
+    return !!end && calYear * 12 + calMonth >= end.year * 12 + end.month - 1;
   }, [calYear, calMonth, sessionEndDate]);
 
   const calDays = useMemo(() => {
     const yr = calYear, mo = calMonth;
-    const first = new Date(yr, mo, 1), last = new Date(yr, mo + 1, 0);
+    const firstDate = `${yr}-${String(mo + 1).padStart(2, "0")}-01`;
+    const lastDate = calendarMonthEndDate(yr, mo + 1);
+    const firstWeekday = calendarWeekday(firstDate) ?? 0;
+    const lastDay = lastDate ? dateOnlyParts(lastDate)!.day : 0;
     const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isWeekend: boolean } | null> = [];
-    for (let i = 0; i < first.getDay(); i++) cells.push(null);
-    for (let d = 1; d <= last.getDate(); d++) {
+    for (let i = 0; i < firstWeekday; i++) cells.push(null);
+    for (let d = 1; d <= lastDay; d++) {
       const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isWeekend: new Date(yr, mo, d).getDay() === 0 || new Date(yr, mo, d).getDay() === 6 });
+      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isWeekend: isWeekend(dateStr) });
     }
     return cells;
   }, [history, today, calYear, calMonth]);
@@ -323,7 +316,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
   const [corrForm, setCorrForm] = useState({ date: "", checkIn: "", checkOut: "", reason: "" });
-  const sevenAgo = useMemo(() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toLocaleDateString("en-CA"); }, []);
+  const sevenAgo = useMemo(() => addCalendarDays(today, -7), [today]);
 
   const corrMut = useMutation({
     mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }).then(r => r.json()),
@@ -382,7 +375,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
       <div>
         <h2 className="text-xl font-bold text-white">My Attendance</h2>
-        <p className="text-xs text-white/40 mt-0.5">{new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+        <p className="text-xs text-white/40 mt-0.5">{formatDateOnlyWithWeekday(today, { weekday: "long", includeYear: true })}</p>
       </div>
 
       {/* Location badge */}
@@ -658,7 +651,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
               <ChevronLeft className="w-4 h-4" />
             </button>
             <p className="text-sm font-semibold text-white text-center">
-              {new Date(calYear, calMonth, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+              {formatMonthYearFromDateOnly(`${calYear}-${String(calMonth + 1).padStart(2, "0")}-01`)}
             </p>
             <button
               onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}

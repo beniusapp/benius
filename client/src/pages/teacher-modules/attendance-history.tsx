@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, Calendar, Clock, Flame, TrendingUp, CheckCircle,
@@ -6,6 +6,19 @@ import {
   ChevronLeft, ChevronRight, History,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  addCalendarDays,
+  calendarMonthEndDate,
+  calendarWeekday,
+  calendarWeekStartMonday,
+  dateOnlyParts,
+  formatDateOnly,
+  formatDateOnlyWithWeekday,
+  formatMonthYearFromDateOnly,
+  formatTimeIST,
+  todayInIST,
+} from "@shared/ist-time";
 
 /* ── Types ────────────────────────────────────────────────────────── */
 
@@ -51,8 +64,7 @@ type TabView = "daily" | "weekly" | "monthly";
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
 function fmtTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  return formatTimeIST(iso);
 }
 
 function fmtDuration(mins: number): string {
@@ -62,36 +74,19 @@ function fmtDuration(mins: number): string {
 }
 
 function fmtDateShort(dateStr: string): string {
-  return new Date(dateStr + "T12:00:00").toLocaleDateString("en-IN", {
-    weekday: "short", day: "numeric", month: "short",
-  });
+  return formatDateOnlyWithWeekday(dateStr);
 }
 
 function fmtDateFull(dateStr: string): string {
-  return new Date(dateStr + "T12:00:00").toLocaleDateString("en-IN", {
-    weekday: "long", day: "numeric", month: "short", year: "numeric",
-  });
+  return formatDateOnlyWithWeekday(dateStr, { weekday: "long", includeYear: true });
 }
 
 function dayName(dateStr: string): string {
-  return new Date(dateStr + "T12:00:00").toLocaleDateString("en-IN", { weekday: "long" });
-}
-
-function localToday(): string {
-  return new Date().toLocaleDateString("en-CA");
-}
-
-function addDays(dateStr: string, n: number): string {
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() + n);
-  return d.toLocaleDateString("en-CA");
+  return formatDateOnlyWithWeekday(dateStr, { weekday: "long" }).split(",")[0];
 }
 
 function weekMonday(dateStr: string): string {
-  const d = new Date(dateStr + "T12:00:00");
-  const diff = d.getDay() === 0 ? -6 : 1 - d.getDay();
-  d.setDate(d.getDate() + diff);
-  return d.toLocaleDateString("en-CA");
+  return calendarWeekStartMonday(dateStr);
 }
 
 function statusCfg(s: string) {
@@ -109,18 +104,13 @@ function statusCfg(s: string) {
 }
 
 /** Build a complete day-by-day list for the date range, filling absent/weekend entries */
-function buildDayList(from: string, to: string, dbRecords: HistRecord[]): DayEntry[] {
-  const today  = localToday();
+function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: string): DayEntry[] {
   // Normalize attendanceDate — defensive slice(0,10) handles any ISO datetime leak
   const recMap = new Map(dbRecords.map(r => [String(r.attendanceDate).slice(0, 10), r]));
   const list: DayEntry[] = [];
 
-  const start = new Date(from + "T12:00:00");
-  const end   = new Date(to   + "T12:00:00");
-
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toLocaleDateString("en-CA");
-    const dow     = d.getDay();
+  for (let dateStr = from; dateStr <= to; dateStr = addCalendarDays(dateStr, 1)) {
+    const dow     = calendarWeekday(dateStr);
     const isWk    = dow === 0 || dow === 6;
     const isFut   = dateStr > today;
     const record  = recMap.get(dateStr) ?? null;
@@ -202,7 +192,7 @@ function exportPDF(teacherName: string, period: string, days: DayEntry[]) {
     </style>
   </head><body>
     <h1>Attendance History — ${teacherName}</h1>
-    <p class="meta">Period: ${period} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString("en-IN")}</p>
+    <p class="meta">Period: ${period} &nbsp;|&nbsp; Generated: ${formatDateOnly(todayInIST())}</p>
     <table>
       <thead><tr>
         <th>Date</th><th>Day</th><th>Check In</th><th>Check Out</th><th>Duration</th><th>Status</th>
@@ -292,14 +282,15 @@ function DayCard({ entry }: { entry: DayEntry }) {
 
 /* ── Monthly Calendar Grid ────────────────────────────────────────── */
 function MonthCalendar({ year, month, dayList }: { year: number; month: number; dayList: DayEntry[] }) {
-  const today  = localToday();
+  const today  = useISTToday();
   const dayMap = new Map(dayList.map(d => [d.dateStr, d]));
-  const first  = new Date(year, month - 1, 1);
-  const last   = new Date(year, month, 0);
+  const firstWeekday = calendarWeekday(`${year}-${String(month).padStart(2, "0")}-01`) ?? 0;
+  const monthEnd = calendarMonthEndDate(year, month);
+  const lastDay = monthEnd ? dateOnlyParts(monthEnd)!.day : 0;
 
   const cells: Array<{ day: number; dateStr: string } | null> = [];
-  for (let i = 0; i < first.getDay(); i++) cells.push(null);
-  for (let d = 1; d <= last.getDate(); d++) {
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= lastDay; d++) {
     cells.push({
       day:     d,
       dateStr: `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
@@ -318,7 +309,8 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
           const cfg     = entry ? statusCfg(entry.effectiveStatus) : null;
           const isToday = cell.dateStr === today;
           const isPast  = cell.dateStr < today;
-          const isWk    = new Date(cell.dateStr + "T12:00:00").getDay() % 6 === 0;
+          const weekday = calendarWeekday(cell.dateStr);
+          const isWk    = weekday === 0 || weekday === 6;
           return (
             <div
               key={cell.dateStr}
@@ -367,32 +359,39 @@ const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════════ */
 export default function AttendanceHistoryView({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
-  const today = localToday();
+  const today = useISTToday();
+  const todayParts = dateOnlyParts(today)!;
 
   const [tab, setTab]             = useState<TabView>("daily");
   const [statusFilter, setStatus] = useState<StatusFilter>("all");
 
   /* Daily — default: last 30 days → end of current month (includes future) */
-  const [fromDate, setFromDate] = useState(() => addDays(today, -29));
-  const [toDate,   setToDate]   = useState(() => {
-    const n = new Date();
-    return new Date(n.getFullYear(), n.getMonth() + 1, 0).toLocaleDateString("en-CA");
-  });
+  const [fromDate, setFromDate] = useState(() => addCalendarDays(today, -29));
+  const [toDate, setToDate] = useState(() => calendarMonthEndDate(todayParts.year, todayParts.month) ?? today);
 
   /* Weekly */
   const [weekStart, setWeekStart] = useState(() => weekMonday(today));
-  const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
+  const weekEnd = useMemo(() => addCalendarDays(weekStart, 6), [weekStart]);
 
   /* Monthly */
-  const [selMonth, setSelMonth] = useState(() => new Date().getMonth() + 1);
-  const [selYear,  setSelYear]  = useState(() => new Date().getFullYear());
+  const [selMonth, setSelMonth] = useState(todayParts.month);
+  const [selYear,  setSelYear]  = useState(todayParts.year);
+
+  // Keep default/current periods aligned when the IST business date rolls over.
+  useEffect(() => {
+    setFromDate(addCalendarDays(today, -29));
+    setToDate(calendarMonthEndDate(todayParts.year, todayParts.month) ?? today);
+    setWeekStart(calendarWeekStartMonday(today));
+    setSelMonth(todayParts.month);
+    setSelYear(todayParts.year);
+  }, [today, todayParts.month, todayParts.year]);
 
   /* Effective date range for the API query */
   const { eff_from, eff_to } = useMemo(() => {
     if (tab === "daily")  return { eff_from: fromDate, eff_to: toDate };
     if (tab === "weekly") return { eff_from: weekStart, eff_to: weekEnd };
     const startM = `${selYear}-${String(selMonth).padStart(2, "0")}-01`;
-    const endM   = new Date(selYear, selMonth, 0).toLocaleDateString("en-CA");
+    const endM   = calendarMonthEndDate(selYear, selMonth) ?? startM;
     return { eff_from: startM, eff_to: endM };
   }, [tab, fromDate, toDate, weekStart, weekEnd, selMonth, selYear]);
 
@@ -410,7 +409,7 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
   const stats     = data?.statistics;
 
   /* Full day list for the current range */
-  const allDays = useMemo(() => buildDayList(eff_from, eff_to, dbRecords), [eff_from, eff_to, dbRecords]);
+  const allDays = useMemo(() => buildDayList(eff_from, eff_to, dbRecords, today), [eff_from, eff_to, dbRecords, today]);
 
   /* Client-side summary computed from the full day list */
   const clientSummary = useMemo(() => {
@@ -443,18 +442,18 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
   const periodLabel = useMemo(() => {
     if (tab === "daily")  return `${fromDate} to ${toDate}`;
     if (tab === "weekly") return `Week ${fmtDateShort(weekStart)} – ${fmtDateShort(weekEnd)}`;
-    return new Date(selYear, selMonth - 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return formatMonthYearFromDateOnly(`${selYear}-${String(selMonth).padStart(2, "0")}-01`);
   }, [tab, fromDate, toDate, weekStart, weekEnd, selMonth, selYear]);
 
   /* ── Week navigation — allow up to 3 months ahead ── */
-  const maxFutureWeek = addDays(today, 90);
-  const canNextWeek   = addDays(weekStart, 7) <= maxFutureWeek;
-  function prevWeek() { setWeekStart(w => addDays(w, -7)); }
-  function nextWeek() { if (canNextWeek) setWeekStart(w => addDays(w, 7)); }
+  const maxFutureWeek = addCalendarDays(today, 90);
+  const canNextWeek   = addCalendarDays(weekStart, 7) <= maxFutureWeek;
+  function prevWeek() { setWeekStart(w => addCalendarDays(w, -7)); }
+  function nextWeek() { if (canNextWeek) setWeekStart(w => addCalendarDays(w, 7)); }
 
   /* ── Month navigation — allow up to 12 months ahead ── */
-  const maxFutureMonth = (() => { const d = new Date(); d.setMonth(d.getMonth() + 12); return d; })();
-  const canNextMonth   = new Date(selYear, selMonth, 1) <= maxFutureMonth;
+  const maxFutureMonthIndex = todayParts.year * 12 + todayParts.month - 1 + 12;
+  const canNextMonth = selYear * 12 + selMonth <= maxFutureMonthIndex;
   function prevMonth() {
     if (selMonth === 1) { setSelMonth(12); setSelYear(y => y - 1); }
     else setSelMonth(m => m - 1);
@@ -561,7 +560,7 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
             <ChevronLeft className="w-4 h-4" />
           </button>
           <p className="text-sm font-semibold text-white">
-            {new Date(selYear, selMonth - 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+            {formatMonthYearFromDateOnly(`${selYear}-${String(selMonth).padStart(2, "0")}-01`)}
           </p>
           <button onClick={nextMonth} disabled={!canNextMonth}
             className="p-2 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
