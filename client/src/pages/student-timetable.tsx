@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
@@ -6,6 +6,14 @@ import { ArrowLeft, Clock, Loader2, School, Coffee } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  isTimetablePeriodActive,
+  timetableDateForDay,
+  timetableDayForDate,
+  timetableTimeToMinutes,
+} from "@/lib/student-timetable-time";
+import { minutesSinceMidnightIST } from "@shared/ist-time";
 
 interface StudentMe {
   id: number;
@@ -51,44 +59,12 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAYS = [0, 1, 2, 3, 4, 5]; // Mon=0 to Sat=5 — matches admin dayOfWeek storage
 
-function getCurrentMinutes(): number {
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes();
-}
-
-function timeToMinutes(t: string): number {
-  const [h, m] = t.split(":").map(Number);
-  return h * 60 + (m || 0);
-}
-
 function formatTime(t: string | null): string {
   if (!t) return "";
   const [h, m] = t.split(":").map(Number);
   const ampm = h >= 12 ? "PM" : "AM";
   const hr = h % 12 || 12;
   return `${hr}:${String(m || 0).padStart(2, "0")} ${ampm}`;
-}
-
-// Returns today's day in admin convention: Mon=0 … Sat=5. Sunday defaults to 0 (Mon).
-function todayDayOfWeek(): number {
-  const d = new Date().getDay(); // JS: 0=Sun, 1=Mon … 6=Sat
-  return d === 0 ? 0 : d - 1;   // admin: Mon=0 … Sat=5
-}
-
-function todayDateStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-// adminDay is 0=Mon … 5=Sat; convert to JS weekday (1=Mon … 6=Sat) for date arithmetic.
-function weekDateFor(adminDay: number): string {
-  const today = new Date();
-  const todayJsDow = today.getDay();        // 0=Sun … 6=Sat
-  const targetJsDow = adminDay + 1;         // 0→1(Mon), 5→6(Sat)
-  const diff = targetJsDow - todayJsDow;
-  const target = new Date(today);
-  target.setDate(today.getDate() + diff);
-  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
 
 function getSubjectColor(subject: string): string {
@@ -116,17 +92,30 @@ function getSubjectColor(subject: string): string {
 export default function StudentTimetable() {
   const [, setLocation] = useLocation();
   const { isArchiveMode, selectedSession } = useSessionView();
-  const initialDay = (() => {
-    const d = new Date().getDay(); // JS: 0=Sun, 1=Mon … 6=Sat
-    return d === 0 ? 0 : d - 1;   // admin: Mon=0 … Sat=5; Sunday defaults to Mon
-  })();
-  const [selectedDay, setSelectedDay] = useState<number>(initialDay);
-  const [currentMinutes, setCurrentMinutes] = useState(getCurrentMinutes());
+  const today = useISTToday();
+  const previousToday = useRef(today);
+  const [selectedDay, setSelectedDay] = useState<number>(() => timetableDayForDate(today));
+  const [currentMinutes, setCurrentMinutes] = useState(minutesSinceMidnightIST);
 
   useEffect(() => {
-    const interval = setInterval(() => setCurrentMinutes(getCurrentMinutes()), 60000);
-    return () => clearInterval(interval);
+    const updateCurrentMinutes = () => setCurrentMinutes(minutesSinceMidnightIST());
+    updateCurrentMinutes();
+    let interval: number | undefined;
+    const timeout = window.setTimeout(() => {
+      updateCurrentMinutes();
+      interval = window.setInterval(updateCurrentMinutes, 60000);
+    }, 60000 - (Date.now() % 60000) + 25);
+    return () => {
+      window.clearTimeout(timeout);
+      if (interval !== undefined) window.clearInterval(interval);
+    };
   }, []);
+
+  useEffect(() => {
+    const previousDay = timetableDayForDate(previousToday.current);
+    setSelectedDay(current => current === previousDay ? timetableDayForDate(today) : current);
+    previousToday.current = today;
+  }, [today]);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
@@ -158,10 +147,10 @@ export default function StudentTimetable() {
     .filter(e => e.dayOfWeek === selectedDay)
     .sort((a, b) => a.period - b.period);
 
-  const selectedDateStr = weekDateFor(selectedDay);
+  const selectedDateStr = timetableDateForDay(today, selectedDay);
   const isHolidayDay = calEvents.some(e => e.date === selectedDateStr && e.eventType.toLowerCase() === "holiday");
   const holidayEvent = calEvents.find(e => e.date === selectedDateStr && e.eventType.toLowerCase() === "holiday");
-  const isTodaySelected = selectedDay === todayDayOfWeek() && selectedDateStr === todayDateStr();
+  const isTodaySelected = selectedDay === timetableDayForDate(today) && selectedDateStr === today;
 
   // Build ordered display: merge structure (with breaks) + timetable entries
   const structureForDay = structure.length > 0 ? structure : [];
@@ -230,9 +219,9 @@ export default function StudentTimetable() {
           <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
             {DAYS.map(day => {
               const isSelected = day === selectedDay;
-              const dateStr = weekDateFor(day);
+              const dateStr = timetableDateForDay(today, day);
               const isHoliday = calEvents.some(e => e.date === dateStr && e.eventType.toLowerCase() === "holiday");
-              const isTodayDow = todayDayOfWeek() === day;
+              const isTodayDow = timetableDayForDate(today) === day;
               return (
                 <button
                   key={day}
@@ -338,10 +327,10 @@ export default function StudentTimetable() {
                 const timeEnd = srow.endTime || entry?.endTime || null;
                 const hasTime = !!(timeStart && timeEnd);
                 const isActive = isTodaySelected && hasTime
-                  ? currentMinutes >= timeToMinutes(timeStart!) && currentMinutes < timeToMinutes(timeEnd!)
+                  ? isTimetablePeriodActive(currentMinutes, timeStart!, timeEnd!)
                   : false;
                 const isPast = isTodaySelected && hasTime
-                  ? currentMinutes >= timeToMinutes(timeEnd!)
+                  ? currentMinutes >= timetableTimeToMinutes(timeEnd!)
                   : false;
                 const subjectColor = entry ? getSubjectColor(entry.subject) : "#94a3b8";
 
@@ -411,10 +400,10 @@ export default function StudentTimetable() {
               dayEntries.map(entry => {
                 const hasTime = entry.startTime && entry.endTime;
                 const isActive = isTodaySelected && hasTime
-                  ? currentMinutes >= timeToMinutes(entry.startTime!) && currentMinutes < timeToMinutes(entry.endTime!)
+                  ? isTimetablePeriodActive(currentMinutes, entry.startTime!, entry.endTime!)
                   : false;
                 const isPast = isTodaySelected && hasTime
-                  ? currentMinutes >= timeToMinutes(entry.endTime!)
+                  ? currentMinutes >= timetableTimeToMinutes(entry.endTime!)
                   : false;
                 const subjectColor = getSubjectColor(entry.subject);
 

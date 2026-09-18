@@ -193,6 +193,18 @@ export function todayInIST(now: Date = new Date()): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** School wall-clock minutes since midnight in Asia/Kolkata. */
+export function minutesSinceMidnightIST(now: Date = new Date()): number {
+  const values = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SCHOOL_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type: string) => Number(values.find(part => part.type === type)?.value ?? 0);
+  return get("hour") * 60 + get("minute");
+}
+
 /** Milliseconds until the next Asia/Kolkata calendar day begins. */
 export function millisecondsUntilNextISTMidnight(now: Date = new Date()): number {
   const nextDate = addCalendarDays(todayInIST(now), 1);

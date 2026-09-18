@@ -14,6 +14,7 @@ import {
   instantEpochMillis,
   isValidDateOnly,
   millisecondsUntilNextISTMidnight,
+  minutesSinceMidnightIST,
   todayInIST,
 } from "../ist-time";
 
@@ -120,6 +121,15 @@ describe("IST date/time policy", () => {
     ["2026-12-31T18:29:59.000Z", 1000],
   ])("calculates the next IST midnight from %s", (instant, expectedMs) => {
     expect(millisecondsUntilNextISTMidnight(new Date(instant))).toBe(expectedMs);
+  });
+
+  it.each([
+    ["2026-09-18T03:30:00.000Z", 9 * 60],
+    ["2026-09-18T04:00:00.000Z", 9 * 60 + 30],
+    ["2026-09-18T18:29:59.000Z", 23 * 60 + 59],
+    ["2026-09-18T18:30:00.000Z", 0],
+  ])("calculates IST wall-clock minutes for %s", (instant, expectedMinutes) => {
+    expect(minutesSinceMidnightIST(new Date(instant))).toBe(expectedMinutes);
   });
 
   it.each([
