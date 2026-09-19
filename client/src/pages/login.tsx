@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-type LoginStep = "credentials" | "pin" | "forgot-request" | "forgot-otp" | "forgot-pin" | "forgot-reset";
+type LoginStep = "credentials" | "pin" | "forgot-request" | "forgot-otp" | "forgot-pin" | "forgot-reset" | "forgot-success";
 
 const credSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -105,11 +105,10 @@ export default function Login() {
   const [pin, setPin] = useState("");
   const [resetPin, setResetPin] = useState("");
   const [newPin, setNewPin] = useState("");
-  const [otpDisplay, setOtpDisplay] = useState("");
-  const [maskedRecoveryEmail, setMaskedRecoveryEmail] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [tempToken, setTempToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const genericOtpMessage = "If those details match, an OTP has been sent to your recovery email. Please check and try again.";
 
   const credForm = useForm<CredForm>({ resolver: zodResolver(credSchema), defaultValues: { email: "", password: "" } });
   const forgotForm = useForm<ForgotForm>({ resolver: zodResolver(forgotSchema), defaultValues: { recoveryEmail: "", schoolCode: "" } });
@@ -152,15 +151,10 @@ export default function Login() {
       const res = await apiRequest("POST", "/api/admin/forgot-password", data);
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       setErrorMessage("");
-      if (data.otp === null) {
-        setErrorMessage("If those details match, an OTP has been sent to your recovery email. Please check and try again.");
-      } else {
-        setOtpDisplay(data.otp);
-        setMaskedRecoveryEmail(data.recoveryEmail || "");
-        setStep("forgot-otp");
-      }
+      otpForm.reset();
+      setStep("forgot-otp");
     },
     onError: (e: Error) => setErrorMessage(e.message || "Could not find account"),
   });
@@ -180,7 +174,7 @@ export default function Login() {
         setStep("forgot-reset");
       }
     },
-    onError: (e: Error) => setErrorMessage(e.message || "Invalid OTP"),
+    onError: () => setErrorMessage("Invalid or expired OTP. Please request a new OTP."),
   });
 
   const verifyResetPinMutation = useMutation({
@@ -201,15 +195,22 @@ export default function Login() {
       const res = await apiRequest("POST", "/api/admin/reset-password", {
         resetToken,
         newPassword: data.newPassword,
+        confirmPassword: data.confirmPassword,
         newPin: data.newPin || undefined,
       });
       return res.json();
     },
     onSuccess: () => {
       setErrorMessage("");
+      setResetToken("");
+      setTempToken("");
+      setPin("");
+      setResetPin("");
       setNewPin("");
-      setStep("credentials");
-      credForm.reset();
+      otpForm.reset();
+      resetForm.reset();
+      forgotForm.reset();
+      setStep("forgot-success");
     },
     onError: (e: Error) => setErrorMessage(e.message || "Reset failed"),
   });
@@ -365,20 +366,14 @@ export default function Login() {
             <>
               <CardHeader className="text-center">
                 <CardTitle className="text-xl">Enter OTP</CardTitle>
-                <CardDescription>Your one-time password has been generated</CardDescription>
+                <CardDescription>Enter the one-time password sent to your recovery email</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {otpDisplay && (
-                  <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-center">
-                    <p className="text-xs text-amber-600 font-medium mb-1">Your OTP (valid 10 min)</p>
-                    <p className="text-3xl font-mono font-bold tracking-widest text-amber-700" data-testid="text-otp-display">{otpDisplay}</p>
-                    {maskedRecoveryEmail && (
-                      <p className="text-xs text-amber-600 mt-2">Would be sent to: <span className="font-semibold">{maskedRecoveryEmail}</span></p>
-                    )}
-                  </div>
-                )}
+                <div className="p-4 rounded-xl bg-muted/50 border text-center text-sm text-muted-foreground" data-testid="text-otp-security-message">
+                  {genericOtpMessage}
+                </div>
                 {errorMessage && (
-                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                  <div className="flex items-center gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm" data-testid="text-otp-error">
                     <AlertCircle className="w-4 h-4 shrink-0" /> {errorMessage}
                   </div>
                 )}
@@ -386,7 +381,7 @@ export default function Login() {
                   <form onSubmit={otpForm.handleSubmit(d => { setErrorMessage(""); verifyOtpMutation.mutate(d); })} className="space-y-4">
                     <FormField control={otpForm.control} name="otp" render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Enter the OTP above</FormLabel>
+                        <FormLabel>Enter your OTP</FormLabel>
                         <FormControl><Input placeholder="6-digit OTP" maxLength={6} data-testid="input-otp" {...field} /></FormControl>
                         <FormMessage />
                       </FormItem>
@@ -397,6 +392,20 @@ export default function Login() {
                     </Button>
                   </form>
                 </Form>
+                <div className="flex flex-col gap-2">
+                  <button type="button"
+                    onClick={() => { setErrorMessage(""); otpForm.reset(); forgotMutation.mutate(forgotForm.getValues()); }}
+                    className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+                    disabled={forgotMutation.isPending}
+                    data-testid="button-request-new-otp">
+                    {forgotMutation.isPending ? "Requesting a new OTP…" : "Request a new OTP"}
+                  </button>
+                  <button type="button" onClick={() => { setStep("forgot-request"); setErrorMessage(""); otpForm.reset(); }}
+                    className="w-full text-center text-sm text-muted-foreground hover:text-foreground flex items-center justify-center gap-1"
+                    data-testid="button-back-to-forgot">
+                    <ArrowLeft className="w-3 h-3" /> Back to forgot password
+                  </button>
+                </div>
               </CardContent>
             </>
           )}
@@ -445,11 +454,6 @@ export default function Login() {
                         <AlertCircle className="w-4 h-4 shrink-0" /> {errorMessage}
                       </div>
                     )}
-                    {resetMutation.isSuccess && (
-                      <div className="p-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium text-center" data-testid="text-reset-success">
-                        Password reset! Please log in again.
-                      </div>
-                    )}
                     <FormField control={resetForm.control} name="newPassword" render={({ field }) => (
                       <FormItem>
                         <FormLabel>New Password</FormLabel>
@@ -477,6 +481,26 @@ export default function Login() {
                     </Button>
                   </form>
                 </Form>
+              </CardContent>
+            </>
+          )}
+
+          {step === "forgot-success" && (
+            <>
+              <CardHeader className="text-center">
+                <CardTitle className="text-xl">Password Reset Successful</CardTitle>
+                <CardDescription>Your password has been updated securely.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-3 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium text-center" data-testid="text-reset-success">
+                  Your password has been reset. Please log in with your new password.
+                </div>
+                <Button type="button" className="w-full" onClick={() => {
+                  setErrorMessage("");
+                  setStep("credentials");
+                }} data-testid="button-back-to-login-after-reset">
+                  Back to Login
+                </Button>
               </CardContent>
             </>
           )}

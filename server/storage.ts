@@ -9,7 +9,7 @@ import {
   nonTeachingStaff, facultyMappings, feeRecords, examPolicyTiers, promotionDecisions,
   academicSessions, enrollments, removedTeachersLog,
   feeStructures, paymentRecords, feeAuditLog, externalPaymentSettings,
-  notificationConfig, dunningLog,
+  notificationConfig, dunningLog, passwordResetChallenges,
   type FeeStructure, type InsertFeeStructure,
   type PaymentRecord, type InsertPaymentRecord,
   type FeeAuditLog,
@@ -48,11 +48,12 @@ import {
   type ExamPolicyTier, type InsertExamPolicyTier,
   type AcademicSession, type InsertAcademicSession,
   type Enrollment, type InsertEnrollment,
+  type PasswordResetChallenge,
 } from "@shared/schema";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, lte, lt, or, ilike, isNull, inArray, type SQL } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import {
@@ -196,6 +197,137 @@ export class DatabaseStorage {
       and(eq(users.recoveryEmail, recoveryEmail), eq(users.schoolId, schoolId))
     );
     return user || undefined;
+  }
+
+  async createPasswordResetChallenge(
+    userId: number,
+    schoolId: number,
+    otpHash: string,
+    otpExpiresAt: Date,
+    requestIp: string | null,
+  ): Promise<PasswordResetChallenge> {
+    return db.transaction(async (tx) => {
+      await tx.update(passwordResetChallenges)
+        .set({ consumedAt: new Date() })
+        .where(and(
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          isNull(passwordResetChallenges.consumedAt),
+        ));
+      const [challenge] = await tx.insert(passwordResetChallenges).values({
+        userId,
+        schoolId,
+        otpHash,
+        otpExpiresAt,
+        requestIp,
+      }).returning();
+      return challenge;
+    });
+  }
+
+  async getPasswordResetChallenge(id: number): Promise<PasswordResetChallenge | undefined> {
+    const [challenge] = await db.select().from(passwordResetChallenges)
+      .where(eq(passwordResetChallenges.id, id));
+    return challenge || undefined;
+  }
+
+  async recordPasswordResetOtpFailure(id: number, now = new Date()): Promise<PasswordResetChallenge | undefined> {
+    const [challenge] = await db.update(passwordResetChallenges)
+      .set({
+        attemptCount: sql`${passwordResetChallenges.attemptCount} + 1`,
+        consumedAt: sql`CASE WHEN ${passwordResetChallenges.attemptCount} + 1 >= 5 THEN ${now} ELSE ${passwordResetChallenges.consumedAt} END`,
+      })
+      .where(and(
+        eq(passwordResetChallenges.id, id),
+        isNull(passwordResetChallenges.consumedAt),
+        isNull(passwordResetChallenges.verifiedAt),
+        gt(passwordResetChallenges.otpExpiresAt, now),
+        lt(passwordResetChallenges.attemptCount, 5),
+      ))
+      .returning();
+    return challenge || undefined;
+  }
+
+  async verifyPasswordResetOtp(
+    id: number,
+    otpHash: string,
+    resetTokenHash: string,
+    resetTokenExpiresAt: Date,
+    now = new Date(),
+  ): Promise<PasswordResetChallenge | undefined> {
+    const [challenge] = await db.update(passwordResetChallenges)
+      .set({ verifiedAt: now, resetTokenHash, resetTokenExpiresAt })
+      .where(and(
+        eq(passwordResetChallenges.id, id),
+        eq(passwordResetChallenges.otpHash, otpHash),
+        isNull(passwordResetChallenges.consumedAt),
+        isNull(passwordResetChallenges.verifiedAt),
+        gt(passwordResetChallenges.otpExpiresAt, now),
+        lt(passwordResetChallenges.attemptCount, 5),
+      ))
+      .returning();
+    return challenge || undefined;
+  }
+
+  async resetPasswordForChallenge(
+    challengeId: number,
+    userId: number,
+    schoolId: number,
+    resetTokenHash: string,
+    passwordHash: string,
+    pinHash?: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [user] = await tx.select().from(users).where(and(
+        eq(users.id, userId),
+        eq(users.schoolId, schoolId),
+        eq(users.role, "admin"),
+        eq(users.isActive, true),
+      ));
+      if (!user) return false;
+      const [challenge] = await tx.update(passwordResetChallenges)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(passwordResetChallenges.id, challengeId),
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          eq(passwordResetChallenges.resetTokenHash, resetTokenHash),
+          isNull(passwordResetChallenges.consumedAt),
+          isNotNull(passwordResetChallenges.verifiedAt),
+          gt(passwordResetChallenges.resetTokenExpiresAt, now),
+        ))
+        .returning();
+      if (!challenge) return false;
+
+      const updates: Partial<typeof users.$inferInsert> = { passwordHash };
+      if (pinHash) updates.pinHash = pinHash;
+      await tx.update(users).set(updates).where(and(eq(users.id, userId), eq(users.schoolId, schoolId)));
+      await tx.update(passwordResetChallenges)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          isNull(passwordResetChallenges.consumedAt),
+        ));
+      return true;
+    });
+  }
+
+  async invalidatePasswordResetChallenges(userId: number, schoolId: number): Promise<void> {
+    await db.update(passwordResetChallenges).set({ consumedAt: new Date() }).where(and(
+      eq(passwordResetChallenges.userId, userId),
+      eq(passwordResetChallenges.schoolId, schoolId),
+      isNull(passwordResetChallenges.consumedAt),
+    ));
+  }
+
+  async invalidateUserSessions(userId: number): Promise<void> {
+    try {
+      await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [String(userId)]);
+    } catch {
+      // Session-store cleanup is best effort because deployments may use another store.
+    }
   }
 
   async getUserWithSchool(userId: number): Promise<{ user: User; school: School } | undefined> {
@@ -4499,40 +4631,6 @@ export class DatabaseStorage {
     await db.update(users)
       .set({ signatureUrl: null })
       .where(and(eq(users.id, userId), eq(users.schoolId, schoolId)));
-  }
-
-  async setAdminOtp(userId: number, otpCode: string, expiresAt: Date): Promise<void> {
-    await db.update(users).set({ otpCode, otpExpiresAt: expiresAt }).where(eq(users.id, userId));
-  }
-
-  async verifyAndConsumeAdminOtp(userId: number, otp: string): Promise<boolean> {
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    if (!user || !user.otpCode || !user.otpExpiresAt) return false;
-    if (new Date() > user.otpExpiresAt) return false;
-    if (user.otpCode !== otp) return false;
-    const token = randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await db.update(users).set({ otpCode: null, otpExpiresAt: null, resetToken: token, resetTokenExpiresAt: expiresAt }).where(eq(users.id, userId));
-    return true;
-  }
-
-  async setAdminResetToken(userId: number, token: string, expiresAt: Date): Promise<void> {
-    await db.update(users).set({ resetToken: token, resetTokenExpiresAt: expiresAt, otpCode: null, otpExpiresAt: null }).where(eq(users.id, userId));
-  }
-
-  async resetAdminPasswordWithToken(email: string, token: string, newPasswordHash: string, newPinHash?: string): Promise<boolean> {
-    const [user] = await db.select().from(users).where(eq(users.email, email));
-    if (!user || !user.resetToken || !user.resetTokenExpiresAt) return false;
-    if (new Date() > user.resetTokenExpiresAt) return false;
-    if (user.resetToken !== token) return false;
-    const updates: Partial<typeof users.$inferInsert> = {
-      passwordHash: newPasswordHash,
-      resetToken: null,
-      resetTokenExpiresAt: null,
-    };
-    if (newPinHash) updates.pinHash = newPinHash;
-    await db.update(users).set(updates).where(eq(users.id, user.id));
-    return true;
   }
 
   async logSecurityEvent(userId: number | null, schoolId: number | null, action: string, success: boolean, ipAddress: string | null, userAgent: string | null): Promise<void> {

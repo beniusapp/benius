@@ -118,6 +118,25 @@ export const users = pgTable("users", {
   signatureUrl: text("signature_url"),
 });
 
+export const passwordResetChallenges = pgTable("password_reset_challenges", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  otpHash: text("otp_hash").notNull(),
+  otpExpiresAt: timestamp("otp_expires_at", { withTimezone: true }).notNull(),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  requestIp: text("request_ip"),
+}, (table) => [
+  index("password_reset_challenges_user_school_idx").on(table.userId, table.schoolId),
+  index("password_reset_challenges_active_idx").on(table.userId, table.schoolId, table.consumedAt),
+]);
+export type PasswordResetChallenge = typeof passwordResetChallenges.$inferSelect;
+
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),

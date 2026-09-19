@@ -34,3 +34,4 @@
 - [Examination pass-policy authority](examination-pass-policy-authority.md) — pass/fail uses the tenant/class grading-tier percentage; missing policy fails explicitly, while stored pass marks are legacy only.
 - [Examination grade-policy authority](examination-grade-policy-authority.md) — grades use tenant/class configured inclusive ranges; invalid, missing, or unmatched policies fail instead of using a universal scale.
 - [Examination promotion-policy authority](examination-promotion-policy-authority.md) — four tenant-owned promotion rules share one boundary contract; missing policy never receives universal defaults.
+- [Principal password recovery security](principal-password-recovery.md) — tenant-bound, emailed OTP recovery uses hashed single-use challenges and preserves mandatory PIN verification.

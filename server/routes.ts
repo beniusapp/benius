@@ -42,6 +42,18 @@ import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from
 import { db } from "./db";
 import { eq, and, sql, inArray, not } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
+import {
+  generatePasswordRecoveryOtp,
+  generatePasswordRecoveryToken,
+  hashPasswordRecoverySecret,
+  passwordRecoverySecretsEqual,
+  PASSWORD_RECOVERY_GENERIC_MESSAGE,
+  buildForgotPasswordResponse,
+  PASSWORD_RECOVERY_INVALID_MESSAGE,
+  PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
+  PasswordRecoveryRateLimiter,
+} from "./password-recovery";
+import { sendPasswordRecoveryEmail } from "./password-recovery-email";
 import path from "node:path";
 import fs from "node:fs";
 import { dateOnlyParts, getAcademicYearForISTDate, replaceCalendarYear, todayInIST } from "@shared/ist-time";
@@ -70,7 +82,10 @@ declare module "express-session" {
     pendingPinUserId?: number;
     pendingPinToken?: string;
     pendingForgotUserId?: number;
+    pendingForgotChallengeId?: number;
     pendingResetUserId?: number;
+    pendingResetChallengeId?: number;
+    pendingResetToken?: string;
     staffId?: number;
     staffName?: string;
     staffEmail?: string;
@@ -82,6 +97,7 @@ declare module "express-session" {
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const passwordRecoveryRateLimiter = new PasswordRecoveryRateLimiter();
 
 // School logo uploader — 5 MB cap, images only, temp staging in uploads/
 const schoolLogoUpload = multer({
@@ -600,25 +616,37 @@ export async function registerRoutes(
     const schema = z.object({ recoveryEmail: z.string().email(), schoolCode: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+    if (!passwordRecoveryRateLimiter.consume(`forgot:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
 
     const school = await storage.getSchoolByCode(parsed.data.schoolCode.toUpperCase());
-    if (!school) {
-      return res.json({ message: "If those details match, an OTP has been sent to your recovery email.", otp: null, expiresIn: 10, recoveryEmail: null });
+    const user = school
+      ? await storage.getUserByRecoveryEmail(parsed.data.recoveryEmail, school.id)
+      : undefined;
+    const eligible = user && user.role === "admin" && user.isActive && user.recoveryEmail;
+    if (school && eligible) {
+      const otp = generatePasswordRecoveryOtp();
+      const challenge = await storage.createPasswordResetChallenge(
+        user.id,
+        school.id,
+        hashPasswordRecoverySecret(otp),
+        new Date(Date.now() + 10 * 60 * 1000),
+        req.ip || null,
+      );
+      req.session.pendingForgotChallengeId = challenge.id;
+      req.session.pendingForgotUserId = undefined;
+      req.session.pendingResetChallengeId = undefined;
+      req.session.pendingResetUserId = undefined;
+      req.session.pendingResetToken = undefined;
+      void storage.getNotificationConfig(school.id)
+        .then(config => {
+          if (!config) throw new Error("Missing notification configuration");
+          return sendPasswordRecoveryEmail(config, user.recoveryEmail!, otp);
+        })
+        .catch(() => storage.invalidatePasswordResetChallenges(user.id, school.id));
     }
-
-    const user = await storage.getUserByRecoveryEmail(parsed.data.recoveryEmail, school.id);
-    if (!user) {
-      return res.json({ message: "If those details match, an OTP has been sent to your recovery email.", otp: null, expiresIn: 10, recoveryEmail: null });
-    }
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await storage.setAdminOtp(user.id, otp, expiresAt);
-    req.session.pendingForgotUserId = user.id;
-    const recoveryEmailMasked = user.recoveryEmail
-      ? user.recoveryEmail.replace(/(.{2}).*(@.*)/, "$1***$2")
-      : null;
-    res.json({ message: "OTP generated", otp, expiresIn: 10, recoveryEmail: recoveryEmailMasked });
+    return res.json(buildForgotPasswordResponse());
   });
 
   app.get("/api/admin/pending-session", (req, res) => {
@@ -626,77 +654,126 @@ export async function registerRoutes(
   });
 
   app.post("/api/admin/verify-otp", async (req, res) => {
-    const pendingForgotUserId = req.session.pendingForgotUserId;
-    if (!pendingForgotUserId) return res.status(401).json({ message: "No pending forgot-password session" });
+    if (!passwordRecoveryRateLimiter.consume(`verify-otp:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+    const pendingForgotChallengeId = req.session.pendingForgotChallengeId;
+    if (!pendingForgotChallengeId) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
 
     const schema = z.object({ otp: z.string().length(6) });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+    if (!parsed.success) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
 
-    const user = await storage.getUserById(pendingForgotUserId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const valid = await storage.verifyAndConsumeAdminOtp(user.id, parsed.data.otp);
-    if (!valid) {
-      await storage.logSecurityEvent(user.id, user.schoolId, "otp_failed", false, req.ip || null, req.headers["user-agent"] || null);
-      return res.status(400).json({ message: "Invalid or expired OTP" });
+    const challenge = await storage.getPasswordResetChallenge(pendingForgotChallengeId);
+    const user = challenge ? await storage.getUserById(challenge.userId) : undefined;
+    const validIdentity = !!challenge && !!user
+      && user.role === "admin" && user.isActive
+      && user.schoolId === challenge.schoolId;
+    const otpHash = hashPasswordRecoverySecret(parsed.data.otp);
+    if (!validIdentity || !passwordRecoverySecretsEqual(challenge!.otpHash, otpHash)) {
+      if (challenge) {
+        await storage.recordPasswordResetOtpFailure(challenge.id);
+        if (user) await storage.logSecurityEvent(user.id, user.schoolId, "otp_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      }
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     }
 
+    const resetToken = generatePasswordRecoveryToken();
+    const verified = await storage.verifyPasswordResetOtp(
+      challenge!.id,
+      otpHash,
+      hashPasswordRecoverySecret(resetToken),
+      new Date(Date.now() + 15 * 60 * 1000),
+    );
+    if (!verified || !user) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     await storage.logSecurityEvent(user.id, user.schoolId, "otp_verified", true, req.ip || null, req.headers["user-agent"] || null);
     req.session.pendingForgotUserId = undefined;
+    req.session.pendingForgotChallengeId = undefined;
     req.session.pendingResetUserId = user.id;
+    req.session.pendingResetChallengeId = challenge!.id;
+    req.session.pendingResetToken = resetToken;
     const hasPinSetup = !!user.pinHash;
 
-    if (!hasPinSetup) {
-      const updatedUser = await storage.getUserById(user.id);
-      return res.json({ message: "OTP verified", requiresPin: false, resetToken: updatedUser?.resetToken });
-    }
-
-    res.json({ message: "OTP verified", requiresPin: true });
+    const response = hasPinSetup
+      ? { message: "OTP verified", requiresPin: true }
+      : { message: "OTP verified", requiresPin: false, resetToken };
+    // The request logger records res.json bodies. Do not put the one-time token in it.
+    return res.type("application/json").send(JSON.stringify(response));
   });
 
   app.post("/api/admin/verify-reset-pin", async (req, res) => {
+    if (!passwordRecoveryRateLimiter.consume(`verify-pin:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
     const pendingResetUserId = req.session.pendingResetUserId;
-    if (!pendingResetUserId) return res.status(401).json({ message: "No pending reset session" });
+    const pendingResetChallengeId = req.session.pendingResetChallengeId;
+    if (!pendingResetUserId || !pendingResetChallengeId) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
 
     const schema = z.object({ pin: z.string().length(6) });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid PIN format" });
+    if (!parsed.success) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
 
     const user = await storage.getUserById(pendingResetUserId);
+    const challenge = await storage.getPasswordResetChallenge(pendingResetChallengeId);
+    if (!user || !challenge || challenge.userId !== user.id || challenge.schoolId !== user.schoolId || !challenge.verifiedAt || challenge.consumedAt || (challenge.resetTokenExpiresAt && challenge.resetTokenExpiresAt <= new Date())) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
     const valid = await storage.verifyAdminPin(pendingResetUserId, parsed.data.pin);
     if (!valid) {
       await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
-      return res.status(401).json({ message: "Incorrect PIN" });
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     }
 
     await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "reset_pin_verified", true, req.ip || null, req.headers["user-agent"] || null);
-    const updatedUser = await storage.getUserById(pendingResetUserId);
-    res.json({ message: "PIN verified", resetToken: updatedUser?.resetToken });
+    // The request logger records res.json bodies. Do not put the one-time token in it.
+    return res.type("application/json").send(JSON.stringify({
+      message: "PIN verified",
+      resetToken: req.session.pendingResetToken,
+    }));
   });
 
   app.post("/api/admin/reset-password", async (req, res) => {
+    if (!passwordRecoveryRateLimiter.consume(`reset:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
     const pendingResetUserId = req.session.pendingResetUserId;
-    if (!pendingResetUserId) return res.status(401).json({ message: "No pending reset session" });
+    const pendingResetChallengeId = req.session.pendingResetChallengeId;
+    if (!pendingResetUserId || !pendingResetChallengeId || typeof req.session.pendingResetToken !== "string") {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
 
     const schema = z.object({
       resetToken: z.string().min(1),
       newPassword: z.string().min(6),
+      confirmPassword: z.string().min(6),
       newPin: z.string().length(6).regex(/^\d{6}$/).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
-
+    if (parsed.data.newPassword !== parsed.data.confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
     const user = await storage.getUserById(pendingResetUserId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const challenge = await storage.getPasswordResetChallenge(pendingResetChallengeId);
+    if (!user || !challenge || challenge.userId !== user.id || challenge.schoolId !== user.schoolId) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
 
     const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
     const newPinHash = parsed.data.newPin ? await bcrypt.hash(parsed.data.newPin, 12) : undefined;
-    const ok = await storage.resetAdminPasswordWithToken(user.email, parsed.data.resetToken, newPasswordHash, newPinHash);
-    if (!ok) return res.status(400).json({ message: "Invalid or expired reset token" });
-    req.session.pendingResetUserId = undefined;
+    const ok = await storage.resetPasswordForChallenge(
+      challenge.id,
+      user.id,
+      user.schoolId,
+      hashPasswordRecoverySecret(parsed.data.resetToken),
+      newPasswordHash,
+      newPinHash,
+    );
+    if (!ok) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     await storage.logSecurityEvent(user.id, user.schoolId, "password_reset", true, req.ip || null, req.headers["user-agent"] || null);
-    res.json({ message: "Password reset successful" });
+    await storage.invalidateUserSessions(user.id);
+    await new Promise<void>((resolve) => req.session.destroy(() => resolve()));
+    return res.json({ message: "Password reset successful" });
   });
 
   app.get("/api/admin/profile", async (req, res) => {
