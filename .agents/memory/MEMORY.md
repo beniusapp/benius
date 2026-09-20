@@ -37,3 +37,4 @@
 - [Principal password recovery security](principal-password-recovery.md) — tenant-bound, emailed OTP recovery uses hashed single-use challenges and preserves mandatory PIN verification.
 - [Password-reset session revocation](password-reset-session-revocation.md) — row deletion alone is insufficient; durable revocation markers also block stale session saves and overlapping old-password logins.
 - [Teacher credential mutation races](teacher-credential-mutation-races.md) — authenticated password changes must use current-hash CAS, consume recovery challenges, and strictly revoke sessions.
+- [Student recovery transaction locking](student-recovery-transaction-locking.md) — all same-Student recovery and email-mutation transactions acquire one tenant-keyed advisory lock before row locks.

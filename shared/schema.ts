@@ -195,6 +195,44 @@ export const studentRecoveryContactVerificationChallenges = pgTable("student_rec
 ]);
 export type StudentRecoveryContactVerificationChallenge = typeof studentRecoveryContactVerificationChallenges.$inferSelect;
 
+export const studentPasswordResetChallenges = pgTable("student_password_reset_challenges", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull(),
+  contactId: integer("contact_id").notNull(),
+  purpose: varchar("purpose", { length: 40 }).notNull().default("student_password_recovery"),
+  otpHash: text("otp_hash").notNull(),
+  otpExpiresAt: timestamp("otp_expires_at", { withTimezone: true }).notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  requestIp: text("request_ip"),
+}, (table) => [
+  index("student_password_reset_school_student_idx").on(table.schoolId, table.studentId),
+  index("student_password_reset_active_idx").on(table.schoolId, table.studentId, table.consumedAt),
+  index("student_password_reset_expiry_idx").on(table.otpExpiresAt, table.resetTokenExpiresAt),
+  foreignKey({
+    name: "student_password_reset_student_tenant_fk",
+    columns: [table.studentId, table.schoolId],
+    foreignColumns: [students.id, students.schoolId],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "student_password_reset_contact_tenant_fk",
+    columns: [table.contactId, table.studentId, table.schoolId],
+    foreignColumns: [
+      studentVerifiedRecoveryContacts.id,
+      studentVerifiedRecoveryContacts.studentId,
+      studentVerifiedRecoveryContacts.schoolId,
+    ],
+  }).onDelete("cascade"),
+  check("student_password_reset_purpose_chk", sql`${table.purpose} = 'student_password_recovery'`),
+  check("student_password_reset_attempts_chk", sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 5`),
+]);
+export type StudentPasswordResetChallenge = typeof studentPasswordResetChallenges.$inferSelect;
+
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),

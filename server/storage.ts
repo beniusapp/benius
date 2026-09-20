@@ -10,7 +10,7 @@ import {
   academicSessions, enrollments, removedTeachersLog,
   feeStructures, paymentRecords, feeAuditLog, externalPaymentSettings,
   notificationConfig, dunningLog, passwordResetChallenges,
-  studentVerifiedRecoveryContacts, studentRecoveryContactVerificationChallenges,
+  studentVerifiedRecoveryContacts, studentRecoveryContactVerificationChallenges, studentPasswordResetChallenges,
   type FeeStructure, type InsertFeeStructure,
   type PaymentRecord, type InsertPaymentRecord,
   type FeeAuditLog,
@@ -50,7 +50,7 @@ import {
   type AcademicSession, type InsertAcademicSession,
   type Enrollment, type InsertEnrollment,
   type PasswordResetChallenge,
-  type StudentVerifiedRecoveryContact, type StudentRecoveryContactVerificationChallenge,
+  type StudentVerifiedRecoveryContact, type StudentRecoveryContactVerificationChallenge, type StudentPasswordResetChallenge,
 } from "@shared/schema";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
@@ -72,6 +72,11 @@ import {
   SESSION_REVOCATION_TTL_MS,
   userSessionRevocationSid,
 } from "./session-revocation";
+import {
+  generatePasswordRecoveryToken,
+  hashPasswordRecoverySecret,
+  passwordRecoverySecretsEqual,
+} from "./password-recovery-crypto";
 
 type GradingRule = Omit<StoredGradingRule, "minPercent" | "maxPercent"> & {
   minPercent: number;
@@ -3413,6 +3418,7 @@ export class DatabaseStorage {
     if (data.aadharNumber !== undefined) setData.aadharNumber = data.aadharNumber;
     if (data.email !== undefined) setData.email = data.email;
     return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${id})`);
       const [before] = await tx.select({ email: students.email }).from(students)
         .where(and(eq(students.id, id), eq(students.schoolId, schoolId))).for("update");
       if (!before) return undefined;
@@ -3434,6 +3440,11 @@ export class DatabaseStorage {
           eq(studentRecoveryContactVerificationChallenges.studentId, id),
           eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
           isNull(studentRecoveryContactVerificationChallenges.consumedAt),
+        ));
+        await tx.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(
+          eq(studentPasswordResetChallenges.studentId, id),
+          eq(studentPasswordResetChallenges.schoolId, schoolId),
+          isNull(studentPasswordResetChallenges.consumedAt),
         ));
       }
       return updated;
@@ -3460,6 +3471,7 @@ export class DatabaseStorage {
     now = new Date(),
   ): Promise<{ contact: StudentVerifiedRecoveryContact; challenge: StudentRecoveryContactVerificationChallenge } | null> {
     return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
       const [student] = await tx.select({ id: students.id, schoolId: students.schoolId, email: students.email })
         .from(students).where(and(eq(students.id, studentId), eq(students.schoolId, schoolId))).for("update");
       if (!student || !student.email || student.email.trim().toLowerCase() !== email.trim().toLowerCase()) return null;
@@ -3508,6 +3520,7 @@ export class DatabaseStorage {
     now = new Date(),
   ): Promise<boolean> {
     return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
       const challengeConditions = [
         eq(studentRecoveryContactVerificationChallenges.studentId, studentId),
         eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
@@ -3555,6 +3568,146 @@ export class DatabaseStorage {
         isNull(studentRecoveryContactVerificationChallenges.consumedAt),
       ));
       return true;
+    });
+  }
+
+  async createStudentPasswordResetChallenge(
+    studentId: number,
+    schoolId: number,
+    contactId: number,
+    otpHash: string,
+    otpExpiresAt: Date,
+    requestIp: string | null,
+    now = new Date(),
+  ): Promise<StudentPasswordResetChallenge | null> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
+      const [student] = await tx.select({
+        id: students.id,
+        schoolId: students.schoolId,
+        email: students.email,
+        isActive: students.isActive,
+        isActivated: students.isActivated,
+      }).from(students).where(and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+      )).for("update");
+      if (!student || !student.isActive || !student.isActivated || !student.email) return null;
+      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
+        eq(studentVerifiedRecoveryContacts.id, contactId),
+        eq(studentVerifiedRecoveryContacts.studentId, studentId),
+        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
+        eq(studentVerifiedRecoveryContacts.contactType, "email"),
+        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
+      )).for("update");
+      if (!contact || contact.contactValueNormalized !== student.email.trim().toLowerCase()) return null;
+      await tx.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(
+        eq(studentPasswordResetChallenges.studentId, studentId),
+        eq(studentPasswordResetChallenges.schoolId, schoolId),
+        isNull(studentPasswordResetChallenges.consumedAt),
+      ));
+      const [challenge] = await tx.insert(studentPasswordResetChallenges).values({
+        schoolId,
+        studentId,
+        contactId,
+        purpose: "student_password_recovery",
+        otpHash,
+        otpExpiresAt,
+        attemptCount: 0,
+        requestIp,
+        createdAt: now,
+      }).returning();
+      return challenge;
+    });
+  }
+
+  async getStudentPasswordResetChallenge(
+    challengeId: number,
+    studentId: number,
+    schoolId: number,
+  ): Promise<StudentPasswordResetChallenge | undefined> {
+    const [challenge] = await db.select().from(studentPasswordResetChallenges).where(and(
+      eq(studentPasswordResetChallenges.id, challengeId),
+      eq(studentPasswordResetChallenges.studentId, studentId),
+      eq(studentPasswordResetChallenges.schoolId, schoolId),
+    )).limit(1);
+    return challenge;
+  }
+
+  async invalidateStudentPasswordResetChallenge(
+    challengeId: number,
+    studentId: number,
+    schoolId: number,
+    now = new Date(),
+  ): Promise<void> {
+    await db.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(
+      eq(studentPasswordResetChallenges.id, challengeId),
+      eq(studentPasswordResetChallenges.studentId, studentId),
+      eq(studentPasswordResetChallenges.schoolId, schoolId),
+      isNull(studentPasswordResetChallenges.consumedAt),
+    ));
+  }
+
+  async verifyStudentPasswordResetOtp(
+    challengeId: number,
+    studentId: number,
+    schoolId: number,
+    otp: string,
+    now = new Date(),
+  ): Promise<string | null> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
+      const [challenge] = await tx.select().from(studentPasswordResetChallenges).where(and(
+        eq(studentPasswordResetChallenges.id, challengeId),
+        eq(studentPasswordResetChallenges.studentId, studentId),
+        eq(studentPasswordResetChallenges.schoolId, schoolId),
+        eq(studentPasswordResetChallenges.purpose, "student_password_recovery"),
+      )).for("update");
+      if (
+        !challenge
+        || challenge.consumedAt
+        || challenge.verifiedAt
+        || challenge.otpExpiresAt <= now
+        || challenge.attemptCount >= 5
+      ) return null;
+      const [student] = await tx.select({
+        email: students.email,
+        isActive: students.isActive,
+        isActivated: students.isActivated,
+      }).from(students).where(and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+      )).for("update");
+      if (!student?.email || !student.isActive || !student.isActivated) return null;
+      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
+        eq(studentVerifiedRecoveryContacts.id, challenge.contactId),
+        eq(studentVerifiedRecoveryContacts.studentId, studentId),
+        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
+        eq(studentVerifiedRecoveryContacts.contactType, "email"),
+        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
+      )).for("update");
+      if (!contact || contact.contactValueNormalized !== student.email.trim().toLowerCase()) return null;
+      const suppliedHash = hashPasswordRecoverySecret(otp);
+      if (!passwordRecoverySecretsEqual(challenge.otpHash, suppliedHash)) {
+        await tx.update(studentPasswordResetChallenges).set({
+          attemptCount: sql`LEAST(${studentPasswordResetChallenges.attemptCount} + 1, 5)`,
+        }).where(and(
+          eq(studentPasswordResetChallenges.id, challenge.id),
+          lt(studentPasswordResetChallenges.attemptCount, 5),
+        ));
+        return null;
+      }
+      const resetToken = generatePasswordRecoveryToken();
+      const [updated] = await tx.update(studentPasswordResetChallenges).set({
+        verifiedAt: now,
+        resetTokenHash: hashPasswordRecoverySecret(resetToken),
+        resetTokenExpiresAt: new Date(now.getTime() + 15 * 60 * 1000),
+      }).where(and(
+        eq(studentPasswordResetChallenges.id, challenge.id),
+        isNull(studentPasswordResetChallenges.verifiedAt),
+        isNull(studentPasswordResetChallenges.consumedAt),
+      )).returning({ id: studentPasswordResetChallenges.id });
+      return updated ? resetToken : null;
     });
   }
 
