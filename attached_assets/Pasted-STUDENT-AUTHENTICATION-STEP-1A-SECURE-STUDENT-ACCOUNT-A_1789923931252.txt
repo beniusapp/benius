@@ -1,0 +1,384 @@
+STUDENT AUTHENTICATION — STEP 1A
+SECURE STUDENT ACCOUNT ACTIVATION
+
+The Student authentication audit found a production-reachable CRITICAL vulnerability:
+
+POST /api/students/verify
+POST /api/students/activate
+
+Currently, an attacker who knows a Student's:
+- DSID
+- phone
+- date of birth
+
+may establish the initial password for an unactivated Student account.
+
+This must be fixed BEFORE implementing Student Forgot Password.
+
+==================================================
+STRICT SCOPE
+==================================================
+
+This step is ONLY for securing the Student account-activation flow.
+
+Do NOT implement Student Forgot Password.
+
+Do NOT modify:
+
+- Teacher authentication/recovery
+- Admin authentication/recovery
+- Student Forgot Password
+- Examination
+- Attendance
+- Fees
+- Academic Session
+- Student Registry unrelated to activation
+- Mobile application
+
+Do not fix unrelated findings from the audit in this step.
+
+==================================================
+FIRST — READ ONLY INSPECTION
+==================================================
+
+Before making changes, inspect:
+
+- POST /api/students/verify
+- POST /api/students/activate
+- student activation frontend
+- Student schema
+- Student creation/registration flow
+- existing Student password-change flow
+- existing email/notification infrastructure
+- existing school notification configuration
+- existing rate limiter
+- existing recovery/session infrastructure
+
+Determine exactly how an unactivated Student is currently created and activated.
+
+==================================================
+SECURITY REQUIREMENT
+==================================================
+
+Knowledge of:
+
+DSID + phone + DOB
+
+MUST NO LONGER be sufficient to establish a Student password.
+
+The activation flow must require a genuine possession/authorization factor.
+
+Preferred architecture:
+
+1. Validate the Student identity within the authenticated/validated school context.
+2. Require a one-time activation challenge.
+3. Deliver the challenge through a trusted school-managed contact/channel.
+4. Verify the challenge server-side.
+5. Only then allow password establishment.
+6. Make the challenge:
+   - cryptographically generated
+   - single-use
+   - time-limited
+   - attempt-limited
+   - tenant-bound
+   - Student-bound
+7. Never store plaintext OTP/challenge values.
+8. Never trust Student ID, school ID, challenge ID, or activation authority supplied by hidden/browser fields.
+
+==================================================
+CRITICAL CONTACT TRUST RULE
+==================================================
+
+The existing Student email field is administratively entered and is NOT currently verified.
+
+Do NOT silently treat an unverified email as a verified possession factor.
+
+If the current architecture does not contain a trustworthy Student activation contact/authorization factor, STOP and report that exact blocker instead of creating a false sense of security.
+
+Do not invent a verification state without implementing the necessary trusted process.
+
+A school-admin-issued activation credential/code is acceptable if the existing application already has a safe mechanism for issuing such a credential.
+
+==================================================
+TENANT ISOLATION
+==================================================
+
+Student activation must be explicitly school-bound.
+
+Do NOT rely solely on globally unique DSID.
+
+The authoritative lookup must include validated school context.
+
+A Student from School A must never be able to activate:
+
+- School B Student
+- School B credentials
+- School B account
+
+Browser-supplied schoolId/tenantId must never be trusted for authorization.
+
+If school code is required, resolve:
+
+school code → authenticated/validated school → Student within that school
+
+before any activation mutation.
+
+==================================================
+ACTIVATION CHALLENGE
+==================================================
+
+If an OTP/challenge mechanism is implemented:
+
+- cryptographically secure generation
+- six digits if OTP is used
+- 10-minute expiry
+- maximum 5 failed attempts
+- single-use
+- tenant-bound
+- Student-bound
+- no plaintext storage
+- HMAC storage where compatible with existing security architecture
+- timing-safe comparison
+- challenge replacement invalidates the previous challenge
+- replay must fail
+- expired challenge must fail
+- wrong challenge must not reveal whether the Student exists
+
+Use the existing secure recovery/OTP patterns where appropriate.
+
+Do not modify the accepted Teacher recovery implementation.
+
+==================================================
+ANTI-ENUMERATION
+==================================================
+
+Public activation endpoints must not reveal unnecessary account state.
+
+Avoid responses that distinguish:
+
+- Student does not exist
+- Student exists but is inactive
+- Student exists but is already activated
+- contact mismatch
+- challenge exists
+- challenge does not exist
+
+Use generic responses where appropriate.
+
+Do not disclose Student names or other personal information before successful authorization.
+
+==================================================
+RATE LIMITING
+==================================================
+
+Protect public activation endpoints against brute force.
+
+At minimum consider:
+
+- IP-based rate limiting
+- Student/account-based attempt limiting
+- challenge attempt limits
+
+Use existing project rate-limiting infrastructure where possible.
+
+Do not create a weak in-memory-only security control if the existing architecture provides a stronger mechanism.
+
+==================================================
+ATOMIC ACTIVATION
+==================================================
+
+Activation must be transactional.
+
+The final credential establishment must atomically verify:
+
+- exact Student
+- exact school
+- account still unactivated
+- valid activation challenge/authorization
+- challenge not expired
+- challenge not consumed
+- attempt limit not exceeded
+
+Then atomically:
+
+- set passwordHash
+- mark Student activated
+- consume activation challenge
+
+A concurrent activation request must not produce inconsistent state.
+
+Two simultaneous activation requests must not both establish different credentials successfully.
+
+==================================================
+PASSWORD HANDLING
+==================================================
+
+Preserve the existing password rules unless inspection shows a security defect.
+
+Passwords:
+
+- must be strings
+- minimum 6 characters
+- must match confirmation
+- must not be trimmed/transformed
+- Unicode supported
+- bcrypt cost 10
+- never logged
+- never returned
+
+==================================================
+ALREADY-ACTIVATED STUDENT
+==================================================
+
+Once activation succeeds:
+
+The same activation mechanism must NOT be reusable to reset the password.
+
+An activated Student must use the future secure Forgot Password flow for password recovery.
+
+Do not add Forgot Password in this step.
+
+==================================================
+SESSION BEHAVIOR
+==================================================
+
+Inspect whether activation currently creates a Student authenticated session.
+
+If activation automatically authenticates the Student:
+
+- preserve existing intended UX only if it can be done securely
+- do not introduce session fixation
+- do not trust browser-controlled identity
+
+If changing this behavior is necessary for security, document it clearly.
+
+Do not redesign the complete Student session system in this step.
+
+==================================================
+TESTS — REQUIRED
+==================================================
+
+Add focused security tests for:
+
+1. Valid activation succeeds.
+2. DSID + phone + DOB alone cannot activate an account.
+3. Missing/invalid activation challenge fails.
+4. Wrong challenge fails.
+5. Expired challenge fails.
+6. Challenge replay fails.
+7. Five failed attempts exhaust the challenge.
+8. A new challenge invalidates the previous challenge.
+9. Cross-tenant activation fails.
+10. Browser-supplied schoolId cannot change tenant.
+11. Browser-supplied studentId cannot change Student identity.
+12. Already-activated Student cannot activate again.
+13. Concurrent activation attempts cannot establish conflicting credentials.
+14. Password is stored only as bcrypt hash.
+15. No plaintext OTP/challenge/password is logged or returned.
+16. Generic anti-enumeration behavior.
+17. Failed activation does not partially modify the Student.
+18. Successful activation consumes the challenge atomically.
+
+If a required test cannot be implemented because the existing architecture lacks a trusted activation factor, STOP and report the blocker.
+
+==================================================
+IMPORTANT STOP CONDITION
+==================================================
+
+Do NOT proceed by weakening the requirement.
+
+If there is no trustworthy activation factor available in the current application, STOP.
+
+Report:
+
+- what trusted factors currently exist
+- why they are insufficient
+- what minimal architecture is required
+- whether schema changes are necessary
+
+Do not implement an insecure workaround.
+
+==================================================
+VALIDATION
+==================================================
+
+After implementation:
+
+- run focused Student activation security tests
+- run relevant existing Student tests
+- run existing Admin/Teacher recovery regression tests if shared infrastructure was touched
+- npm run check
+- git diff --check
+- restart application
+- verify startup/schema validation
+
+Do not perform production data changes.
+
+==================================================
+DATABASE / SCHEMA
+==================================================
+
+Prefer no schema changes if a secure implementation is possible with existing infrastructure.
+
+If a new activation-challenge table or fields are genuinely required:
+
+STOP before applying a migration.
+
+Report the proposed schema and why it is required.
+
+Do not silently introduce a migration.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return:
+
+A. Overall Result
+PASS / BLOCKED
+
+B. Critical Vulnerability Before
+
+C. Activation Architecture After
+
+D. Trusted Activation Factor
+
+E. Tenant Isolation
+
+F. Challenge Security
+
+G. Atomic Activation
+
+H. Enumeration Protection
+
+I. Rate Limiting
+
+J. Concurrent Activation Result
+
+K. Password Security
+
+L. Session Behavior
+
+M. Tests
+- suites
+- passed
+- failed
+- skipped
+
+N. npm run check
+
+O. git diff --check
+
+P. Files Changed
+
+Q. Database/Schema Changes
+
+R. Unrelated Changes
+
+S. Remaining Security Findings
+
+T. Final Status
+
+Do NOT implement Student Forgot Password.
+
+STOP after completing this activation remediation and report the result.
