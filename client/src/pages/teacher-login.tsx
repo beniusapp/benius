@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { GraduationCap, Loader2, Lock, Mail, Eye, EyeOff, Phone, ArrowLeft, KeyRound } from "lucide-react";
+import { ArrowLeft, Building2, CheckCircle2, Eye, EyeOff, GraduationCap, KeyRound, Loader2, Lock, Mail } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,12 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-type Step = "login" | "change-password" | "forgot-password" | "verify-otp" | "reset-password";
+type Step = "login" | "change-password" | "forgot-password" | "verify-otp" | "reset-password" | "reset-success";
+
+const GENERIC_RECOVERY_MESSAGE =
+  "If those details match, an OTP has been sent to your recovery email. Please check and try again.";
+
+const EMPTY_OTP = "";
 
 export default function TeacherLogin() {
   const { toast } = useToast();
@@ -20,18 +25,13 @@ export default function TeacherLogin() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [forgotSchoolCode, setForgotSchoolCode] = useState("");
   const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotPhone, setForgotPhone] = useState("");
-  const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
-  const [teacherId, setTeacherId] = useState<number | null>(null);
-  const [resetToken, setResetToken] = useState("");
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-
-  useEffect(() => {
-    if (step === "verify-otp") {
-      otpRefs.current[0]?.focus();
-    }
-  }, [step]);
+  const [otp, setOtp] = useState(EMPTY_OTP);
+  const [recoveryMessage, setRecoveryMessage] = useState(GENERIC_RECOVERY_MESSAGE);
+  const forgotSubmittingRef = useRef(false);
+  const otpSubmittingRef = useRef(false);
+  const resetSubmittingRef = useRef(false);
 
   const loginMutation = useMutation({
     mutationFn: async () => {
@@ -67,56 +67,96 @@ export default function TeacherLogin() {
 
   const forgotPasswordMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/teacher/forgot-password", { email: forgotEmail, phone: forgotPhone });
+      const res = await apiRequest("POST", "/api/teacher/forgot-password", {
+        schoolCode: forgotSchoolCode,
+        email: forgotEmail,
+      });
       return res.json();
     },
     onSuccess: (data) => {
-      setTeacherId(data.teacherId);
-      setOtpDigits(["", "", "", "", "", ""]);
+      setRecoveryMessage(
+        typeof data?.message === "string" ? data.message : GENERIC_RECOVERY_MESSAGE,
+      );
+      setOtp(EMPTY_OTP);
       setStep("verify-otp");
-      toast({ title: "OTP Sent", description: "OTP sent to your phone. Check console for dev OTP." });
+      toast({ title: "Check Your Email", description: GENERIC_RECOVERY_MESSAGE });
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: () => {
+      toast({
+        title: "Unable to Send OTP",
+        description: "Please wait a moment and try again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      forgotSubmittingRef.current = false;
     },
   });
 
   const verifyOtpMutation = useMutation({
     mutationFn: async () => {
-      const otp = otpDigits.join("");
-      const res = await apiRequest("POST", "/api/teacher/verify-otp", { teacherId, otp });
-      return { ...(await res.json()), otp };
+      const res = await apiRequest("POST", "/api/teacher/verify-otp", { otp });
+      return res.json();
     },
-    onSuccess: (data) => {
-      setResetToken(data.resetToken);
+    onSuccess: () => {
       setNewPassword("");
       setConfirmPassword("");
       setStep("reset-password");
       toast({ title: "OTP Verified", description: "Please set your new password." });
     },
-    onError: (error: Error) => {
-      toast({ title: "Invalid OTP", description: error.message, variant: "destructive" });
+    onError: () => {
+      toast({
+        title: "Unable to Verify OTP",
+        description: "The OTP is invalid or expired. Please request a new OTP and try again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      otpSubmittingRef.current = false;
     },
   });
 
   const resetPasswordMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/teacher/reset-password", { teacherId, resetToken, newPassword });
+      await apiRequest("POST", "/api/teacher/reset-password", {
+        newPassword,
+        confirmPassword,
+      });
     },
     onSuccess: () => {
-      toast({ title: "Password Reset", description: "Your password has been reset successfully. Please login." });
-      setStep("login");
-      setEmail("");
-      setPassword("");
-      setForgotEmail("");
-      setForgotPhone("");
-      setResetToken("");
-      setTeacherId(null);
+      setOtp(EMPTY_OTP);
+      setStep("reset-success");
     },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: () => {
+      toast({
+        title: "Unable to Reset Password",
+        description: "Your recovery session may have expired. Please start again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      resetSubmittingRef.current = false;
     },
   });
+
+  function clearRecoveryState() {
+    setForgotSchoolCode("");
+    setForgotEmail("");
+    setOtp(EMPTY_OTP);
+    setNewPassword("");
+    setConfirmPassword("");
+    setRecoveryMessage(GENERIC_RECOVERY_MESSAGE);
+    forgotPasswordMutation.reset();
+    verifyOtpMutation.reset();
+    resetPasswordMutation.reset();
+  }
+
+  function returnToLogin() {
+    clearRecoveryState();
+    setEmail("");
+    setPassword("");
+    setStep("login");
+  }
 
   function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -139,52 +179,29 @@ export default function TeacherLogin() {
 
   function handleForgotPassword(e: React.FormEvent) {
     e.preventDefault();
-    if (!forgotEmail || !forgotPhone) return;
+    if (forgotSubmittingRef.current || !forgotSchoolCode || !forgotEmail) return;
+    forgotSubmittingRef.current = true;
     forgotPasswordMutation.mutate();
   }
 
-  function handleOtpChange(index: number, value: string) {
-    if (value.length > 1) value = value.slice(-1);
-    if (value && !/^\d$/.test(value)) return;
-    const newDigits = [...otpDigits];
-    newDigits[index] = value;
-    setOtpDigits(newDigits);
-    if (value && index < 5) {
-      otpRefs.current[index + 1]?.focus();
-    }
-  }
-
-  function handleOtpKeyDown(index: number, e: React.KeyboardEvent) {
-    if (e.key === "Backspace" && !otpDigits[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-  }
-
-  function handleOtpPaste(e: React.ClipboardEvent) {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-    if (pasted.length === 0) return;
-    const newDigits = [...otpDigits];
-    for (let i = 0; i < 6; i++) {
-      newDigits[i] = pasted[i] || "";
-    }
-    setOtpDigits(newDigits);
-    const focusIdx = Math.min(pasted.length, 5);
-    otpRefs.current[focusIdx]?.focus();
+  function handleOtpChange(value: string) {
+    setOtp(value.replace(/\D/g, "").slice(0, 6));
   }
 
   function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
-    const otp = otpDigits.join("");
+    if (otpSubmittingRef.current) return;
     if (otp.length !== 6) {
       toast({ title: "Error", description: "Please enter the complete 6-digit OTP", variant: "destructive" });
       return;
     }
+    otpSubmittingRef.current = true;
     verifyOtpMutation.mutate();
   }
 
   function handleResetPassword(e: React.FormEvent) {
     e.preventDefault();
+    if (resetSubmittingRef.current) return;
     if (newPassword.length < 6) {
       toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
       return;
@@ -193,11 +210,14 @@ export default function TeacherLogin() {
       toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
       return;
     }
+    resetSubmittingRef.current = true;
     resetPasswordMutation.mutate();
   }
 
   function handleResendOtp() {
-    setOtpDigits(["", "", "", "", "", ""]);
+    if (forgotSubmittingRef.current) return;
+    forgotSubmittingRef.current = true;
+    setOtp(EMPTY_OTP);
     forgotPasswordMutation.mutate();
   }
 
@@ -207,14 +227,16 @@ export default function TeacherLogin() {
     "forgot-password": "Forgot Password",
     "verify-otp": "Enter OTP",
     "reset-password": "Set New Password",
+    "reset-success": "Password Reset",
   };
 
   const stepDescriptions: Record<Step, string> = {
     "login": "Sign in to your teacher account",
     "change-password": "Please set a new password to continue",
-    "forgot-password": "Enter your registered email and phone number",
-    "verify-otp": "Enter the 6-digit OTP sent to your phone",
+    "forgot-password": "Enter your school code and registered email",
+    "verify-otp": "Enter the 6-digit OTP sent to your recovery email",
     "reset-password": "Create a new password for your account",
+    "reset-success": "Your password has been updated securely",
   };
 
   const stepIcons: Record<Step, typeof GraduationCap> = {
@@ -223,6 +245,7 @@ export default function TeacherLogin() {
     "forgot-password": Mail,
     "verify-otp": KeyRound,
     "reset-password": Lock,
+    "reset-success": CheckCircle2,
   };
 
   const StepIcon = stepIcons[step];
@@ -296,7 +319,7 @@ export default function TeacherLogin() {
               <div className="text-center">
                 <button
                   type="button"
-                  onClick={() => { setForgotEmail(""); setForgotPhone(""); setStep("forgot-password"); }}
+                  onClick={() => { clearRecoveryState(); setStep("forgot-password"); }}
                   className="text-sm text-primary hover:underline"
                   data-testid="link-forgot-password"
                 >
@@ -347,6 +370,23 @@ export default function TeacherLogin() {
           {step === "forgot-password" && (
             <form onSubmit={handleForgotPassword} className="space-y-4">
               <div className="space-y-2">
+                <Label htmlFor="forgotSchoolCode">School Code</Label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    id="forgotSchoolCode"
+                    type="text"
+                    autoComplete="organization"
+                    placeholder="Enter your school code"
+                    value={forgotSchoolCode}
+                    onChange={(e) => setForgotSchoolCode(e.target.value)}
+                    className="pl-10"
+                    required
+                    data-testid="input-forgot-school-code"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="forgotEmail">Registered Email</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -362,22 +402,6 @@ export default function TeacherLogin() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="forgotPhone">Registered Phone Number</Label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    id="forgotPhone"
-                    type="tel"
-                    placeholder="9876543210"
-                    value={forgotPhone}
-                    onChange={(e) => setForgotPhone(e.target.value)}
-                    className="pl-10"
-                    required
-                    data-testid="input-forgot-phone"
-                  />
-                </div>
-              </div>
               <Button
                 type="submit"
                 className="w-full"
@@ -390,7 +414,7 @@ export default function TeacherLogin() {
               <div className="text-center">
                 <button
                   type="button"
-                  onClick={() => setStep("login")}
+                  onClick={returnToLogin}
                   className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
                   data-testid="link-back-to-login"
                 >
@@ -405,24 +429,23 @@ export default function TeacherLogin() {
             <form onSubmit={handleVerifyOtp} className="space-y-6">
               <div className="bg-muted/50 rounded-lg p-3 text-center">
                 <p className="text-sm text-muted-foreground" data-testid="text-otp-message">
-                  OTP sent to your phone. It expires in 5 minutes.
+                   {recoveryMessage}
                 </p>
               </div>
-              <div className="flex justify-center gap-2" onPaste={handleOtpPaste}>
-                {otpDigits.map((digit, i) => (
-                  <Input
-                    key={i}
-                    ref={(el) => { otpRefs.current[i] = el; }}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(i, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                    className="w-12 h-12 text-center text-xl font-semibold"
-                    data-testid={`input-otp-${i}`}
-                  />
-                ))}
+              <div className="space-y-2">
+                <Label htmlFor="teacherRecoveryOtp">Six-digit OTP</Label>
+                <Input
+                  id="teacherRecoveryOtp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => handleOtpChange(e.target.value)}
+                  className="w-full text-center text-xl font-semibold tracking-[0.35em]"
+                  aria-invalid={otp.length > 0 && otp.length !== 6}
+                  data-testid="input-otp"
+                />
               </div>
               <Button
                 type="submit"
@@ -446,7 +469,7 @@ export default function TeacherLogin() {
                 <div>
                   <button
                     type="button"
-                    onClick={() => setStep("login")}
+                    onClick={returnToLogin}
                     className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
                     data-testid="link-back-to-login-otp"
                   >
@@ -502,6 +525,27 @@ export default function TeacherLogin() {
                 Reset Password
               </Button>
             </form>
+          )}
+
+          {step === "reset-success" && (
+            <div className="space-y-6 text-center" data-testid="reset-success-state">
+              <div className="rounded-lg bg-muted/50 p-4">
+                <p className="font-medium" data-testid="text-reset-success">
+                  Password reset successfully.
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Please log in with your new password.
+                </p>
+              </div>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={returnToLogin}
+                data-testid="button-back-to-login-after-reset"
+              >
+                Back to Login
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>
