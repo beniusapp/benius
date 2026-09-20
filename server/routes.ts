@@ -1206,7 +1206,7 @@ export async function registerRoutes(
         dob: string;
         passwordHash: string;
         isActivated: boolean;
-        email?: string;
+        email: string;
       }[] = [];
 
       for (let i = 0; i < rows.length; i++) {
@@ -1227,6 +1227,11 @@ export async function registerRoutes(
 
         if (!phone || !isValidPhone(phone)) {
           warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid phone number`);
+          continue;
+        }
+
+        if (!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid student email`);
           continue;
         }
 
@@ -1255,7 +1260,7 @@ export async function registerRoutes(
           dob,
           passwordHash,
           isActivated: false,
-          ...(emailRaw && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? { email: emailRaw } : {}),
+          email: emailRaw,
         });
       }
 
@@ -1280,7 +1285,7 @@ export async function registerRoutes(
     motherName: z.string().optional(),
     address: z.string().optional(),
     aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
-    email: z.string().email("Invalid email format").optional().or(z.literal("")),
+    email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
     // existing fields below — do not move
     name: z.string().min(1),
     class: z.string().min(1),
@@ -1358,7 +1363,7 @@ export async function registerRoutes(
         ...(motherName     ? { motherName }     : {}),
         ...(address        ? { address }        : {}),
         ...(aadharNumber   ? { aadharNumber }   : {}),
-        ...(email          ? { email }          : {}),
+        email,
       });
 
       // Auto-enrollment: silently attach the student to the currently active
@@ -4150,7 +4155,7 @@ export async function registerRoutes(
     motherName: z.string().optional().nullable(),
     address: z.string().optional().nullable(),
     aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
-    email: z.string().email("Invalid email format").optional().nullable().or(z.literal("")),
+    email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
@@ -4176,7 +4181,7 @@ export async function registerRoutes(
       motherName:   rest.motherName   ?? null,
       address:      rest.address      ?? null,
       aadharNumber: rest.aadharNumber ?? null,
-      email:        rest.email        || null,
+      email:        rest.email,
     });
     if (!updated) return res.status(404).json({ message: "Student not found" });
     res.json(updated);

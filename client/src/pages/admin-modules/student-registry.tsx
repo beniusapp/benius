@@ -46,7 +46,7 @@ const addSchema = z.object({
   motherName: z.string().optional(),
   address: z.string().optional(),
   aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
-  email: z.string().email("Invalid email format").optional().or(z.literal("")),
+  email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
 });
 type AddForm = z.infer<typeof addSchema>;
 
@@ -65,7 +65,7 @@ const editSchema = z.object({
   motherName: z.string().optional(),
   address: z.string().optional(),
   aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
-  email: z.string().email("Invalid email format").optional().or(z.literal("")),
+  email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
 });
 type EditForm = z.infer<typeof editSchema>;
 
@@ -209,7 +209,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         motherName:   d.motherName   || undefined,
         address:      d.address      || undefined,
         aadharNumber: d.aadharNumber || undefined,
-        email:        d.email        || undefined,
+        email:        d.email,
       };
       const r = await apiRequest("POST", `/api/schools/${schoolId}/students`, payload);
       return r.json();
@@ -278,7 +278,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
         motherName:   d.motherName   || null,
         address:      d.address      || null,
         aadharNumber: d.aadharNumber || null,
-        email:        d.email        || null,
+        email:        d.email,
       };
       const r = await apiRequest("PATCH", `/api/admin/students/${editTarget!.id}`, payload);
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
@@ -567,10 +567,12 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                   <FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="email" render={({ field }) => (
-                <FormItem><FormLabel className="text-white/70">Student Email</FormLabel>
+                <FormItem><FormLabel className="text-white/70">Student Email <span className="text-red-400">*</span></FormLabel>
                   <FormControl><Input
                     {...field}
                     type="email"
+                    required
+                    placeholder="student@example.com"
                     className="bg-[#0A1628] border-white/20 text-white"
                     data-testid="input-student-email"
                   /></FormControl>
@@ -1093,10 +1095,12 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                       <FormMessage /></FormItem>
                   )} />
                   <FormField control={editForm.control} name="email" render={({ field }) => (
-                    <FormItem><FormLabel className="text-white/70">Student Email</FormLabel>
+                    <FormItem><FormLabel className="text-white/70">Student Email <span className="text-red-400">*</span></FormLabel>
                       <FormControl><Input
                         {...field}
                         type="email"
+                        required
+                        placeholder="student@example.com"
                         data-testid="input-edit-email"
                         className="bg-[#0A1628] border-white/20 text-white"
                       /></FormControl>
