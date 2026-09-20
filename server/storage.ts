@@ -56,6 +56,7 @@ import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
+import bcrypt from "bcryptjs";
 import {
   CURRENT_FEE_AUDIT_ACTION_OPTIONS,
   feeAuditActionLabel,
@@ -630,9 +631,70 @@ export class DatabaseStorage {
     return { teacher: result[0].teachers, school: result[0].schools, user: result[0].users };
   }
 
-  async updateTeacherPassword(userId: number, passwordHash: string, mustChangePassword: boolean = false): Promise<void> {
-    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
-    await db.update(teachers).set({ mustChangePassword }).where(eq(teachers.userId, userId));
+  async changeTeacherPasswordAtomically(
+    userId: number,
+    teacherId: number,
+    schoolId: number,
+    currentPassword: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [account] = await tx.select({ user: users, teacher: teachers })
+        .from(users)
+        .innerJoin(teachers, eq(teachers.userId, users.id))
+        .where(and(
+          eq(users.id, userId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+          eq(users.isActive, true),
+          eq(teachers.id, teacherId),
+          eq(teachers.userId, userId),
+          eq(teachers.schoolId, schoolId),
+          eq(teachers.isActive, true),
+        ))
+        .limit(1);
+      if (!account) return false;
+
+      const currentPasswordValid = await bcrypt.compare(
+        currentPassword,
+        account.user.passwordHash,
+      );
+      if (!currentPasswordValid) return false;
+
+      const [updatedUser] = await tx.update(users)
+        .set({ passwordHash })
+        .where(and(
+          eq(users.id, userId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+          eq(users.isActive, true),
+          eq(users.passwordHash, account.user.passwordHash),
+        ))
+        .returning({ id: users.id });
+      if (!updatedUser) return false;
+
+      const [updatedTeacher] = await tx.update(teachers)
+        .set({ mustChangePassword: false })
+        .where(and(
+          eq(teachers.id, teacherId),
+          eq(teachers.userId, userId),
+          eq(teachers.schoolId, schoolId),
+          eq(teachers.isActive, true),
+        ))
+        .returning({ id: teachers.id });
+      if (!updatedTeacher) {
+        throw new Error("Teacher password state changed during update");
+      }
+
+      await tx.update(passwordResetChallenges)
+        .set({ consumedAt: new Date() })
+        .where(and(
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          isNull(passwordResetChallenges.consumedAt),
+        ));
+      return true;
+    });
   }
 
   async deleteTeacher(teacherId: number, schoolId: number): Promise<boolean> {

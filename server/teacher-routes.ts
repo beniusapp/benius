@@ -266,23 +266,68 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.post("/api/teacher/change-password", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { teacherId, userId, schoolId, authIssuedAt } = req.session;
+    if (
+      !teacherId
+      || !userId
+      || !schoolId
+      || typeof authIssuedAt !== "number"
+      || !Number.isFinite(authIssuedAt)
+    ) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
     const parsed = changePasswordSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const data = await storage.getTeacherWithSchool(req.session.teacherId);
-    if (!data) return res.status(401).json({ message: "Teacher not found" });
-
-    if (data.teacher.schoolId !== req.session.schoolId) {
-      return res.status(403).json({ message: "Access denied" });
+    try {
+      if (await authenticationAttemptIsRevoked(userId, authIssuedAt)) {
+        await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+        return res.status(401).json({ message: "Session expired. Please log in again." });
+      }
+    } catch {
+      return res.status(503).json({ message: "Unable to verify session security. Please try again." });
     }
 
-    const currentValid = await bcrypt.compare(parsed.data.currentPassword, data.user.passwordHash);
-    if (!currentValid) return res.status(400).json({ message: "Incorrect Current Password" });
-
     const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
-    await storage.updateTeacherPassword(data.user.id, passwordHash, false);
-    res.json({ message: "Password changed successfully" });
+    let changed: boolean;
+    try {
+      changed = await storage.changeTeacherPasswordAtomically(
+        userId,
+        teacherId,
+        schoolId,
+        parsed.data.currentPassword,
+        passwordHash,
+      );
+    } catch {
+      return res.status(500).json({ message: "Unable to change password securely. Please try again." });
+    }
+    if (!changed) {
+      return res.status(400).json({ message: "Incorrect Current Password" });
+    }
+
+    try {
+      await storage.invalidateUserSessionsStrict(userId);
+    } catch {
+      await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+      console.error("Teacher password change session invalidation failed");
+      return res.status(500).json({
+        message: "Unable to complete password change securely. Please contact support.",
+      });
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        req.session.destroy(error => error ? reject(error) : resolve());
+      });
+    } catch {
+      console.error("Teacher password change current-session destruction failed");
+      return res.status(500).json({
+        message: "Unable to complete password change securely. Please contact support.",
+      });
+    }
+    return res.json({
+      message: "Password changed successfully. Please log in again.",
+    });
   });
 
   // ── TEACHER PROFILE — GLOBAL MODULE ──────────────────────────────────────────

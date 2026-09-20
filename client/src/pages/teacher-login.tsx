@@ -57,8 +57,15 @@ export default function TeacherLogin() {
       await apiRequest("POST", "/api/teacher/change-password", { currentPassword: password, newPassword });
     },
     onSuccess: () => {
-      toast({ title: "Password Changed", description: "Security credentials updated successfully." });
-      setLocation("/teacher-dashboard");
+      queryClient.clear();
+      setPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setStep("login");
+      toast({
+        title: "Password Changed",
+        description: "Security credentials updated successfully. Please log in again.",
+      });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

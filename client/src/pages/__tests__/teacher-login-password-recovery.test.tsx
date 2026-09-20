@@ -116,6 +116,49 @@ describe("Teacher Login secure password recovery", () => {
     expect(navigateMock).toHaveBeenCalledWith("/teacher-dashboard");
   });
 
+  it("submits only password fields for forced first-login change and returns to login after revocation", async () => {
+    apiRequestMock.mockImplementation((_method: string, url: string) => {
+      if (url === "/api/teacher-login") {
+        return response({ message: "Login successful", mustChangePassword: true });
+      }
+      if (url === "/api/teacher/change-password") {
+        return response({
+          message: "Password changed successfully. Please log in again.",
+        });
+      }
+      return response({});
+    });
+    renderTeacherLogin();
+    fireEvent.change(screen.getByTestId("input-email"), {
+      target: { value: "teacher@school.test" },
+    });
+    fireEvent.change(screen.getByTestId("input-password"), {
+      target: { value: "current-password" },
+    });
+    fireEvent.click(screen.getByTestId("button-login"));
+
+    await screen.findByTestId("input-new-password");
+    fireEvent.change(screen.getByTestId("input-new-password"), {
+      target: { value: "new-password" },
+    });
+    fireEvent.change(screen.getByTestId("input-confirm-password"), {
+      target: { value: "new-password" },
+    });
+    fireEvent.click(screen.getByTestId("button-change-password"));
+
+    await waitFor(() => expect(apiRequestMock).toHaveBeenCalledWith(
+      "POST",
+      "/api/teacher/change-password",
+      {
+        currentPassword: "current-password",
+        newPassword: "new-password",
+      },
+    ));
+    await waitFor(() => expect(screen.getByTestId("button-login")).toBeVisible());
+    expect(queryClearMock).toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/teacher-dashboard");
+  });
+
   it("opens a School Code and Email recovery form without phone or browser identity fields", () => {
     renderTeacherLogin();
     openRecovery();
