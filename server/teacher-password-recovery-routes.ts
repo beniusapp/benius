@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
 import type { NotificationConfig } from "@shared/schema";
 import { storage } from "./storage";
 import {
@@ -8,6 +9,7 @@ import {
   PASSWORD_RECOVERY_INVALID_MESSAGE,
   PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
   PasswordRecoveryRateLimiter,
+  hashPasswordRecoverySecret,
   type TeacherPasswordRecoveryChallenge,
 } from "./password-recovery";
 import { sendPasswordRecoveryEmail } from "./password-recovery-email";
@@ -34,6 +36,14 @@ type RecoveryRouteDependencies = {
   ) => Promise<void>;
   invalidateChallenges: (userId: number, schoolId: number) => Promise<void>;
   verifyOtp: typeof verifyTeacherPasswordRecoveryOtp;
+  resetPassword: (
+    challengeId: number,
+    userId: number,
+    schoolId: number,
+    resetTokenHash: string,
+    passwordHash: string,
+  ) => Promise<boolean>;
+  invalidateUserSessionsStrict: (userId: number) => Promise<void>;
   rateLimiter: PasswordRecoveryRateLimiter;
 };
 
@@ -48,6 +58,15 @@ const defaultDependencies: RecoveryRouteDependencies = {
   invalidateChallenges: (userId, schoolId) =>
     storage.invalidatePasswordResetChallenges(userId, schoolId),
   verifyOtp: verifyTeacherPasswordRecoveryOtp,
+  resetPassword: (challengeId, userId, schoolId, resetTokenHash, passwordHash) =>
+    storage.resetTeacherPasswordForChallenge(
+      challengeId,
+      userId,
+      schoolId,
+      resetTokenHash,
+      passwordHash,
+    ),
+  invalidateUserSessionsStrict: userId => storage.invalidateUserSessionsStrict(userId),
   rateLimiter: teacherRecoveryRateLimiter,
 };
 
@@ -58,6 +77,11 @@ const forgotPasswordSchema = z.object({
 
 const verifyOtpSchema = z.object({
   otp: z.string().regex(/^\d{6}$/),
+});
+
+const resetPasswordSchema = z.object({
+  newPassword: z.string().min(6),
+  confirmPassword: z.string().min(6),
 });
 
 export function registerTeacherPasswordRecoveryRoutes(
@@ -144,5 +168,69 @@ export function registerTeacherPasswordRecoveryRoutes(
     } catch {
       return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     }
+  });
+
+  app.post("/api/teacher/reset-password", async (req, res) => {
+    if (!dependencies.rateLimiter.consume(`teacher-reset-password:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+
+    const recovery = getTeacherPasswordRecoverySession(req, "password_reset");
+    if (!recovery || recovery.stage !== "password_reset") {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success || parsed.data.newPassword !== parsed.data.confirmPassword) {
+      return res.status(400).json({ message: "Invalid password reset request." });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    const resetTokenHash = hashPasswordRecoverySecret(recovery.resetToken);
+    let reset: boolean;
+    try {
+      reset = await dependencies.resetPassword(
+        recovery.challengeId,
+        recovery.userId,
+        recovery.schoolId,
+        resetTokenHash,
+        passwordHash,
+      );
+    } catch {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+    if (!reset) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+
+    try {
+      await dependencies.invalidateUserSessionsStrict(recovery.userId);
+    } catch {
+      clearTeacherPasswordRecoverySession(req);
+      if (req.session.userId === recovery.userId) {
+        await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+      }
+      console.error("Teacher password reset session invalidation failed");
+      return res.status(500).json({
+        message: "Unable to complete password reset securely. Please contact support.",
+      });
+    }
+
+    clearTeacherPasswordRecoverySession(req);
+    if (req.session.userId === recovery.userId) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          req.session.destroy(error => error ? reject(error) : resolve());
+        });
+      } catch {
+        console.error("Teacher password reset current-session destruction failed");
+        return res.status(500).json({
+          message: "Unable to complete password reset securely. Please contact support.",
+        });
+      }
+    }
+    return res.json({
+      success: true,
+      message: "Your password has been reset successfully. Please log in again.",
+    });
   });
 }

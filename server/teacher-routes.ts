@@ -1,7 +1,6 @@
 import type { Express } from "express";
 import { storage, evaluatePromotion } from "./storage";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
 import { z } from "zod";
 import multer from "multer";
 import path from "path";
@@ -23,6 +22,7 @@ import { resolveTeacherExaminationSession } from "./teacher-examination-session"
 import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
+import { authenticationAttemptIsRevoked } from "./session-revocation";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -111,12 +111,6 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6),
 });
 
-const resetPasswordSchema = z.object({
-  teacherId: z.number(),
-  resetToken: z.string().min(1),
-  newPassword: z.string().min(6),
-});
-
 export function registerTeacherRoutes(app: Express) {
   registerTeacherPasswordRecoveryRoutes(app);
   /**
@@ -188,6 +182,7 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== TEACHER AUTH =====
   app.post("/api/teacher-login", async (req, res) => {
+    const authenticationStartedAt = Date.now();
     const parsed = teacherLoginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Email and password are required" });
 
@@ -200,14 +195,21 @@ export function registerTeacherRoutes(app: Express) {
 
     const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
     if (!valid) return res.status(401).json({ message: "Invalid Credentials" });
-
     const teacher = await storage.getTeacherByUserId(user.id);
     if (!teacher) return res.status(401).json({ message: "Teacher record not found" });
+    try {
+      if (await authenticationAttemptIsRevoked(user.id, authenticationStartedAt)) {
+        return res.status(401).json({ message: "Invalid Credentials" });
+      }
+    } catch {
+      return res.status(503).json({ message: "Unable to verify session security. Please try again." });
+    }
 
     req.session.teacherId = teacher.id;
     req.session.userId = user.id;
     req.session.schoolId = teacher.schoolId;
     req.session.userRole = "teacher";
+    req.session.authIssuedAt = authenticationStartedAt;
     res.json({ message: "Login successful", mustChangePassword: teacher.mustChangePassword });
   });
 
@@ -321,21 +323,6 @@ export function registerTeacherRoutes(app: Express) {
     const profileImageUrl = `/uploads/schools/${teacher.schoolId}/teachers/${teacher.id}/${destFilename}`;
     await storage.updateTeacherProfilePicture(teacher.id, profileImageUrl);
     res.json({ message: "Profile picture updated", profileImageUrl });
-  });
-
-  // Final password-reset HTTP migration is intentionally deferred to Step 7.
-  app.post("/api/teacher/reset-password", async (req, res) => {
-    const parsed = resetPasswordSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-
-    const teacher = await storage.verifyTeacherResetToken(parsed.data.teacherId, parsed.data.resetToken);
-    if (!teacher) return res.status(400).json({ message: "Invalid or expired reset token. Please request a new OTP." });
-
-    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
-    await storage.updateTeacherPassword(teacher.user.id, passwordHash, false);
-    await storage.clearTeacherResetToken(parsed.data.teacherId);
-
-    res.json({ message: "Password reset successfully" });
   });
 
   app.post("/api/teacher-logout", (req, res) => {

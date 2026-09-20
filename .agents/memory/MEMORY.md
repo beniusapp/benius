@@ -35,3 +35,4 @@
 - [Examination grade-policy authority](examination-grade-policy-authority.md) — grades use tenant/class configured inclusive ranges; invalid, missing, or unmatched policies fail instead of using a universal scale.
 - [Examination promotion-policy authority](examination-promotion-policy-authority.md) — four tenant-owned promotion rules share one boundary contract; missing policy never receives universal defaults.
 - [Principal password recovery security](principal-password-recovery.md) — tenant-bound, emailed OTP recovery uses hashed single-use challenges and preserves mandatory PIN verification.
+- [Password-reset session revocation](password-reset-session-revocation.md) — row deletion alone is insufficient; durable revocation markers also block stale session saves and overlapping old-password logins.

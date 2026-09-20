@@ -13,6 +13,7 @@ import path from "path";
 import { formatTimeIST, SCHOOL_TIME_ZONE } from "../shared/ist-time";
 import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
+import { enforceSessionRevocation } from "./session-revocation";
 
 const app = express();
 const httpServer = createServer(app);
@@ -48,6 +49,7 @@ app.use(
     },
   }),
 );
+app.use(enforceSessionRevocation);
 
 export function log(message: string, source = "express") {
   const formattedTime = formatTimeIST(new Date());

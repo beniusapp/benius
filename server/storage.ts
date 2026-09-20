@@ -65,6 +65,10 @@ import {
 } from "./fee-audit";
 import { evaluatePromotionRules, selectGrade } from "@shared/examination-calculation-engine";
 import { percentageToDatabaseValue, percentageToHundredths } from "@shared/grading-percentage";
+import {
+  SESSION_REVOCATION_TTL_MS,
+  userSessionRevocationSid,
+} from "./session-revocation";
 
 type GradingRule = Omit<StoredGradingRule, "minPercent" | "maxPercent"> & {
   minPercent: number;
@@ -383,6 +387,7 @@ export class DatabaseStorage {
           eq(users.role, "teacher"),
           eq(users.isActive, true),
           eq(teachers.schoolId, schoolId),
+          eq(teachers.isActive, true),
         ))
         .limit(1)
         .for("update");
@@ -438,9 +443,38 @@ export class DatabaseStorage {
 
   async invalidateUserSessions(userId: number): Promise<void> {
     try {
-      await pool.query(`DELETE FROM "session" WHERE sess->>'userId' = $1`, [String(userId)]);
+      await this.invalidateUserSessionsStrict(userId);
     } catch {
       // Session-store cleanup is best effort because deployments may use another store.
+    }
+  }
+
+  async invalidateUserSessionsStrict(userId: number): Promise<void> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const revokedAt = Date.now();
+      await client.query(
+        `INSERT INTO "session" (sid, sess, expire)
+         VALUES ($1, $2::json, $3)
+         ON CONFLICT (sid) DO UPDATE
+         SET sess = EXCLUDED.sess, expire = EXCLUDED.expire`,
+        [
+          userSessionRevocationSid(userId),
+          JSON.stringify({ revokedAt }),
+          new Date(revokedAt + SESSION_REVOCATION_TTL_MS),
+        ],
+      );
+      await client.query(
+        `DELETE FROM "session" WHERE sess->>'userId' = $1`,
+        [String(userId)],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
   }
 

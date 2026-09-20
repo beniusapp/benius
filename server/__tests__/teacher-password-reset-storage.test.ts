@@ -34,6 +34,7 @@ async function createAccount(options: {
   teacherSchoolId?: number;
   linkedTeacher?: boolean;
   mustChangePassword?: boolean;
+    teacherIsActive?: boolean;
   otpCode?: string | null;
   resetToken?: string | null;
 }): Promise<Account> {
@@ -57,6 +58,7 @@ async function createAccount(options: {
     assignedClass: "1",
     assignedSection: "A",
     mustChangePassword: options.mustChangePassword ?? true,
+    isActive: options.teacherIsActive ?? true,
     otpCode: options.otpCode,
     otpExpiresAt: options.otpCode ? new Date(Date.now() + 600_000) : null,
     resetToken: options.resetToken,
@@ -327,6 +329,24 @@ describe("resetTeacherPasswordForChallenge", () => {
     expect(after.otpExpiresAt).toEqual(before.otpExpiresAt);
     expect(after.resetToken).toBe(before.resetToken);
     expect(after.resetTokenExpiresAt).toEqual(before.resetTokenExpiresAt);
+  });
+
+  it("rejects a reset when the linked Teacher was deactivated after challenge creation", async ({ skip }) => {
+    if (!tableAvailable) return skip();
+    const schoolId = await createSchool();
+    const account = await createAccount({ schoolId, teacherIsActive: false });
+    const challenge = await createChallenge(account, "inactive-teacher-token");
+
+    expect(await reset(
+      challenge.id,
+      account,
+      "inactive-teacher-token",
+      "new-password-for-inactive-teacher",
+    )).toBe(false);
+    expect(await bcrypt.compare(
+      account.password,
+      (await storedUser(account.userId)).passwordHash,
+    )).toBe(true);
   });
 
   it("uses exact challenge, user, school, and token identity", async ({ skip }) => {

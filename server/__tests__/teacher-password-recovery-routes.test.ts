@@ -3,6 +3,7 @@ import express from "express";
 import session from "express-session";
 import type { Server } from "node:http";
 import {
+  hashPasswordRecoverySecret,
   PASSWORD_RECOVERY_GENERIC_MESSAGE,
   PASSWORD_RECOVERY_INVALID_MESSAGE,
   PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
@@ -53,6 +54,8 @@ type RouteHarness = {
   invalidateChallenges: ReturnType<typeof vi.fn>;
   verifyOtp: ReturnType<typeof vi.fn>;
   createChallenge: ReturnType<typeof vi.fn>;
+  resetPassword: ReturnType<typeof vi.fn>;
+  invalidateUserSessionsStrict: ReturnType<typeof vi.fn>;
   stop: () => Promise<void>;
 };
 
@@ -145,6 +148,8 @@ async function makeHarness(options?: {
       ? { success: true as const, resetToken: expected.token }
       : { success: false as const };
   });
+  const resetPassword = vi.fn(async () => true);
+  const invalidateUserSessionsStrict = vi.fn(async () => undefined);
 
   const app = express();
   app.use(express.json());
@@ -170,6 +175,8 @@ async function makeHarness(options?: {
     sendRecoveryEmail,
     invalidateChallenges,
     verifyOtp: verifyOtp as any,
+    resetPassword,
+    invalidateUserSessionsStrict,
     rateLimiter: options?.limiter ?? new PasswordRecoveryRateLimiter(1000),
   });
   app.get("/test/session", (req, res) => {
@@ -193,9 +200,9 @@ async function makeHarness(options?: {
     res.json({ ok: true });
   });
   app.post("/test/auth-state", (req, res) => {
-    req.session.userId = 71001;
-    req.session.teacherId = 72001;
-    req.session.schoolId = 73001;
+    req.session.userId = req.body.userId ?? 71001;
+    req.session.teacherId = req.body.teacherId ?? 72001;
+    req.session.schoolId = req.body.schoolId ?? 73001;
     req.session.userRole = "teacher";
     res.json({ ok: true });
   });
@@ -216,6 +223,8 @@ async function makeHarness(options?: {
     invalidateChallenges,
     verifyOtp,
     createChallenge,
+    resetPassword,
+    invalidateUserSessionsStrict,
     stop: () => new Promise<void>((resolve, reject) =>
       server.close(error => error ? reject(error) : resolve())
     ),
@@ -594,5 +603,209 @@ describe("Teacher password recovery HTTP boundary", () => {
     expect(serializedLogs).not.toContain("unused-in-step-6");
     expect(serializedLogs).not.toContain(configA.sendgridApiKey);
     expect(serializedLogs).not.toContain("Provider rejected");
+  });
+
+  it.each([
+    ["missing newPassword", { confirmPassword: "valid-password" }],
+    ["missing confirmPassword", { newPassword: "valid-password" }],
+    ["non-string password", { newPassword: 123456, confirmPassword: 123456 }],
+    ["mismatched passwords", { newPassword: "valid-password", confirmPassword: "different-password" }],
+    ["password below policy", { newPassword: "short", confirmPassword: "short" }],
+  ])("rejects %s without consuming PASSWORD_RESET state", async (_label, body) => {
+    const app = await harness();
+    const now = Date.now();
+    const recovery = {
+      flow: "teacher_password_recovery",
+      stage: "password_reset",
+      challengeId: accountA.userId + 1000,
+      userId: accountA.userId,
+      schoolId: schoolA.id,
+      teacherId: accountA.teacherId,
+      resetToken: resetTokenA,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seeded = await request(app, "/test/recovery-state", "POST", { recovery });
+    const result = await request(app, "/api/teacher/reset-password", "POST", body, seeded.cookie);
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ message: "Invalid password reset request." });
+    expect(app.resetPassword).not.toHaveBeenCalled();
+    const current = await request(app, "/test/session", "GET", undefined, seeded.cookie);
+    expect(current.body.recovery).toMatchObject(recovery);
+  });
+
+  it("ignores injected identity and token fields, hashes exact Unicode input, then prevents replay", async () => {
+    const app = await harness();
+    const password = "नया-पासवर्ड-🔐";
+    const logs = [
+      vi.spyOn(console, "log").mockImplementation(() => undefined),
+      vi.spyOn(console, "info").mockImplementation(() => undefined),
+      vi.spyOn(console, "debug").mockImplementation(() => undefined),
+      vi.spyOn(console, "warn").mockImplementation(() => undefined),
+      vi.spyOn(console, "error").mockImplementation(() => undefined),
+    ];
+    const now = Date.now();
+    const recovery = {
+      flow: "teacher_password_recovery",
+      stage: "password_reset",
+      challengeId: accountA.userId + 1000,
+      userId: accountA.userId,
+      schoolId: schoolA.id,
+      teacherId: accountA.teacherId,
+      resetToken: resetTokenA,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const seeded = await request(app, "/test/recovery-state", "POST", { recovery });
+    const result = await request(app, "/api/teacher/reset-password", "POST", {
+      newPassword: password,
+      confirmPassword: password,
+      schoolId: schoolB.id,
+      tenantId: schoolB.id,
+      userId: accountB.userId,
+      teacherId: accountB.teacherId,
+      challengeId: accountB.userId + 1000,
+      resetToken: resetTokenB,
+      email: schoolBOnlyEmail,
+      schoolCode: schoolB.code,
+    }, seeded.cookie);
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({
+      success: true,
+      message: "Your password has been reset successfully. Please log in again.",
+    });
+    expect(app.resetPassword).toHaveBeenCalledTimes(1);
+    const [challengeId, userId, schoolId, tokenHash, passwordHash] =
+      app.resetPassword.mock.calls[0];
+    expect({ challengeId, userId, schoolId }).toEqual({
+      challengeId: accountA.userId + 1000,
+      userId: accountA.userId,
+      schoolId: schoolA.id,
+    });
+    expect(tokenHash).toBe(hashPasswordRecoverySecret(resetTokenA));
+    expect(tokenHash).not.toBe(resetTokenA);
+    expect(await (await import("bcryptjs")).default.compare(password, passwordHash)).toBe(true);
+    expect(app.invalidateUserSessionsStrict).toHaveBeenCalledWith(accountA.userId);
+    expect(JSON.stringify(result.body)).not.toContain(password);
+    expect(JSON.stringify(result.body)).not.toContain(resetTokenA);
+    expect(JSON.stringify(result.body)).not.toContain(passwordHash);
+    const serializedLogs = JSON.stringify(logs.flatMap(spy => spy.mock.calls));
+    expect(serializedLogs).not.toContain(password);
+    expect(serializedLogs).not.toContain(resetTokenA);
+    expect(serializedLogs).not.toContain(tokenHash);
+    expect(serializedLogs).not.toContain(passwordHash);
+
+    const current = await request(app, "/test/session", "GET", undefined, seeded.cookie);
+    expect(current.body.recovery).toBeNull();
+    const replay = await request(app, "/api/teacher/reset-password", "POST", {
+      newPassword: password,
+      confirmPassword: password,
+    }, seeded.cookie);
+    expect(replay.status).toBe(400);
+    expect(app.resetPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report success when strict session invalidation fails", async () => {
+    const app = await harness();
+    app.invalidateUserSessionsStrict.mockRejectedValueOnce(new Error("session-store unavailable"));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const auth = await request(app, "/test/auth-state", "POST", {
+      userId: accountA.userId,
+      teacherId: accountA.teacherId,
+      schoolId: schoolA.id,
+    });
+    const now = Date.now();
+    const seeded = await request(app, "/test/recovery-state", "POST", {
+      recovery: {
+        flow: "teacher_password_recovery",
+        stage: "password_reset",
+        challengeId: accountA.userId + 1000,
+        userId: accountA.userId,
+        schoolId: schoolA.id,
+        teacherId: accountA.teacherId,
+        resetToken: resetTokenA,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }, auth.cookie);
+    const result = await request(app, "/api/teacher/reset-password", "POST", {
+      newPassword: "new-secure-password",
+      confirmPassword: "new-secure-password",
+    }, seeded.cookie);
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({
+      message: "Unable to complete password reset securely. Please contact support.",
+    });
+    expect(errorLog).toHaveBeenCalled();
+    const current = await request(app, "/test/session", "GET", undefined, seeded.cookie);
+    expect(current.body.recovery).toBeNull();
+    expect(current.body.auth).toEqual({});
+  });
+
+  it("invalidates the current affected authenticated session without logging the Teacher back in", async () => {
+    const app = await harness();
+    const auth = await request(app, "/test/auth-state", "POST", {
+      userId: accountA.userId,
+      teacherId: accountA.teacherId,
+      schoolId: schoolA.id,
+    });
+    const now = Date.now();
+    const seeded = await request(app, "/test/recovery-state", "POST", {
+      recovery: {
+        flow: "teacher_password_recovery",
+        stage: "password_reset",
+        challengeId: accountA.userId + 1000,
+        userId: accountA.userId,
+        schoolId: schoolA.id,
+        teacherId: accountA.teacherId,
+        resetToken: resetTokenA,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }, auth.cookie);
+    const result = await request(app, "/api/teacher/reset-password", "POST", {
+      newPassword: "new-secure-password",
+      confirmPassword: "new-secure-password",
+    }, seeded.cookie);
+    expect(result.status).toBe(200);
+    const current = await request(app, "/test/session", "GET", undefined, seeded.cookie);
+    expect(current.body.auth).toEqual({});
+    expect(current.body.recovery).toBeNull();
+  });
+
+  it("allows exactly one of two concurrent reset requests to succeed", async () => {
+    const app = await harness();
+    let consumed = false;
+    app.resetPassword.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      if (consumed) return false;
+      consumed = true;
+      return true;
+    });
+    const now = Date.now();
+    const seeded = await request(app, "/test/recovery-state", "POST", {
+      recovery: {
+        flow: "teacher_password_recovery",
+        stage: "password_reset",
+        challengeId: accountA.userId + 1000,
+        userId: accountA.userId,
+        schoolId: schoolA.id,
+        teacherId: accountA.teacherId,
+        resetToken: resetTokenA,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const body = {
+      newPassword: "concurrent-secure-password",
+      confirmPassword: "concurrent-secure-password",
+    };
+    const results = await Promise.all([
+      request(app, "/api/teacher/reset-password", "POST", body, seeded.cookie),
+      request(app, "/api/teacher/reset-password", "POST", body, seeded.cookie),
+    ]);
+    expect(results.map(result => result.status).sort()).toEqual([200, 400]);
+    expect(app.invalidateUserSessionsStrict).toHaveBeenCalledTimes(1);
   });
 });
