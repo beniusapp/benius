@@ -314,6 +314,69 @@ export class DatabaseStorage {
     });
   }
 
+  async resetTeacherPasswordForChallenge(
+    challengeId: number,
+    userId: number,
+    schoolId: number,
+    resetTokenHash: string,
+    passwordHash: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [account] = await tx.select({ user: users, teacher: teachers })
+        .from(users)
+        .innerJoin(teachers, eq(teachers.userId, users.id))
+        .where(and(
+          eq(users.id, userId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+          eq(users.isActive, true),
+          eq(teachers.schoolId, schoolId),
+        ))
+        .limit(1)
+        .for("update");
+      if (!account) return false;
+
+      const [challenge] = await tx.update(passwordResetChallenges)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(passwordResetChallenges.id, challengeId),
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          eq(passwordResetChallenges.resetTokenHash, resetTokenHash),
+          isNull(passwordResetChallenges.consumedAt),
+          isNotNull(passwordResetChallenges.verifiedAt),
+          gte(passwordResetChallenges.resetTokenExpiresAt, now),
+        ))
+        .returning();
+      if (!challenge) return false;
+
+      await tx.update(users)
+        .set({ passwordHash })
+        .where(and(
+          eq(users.id, userId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+          eq(users.isActive, true),
+        ));
+      await tx.update(teachers)
+        .set({ mustChangePassword: false })
+        .where(and(
+          eq(teachers.id, account.teacher.id),
+          eq(teachers.userId, userId),
+          eq(teachers.schoolId, schoolId),
+        ));
+      await tx.update(passwordResetChallenges)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          isNull(passwordResetChallenges.consumedAt),
+        ));
+      return true;
+    });
+  }
+
   async invalidatePasswordResetChallenges(userId: number, schoolId: number): Promise<void> {
     await db.update(passwordResetChallenges).set({ consumedAt: new Date() }).where(and(
       eq(passwordResetChallenges.userId, userId),
