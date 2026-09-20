@@ -2529,6 +2529,24 @@ export class DatabaseStorage {
     return { teacher: result[0].teachers, user: result[0].users };
   }
 
+  async getTeacherUserByEmailAndSchool(email: string, schoolId: number): Promise<{ teacher: Teacher; user: User } | null> {
+    const result = await db.select().from(users)
+      .innerJoin(teachers, eq(users.id, teachers.userId))
+      .where(and(
+        eq(users.email, email),
+        eq(users.schoolId, schoolId),
+        eq(users.role, "teacher"),
+        eq(users.isActive, true),
+        eq(teachers.schoolId, schoolId),
+      ))
+      .limit(2);
+    if (result.length === 0) return null;
+    if (result.length > 1) {
+      throw new Error("Ambiguous teacher account for school");
+    }
+    return { teacher: result[0].teachers, user: result[0].users };
+  }
+
   async setTeacherOtp(teacherId: number, otpCode: string, expiresAt: Date): Promise<void> {
     await db.update(teachers).set({ otpCode, otpExpiresAt: expiresAt }).where(eq(teachers.id, teacherId));
   }
