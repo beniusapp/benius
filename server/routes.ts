@@ -1039,13 +1039,13 @@ export async function registerRoutes(
   app.patch("/api/admin/profile", async (req, res) => {
     if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
     const schema = z.object({
-      recoveryEmail: z.string().email().optional().or(z.literal("")),
+      recoveryEmail: z.string().trim().min(1, "Recovery email is required").email("Enter a valid recovery email"),
       recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Phone must contain only digits").optional().or(z.literal("")),
     });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Invalid data" });
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(issue => issue.message).join(", ") });
     await storage.updateAdminProfile(req.session.userId, {
-      recoveryEmail: parsed.data.recoveryEmail || null,
+      recoveryEmail: parsed.data.recoveryEmail,
       recoveryPhone: parsed.data.recoveryPhone || null,
     });
     res.json({ message: "Profile updated" });

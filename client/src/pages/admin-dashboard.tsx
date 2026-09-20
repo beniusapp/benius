@@ -192,7 +192,7 @@ const changePinSchema = z.object({
 }).refine(d => d.newPin === d.confirmPin, { message: "PINs do not match", path: ["confirmPin"] });
 
 const profileSchema = z.object({
-  recoveryEmail: z.string().email("Valid email").optional().or(z.literal("")),
+  recoveryEmail: z.string().trim().min(1, "Recovery email is required").email("Enter a valid recovery email"),
   recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed").optional().or(z.literal("")),
 });
 
@@ -829,11 +829,11 @@ function AdminProfilePanel({ me, onClose }: { me: MeResponse; onClose: () => voi
                   <p className="text-xs font-bold text-gray-600 uppercase tracking-wide">Recovery Options</p>
                   <FormField control={profileForm.control} name="recoveryEmail" render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-xs">Recovery Email</FormLabel>
+                      <FormLabel className="text-xs">Recovery Email <span className="text-red-500">*</span></FormLabel>
                       <FormControl>
                         <div className="relative">
                           <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                          <Input className="pl-8 text-sm" placeholder="backup@email.com" data-testid="input-profile-recovery-email" {...field} />
+                          <Input type="email" required className="pl-8 text-sm" placeholder="backup@email.com" data-testid="input-profile-recovery-email" {...field} />
                         </div>
                       </FormControl>
                       <FormMessage />
