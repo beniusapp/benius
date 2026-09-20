@@ -1,4 +1,6 @@
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { storage } from "./storage";
+import type { PasswordResetChallenge } from "@shared/schema";
 
 export const PASSWORD_RECOVERY_GENERIC_MESSAGE =
   "If those details match, an OTP has been sent to your recovery email. Please check and try again.";
@@ -33,6 +35,38 @@ export function passwordRecoverySecretsEqual(expectedHash: string, actualHash: s
   const expected = Buffer.from(expectedHash, "hex");
   const actual = Buffer.from(actualHash, "hex");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+export type TeacherPasswordRecoveryChallenge = {
+  challenge: PasswordResetChallenge;
+  otp: string;
+  resetToken: string;
+};
+
+export async function createTeacherPasswordRecoveryChallenge(
+  email: string,
+  schoolId: number,
+  requestIp: string | null,
+  now = new Date(),
+): Promise<TeacherPasswordRecoveryChallenge | null> {
+  const account = await storage.getTeacherUserByEmailAndSchool(email, schoolId);
+  if (!account || !account.teacher.isActive) return null;
+
+  const otp = generatePasswordRecoveryOtp();
+  const resetToken = generatePasswordRecoveryToken();
+  const challenge = await storage.createTeacherPasswordResetChallenge(
+    account.user.id,
+    account.teacher.id,
+    schoolId,
+    hashPasswordRecoverySecret(otp),
+    new Date(now.getTime() + 10 * 60 * 1000),
+    hashPasswordRecoverySecret(resetToken),
+    new Date(now.getTime() + 15 * 60 * 1000),
+    requestIp,
+    now,
+  );
+  if (!challenge) return null;
+  return { challenge, otp, resetToken };
 }
 
 type RateLimitEntry = { startedAt: number; count: number };

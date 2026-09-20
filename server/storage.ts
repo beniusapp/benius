@@ -225,6 +225,57 @@ export class DatabaseStorage {
     });
   }
 
+  async createTeacherPasswordResetChallenge(
+    userId: number,
+    teacherId: number,
+    schoolId: number,
+    otpHash: string,
+    otpExpiresAt: Date,
+    resetTokenHash: string,
+    resetTokenExpiresAt: Date,
+    requestIp: string | null,
+    now = new Date(),
+  ): Promise<PasswordResetChallenge | null> {
+    return db.transaction(async (tx) => {
+      const [account] = await tx.select({ userId: users.id, teacherId: teachers.id })
+        .from(users)
+        .innerJoin(teachers, eq(teachers.userId, users.id))
+        .where(and(
+          eq(users.id, userId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+          eq(users.isActive, true),
+          eq(teachers.id, teacherId),
+          eq(teachers.schoolId, schoolId),
+          eq(teachers.isActive, true),
+        ))
+        .limit(1)
+        .for("update");
+      if (!account) return null;
+
+      await tx.update(passwordResetChallenges)
+        .set({ consumedAt: now })
+        .where(and(
+          eq(passwordResetChallenges.userId, userId),
+          eq(passwordResetChallenges.schoolId, schoolId),
+          isNull(passwordResetChallenges.consumedAt),
+        ));
+      const [challenge] = await tx.insert(passwordResetChallenges).values({
+        userId,
+        schoolId,
+        otpHash,
+        otpExpiresAt,
+        resetTokenHash,
+        resetTokenExpiresAt,
+        attemptCount: 0,
+        verifiedAt: null,
+        consumedAt: null,
+        requestIp,
+      }).returning();
+      return challenge;
+    });
+  }
+
   async getPasswordResetChallenge(id: number): Promise<PasswordResetChallenge | undefined> {
     const [challenge] = await db.select().from(passwordResetChallenges)
       .where(eq(passwordResetChallenges.id, id));
