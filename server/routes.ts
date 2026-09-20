@@ -53,7 +53,10 @@ import {
   PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
   PasswordRecoveryRateLimiter,
 } from "./password-recovery";
-import { sendPasswordRecoveryEmail } from "./password-recovery-email";
+import {
+  sendPasswordRecoveryEmail,
+  sendStudentRecoveryContactVerificationEmail,
+} from "./password-recovery-email";
 import path from "node:path";
 import fs from "node:fs";
 import { dateOnlyParts, getAcademicYearForISTDate, replaceCalendarYear, todayInIST } from "@shared/ist-time";
@@ -4185,6 +4188,89 @@ export async function registerRoutes(
     });
     if (!updated) return res.status(404).json({ message: "Student not found" });
     res.json(updated);
+  });
+
+  const studentRecoveryContactGenericMessage = "If the recovery email is eligible, a verification code has been sent.";
+  const studentRecoveryContactInvalidMessage = "Invalid or expired verification code.";
+  const studentRecoveryContactRequestSchema = z.object({}).strict();
+  const studentRecoveryContactVerifySchema = z.object({ otp: z.string().regex(/^\d{6}$/) });
+
+  app.get("/api/admin/students/:id/recovery-contact", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    const id = Number(req.params.id);
+    if (!schoolId || !Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid student" });
+    const contact = await storage.getStudentVerifiedRecoveryContact(id, schoolId);
+    const [student] = await db.select({ id: students.id, email: students.email, schoolId: students.schoolId })
+      .from(students).where(and(eq(students.id, id), eq(students.schoolId, schoolId))).limit(1);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    res.json({
+      email: student.email ?? null,
+      verified: !!contact,
+      verifiedAt: contact?.verifiedAt ?? null,
+    });
+  });
+
+  app.post("/api/admin/students/:id/recovery-contact/request", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    const id = Number(req.params.id);
+    if (!schoolId || !Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid student" });
+    if (!studentRecoveryContactRequestSchema.safeParse(req.body).success) return res.status(400).json({ message: studentRecoveryContactGenericMessage });
+    try {
+      const [student] = await db.select({ id: students.id, schoolId: students.schoolId, email: students.email })
+        .from(students).where(and(eq(students.id, id), eq(students.schoolId, schoolId))).limit(1);
+      if (!student?.email) return res.json({ message: studentRecoveryContactGenericMessage });
+      const existingContact = await storage.getStudentVerifiedRecoveryContact(id, schoolId);
+      if (
+        existingContact
+        && existingContact.contactValueNormalized === student.email.trim().toLowerCase()
+      ) {
+        return res.json({ message: studentRecoveryContactGenericMessage });
+      }
+      const config = await storage.getNotificationConfig(schoolId);
+      if (!config || config.schoolId !== schoolId || !config.emailEnabled) return res.json({ message: studentRecoveryContactGenericMessage });
+      const otp = generatePasswordRecoveryOtp();
+      const created = await storage.createStudentRecoveryContactVerificationChallenge(
+        id, schoolId, student.email, hashPasswordRecoverySecret(otp),
+        new Date(Date.now() + 10 * 60 * 1000), req.ip || null,
+      );
+      if (!created || created.challenge.schoolId !== schoolId || created.challenge.studentId !== id) {
+        return res.json({ message: studentRecoveryContactGenericMessage });
+      }
+      try {
+        await sendStudentRecoveryContactVerificationEmail(config, student.email, otp);
+      } catch {
+        await storage.invalidateStudentRecoveryContactVerificationChallenge(created.challenge.id, id, schoolId);
+      }
+      return res.json({ message: studentRecoveryContactGenericMessage });
+    } catch {
+      return res.json({ message: studentRecoveryContactGenericMessage });
+    }
+  });
+
+  app.post("/api/admin/students/:id/recovery-contact/verify", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    const id = Number(req.params.id);
+    if (!schoolId || !Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: studentRecoveryContactInvalidMessage });
+    }
+    const parsed = studentRecoveryContactVerifySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: studentRecoveryContactInvalidMessage });
+    try {
+      const verified = await storage.verifyStudentRecoveryContactChallenge(
+        null,
+        id,
+        schoolId,
+        hashPasswordRecoverySecret(parsed.data.otp),
+        passwordRecoverySecretsEqual,
+      );
+      if (!verified) return res.status(400).json({ message: studentRecoveryContactInvalidMessage });
+      return res.json({ success: true, message: "Recovery email verified." });
+    } catch {
+      return res.status(400).json({ message: studentRecoveryContactInvalidMessage });
+    }
   });
 
   // ===== ADMIN: ACTIVE STUDENT EXPORT (Excel) =====

@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey, foreignKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -137,6 +137,64 @@ export const passwordResetChallenges = pgTable("password_reset_challenges", {
 ]);
 export type PasswordResetChallenge = typeof passwordResetChallenges.$inferSelect;
 
+export const studentVerifiedRecoveryContacts = pgTable("student_verified_recovery_contacts", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull(),
+  contactType: varchar("contact_type", { length: 20 }).notNull().default("email"),
+  contactValue: varchar("contact_value", { length: 255 }).notNull(),
+  contactValueNormalized: varchar("contact_value_normalized", { length: 255 }).notNull(),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  verificationMethod: varchar("verification_method", { length: 30 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("student_verified_contacts_school_student_idx").on(table.schoolId, table.studentId),
+  uniqueIndex("student_verified_contacts_student_type_uniq").on(table.studentId, table.contactType),
+  uniqueIndex("student_verified_contacts_tenant_identity_uniq").on(table.id, table.studentId, table.schoolId),
+  foreignKey({
+    name: "student_verified_contacts_student_tenant_fk",
+    columns: [table.studentId, table.schoolId],
+    foreignColumns: [students.id, students.schoolId],
+  }).onDelete("cascade"),
+  check("student_verified_contacts_email_only_chk", sql`${table.contactType} = 'email'`),
+]);
+export type StudentVerifiedRecoveryContact = typeof studentVerifiedRecoveryContacts.$inferSelect;
+
+export const studentRecoveryContactVerificationChallenges = pgTable("student_recovery_contact_verification_challenges", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull(),
+  contactId: integer("contact_id").notNull(),
+  purpose: varchar("purpose", { length: 40 }).notNull().default("student_recovery_email_verification"),
+  codeHash: text("code_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  requestIp: text("request_ip"),
+}, (table) => [
+  index("student_recovery_verification_school_student_idx").on(table.schoolId, table.studentId),
+  index("student_recovery_verification_active_idx").on(table.schoolId, table.studentId, table.contactId, table.consumedAt),
+  foreignKey({
+    name: "student_recovery_verification_student_tenant_fk",
+    columns: [table.studentId, table.schoolId],
+    foreignColumns: [students.id, students.schoolId],
+  }).onDelete("cascade"),
+  foreignKey({
+    name: "student_recovery_verification_contact_tenant_fk",
+    columns: [table.contactId, table.studentId, table.schoolId],
+    foreignColumns: [
+      studentVerifiedRecoveryContacts.id,
+      studentVerifiedRecoveryContacts.studentId,
+      studentVerifiedRecoveryContacts.schoolId,
+    ],
+  }).onDelete("cascade"),
+  check("student_recovery_verification_purpose_chk", sql`${table.purpose} = 'student_recovery_email_verification'`),
+  check("student_recovery_verification_attempts_chk", sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 5`),
+]);
+export type StudentRecoveryContactVerificationChallenge = typeof studentRecoveryContactVerificationChallenges.$inferSelect;
+
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
@@ -162,7 +220,9 @@ export const students = pgTable("students", {
   address: text("address"),
   aadharNumber: varchar("aadhar_number", { length: 12 }),
   email: varchar("email", { length: 255 }),
-});
+}, (table) => [
+  uniqueIndex("students_id_school_uniq").on(table.id, table.schoolId),
+]);
 
 export const teachers = pgTable("teachers", {
   id: serial("id").primaryKey(),

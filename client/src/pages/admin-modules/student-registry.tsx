@@ -120,6 +120,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   const [bulkPassword, setBulkPassword]   = useState("");
   const [bulkShowPw, setBulkShowPw]       = useState(false);
   const [bulkPwError, setBulkPwError]     = useState("");
+  const [recoveryOtp, setRecoveryOtp] = useState("");
 
   const handleSearch = useCallback((val: string) => {
     setQ(val);
@@ -286,10 +287,43 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     },
     onSuccess: () => {
       toast({ title: "Student Updated", description: `${editTarget?.name} record saved.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/students", editTarget?.id, "recovery-contact"] });
       setEditTarget(null);
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
     },
     onError: (e: Error) => toast({ title: "Update Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const { data: recoveryContact } = useQuery<{ email: string | null; verified: boolean; verifiedAt: string | null }>({
+    queryKey: ["/api/admin/students", editTarget?.id, "recovery-contact"],
+    enabled: !!editTarget,
+  });
+  const editedRecoveryEmail = editForm.watch("email");
+  const recoveryEmailIsSaved = editedRecoveryEmail.trim().toLowerCase()
+    === (recoveryContact?.email ?? "").trim().toLowerCase();
+  const requestRecoveryContactMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/admin/students/${editTarget!.id}/recovery-contact/request`, {});
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.message);
+      return body;
+    },
+    onSuccess: d => { setRecoveryOtp(""); toast({ title: "Verification code sent", description: d.message }); },
+    onError: (e: Error) => toast({ title: "Verification unavailable", description: e.message, variant: "destructive" }),
+  });
+  const verifyRecoveryContactMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/admin/students/${editTarget!.id}/recovery-contact/verify`, { otp: recoveryOtp });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.message);
+      return body;
+    },
+    onSuccess: d => {
+      setRecoveryOtp("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/students", editTarget?.id, "recovery-contact"] });
+      toast({ title: "Recovery email verified", description: d.message });
+    },
+    onError: (e: Error) => toast({ title: "Verification failed", description: e.message, variant: "destructive" }),
   });
 
   const autoAssignMutation = useMutation({
@@ -1106,6 +1140,43 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                       /></FormControl>
                       <FormMessage /></FormItem>
                   )} />
+                  <div className="rounded-lg border border-white/10 bg-[#0A1628]/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-white/80">Recovery email ownership</p>
+                        <p className="text-xs text-white/45">
+                          {recoveryContact?.verified ? "Verified for this Student." : "Unverified — recipient must enter the emailed code."}
+                        </p>
+                      </div>
+                      <span className={`text-xs font-semibold ${recoveryContact?.verified ? "text-emerald-400" : "text-amber-400"}`}>
+                        {recoveryContact?.verified ? "Verified" : "Unverified"}
+                      </span>
+                    </div>
+                    {!recoveryContact?.verified && (
+                      <div className="space-y-2">
+                        {!recoveryEmailIsSaved && (
+                          <p className="text-xs text-amber-300">Save the Student record before sending a code to the new email.</p>
+                        )}
+                        <div className="flex gap-2 items-center">
+                        <Button type="button" variant="outline" className="h-9 border-white/20 text-white/70"
+                          disabled={requestRecoveryContactMutation.isPending || !editedRecoveryEmail || !recoveryEmailIsSaved}
+                          onClick={() => requestRecoveryContactMutation.mutate()}
+                          data-testid="button-request-recovery-email">
+                          {requestRecoveryContactMutation.isPending ? "Sending…" : "Send verification code"}
+                        </Button>
+                        <Input value={recoveryOtp} onChange={e => setRecoveryOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          inputMode="numeric" maxLength={6} placeholder="6-digit code"
+                          className="h-9 bg-[#0A1628] border-white/20 text-white" data-testid="input-recovery-email-otp" />
+                        <Button type="button" className="h-9 bg-[#10b981] text-white"
+                          disabled={verifyRecoveryContactMutation.isPending || recoveryOtp.length !== 6}
+                          onClick={() => verifyRecoveryContactMutation.mutate()}
+                          data-testid="button-verify-recovery-email">
+                          Verify
+                        </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <FormField control={editForm.control} name="address" render={({ field }) => (
                     <FormItem><FormLabel className="text-white/70">Address</FormLabel>
                       <FormControl><Textarea {...field} placeholder="" rows={2} data-testid="input-edit-address"
