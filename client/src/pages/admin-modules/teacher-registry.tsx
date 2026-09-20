@@ -22,7 +22,7 @@ const GOVT_ID_TYPES = ["Aadhar", "Voter ID", "PAN", "Driving Licence"];
 
 const addSchema = z.object({
   fullName: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Valid email required"),
+  email: z.string().trim().min(1, "Teacher email is required").email("Enter a valid teacher email"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
   designation: z.string().optional(),
@@ -271,10 +271,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                     <FormField key={name} control={addForm.control} name={name} render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-white/70 text-xs">
-                          {name === "fullName" ? "Full Name" : name.charAt(0).toUpperCase() + name.slice(1)}
+                          {name === "fullName" ? "Full Name" : name === "email" ? (
+                            <>Email <span className="text-red-400">*</span></>
+                          ) : name.charAt(0).toUpperCase() + name.slice(1)}
                         </FormLabel>
                         <FormControl>
-                          <Input {...field} type={name === "password" ? "password" : "text"}
+                          <Input {...field} type={name === "password" ? "password" : name === "email" ? "email" : "text"}
+                            required={name === "email"}
                             className="bg-[#0A1628] border-white/20 text-white h-9 text-sm"
                             data-testid={`input-reg-teacher-${name}`}
                             {...(name === "phone" ? { inputMode: "numeric" as const, maxLength: 10, placeholder: "10-digit mobile number", onChange: (e: React.ChangeEvent<HTMLInputElement>) => field.onChange(e.target.value.replace(/\D/g, "").slice(0, 10)) } : {})} />

@@ -85,7 +85,7 @@ const studentPhotoUpload = multer({
 
 const createTeacherSchema = z.object({
   fullName: z.string().min(2),
-  email: z.string().email(),
+  email: z.string().trim().min(1, "Teacher email is required").email("Enter a valid teacher email"),
   password: z.string().min(6),
   phone: z.string().min(7),
   subject: z.string().optional().default(""),
