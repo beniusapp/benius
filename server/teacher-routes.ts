@@ -22,6 +22,7 @@ import {
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
+import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -110,16 +111,6 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(6),
 });
 
-const forgotPasswordSchema = z.object({
-  email: z.string().email(),
-  phone: z.string().min(7),
-});
-
-const verifyOtpSchema = z.object({
-  teacherId: z.number(),
-  otp: z.string().length(6),
-});
-
 const resetPasswordSchema = z.object({
   teacherId: z.number(),
   resetToken: z.string().min(1),
@@ -127,6 +118,7 @@ const resetPasswordSchema = z.object({
 });
 
 export function registerTeacherRoutes(app: Express) {
+  registerTeacherPasswordRecoveryRoutes(app);
   /**
    * Teacher Examination's authoritative data boundary. The selected session is
    * required and is resolved together with the authenticated teacher's school,
@@ -331,36 +323,7 @@ export function registerTeacherRoutes(app: Express) {
     res.json({ message: "Profile picture updated", profileImageUrl });
   });
 
-  // ===== FORGOT PASSWORD / OTP =====
-  app.post("/api/teacher/forgot-password", async (req, res) => {
-    const parsed = forgotPasswordSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Email and phone number are required" });
-
-    const match = await storage.findTeacherByEmailAndPhone(parsed.data.email, parsed.data.phone);
-    if (!match) return res.status(404).json({ message: "Details not found. Please contact the Principal." });
-
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    await storage.setTeacherOtp(match.teacher.id, otp, expiresAt);
-
-    console.log(`[DEV OTP] ${parsed.data.email} → ${otp}`);
-    res.json({ message: "OTP sent to your phone", teacherId: match.teacher.id });
-  });
-
-  app.post("/api/teacher/verify-otp", async (req, res) => {
-    const parsed = verifyOtpSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: "Teacher ID and OTP are required" });
-
-    const verified = await storage.verifyTeacherOtp(parsed.data.teacherId, parsed.data.otp);
-    if (!verified) return res.status(400).json({ message: "Invalid or expired OTP. Please try again." });
-
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    await storage.setTeacherResetToken(parsed.data.teacherId, resetToken);
-    await storage.clearTeacherOtp(parsed.data.teacherId);
-
-    res.json({ message: "OTP verified", verified: true, resetToken });
-  });
-
+  // Final password-reset HTTP migration is intentionally deferred to Step 7.
   app.post("/api/teacher/reset-password", async (req, res) => {
     const parsed = resetPasswordSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });

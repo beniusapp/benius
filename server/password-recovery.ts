@@ -39,6 +39,7 @@ export function passwordRecoverySecretsEqual(expectedHash: string, actualHash: s
 
 export type TeacherPasswordRecoveryChallenge = {
   challenge: PasswordResetChallenge;
+  teacherId: number;
   otp: string;
   resetToken: string;
 };
@@ -66,7 +67,7 @@ export async function createTeacherPasswordRecoveryChallenge(
     now,
   );
   if (!challenge) return null;
-  return { challenge, otp, resetToken };
+  return { challenge, teacherId: account.teacher.id, otp, resetToken };
 }
 
 type RateLimitEntry = { startedAt: number; count: number };
