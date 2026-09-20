@@ -1,0 +1,944 @@
+TEACHER AUTHENTICATION — STEP 10
+LEGACY / ALTERNATE AUTHENTICATION PATH AUDIT
+READ-ONLY INVESTIGATION ONLY
+
+Steps 1–9 have been completed and accepted as PASS.
+
+Step 10 is a READ-ONLY security audit.
+
+The objective is to identify whether any legacy, alternate, duplicate, undocumented, or directly reachable Teacher authentication/password-recovery path still exists that could bypass the secure Teacher Forgot Password architecture implemented in Steps 1–9.
+
+==================================================
+CRITICAL RULE — NO IMPLEMENTATION
+==================================================
+
+DO NOT modify production code.
+
+DO NOT modify test code.
+
+DO NOT refactor.
+
+DO NOT delete legacy code.
+
+DO NOT remove old endpoints.
+
+DO NOT change routes.
+
+DO NOT change database schema.
+
+DO NOT create migrations.
+
+DO NOT change passwords.
+
+DO NOT change session behavior.
+
+DO NOT change authentication behavior.
+
+DO NOT change rate limits.
+
+DO NOT change recovery configuration.
+
+DO NOT change SendGrid configuration.
+
+DO NOT make security fixes during this step.
+
+This is an investigation only.
+
+If you discover a security issue:
+
+1. STOP the investigation at the point necessary to establish the finding.
+2. Do NOT fix it.
+3. Do NOT modify the code.
+4. Report the exact issue.
+5. Report the exact route/file/function involved.
+6. Explain whether it is actually reachable.
+7. Explain whether it can bypass Steps 1–9.
+8. Provide a minimal proposed remediation separately.
+9. Mark the final result BLOCKED if it is a genuine security bypass.
+
+Do not silently repair anything.
+
+==================================================
+SECURITY ARCHITECTURE THAT MUST REMAIN AUTHORITATIVE
+==================================================
+
+The accepted Teacher Forgot Password architecture is:
+
+Teacher Login
+→ School Code + Registered Teacher Email
+→ tenant-safe Teacher lookup
+→ server-side recovery challenge
+→ OTP
+→ server-side recovery session
+→ password-reset state
+→ server-side reset token
+→ atomic password reset
+→ session revocation
+→ Teacher Login
+
+The browser must never be authoritative for:
+
+- schoolId
+- tenantId
+- userId
+- teacherId
+- challengeId
+- resetToken
+
+The secure recovery endpoints are:
+
+POST /api/teacher/forgot-password
+
+POST /api/teacher/verify-otp
+
+POST /api/teacher/reset-password
+
+==================================================
+MULTI-TENANT SECURITY REQUIREMENT
+==================================================
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+School/tenant isolation is permanent and non-negotiable.
+
+A Teacher belonging to School A must never be able to:
+
+- authenticate as School B
+- reset a School B Teacher password
+- use a School B recovery challenge
+- use a School B reset token
+- access another school's Teacher authentication state
+- bypass tenant checks through a legacy endpoint
+
+Any alternate authentication path must preserve:
+
+authenticated school / tenant boundary
+
+and must not introduce a global Teacher identity lookup.
+
+==================================================
+PART 1 — INVENTORY ALL TEACHER AUTHENTICATION ROUTES
+==================================================
+
+Perform a repository-wide search.
+
+Identify EVERY route related to Teacher authentication.
+
+Search for terms including, but not limited to:
+
+- teacher login
+- teacher-login
+- teacher/login
+- teacher/forgot-password
+- teacher/verify-otp
+- teacher/reset-password
+- teacher password
+- teacher password reset
+- teacher OTP
+- teacher otp
+- teacher authentication
+- teacher auth
+- login
+- authenticate
+- sign-in
+- password
+- reset
+- forgot
+- recovery
+- verify-otp
+- otpCode
+- resetToken
+
+Search both:
+
+- server/
+- client/
+
+Also inspect route registration in:
+
+- server/index.ts
+- server/routes.ts
+- server/teacher-routes.ts
+- any other route-registration modules
+
+Do not assume route names from previous steps.
+
+Find the actual registered routes.
+
+==================================================
+PART 2 — BUILD COMPLETE TEACHER AUTH MAP
+==================================================
+
+Create a table with:
+
+| Route | Method | File | Handler | Purpose | Auth Required | Tenant Check | Status |
+
+Include every Teacher-related authentication/recovery route you find.
+
+For each route determine:
+
+- Is it active?
+- Is it registered?
+- Is it reachable?
+- Is it used by the current frontend?
+- Is it used by another frontend/mobile/API path?
+- Is it legacy?
+- Does it authenticate a Teacher?
+- Does it reset a Teacher password?
+- Does it verify OTP?
+- Does it create a session?
+- Does it destroy/revoke a session?
+
+Do not modify anything.
+
+==================================================
+PART 3 — IDENTIFY LEGACY TEACHER RECOVERY CODE
+==================================================
+
+Specifically investigate the legacy implementation that existed before Steps 1–8.
+
+Search for historical/legacy mechanisms such as:
+
+- email + phone Teacher lookup
+- findTeacherByEmailAndPhone
+- teacher otpCode
+- Math.random OTP
+- plaintext OTP storage
+- console OTP logging
+- browser-supplied teacherId
+- browser-supplied resetToken
+- legacy reset-password handlers
+- old Teacher recovery state
+- old Teacher password reset fields
+
+Determine:
+
+1. Does the legacy code still exist?
+
+2. Is it registered as an active route?
+
+3. Can it be reached over HTTP?
+
+4. Is it reachable only through unused functions?
+
+5. Is it reachable from the current frontend?
+
+6. Is it reachable from any other frontend?
+
+7. Is it reachable through another server route?
+
+8. Can it authenticate a Teacher?
+
+9. Can it reset a Teacher password?
+
+10. Can it bypass tenant isolation?
+
+IMPORTANT:
+
+Do NOT delete or modify the legacy code.
+
+We are only determining whether it remains reachable.
+
+==================================================
+PART 4 — LEGACY STORAGE METHODS
+==================================================
+
+Inspect Teacher-related storage methods in:
+
+server/storage.ts
+
+Search for methods related to:
+
+- findTeacherByEmailAndPhone
+- OTP
+- password reset
+- reset token
+- teacher password
+- teacher authentication
+- teacher session
+- recovery
+
+For every legacy method determine:
+
+- who calls it
+- whether the caller is active/reachable
+- whether it is only retained for compatibility
+- whether it can still affect authentication
+- whether it can still affect password reset
+- whether it can still create/reset credentials
+- whether it can bypass school isolation
+
+Do not remove any method.
+
+==================================================
+PART 5 — LEGACY DATABASE FIELDS
+==================================================
+
+Inspect the Teacher/User schema and existing recovery-related columns.
+
+Identify fields such as:
+
+- otpCode
+- resetToken
+- reset expiry
+- phone-based recovery fields
+- legacy password-reset fields
+- other Teacher authentication fields
+
+Determine:
+
+A. Which fields are still actively read.
+
+B. Which fields are still actively written.
+
+C. Which fields are only retained for backward compatibility.
+
+D. Which fields are completely unused.
+
+E. Whether any active authentication path still trusts them.
+
+F. Whether any active password-reset path still trusts them.
+
+DO NOT modify schema or data.
+
+DO NOT migrate anything.
+
+==================================================
+PART 6 — FRONTEND AUTHENTICATION PATHS
+==================================================
+
+Search all frontend code for Teacher authentication.
+
+Inspect:
+
+- client/src/pages/teacher-login.tsx
+- Teacher dashboard authentication guards
+- Teacher session providers
+- auth hooks
+- API clients
+- route guards
+- navigation
+- mobile-related Teacher authentication code if present
+
+Search for:
+
+- fetch("/api/teacher
+- /api/teacher/
+- login
+- forgot-password
+- verify-otp
+- reset-password
+- teacherId
+- schoolId
+- tenantId
+- resetToken
+- otp
+
+Determine whether any frontend code still uses:
+
+- phone-based Teacher recovery
+- Teacher ID recovery
+- browser reset tokens
+- browser-supplied school IDs
+- legacy OTP endpoints
+- alternate login endpoints
+
+Do not modify the frontend.
+
+==================================================
+PART 7 — SESSION CREATION AUDIT
+==================================================
+
+Identify EVERY place where a Teacher-authenticated session can be created.
+
+Search for:
+
+- req.session
+- teacherId
+- userId
+- authenticated
+- login
+- session assignment
+- session regeneration
+- session authentication
+- Teacher role assignment
+
+For each authentication path determine:
+
+1. What proves the Teacher's identity?
+
+2. What proves the Teacher belongs to the school?
+
+3. Does the path query the Teacher within school scope?
+
+4. Can client-supplied schoolId override server-side identity?
+
+5. Can client-supplied teacherId override identity?
+
+6. Can an old password still create a session after password reset?
+
+7. Does session revocation apply?
+
+8. Does the authentication-start timestamp protection apply?
+
+9. Is the path covered by tests?
+
+Do not change anything.
+
+==================================================
+PART 8 — ALTERNATE LOGIN / API PATHS
+==================================================
+
+Look for any alternate way to authenticate as a Teacher, including:
+
+- direct API login
+- legacy login
+- development login
+- test login accidentally registered in development workflow
+- password bypass
+- temporary authentication
+- impersonation
+- magic login
+- OTP login
+- PIN login
+- email-only login
+- phone-only login
+- Teacher ID login
+- session restoration
+- auto-login
+- remember-me authentication
+- OAuth/provider login if applicable
+
+Do not assume these exist.
+
+Determine whether they exist.
+
+If any exist, document:
+
+- route
+- method
+- implementation
+- tenant enforcement
+- whether active
+- whether production-reachable
+- whether it can bypass the accepted authentication architecture
+
+==================================================
+PART 9 — DEVELOPMENT / TEST BYPASS AUDIT
+==================================================
+
+Search specifically for development-only authentication shortcuts.
+
+Look for:
+
+- DEV_LOGIN
+- development login
+- test user
+- mock authentication
+- bypassAuth
+- skipAuth
+- authenticateAs
+- impersonate
+- forceLogin
+- testTeacher
+- seedTeacher
+- hardcoded credentials
+- environment-controlled auth bypass
+- NODE_ENV checks
+- REPLIT_DEV
+- development password bypass
+
+Determine:
+
+- whether it exists
+- whether it is server-side
+- whether it is route-reachable
+- whether it can run in the production environment
+- whether it affects tenant isolation
+
+Do NOT remove or modify it.
+
+==================================================
+PART 10 — ROUTE REGISTRATION AUDIT
+==================================================
+
+A function existing in source code is NOT automatically a security issue.
+
+Verify actual route registration.
+
+For every legacy/alternate recovery/authentication handler determine:
+
+A. Is it imported?
+
+B. Is it registered?
+
+C. What HTTP method?
+
+D. What exact path?
+
+E. Is the route reachable?
+
+F. Is it protected?
+
+G. Can it affect credentials?
+
+Distinguish clearly between:
+
+ACTIVE / REACHABLE
+
+and
+
+UNREFERENCED / UNREACHABLE
+
+Do not label unused source code as an active vulnerability without proving reachability.
+
+==================================================
+PART 11 — CROSS-TENANT AUTHENTICATION AUDIT
+==================================================
+
+For every active Teacher authentication path discovered, verify tenant enforcement.
+
+Test development-only requests where appropriate.
+
+At minimum investigate:
+
+School A credentials + School B identifiers
+
+School A credentials + School B schoolId
+
+School A credentials + School B teacherId
+
+School A recovery state + School B identity
+
+School B recovery state + School A identity
+
+For each active path determine whether cross-tenant authentication is possible.
+
+If a cross-tenant authentication path is found:
+
+STOP.
+
+Do not fix it.
+
+Report BLOCKED.
+
+==================================================
+PART 12 — OLD PASSWORD AFTER RESET
+==================================================
+
+Trace every Teacher authentication path.
+
+Determine whether any path could still authenticate with the old password after a successful password reset.
+
+Pay particular attention to:
+
+- legacy password fields
+- alternate password verification
+- phone/OTP login
+- cached credentials
+- development login
+- duplicate login handlers
+
+Do not change anything.
+
+If an alternate path bypasses the new bcrypt password:
+
+STOP and report it.
+
+==================================================
+PART 13 — PASSWORD RESET PATH INVENTORY
+==================================================
+
+Identify EVERY place that can modify a Teacher password.
+
+Search for:
+
+- passwordHash
+- password
+- bcrypt
+- compare
+- hash
+- update password
+- reset password
+- mustChangePassword
+- teacher password
+- user password
+
+Build:
+
+| Password-change path | Route/function | Who can invoke | Tenant scoped | Recovery protected | Active |
+
+Determine whether any path can reset a Teacher password without appropriate authorization.
+
+Do not modify anything.
+
+==================================================
+PART 14 — OTP PATH INVENTORY
+==================================================
+
+Identify EVERY OTP mechanism related to Teacher authentication.
+
+For each one determine:
+
+- generation method
+- storage method
+- hashing
+- expiry
+- attempt limit
+- tenant binding
+- session binding
+- route
+- active/reachable status
+
+Specifically identify whether any legacy plaintext OTP mechanism remains reachable.
+
+Do not modify it.
+
+If a reachable plaintext OTP authentication/reset path exists:
+
+STOP and report BLOCKED.
+
+==================================================
+PART 15 — MOBILE / FUTURE CLIENT API SURFACE
+==================================================
+
+Do NOT build the mobile app.
+
+Do NOT change mobile code.
+
+Only inspect whether existing APIs expose an alternate Teacher authentication/recovery contract that a future mobile client could use.
+
+Identify:
+
+- active Teacher auth APIs
+- active Teacher recovery APIs
+- legacy APIs still reachable
+- undocumented APIs
+- APIs accepting browser-supplied identity
+
+Do not redesign anything in this step.
+
+==================================================
+PART 16 — TEST COVERAGE AUDIT
+==================================================
+
+Determine whether active Teacher authentication/recovery paths are covered by tests.
+
+For each active path identify relevant test files.
+
+Look for:
+
+- tenant isolation
+- authentication
+- password reset
+- session revocation
+- race conditions
+- OTP
+- recovery expiry
+- replay
+- old password
+- browser request contracts
+
+Do not add tests in Step 10.
+
+This is an audit only.
+
+==================================================
+PART 17 — RUN EXISTING TESTS ONLY
+==================================================
+
+Run the existing relevant Teacher authentication/recovery tests.
+
+Do NOT create new tests.
+
+Do NOT modify tests.
+
+At minimum run:
+
+- Teacher password recovery tests
+- Teacher recovery route tests
+- Teacher reset storage tests
+- Teacher reset integration tests
+- Teacher session revocation tests
+- Teacher login race tests
+- strict session invalidation tests
+- Teacher frontend recovery tests
+- relevant Teacher authentication tests
+
+Also run:
+
+npm run check
+
+git diff --check
+
+Do NOT run a full repository repair/fix cycle.
+
+If unrelated existing tests fail, document them.
+
+Do not modify unrelated tests.
+
+==================================================
+PART 18 — VERIFY NO CODE CHANGES
+==================================================
+
+Before starting the audit:
+
+git status
+
+After completing the audit:
+
+git status
+git diff --stat
+git diff --check
+
+Expected:
+
+NO production-code changes
+NO test-code changes
+NO schema changes
+NO migrations
+NO data changes
+
+If anything changes unexpectedly:
+
+STOP and report it.
+
+==================================================
+SEVERITY CLASSIFICATION
+==================================================
+
+Use only these classifications:
+
+CRITICAL:
+A reachable authentication/password-reset path allows cross-tenant access, unauthorized password reset, authentication bypass, or exposure of a reset credential.
+
+HIGH:
+A reachable authentication/recovery path significantly weakens tenant isolation or credential security but does not demonstrate direct account takeover.
+
+MEDIUM:
+A reachable security weakness with meaningful but limited impact.
+
+LOW:
+A non-exploitable hardening issue or inactive/legacy concern.
+
+INFORMATIONAL:
+Unused/unreachable legacy code or documented compatibility code with no active security impact.
+
+Do not invent severity.
+
+==================================================
+IMPORTANT DISTINCTION
+==================================================
+
+Clearly distinguish:
+
+1. Active security vulnerability
+
+from
+
+2. Legacy code that exists but is unreachable
+
+from
+
+3. Legacy database fields that are unused
+
+from
+
+4. Dead storage methods with no active caller
+
+from
+
+5. Development-only code that cannot execute in production
+
+from
+
+6. Legitimate compatibility behavior
+
+Do not call dead code a vulnerability merely because it looks insecure.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return exactly these sections:
+
+A. Overall Result
+
+PASS / BLOCKED
+
+B. Teacher Authentication Route Inventory
+
+Table:
+
+| Route | Method | File | Active? | Reachable? | Purpose | Tenant Scoped? |
+
+C. Teacher Password-Recovery Route Inventory
+
+Table:
+
+| Route | Method | Active? | Current or Legacy | Tenant Scoped? | Reachable? |
+
+D. Legacy Recovery Findings
+
+For each legacy mechanism:
+
+- Location
+- What it does
+- Active/reachable?
+- Current caller
+- Security impact
+- Classification
+
+E. Legacy Storage Findings
+
+Identify relevant storage methods and whether they remain reachable.
+
+F. Legacy Database Field Findings
+
+Identify recovery/authentication fields and whether they are actively used.
+
+G. Teacher Session-Creation Paths
+
+List every active path that can create a Teacher-authenticated session.
+
+H. Password-Change Paths
+
+List every active path that can modify a Teacher password.
+
+I. OTP Paths
+
+List every active Teacher OTP mechanism.
+
+J. Development/Test Authentication Bypasses
+
+List any found and whether production-reachable.
+
+K. Cross-Tenant Findings
+
+PASS/FAIL for each active authentication/recovery path.
+
+L. Old-Password Authentication Audit
+
+PASS/FAIL.
+
+M. Mobile/Future API Surface
+
+List relevant active APIs only.
+
+N. Test Coverage
+
+List active paths and existing test coverage.
+
+O. Test Results
+
+Provide:
+
+- suites passed
+- tests passed
+- tests failed
+- tests skipped
+
+P. npm run check
+
+PASS/FAIL
+
+Q. git diff --check
+
+PASS/FAIL
+
+R. Code Changes
+
+EXPECTED:
+
+"No production-code or test-code changes."
+
+S. Database Changes
+
+EXPECTED:
+
+"No schema, migration, or data changes."
+
+T. Security Findings
+
+For every genuine finding:
+
+- Severity
+- Exact route/function
+- File
+- Reachability
+- Reproduction
+- Security impact
+- Why existing Steps 1–9 do not protect it
+- Recommended remediation
+
+If none:
+
+"No active security findings."
+
+U. Recommended Next Step
+
+Provide only factual next-step recommendations.
+
+Do NOT implement them.
+
+==================================================
+FINAL DECISION RULE
+==================================================
+
+PASS if:
+
+- every active Teacher authentication path is identified
+- every active password-reset path is identified
+- every active OTP path is identified
+- every active path is tenant-scoped
+- no legacy reachable path bypasses Steps 1–9
+- no reachable plaintext OTP path exists
+- no alternate password-reset bypass exists
+- no old-password authentication bypass exists
+- no development authentication bypass is production-reachable
+- relevant existing tests pass
+- npm run check passes
+- git diff --check passes
+- no code/schema/data changes occurred
+
+BLOCKED if:
+
+- any reachable authentication bypass exists
+- any reachable cross-tenant authentication exists
+- any reachable unauthorized password-reset path exists
+- any reachable plaintext OTP recovery path exists
+- any alternate path can authenticate using the old password after reset
+- any production-reachable development/test authentication bypass exists
+- or any other genuine security defect is discovered
+
+==================================================
+ABSOLUTE FINAL RULE
+==================================================
+
+DO NOT FIX ANYTHING IN STEP 10.
+
+DO NOT DELETE LEGACY CODE.
+
+DO NOT REMOVE LEGACY DATABASE FIELDS.
+
+DO NOT CHANGE ROUTES.
+
+DO NOT CHANGE AUTHENTICATION.
+
+DO NOT CHANGE PASSWORD RECOVERY.
+
+DO NOT CHANGE SESSION LOGIC.
+
+DO NOT CHANGE TESTS.
+
+This step is ONLY to discover and document whether anything remains that could bypass the secure Teacher authentication/recovery architecture.
+
+Do not proceed to Step 11 automatically.
+
+FINAL STATUS MUST BE:
+
+PASS
+
+or
+
+BLOCKED
