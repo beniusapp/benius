@@ -565,6 +565,17 @@ export class DatabaseStorage {
     return student || undefined;
   }
 
+  async getStudentByDsidAndSchool(
+    dsid: string,
+    schoolId: number,
+  ): Promise<Student | undefined> {
+    const [student] = await db.select().from(students).where(and(
+      eq(students.digitalStudentId, dsid),
+      eq(students.schoolId, schoolId),
+    ));
+    return student || undefined;
+  }
+
   async getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined> {
     const [student] = await db.select().from(students).where(
       and(eq(students.digitalStudentId, dsid), eq(students.phone, phone), eq(students.dob, dob))
@@ -3593,6 +3604,19 @@ export class DatabaseStorage {
         eq(students.schoolId, schoolId),
       )).for("update");
       if (!student || !student.isActive || !student.isActivated || !student.email) return null;
+      const [verifiedRecovery] = await tx.select({ id: studentPasswordResetChallenges.id })
+        .from(studentPasswordResetChallenges)
+        .where(and(
+          eq(studentPasswordResetChallenges.studentId, studentId),
+          eq(studentPasswordResetChallenges.schoolId, schoolId),
+          eq(studentPasswordResetChallenges.purpose, "student_password_recovery"),
+          isNull(studentPasswordResetChallenges.consumedAt),
+          isNotNull(studentPasswordResetChallenges.verifiedAt),
+          gt(studentPasswordResetChallenges.resetTokenExpiresAt, now),
+        ))
+        .limit(1)
+        .for("update");
+      if (verifiedRecovery) return null;
       const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
         eq(studentVerifiedRecoveryContacts.id, contactId),
         eq(studentVerifiedRecoveryContacts.studentId, studentId),

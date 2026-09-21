@@ -249,6 +249,41 @@ describe("Student password-reset challenge foundation", () => {
     expect(await storage.verifyStudentPasswordResetOtp(challenge!.id, student.id, school.id, "777777", now)).toBeNull();
   });
 
+  it("does not replace a live PASSWORD_RESET challenge with a stale forgot request", async () => {
+    const school = await createSchool();
+    const student = await createStudent(school.id);
+    const contact = await createContact(student);
+    const original = await createChallenge(student, contact.id, "707070");
+    const resetToken = await storage.verifyStudentPasswordResetOtp(
+      original!.id,
+      student.id,
+      school.id,
+      "707070",
+    );
+    expect(resetToken).toMatch(/^[a-f0-9]{64}$/);
+    const replacement = await storage.createStudentPasswordResetChallenge(
+      student.id,
+      school.id,
+      contact.id,
+      hashPasswordRecoverySecret("717171"),
+      new Date(Date.now() + 10 * 60 * 1000),
+      "127.0.0.1",
+    );
+    expect(replacement).toBeNull();
+    const preserved = await storage.getStudentPasswordResetChallenge(
+      original!.id,
+      student.id,
+      school.id,
+    );
+    expect(preserved?.consumedAt).toBeNull();
+    expect(preserved?.verifiedAt).not.toBeNull();
+    expect(preserved?.resetTokenHash).not.toBe(resetToken);
+    expect(passwordRecoverySecretsEqual(
+      preserved!.resetTokenHash!,
+      hashPasswordRecoverySecret(resetToken!),
+    )).toBe(true);
+  });
+
   it("allows exactly one winner for concurrent correct OTP submissions", async () => {
     const school = await createSchool();
     const student = await createStudent(school.id);
@@ -341,12 +376,23 @@ describe("Student password-reset challenge foundation", () => {
       storage.verifyStudentPasswordResetOtp(original!.id, student.id, school.id, "565656"),
       createChallenge(student, contact.id, "676767"),
     ]);
-    expect(replacement).not.toBeNull();
     const originalStored = await storage.getStudentPasswordResetChallenge(original!.id, student.id, school.id);
-    const replacementStored = await storage.getStudentPasswordResetChallenge(replacement!.id, student.id, school.id);
-    expect(originalStored?.consumedAt).not.toBeNull();
-    expect(replacementStored?.consumedAt).toBeNull();
-    if (token) expect(originalStored?.verifiedAt).not.toBeNull();
+    if (token) {
+      expect(replacement).toBeNull();
+      expect(originalStored?.verifiedAt).not.toBeNull();
+      expect(originalStored?.consumedAt).toBeNull();
+      expect(originalStored?.resetTokenHash).not.toBeNull();
+    } else {
+      expect(replacement).not.toBeNull();
+      const replacementStored = await storage.getStudentPasswordResetChallenge(
+        replacement!.id,
+        student.id,
+        school.id,
+      );
+      expect(originalStored?.consumedAt).not.toBeNull();
+      expect(originalStored?.verifiedAt).toBeNull();
+      expect(replacementStored?.consumedAt).toBeNull();
+    }
   });
 
   it("does not write plaintext OTP or reset-token material to console logs", async () => {

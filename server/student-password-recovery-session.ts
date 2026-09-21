@@ -87,6 +87,24 @@ export function clearStudentPasswordRecoverySession(req: StudentRecoveryRequest)
   req.session.studentPasswordRecovery = undefined;
 }
 
+export function clearStudentPasswordRecoverySessionIfMatchesInMemory(
+  req: StudentRecoveryRequest,
+  identity: Pick<StudentPasswordRecoveryState, "challengeId" | "studentId" | "schoolId">,
+): boolean {
+  const current = req.session.studentPasswordRecovery;
+  if (
+    !structurallyValid(current)
+    || current.challengeId !== identity.challengeId
+    || current.studentId !== identity.studentId
+    || current.schoolId !== identity.schoolId
+  ) {
+    return false;
+  }
+  stageStudentRecoverySessionMutation(req.session, current);
+  req.session.studentPasswordRecovery = undefined;
+  return true;
+}
+
 export async function clearStudentPasswordRecoverySessionIfMatches(
   req: PersistedStudentRecoveryRequest,
   challengeId: number,

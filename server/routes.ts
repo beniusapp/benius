@@ -20,6 +20,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
+import { registerStudentPasswordRecoveryRoutes } from "./student-password-recovery-routes";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { resolveStudentExaminationSession } from "./student-examination-session";
@@ -52,6 +53,7 @@ import {
   PASSWORD_RECOVERY_INVALID_MESSAGE,
   PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
   PasswordRecoveryRateLimiter,
+  passwordRecoveryRateLimiter,
 } from "./password-recovery";
 import {
   sendPasswordRecoveryEmail,
@@ -100,8 +102,6 @@ declare module "express-session" {
 }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const passwordRecoveryRateLimiter = new PasswordRecoveryRateLimiter();
-
 // School logo uploader — 5 MB cap, images only, temp staging in uploads/
 const schoolLogoUpload = multer({
   storage: multer.diskStorage({
@@ -6029,6 +6029,7 @@ tfoot td:last-child{text-align:right;}
   });
 
   registerFeesRoutes(app);
+  registerStudentPasswordRecoveryRoutes(app);
   registerTeacherRoutes(app);
 
   return httpServer;

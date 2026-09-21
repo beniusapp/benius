@@ -19,6 +19,19 @@ type PersistedSessionRow = {
   sess: unknown;
 };
 
+export async function getPersistedStudentRecoveryState(
+  sessionId: string,
+  databasePool: Pool = pool,
+): Promise<unknown> {
+  const result = await databasePool.query<PersistedSessionRow>(
+    `SELECT sess FROM "session" WHERE sid = $1 AND expire > NOW()`,
+    [sessionId],
+  );
+  const stored = result.rows[0]?.sess;
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return undefined;
+  return (stored as Record<string, unknown>).studentPasswordRecovery;
+}
+
 type RecoveryIdentity = {
   challengeId: number;
   studentId: number;

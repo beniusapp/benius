@@ -79,3 +79,5 @@ export class PasswordRecoveryRateLimiter {
     this.entries.clear();
   }
 }
+
+export const passwordRecoveryRateLimiter = new PasswordRecoveryRateLimiter();
