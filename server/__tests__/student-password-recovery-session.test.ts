@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Request } from "express";
 import {
   clearStudentPasswordRecoverySession,
+  clearStudentPasswordRecoverySessionIfMatches,
   getStudentPasswordRecoverySession,
   markStudentPasswordRecoveryVerified,
   startStudentPasswordRecoverySession,
@@ -164,16 +165,20 @@ describe("Student password recovery session helpers", () => {
     expect(req.session.studentPasswordRecovery?.updatedAt).toBe(now);
   });
 
-  it("rejects competing identity replacement until state is cleared or expired", () => {
+  it("replaces a competing OTP_PENDING identity with one canonical new state", () => {
     const req = request();
     const now = 1_800_000_000_000;
     startStudentPasswordRecoverySession(req, identityA, now);
-    expect(startStudentPasswordRecoverySession(req, identityB, now + 1)).toBe(false);
-    expect(req.session.studentPasswordRecovery).toMatchObject(identityA);
-
-    clearStudentPasswordRecoverySession(req);
-    expect(startStudentPasswordRecoverySession(req, identityB, now + 2)).toBe(true);
-    expect(req.session.studentPasswordRecovery).toMatchObject(identityB);
+    expect(startStudentPasswordRecoverySession(req, identityB, now + 1)).toBe(true);
+    expect(req.session.studentPasswordRecovery).toEqual({
+      flow: "student_password_recovery",
+      stage: "otp_pending",
+      ...identityB,
+      createdAt: now + 1,
+      updatedAt: now + 1,
+    });
+    expect(req.session.studentPasswordRecovery).not.toMatchObject(identityA);
+    expect(req.session.studentPasswordRecovery).not.toHaveProperty("resetToken");
 
     const expired = request();
     startStudentPasswordRecoverySession(expired, identityA, now);
@@ -181,6 +186,16 @@ describe("Student password recovery session helpers", () => {
       expired, identityB, now + STUDENT_PASSWORD_RECOVERY_TTL_MS,
     )).toBe(true);
     expect(expired.session.studentPasswordRecovery).toMatchObject(identityB);
+  });
+
+  it("requires a real persisted Express session for conditional cleanup", async () => {
+    const req = request();
+    await expect(clearStudentPasswordRecoverySessionIfMatches(
+      req as Request,
+      identityA.challengeId,
+      identityA.studentId,
+      identityA.schoolId,
+    )).resolves.toBe(false);
   });
 
   it("does not allow a new start to downgrade PASSWORD_RESET state", () => {

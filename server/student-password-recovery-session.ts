@@ -1,4 +1,9 @@
 import type { Request } from "express";
+import {
+  clearStudentRecoveryIfMatchesPersistedSession,
+  stageStudentRecoverySessionMutation,
+  suppressStudentRecoveryStaleSessionWrite,
+} from "./student-recovery-session-store";
 
 export const STUDENT_PASSWORD_RECOVERY_TTL_MS = 30 * 60 * 1000;
 
@@ -32,6 +37,7 @@ declare module "express-session" {
 }
 
 type StudentRecoveryRequest = Pick<Request, "session">;
+type PersistedStudentRecoveryRequest = Pick<Request, "session" | "sessionID">;
 
 function validId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -77,7 +83,26 @@ function structurallyValid(state: unknown): state is StudentPasswordRecoveryStat
 }
 
 export function clearStudentPasswordRecoverySession(req: StudentRecoveryRequest): void {
+  stageStudentRecoverySessionMutation(req.session, req.session.studentPasswordRecovery);
   req.session.studentPasswordRecovery = undefined;
+}
+
+export async function clearStudentPasswordRecoverySessionIfMatches(
+  req: PersistedStudentRecoveryRequest,
+  challengeId: number,
+  studentId: number,
+  schoolId: number,
+): Promise<boolean> {
+  const cleared = await clearStudentRecoveryIfMatchesPersistedSession(
+    req.sessionID,
+    challengeId,
+    studentId,
+    schoolId,
+  );
+  if (cleared) {
+    suppressStudentRecoveryStaleSessionWrite(req.session);
+  }
+  return cleared;
 }
 
 export function startStudentPasswordRecoverySession(
@@ -100,11 +125,16 @@ export function startStudentPasswordRecoverySession(
   }
   const existing = getStudentPasswordRecoverySession(req, undefined, now);
   if (existing) {
-    return existing.stage === "otp_pending"
-      && existing.challengeId === identity.challengeId
+    if (existing.stage === "password_reset") return false;
+    if (
+      existing.challengeId === identity.challengeId
       && existing.studentId === identity.studentId
-      && existing.schoolId === identity.schoolId;
+      && existing.schoolId === identity.schoolId
+    ) {
+      return true;
+    }
   }
+  stageStudentRecoverySessionMutation(req.session, existing);
   req.session.studentPasswordRecovery = {
     flow: "student_password_recovery",
     stage: "otp_pending",
@@ -148,6 +178,7 @@ export function markStudentPasswordRecoveryVerified(
   }
   const current = getStudentPasswordRecoverySession(req, "otp_pending", now);
   if (!current || current.stage !== "otp_pending") return false;
+  stageStudentRecoverySessionMutation(req.session, current);
   req.session.studentPasswordRecovery = {
     flow: "student_password_recovery",
     stage: "password_reset",

@@ -1,6 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -14,6 +13,7 @@ import { formatTimeIST, SCHOOL_TIME_ZONE } from "../shared/ist-time";
 import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 import { enforceSessionRevocation } from "./session-revocation";
+import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
 
 const app = express();
 const httpServer = createServer(app);
@@ -35,10 +35,9 @@ app.use(
 app.use(express.urlencoded({ extended: false }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-const PgStore = connectPgSimple(session);
 app.use(
   session({
-    store: new PgStore({ pool, createTableIfMissing: true }),
+    store: new StudentRecoverySafePgStore(pool),
     secret: process.env.SESSION_SECRET || "benius-secret-key",
     resave: false,
     saveUninitialized: false,
