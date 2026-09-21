@@ -1,0 +1,67 @@
+STEP 2A — TEST COVERAGE ONLY
+
+The Admin Teacher Registry Email field implementation is already complete.
+
+Do NOT modify application behavior.
+
+Do NOT modify:
+- server files
+- database
+- migrations
+- API routes
+- Teacher Login
+- Teacher Forgot Password
+- Teacher Reset Password
+- Teacher assignments
+- Faculty Mapping
+- any other module
+
+The only purpose of this step is to add focused frontend tests for the Email field that was added in:
+
+client/src/pages/admin-modules/teacher-registry.tsx
+
+IMPORTANT:
+Do not change the existing UI implementation unless a test reveals an actual defect. If the implementation already satisfies the requirement, leave it unchanged.
+
+Add/update focused tests covering:
+
+1. When Edit Teacher is opened, the existing canonical Teacher email is populated in the Email input.
+
+2. The Edit Teacher modal contains an editable Email input with an appropriate email input type.
+
+3. Changing the Email field and saving includes the changed email in:
+   PATCH /api/admin/teachers/:id
+
+4. Leading/trailing whitespace follows the existing trim behavior.
+
+5. Invalid email input is rejected by the existing frontend validation.
+
+6. A successful email update follows the existing successful-save behavior.
+
+7. A backend HTTP 409 duplicate-email response is handled by the existing generic error mechanism and does not expose another account's identity/email.
+
+8. Existing Teacher edit fields continue to work and are not accidentally removed from the PATCH payload.
+
+Use the existing testing framework, mocks, fixtures, and patterns already present in the Teacher Registry tests.
+
+Do NOT create a new testing framework or introduce unrelated test infrastructure.
+
+After implementation run:
+
+1. The focused Teacher Registry tests.
+2. Existing frontend/Student/Teacher authentication recovery tests if required by the project test structure.
+3. npm run check
+4. git diff --check
+
+Report:
+
+- exact test file(s) changed
+- number of new/updated tests
+- focused test result
+- broader frontend test result
+- npm run check result
+- git diff --check result
+- confirmation that NO application/server files were modified
+- confirmation that NO database/migration was created
+
+STOP after this test-only step.
