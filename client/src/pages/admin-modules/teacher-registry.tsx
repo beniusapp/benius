@@ -38,6 +38,7 @@ type AddForm = z.infer<typeof addSchema>;
 
 const editSchema = z.object({
   fullName: z.string().min(2),
+  email: z.string().trim().email("Enter a valid teacher email"),
   phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
   designation: z.string().optional(),
   subject: z.string().optional(),
@@ -162,7 +163,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
   // ── Edit form ─────────────────────────────────────────────
   const editForm = useForm<EditForm>({
     resolver: zodResolver(editSchema),
-    defaultValues: { fullName: "", phone: "", designation: "", subject: "", assignedClass: "", assignedSection: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
+    defaultValues: { fullName: "", email: "", phone: "", designation: "", subject: "", assignedClass: "", assignedSection: "", gender: "", dateOfBirth: "", govtIdType: "", govtIdNumber: "", address: "", joiningDate: "", qualifications: "" },
   });
 
   const watchEditGovtIdType = editForm.watch("govtIdType");
@@ -171,6 +172,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
     if (editTarget) {
       editForm.reset({
         fullName: editTarget.fullName,
+        email: editTarget.email,
         phone: editTarget.phone,
         designation: editTarget.designation ?? "",
         subject: editTarget.subject ?? "",
@@ -682,6 +684,13 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                         <FormItem className="col-span-2">
                           <FormLabel className="text-white/70 text-xs">Full Name</FormLabel>
                           <FormControl><Input {...field} className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-name" /></FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )} />
+                      <FormField control={editForm.control} name="email" render={({ field }) => (
+                        <FormItem className="col-span-2">
+                          <FormLabel className="text-white/70 text-xs">Email</FormLabel>
+                          <FormControl><Input {...field} type="email" autoComplete="email" placeholder="teacher@example.com" className="bg-[#0A1628] border-white/20 text-white h-10" data-testid="input-edit-reg-email" /></FormControl>
                           <FormMessage />
                         </FormItem>
                       )} />
