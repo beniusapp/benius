@@ -1,0 +1,206 @@
+IMPLEMENTATION — STEP 1 ONLY: Secure Admin Teacher Email Update Backend
+
+We have completed a read-only audit of Admin Portal → Teacher Registry → Edit Teacher.
+
+DO NOT modify the frontend/UI in this step.
+
+Implement ONLY the backend/storage support required for an authorized Admin Teacher Registry edit to change the Teacher's canonical email stored in:
+
+users.email
+
+Important architecture:
+- teachers.userId → users.id
+- teachers.schoolId identifies the Teacher's school
+- users.schoolId identifies the User's school
+- users.email is the canonical Teacher Login and Teacher Forgot Password email.
+- No database migration is required.
+- Do not create a second email field.
+
+STRICT MULTI-TENANT REQUIREMENT:
+The authenticated session's schoolId is authoritative.
+Never trust a browser-supplied schoolId.
+A Teacher from School A must never be readable or modifiable by School B.
+Preserve the existing Admin/Support Staff authorization model exactly.
+
+CURRENT ROUTE:
+PATCH /api/admin/teachers/:id
+File:
+server/teacher-routes.ts
+
+CURRENT STORAGE:
+updateTeacherAssignment in:
+server/storage.ts
+
+The existing route currently updates teacher fields but does NOT update users.email.
+
+Implement the backend change so the existing PATCH /api/admin/teachers/:id can safely accept an email field.
+
+Requirements:
+
+1. BACKEND VALIDATION
+Add email to the existing Admin Teacher Edit request schema.
+
+Use the existing Teacher email validation convention already used by the application:
+- trim
+- valid email format
+- DO NOT introduce lowercase normalization in this step
+- do not silently change existing Teacher creation/login/recovery normalization behavior
+
+Reject invalid email input using the existing validation/error style.
+
+2. TENANT-SAFE IDENTITY RESOLUTION
+When email is being changed:
+- Resolve the Teacher using the existing :id and authenticated req.session.schoolId.
+- Verify teacher.schoolId === req.session.schoolId.
+- Resolve the linked User through teachers.userId.
+- Verify users.schoolId === req.session.schoolId.
+- Verify the linked User is the expected Teacher user.
+- Never accept userId, schoolId, or another identity from the browser.
+
+3. EMAIL UNIQUENESS
+users.email is globally unique.
+
+Before changing the email:
+- Check whether another users row already owns the requested email.
+- If another user owns it, reject the operation.
+- Do not reveal unnecessary information about the other account.
+- Use the application's existing conflict/error conventions where possible.
+
+If the submitted email is exactly the existing email, treat it as a no-op rather than revoking sessions/recovery challenges unnecessarily.
+
+4. ATOMIC UPDATE
+The email update must be atomic.
+
+When the email actually changes, perform the required operations in one PostgreSQL transaction:
+
+A. Lock the authoritative Teacher/User identity.
+B. Re-check school ownership under the lock.
+C. Re-check email uniqueness under the lock.
+D. Update users.email.
+E. Invalidate/consume all active Teacher password-recovery challenges belonging to that user and school.
+F. Revoke active authenticated Teacher sessions for that user.
+G. Commit.
+
+If ANY operation fails:
+- Roll back the email change.
+- Do not partially consume recovery challenges.
+- Do not partially revoke sessions.
+
+5. PASSWORD-RECOVERY INVALIDATION
+Use the existing Teacher password-recovery challenge infrastructure.
+
+Pending Teacher recovery challenges are currently bound to:
+- userId
+- schoolId
+
+They are NOT email snapshots.
+
+Therefore, when the canonical email changes, all active Teacher password-recovery challenges for that exact user + school must be invalidated atomically.
+
+Do not modify recovery architecture beyond what is required for this operation.
+
+6. SESSION REVOCATION
+Use the application's existing Teacher session revocation infrastructure if one exists.
+
+Do not invent a second session-revocation system.
+
+The intended behavior is:
+- Existing authenticated Teacher sessions for the changed Teacher are revoked.
+- Other Teachers are unaffected.
+- Other schools are unaffected.
+- Admin sessions are unaffected.
+- Student sessions are unaffected.
+
+7. KEEP ALL OTHER TEACHER EDIT FIELDS UNCHANGED
+Do not alter the behavior of:
+- fullName
+- phone
+- designation
+- gender
+- dateOfBirth
+- joiningDate
+- qualifications
+- govtIdType
+- govtIdNumber
+- address
+
+Do not change Teacher assignments, subjects, classes, sections, Faculty Mapping, or Teacher Registry architecture.
+
+8. DO NOT MODIFY THESE FLOWS
+Do not redesign:
+- Teacher Login
+- Teacher Forgot Password
+- Teacher Reset Password
+- Student authentication
+- Admin authentication
+- Support Staff authentication
+
+Only make the minimum backend/storage changes required so an Admin Teacher Edit can safely change users.email.
+
+9. TESTS
+Add/update focused backend tests covering at minimum:
+
+A. Authorized same-school admin can change Teacher email.
+B. Authorized support staff with teacher-registry:edit can change Teacher email.
+C. Wrong-school Teacher ID is rejected.
+D. Browser-supplied schoolId cannot bypass tenant isolation.
+E. Non-authorized user cannot change Teacher email.
+F. Invalid email is rejected.
+G. Duplicate global users.email is rejected.
+H. Same email is a no-op.
+I. Successful email change updates users.email.
+J. Old email no longer authenticates as the Teacher.
+K. New email authenticates as the Teacher.
+L. Existing pending Teacher recovery challenges are invalidated.
+M. Existing authenticated Teacher sessions are revoked.
+N. Another Teacher's sessions remain valid.
+O. Another school's Teacher/session data remains unaffected.
+P. Transaction rollback leaves email/challenges/sessions consistent if a required operation fails.
+Q. Concurrent email-change attempts cannot violate the global users.email uniqueness constraint.
+
+Use the project's existing test framework and database-test patterns.
+
+10. IMPORTANT TESTING RULE
+Run only the focused tests relevant to this change first.
+
+Then run:
+npm run check
+
+Then:
+git diff --check
+
+If startup/schema verification is part of the project's normal verification process, run it as well.
+
+11. NO FRONTEND CHANGES
+Do NOT modify:
+client/src/pages/admin-modules/teacher-registry.tsx
+
+The Email input will be added in a separate Step 2 after the backend is verified.
+
+12. NO DATABASE MIGRATION
+Do NOT create a migration.
+
+13. READ-ONLY FIRST
+Before modifying anything, inspect the existing:
+- Teacher update storage implementation
+- users schema
+- Teacher password recovery challenge storage
+- Teacher session revocation implementation
+- relevant existing transaction/locking patterns
+
+Reuse existing infrastructure wherever possible.
+
+At the end, report:
+- exact files changed
+- exact backend behavior added
+- transaction/locking approach
+- recovery challenge invalidation approach
+- session revocation approach
+- tests added/changed
+- focused test result
+- npm run check result
+- git diff --check result
+- confirmation that no frontend files were modified
+- confirmation that no migration was created
+
+Do not proceed to frontend/UI changes in this step.

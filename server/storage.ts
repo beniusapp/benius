@@ -113,6 +113,15 @@ export class AcademicSessionFinancialHistoryError extends Error {
   }
 }
 
+export class TeacherEmailConflictError extends Error {
+  readonly status = 409;
+
+  constructor() {
+    super("Unable to update teacher");
+    this.name = "TeacherEmailConflictError";
+  }
+}
+
 const UNSAFE_FEE_AUDIT_SEARCH_PATTERN = String.raw`(^|[^[:alnum:]])(pay|order|rfnd|disp|evt|plink|inv|cust|card)_[[:alnum:]_-]+|(^|[^[:alnum:]_])(signature|token|secret)[[:space:]]*[:=]|(raw_response|payload|gateway_response|error_code|error_source|error_step|error_reason|payer_contact|payer_email|contact|phone|mobile|vpa|card_last4)[[:space:]]*[:=]|[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}|(^|[^0-9])(\+?91[ -]?)?[6-9][0-9]{9}([^0-9]|$)|([0-9][ -]?){13,19}|([0-9]{1,3}\.){3}[0-9]{1,3}|([[:xdigit:]]{0,4}:){2,}[[:xdigit:].:]{0,}|[[:xdigit:]]{32,}|[[:alnum:]+/_=-]{40,}`;
 
 /**
@@ -490,6 +499,27 @@ export class DatabaseStorage {
     } finally {
       client.release();
     }
+  }
+
+  private async invalidateUserSessionsInTransaction(
+    tx: { execute: (query: SQL) => Promise<unknown> },
+    userId: number,
+    revokedAt = Date.now(),
+  ): Promise<void> {
+    await tx.execute(sql`
+      INSERT INTO "session" (sid, sess, expire)
+      VALUES (
+        ${userSessionRevocationSid(userId)},
+        ${JSON.stringify({ revokedAt })}::json,
+        ${new Date(revokedAt + SESSION_REVOCATION_TTL_MS)}
+      )
+      ON CONFLICT (sid) DO UPDATE
+      SET sess = EXCLUDED.sess, expire = EXCLUDED.expire
+    `);
+    await tx.execute(sql`
+      DELETE FROM "session"
+      WHERE sess->>'userId' = ${String(userId)}
+    `);
   }
 
   async getUserWithSchool(userId: number): Promise<{ user: User; school: School } | undefined> {
@@ -3783,7 +3813,7 @@ export class DatabaseStorage {
   }
 
   // ===== PAGINATED TEACHERS (Big Data) =====
-  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string; department?: string; gender?: string; dateOfBirth?: string; govtIdType?: string; govtIdNumber?: string; address?: string; joiningDate?: string; qualifications?: string }): Promise<Teacher | undefined> {
+  async updateTeacherAssignment(teacherId: number, schoolId: number, data: { fullName: string; subject: string; assignedClass: string; assignedSection: string; phone?: string; designation?: string; department?: string; gender?: string; dateOfBirth?: string; govtIdType?: string; govtIdNumber?: string; address?: string; joiningDate?: string; qualifications?: string; email?: string }): Promise<Teacher | undefined> {
     const setData: Partial<typeof teachers.$inferInsert> = {
       fullName: data.fullName,
       subject: data.subject,
@@ -3800,11 +3830,52 @@ export class DatabaseStorage {
     if (data.address !== undefined) setData.address = data.address;
     if (data.joiningDate !== undefined) setData.joiningDate = data.joiningDate;
     if (data.qualifications !== undefined) setData.qualifications = data.qualifications;
-    const [updated] = await db.update(teachers)
-      .set(setData)
-      .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
-      .returning();
-    return updated;
+    return db.transaction(async tx => {
+      const [identity] = await tx.select({ teacher: teachers, user: users })
+        .from(teachers)
+        .innerJoin(users, eq(teachers.userId, users.id))
+        .where(and(
+          eq(teachers.id, teacherId),
+          eq(teachers.schoolId, schoolId),
+          eq(users.schoolId, schoolId),
+          eq(users.role, "teacher"),
+        ))
+        .for("update");
+      if (!identity || identity.teacher.userId !== identity.user.id) return undefined;
+
+      if (data.email !== undefined) {
+        if (data.email !== identity.user.email) {
+          const [owner] = await tx.select({ id: users.id })
+            .from(users)
+            .where(eq(users.email, data.email))
+            .for("update");
+          if (owner && owner.id !== identity.user.id) {
+            throw new TeacherEmailConflictError();
+          }
+          await tx.update(users)
+            .set({ email: data.email })
+            .where(and(
+              eq(users.id, identity.user.id),
+              eq(users.schoolId, schoolId),
+              eq(users.role, "teacher"),
+            ));
+          await tx.update(passwordResetChallenges)
+            .set({ consumedAt: new Date() })
+            .where(and(
+              eq(passwordResetChallenges.userId, identity.user.id),
+              eq(passwordResetChallenges.schoolId, schoolId),
+              isNull(passwordResetChallenges.consumedAt),
+            ));
+          await this.invalidateUserSessionsInTransaction(tx, identity.user.id);
+        }
+      }
+
+      const [updated] = await tx.update(teachers)
+        .set(setData)
+        .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)))
+        .returning();
+      return updated;
+    });
   }
 
   async getTeachersPaginated(schoolId: number, opts: { q?: string; page?: number }): Promise<{ data: (Teacher & { email: string })[]; total: number }> {

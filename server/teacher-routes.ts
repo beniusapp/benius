@@ -3851,6 +3851,7 @@ Thank you for your prompt attention to this matter.
     const editSchema = z.object({
       fullName: z.string().min(2).optional(),
       phone: z.string().length(10).regex(/^\d{10}$/).optional(),
+      email: z.string().trim().email("Enter a valid teacher email").optional(),
       designation: z.string().optional(),
       gender: z.string().optional(),
       dateOfBirth: z.string().optional(),
@@ -3884,9 +3885,13 @@ Thank you for your prompt attention to this matter.
         address: str(parsed.data.address, teacher.address),
         joiningDate: str(parsed.data.joiningDate, teacher.joiningDate),
         qualifications: str(parsed.data.qualifications, teacher.qualifications),
+        email: parsed.data.email,
       });
       res.json(updated);
     } catch (err: any) {
+      if (err?.status === 409 || err?.code === "23505") {
+        return res.status(409).json({ message: "Unable to update teacher" });
+      }
       res.status(500).json({ message: err.message || "Failed to update teacher" });
     }
   });
