@@ -70,6 +70,7 @@ import { evaluatePromotionRules, selectGrade } from "@shared/examination-calcula
 import { percentageToDatabaseValue, percentageToHundredths } from "@shared/grading-percentage";
 import {
   SESSION_REVOCATION_TTL_MS,
+  studentSessionRevocationSid,
   userSessionRevocationSid,
 } from "./session-revocation";
 import {
@@ -574,6 +575,50 @@ export class DatabaseStorage {
       eq(students.schoolId, schoolId),
     ));
     return student || undefined;
+  }
+
+  async authenticateStudentByDsidForLogin(
+    dsid: string,
+    password: string,
+  ): Promise<
+    | { status: "not_found" }
+    | { status: "inactive" }
+    | { status: "not_activated" }
+    | { status: "invalid" }
+    | { status: "success"; student: Student; authIssuedAt: number }
+  > {
+    // This lookup only selects the lock key. Every security decision below is
+    // made from the locked, authoritative row.
+    const preliminary = await this.getStudentByDsid(dsid);
+    if (!preliminary) return { status: "not_found" };
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${preliminary.schoolId}, ${preliminary.id})`);
+      const lockClock = await tx.execute<{ now: Date }>(sql`SELECT clock_timestamp() AS now`);
+      const authIssuedAt = new Date(lockClock.rows[0].now).getTime();
+      const [student] = await tx.select().from(students).where(and(
+        eq(students.id, preliminary.id),
+        eq(students.schoolId, preliminary.schoolId),
+        eq(students.digitalStudentId, dsid),
+      )).for("update");
+      if (!student) return { status: "not_found" as const };
+      if (!student.isActive) return { status: "inactive" as const };
+      if (!student.isActivated) return { status: "not_activated" as const };
+      if (!await bcrypt.compare(password, student.passwordHash)) {
+        return { status: "invalid" as const };
+      }
+      const marker = await tx.execute<{ revoked_at: string | null }>(sql`
+        SELECT sess->>'revokedAt' AS revoked_at
+        FROM "session"
+        WHERE sid = ${studentSessionRevocationSid(student.id)}
+          AND expire > NOW()
+        LIMIT 1
+      `);
+      const revokedAt = marker.rows.length > 0 ? Number(marker.rows[0].revoked_at) : null;
+      if (revokedAt !== null && (!Number.isFinite(revokedAt) || authIssuedAt <= revokedAt)) {
+        return { status: "invalid" as const };
+      }
+      return { status: "success" as const, student, authIssuedAt };
+    });
   }
 
   async getStudentByDsidPhoneDob(dsid: string, phone: string, dob: string): Promise<Student | undefined> {
@@ -3732,6 +3777,82 @@ export class DatabaseStorage {
         isNull(studentPasswordResetChallenges.consumedAt),
       )).returning({ id: studentPasswordResetChallenges.id });
       return updated ? resetToken : null;
+    });
+  }
+
+  async resetStudentPasswordAtomically(
+    challengeId: number,
+    studentId: number,
+    schoolId: number,
+    resetToken: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
+      const lockClock = await tx.execute<{ now: Date }>(sql`SELECT clock_timestamp() AS now`);
+      const transactionNow = new Date(lockClock.rows[0].now);
+      const [challenge] = await tx.select().from(studentPasswordResetChallenges).where(and(
+        eq(studentPasswordResetChallenges.id, challengeId),
+        eq(studentPasswordResetChallenges.studentId, studentId),
+        eq(studentPasswordResetChallenges.schoolId, schoolId),
+        eq(studentPasswordResetChallenges.purpose, "student_password_recovery"),
+        isNull(studentPasswordResetChallenges.consumedAt),
+        isNotNull(studentPasswordResetChallenges.verifiedAt),
+        gt(studentPasswordResetChallenges.resetTokenExpiresAt, transactionNow),
+      )).for("update");
+      if (
+        !challenge?.resetTokenHash
+        || !challenge.resetTokenExpiresAt
+        || !passwordRecoverySecretsEqual(
+          challenge.resetTokenHash,
+          hashPasswordRecoverySecret(resetToken),
+        )
+      ) return false;
+      const [student] = await tx.select({ id: students.id, email: students.email }).from(students).where(and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+        eq(students.isActive, true),
+        eq(students.isActivated, true),
+      )).for("update");
+      if (!student) return false;
+      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
+        eq(studentVerifiedRecoveryContacts.id, challenge.contactId),
+        eq(studentVerifiedRecoveryContacts.studentId, studentId),
+        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
+        eq(studentVerifiedRecoveryContacts.contactType, "email"),
+        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
+      )).for("update");
+      if (
+        !contact
+        || !student
+        || !student.email
+        || contact.contactValueNormalized !== student.email.trim().toLowerCase()
+      ) return false;
+      await tx.update(students).set({ passwordHash }).where(and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+      ));
+      await tx.update(studentPasswordResetChallenges).set({ consumedAt: transactionNow }).where(and(
+        eq(studentPasswordResetChallenges.studentId, studentId),
+        eq(studentPasswordResetChallenges.schoolId, schoolId),
+        isNull(studentPasswordResetChallenges.consumedAt),
+      ));
+      const revokedAt = transactionNow.getTime();
+      await tx.execute(sql`
+        INSERT INTO "session" (sid, sess, expire)
+        VALUES (
+          ${studentSessionRevocationSid(studentId)},
+          ${JSON.stringify({ revokedAt })}::json,
+          ${new Date(revokedAt + SESSION_REVOCATION_TTL_MS)}
+        )
+        ON CONFLICT (sid) DO UPDATE
+        SET sess = EXCLUDED.sess, expire = EXCLUDED.expire
+      `);
+      await tx.execute(sql`
+        DELETE FROM "session"
+        WHERE sess->>'studentId' = ${String(studentId)}
+      `);
+      return true;
     });
   }
 

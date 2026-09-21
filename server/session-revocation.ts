@@ -7,13 +7,17 @@ export function userSessionRevocationSid(userId: number): string {
   return `user-revocation:${userId}`;
 }
 
-async function latestRevocation(userId: number): Promise<number | null> {
+export function studentSessionRevocationSid(studentId: number): string {
+  return `student-revocation:${studentId}`;
+}
+
+async function latestRevocationForSid(sid: string): Promise<number | null> {
   const result = await pool.query<{ revoked_at: string | null }>(
     `SELECT sess->>'revokedAt' AS revoked_at
      FROM "session"
      WHERE sid = $1 AND expire > NOW()
      LIMIT 1`,
-    [userSessionRevocationSid(userId)],
+    [sid],
   );
   if (result.rows.length === 0) return null;
   const revokedAt = Number(result.rows[0].revoked_at);
@@ -21,6 +25,14 @@ async function latestRevocation(userId: number): Promise<number | null> {
     throw new Error("Invalid session revocation marker");
   }
   return revokedAt;
+}
+
+async function latestRevocation(userId: number): Promise<number | null> {
+  return latestRevocationForSid(userSessionRevocationSid(userId));
+}
+
+async function latestStudentRevocation(studentId: number): Promise<number | null> {
+  return latestRevocationForSid(studentSessionRevocationSid(studentId));
 }
 
 export async function authenticationAttemptIsRevoked(
@@ -31,9 +43,18 @@ export async function authenticationAttemptIsRevoked(
   return revokedAt !== null && authenticationStartedAt <= revokedAt;
 }
 
+export async function studentAuthenticationAttemptIsRevoked(
+  studentId: number,
+  authenticationStartedAt: number,
+): Promise<boolean> {
+  const revokedAt = await latestStudentRevocation(studentId);
+  return revokedAt !== null && authenticationStartedAt <= revokedAt;
+}
+
 declare module "express-session" {
   interface SessionData {
     authIssuedAt?: number;
+    studentAuthIssuedAt?: number;
   }
 }
 
@@ -43,25 +64,37 @@ export async function enforceSessionRevocation(
   next: NextFunction,
 ): Promise<void> {
   const userId = req.session?.userId;
-  if (!userId) {
-    next();
-    return;
-  }
   try {
-    const revokedAt = await latestRevocation(userId);
-    if (revokedAt === null) {
-      next();
-      return;
+    if (userId) {
+      const revokedAt = await latestRevocation(userId);
+      if (revokedAt !== null) {
+        const authIssuedAt = req.session.authIssuedAt;
+        if (
+          typeof authIssuedAt !== "number"
+          || !Number.isFinite(authIssuedAt)
+          || authIssuedAt <= revokedAt
+        ) {
+          await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+          res.status(401).json({ message: "Session expired. Please log in again." });
+          return;
+        }
+      }
     }
-    const authIssuedAt = req.session.authIssuedAt;
-    if (
-      typeof authIssuedAt !== "number"
-      || !Number.isFinite(authIssuedAt)
-      || authIssuedAt <= revokedAt
-    ) {
-      await new Promise<void>(resolve => req.session.destroy(() => resolve()));
-      res.status(401).json({ message: "Session expired. Please log in again." });
-      return;
+    const studentId = req.session?.studentId;
+    if (studentId) {
+      const revokedAt = await latestStudentRevocation(studentId);
+      if (revokedAt !== null) {
+        const issuedAt = req.session.studentAuthIssuedAt ?? req.session.authIssuedAt;
+        if (
+          typeof issuedAt !== "number"
+          || !Number.isFinite(issuedAt)
+          || issuedAt <= revokedAt
+        ) {
+          await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+          res.status(401).json({ message: "Session expired. Please log in again." });
+          return;
+        }
+      }
     }
     next();
   } catch {

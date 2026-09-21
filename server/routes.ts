@@ -21,6 +21,7 @@ import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes } from "./teacher-routes";
 import { registerStudentPasswordRecoveryRoutes } from "./student-password-recovery-routes";
+import { studentAuthenticationAttemptIsRevoked } from "./session-revocation";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { resolveStudentExaminationSession } from "./student-examination-session";
@@ -1474,26 +1475,33 @@ export async function registerRoutes(
     }
 
     const { dsid, password } = parsed.data;
-
-    const student = await storage.getStudentByDsid(dsid);
-    if (!student) {
+    const authentication = await storage.authenticateStudentByDsidForLogin(
+      dsid,
+      password,
+    );
+    if (authentication.status === "not_found") {
       return res.status(401).json({ message: "Invalid DSID or password" });
     }
 
-    if (!student.isActive) {
+    if (authentication.status === "inactive") {
       return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
     }
 
-    if (!student.isActivated) {
+    if (authentication.status === "not_activated") {
       return res.status(403).json({ message: "Account not activated. Please register first at /register." });
     }
 
-    const valid = await bcrypt.compare(password, student.passwordHash);
-    if (!valid) {
+    if (authentication.status !== "success") {
       return res.status(401).json({ message: "Invalid DSID or password" });
     }
 
+    const student = authentication.student;
+    if (await studentAuthenticationAttemptIsRevoked(student.id, authentication.authIssuedAt)) {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
     req.session.studentId = student.id;
+    req.session.studentAuthIssuedAt = authentication.authIssuedAt;
+    req.session.authIssuedAt = authentication.authIssuedAt;
     res.json({ message: "Login successful" });
   });
 

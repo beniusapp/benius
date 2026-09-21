@@ -1,6 +1,7 @@
 import type { Express, Request } from "express";
 import { z } from "zod";
 import type { NotificationConfig } from "@shared/schema";
+import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import {
   buildForgotPasswordResponse,
@@ -18,7 +19,10 @@ import {
   markStudentPasswordRecoveryVerified,
   startStudentPasswordRecoverySession,
 } from "./student-password-recovery-session";
-import { getPersistedStudentRecoveryState } from "./student-recovery-session-store";
+import {
+  getPersistedStudentRecoveryState,
+  suppressStudentRecoveryStaleSessionWrite,
+} from "./student-recovery-session-store";
 
 type StudentRecoveryRouteDependencies = {
   getSchoolByCode: (code: string) => Promise<{ id: number } | undefined>;
@@ -58,6 +62,13 @@ type StudentRecoveryRouteDependencies = {
   rateLimiter: typeof passwordRecoveryRateLimiter;
   getPersistedRecoveryState: (sessionId: string) => Promise<unknown>;
   isChallengeActive: (challengeId: number, studentId: number, schoolId: number) => Promise<boolean>;
+  resetPassword?: (
+    challengeId: number,
+    studentId: number,
+    schoolId: number,
+    resetToken: string,
+    passwordHash: string,
+  ) => Promise<boolean>;
 };
 
 const defaultDependencies: StudentRecoveryRouteDependencies = {
@@ -91,6 +102,14 @@ const defaultDependencies: StudentRecoveryRouteDependencies = {
     );
     return !!challenge && !challenge.consumedAt && !challenge.verifiedAt;
   },
+  resetPassword: (challengeId, studentId, schoolId, resetToken, passwordHash) =>
+    storage.resetStudentPasswordAtomically(
+      challengeId,
+      studentId,
+      schoolId,
+      resetToken,
+      passwordHash,
+    ),
 };
 
 const forgotPasswordSchema = z.object({
@@ -100,6 +119,10 @@ const forgotPasswordSchema = z.object({
 
 const verifyOtpSchema = z.object({
   otp: z.string().regex(/^\d{6}$/),
+}).strict();
+
+const resetPasswordSchema = z.object({
+  newPassword: z.string().min(6),
 }).strict();
 
 function supportedProvider(config: NotificationConfig): boolean {
@@ -299,6 +322,62 @@ export function registerStudentPasswordRecoveryRoutes(
         return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
       }
       return res.json({ success: true, message: "Verification successful." });
+    } catch {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+  });
+
+  app.post("/api/student/reset-password", async (req, res) => {
+    if (!dependencies.rateLimiter.consume(`student-reset-password:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+    const parsed = resetPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+    const recovery = getStudentPasswordRecoverySession(req, "password_reset");
+    if (!recovery || recovery.stage !== "password_reset") {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+    try {
+      // Keep the recovery state intact until the database transaction commits.
+      const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+      if (!dependencies.resetPassword) {
+        return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+      }
+      const reset = await dependencies.resetPassword(
+        recovery.challengeId,
+        recovery.studentId,
+        recovery.schoolId,
+        recovery.resetToken,
+        passwordHash,
+      );
+      if (!reset) {
+        return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+      }
+      // The reset transaction removes this session row along with every old
+      // Student session. Clear only the exact recovery authority; a newer
+      // recovery state must never be erased by this stale request.
+      const cleared = await clearStudentPasswordRecoverySessionIfMatches(
+        req,
+        recovery.challengeId,
+        recovery.studentId,
+        recovery.schoolId,
+      ).catch(() => false);
+      if (!cleared) {
+        clearStudentPasswordRecoverySessionIfMatchesInMemory(req, recovery);
+      }
+      // Remove authentication fields only when this request's session still
+      // represents the reset Student, never a different Student identity.
+      if (req.session.studentId === recovery.studentId) {
+        req.session.studentId = undefined;
+        req.session.studentAuthIssuedAt = undefined;
+        req.session.authIssuedAt = undefined;
+      }
+      // Prevent this request's stale session snapshot from recreating deleted
+      // authentication/recovery authority after the transaction commits.
+      suppressStudentRecoveryStaleSessionWrite(req.session);
+      return res.json({ success: true, message: "Password reset successful." });
     } catch {
       return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
     }

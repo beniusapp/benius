@@ -39,3 +39,4 @@
 - [Teacher credential mutation races](teacher-credential-mutation-races.md) — authenticated password changes must use current-hash CAS, consume recovery challenges, and strictly revoke sessions.
 - [Student recovery transaction locking](student-recovery-transaction-locking.md) — all same-Student recovery and email-mutation transactions acquire one tenant-keyed advisory lock before row locks.
 - [Student recovery session CAS](student-recovery-session-cas.md) — PostgreSQL session writes preserve newer recovery state; mutate recovery only through staged helpers.
+- [Student reset session revocation](student-reset-session-revocation.md) — login and reset share a tenant/Student lock and PostgreSQL clock so old-password races cannot outlive reset.
