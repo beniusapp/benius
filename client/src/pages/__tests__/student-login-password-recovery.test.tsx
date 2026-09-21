@@ -62,7 +62,7 @@ import StudentLogin from "@/pages/student-login";
 import StudentForgotPassword from "@/pages/student-forgot-password";
 
 const GENERIC_MESSAGE =
-  "If those details match a student account, a verification code has been sent to the recovery contact on file.";
+  "If those details match a student account, a verification code has been sent to the email on file.";
 
 function response(data: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(data), {
@@ -170,7 +170,7 @@ describe("Student Login and Forgot Password frontend flow", () => {
       { schoolCode: "SCH-001", dsid: "MLS-0001" },
     );
     expect(screen.getByTestId("student-recovery-page")).toHaveTextContent(GENERIC_MESSAGE);
-    expect(screen.getByTestId("student-recovery-page")).not.toHaveTextContent(/email|student name|school id|challenge/i);
+    expect(screen.getByTestId("student-recovery-page")).not.toHaveTextContent(/student name|school id|challenge/i);
   });
 
   it("normalizes OTP to six digits, rejects incomplete OTP, and sends only otp", async () => {

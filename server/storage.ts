@@ -10,7 +10,7 @@ import {
   academicSessions, enrollments, removedTeachersLog,
   feeStructures, paymentRecords, feeAuditLog, externalPaymentSettings,
   notificationConfig, dunningLog, passwordResetChallenges,
-  studentVerifiedRecoveryContacts, studentRecoveryContactVerificationChallenges, studentPasswordResetChallenges,
+  studentPasswordResetChallenges,
   type FeeStructure, type InsertFeeStructure,
   type PaymentRecord, type InsertPaymentRecord,
   type FeeAuditLog,
@@ -50,7 +50,7 @@ import {
   type AcademicSession, type InsertAcademicSession,
   type Enrollment, type InsertEnrollment,
   type PasswordResetChallenge,
-  type StudentVerifiedRecoveryContact, type StudentRecoveryContactVerificationChallenge, type StudentPasswordResetChallenge,
+  type StudentPasswordResetChallenge,
 } from "@shared/schema";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
@@ -78,6 +78,11 @@ import {
   hashPasswordRecoverySecret,
   passwordRecoverySecretsEqual,
 } from "./password-recovery-crypto";
+
+function isValidStudentRecoveryEmail(email: string | null): email is string {
+  return typeof email === "string"
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
 
 type GradingRule = Omit<StoredGradingRule, "minPercent" | "maxPercent"> & {
   minPercent: number;
@@ -637,6 +642,39 @@ export class DatabaseStorage {
 
   async updateStudentLivePhoto(studentId: number, photoUrl: string): Promise<void> {
     await db.update(students).set({ photoUrl }).where(eq(students.id, studentId));
+  }
+
+  async updateStudentLiveFieldsForTeacherApproval(
+    studentId: number,
+    schoolId: number,
+    data: Record<string, unknown>,
+  ): Promise<Student | undefined> {
+    return db.transaction(async tx => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
+      const [before] = await tx.select({ email: students.email })
+        .from(students)
+        .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)))
+        .for("update");
+      if (!before) return undefined;
+
+      const [updated] = await tx.update(students)
+        .set(data as Partial<typeof students.$inferInsert>)
+        .where(and(eq(students.id, studentId), eq(students.schoolId, schoolId)))
+        .returning();
+
+      const emailChanged = Object.prototype.hasOwnProperty.call(data, "email")
+        && String(data.email ?? "").trim().toLowerCase() !== (before.email ?? "").trim().toLowerCase();
+      if (emailChanged) {
+        await tx.update(studentPasswordResetChallenges)
+          .set({ consumedAt: new Date() })
+          .where(and(
+            eq(studentPasswordResetChallenges.studentId, studentId),
+            eq(studentPasswordResetChallenges.schoolId, schoolId),
+            isNull(studentPasswordResetChallenges.consumedAt),
+          ));
+      }
+      return updated;
+    });
   }
 
   async updateStudentVerifiedProfile(studentId: number, verifiedProfileJson: string): Promise<void> {
@@ -3484,19 +3522,6 @@ export class DatabaseStorage {
         .returning();
       if (data.email !== undefined && (data.email ?? "").trim().toLowerCase() !== (before.email ?? "").trim().toLowerCase()) {
         const now = new Date();
-        await tx.update(studentVerifiedRecoveryContacts).set({
-          verifiedAt: null,
-          verificationMethod: null,
-          updatedAt: now,
-        }).where(and(
-          eq(studentVerifiedRecoveryContacts.studentId, id),
-          eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-        ));
-        await tx.update(studentRecoveryContactVerificationChallenges).set({ consumedAt: now }).where(and(
-          eq(studentRecoveryContactVerificationChallenges.studentId, id),
-          eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
-          isNull(studentRecoveryContactVerificationChallenges.consumedAt),
-        ));
         await tx.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(
           eq(studentPasswordResetChallenges.studentId, id),
           eq(studentPasswordResetChallenges.schoolId, schoolId),
@@ -3507,130 +3532,10 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentVerifiedRecoveryContact(studentId: number, schoolId: number): Promise<StudentVerifiedRecoveryContact | undefined> {
-    const [contact] = await db.select().from(studentVerifiedRecoveryContacts).where(and(
-      eq(studentVerifiedRecoveryContacts.studentId, studentId),
-      eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-      eq(studentVerifiedRecoveryContacts.contactType, "email"),
-      isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
-    )).limit(1);
-    return contact;
-  }
-
-  async createStudentRecoveryContactVerificationChallenge(
-    studentId: number,
-    schoolId: number,
-    email: string,
-    codeHash: string,
-    expiresAt: Date,
-    requestIp: string | null,
-    now = new Date(),
-  ): Promise<{ contact: StudentVerifiedRecoveryContact; challenge: StudentRecoveryContactVerificationChallenge } | null> {
-    return db.transaction(async tx => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
-      const [student] = await tx.select({ id: students.id, schoolId: students.schoolId, email: students.email })
-        .from(students).where(and(eq(students.id, studentId), eq(students.schoolId, schoolId))).for("update");
-      if (!student || !student.email || student.email.trim().toLowerCase() !== email.trim().toLowerCase()) return null;
-      const normalized = email.trim().toLowerCase();
-      await tx.update(studentRecoveryContactVerificationChallenges).set({ consumedAt: now }).where(and(
-        eq(studentRecoveryContactVerificationChallenges.studentId, studentId),
-        eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
-        isNull(studentRecoveryContactVerificationChallenges.consumedAt),
-      ));
-      const [contact] = await tx.insert(studentVerifiedRecoveryContacts).values({
-        schoolId, studentId, contactType: "email", contactValue: email.trim(),
-        contactValueNormalized: normalized, verifiedAt: null, verificationMethod: null,
-        createdAt: now, updatedAt: now,
-      }).onConflictDoUpdate({
-        target: [studentVerifiedRecoveryContacts.studentId, studentVerifiedRecoveryContacts.contactType],
-        set: { schoolId, contactValue: email.trim(), contactValueNormalized: normalized, verifiedAt: null, verificationMethod: null, updatedAt: now },
-      }).returning();
-      const [challenge] = await tx.insert(studentRecoveryContactVerificationChallenges).values({
-        schoolId, studentId, contactId: contact.id, purpose: "student_recovery_email_verification",
-        codeHash, expiresAt, attemptCount: 0, requestIp, createdAt: now,
-      }).returning();
-      return { contact, challenge };
-    });
-  }
-
-  async invalidateStudentRecoveryContactVerificationChallenge(
-    challengeId: number,
-    studentId: number,
-    schoolId: number,
-    now = new Date(),
-  ): Promise<void> {
-    await db.update(studentRecoveryContactVerificationChallenges).set({ consumedAt: now }).where(and(
-      eq(studentRecoveryContactVerificationChallenges.id, challengeId),
-      eq(studentRecoveryContactVerificationChallenges.studentId, studentId),
-      eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
-      isNull(studentRecoveryContactVerificationChallenges.consumedAt),
-    ));
-  }
-
-  async verifyStudentRecoveryContactChallenge(
-    challengeId: number | null,
-    studentId: number,
-    schoolId: number,
-    codeHash: string,
-    secretsEqual: (expected: string, actual: string) => boolean,
-    now = new Date(),
-  ): Promise<boolean> {
-    return db.transaction(async tx => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${studentId})`);
-      const challengeConditions = [
-        eq(studentRecoveryContactVerificationChallenges.studentId, studentId),
-        eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
-        eq(studentRecoveryContactVerificationChallenges.purpose, "student_recovery_email_verification"),
-        isNull(studentRecoveryContactVerificationChallenges.consumedAt),
-        gt(studentRecoveryContactVerificationChallenges.expiresAt, now),
-        lt(studentRecoveryContactVerificationChallenges.attemptCount, 5),
-      ];
-      if (challengeId !== null) {
-        challengeConditions.push(eq(studentRecoveryContactVerificationChallenges.id, challengeId));
-      }
-      const [challenge] = await tx.select().from(studentRecoveryContactVerificationChallenges)
-        .where(and(...challengeConditions))
-        .orderBy(sql`${studentRecoveryContactVerificationChallenges.createdAt} DESC`, sql`${studentRecoveryContactVerificationChallenges.id} DESC`)
-        .limit(1)
-        .for("update");
-      if (!challenge) return false;
-      const [student] = await tx.select({ id: students.id, email: students.email }).from(students).where(and(
-        eq(students.id, studentId),
-        eq(students.schoolId, schoolId),
-      )).for("update");
-      if (!student?.email) return false;
-      if (!secretsEqual(challenge.codeHash, codeHash)) {
-        await tx.update(studentRecoveryContactVerificationChallenges).set({
-          attemptCount: sql`LEAST(${studentRecoveryContactVerificationChallenges.attemptCount} + 1, 5)`,
-        }).where(and(eq(studentRecoveryContactVerificationChallenges.id, challenge.id), lt(studentRecoveryContactVerificationChallenges.attemptCount, 5)));
-        return false;
-      }
-      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
-        eq(studentVerifiedRecoveryContacts.id, challenge.contactId),
-        eq(studentVerifiedRecoveryContacts.studentId, studentId),
-        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-        eq(studentVerifiedRecoveryContacts.contactType, "email"),
-      )).for("update");
-      if (
-        !contact
-        || contact.contactValueNormalized !== student.email.trim().toLowerCase()
-      ) return false;
-      await tx.update(studentVerifiedRecoveryContacts).set({ verifiedAt: now, verificationMethod: "email_otp", updatedAt: now }).where(eq(studentVerifiedRecoveryContacts.id, contact.id));
-      await tx.update(studentRecoveryContactVerificationChallenges).set({ consumedAt: now }).where(eq(studentRecoveryContactVerificationChallenges.id, challenge.id));
-      await tx.update(studentRecoveryContactVerificationChallenges).set({ consumedAt: now }).where(and(
-        eq(studentRecoveryContactVerificationChallenges.studentId, studentId),
-        eq(studentRecoveryContactVerificationChallenges.schoolId, schoolId),
-        eq(studentRecoveryContactVerificationChallenges.contactId, contact.id),
-        isNull(studentRecoveryContactVerificationChallenges.consumedAt),
-      ));
-      return true;
-    });
-  }
-
   async createStudentPasswordResetChallenge(
     studentId: number,
     schoolId: number,
-    contactId: number,
+    expectedEmail: string,
     otpHash: string,
     otpExpiresAt: Date,
     requestIp: string | null,
@@ -3648,7 +3553,13 @@ export class DatabaseStorage {
         eq(students.id, studentId),
         eq(students.schoolId, schoolId),
       )).for("update");
-      if (!student || !student.isActive || !student.isActivated || !student.email) return null;
+      if (
+        !student
+        || !student.isActive
+        || !student.isActivated
+        || !isValidStudentRecoveryEmail(student.email)
+        || student.email.trim().toLowerCase() !== expectedEmail.trim().toLowerCase()
+      ) return null;
       const [verifiedRecovery] = await tx.select({ id: studentPasswordResetChallenges.id })
         .from(studentPasswordResetChallenges)
         .where(and(
@@ -3662,14 +3573,6 @@ export class DatabaseStorage {
         .limit(1)
         .for("update");
       if (verifiedRecovery) return null;
-      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
-        eq(studentVerifiedRecoveryContacts.id, contactId),
-        eq(studentVerifiedRecoveryContacts.studentId, studentId),
-        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-        eq(studentVerifiedRecoveryContacts.contactType, "email"),
-        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
-      )).for("update");
-      if (!contact || contact.contactValueNormalized !== student.email.trim().toLowerCase()) return null;
       await tx.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(
         eq(studentPasswordResetChallenges.studentId, studentId),
         eq(studentPasswordResetChallenges.schoolId, schoolId),
@@ -3678,7 +3581,6 @@ export class DatabaseStorage {
       const [challenge] = await tx.insert(studentPasswordResetChallenges).values({
         schoolId,
         studentId,
-        contactId,
         purpose: "student_password_recovery",
         otpHash,
         otpExpiresAt,
@@ -3747,15 +3649,7 @@ export class DatabaseStorage {
         eq(students.id, studentId),
         eq(students.schoolId, schoolId),
       )).for("update");
-      if (!student?.email || !student.isActive || !student.isActivated) return null;
-      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
-        eq(studentVerifiedRecoveryContacts.id, challenge.contactId),
-        eq(studentVerifiedRecoveryContacts.studentId, studentId),
-        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-        eq(studentVerifiedRecoveryContacts.contactType, "email"),
-        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
-      )).for("update");
-      if (!contact || contact.contactValueNormalized !== student.email.trim().toLowerCase()) return null;
+      if (!student || !student.isActive || !student.isActivated || !isValidStudentRecoveryEmail(student.email)) return null;
       const suppliedHash = hashPasswordRecoverySecret(otp);
       if (!passwordRecoverySecretsEqual(challenge.otpHash, suppliedHash)) {
         await tx.update(studentPasswordResetChallenges).set({
@@ -3814,20 +3708,7 @@ export class DatabaseStorage {
         eq(students.isActive, true),
         eq(students.isActivated, true),
       )).for("update");
-      if (!student) return false;
-      const [contact] = await tx.select().from(studentVerifiedRecoveryContacts).where(and(
-        eq(studentVerifiedRecoveryContacts.id, challenge.contactId),
-        eq(studentVerifiedRecoveryContacts.studentId, studentId),
-        eq(studentVerifiedRecoveryContacts.schoolId, schoolId),
-        eq(studentVerifiedRecoveryContacts.contactType, "email"),
-        isNotNull(studentVerifiedRecoveryContacts.verifiedAt),
-      )).for("update");
-      if (
-        !contact
-        || !student
-        || !student.email
-        || contact.contactValueNormalized !== student.email.trim().toLowerCase()
-      ) return false;
+      if (!student || !isValidStudentRecoveryEmail(student.email)) return false;
       await tx.update(students).set({ passwordHash }).where(and(
         eq(students.id, studentId),
         eq(students.schoolId, schoolId),

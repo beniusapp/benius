@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const GENERIC_MESSAGE =
-  "If those details match a student account, a verification code has been sent to the recovery contact on file.";
+  "If those details match a student account, a verification code has been sent to the email on file.";
 
 type RecoveryStep = "start" | "otp" | "reset";
 
@@ -220,7 +220,7 @@ export default function StudentForgotPassword() {
             <CardDescription>
               {resetComplete ? "Your student account is ready to use." :
                 step === "start" ? "Enter your school details to securely recover your account." :
-                step === "otp" ? "Enter the 6-digit code sent to your recovery contact." :
+                step === "otp" ? "Enter the 6-digit code sent to the email on file." :
                 "Choose a new password with at least 6 characters."}
             </CardDescription>
           </CardHeader>

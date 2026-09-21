@@ -3335,7 +3335,11 @@ Thank you for your prompt attention to this matter.
     if (profile.presentAddress) liveUpdates.address     = profile.presentAddress;
     if (profile.email)        liveUpdates.email         = profile.email;
     if (Object.keys(liveUpdates).length > 0) {
-      await db.update(students).set(liveUpdates).where(eq(students.id, studentId));
+      await storage.updateStudentLiveFieldsForTeacherApproval(
+        studentId,
+        teacher.schoolId,
+        liveUpdates,
+      );
     }
 
     res.json(profile);

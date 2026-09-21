@@ -33,15 +33,10 @@ type StudentRecoveryRouteDependencies = {
     isActive: boolean;
     isActivated: boolean;
   } | undefined>;
-  getVerifiedRecoveryContact: (studentId: number, schoolId: number) => Promise<{
-    id: number;
-    contactValueNormalized: string;
-    verifiedAt: Date | null;
-  } | undefined>;
   createChallenge: (
     studentId: number,
     schoolId: number,
-    contactId: number,
+    expectedEmail: string,
     otpHash: string,
     otpExpiresAt: Date,
     requestIp: string | null,
@@ -75,13 +70,11 @@ const defaultDependencies: StudentRecoveryRouteDependencies = {
   getSchoolByCode: code => storage.getSchoolByCode(code),
   getStudentByDsidAndSchool: (dsid, schoolId) =>
     storage.getStudentByDsidAndSchool(dsid, schoolId),
-  getVerifiedRecoveryContact: (studentId, schoolId) =>
-    storage.getStudentVerifiedRecoveryContact(studentId, schoolId),
-  createChallenge: (studentId, schoolId, contactId, otpHash, otpExpiresAt, requestIp) =>
+  createChallenge: (studentId, schoolId, expectedEmail, otpHash, otpExpiresAt, requestIp) =>
     storage.createStudentPasswordResetChallenge(
       studentId,
       schoolId,
-      contactId,
+      expectedEmail,
       otpHash,
       otpExpiresAt,
       requestIp,
@@ -126,7 +119,16 @@ const resetPasswordSchema = z.object({
 }).strict();
 
 function supportedProvider(config: NotificationConfig): boolean {
-  return config.emailProvider === "sendgrid" || config.emailProvider === "mailtrap";
+  if (config.emailProvider !== "sendgrid" && config.emailProvider !== "mailtrap") return false;
+  if (config.emailProvider === "mailtrap") {
+    return typeof config.mailtrapInboxId === "string" && config.mailtrapInboxId.trim().length > 0;
+  }
+  return true;
+}
+
+function validStudentEmail(email: string | null): email is string {
+  return typeof email === "string"
+    && z.string().email().safeParse(email.trim()).success;
 }
 
 function saveSession(req: Request): Promise<void> {
@@ -204,13 +206,7 @@ export function registerStudentPasswordRecoveryRoutes(
       if (!student || student.schoolId !== school.id || !student.isActive || !student.isActivated) {
         return res.json(buildForgotPasswordResponse());
       }
-      const contact = await dependencies.getVerifiedRecoveryContact(student.id, school.id);
-      if (
-        !student.email
-        || !contact
-        || !contact.verifiedAt
-        || contact.contactValueNormalized !== student.email.trim().toLowerCase()
-      ) {
+      if (!validStudentEmail(student.email)) {
         return res.json(buildForgotPasswordResponse());
       }
 
@@ -218,7 +214,7 @@ export function registerStudentPasswordRecoveryRoutes(
       const created = await dependencies.createChallenge(
         student.id,
         school.id,
-        contact.id,
+        student.email.trim().toLowerCase(),
         hashPasswordRecoverySecret(otp),
         new Date(Date.now() + 10 * 60 * 1000),
         req.ip || null,
@@ -289,7 +285,7 @@ export function registerStudentPasswordRecoveryRoutes(
         ) {
           throw new Error("Missing or inconsistent notification configuration");
         }
-        await dependencies.sendRecoveryEmail(config, student.email, otp);
+        await dependencies.sendRecoveryEmail(config, student.email.trim(), otp);
       } catch {
         await cleanupCreatedChallenge(req, created, dependencies);
       }

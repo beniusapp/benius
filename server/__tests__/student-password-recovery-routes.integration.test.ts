@@ -5,7 +5,7 @@ import type { Server } from "node:http";
 import { eq, inArray } from "drizzle-orm";
 import { db, pool } from "../db";
 import { storage } from "../storage";
-import { notificationConfig, schools, studentPasswordResetChallenges, students, studentVerifiedRecoveryContacts } from "@shared/schema";
+import { notificationConfig, schools, studentPasswordResetChallenges, students } from "@shared/schema";
 import { PasswordRecoveryRateLimiter, passwordRecoverySecretsEqual, hashPasswordRecoverySecret } from "../password-recovery";
 import { registerStudentPasswordRecoveryRoutes } from "../student-password-recovery-routes";
 import { StudentRecoverySafePgStore } from "../student-recovery-session-store";
@@ -37,15 +37,6 @@ async function fixture(suffix = `${Date.now()}-${serial++}`) {
     isActive: true,
     isActivated: true,
   }).returning();
-  const [contact] = await db.insert(studentVerifiedRecoveryContacts).values({
-    schoolId: school.id,
-    studentId: student.id,
-    contactType: "email",
-    contactValue: student.email!,
-    contactValueNormalized: student.email!.trim().toLowerCase(),
-    verifiedAt: new Date(),
-    verificationMethod: "email_otp",
-  }).returning();
   await db.insert(notificationConfig).values({
     schoolId: school.id,
     emailEnabled: true,
@@ -54,7 +45,7 @@ async function fixture(suffix = `${Date.now()}-${serial++}`) {
     sendgridFromEmail: "school@example.test",
     sendgridFromName: "Integration School",
   });
-  return { school, student, contact };
+  return { school, student };
 }
 
 type Harness = {
@@ -78,9 +69,8 @@ async function makeHarness(sendImpl?: (otp: string) => Promise<void>): Promise<H
   registerStudentPasswordRecoveryRoutes(app, {
     getSchoolByCode: code => storage.getSchoolByCode(code),
     getStudentByDsidAndSchool: (dsid, schoolId) => storage.getStudentByDsidAndSchool(dsid, schoolId),
-    getVerifiedRecoveryContact: (studentId, schoolId) => storage.getStudentVerifiedRecoveryContact(studentId, schoolId),
-    createChallenge: async (studentId, schoolId, contactId, otpHash, expires, ip) =>
-      storage.createStudentPasswordResetChallenge(studentId, schoolId, contactId, otpHash, expires, ip),
+    createChallenge: async (studentId, schoolId, expectedEmail, otpHash, expires, ip) =>
+      storage.createStudentPasswordResetChallenge(studentId, schoolId, expectedEmail, otpHash, expires, ip),
     invalidateChallenge: (challengeId, studentId, schoolId) =>
       storage.invalidateStudentPasswordResetChallenge(challengeId, studentId, schoolId),
     getNotificationConfig: schoolId => storage.getNotificationConfig(schoolId),
@@ -245,20 +235,24 @@ describe("Student Step 4 PostgreSQL HTTP integration", () => {
     await app.stop();
   });
 
-  it("blocks verification after current contact revocation or Student deactivation", async () => {
-    const contactCase = await fixture();
+  it("blocks verification after Student deactivation or email change", async () => {
+    const emailCase = await fixture();
     const app = await makeHarness();
-    const contactForgot = await post("/api/student/forgot-password", {
-      schoolCode: contactCase.school.code,
-      dsid: contactCase.student.digitalStudentId,
+    const emailForgot = await post("/api/student/forgot-password", {
+      schoolCode: emailCase.school.code,
+      dsid: emailCase.student.digitalStudentId,
     });
-    const contactOtp = app.send.mock.calls.at(-1)![2] as string;
-    await db.update(studentVerifiedRecoveryContacts)
-      .set({ verifiedAt: null })
-      .where(eq(studentVerifiedRecoveryContacts.id, contactCase.contact.id));
-    const revoked = await post("/api/student/verify-recovery-otp", { otp: contactOtp }, contactForgot.cookie);
-    expect(revoked.status).toBe(400);
-    expect(revoked.body).toEqual({ message: invalid });
+    const emailOtp = app.send.mock.calls.at(-1)![2] as string;
+    await storage.updateStudent(emailCase.student.id, emailCase.school.id, {
+      name: emailCase.student.name,
+      class: emailCase.student.class,
+      section: emailCase.student.section,
+      phone: emailCase.student.phone,
+      email: `changed-${Date.now()}@example.test`,
+    });
+    const changed = await post("/api/student/verify-recovery-otp", { otp: emailOtp }, emailForgot.cookie);
+    expect(changed.status).toBe(400);
+    expect(changed.body).toEqual({ message: invalid });
 
     const inactiveCase = await fixture();
     const inactiveForgot = await post("/api/student/forgot-password", {

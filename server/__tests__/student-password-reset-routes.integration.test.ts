@@ -11,7 +11,6 @@ import {
   schools,
   studentPasswordResetChallenges,
   students,
-  studentVerifiedRecoveryContacts,
 } from "@shared/schema";
 import {
   PasswordRecoveryRateLimiter,
@@ -45,7 +44,6 @@ type Fixture = {
     isActivated: boolean;
   };
   oldPassword: string;
-  contact: { id: number };
 };
 
 type Harness = {
@@ -77,15 +75,6 @@ async function fixture(): Promise<Fixture> {
     isActivated: true,
   }).returning();
   studentIds.push(student.id);
-  const [contact] = await db.insert(studentVerifiedRecoveryContacts).values({
-    schoolId: school.id,
-    studentId: student.id,
-    contactType: "email",
-    contactValue: student.email!,
-    contactValueNormalized: student.email!.trim().toLowerCase(),
-    verifiedAt: new Date(),
-    verificationMethod: "email_otp",
-  }).returning({ id: studentVerifiedRecoveryContacts.id });
   await db.insert(notificationConfig).values({
     schoolId: school.id,
     emailEnabled: true,
@@ -94,7 +83,7 @@ async function fixture(): Promise<Fixture> {
     sendgridFromEmail: "step5@example.test",
     sendgridFromName: "Step 5 Test",
   });
-  return { school, student, oldPassword, contact };
+  return { school, student, oldPassword };
 }
 
 async function makeHarness(rateLimiter = new PasswordRecoveryRateLimiter(1000)): Promise<Harness> {
@@ -114,11 +103,9 @@ async function makeHarness(rateLimiter = new PasswordRecoveryRateLimiter(1000)):
     getSchoolByCode: code => storage.getSchoolByCode(code),
     getStudentByDsidAndSchool: (dsid, schoolId) =>
       storage.getStudentByDsidAndSchool(dsid, schoolId),
-    getVerifiedRecoveryContact: (studentId, schoolId) =>
-      storage.getStudentVerifiedRecoveryContact(studentId, schoolId),
-    createChallenge: (studentId, schoolId, contactId, otpHash, expires, ip) =>
+    createChallenge: (studentId, schoolId, expectedEmail, otpHash, expires, ip) =>
       storage.createStudentPasswordResetChallenge(
-        studentId, schoolId, contactId, otpHash, expires, ip,
+        studentId, schoolId, expectedEmail, otpHash, expires, ip,
       ),
     invalidateChallenge: (challengeId, studentId, schoolId) =>
       storage.invalidateStudentPasswordResetChallenge(challengeId, studentId, schoolId),
@@ -503,31 +490,28 @@ describe("Student Step 5 PostgreSQL reset integration", () => {
     await app.stop();
   });
 
-  it.each(["contact", "email"] as const)(
-    "rejects reset when the current %s no longer matches Step 3",
-    async kind => {
-      const item = await fixture();
-      const app = await makeHarness();
-      const reset = await beginReset(app, item);
-      if (kind === "contact") {
-        await db.update(studentVerifiedRecoveryContacts).set({ verifiedAt: null })
-          .where(eq(studentVerifiedRecoveryContacts.id, item.contact.id));
-      } else {
-        await db.update(students).set({ email: `changed-${Date.now()}@example.test` })
-          .where(eq(students.id, item.student.id));
-      }
-      const before = await db.select({ passwordHash: students.passwordHash })
-        .from(students).where(eq(students.id, item.student.id));
-      const response = await post("/api/student/reset-password", {
-        newPassword: "should-not-apply",
-      }, reset.cookie);
-      expect(response.status).toBe(400);
-      expect((await db.select({ passwordHash: students.passwordHash }).from(students)
-        .where(eq(students.id, item.student.id)))[0].passwordHash).toBe(before[0].passwordHash);
-      expect((await challengeFor(item.student.id))?.consumedAt).toBeNull();
-      await app.stop();
-    },
-  );
+  it("rejects reset when the current email changes", async () => {
+    const item = await fixture();
+    const app = await makeHarness();
+    const reset = await beginReset(app, item);
+    await storage.updateStudent(item.student.id, item.school.id, {
+      name: item.student.name,
+      class: item.student.class,
+      section: item.student.section,
+      phone: item.student.phone,
+      email: `changed-${Date.now()}@example.test`,
+    });
+    const before = await db.select({ passwordHash: students.passwordHash })
+      .from(students).where(eq(students.id, item.student.id));
+    const response = await post("/api/student/reset-password", {
+      newPassword: "should-not-apply",
+    }, reset.cookie);
+    expect(response.status).toBe(400);
+    expect((await db.select({ passwordHash: students.passwordHash }).from(students)
+      .where(eq(students.id, item.student.id)))[0].passwordHash).toBe(before[0].passwordHash);
+    expect((await challengeFor(item.student.id))?.consumedAt).not.toBeNull();
+    await app.stop();
+  });
 
   it("rejects independently tampered school, student, and reset-token authority", async () => {
     for (const field of ["schoolId", "studentId", "resetToken"] as const) {
