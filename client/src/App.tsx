@@ -16,6 +16,7 @@ import TeacherDashboard from "@/pages/teacher-dashboard";
 import Login           from "@/pages/login";
 import StudentLogin    from "@/pages/student-login";
 import TeacherLogin    from "@/pages/teacher-login";
+import StudentForgotPassword from "@/pages/student-forgot-password";
 
 const SessionCopyCenter       = lazy(() => import("@/pages/session-copy-center"));
 const SessionMigration        = lazy(() => import("@/pages/admin-modules/session-migration"));
@@ -78,6 +79,9 @@ function Router() {
         <Route path="/admin-dashboard/:module" component={AdminDashboard} />
         <Route path="/register" component={Register} />
         <Route path="/student-login" component={StudentLogin} />
+        <Route path="/student/forgot-password" component={StudentForgotPassword} />
+        <Route path="/student/forgot-password/otp" component={StudentForgotPassword} />
+        <Route path="/student/forgot-password/reset" component={StudentForgotPassword} />
         <Route path="/student-dashboard" component={StudentDashboard} />
         <Route path="/student-profile" component={StudentProfilePage} />
         <Route path="/student/attendance" component={StudentAttendance} />

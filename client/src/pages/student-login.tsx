@@ -85,7 +85,7 @@ export default function StudentLogin() {
                     <FormItem>
                       <FormLabel>Digital Student ID (DSID)</FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g. MLS-0001" data-testid="input-student-dsid" {...field} />
+                       <Input placeholder="e.g. MLS-0001" autoComplete="username" data-testid="input-student-dsid" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -98,7 +98,7 @@ export default function StudentLogin() {
                     <FormItem>
                       <FormLabel>Password</FormLabel>
                       <FormControl>
-                        <Input type="password" placeholder="Enter your password" data-testid="input-student-password" {...field} />
+                       <Input type="password" autoComplete="current-password" placeholder="Enter your password" data-testid="input-student-password" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -113,6 +113,15 @@ export default function StudentLogin() {
                   {loginMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                   Sign In
                 </Button>
+                <div className="text-center">
+                  <Link
+                    href="/student/forgot-password"
+                    className="text-sm text-primary underline"
+                    data-testid="link-student-forgot-password"
+                  >
+                    Forgot your password?
+                  </Link>
+                </div>
                 <p className="text-center text-sm text-muted-foreground">
                   Haven't activated your account?{" "}
                   <Link href="/register" className="text-primary underline" data-testid="link-register">
