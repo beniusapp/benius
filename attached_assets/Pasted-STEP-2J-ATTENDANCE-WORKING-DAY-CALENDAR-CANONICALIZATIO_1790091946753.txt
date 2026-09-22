@@ -1,0 +1,239 @@
+STEP 2J — ATTENDANCE WORKING-DAY / CALENDAR CANONICALIZATION
+READ-ONLY AUDIT ONLY — DO NOT MODIFY ANY FILE, DATABASE, SCHEMA, MIGRATION, OR RUNTIME BEHAVIOR
+
+Context:
+Attendance Steps 2D–2I are complete and passed.
+
+Completed requirements that MUST remain unchanged:
+- Multi-tenant school isolation is mandatory.
+- Every Attendance operation is scoped to authenticated school/tenant.
+- Every Attendance read/calculation is scoped to a validated Academic Session ID.
+- Student Registry is global/permanent and must NOT reset/change when Academic Session changes.
+- Historical Attendance must remain visible for the selected historical session.
+- Historical class/section authority from Step 2H must remain unchanged.
+- Enrollment is NOT an Attendance prerequisite.
+- Faculty Mapping is NOT an Attendance restriction.
+- Any authenticated Teacher belonging to the school may mark Student Attendance.
+- Student/Admin/Teacher Student Attendance use the Step 2I canonical status semantics:
+  Present = 1.0
+  Late = 1.0
+  Approved Leave = 1.0
+  Half Day = 0.5
+  Absent = 0
+  Unknown = 0
+  Missing/Not Marked = 0 but tracked separately from explicit Absent.
+- Teacher self-attendance remains separate and is NOT part of this Step 2J calculation contract.
+- Attendance history remains read-only for historical sessions.
+- Application-facing dates/times must remain IST / Asia/Kolkata.
+- Production must NOT be accessed or modified.
+
+Purpose of Step 2J:
+Determine exactly how "working days" are currently derived across Admin, Teacher, and Student Attendance, and identify the minimum changes required so all Student Attendance calculations use ONE authoritative school-calendar/working-day definition for the selected Academic Session.
+
+IMPORTANT:
+This is READ-ONLY ONLY.
+Do NOT implement fixes.
+Do NOT edit files.
+Do NOT create migrations.
+Do NOT change schema.
+Do NOT restart the application unless absolutely required for read-only inspection.
+Do NOT change existing behavior.
+
+AUDIT THE FOLLOWING:
+
+1. CALENDAR DATA MODEL
+Identify all tables/models/functions representing:
+- Academic Session
+- school calendar
+- working days
+- holidays
+- calendar events
+- weekends/non-working days
+- school closures
+- special working days
+- exam days if relevant
+- leave days if relevant
+
+For each, report:
+- file/table/model
+- relevant columns
+- school/tenant ownership
+- Academic Session linkage
+- date/date-range representation
+- whether it is authoritative or merely used by one screen
+
+2. CURRENT WORKING-DAY GENERATION
+Find every function/query/helper that determines whether a date is:
+- working day
+- holiday
+- school closed
+- non-working
+- applicable to Attendance percentage calculations
+
+Trace the actual implementation, not just function names.
+
+For each implementation report:
+- source file and function
+- input parameters
+- school scope
+- Academic Session scope
+- date range
+- data source used
+- exact inclusion/exclusion rules
+- whether weekends are automatically excluded
+- whether holidays are excluded
+- whether calendar events are included/excluded
+- whether special working days are supported
+- whether session boundaries are respected
+
+3. ATTENDANCE CALCULATION SURFACES
+Trace the working-day denominator used by:
+
+A. Student:
+- monthly Attendance
+- yearly Attendance
+- Attendance statistics
+- dashboard
+- archives
+- examination Attendance display
+
+B. Admin:
+- Attendance overview
+- class detail
+- dashboard daily summary
+- teacher summary if applicable
+- Performance Analytics Attendance
+
+C. Teacher:
+- Attendance daily/history
+- Attendance summaries
+- Examination Attendance summary
+- class Attendance summaries
+
+For every surface report:
+- exact backend endpoint/function
+- exact denominator source
+- whether it uses calendar data, attendance dates, enrollment dates, class dates, or another source
+- whether the selected Academic Session is enforced
+- whether historical students/classes are handled through Step 2H
+- whether different surfaces can produce different working-day counts
+
+4. FIND ALL EVENT-DERIVED WORKING-DAY LOGIC
+Specifically identify logic where working days are inferred from:
+- dates appearing in attendance_records
+- dates appearing in calendar_events
+- dates appearing in another event table
+- date ranges generated from current class/section
+- dates with at least one Attendance record
+- current Student Registry state
+
+Explain why each source is or is not appropriate as the canonical working-day source.
+
+5. SESSION BOUNDARIES
+Test/read the code paths conceptually for:
+- selected historical Academic Session
+- current Academic Session
+- two Academic Sessions with overlapping date ranges
+- dates before/after selected session
+- students promoted between sessions
+- inactive historical students
+- students without Enrollment
+- Attendance-only historical students
+
+Determine whether a working-day calculation can accidentally include dates belonging to another Academic Session.
+
+6. SCHOOL CALENDAR AUTHORITY
+Determine whether there is already an existing calendar implementation that can safely become the authoritative source.
+
+DO NOT redesign the calendar if an existing implementation already satisfies the requirement.
+
+Report:
+- existing calendar source
+- whether it is school-specific
+- whether it is session-specific
+- whether it supports holidays
+- whether it supports working-day overrides
+- whether it supports date ranges
+- whether it can represent school closure/non-working days
+- any gaps
+
+7. MISSING-DAY SEMANTICS
+Determine how the system currently treats a Student who has:
+- no Attendance record on a working day
+- explicit Absent on a working day
+- approved Leave on a working day
+- Attendance on a holiday/non-working day
+
+Do NOT change anything.
+Just report current behavior and identify inconsistencies.
+
+8. ADMIN / TEACHER / STUDENT CONSISTENCY
+Create a comparison table:
+
+Surface | Working-day source | Denominator | Session-scoped? | Calendar-scoped? | Historical-safe? | Consistent with Step 2I?
+
+Identify every mismatch.
+
+9. CANONICALIZATION RECOMMENDATION
+Based only on the existing codebase, recommend the MINIMUM safe design for Step 2J.
+
+The recommendation must answer:
+- What should be the single authoritative working-day source?
+- How should it be scoped to school + Academic Session?
+- How should session date boundaries be enforced?
+- How should weekends/holidays/special working days be handled?
+- How should missing Attendance records behave?
+- Which existing functions should be reused?
+- Which functions must be changed?
+- Which files must change?
+- What MUST NOT change?
+
+Do NOT implement the recommendation.
+
+10. TEST PLAN
+Propose focused tests for:
+- normal working day
+- weekend
+- holiday
+- special working day
+- school closure
+- selected historical session
+- two-session isolation
+- missing Attendance
+- explicit Absent
+- approved Leave
+- promoted student
+- inactive historical student
+- student without Enrollment
+- Attendance-only historical student
+- cross-tenant isolation
+- Admin/Teacher/Student receiving identical working-day denominator
+
+11. SCOPE CONTROL
+Explicitly confirm that the audit does NOT propose:
+- Enrollment as an Attendance gate
+- Faculty Mapping restrictions
+- Student Registry redesign
+- Attendance writer changes
+- Teacher self-attendance redesign
+- Attendance status-rule changes from Step 2I
+- Exam Controller redesign
+- unrelated fixes
+- production changes
+
+FINAL OUTPUT FORMAT:
+
+A. Result: PASS / BLOCKED
+B. Current calendar/working-day architecture
+C. Exact working-day sources by surface
+D. Current denominator formulas/sources
+E. All inconsistencies found
+F. Historical-session risks
+G. Existing calendar reuse assessment
+H. Minimum Step 2J change set
+I. Exact files/functions that would need changes
+J. Focused test plan
+K. Explicit non-changes
+L. Confirmation: READ-ONLY ONLY, no implementation performed
+
+Again: DO NOT IMPLEMENT ANYTHING.
