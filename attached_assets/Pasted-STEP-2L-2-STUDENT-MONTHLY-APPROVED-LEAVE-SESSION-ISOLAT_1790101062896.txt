@@ -1,0 +1,229 @@
+STEP 2L-2 — STUDENT MONTHLY APPROVED LEAVE SESSION ISOLATION
+
+We are continuing Attendance hardening.
+
+Current status:
+- Step 2I — PASS
+- Step 2J — PASS
+- Step 2K — PASS
+- Step 2K-Test — PASS
+- Step 2L read-only audit — NEEDS CHANGES
+- Step 2L-1 Student Attendance Session Authority — PASS
+
+THIS STEP ADDRESSES ONLY STEP 2L FINDING 2.
+
+==================================================
+FINDING BEING FIXED
+==================================================
+
+The read-only audit identified a cross-Academic-Session leak in:
+
+  server/storage.ts
+  getStudentMonthlyAttendance()
+
+Attendance records are correctly filtered by:
+
+- schoolId
+- sessionId
+- studentId
+- month/date range
+
+However, the separately queried approved Student Leave records are currently filtered by:
+
+- schoolId
+- studentId
+- approved status
+- overlapping date range
+
+The approved-leave query does NOT require:
+
+  studentLeaveRequests.sessionId = selectedSessionId
+
+The monthly Attendance response then uses those approved leaves to display Leave when no Attendance record exists.
+
+Therefore:
+
+Session A approved leave
+        ↓
+same student/date
+        ↓
+Session B monthly Attendance
+        ↓
+Leave can incorrectly appear
+
+This is a direct Session-isolation defect.
+
+==================================================
+REQUIRED CHANGE
+==================================================
+
+Modify ONLY the approved Student Leave lookup used by:
+
+  getStudentMonthlyAttendance()
+
+so that approved leave is restricted to the SAME validated selected Academic Session used by the Attendance query.
+
+The leave query must be scoped to:
+
+- authenticated/validated school
+- selected student
+- approved status
+- requested date range
+- selected Academic Session
+
+Use the existing Student Leave session field and existing schema/storage conventions.
+
+Do not introduce a new field.
+
+Do not infer Session from dates.
+
+Do not use the active/latest Session as a fallback.
+
+Do not change the Attendance working-day rule.
+
+Do not change Attendance status weights.
+
+Do not change Attendance calculation logic.
+
+==================================================
+TENANT ISOLATION
+==================================================
+
+Preserve existing tenant isolation.
+
+The approved leave query must remain school-scoped.
+
+Never trust a browser-supplied schoolId to establish ownership.
+
+Do not weaken any existing Student Leave authorization.
+
+==================================================
+HISTORICAL SESSION BEHAVIOR
+==================================================
+
+For a selected historical Session:
+
+- approved leave belonging to that historical Session may appear
+  according to the existing monthly Attendance display behavior.
+
+For another Session:
+
+- that leave must NOT appear.
+
+Example:
+
+Student 100
+School 1
+
+Session A:
+  approved leave: 2026-07-10
+
+Session B:
+  no leave: 2026-07-10
+
+When viewing Session A:
+  2026-07-10 may show Leave.
+
+When viewing Session B:
+  2026-07-10 must NOT show Leave because of Session A's leave.
+
+==================================================
+IMPORTANT SCOPE LIMIT
+==================================================
+
+Do NOT modify:
+
+- Student Attendance Session selector
+- Student Attendance frontend Session authority
+- Attendance working-day helper
+- Attendance calculation helper
+- Student Registry
+- Enrollment
+- Faculty Mapping
+- Teacher Attendance
+- Admin Attendance
+- Teacher self-attendance
+- Leave approval workflow
+- Leave synchronization logic
+- Attendance policy engine
+- historical mutation locking
+- database schema
+- migrations
+
+This step is ONLY about the approved Student Leave query used by
+getStudentMonthlyAttendance() and its focused regression coverage.
+
+==================================================
+TEST REQUIREMENTS
+==================================================
+
+Before implementation:
+
+1. Inspect the current getStudentMonthlyAttendance() implementation.
+2. Inspect the Student Leave schema/storage definition.
+3. Inspect existing Attendance/Leave test patterns.
+
+Then implement the smallest production change.
+
+Add focused regression coverage proving:
+
+TEST 1:
+- Student has approved leave in Session A.
+- Monthly Attendance requested for Session A.
+- Leave is included.
+
+TEST 2:
+- Same student/date.
+- Approved leave exists only in Session A.
+- Monthly Attendance requested for Session B.
+- Leave is NOT included.
+
+TEST 3:
+- Same date/student/session but different school.
+- Leave from another school must NOT appear.
+
+TEST 4:
+- Existing Attendance record for the selected Session remains authoritative.
+- The new Session filter does not break normal Attendance rows.
+
+Use the existing repository test infrastructure.
+
+Do not create a new test framework.
+
+Do not weaken existing tests.
+
+==================================================
+VERIFICATION
+==================================================
+
+Run the focused tests covering:
+
+- getStudentMonthlyAttendance
+- Student Attendance monthly Leave behavior
+- existing Attendance Session isolation
+
+Then run:
+
+  npm run check
+
+and:
+
+  git diff --check
+
+Report:
+
+1. Exact files changed.
+2. Exact production change.
+3. Exact tests added/changed.
+4. Test results.
+5. npm run check result.
+6. git diff --check result.
+7. Confirmation that:
+   - no schema changed
+   - no migration was created/applied
+   - no unrelated Attendance behavior changed
+   - no other Step 2L finding was implemented.
+
+STOP after Step 2L-2.
+
+Do not start Step 2L-3 automatically.

@@ -4785,6 +4785,7 @@ export class DatabaseStorage {
     const leaves = await db.select().from(studentLeaveRequests).where(
       and(
         eq(studentLeaveRequests.schoolId, schoolId),
+        eq(studentLeaveRequests.sessionId, sessionId),
         eq(studentLeaveRequests.studentId, studentId),
         eq(studentLeaveRequests.status, "approved"),
         lte(studentLeaveRequests.startDate, endDate),

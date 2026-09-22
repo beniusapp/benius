@@ -699,3 +699,98 @@ describe("Attendance canonical persistence identity", () => {
       .resolves.toMatchObject({ id: foreignLeave.id, schoolId: schoolBId });
   });
 });
+
+describe("Student monthly approved-leave Session isolation", () => {
+  it("includes approved leave from the selected Session", async () => {
+    const date = "2040-07-10";
+    await db.insert(studentLeaveRequests).values({
+      schoolId: schoolAId,
+      sessionId: sessionAId,
+      studentId,
+      startDate: date,
+      endDate: date,
+      reason: "Selected Session approved leave",
+      status: "approved",
+    });
+
+    const monthly = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionAId, 2040, 7,
+    );
+
+    expect(monthly.find(day => day.date === date)).toMatchObject({
+      status: "none",
+      isApprovedLeave: true,
+    });
+  });
+
+  it("excludes approved leave from another Session", async () => {
+    const date = "2040-07-11";
+    await db.insert(studentLeaveRequests).values({
+      schoolId: schoolAId,
+      sessionId: sessionAId,
+      studentId,
+      startDate: date,
+      endDate: date,
+      reason: "Other Session approved leave",
+      status: "approved",
+    });
+
+    const monthly = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionBId, 2040, 7,
+    );
+
+    expect(monthly.find(day => day.date === date)).toMatchObject({
+      status: "none",
+      isApprovedLeave: false,
+    });
+  });
+
+  it("excludes approved leave from another school", async () => {
+    const date = "2040-07-12";
+    await db.insert(studentLeaveRequests).values({
+      schoolId: schoolBId,
+      sessionId: sessionAId,
+      studentId,
+      startDate: date,
+      endDate: date,
+      reason: "Other school approved leave",
+      status: "approved",
+    });
+
+    const monthly = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionAId, 2040, 7,
+    );
+
+    expect(monthly.find(day => day.date === date)).toMatchObject({
+      status: "none",
+      isApprovedLeave: false,
+    });
+  });
+
+  it("preserves the selected Session Attendance record as the displayed status", async () => {
+    const date = "2040-07-13";
+    await db.insert(studentLeaveRequests).values({
+      schoolId: schoolAId,
+      sessionId: sessionAId,
+      studentId,
+      startDate: date,
+      endDate: date,
+      reason: "Approved leave with Attendance",
+      status: "approved",
+    });
+    await db.insert(attendanceRecords).values(attendanceInput({
+      sessionId: sessionAId,
+      date,
+      status: "absent",
+    }));
+
+    const monthly = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionAId, 2040, 7,
+    );
+
+    expect(monthly.find(day => day.date === date)).toMatchObject({
+      status: "absent",
+      isApprovedLeave: true,
+    });
+  });
+});
