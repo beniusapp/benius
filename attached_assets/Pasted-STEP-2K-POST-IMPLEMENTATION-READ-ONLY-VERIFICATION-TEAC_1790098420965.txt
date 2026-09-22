@@ -1,0 +1,353 @@
+STEP 2K — POST-IMPLEMENTATION READ-ONLY VERIFICATION
+TEACHER SELF-ATTENDANCE SESSION MIGRATION + ISOLATION
+
+IMPORTANT:
+READ-ONLY AUDIT ONLY.
+
+DO NOT modify any file.
+DO NOT create or run migrations.
+DO NOT alter the database.
+DO NOT change schema.
+DO NOT fix anything.
+DO NOT make unrelated changes.
+
+Step 2K has already been implemented.
+
+This verification is specifically to confirm that the database migration and
+Teacher self-attendance Academic Session isolation were implemented correctly.
+
+==================================================
+PROJECT RULES
+==================================================
+
+This is a multi-tenant school MIS.
+
+Tenant isolation is mandatory.
+
+Academic Session isolation is mandatory for Attendance.
+
+Teacher self-attendance is part of the Attendance domain and must not allow
+records from one Academic Session to collide with or leak into another.
+
+Authenticated school/tenant context is authoritative.
+
+Browser-supplied schoolId must never override authenticated schoolId.
+
+==================================================
+1. INSPECT THE MIGRATION
+==================================================
+
+Find the exact development migration that Step 2K created/applied for:
+
+teacher + Academic Session + attendance date uniqueness.
+
+Report:
+
+- migration filename
+- migration contents relevant to Teacher self-attendance
+- exact table affected
+- exact constraint/index created
+- exact columns involved
+- whether the constraint/index is UNIQUE
+- whether teacher_id is included
+- whether session_id is included
+- whether attendance_date is included
+- whether school_id is included
+- whether nullable behavior is involved
+
+DO NOT modify the migration.
+
+==================================================
+2. VERIFY THE CURRENT DATABASE SCHEMA
+==================================================
+
+Read the current schema/database metadata and verify whether the expected
+constraint/index actually exists after the migration.
+
+Report the exact current uniqueness/index definition.
+
+Do not make any schema changes.
+
+==================================================
+3. VERIFY SCHOOL/TENANT ISOLATION
+==================================================
+
+Inspect Teacher self-attendance create/read/update/history/correction paths.
+
+Confirm that all relevant operations remain constrained by authenticated:
+
+schoolId
++
+teacher identity
++
+Academic Session where applicable.
+
+Specifically verify that:
+
+School A teacher cannot access School B self-attendance.
+
+School A teacher cannot update School B self-attendance.
+
+A browser-supplied schoolId cannot override the authenticated school.
+
+Report the exact route/function and predicate responsible for each protection.
+
+==================================================
+4. VERIFY SESSION ISOLATION
+==================================================
+
+Verify these scenarios conceptually from the current implementation:
+
+Scenario A:
+
+Teacher 10
+School 1
+Session A
+Attendance date 2026-09-22
+
+Scenario B:
+
+Teacher 10
+School 1
+Session B
+Attendance date 2026-09-22
+
+Confirm whether both records can coexist.
+
+They MUST be able to coexist because they belong to different Academic
+Sessions.
+
+Then verify:
+
+Teacher 10 + Session A
+
+cannot accidentally retrieve/update/delete:
+
+Teacher 10 + Session B.
+
+==================================================
+5. VERIFY SAME SESSION DUPLICATE PROTECTION
+==================================================
+
+Verify:
+
+Teacher 10
+School 1
+Session A
+2026-09-22
+
+cannot create a second conflicting self-attendance record for the same
+Teacher + Session + Attendance date.
+
+Report whether this protection is enforced:
+
+- at database level
+- at application level
+- or both.
+
+==================================================
+6. VERIFY NULLABLE LEGACY SESSION ROWS
+==================================================
+
+Step 2K reportedly preserved legacy nullable Session rows.
+
+Inspect the current implementation and explain:
+
+1. Can old rows with session_id = NULL still exist?
+2. Are they included in new Session-scoped reads?
+3. Are they included in new Session-scoped writes/updates?
+4. Can a new Session-scoped operation accidentally attach itself to a
+   legacy NULL-session row?
+5. Can a NULL-session row cause a cross-session collision?
+6. Is there any migration that incorrectly converts old rows to a guessed
+   Academic Session?
+
+IMPORTANT:
+
+Do NOT change the legacy rows.
+
+We only want to verify their behavior.
+
+==================================================
+7. VERIFY TEACHER SELF-ATTENDANCE HISTORY
+==================================================
+
+Inspect the Teacher self-attendance history route/query.
+
+Confirm that history is filtered by:
+
+authenticated schoolId
++
+teacher identity
++
+selected/validated Academic Session
+
+where required by the Attendance Session invariant.
+
+Verify that selecting Session A cannot return Session B records.
+
+==================================================
+8. VERIFY FRONTEND CACHE/QUERY IDENTITY
+==================================================
+
+Inspect:
+
+client/src/pages/teacher-modules/my-attendance.tsx
+
+Confirm that relevant React Query/cache keys include the Academic Session
+where Session-specific data is being cached.
+
+Verify that switching:
+
+Session A → Session B
+
+cannot reuse Session A self-attendance data from cache.
+
+Do not modify the frontend.
+
+==================================================
+9. VERIFY CORRECTIONS / UPDATES
+==================================================
+
+Inspect Teacher self-attendance correction/update routes.
+
+Confirm that a correction for:
+
+Teacher + School + Session A + Date
+
+cannot update a record belonging to:
+
+Teacher + School + Session B + Date
+
+or another school.
+
+Report exact predicates used.
+
+==================================================
+10. VERIFY DELETE / MUTATION PATHS
+==================================================
+
+If Teacher self-attendance has delete, correction, approval, or other mutation
+paths, inspect them.
+
+Confirm they remain:
+
+tenant-scoped
++
+teacher-scoped
++
+Session-scoped where applicable.
+
+Do not modify anything.
+
+==================================================
+11. CHECK FOR DANGEROUS FALLBACKS
+==================================================
+
+Search Teacher self-attendance code for patterns such as:
+
+- active Session fallback
+- latest Session fallback
+- current Session fallback
+- sessionId omitted from queries
+- schoolId taken directly from request body/query
+- teacherId taken directly from request body/query without authentication
+- queries filtering only teacher + date
+- queries filtering only school + teacher
+- queries filtering only date
+- cache keys missing sessionId
+
+Report only findings relevant to Teacher self-attendance.
+
+==================================================
+12. VERIFY MIGRATION SAFETY
+==================================================
+
+Determine whether the new uniqueness constraint/index could incorrectly reject
+valid records.
+
+Specifically verify:
+
+Same teacher + same date + different Session
+    MUST be allowed.
+
+Different teacher + same Session + same date
+    MUST be allowed.
+
+Same teacher + same Session + same date
+    MUST be uniquely protected.
+
+Different school + same teacher/date/session identifiers
+    MUST remain tenant-isolated.
+
+Also verify whether school_id is required in the database uniqueness key.
+
+IMPORTANT:
+
+Do not change anything even if you find an issue.
+
+==================================================
+13. TEST COVERAGE AUDIT
+==================================================
+
+Inspect the tests added/updated by Step 2K.
+
+Confirm whether tests cover:
+
+1. Same teacher/date/different Session can coexist.
+2. Same teacher/session/date duplicate is rejected.
+3. Session A cannot read Session B.
+4. Session A cannot update Session B.
+5. School A cannot access School B.
+6. NULL-session legacy rows are not accidentally included in new
+   Session-scoped operations.
+7. Frontend cache identity includes Session.
+
+Report exact test filenames and test descriptions.
+
+Do not add tests during this verification.
+
+==================================================
+14. FINAL RESULT
+==================================================
+
+Give one of:
+
+STEP 2K POST-IMPLEMENTATION VERIFICATION — PASS
+
+or
+
+STEP 2K POST-IMPLEMENTATION VERIFICATION — NEEDS REVIEW
+
+Use PASS only if the migration, current schema, tenant isolation,
+Academic Session isolation, legacy NULL-session behavior, history,
+correction/update paths, and cache identity are all consistent with the
+requirements above.
+
+If anything is wrong or uncertain:
+
+- DO NOT fix it.
+- Clearly identify the exact issue.
+- Give the exact file/function/schema object involved.
+- Explain why it matters.
+
+==================================================
+15. VALIDATION
+==================================================
+
+Run only read-only checks/tests that do not modify the database or files.
+
+You may run existing relevant tests.
+
+Report:
+
+- relevant tests run
+- test results
+- npm run check result if run
+- git diff --check result if run
+- confirmation that NO files were modified
+- confirmation that NO migrations were created/applied during this audit
+
+FINAL REQUIREMENT:
+
+DO NOT implement anything during this verification.
