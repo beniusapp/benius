@@ -1816,9 +1816,10 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Not authorized for this student's class/section" });
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be approved here" });
+    if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
     const { teacherComment: approveComment } = req.body;
     const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", teacher.id, "teacher", undefined, undefined, approveComment || undefined);
-    await storage.markAttendanceAsLeave(leave.studentId, teacher.id, teacher.schoolId, leave.startDate, leave.endDate);
+    await storage.markAttendanceAsLeave(leave.studentId, teacher.id, teacher.schoolId, leave.sessionId, leave.startDate, leave.endDate);
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
       actionBy: teacher.id, actionByRole: "teacher",
@@ -3104,6 +3105,7 @@ Thank you for your prompt attention to this matter.
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
+    if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
     const { adminComment } = req.body;
     const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin", undefined, adminComment || undefined);
     // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
@@ -3112,7 +3114,7 @@ Thank you for your prompt attention to this matter.
     const classTeacher = student
       ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
       : null;
-    await storage.markAttendanceAsLeave(leave.studentId, classTeacher?.id ?? null, leave.schoolId, leave.startDate, leave.endDate);
+    await storage.markAttendanceAsLeave(leave.studentId, classTeacher?.id ?? null, leave.schoolId, leave.sessionId, leave.startDate, leave.endDate);
     await storage.createAuditLog({
       schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
       actionBy: req.session.userId!, actionByRole: "admin",

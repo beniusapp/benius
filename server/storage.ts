@@ -925,17 +925,19 @@ export class DatabaseStorage {
     return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
-  async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string; sessionId?: number }[]): Promise<AttendanceRecord[]> {
+  async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; sessionId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string }[]): Promise<AttendanceRecord[]> {
     const results: AttendanceRecord[] = [];
     for (const rec of records) {
-      // Auto-resolve active session if not provided
-      let resolvedSessionId = rec.sessionId;
-      if (!resolvedSessionId) {
-        const active = await this.getActiveSession(rec.schoolId);
-        resolvedSessionId = active?.id ?? undefined;
+      if (!Number.isInteger(rec.sessionId) || rec.sessionId <= 0) {
+        throw new Error("Attendance sessionId is required");
       }
       const existing = await db.select().from(attendanceRecords).where(
-        and(eq(attendanceRecords.studentId, rec.studentId), eq(attendanceRecords.date, rec.date))
+        and(
+          eq(attendanceRecords.schoolId, rec.schoolId),
+          eq(attendanceRecords.sessionId, rec.sessionId),
+          eq(attendanceRecords.studentId, rec.studentId),
+          eq(attendanceRecords.date, rec.date),
+        )
       );
       if (existing.length > 0) {
         const current = existing[0];
@@ -948,7 +950,6 @@ export class DatabaseStorage {
           ...(rec.class && { class: rec.class }),
           ...(rec.section && { section: rec.section }),
           ...(rec.academicYear && { academicYear: rec.academicYear }),
-          ...(resolvedSessionId && { sessionId: resolvedSessionId }),
         }).where(eq(attendanceRecords.id, current.id)).returning();
         results.push(updated);
       } else {
@@ -956,7 +957,7 @@ export class DatabaseStorage {
           studentId: rec.studentId,
           teacherId: rec.teacherId,
           schoolId: rec.schoolId,
-          sessionId: resolvedSessionId ?? null,
+          sessionId: rec.sessionId,
           date: rec.date,
           status: rec.status,
           editCount: 0,
@@ -3194,18 +3195,26 @@ export class DatabaseStorage {
     return { success: true };
   }
 
-  async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, startDate: string, endDate: string): Promise<void> {
+  async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, sessionId: number, startDate: string, endDate: string): Promise<void> {
+    if (!Number.isInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Attendance sessionId is required");
+    }
     for (let dateStr = startDate; dateStr <= endDate; dateStr = addCalendarDays(dateStr, 1)) {
       if (calendarWeekday(dateStr) === 0) continue;
       const existing = await db.select().from(attendanceRecords)
-        .where(and(eq(attendanceRecords.studentId, studentId), eq(attendanceRecords.date, dateStr), eq(attendanceRecords.schoolId, schoolId)));
+        .where(and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.sessionId, sessionId),
+          eq(attendanceRecords.studentId, studentId),
+          eq(attendanceRecords.date, dateStr),
+        ));
       if (existing.length > 0) {
         await db.update(attendanceRecords)
           .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
           .where(eq(attendanceRecords.id, existing[0].id));
       } else if (teacherId !== null) {
         await db.insert(attendanceRecords).values({
-          studentId, teacherId, schoolId, date: dateStr,
+          studentId, teacherId, schoolId, sessionId, date: dateStr,
           status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
         });
       }

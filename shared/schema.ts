@@ -229,7 +229,7 @@ export const attendanceRecords = pgTable("attendance_records", {
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
-  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "restrict" }),
   date: date("date").notNull(),
   status: text("status").notNull().default("present"),
   editCount: integer("edit_count").notNull().default(0),
@@ -238,7 +238,14 @@ export const attendanceRecords = pgTable("attendance_records", {
   class: varchar("class", { length: 20 }),
   section: varchar("section", { length: 10 }),
   academicYear: varchar("academic_year", { length: 20 }),
-});
+}, (table) => [
+  uniqueIndex("attendance_records_canonical_identity_uidx").on(
+    table.schoolId,
+    table.sessionId,
+    table.studentId,
+    table.date,
+  ),
+]);
 
 export const homework = pgTable("homework", {
   id: serial("id").primaryKey(),
