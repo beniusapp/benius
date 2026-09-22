@@ -1,0 +1,343 @@
+We are continuing the Attendance hardening work.
+
+Current status:
+- Step 2I — Unified Student Attendance calculation: PASS
+- Step 2J — Canonical working-day rule: PASS
+- Step 2K — IST / Asia-Kolkata + Academic Session consistency: PASS
+- Step 2K-Test — Session-isolation regression hardening: PASS
+- Step 2K regression suite: 39 tests passed
+- npm run check: passed
+- git diff --check: passed
+
+Now perform:
+
+STEP 2L — ATTENDANCE READ-ONLY ARCHITECTURE / CONSISTENCY AUDIT
+
+IMPORTANT:
+This is a READ-ONLY AUDIT ONLY.
+
+DO NOT:
+- modify production/application code
+- modify frontend code
+- modify tests
+- modify database schema
+- create or apply migrations
+- change configuration
+- change routes
+- refactor anything
+- fix anything
+- make "while you're here" improvements
+- change existing behavior
+
+The purpose of this step is ONLY to discover whether any Attendance requirements remain inconsistent or unsafe after Steps 2I–2K.
+
+==================================================
+NON-NEGOTIABLE PROJECT REQUIREMENTS
+==================================================
+
+1. MULTI-TENANCY
+Every Attendance operation must be strictly isolated to the authenticated school/tenant.
+
+Authenticated school/tenant context is authoritative.
+
+Never trust browser-supplied:
+- schoolId
+- tenantId
+- teacherId
+- studentId
+- session ownership
+
+to establish tenant ownership.
+
+No Attendance read, write, calculation, correction, history, analytics, summary, or synchronization may cross schools.
+
+2. ACADEMIC SESSION ISOLATION
+Attendance is Academic-Session-specific.
+
+Every Attendance operation that reads, writes, calculates, summarizes, corrects, or displays Attendance must use the selected/validated Academic Session where applicable.
+
+Switching Academic Session must isolate the Attendance data.
+
+A previous Session's Attendance must never leak into another Session.
+
+3. STUDENT REGISTRY
+Student Registry is global/current master data.
+
+It must NOT reset, recreate, or become session-specific merely because an Academic Session changes.
+
+Historical Attendance must remain readable even when a historical student no longer exists in the current Student Registry.
+
+4. ENROLLMENT
+Enrollment is NOT an Attendance gate.
+
+Attendance must not require current Enrollment merely to allow Attendance marking.
+
+For historical Attendance identity:
+- selected-session Enrollment may provide identity when available
+- otherwise Attendance snapshot/history data must preserve the historical identity
+
+Do not introduce Enrollment restrictions.
+
+5. FACULTY MAPPING
+Faculty Mapping must NOT restrict Attendance marking.
+
+Any authenticated teacher belonging to the school may mark Attendance according to the existing Attendance workflow.
+
+Do not introduce class/subject assignment restrictions.
+
+6. WORKING-DAY RULE
+The canonical working-day rule from Step 2J is:
+
+For a PARTICULAR:
+- school
+- Academic Session
+- class
+- section
+
+a working Attendance day exists when at least one Attendance record exists for that exact class + section + date, and the date is within the selected Academic Session start/end boundaries.
+
+Therefore:
+- Attendance in Class 7 must NOT make the same date applicable to Class 6.
+- If 20 of 30 students have Attendance records, the date is applicable and the remaining 10 are Missing.
+- If no Attendance record exists for the class/section/date, that date is not applicable.
+- Sunday/holiday does NOT automatically exclude the date if Attendance exists for that class/section.
+- Calendar events are NOT the Attendance denominator authority unless existing code already uses them for a separate legitimate purpose.
+
+7. ATTENDANCE STATUS WEIGHTS
+The canonical Student Attendance calculation from Step 2I is:
+
+Present = 1.0
+Late = 1.0
+Approved Leave = 1.0
+Halfday / half_day = 0.5
+Absent = 0
+Unknown = 0
+Missing / not marked = 0 and remains distinguishable from explicit Absent.
+
+Student/Admin/Teacher Student Attendance calculations must use the same authoritative calculation.
+
+8. TIMEZONE
+Application Attendance business dates and timestamps must consistently use:
+Asia/Kolkata / IST.
+
+DATE-only Attendance dates must not accidentally pass through JavaScript Date timezone conversion.
+
+Instants/timestamps must use the canonical project IST utilities.
+
+9. HISTORICAL READS
+Historical Attendance must use historical class/section/student identity correctly.
+
+Current Student Registry values must not incorrectly rewrite historical Attendance identity.
+
+10. ATTENDANCE HISTORY
+Historical Attendance must remain readable.
+
+Historical records must not become editable merely because the user switches to a previous Academic Session.
+
+11. ADMIN / TEACHER / STUDENT CONSISTENCY
+Admin, Teacher, and Student Attendance surfaces must use the same authoritative Attendance records and calculation rules.
+
+They must not silently use different denominator or status logic.
+
+12. TEACHER SELF-ATTENDANCE
+Teacher self-attendance must remain isolated by:
+
+authenticated teacher
++ authenticated school
++ selected Academic Session
++ attendance date
+
+Legacy NULL-session rows must not be included in new Session-scoped operations.
+
+==================================================
+AUDIT SCOPE
+==================================================
+
+Inspect the COMPLETE Attendance domain, including where relevant:
+
+Backend:
+- attendance routes
+- teacher attendance routes
+- student attendance routes
+- admin attendance routes
+- attendance storage/repository methods
+- Attendance calculation helpers
+- working-day helpers
+- attendance policy engine
+- leave synchronization
+- self-attendance
+- attendance correction
+- attendance history
+- attendance analytics
+- attendance summaries
+- attendance completion
+- monthly/yearly statistics
+- dashboard Attendance widgets
+- performance analytics
+- any Attendance exports/imports if present
+- any scheduled/background Attendance processing if present
+
+Frontend:
+- Admin Attendance
+- Teacher Attendance
+- Teacher Student Attendance
+- Teacher Self Attendance / My Attendance
+- Student Attendance
+- Attendance history
+- Attendance statistics
+- Attendance calendar
+- Attendance dashboard widgets
+- correction/history screens
+- Academic Session selectors and Attendance cache/query keys
+
+Database:
+- Attendance-related tables
+- relevant constraints/indexes
+- session_id relationships
+- school_id ownership
+- unique identities
+- historical snapshot fields
+- nullable legacy fields
+- foreign keys
+- indexes relevant to tenant/session/date isolation
+
+Search for:
+- queries missing school_id
+- queries missing session_id where session scope is required
+- current/latest/active Session fallbacks
+- browser-supplied schoolId/tenantId/teacherId/studentId trust
+- JavaScript Date conversion of DATE-only Attendance values
+- UTC/local timezone drift
+- different working-day denominators
+- duplicate Attendance calculation logic
+- inconsistent status mapping
+- current Registry fallback leaking into historical Session
+- Enrollment accidentally acting as Attendance gate
+- Faculty Mapping accidentally restricting Attendance
+- historical records becoming editable
+- Admin/Teacher/Student using different Attendance sources
+- cache/query keys missing Session identity
+- correction routes missing Session identity
+- leave synchronization crossing Session boundaries
+- self-attendance missing Session identity
+- any cross-school or cross-session mutation/read path
+- any hidden fallback that silently chooses a different Session
+
+==================================================
+IMPORTANT AUDIT METHOD
+==================================================
+
+Do NOT make assumptions based only on filenames.
+
+Trace actual:
+- route -> validation -> storage -> database
+- frontend -> query key -> transport -> backend
+- calculation -> working-day source -> status aggregation
+- leave -> approval -> synchronization
+- self-attendance -> read/write/correction/history
+
+For each finding, classify it as:
+
+A. PASS / already correct
+B. NEEDS CHANGE — actual correctness/security/consistency issue
+C. ACCEPTED LEGACY — intentionally preserved and not a defect
+D. OUT OF SCOPE — unrelated to Attendance hardening
+
+Do not label something NEEDS CHANGE merely because it could theoretically be redesigned.
+
+Only identify a change when it is required by the established Attendance requirements above.
+
+==================================================
+SPECIAL CHECKS
+==================================================
+
+Explicitly verify these scenarios:
+
+1. Same date, same school, different classes:
+   Class 6 Attendance must not affect Class 7 working-day denominator.
+
+2. Same student, same school, different Academic Sessions:
+   Session A Attendance must not appear in Session B.
+
+3. Historical student:
+   Student exists in old Session but no longer exists in current Registry.
+   Historical Attendance must still display correctly.
+
+4. Partial marking:
+   Some students marked, others not marked.
+   Marked date is applicable; unmarked students are Missing, not Absent.
+
+5. Explicit Absent:
+   Must remain distinguishable from Missing and contribute zero attendance.
+
+6. Approved leave:
+   Verify the existing Attendance behavior exactly as currently designed.
+   Do not invent new behavior.
+
+7. Sunday/holiday:
+   Verify that the Step 2J rule is actually what the code uses.
+
+8. Same teacher, same date, different self-attendance Sessions:
+   Must remain isolated.
+
+9. Legacy NULL-session self-attendance:
+   Must remain isolated from new Session-scoped operations.
+
+10. Cross-school:
+   Identical student/teacher/date/session-like inputs from another school must never expose or mutate data.
+
+11. Session switching:
+   Frontend query/cache identity must include Session wherever Attendance data is Session-specific.
+
+12. Historical read-only behavior:
+   Verify that previous-session Attendance cannot be modified through current Attendance marking/correction paths unless the existing design explicitly permits it.
+
+==================================================
+OUTPUT FORMAT
+==================================================
+
+Return a structured report with:
+
+1. OVERALL RESULT:
+   PASS
+   or
+   NEEDS CHANGES
+
+2. ATTENDANCE REQUIREMENT MATRIX:
+   Requirement | Current implementation | Status | Evidence
+
+3. FINDINGS:
+   For every NEEDS CHANGE:
+   - exact file/path
+   - exact route/function/component
+   - current behavior
+   - why it violates an established requirement
+   - affected surface
+   - whether tenant/session/date/history isolation is involved
+   - smallest required fix
+
+4. ACCEPTED LEGACY:
+   List intentional legacy behavior that should NOT be changed.
+
+5. OUT OF SCOPE:
+   List unrelated issues discovered so they are not accidentally mixed into Attendance work.
+
+6. TEST COVERAGE:
+   Identify which existing tests already prove each major requirement and identify genuine missing regression coverage.
+
+7. CHANGE SCOPE:
+   If NEEDS CHANGES, give the smallest possible next implementation step.
+   Do NOT implement it.
+
+8. VERIFICATION:
+   Run only read-only/static checks and existing tests as appropriate.
+   Report:
+   - tests run and results
+   - npm run check result
+   - git diff --check result
+   - confirmation that no files were modified
+   - confirmation that no schema/migrations/database changes were made
+
+STOP after the audit.
+Do NOT implement any fix.
+Do NOT proceed to another step automatically.
