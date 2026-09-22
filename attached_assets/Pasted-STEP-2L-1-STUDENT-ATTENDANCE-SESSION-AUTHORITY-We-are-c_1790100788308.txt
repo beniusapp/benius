@@ -1,0 +1,232 @@
+STEP 2L-1 — STUDENT ATTENDANCE SESSION AUTHORITY
+
+We are continuing the Attendance hardening work.
+
+STEP 2L READ-ONLY AUDIT RESULT:
+NEEDS CHANGES
+
+This implementation step addresses ONLY Finding 1 from the audit:
+
+Student Attendance currently maintains an independent local Academic Session selection instead of consistently following the portal's shared selected Academic Session.
+
+IMPORTANT:
+This step is narrowly scoped.
+
+DO NOT:
+- fix any other Step 2L findings
+- modify Attendance calculation logic
+- modify working-day logic
+- modify Attendance database schema
+- create or apply migrations
+- modify Student Registry
+- modify Enrollment behavior
+- modify Faculty Mapping behavior
+- modify Teacher Attendance
+- modify Teacher self-attendance
+- modify Admin Attendance
+- modify leave synchronization
+- modify Attendance policy validation
+- introduce historical mutation locking
+- make unrelated fixes
+- refactor unrelated code
+
+==================================================
+REQUIREMENT
+==================================================
+
+Student Attendance must use the portal's shared Academic Session context as its authoritative selected Session.
+
+The Student Attendance page must NOT maintain a competing Session authority.
+
+The selected Session used by:
+
+- Monthly Attendance
+- Yearly Attendance
+- Attendance Statistics
+- Attendance-related policy requests
+- Attendance query/cache identity
+
+must correspond to the portal's selected Session.
+
+If the portal has not yet resolved a selected Session, Session-dependent Attendance requests must not silently fall back to the active Session.
+
+Do not invent a new Session-selection mechanism.
+
+Reuse the existing session-view/context infrastructure.
+
+==================================================
+CURRENT AUDIT FINDING
+==================================================
+
+The audit identified:
+
+File:
+  client/src/pages/student-attendance.tsx
+
+The component already reads:
+
+  const { isArchiveMode, selectedSession } = useSessionView();
+
+but also maintains:
+
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+
+The local Session state currently becomes an independent authority.
+
+The Session selector is also only exposed in the Yearly tab.
+
+This can cause the Attendance page to use a different Session from the portal context.
+
+==================================================
+REQUIRED CHANGE
+==================================================
+
+Make the shared portal Session authoritative.
+
+Use:
+
+  useSessionView().selectedSession
+
+as the source of truth for Student Attendance.
+
+Remove the competing local Session authority if it is no longer required.
+
+If a local UI selector is genuinely necessary for an existing UX reason, it must update/use the shared Session context rather than create a second independent Session authority.
+
+Do NOT redesign the portal Session selector.
+
+==================================================
+REQUEST TRANSPORT
+==================================================
+
+Audit every Student Attendance request in:
+
+  client/src/pages/student-attendance.tsx
+
+including:
+
+- monthly Attendance
+- yearly Attendance
+- statistics
+- policy-related Attendance requests
+- any other Session-dependent Attendance query
+
+Ensure they use the resolved shared Session ID.
+
+The selected Session must be included in:
+
+- request transport where required by the existing Attendance session contract
+- React Query/cache/query keys wherever Session identity affects the response
+
+Do not allow a query to remain keyed only by student/date/month when Session identity affects the result.
+
+==================================================
+SESSION-LOADING BEHAVIOR
+==================================================
+
+When selectedSession is not yet resolved:
+
+DO NOT:
+- silently use the active Session
+- silently use a locally initialized Session
+- request Attendance for an arbitrary Session
+
+Instead, keep the Session-dependent query disabled/not executed until the shared selected Session is available.
+
+Use the existing repository conventions for React Query's enabled/disabled behavior.
+
+Do not add a new loading architecture.
+
+==================================================
+ARCHIVE BEHAVIOR
+==================================================
+
+Preserve existing archive behavior.
+
+The selected historical Session must continue to be readable.
+
+Do not introduce the historical mutation lock in this step.
+
+Do not change backend authorization in this step.
+
+Do not change how historical Attendance is calculated.
+
+==================================================
+IMPORTANT
+==================================================
+
+The backend already validates the selected/view Session through the existing Attendance session transport contract.
+
+Do not weaken that validation.
+
+Do not trust a browser-provided schoolId to establish tenant ownership.
+
+Do not introduce a new schoolId/sessionId authorization mechanism.
+
+==================================================
+TEST REQUIREMENTS
+==================================================
+
+Before changing code:
+
+1. Inspect the existing:
+   - useSessionView implementation
+   - student-attendance.tsx
+   - Attendance query hooks/helpers
+   - existing Session transport helpers
+   - existing Attendance Session contract tests
+
+2. Implement only the smallest required frontend change.
+
+3. Add focused regression tests if the repository's existing frontend test infrastructure supports them.
+
+At minimum, establish source/contract coverage proving:
+
+A. Student Attendance uses shared selected Session.
+
+B. Monthly Attendance does not execute before selected Session is resolved.
+
+C. Yearly Attendance uses the same selected Session.
+
+D. Statistics uses the same selected Session.
+
+E. Changing selected Session changes the Attendance query/cache identity.
+
+F. No local independent Session authority remains capable of overriding the shared Session.
+
+Do not create a large new test framework just for this.
+
+==================================================
+VERIFICATION
+==================================================
+
+Run the most focused relevant Student Attendance tests.
+
+Then run:
+
+  npm run check
+
+and:
+
+  git diff --check
+
+Report:
+
+1. Exact files changed.
+2. Exact behavior changed.
+3. Tests added/changed.
+4. Test results.
+5. npm run check result.
+6. git diff --check result.
+7. Confirmation that:
+   - no database schema changed
+   - no migrations were created/applied
+   - no production backend Attendance behavior changed
+   - no Student Registry behavior changed
+   - no Enrollment behavior changed
+   - no Faculty Mapping behavior changed
+   - no other Step 2L finding was implemented.
+
+STOP after Step 2L-1.
+
+Do not proceed automatically to Step 2L-2.

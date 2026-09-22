@@ -92,14 +92,6 @@ const MONTH_NAMES = [
 ];
 const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-interface AcademicSession {
-  id: number;
-  sessionName: string;
-  startDate: string;
-  endDate: string;
-  isActive: boolean;
-}
-
 function getDayCell(day: DayData): {
   bg: string;
   ring: string;
@@ -143,7 +135,6 @@ export default function StudentAttendance() {
   const [selectedMonth, setSelectedMonth] = useState(todayParts.month);
   const currentMonthIndex = todayParts.year * 12 + todayParts.month - 1;
   const previousCurrentMonthIndex = useRef(currentMonthIndex);
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
   const [tooltip, setTooltip] = useState<{ day: DayData; x: number; y: number } | null>(null);
 
   const calendarRef = useRef<HTMLDivElement>(null);
@@ -155,31 +146,15 @@ export default function StudentAttendance() {
   });
 
   const { data: policyData } = useQuery<StudentPolicy>({
-    queryKey: ["/api/student/attendance-policy"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!student,
+    queryKey: ["/api/student/attendance-policy", selectedSession?.id ?? null],
+    queryFn: async ({ signal }): Promise<StudentPolicy> => {
+      const res = await sessionFetchForViewSession("/api/student/attendance-policy", selectedSession?.id, { signal });
+      if (!res.ok) throw new Error(`Failed to load attendance policy (${res.status})`);
+      return res.json();
+    },
+    enabled: !!student && !!selectedSession,
     staleTime: 300000,
   });
-
-  // Fetch all academic sessions created by the admin
-  const { data: sessions = [] } = useQuery<AcademicSession[]>({
-    queryKey: ["/api/student/academic-sessions"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!student,
-    staleTime: 300000,
-  });
-
-  // Auto-select the active session once sessions load; keep user override
-  const activeSession = sessions.find(s => s.isActive) ?? sessions[0] ?? null;
-  const currentSession: AcademicSession | null =
-    sessions.find(s => s.id === selectedSessionId) ?? activeSession;
-
-  // Auto-init selectedSessionId to the active session when sessions first load
-  useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null) {
-      setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
-    }
-  }, [sessions, selectedSessionId]);
 
   useEffect(() => {
     const previous = previousCurrentMonthIndex.current;
@@ -192,41 +167,41 @@ export default function StudentAttendance() {
     }
   }, [currentMonthIndex, selectedMonth, selectedYear, todayParts.month, todayParts.year]);
 
-  const sessionStartDate = currentSession?.startDate ?? "";
-  const sessionEndDate   = currentSession?.endDate   ?? "";
-  const sessionName      = currentSession?.sessionName ?? "—";
+  const sessionStartDate = selectedSession?.startDate ?? "";
+  const sessionEndDate   = selectedSession?.endDate   ?? "";
+  const sessionName      = selectedSession?.sessionName ?? "—";
 
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
-    queryKey: ["/api/student/attendance/stats", currentSession?.id ?? null, sessionStartDate, sessionEndDate],
+    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? null, sessionStartDate, sessionEndDate],
     queryFn: async ({ signal }): Promise<StatsResponse> => {
-      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionId: String(currentSession?.id ?? "") });
-      const res = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, currentSession?.id, { signal });
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionId: String(selectedSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, selectedSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load attendance stats (${res.status})`);
       return res.json();
     },
-    enabled: !!student && !!sessionStartDate,
+    enabled: !!student && !!selectedSession && !!sessionStartDate,
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery<MonthlyResponse>({
-    queryKey: ["/api/student/attendance/monthly", currentSession?.id ?? null, selectedYear, selectedMonth],
+    queryKey: ["/api/student/attendance/monthly", selectedSession?.id ?? null, selectedYear, selectedMonth],
     queryFn: async ({ signal }): Promise<MonthlyResponse> => {
-      const params = new URLSearchParams({ year: String(selectedYear), month: String(selectedMonth), sessionId: String(currentSession?.id ?? "") });
-      const res = await sessionFetchForViewSession(`/api/student/attendance/monthly?${params}`, currentSession?.id, { signal });
+      const params = new URLSearchParams({ year: String(selectedYear), month: String(selectedMonth), sessionId: String(selectedSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/monthly?${params}`, selectedSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load monthly attendance (${res.status})`);
       return res.json();
     },
-    enabled: !!student && activeTab === "monthly",
+    enabled: !!student && !!selectedSession && activeTab === "monthly",
   });
 
   const { data: yearlyData, isLoading: yearlyLoading } = useQuery<YearlyResponse>({
-    queryKey: ["/api/student/attendance/yearly", currentSession?.id ?? null, sessionStartDate, sessionEndDate],
+    queryKey: ["/api/student/attendance/yearly", selectedSession?.id ?? null, sessionStartDate, sessionEndDate],
     queryFn: async ({ signal }): Promise<YearlyResponse> => {
-      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionName, sessionId: String(currentSession?.id ?? "") });
-      const res = await sessionFetchForViewSession(`/api/student/attendance/yearly?${params}`, currentSession?.id, { signal });
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionName, sessionId: String(selectedSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/yearly?${params}`, selectedSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load yearly attendance (${res.status})`);
       return res.json();
     },
-    enabled: !!student && activeTab === "yearly" && !!sessionStartDate,
+    enabled: !!student && !!selectedSession && activeTab === "yearly" && !!sessionStartDate,
   });
 
   useEffect(() => {
@@ -663,25 +638,11 @@ export default function StudentAttendance() {
             ══════════════════════════════════ */}
         {activeTab === "yearly" && (
           <>
-            {/* Session Dropdown */}
             <div className="flex items-center gap-3 print:hidden">
-              <label className="text-sm font-semibold text-slate-600">Academic Year</label>
-              {sessions.length === 0 ? (
-                <span className="text-sm text-slate-400">Loading…</span>
-              ) : (
-                <select
-                  value={selectedSessionId ?? ""}
-                  onChange={e => setSelectedSessionId(Number(e.target.value))}
-                  className="border border-emerald-100 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 min-h-[44px]"
-                  data-testid="select-academic-year"
-                >
-                  {sessions.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.sessionName}{s.isActive ? " (Active)" : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <span className="text-sm font-semibold text-slate-600">Academic Year</span>
+              <span className="rounded-lg border border-emerald-100 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700">
+                {sessionName}
+              </span>
             </div>
 
             {/* Bar Chart */}

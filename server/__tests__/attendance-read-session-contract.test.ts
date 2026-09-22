@@ -118,9 +118,10 @@ describe("Attendance read Session frontend contract", () => {
   });
 
   it("keys every Student Attendance consumer by Session and sends Session context", () => {
-    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/monthly", currentSession?.id ?? null');
-    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/yearly", currentSession?.id ?? null');
-    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/stats", currentSession?.id ?? null');
+    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/monthly", selectedSession?.id ?? null');
+    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/yearly", selectedSession?.id ?? null');
+    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? null');
+    expect(studentAttendanceClient).toContain('queryKey: ["/api/student/attendance-policy", selectedSession?.id ?? null]');
     expect(studentDashboardClient).toContain('queryKey: ["/api/student/attendance/stats", selectedSession?.id');
     expect(studentExaminationClient).toContain('queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? null]');
     expect(studentArchivesClient).toContain('queryKey: ["/api/student/archive/attendance", selectedSession?.id]');
@@ -135,5 +136,26 @@ describe("Attendance read Session frontend contract", () => {
     ]) {
       expect(source).toContain("sessionFetchForViewSession(");
     }
+  });
+
+  it("uses only the shared Student Session authority and waits for it before Attendance reads", () => {
+    expect(studentAttendanceClient).toContain("const { isArchiveMode, selectedSession } = useSessionView()");
+    expect(studentAttendanceClient).not.toContain("selectedSessionId");
+    expect(studentAttendanceClient).not.toContain("setSelectedSessionId");
+    expect(studentAttendanceClient).not.toContain("activeSession");
+    expect(studentAttendanceClient).not.toContain('queryKey: ["/api/student/academic-sessions"]');
+
+    expect(studentAttendanceClient).toContain('enabled: !!student && !!selectedSession && activeTab === "monthly"');
+    expect(studentAttendanceClient).toContain('enabled: !!student && !!selectedSession && activeTab === "yearly" && !!sessionStartDate');
+    expect(studentAttendanceClient).toContain("enabled: !!student && !!selectedSession && !!sessionStartDate");
+    expect(studentAttendanceClient).toContain("enabled: !!student && !!selectedSession,");
+
+    const attendanceQueries = block(
+      studentAttendanceClient,
+      "const { data: policyData }",
+      "useEffect(() => {\n    if (!studentLoading",
+    );
+    expect(attendanceQueries.match(/sessionFetchForViewSession/g)).toHaveLength(4);
+    expect(attendanceQueries).not.toContain("currentSession");
   });
 });
