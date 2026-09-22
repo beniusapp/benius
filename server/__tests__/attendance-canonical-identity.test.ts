@@ -10,6 +10,8 @@ import { todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceRecords,
+  enrollments,
+  examScores,
   schools,
   studentLeaveRequests,
   students,
@@ -326,6 +328,216 @@ describe("Attendance canonical persistence identity", () => {
     );
     expect(statsA).toMatchObject({ workingDays: 1, totalPresent: 1, totalAbsent: 0 });
     expect(statsB).toMatchObject({ workingDays: 1, totalPresent: 0, totalAbsent: 1 });
+  });
+
+  it("preserves historical class membership after promotion, inactivity, and missing Enrollment", async () => {
+    const [promotedStudent, attendanceOnlyStudent, historicalClassmate] = await db.insert(students).values([
+      {
+        schoolId: schoolAId,
+        digitalStudentId: `PROMOTED-${suffix}`,
+        name: "Promoted Historical Student",
+        class: "10",
+        section: "B",
+        phone: "9000000011",
+        dob: "2014-01-01",
+        passwordHash: "test-only",
+        isActive: false,
+      },
+      {
+        schoolId: schoolAId,
+        digitalStudentId: `NO-ENROLLMENT-${suffix}`,
+        name: "Attendance Only Historical Student",
+        class: "10",
+        section: "B",
+        phone: "9000000012",
+        dob: "2014-01-01",
+        passwordHash: "test-only",
+      },
+      {
+        schoolId: schoolAId,
+        digitalStudentId: `CLASSMATE-${suffix}`,
+        name: "Historical Classmate",
+        class: "10",
+        section: "B",
+        phone: "9000000013",
+        dob: "2014-01-01",
+        passwordHash: "test-only",
+      },
+    ]).returning({ id: students.id });
+
+    await db.insert(enrollments).values([
+      {
+        schoolId: schoolAId,
+        sessionId: sessionAId,
+        studentId: promotedStudent.id,
+        className: "9",
+        sectionName: "A",
+      },
+      {
+        schoolId: schoolAId,
+        sessionId: sessionAId,
+        studentId: historicalClassmate.id,
+        className: "9",
+        sectionName: "A",
+      },
+      {
+        schoolId: schoolAId,
+        sessionId: sessionBId,
+        studentId: promotedStudent.id,
+        className: "10",
+        sectionName: "B",
+      },
+    ]);
+
+    await storage.upsertAttendance([
+      attendanceInput({
+        studentId: promotedStudent.id,
+        date: "2025-05-01",
+        class: "9",
+        section: "A",
+      }),
+      attendanceInput({
+        studentId: attendanceOnlyStudent.id,
+        date: "2025-05-01",
+        class: "9",
+        section: "A",
+      }),
+      attendanceInput({
+        studentId: historicalClassmate.id,
+        date: "2025-05-02",
+        class: "9",
+        section: "A",
+      }),
+    ]);
+
+    const roster = await storage.getAttendanceRosterForSessionClass(
+      schoolAId, sessionAId, "9", "A",
+    );
+    expect(roster.map(student => student.id)).toEqual(expect.arrayContaining([
+      promotedStudent.id,
+      attendanceOnlyStudent.id,
+      historicalClassmate.id,
+    ]));
+
+    const history = await storage.getAttendanceHistory(
+      schoolAId, sessionAId, "9", "A", "2025-05-01", "2025-05-02",
+    );
+    expect(history.map(record => record.studentId)).toEqual(expect.arrayContaining([
+      promotedStudent.id,
+      attendanceOnlyStudent.id,
+      historicalClassmate.id,
+    ]));
+
+    await expect(storage.resolveAttendanceClassSectionForStudent(
+      schoolAId, sessionAId, promotedStudent.id,
+    )).resolves.toEqual({ class: "9", section: "A" });
+    await expect(storage.resolveAttendanceClassSectionForStudent(
+      schoolAId, sessionAId, attendanceOnlyStudent.id,
+    )).resolves.toEqual({ class: "9", section: "A" });
+
+    const yearly = await storage.getStudentYearlyAttendance(
+      promotedStudent.id, schoolAId, sessionAId, "9", "A",
+      "2025-05-01", "2025-05-02",
+    );
+    expect(yearly).toEqual([
+      expect.objectContaining({ workingDays: 2, present: 1, absent: 1 }),
+    ]);
+
+    const stats = await storage.getStudentAttendanceStats(
+      promotedStudent.id, schoolAId, sessionAId, "9", "A",
+      "2025-05-01", "2025-05-02",
+    );
+    expect(stats).toMatchObject({ workingDays: 2, totalPresent: 1 });
+
+    await expect(storage.getAttendancePopulationForSession(
+      schoolAId, sessionAId,
+    )).resolves.toBeGreaterThanOrEqual(3);
+
+    await db.insert(examScores).values({
+      studentId: promotedStudent.id,
+      teacherId: teacherAId,
+      schoolId: schoolAId,
+      sessionId: sessionAId,
+      subject: "History",
+      examType: "Term",
+      marks: 80,
+      totalMarks: 100,
+      class: "10",
+      section: "B",
+    });
+    const historicalExamRoster = await storage.getStudentsByClassSectionForExamSession(
+      schoolAId, sessionAId, "9", "A",
+    );
+    const staleScoreRoster = await storage.getStudentsByClassSectionForExamSession(
+      schoolAId, sessionAId, "10", "B",
+    );
+    expect(historicalExamRoster.map(student => student.id)).toContain(promotedStudent.id);
+    expect(staleScoreRoster.map(student => student.id)).not.toContain(promotedStudent.id);
+  });
+
+  it("keeps active-session current students available before their first Enrollment or Attendance row", async () => {
+    await db.update(academicSessions)
+      .set({ isActive: true })
+      .where(eq(academicSessions.id, sessionBId));
+    const [currentStudent] = await db.insert(students).values({
+      schoolId: schoolAId,
+      digitalStudentId: `FIRST-MARK-${suffix}`,
+      name: "First Mark Student",
+      class: "10",
+      section: "B",
+      phone: "9000000015",
+      dob: "2014-01-01",
+      passwordHash: "test-only",
+      isActive: true,
+    }).returning({ id: students.id });
+
+    const roster = await storage.getAttendanceRosterForSessionClass(
+      schoolAId, sessionBId, "10", "B",
+    );
+    expect(roster.map(student => student.id)).toContain(currentStudent.id);
+    await expect(storage.getAttendancePopulationForSession(
+      schoolAId, sessionBId,
+    )).resolves.toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps existing Attendance readable without Enrollment or a usable historical class snapshot", async () => {
+    const [student] = await db.insert(students).values({
+      schoolId: schoolAId,
+      digitalStudentId: `ORPHAN-CONTEXT-${suffix}`,
+      name: "Attendance Without Context",
+      class: "10",
+      section: "B",
+      phone: "9000000014",
+      dob: "2014-01-01",
+      passwordHash: "test-only",
+    }).returning({ id: students.id });
+    await db.insert(attendanceRecords).values({
+      schoolId: schoolAId,
+      sessionId: sessionAId,
+      studentId: student.id,
+      teacherId: teacherAId,
+      date: "2025-06-01",
+      status: "present",
+      markedBy: "Historical fallback test",
+    });
+
+    await expect(storage.resolveAttendanceClassSectionForStudent(
+      schoolAId, sessionAId, student.id,
+    )).resolves.toBeNull();
+
+    const yearly = await storage.getStudentYearlyAttendance(
+      student.id, schoolAId, sessionAId, null, null,
+      "2025-06-01", "2025-06-01",
+    );
+    expect(yearly).toEqual([
+      expect.objectContaining({ workingDays: 1, present: 1 }),
+    ]);
+
+    const stats = await storage.getStudentAttendanceStats(
+      student.id, schoolAId, sessionAId, null, null,
+      "2025-06-01", "2025-06-01",
+    );
+    expect(stats).toMatchObject({ workingDays: 1, totalPresent: 1 });
   });
 
   it("validates Attendance read Sessions against the authenticated school and fails closed", async () => {

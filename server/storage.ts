@@ -941,6 +941,128 @@ export class DatabaseStorage {
     return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
+  async getAttendanceRosterForSessionClass(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<Student[]> {
+    const [session, enrolledInClass, allSessionEnrollments, attendanceStudents, currentStudents] = await Promise.all([
+      this.getAcademicSessionForSchool(sessionId, schoolId),
+      this.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId),
+      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+      )),
+      db.select({ student: students }).from(students).innerJoin(attendanceRecords, and(
+        eq(attendanceRecords.studentId, students.id),
+        eq(attendanceRecords.schoolId, students.schoolId),
+      )).where(and(
+        eq(students.schoolId, schoolId),
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.class, cls),
+        eq(attendanceRecords.section, section),
+      )),
+      this.getStudentsByClassSection(schoolId, cls, section),
+    ]);
+
+    const enrolledStudentIds = new Set(allSessionEnrollments.map(row => row.studentId));
+    const roster = new Map(enrolledInClass.map(student => [student.id, student]));
+    for (const { student } of attendanceStudents) {
+      if (!enrolledStudentIds.has(student.id)) roster.set(student.id, student);
+    }
+    if (session?.isActive) {
+      for (const student of currentStudents) {
+        if (!enrolledStudentIds.has(student.id)) roster.set(student.id, student);
+      }
+    }
+    return [...roster.values()];
+  }
+
+  async getAttendancePopulationForSession(schoolId: number, sessionId: number): Promise<number> {
+    const [session, enrolledRows, attendanceRows, currentActiveRows] = await Promise.all([
+      this.getAcademicSessionForSchool(sessionId, schoolId),
+      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+      )),
+      db.selectDistinct({ studentId: attendanceRecords.studentId }).from(attendanceRecords).where(and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+      )),
+      db.select({ studentId: students.id }).from(students).where(and(
+        eq(students.schoolId, schoolId),
+        eq(students.isActive, true),
+      )),
+    ]);
+    const enrolledStudentIds = new Set(enrolledRows.map(row => row.studentId));
+    return new Set([
+      ...enrolledRows.map(row => row.studentId),
+      ...attendanceRows.map(row => row.studentId),
+      ...(session?.isActive
+        ? currentActiveRows
+            .filter(row => !enrolledStudentIds.has(row.studentId))
+            .map(row => row.studentId)
+        : []),
+    ]).size;
+  }
+
+  async getStudentsByClassSectionForExamSession(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<Student[]> {
+    const [attendanceRoster, allSessionEnrollments, scoreStudents] = await Promise.all([
+      this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section),
+      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+      )),
+      db.select({ student: students }).from(students).innerJoin(examScores, and(
+        eq(examScores.studentId, students.id),
+        eq(examScores.schoolId, students.schoolId),
+      )).where(and(
+        eq(students.schoolId, schoolId),
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.sessionId, sessionId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+      )),
+    ]);
+    const enrolledStudentIds = new Set(allSessionEnrollments.map(row => row.studentId));
+    const roster = new Map(attendanceRoster.map(student => [student.id, student]));
+    for (const { student } of scoreStudents) {
+      if (!enrolledStudentIds.has(student.id)) roster.set(student.id, student);
+    }
+    return [...roster.values()];
+  }
+
+  async resolveAttendanceClassSectionForStudent(
+    schoolId: number,
+    sessionId: number,
+    studentId: number,
+  ): Promise<{ class: string; section: string } | null> {
+    const enrollment = await this.resolveEnrollmentForStudentSession(schoolId, studentId, sessionId);
+    if (enrollment?.className && enrollment.sectionName) {
+      return { class: enrollment.className, section: enrollment.sectionName };
+    }
+    const [snapshot] = await db.select({
+      class: attendanceRecords.class,
+      section: attendanceRecords.section,
+    }).from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.studentId, studentId),
+      isNotNull(attendanceRecords.class),
+      isNotNull(attendanceRecords.section),
+    )).orderBy(attendanceRecords.date, attendanceRecords.id).limit(1);
+    return snapshot?.class && snapshot.section
+      ? { class: snapshot.class, section: snapshot.section }
+      : null;
+  }
+
   async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; sessionId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string }[]): Promise<AttendanceRecord[]> {
     if (records.length === 0) return [];
     return await db.transaction(async (tx) => {
@@ -1023,7 +1145,7 @@ export class DatabaseStorage {
   }
 
   async getAttendanceHistory(schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
-    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+    const studentList = await this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
     const conditions = [
@@ -1044,7 +1166,7 @@ export class DatabaseStorage {
 
   async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number, sessionId: number): Promise<boolean> {
     const today = todayInIST();
-    const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
+    const studentList = await this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section);
     if (studentList.length === 0) return false;
     const studentIds = studentList.map(s => s.id);
     const records = await db.select().from(attendanceRecords).where(
@@ -4620,7 +4742,7 @@ export class DatabaseStorage {
     return result;
   }
 
-  async getStudentYearlyAttendance(studentId: number, schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<{
+  async getStudentYearlyAttendance(studentId: number, schoolId: number, sessionId: number, cls: string | null, section: string | null, startDate: string, endDate: string): Promise<{
     month: number;
     year: number;
     present: number;
@@ -4631,19 +4753,6 @@ export class DatabaseStorage {
     workingDays: number;
     total: number;
   }[]> {
-    // Event-driven: working days = distinct dates where any attendance record was logged for the class/section
-    const workingDateRows = await db.selectDistinct({ date: attendanceRecords.date })
-      .from(attendanceRecords)
-      .where(and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
-        eq(attendanceRecords.class, cls),
-        eq(attendanceRecords.section, section),
-        gte(attendanceRecords.date, startDate),
-        lte(attendanceRecords.date, endDate),
-      ));
-    const workingDatesSet = new Set(workingDateRows.map(r => r.date));
-
     const myRecords = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
@@ -4653,6 +4762,23 @@ export class DatabaseStorage {
         lte(attendanceRecords.date, endDate),
       )
     );
+
+    // Event-driven: use the selected Session's historical class/section when known.
+    // Without historical context, preserve the student's existing rows instead of
+    // inventing a class from the current Student Registry.
+    const workingDateRows = cls && section
+      ? await db.selectDistinct({ date: attendanceRecords.date })
+      .from(attendanceRecords)
+      .where(and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.class, cls),
+        eq(attendanceRecords.section, section),
+        gte(attendanceRecords.date, startDate),
+        lte(attendanceRecords.date, endDate),
+      ))
+      : myRecords.map(record => ({ date: record.date }));
+    const workingDatesSet = new Set(workingDateRows.map(r => r.date));
     const recordMap = new Map(myRecords.map(r => [r.date, r]));
 
     const monthMap = new Map<string, { month: number; year: number; present: number; absent: number; halfDay: number; late: number; leave: number; workingDays: number; total: number }>();
@@ -4683,7 +4809,7 @@ export class DatabaseStorage {
     return Array.from(monthMap.values()).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
   }
 
-  async getStudentAttendanceStats(studentId: number, schoolId: number, sessionId: number, cls: string, section: string, academicStartDate: string, academicEndDate?: string): Promise<{
+  async getStudentAttendanceStats(studentId: number, schoolId: number, sessionId: number, cls: string | null, section: string | null, academicStartDate: string, academicEndDate?: string): Promise<{
     overallPercent: number;
     workingDays: number;
     daysPresent: number;
@@ -4696,21 +4822,6 @@ export class DatabaseStorage {
     const today = todayInIST();
     const upperBound = academicEndDate && academicEndDate < today ? academicEndDate : today;
 
-    // Rule 1 & 2: Event-driven working days — only dates where a teacher actually
-    // submitted attendance for the student's current class/section in this school.
-    const workingDateRows = await db.selectDistinct({ date: attendanceRecords.date })
-      .from(attendanceRecords)
-      .where(and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
-        eq(attendanceRecords.class, cls),
-        eq(attendanceRecords.section, section),
-        gte(attendanceRecords.date, academicStartDate),
-        lte(attendanceRecords.date, upperBound),
-      ));
-    const workingDays = workingDateRows.length;
-
-    // Student's own records within the same range
     const myRecords = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
@@ -4720,6 +4831,23 @@ export class DatabaseStorage {
         lte(attendanceRecords.date, upperBound),
       )
     );
+
+    // Keep the existing event-driven rule, but source its class/section from the
+    // selected Session. If no historical context exists, count the student's own
+    // selected-Session dates rather than leaking current Registry placement.
+    const workingDateRows = cls && section
+      ? await db.selectDistinct({ date: attendanceRecords.date })
+      .from(attendanceRecords)
+      .where(and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.class, cls),
+        eq(attendanceRecords.section, section),
+        gte(attendanceRecords.date, academicStartDate),
+        lte(attendanceRecords.date, upperBound),
+      ))
+      : myRecords.map(record => ({ date: record.date }));
+    const workingDays = workingDateRows.length;
 
     let weightedPresent = 0;
     let totalPresent = 0, totalAbsent = 0, totalHalfDay = 0, totalLate = 0, totalLeave = 0;

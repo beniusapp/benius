@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
-import { sessionFetch } from "@/lib/queryClient";
+import { sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 import {
   Loader2, Award, BarChart3, Search, X, FileText, Printer, TrendingUp,
@@ -980,7 +980,10 @@ export default function PerformanceAnalytics({
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
     queryKey: ["/api/admin/analytics/attendance-summary", resClass, resSection, sessionId],
     queryFn: async () => {
-      const res = await sessionFetch(`/api/admin/analytics/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`);
+      const res = await sessionFetchForViewSession(
+        `/api/admin/analytics/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`,
+        sessionId,
+      );
       return res.ok ? res.json() : [];
     },
     enabled: !!resClass && !!resSection, staleTime: 0, refetchOnMount: "always",

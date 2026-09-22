@@ -10,6 +10,7 @@ const studentAttendanceClient = readFileSync(resolve(process.cwd(), "client/src/
 const studentDashboardClient = readFileSync(resolve(process.cwd(), "client/src/pages/student-dashboard.tsx"), "utf8");
 const studentExaminationClient = readFileSync(resolve(process.cwd(), "client/src/pages/student-examination.tsx"), "utf8");
 const studentArchivesClient = readFileSync(resolve(process.cwd(), "client/src/pages/student-archives.tsx"), "utf8");
+const performanceAnalyticsClient = readFileSync(resolve(process.cwd(), "client/src/pages/admin-modules/performance-analytics.tsx"), "utf8");
 
 function block(source: string, startMarker: string, endMarker: string) {
   const start = source.indexOf(startMarker);
@@ -108,6 +109,8 @@ describe("Attendance read Session frontend contract", () => {
     expect(teacherClient).toContain('queryKey: ["/api/attendance", teacher.schoolId, selectedSession?.id ?? null');
     expect(teacherClient).toContain('queryKey: ["/api/attendance/history", teacher.schoolId, selectedSession?.id ?? null');
     expect(teacherClient).toContain("sessionFetchForViewSession(");
+    expect(performanceAnalyticsClient).toContain('queryKey: ["/api/admin/analytics/attendance-summary", resClass, resSection, sessionId]');
+    expect(performanceAnalyticsClient).toContain("sessionFetchForViewSession(");
   });
 
   it("keys every Student Attendance consumer by Session and sends Session context", () => {

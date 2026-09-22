@@ -261,7 +261,7 @@ describe("Teacher Attendance read Session isolation", () => {
       schoolId: teacher.schoolId,
       isActive: true,
     } as any);
-    vi.spyOn(storage, "getStudentsByClassSection").mockResolvedValue([
+    vi.spyOn(storage, "getAttendanceRosterForSessionClass").mockResolvedValue([
       { id: 101, name: "Student", digitalStudentId: "S-101" },
     ] as any);
     const read = vi.spyOn(storage, "getAttendanceForStudentsOnDate").mockResolvedValue([]);

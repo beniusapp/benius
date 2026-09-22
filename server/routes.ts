@@ -2040,7 +2040,14 @@ export async function registerRoutes(
         student.schoolId,
         (req as any).viewSessionId,
       );
-      const data = await storage.getStudentYearlyAttendance(student.id, student.schoolId, session.id, student.class, student.section, startDate, endDate);
+      const historicalContext = await storage.resolveAttendanceClassSectionForStudent(
+        student.schoolId, session.id, student.id,
+      );
+      const data = await storage.getStudentYearlyAttendance(
+        student.id, student.schoolId, session.id,
+        historicalContext?.class ?? null, historicalContext?.section ?? null,
+        startDate, endDate,
+      );
       res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, sessionName: label, months: data });
     } catch (error) {
       if (sendAttendanceReadSessionError(res, error)) return;
@@ -2076,7 +2083,14 @@ export async function registerRoutes(
         student.schoolId,
         (req as any).viewSessionId,
       );
-      const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, session.id, student.class, student.section, startDate, endDate);
+      const historicalContext = await storage.resolveAttendanceClassSectionForStudent(
+        student.schoolId, session.id, student.id,
+      );
+      const stats = await storage.getStudentAttendanceStats(
+        student.id, student.schoolId, session.id,
+        historicalContext?.class ?? null, historicalContext?.section ?? null,
+        startDate, endDate,
+      );
       res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, startDate, ...stats });
     } catch (error) {
       if (sendAttendanceReadSessionError(res, error)) return;
@@ -2877,33 +2891,29 @@ export async function registerRoutes(
     if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
     console.log(`[class-detail] schoolId=${schoolId} class=${cls} section=${section} date=${date}`);
     try {
-      const { students: studentsTable } = await import("@shared/schema");
-      // Fetch students with their rollNo via LEFT JOIN on student_profiles
-      const studentRows = await db
-        .select({
-          id: studentsTable.id,
-          name: studentsTable.name,
-          digitalStudentId: studentsTable.digitalStudentId,
-          photoUrl: studentsTable.photoUrl,
-          rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
-        })
-        .from(studentsTable)
-        .leftJoin(studentProfiles, eq(studentProfiles.studentId, studentsTable.id))
-        .where(
-          and(
-            eq(studentsTable.schoolId, schoolId),
-            eq(studentsTable.class, cls),
-            eq(studentsTable.section, section),
-            eq(studentsTable.isActive, true)
-          )
-        );
-      // SQL-level filter: school_id + date + student_id IN (...) — no in-memory scan
-      const studentIdList = studentRows.map(s => s.id);
       const attendanceSession = await resolveAttendanceReadSession(
         schoolId,
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
+      const historicalRoster = await storage.getAttendanceRosterForSessionClass(
+        schoolId, attendanceSession.id, cls, section,
+      );
+      const studentIdList = historicalRoster.map(student => student.id);
+      const profileRows = studentIdList.length > 0
+        ? await db.select({
+            studentId: studentProfiles.studentId,
+            rollNo: studentProfiles.rollNo,
+          }).from(studentProfiles).where(inArray(studentProfiles.studentId, studentIdList))
+        : [];
+      const rollNoByStudent = new Map(profileRows.map(profile => [profile.studentId, profile.rollNo ?? ""]));
+      const studentRows = historicalRoster.map(student => ({
+        id: student.id,
+        name: student.name,
+        digitalStudentId: student.digitalStudentId,
+        photoUrl: student.photoUrl,
+        rollNo: rollNoByStudent.get(student.id) ?? "",
+      }));
       const filteredRecords = studentIdList.length > 0
         ? await db.select().from(attendanceRecords).where(
             and(
@@ -2962,16 +2972,13 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const { students: studentsTable } = await import("@shared/schema");
-      const enrolledRows = await db.select({ id: studentsTable.id })
-        .from(studentsTable)
-        .where(and(eq(studentsTable.schoolId, schoolId), eq(studentsTable.isActive, true)));
-      const enrolledTotal = enrolledRows.length;
-
       const attendanceSession = await resolveAttendanceReadSession(
         schoolId,
         (req as any).viewSessionId,
         { allowActiveFallback: true },
+      );
+      const enrolledTotal = await storage.getAttendancePopulationForSession(
+        schoolId, attendanceSession.id,
       );
       const recs = await db.select().from(attendanceRecords)
         .where(and(

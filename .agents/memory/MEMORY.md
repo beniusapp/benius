@@ -42,3 +42,4 @@
 - [Student reset session revocation](student-reset-session-revocation.md) — login and reset share a tenant/Student lock and PostgreSQL clock so old-password races cannot outlive reset.
 - [Student recovery frontend authority](student-recovery-frontend-authority.md) — route-only UI steps carry no secrets; server sessions authorize progress and stale requests cannot navigate forward.
 - [Student recovery email authority](student-recovery-email-authority.md) — Registry `students.email` is the sole recovery destination; email changes atomically invalidate pending challenges.
+- [Historical Attendance roster authority](historical-attendance-roster-authority.md) — Enrollment gives selected-session placement, but existing Attendance remains visible without Enrollment.

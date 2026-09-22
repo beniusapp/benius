@@ -409,13 +409,9 @@ export function registerTeacherRoutes(app: Express) {
       throw error;
     }
 
-    // Archive look-back: resolve roster via enrollments for the viewed session.
-    // Active-session view: use current student fields (class/section/isActive).
-    const studentList = attendanceSession.isActive
-      ? await storage.getStudentsByClassSection(sid, cls, section)
-      : await storage.getStudentsByClassSectionInSession(
-          sid, cls, section, attendanceSession.id,
-        );
+    const studentList = await storage.getAttendanceRosterForSessionClass(
+      sid, attendanceSession.id, cls, section,
+    );
     const records = await storage.getAttendanceForStudentsOnDate(
       sid, attendanceSession.id, studentList.map(s => s.id), date,
     );
@@ -4418,7 +4414,9 @@ Thank you for your prompt attention to this matter.
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const schoolId = context.schoolId;
-      const studentList = await storage.getStudentsByClassSection(schoolId, cls, section);
+      const studentList = await storage.getStudentsByClassSectionForExamSession(
+        schoolId, context.sessionId, cls, section,
+      );
       const results = await Promise.all(studentList.map(async (s) => {
         const scores = await storage.getExamScoresByStudent(s.id, schoolId, context.sessionId);
         return {
@@ -4447,11 +4445,15 @@ Thank you for your prompt attention to this matter.
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const schoolId = context.schoolId;
+      const attendanceSession = await storage.getAcademicSessionForSchool(
+        context.sessionId, schoolId,
+      );
+      if (!attendanceSession) return res.status(403).json({ message: "Invalid academic session" });
       const today = todayInIST();
-      const academicYear = getAcademicYearForISTDate(today);
-      const yearStart = `${academicYear.split("-")[0]}-04-01`;
+      const yearStart = attendanceSession.startDate;
+      const yearEnd = attendanceSession.endDate < today ? attendanceSession.endDate : today;
       const records = await storage.getAttendanceHistory(
-        schoolId, context.sessionId, cls, section, yearStart, today,
+        schoolId, context.sessionId, cls, section, yearStart, yearEnd,
       );
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
