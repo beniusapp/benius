@@ -1,0 +1,576 @@
+ATTENDANCE STEP 2A — READ-ONLY APPLICATION COMPATIBILITY & MIGRATION DEPENDENCY AUDIT
+
+IMPORTANT:
+This is a READ-ONLY investigation.
+
+DO NOT modify:
+- application code
+- shared/schema.ts
+- migrations
+- database
+- indexes
+- constraints
+- triggers
+- configuration
+- tests
+- production environment
+
+DO NOT run:
+- drizzle-kit push
+- drizzle-kit migrate
+- ALTER TABLE
+- CREATE INDEX
+- CREATE TABLE
+- DROP
+- DELETE
+- UPDATE
+- INSERT
+- any mutating SQL
+
+Do not implement fixes.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Step 2 established the future database invariants for Student Attendance.
+
+Before implementing those invariants, we must determine every existing application path that would break or become unsafe when Attendance changes from:
+
+    student_id + date
+
+to:
+
+    school_id + session_id + student_id + date
+
+The purpose of this step is to create an exact dependency map for the later implementation.
+
+Do not guess.
+Inspect the actual repository.
+
+==================================================
+SETTLED FUTURE ATTENDANCE CONTRACT
+==================================================
+
+Student Attendance identity:
+
+    school_id
+    + session_id
+    + student_id
+    + date
+
+Session:
+
+- server-authoritative
+- authenticated school's active Academic Session
+- browser cannot select write session
+- historical sessions read-only
+- Attendance must retain session identity
+
+Enrollment:
+
+- Attendance requires:
+    school_id + student_id + session_id
+- class_name and section_name come from enrollment
+- browser class/section is not authoritative
+- historical Attendance must not move when placement changes
+
+Tenant isolation:
+
+- school_id comes from authenticated tenant context
+- browser school_id is never trusted
+- Student, Teacher, Session and Enrollment relationships must be tenant-safe
+
+Canonical persisted Student Attendance statuses:
+
+    present
+    absent
+    late
+    halfday
+
+Currently unresolved:
+
+    leave
+
+Do not invent a leave policy.
+
+Edit contract:
+
+- initial creation = edit_count 0
+- changed status = +1
+- unchanged status = no-op
+- maximum Teacher changes = 3
+- cap enforcement must be atomic
+- seven-day edit window uses IST calendar arithmetic
+- Admin override/correction behavior remains unresolved
+
+Teacher authorization:
+
+Current behavior:
+
+    authenticated same-school Teacher
+
+Faculty Mapping / legacy assignment restriction remains a product decision.
+
+Do not add assignment restrictions in this audit.
+
+==================================================
+PART 1 — FIND EVERY ATTENDANCE WRITE PATH
+==================================================
+
+Search the complete repository for all writes involving:
+
+- attendance_records
+- upsertAttendance
+- insertAttendance
+- updateAttendance
+- markAttendance
+- attendance status mutation
+- student leave synchronization
+- attendance correction
+- bulk attendance save
+- attendance import
+- attendance API routes
+
+For EVERY write path report:
+
+1. File
+2. Function
+3. Route/API
+4. Caller/UI if applicable
+5. Inputs
+6. Current identity lookup
+7. Current school/tenant source
+8. Current session source
+9. Current Student validation
+10. Current enrollment validation
+11. Current class/section source
+12. Current status validation
+13. Current edit-count behavior
+14. Current transaction behavior
+15. Whether it will remain compatible with the future canonical identity
+
+Create a table:
+
+| Write path | File/function | Session source | Student validation | Enrollment validation | Class/section source | Status validation | Atomic? | Future compatibility |
+|---|---|---|---|---|---|---|---|---|
+
+==================================================
+PART 2 — FIND EVERY ATTENDANCE READ PATH
+==================================================
+
+Search the complete repository for every read/query involving:
+
+- attendance_records
+- student attendance
+- monthly attendance
+- yearly attendance
+- attendance statistics
+- admin attendance overview
+- teacher attendance roster
+- student attendance page
+- attendance percentages
+- working-day calculations
+
+For each read path determine:
+
+1. Is session_id filtered?
+2. Is school_id filtered?
+3. Is Student identity derived from authenticated session?
+4. Does it use current students.class / students.section?
+5. Does it use enrollment?
+6. Does it use attendance.class / attendance.section?
+7. Does it calculate denominators from Attendance rows?
+8. Does it use calendar_events?
+9. Does it overlay student_leave_requests?
+10. Could historical Attendance appear under the wrong session?
+
+Create a table:
+
+| Read path | Session filter | Tenant filter | Roster source | Placement source | Calendar source | Leave source | Historical-safe? |
+|---|---|---|---|---|---|---|---|
+
+==================================================
+PART 3 — FIND EVERY ATTENDANCE IDENTITY ASSUMPTION
+==================================================
+
+Search for code patterns equivalent to:
+
+    student_id + date
+
+    studentId + date
+
+    WHERE student_id = ?
+    AND date = ?
+
+    getAttendance(studentId, date)
+
+    updateAttendance(studentId, date)
+
+    existingAttendance.find(...)
+
+Also find:
+
+- unique assumptions
+- duplicate detection
+- upsert logic
+- cache keys
+- React query keys
+- API query parameters
+- frontend state keys
+- test fixtures
+- helper functions
+
+Report every occurrence where code assumes:
+
+    Student + date
+
+instead of:
+
+    school + session + Student + date
+
+Do not modify anything.
+
+==================================================
+PART 4 — SESSION RESOLUTION AUDIT
+==================================================
+
+Trace the exact current implementation of:
+
+- active Academic Session lookup
+- Teacher Attendance write
+- Teacher Attendance GET
+- Admin Attendance GET
+- Student Attendance GET
+- Student Attendance statistics
+- Attendance monthly/yearly calculations
+
+For each path answer:
+
+1. Where does session_id come from?
+2. Is it explicit?
+3. Is it implicit?
+4. Can it become NULL?
+5. Can the browser choose it?
+6. Is it guaranteed to belong to authenticated school?
+7. Does the path support historical session reads?
+8. Does it accidentally use current active session for historical data?
+
+Pay special attention to any helper that silently resolves the active session.
+
+==================================================
+PART 5 — ENROLLMENT AUTHORITY AUDIT
+==================================================
+
+Trace the exact existing enrollment APIs/helpers used by:
+
+- Student Archive
+- Teacher Examination
+- Student Examination
+- promotion/session migration
+- Teacher Attendance
+- Admin Attendance
+
+Determine whether there is already a safe reusable helper for:
+
+    school + student + session
+    → enrollment
+
+If a helper exists, report:
+
+- exact function name
+- file
+- tenant checks
+- status handling
+- class/section returned
+- whether it locks rows
+- whether it is safe for Attendance
+
+If no suitable helper exists, explicitly say so.
+
+Do NOT create one yet.
+
+==================================================
+PART 6 — WRITE RACE / ATOMICITY AUDIT
+==================================================
+
+Inspect the current Attendance write implementation carefully.
+
+Determine:
+
+1. Does it SELECT then UPDATE/INSERT?
+2. Does it use ON CONFLICT?
+3. Is there currently a unique conflict target?
+4. Can two concurrent requests create duplicate Attendance rows?
+5. Can two concurrent edits lose edit_count increments?
+6. Can the edit cap be bypassed concurrently?
+7. Is the seven-day check performed inside the atomic update?
+8. Is the Teacher authorization checked inside the transaction?
+9. Is enrollment checked inside the transaction?
+10. Is session ownership checked inside the transaction?
+
+Provide a concrete race timeline if unsafe.
+
+Do not fix it.
+
+==================================================
+PART 7 — BULK ATTENDANCE BEHAVIOR
+==================================================
+
+Inspect the Teacher Attendance frontend and backend bulk save behavior.
+
+Determine:
+
+- whether every Student is submitted every time
+- whether unchanged statuses are sent
+- whether absent/present/etc. are transformed client-side
+- whether partial failures are possible
+- whether the entire batch is transactional
+- whether one unauthorized Student could cause partial writes
+- whether duplicate Student IDs in the request are possible
+- whether duplicate rows can currently be generated
+- whether response reports per-Student outcomes
+
+Do not redesign yet.
+
+==================================================
+PART 8 — LEAVE SYNCHRONIZATION DEPENDENCY AUDIT
+==================================================
+
+Trace every place where:
+
+    student_leave_requests
+
+causes:
+
+    attendance_records.status = 'leave'
+
+Report:
+
+- exact files/functions
+- whether session_id is supplied
+- how Teacher ID is chosen
+- whether school is validated
+- whether enrollment is checked
+- whether existing Attendance is overwritten
+- whether edit_count changes
+- whether transaction exists
+- whether it will conflict with the future status CHECK
+
+Also identify every read path that separately overlays approved leave.
+
+Do not change leave behavior.
+
+==================================================
+PART 9 — CLASS/SECTION SNAPSHOT AUDIT
+==================================================
+
+Find every writer of:
+
+    attendance_records.class
+    attendance_records.section
+
+Determine whether values come from:
+
+- browser
+- Student Registry
+- enrollment
+- Teacher assignment
+- other source
+
+Find every reader that relies on these columns.
+
+Determine whether they can safely become:
+
+    NOT NULL
+
+after application compatibility changes.
+
+Do not modify them.
+
+==================================================
+PART 10 — EDIT COUNT AUDIT
+==================================================
+
+Trace every read/write of:
+
+    attendance_records.edit_count
+
+Determine:
+
+- where it increments
+- where it is checked
+- whether same-status saves increment
+- whether the cap is hard-coded in multiple locations
+- whether seven-day logic is duplicated
+- whether Admin has any separate path
+- whether any route can modify edit_count directly
+- whether concurrent updates are safe
+
+Find every hard-coded:
+
+    3
+
+and:
+
+    7
+
+related to Attendance edits.
+
+Do not modify them.
+
+==================================================
+PART 11 — SESSION DELETION AUDIT
+==================================================
+
+Trace:
+
+    deleteAcademicSession()
+
+and every other Academic Session deletion route/service.
+
+Determine:
+
+- all callers
+- all authorization checks
+- all dependency checks
+- whether Attendance is checked
+- whether enrollment is checked
+- whether exam scores are checked
+- whether promotion decisions are checked
+- whether academic history is checked
+- whether audit logs are checked
+- whether financial dependencies are the only blocker
+
+Determine the safest application-layer change needed BEFORE changing Attendance session FK from SET NULL to RESTRICT/NO ACTION.
+
+Do not implement.
+
+==================================================
+PART 12 — MIGRATION DEPLOYMENT COMPATIBILITY
+==================================================
+
+Inspect:
+
+- package.json
+- drizzle configuration
+- migration runner
+- deployment scripts
+- post-merge scripts
+- startup behavior
+- schema push behavior
+
+Determine:
+
+1. Whether `drizzle-kit push` is used anywhere in development/production.
+2. Whether migrations are automatically executed.
+3. Whether schema push could undo or conflict with explicit Attendance constraints.
+4. Whether deployment uses multiple application instances.
+5. Whether an old application instance could remain online while a migration is applied.
+6. Whether an expand/contract migration is required.
+
+Do not change deployment behavior.
+
+==================================================
+PART 13 — TEST COVERAGE AUDIT
+==================================================
+
+Find existing Attendance tests.
+
+Categorize:
+
+- unit
+- integration
+- HTTP/security
+- database/concurrency
+- frontend
+
+Determine whether tests exist for:
+
+- tenant isolation
+- cross-school Student ID
+- wrong session
+- missing enrollment
+- duplicate Attendance
+- concurrent create
+- concurrent edit
+- edit cap
+- seven-day window
+- historical session
+- session deletion
+- invalid status
+- leave synchronization
+- class/section correctness
+
+Report exact test files and gaps.
+
+Do not add tests yet.
+
+==================================================
+PART 14 — IMPLEMENTATION DEPENDENCY GRAPH
+==================================================
+
+Create a dependency graph like:
+
+    Product decisions
+          ↓
+    Application compatibility
+          ↓
+    Session deletion protection
+          ↓
+    Parent supporting keys
+          ↓
+    Attendance write-path conversion
+          ↓
+    Data preflight/backfill
+          ↓
+    Composite FKs
+          ↓
+    Canonical unique identity
+          ↓
+    session_id NOT NULL
+          ↓
+    Status/edit constraints
+          ↓
+    Cleanup
+
+Adjust this ordering if repository evidence requires something different.
+
+For every dependency explain WHY.
+
+==================================================
+PART 15 — EXACT NEXT IMPLEMENTATION STEP
+==================================================
+
+At the end, identify exactly ONE next implementation step.
+
+Do not propose multiple implementation steps.
+
+It must be the smallest safe change that can be implemented without requiring unresolved product decisions.
+
+The next step should NOT yet:
+
+- add Attendance DB constraints
+- change leave behavior
+- enforce Faculty Mapping
+- define enrollment status semantics
+- change Admin correction behavior
+- change Teacher self-attendance
+- modify unrelated modules
+
+Return:
+
+1. Current compatibility blockers
+2. Safe changes that can be implemented now
+3. Changes blocked by product decisions
+4. Exact files likely to be touched
+5. Exact next step
+6. Why that step is safe
+
+CRITICAL:
+
+This is READ-ONLY.
+
+At the end explicitly state:
+
+"NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED."
