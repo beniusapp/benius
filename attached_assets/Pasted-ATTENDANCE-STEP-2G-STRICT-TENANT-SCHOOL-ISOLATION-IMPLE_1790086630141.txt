@@ -1,0 +1,828 @@
+ATTENDANCE STEP 2G — STRICT TENANT / SCHOOL ISOLATION
+IMPLEMENTATION ONLY
+
+We have completed:
+
+- Step 2D — authoritative Academic Session on Attendance writes
+- Step 2E — canonical Attendance identity
+- Step 2F — session-specific Attendance readers
+
+The Step 2G read-only audit is complete and returned:
+
+OVERALL: FAIL
+
+The confirmed primary tenant-isolation defect is:
+
+An authenticated Teacher from School A can submit a School B Student ID to:
+
+POST /api/attendance
+
+The server correctly derives:
+- Teacher ID from authenticated session
+- School ID from server-loaded Teacher
+- Session ID from School A's active Session
+
+BUT it currently accepts:
+
+records[].studentId
+
+without verifying that the Student belongs to the authenticated Teacher's school.
+
+This can create a mixed-tenant Attendance row:
+
+school_id  = School A
+session_id = School A Session
+teacher_id = School A Teacher
+student_id = School B Student
+
+This must be fixed.
+
+The audit also found storage-boundary weaknesses in:
+- upsertAttendance()
+- markAttendanceAsLeave()
+- getStudentLeaveById()
+- updateStudentLeaveStatus()
+- Teacher self-attendance queries
+- Teacher correction-history queries
+- leave → Attendance synchronization
+
+Your task is to IMPLEMENT ONLY the minimum changes required for strict Attendance tenant isolation.
+
+==================================================
+1. ABSOLUTE SCOPE
+==================================================
+
+THIS IS AN IMPLEMENTATION TASK.
+
+Make the required code changes.
+
+Do NOT perform unrelated cleanup.
+
+Do NOT redesign Attendance.
+
+Do NOT redesign Student Registry.
+
+Do NOT change Academic Session architecture.
+
+Do NOT change Attendance calculations.
+
+Do NOT change Attendance UI/layout.
+
+Do NOT change Step 2F read/session behavior except where a tenant-validation dependency must be corrected.
+
+Do NOT introduce Enrollment as an Attendance requirement.
+
+Do NOT introduce Faculty Mapping as an Attendance authorization requirement.
+
+Do NOT require class/section assignment or subject assignment for Attendance marking.
+
+The permanent Attendance authorization rule remains:
+
+ANY AUTHENTICATED TEACHER BELONGING TO THE SCHOOL MAY MARK ATTENDANCE.
+
+Tenant isolation is the only concern.
+
+==================================================
+2. PERMANENT MULTI-TENANT RULE
+==================================================
+
+The authenticated school/tenant is authoritative.
+
+For every Attendance operation:
+
+authenticated school
+        +
+validated entity ownership
+        ↓
+same-school Attendance operation only
+
+A user from School A must never be able to:
+
+- read School B Attendance
+- create School B Attendance
+- update School B Attendance
+- create an Attendance row referencing a School B Student
+- use a School B Student in a School A Attendance operation
+- use a School B Teacher in a School A Attendance operation
+- use a School B Session in a School A Attendance operation
+- use a School B leave in a School A Attendance operation
+
+Browser/client-supplied schoolId MUST NEVER establish tenant authority.
+
+==================================================
+3. FIRST: INSPECT CURRENT CODE
+==================================================
+
+Before editing, inspect the current implementation and confirm the exact current code for:
+
+- server/teacher-routes.ts
+- server/storage.ts
+- server/routes.ts
+- server/attendance-read-session.ts
+- shared/schema.ts
+
+Relevant functions/routes include:
+
+- POST /api/attendance
+- upsertAttendance()
+- markAttendanceAsLeave()
+- getStudentLeaveById()
+- updateStudentLeaveStatus()
+- leave approval routes
+- Teacher self-attendance routes
+- Teacher self-attendance correction routes
+- correction history
+- any leave → Attendance synchronization
+- any Attendance-related direct SQL
+
+Do not rely only on the previous audit text.
+Verify the current code before editing.
+
+==================================================
+4. FIX #1 — TEACHER ATTENDANCE WRITER
+==================================================
+
+File:
+
+server/teacher-routes.ts
+
+Route:
+
+POST /api/attendance
+
+Current problem:
+
+records[].studentId is accepted without proving that the Student belongs to the authenticated Teacher's school.
+
+Implement the minimum safe validation.
+
+For every submitted Student ID:
+
+Verify:
+
+students.id = submitted studentId
+AND
+students.school_id = authenticated teacher school
+
+If the Student does not exist or belongs to another school:
+
+- reject the request
+- do not create/update any Attendance row
+- return an appropriate 4xx response
+- do not leak whether the foreign Student exists beyond what is necessary for the API contract
+
+IMPORTANT:
+
+Do NOT check Enrollment.
+
+Do NOT check Faculty Mapping.
+
+Do NOT check Teacher class/section assignment.
+
+Do NOT change the existing rule that any authenticated Teacher from the school may mark Attendance.
+
+The Teacher's school must come from the authenticated server-side Teacher record.
+
+Do not trust browser schoolId.
+
+The Session must continue to come from the existing authoritative School A active-session flow established in Step 2D.
+
+==================================================
+5. TRANSACTION / PARTIAL-WRITE SAFETY
+==================================================
+
+The validation must happen BEFORE any Attendance write occurs.
+
+If the request contains multiple records, validate ALL Student IDs before performing writes.
+
+Example:
+
+School A Teacher submits:
+
+Student A = School A
+Student B = School A
+Student C = School B
+
+Expected:
+
+- Entire request rejected.
+- No Student A Attendance created.
+- No Student B Attendance created.
+- No Student C Attendance created.
+
+Do NOT allow partial writes before discovering the foreign Student.
+
+Preserve existing behavior for valid same-school records.
+
+==================================================
+6. FIX #2 — upsertAttendance() STORAGE BOUNDARY
+==================================================
+
+File:
+
+server/storage.ts
+
+Function:
+
+upsertAttendance()
+
+The audit found that the function accepts:
+
+- schoolId
+- sessionId
+- teacherId
+- studentId
+
+without independently proving that the referenced entities belong to the same school.
+
+Strengthen the storage boundary.
+
+Before creating/updating Attendance, validate:
+
+Student:
+  student.id = record.studentId
+  AND
+  student.school_id = record.schoolId
+
+Teacher:
+  teacher.id = record.teacherId
+  AND
+  teacher.school_id = record.schoolId
+
+Session:
+  session.id = record.sessionId
+  AND
+  session.school_id = record.schoolId
+
+If any validation fails:
+
+- reject the operation
+- do not write Attendance
+- do not silently substitute another tenant
+- do not fall back to browser values
+
+Prefer performing the entity validation and Attendance write within the existing transaction if the function already has transactional infrastructure.
+
+Do not redesign the transaction architecture unnecessarily.
+
+Preserve the canonical Attendance identity:
+
+school_id + session_id + student_id + date
+
+Do not change the schema.
+
+Do not create another Attendance identity.
+
+==================================================
+7. FIX #3 — markAttendanceAsLeave()
+==================================================
+
+File:
+
+server/storage.ts
+
+Function:
+
+markAttendanceAsLeave()
+
+The audit found that it accepts entity combinations without independently validating ownership.
+
+Before creating/updating Attendance, validate:
+
+Student:
+  student.id = studentId
+  AND
+  student.school_id = schoolId
+
+Session:
+  session.id = sessionId
+  AND
+  session.school_id = schoolId
+
+Teacher:
+  if teacherId is non-null:
+    teacher.id = teacherId
+    AND
+    teacher.school_id = schoolId
+
+If any supplied entity does not belong to the supplied school:
+
+- reject the operation
+- do not create/update Attendance
+- do not cross tenants
+
+Preserve the existing Leave → Attendance behavior otherwise.
+
+Do NOT redesign Leave.
+
+==================================================
+8. FIX #4 — STUDENT LEAVE STORAGE TENANT BOUNDARY
+==================================================
+
+File:
+
+server/storage.ts
+
+Functions:
+
+- getStudentLeaveById()
+- updateStudentLeaveStatus()
+
+The audit found ID-only storage operations.
+
+Make them tenant-aware.
+
+Change their contracts minimally so the caller provides the authenticated/authoritative schoolId.
+
+Desired logical contract:
+
+getStudentLeaveById(
+  leaveId,
+  schoolId
+)
+
+and:
+
+updateStudentLeaveStatus(
+  leaveId,
+  schoolId,
+  ...
+)
+
+Their database operations must constrain:
+
+leave.id = leaveId
+AND
+leave.school_id = schoolId
+
+Do not use browser-supplied schoolId as authority.
+
+The route must pass the authenticated server-derived school.
+
+If the leave belongs to another school:
+
+- behave as not found or reject safely according to the existing API contract
+- do not expose foreign-tenant information
+- do not mutate it
+
+==================================================
+9. FIX #5 — LEAVE STUDENT OWNERSHIP
+==================================================
+
+For Leave → Attendance synchronization and Leave approval:
+
+Verify that:
+
+leave.studentId
+belongs to
+leave.schoolId
+
+before Attendance synchronization.
+
+The Student must satisfy:
+
+student.id = leave.studentId
+AND
+student.school_id = leave.schoolId
+
+If not:
+
+- reject safely
+- do not create/update Attendance
+
+Do not redesign the Student Registry.
+
+Do not introduce Enrollment.
+
+==================================================
+10. FIX #6 — TEACHER SELF-ATTENDANCE
+==================================================
+
+Audit the Teacher self-attendance operations identified in the Step 2G report.
+
+Relevant area:
+
+server/teacher-routes.ts
+
+The audit found queries commonly using:
+
+teacher_id + date
+
+without school_id and sometimes without session_id.
+
+Strengthen ONLY the identified Attendance-related queries so that tenant ownership is explicit where appropriate.
+
+Where the authenticated Teacher is the source of truth, preserve that behavior.
+
+Add authenticated school filtering where it is missing.
+
+Do not change the Teacher self-attendance product behavior.
+
+Do not redesign Teacher self-attendance.
+
+Do not add unrelated constraints.
+
+Do not introduce Faculty Mapping or Enrollment.
+
+If a self-attendance record is updated by row ID, ensure the row being updated belongs to the authenticated Teacher/school before mutation.
+
+==================================================
+11. FIX #7 — TEACHER CORRECTION HISTORY
+==================================================
+
+Audit the correction-history and Teacher self-correction queries identified by the Step 2G audit.
+
+Relevant area:
+
+server/teacher-routes.ts
+
+Where queries currently use only:
+
+teacher_id
+
+or:
+
+record id
+
+ensure the authenticated Teacher and school boundary are preserved.
+
+A Teacher from School A must not read or mutate correction information belonging to School B.
+
+Add only the necessary school/teacher ownership predicates.
+
+Do not redesign correction workflows.
+
+==================================================
+12. FIX #8 — LEAVE APPROVAL ROUTES
+==================================================
+
+Inspect all Leave approval routes that synchronize Attendance, including the routes identified by the audit.
+
+Examples:
+
+- PATCH /api/student-leaves/:id/admin-approve
+- PATCH /api/student-leaves/:id/reject
+- PATCH /api/leave/:id/status
+- Teacher leave approval route(s)
+
+Ensure:
+
+1. Authenticated school is authoritative.
+2. Leave belongs to authenticated school.
+3. Leave's Student belongs to leave.schoolId.
+4. Leave's Session, where applicable, belongs to leave.schoolId.
+5. Attendance synchronization receives only tenant-consistent IDs.
+
+Do not duplicate large amounts of validation unnecessarily if the storage layer already guarantees it.
+
+The goal is defense in depth without excessive duplication.
+
+==================================================
+13. DO NOT WEAKEN STEP 2F
+==================================================
+
+Step 2F is already complete.
+
+Do not undo or weaken:
+
+- Attendance read Session resolver
+- school + session predicates
+- cross-school Session rejection
+- frontend Session transport
+- React Query Session cache keys
+- Admin Session behavior
+- Teacher Session behavior
+- Student Session behavior
+
+After implementation, existing Step 2F tests must continue passing.
+
+==================================================
+14. CROSS-TENANT TESTS REQUIRED
+==================================================
+
+Add focused automated tests for the exact failure discovered in the audit.
+
+At minimum test:
+
+TEST 1 — Teacher A submits Student B
+
+Setup:
+
+School A
+- Teacher A
+- Student A
+- Session A
+
+School B
+- Teacher B
+- Student B
+- Session B
+
+Authenticated as Teacher A.
+
+Submit:
+
+studentId = Student B
+
+Expected:
+
+- request rejected
+- NO Attendance row created
+- NO mixed-tenant Attendance row exists
+
+--------------------------------------------------
+
+TEST 2 — Teacher A submits Student A
+
+Expected:
+
+- request succeeds according to existing valid Attendance behavior
+- Attendance row has:
+  school_id = School A
+  session_id = Session A
+  teacher_id = Teacher A
+  student_id = Student A
+
+--------------------------------------------------
+
+TEST 3 — upsertAttendance() foreign Student
+
+Call the storage function directly with:
+
+schoolId = School A
+sessionId = Session A
+teacherId = Teacher A
+studentId = Student B
+
+Expected:
+
+- rejected
+- no row created
+
+--------------------------------------------------
+
+TEST 4 — upsertAttendance() foreign Teacher
+
+Use:
+
+schoolId = School A
+sessionId = Session A
+teacherId = Teacher B
+studentId = Student A
+
+Expected:
+
+- rejected
+- no row created
+
+--------------------------------------------------
+
+TEST 5 — upsertAttendance() foreign Session
+
+Use:
+
+schoolId = School A
+sessionId = Session B
+teacherId = Teacher A
+studentId = Student A
+
+Expected:
+
+- rejected
+- no row created
+
+--------------------------------------------------
+
+TEST 6 — markAttendanceAsLeave() foreign Student
+
+School A operation using School B Student.
+
+Expected:
+
+- rejected
+- no Attendance row created/updated
+
+--------------------------------------------------
+
+TEST 7 — markAttendanceAsLeave() foreign Session
+
+School A Student/Teacher with School B Session.
+
+Expected:
+
+- rejected
+
+--------------------------------------------------
+
+TEST 8 — leave lookup cross-school
+
+School A requests School B leave ID.
+
+Expected:
+
+- no foreign leave returned
+- no foreign leave mutated
+
+--------------------------------------------------
+
+TEST 9 — leave update cross-school
+
+School A attempts to update School B leave ID.
+
+Expected:
+
+- rejected/not found
+- School B leave unchanged
+
+--------------------------------------------------
+
+TEST 10 — Teacher self-attendance cross-school protection
+
+Authenticated Teacher A must not read/update Teacher B's self-attendance.
+
+--------------------------------------------------
+
+TEST 11 — correction history cross-school protection
+
+Authenticated Teacher A must not read Teacher B correction history.
+
+--------------------------------------------------
+
+TEST 12 — existing Step 2D/2E/2F regression
+
+All existing tests remain passing.
+
+==================================================
+15. IMPORTANT DATA-SAFETY REQUIREMENT
+==================================================
+
+Before implementation, inspect whether dev Attendance data currently exists.
+
+DO NOT modify or delete existing Attendance data.
+
+If tests require test records:
+
+- use isolated test fixtures/transaction rollback/test database mechanisms already used by the repository
+- do not alter production
+- do not permanently alter development data unless the existing test infrastructure explicitly requires it
+
+Do not create a migration.
+
+Do not change schema.
+
+==================================================
+16. NO PRODUCTION
+==================================================
+
+STRICT:
+
+- Do not connect to production.
+- Do not run production migrations.
+- Do not deploy.
+- Do not modify production configuration.
+- Do not modify production data.
+
+Development/test environment only.
+
+==================================================
+17. REQUIRED VALIDATION AFTER IMPLEMENTATION
+==================================================
+
+After implementation:
+
+1. Run focused Step 2G tests.
+2. Run all relevant existing Attendance tests.
+3. Confirm Step 2D tests still pass.
+4. Confirm Step 2E tests still pass.
+5. Confirm Step 2F tests still pass.
+6. Run:
+
+npm run check
+
+7. Run:
+
+git diff --check
+
+8. Inspect the final diff carefully.
+
+Confirm there are no unrelated changes.
+
+==================================================
+18. REQUIRED FINAL REPORT
+==================================================
+
+At the end, return a structured report with EXACTLY these sections:
+
+A. Files changed
+
+List every changed file.
+
+B. Tenant isolation changes
+
+For each changed area explain exactly what was fixed.
+
+C. Teacher Attendance writer
+
+Confirm whether foreign Student IDs are now rejected.
+
+D. Storage validation
+
+Confirm:
+- Student → School validation
+- Teacher → School validation
+- Session → School validation
+
+E. Leave isolation
+
+Confirm:
+- leave → school
+- leave → student
+- leave → session
+- Leave → Attendance synchronization
+
+F. Teacher self-attendance/correction isolation
+
+Explain exactly what was changed.
+
+G. Tests
+
+Give exact test file count and test count.
+
+Include explicit results for:
+- foreign Student
+- foreign Teacher
+- foreign Session
+- foreign Leave
+- self-attendance
+- correction history
+- Step 2D
+- Step 2E
+- Step 2F
+
+H. npm run check
+
+Exact result.
+
+I. git diff --check
+
+Exact result.
+
+J. Production safety
+
+Confirm:
+- production untouched
+- no deployment
+- no production migration
+- no production data change
+
+K. Scope confirmation
+
+Explicitly confirm:
+
+- No Enrollment requirement added.
+- No Faculty Mapping requirement added.
+- No Student Registry redesign.
+- No Attendance calculation changes.
+- No Academic Session redesign.
+- No Attendance canonical identity changes.
+- No unrelated fixes.
+
+L. Final Step 2G assessment
+
+Return exactly one:
+
+PASS
+
+or
+
+PASS WITH FINDINGS
+
+or
+
+FAIL
+
+==================================================
+19. CRITICAL FINAL RULE
+==================================================
+
+Do not make any change outside the scope above.
+
+The purpose of this task is ONLY:
+
+STRICT ATTENDANCE TENANT / SCHOOL ISOLATION.
+
+Do not use this task as an opportunity to:
+- refactor unrelated code
+- redesign APIs
+- redesign UI
+- redesign Attendance
+- redesign Student Registry
+- introduce Enrollment
+- introduce Faculty Mapping
+- change calculations
+- change calendar behavior
+- change Academic Session behavior
+
+Preserve all existing valid behavior while closing the confirmed tenant-isolation gaps.
+
+Implement now, test thoroughly, and return the exact final report requested above.

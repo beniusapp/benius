@@ -596,6 +596,14 @@ export class DatabaseStorage {
     return student || undefined;
   }
 
+  async getStudentsByIdsForSchool(studentIds: number[], schoolId: number): Promise<Student[]> {
+    if (studentIds.length === 0) return [];
+    return await db.select().from(students).where(and(
+      eq(students.schoolId, schoolId),
+      inArray(students.id, studentIds),
+    ));
+  }
+
   async getStudentByDsid(dsid: string): Promise<Student | undefined> {
     const [student] = await db.select().from(students).where(eq(students.digitalStudentId, dsid));
     return student || undefined;
@@ -934,12 +942,44 @@ export class DatabaseStorage {
   }
 
   async upsertAttendance(records: { studentId: number; teacherId: number; schoolId: number; sessionId: number; date: string; status: string; markedBy: string; class?: string; section?: string; academicYear?: string }[]): Promise<AttendanceRecord[]> {
-    const results: AttendanceRecord[] = [];
-    for (const rec of records) {
+    if (records.length === 0) return [];
+    return await db.transaction(async (tx) => {
+      const results: AttendanceRecord[] = [];
+      const studentIds = [...new Set(records.map(record => record.studentId))];
+      const teacherIds = [...new Set(records.map(record => record.teacherId))];
+      const sessionIds = [...new Set(records.map(record => record.sessionId))];
+
+      if (sessionIds.some(sessionId => !Number.isInteger(sessionId) || sessionId <= 0)) {
+        throw new Error("Attendance sessionId is required");
+      }
+
+      const [ownedStudents, ownedTeachers, ownedSessions] = await Promise.all([
+        tx.select({ id: students.id, schoolId: students.schoolId }).from(students)
+          .where(inArray(students.id, studentIds)),
+        tx.select({ id: teachers.id, schoolId: teachers.schoolId }).from(teachers)
+          .where(inArray(teachers.id, teacherIds)),
+        tx.select({ id: academicSessions.id, schoolId: academicSessions.schoolId }).from(academicSessions)
+          .where(inArray(academicSessions.id, sessionIds)),
+      ]);
+      const studentSchools = new Map(ownedStudents.map(student => [student.id, student.schoolId]));
+      const teacherSchools = new Map(ownedTeachers.map(teacher => [teacher.id, teacher.schoolId]));
+      const sessionSchools = new Map(ownedSessions.map(session => [session.id, session.schoolId]));
+
+      for (const rec of records) {
+        if (
+          studentSchools.get(rec.studentId) !== rec.schoolId ||
+          teacherSchools.get(rec.teacherId) !== rec.schoolId ||
+          sessionSchools.get(rec.sessionId) !== rec.schoolId
+        ) {
+          throw new Error("Attendance entities do not belong to the same school");
+        }
+      }
+
+      for (const rec of records) {
       if (!Number.isInteger(rec.sessionId) || rec.sessionId <= 0) {
         throw new Error("Attendance sessionId is required");
       }
-      const existing = await db.select().from(attendanceRecords).where(
+      const existing = await tx.select().from(attendanceRecords).where(
         and(
           eq(attendanceRecords.schoolId, rec.schoolId),
           eq(attendanceRecords.sessionId, rec.sessionId),
@@ -950,7 +990,7 @@ export class DatabaseStorage {
       if (existing.length > 0) {
         const current = existing[0];
         if (current.editCount >= 3) continue;
-        const [updated] = await db.update(attendanceRecords).set({
+        const [updated] = await tx.update(attendanceRecords).set({
           status: rec.status,
           editCount: current.editCount + 1,
           markedBy: rec.markedBy,
@@ -961,7 +1001,7 @@ export class DatabaseStorage {
         }).where(eq(attendanceRecords.id, current.id)).returning();
         results.push(updated);
       } else {
-        const [created] = await db.insert(attendanceRecords).values({
+        const [created] = await tx.insert(attendanceRecords).values({
           studentId: rec.studentId,
           teacherId: rec.teacherId,
           schoolId: rec.schoolId,
@@ -977,8 +1017,9 @@ export class DatabaseStorage {
         }).returning();
         results.push(created);
       }
-    }
-    return results;
+      }
+      return results;
+    });
   }
 
   async getAttendanceHistory(schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
@@ -3166,15 +3207,18 @@ export class DatabaseStorage {
     }));
   }
 
-  async updateStudentLeaveStatus(id: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string, teacherComment?: string): Promise<StudentLeaveRequest> {
+  async updateStudentLeaveStatus(id: number, schoolId: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string, teacherComment?: string): Promise<StudentLeaveRequest | null> {
     const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
     if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;
     if (adminComment !== undefined) updateData.adminComment = adminComment;
     if (teacherComment !== undefined) updateData.teacherComment = teacherComment;
     const [req] = await db.update(studentLeaveRequests)
       .set(updateData)
-      .where(eq(studentLeaveRequests.id, id)).returning();
-    return req;
+      .where(and(
+        eq(studentLeaveRequests.id, id),
+        eq(studentLeaveRequests.schoolId, schoolId),
+      )).returning();
+    return req ?? null;
   }
 
   async getStudentLeavesByStudent(studentId: number, sessionId?: number | null): Promise<StudentLeaveRequest[]> {
@@ -3185,17 +3229,25 @@ export class DatabaseStorage {
       .orderBy(desc(studentLeaveRequests.createdAt));
   }
 
-  async getStudentLeaveById(id: number): Promise<StudentLeaveRequest | null> {
-    const [req] = await db.select().from(studentLeaveRequests).where(eq(studentLeaveRequests.id, id));
+  async getStudentLeaveById(id: number, schoolId: number): Promise<StudentLeaveRequest | null> {
+    const [req] = await db.select().from(studentLeaveRequests).where(and(
+      eq(studentLeaveRequests.id, id),
+      eq(studentLeaveRequests.schoolId, schoolId),
+    ));
     return req || null;
   }
 
   async deleteStudentLeaveRequest(id: number, studentId: number): Promise<{ success: boolean; reason?: string }> {
-    const leave = await this.getStudentLeaveById(id);
+    const [leave] = await db.select().from(studentLeaveRequests).where(and(
+      eq(studentLeaveRequests.id, id),
+      eq(studentLeaveRequests.studentId, studentId),
+    ));
     if (!leave) return { success: false, reason: "not_found" };
-    if (leave.studentId !== studentId) return { success: false, reason: "forbidden" };
     if (leave.status !== "pending_teacher") return { success: false, reason: "not_pending" };
-    await db.delete(studentLeaveRequests).where(eq(studentLeaveRequests.id, id));
+    await db.delete(studentLeaveRequests).where(and(
+      eq(studentLeaveRequests.id, id),
+      eq(studentLeaveRequests.studentId, studentId),
+    ));
     return { success: true };
   }
 
@@ -3212,9 +3264,30 @@ export class DatabaseStorage {
     if (!Number.isInteger(sessionId) || sessionId <= 0) {
       throw new Error("Attendance sessionId is required");
     }
-    for (let dateStr = startDate; dateStr <= endDate; dateStr = addCalendarDays(dateStr, 1)) {
+    const [student, session, teacher] = await Promise.all([
+      db.select({ id: students.id }).from(students).where(and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+      )).then(rows => rows[0]),
+      db.select({ id: academicSessions.id }).from(academicSessions).where(and(
+        eq(academicSessions.id, sessionId),
+        eq(academicSessions.schoolId, schoolId),
+      )).then(rows => rows[0]),
+      teacherId === null
+        ? Promise.resolve(null)
+        : db.select({ id: teachers.id }).from(teachers).where(and(
+            eq(teachers.id, teacherId),
+            eq(teachers.schoolId, schoolId),
+          )).then(rows => rows[0] ?? null),
+    ]);
+    if (!student || !session || (teacherId !== null && !teacher)) {
+      throw new Error("Leave Attendance entities do not belong to the same school");
+    }
+
+    await db.transaction(async (tx) => {
+      for (let dateStr = startDate; dateStr <= endDate; dateStr = addCalendarDays(dateStr, 1)) {
       if (calendarWeekday(dateStr) === 0) continue;
-      const existing = await db.select().from(attendanceRecords)
+      const existing = await tx.select().from(attendanceRecords)
         .where(and(
           eq(attendanceRecords.schoolId, schoolId),
           eq(attendanceRecords.sessionId, sessionId),
@@ -3222,18 +3295,19 @@ export class DatabaseStorage {
           eq(attendanceRecords.date, dateStr),
         ));
       if (existing.length > 0) {
-        await db.update(attendanceRecords)
+        await tx.update(attendanceRecords)
           .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
           .where(eq(attendanceRecords.id, existing[0].id));
       } else if (teacherId !== null) {
-        await db.insert(attendanceRecords).values({
+        await tx.insert(attendanceRecords).values({
           studentId, teacherId, schoolId, sessionId, date: dateStr,
           status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
         });
       }
       // If teacherId is null (admin path) and no existing record, skip INSERT to avoid FK violation.
       // The leave request itself is the source of truth for the leave.
-    }
+      }
+    });
   }
 
   // ===== AUDIT LOGS =====
@@ -3430,9 +3504,12 @@ export class DatabaseStorage {
     return result;
   }
 
-  async updateLeaveStatusWithApprover(id: number, status: string, approvedBy: number): Promise<LeaveRequest> {
-    const [req] = await db.update(leaveRequests).set({ status, approvedBy }).where(eq(leaveRequests.id, id)).returning();
-    return req;
+  async updateLeaveStatusWithApprover(id: number, schoolId: number, status: string, approvedBy: number): Promise<LeaveRequest | null> {
+    const [req] = await db.update(leaveRequests).set({ status, approvedBy }).where(and(
+      eq(leaveRequests.id, id),
+      eq(leaveRequests.schoolId, schoolId),
+    )).returning();
+    return req ?? null;
   }
 
   // ===== PAGINATED STUDENTS (Big Data) =====

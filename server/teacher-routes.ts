@@ -461,6 +461,20 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(409).json({ message: "No active academic session found" });
     }
 
+    const submittedStudentIds = [...new Set(records.map((record: any) => Number(record.studentId)))];
+    if (
+      submittedStudentIds.some(studentId => !Number.isInteger(studentId) || studentId <= 0)
+    ) {
+      return res.status(400).json({ message: "One or more students are not valid for this school" });
+    }
+    const ownedStudents = await storage.getStudentsByIdsForSchool(
+      submittedStudentIds,
+      teacher.schoolId,
+    );
+    if (ownedStudents.length !== submittedStudentIds.length) {
+      return res.status(403).json({ message: "One or more students are not valid for this school" });
+    }
+
     // Rule A — Holiday Lockdown: reject attendance if the date is a school-wide holiday.
     // This is the single source of truth enforced at the API layer so no attendance
     // record (and therefore no working-day count) can ever be created on a holiday.
@@ -1671,7 +1685,19 @@ export function registerTeacherRoutes(app: Express) {
     if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const leave = await storage.getLeaveRequestById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
-    const updated = await storage.updateLeaveStatusWithApprover(leave.id, status, req.session.userId!);
+    if (status === "approved" && leave.teacherId) {
+      const leaveTeacher = await storage.getTeacherById(leave.teacherId);
+      if (!leaveTeacher || leaveTeacher.schoolId !== leave.schoolId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+    }
+    const updated = await storage.updateLeaveStatusWithApprover(
+      leave.id,
+      req.session.schoolId!,
+      status,
+      req.session.userId!,
+    );
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
     await storage.createAuditLog({
       schoolId: updated.schoolId, actionType: status, entityType: "teacher_leave", entityId: updated.id,
       actionBy: req.session.userId!, actionByRole: "admin",
@@ -1683,7 +1709,11 @@ export function registerTeacherRoutes(app: Express) {
       const now = new Date();
       for (let dateStr = leave.startDate; dateStr <= leave.endDate; dateStr = addCalendarDays(dateStr, 1)) {
         const [existing] = await db.select().from(teacherSelfAttendance)
-          .where(and(eq(teacherSelfAttendance.teacherId, leave.teacherId), eq(teacherSelfAttendance.attendanceDate, dateStr)));
+          .where(and(
+            eq(teacherSelfAttendance.teacherId, leave.teacherId),
+            eq(teacherSelfAttendance.schoolId, leave.schoolId),
+            eq(teacherSelfAttendance.attendanceDate, dateStr),
+          ));
         if (!existing) {
           const leaveActiveSession = await storage.getActiveSession(leave.schoolId);
           await db.insert(teacherSelfAttendance).values({
@@ -1695,7 +1725,11 @@ export function registerTeacherRoutes(app: Express) {
         } else if (!["Present", "Late", "Half Day"].includes(existing.status ?? "")) {
           await db.update(teacherSelfAttendance)
             .set({ status: "Leave", updatedAt: now })
-            .where(eq(teacherSelfAttendance.id, existing.id));
+            .where(and(
+              eq(teacherSelfAttendance.id, existing.id),
+              eq(teacherSelfAttendance.teacherId, leave.teacherId),
+              eq(teacherSelfAttendance.schoolId, leave.schoolId),
+            ));
         }
       }
     }
@@ -1850,9 +1884,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
     const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
     const isAuthorized = student && (
       mappings.some(m => m.className === student.class && m.section === student.section) ||
@@ -1863,8 +1898,11 @@ export function registerTeacherRoutes(app: Express) {
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be approved here" });
     if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
+    const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
+    if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
     const { teacherComment: approveComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", teacher.id, "teacher", undefined, undefined, approveComment || undefined);
+    const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "approved", teacher.id, "teacher", undefined, undefined, approveComment || undefined);
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
     await storage.markAttendanceAsLeave(leave.studentId, teacher.id, teacher.schoolId, leave.sessionId, leave.startDate, leave.endDate);
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
@@ -1878,9 +1916,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave || leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
     const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const mappingsFwd = await storage.getFacultyMappingsByTeacher(teacher.id);
     const isAuthorizedFwd = student && (
       mappingsFwd.some(m => m.className === student.class && m.section === student.section) ||
@@ -1891,7 +1930,8 @@ export function registerTeacherRoutes(app: Express) {
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be forwarded" });
     const { teacherComment: fwdComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "forwarded_to_admin", teacher.id, "teacher", undefined, undefined, fwdComment || undefined);
+    const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "forwarded_to_admin", teacher.id, "teacher", undefined, undefined, fwdComment || undefined);
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "forward", entityType: "student_leave", entityId: leave.id,
       actionBy: teacher.id, actionByRole: "teacher",
@@ -3160,15 +3200,20 @@ Thank you for your prompt attention to this matter.
     const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
       (req.session.allowedModules ?? []).includes("approval-center:student-leave"));
     if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const schoolId = req.session.schoolId!;
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
     if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
     if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
+    const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
+    if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
+    const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const { adminComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, "approved", req.session.userId!, "admin", undefined, adminComment || undefined);
+    const updated = await storage.updateStudentLeaveStatus(leave.id, schoolId, "approved", req.session.userId!, "admin", undefined, adminComment || undefined);
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
     // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
     // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.
-    const student = await storage.getStudentById(leave.studentId);
     const classTeacher = student
       ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
       : null;
@@ -3183,16 +3228,16 @@ Thank you for your prompt attention to this matter.
 
   app.patch("/api/student-leaves/:id/reject", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id));
-    if (!leave) return res.status(404).json({ message: "Leave request not found" });
     const { rejectionReason } = req.body;
 
     // Teacher path: class/section scoped rejection
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      if (leave.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
       const student = await storage.getStudentById(leave.studentId);
+      if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
       const mappingsRej = await storage.getFacultyMappingsByTeacher(teacher.id);
       const isAuthorizedRej = student && (
         mappingsRej.some(m => m.className === student.class && m.section === student.section) ||
@@ -3202,7 +3247,8 @@ Thank you for your prompt attention to this matter.
         return res.status(403).json({ message: "Not authorized for this student's class/section" });
       }
       if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be rejected here" });
-      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+      const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+      if (!updated) return res.status(404).json({ message: "Leave request not found" });
       await storage.createAuditLog({
         schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
         actionBy: teacher.id, actionByRole: "teacher",
@@ -3213,10 +3259,13 @@ Thank you for your prompt attention to this matter.
 
     // Admin path: school-scoped rejection (only forwarded_to_admin leaves)
     if (req.session.userId) {
-      if (leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const schoolId = req.session.schoolId!;
+      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
       if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Admin can only reject leaves that were forwarded by a teacher" });
       const { adminComment } = req.body;
-      const updated = await storage.updateStudentLeaveStatus(leave.id, "rejected", req.session.userId!, "admin", rejectionReason || undefined, adminComment || undefined);
+      const updated = await storage.updateStudentLeaveStatus(leave.id, schoolId, "rejected", req.session.userId!, "admin", rejectionReason || undefined, adminComment || undefined);
+      if (!updated) return res.status(404).json({ message: "Leave request not found" });
       await storage.createAuditLog({
         schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
         actionBy: req.session.userId!, actionByRole: "admin",
@@ -4559,7 +4608,11 @@ Thank you for your prompt attention to this matter.
 
       const [[record], policyRows] = await Promise.all([
         db.select().from(teacherSelfAttendance).where(
-          and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+          and(
+            eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.attendanceDate, today),
+          )
         ),
         db.select().from(attendancePolicies).where(
           and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
@@ -4574,7 +4627,11 @@ Thank you for your prompt attention to this matter.
       if (correctStatus !== record.status) {
         const [updated] = await db.update(teacherSelfAttendance)
           .set({ status: correctStatus, updatedAt: new Date() })
-          .where(eq(teacherSelfAttendance.id, record.id))
+          .where(and(
+            eq(teacherSelfAttendance.id, record.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          ))
           .returning();
         return res.json(updated);
       }
@@ -4610,7 +4667,11 @@ Thank you for your prompt attention to this matter.
       const { latitude, longitude, locationVerified } = req.body;
 
       const [existing] = await db.select().from(teacherSelfAttendance).where(
-        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
       );
       if (existing?.checkInTime) return res.status(400).json({ message: "Already checked in for today" });
 
@@ -4630,7 +4691,11 @@ Thank you for your prompt attention to this matter.
       if (existing) {
         [record] = await db.update(teacherSelfAttendance)
           .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now, ...(checkInSessionId ? { sessionId: checkInSessionId } : {}) })
-          .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+          .where(and(
+            eq(teacherSelfAttendance.id, existing.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          )).returning();
       } else {
         [record] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
@@ -4650,8 +4715,14 @@ Thank you for your prompt attention to this matter.
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const today = istToday();
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       const [existing] = await db.select().from(teacherSelfAttendance).where(
-        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, today))
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
       );
       if (!existing?.checkInTime) return res.status(400).json({ message: "Not checked in yet" });
       if (existing.checkOutTime)  return res.status(400).json({ message: "Already checked out" });
@@ -4660,10 +4731,13 @@ Thank you for your prompt attention to this matter.
       const workingMinutes = Math.floor((now.getTime() - new Date(existing.checkInTime).getTime()) / 60000);
       let [record] = await db.update(teacherSelfAttendance)
         .set({ checkOutTime: now, totalWorkingMinutes: workingMinutes, updatedAt: now })
-        .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+        .where(and(
+          eq(teacherSelfAttendance.id, existing.id),
+          eq(teacherSelfAttendance.teacherId, teacher.id),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+        )).returning();
 
       // Early check-out: if checkout time (IST) < halfDayCutoffTime → mark as Half Day
-      const teacher = await storage.getTeacherById(req.session.teacherId!);
       if (teacher) {
         const policyRowsCO = await db.select().from(attendancePolicies).where(
           and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
@@ -4677,7 +4751,11 @@ Thank you for your prompt attention to this matter.
         if (coMin < halfMin) {
           [record] = await db.update(teacherSelfAttendance)
             .set({ status: "Half Day", updatedAt: now })
-            .where(eq(teacherSelfAttendance.id, record.id)).returning();
+            .where(and(
+              eq(teacherSelfAttendance.id, record.id),
+              eq(teacherSelfAttendance.teacherId, teacher.id),
+              eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            )).returning();
         }
       }
 
@@ -4709,7 +4787,12 @@ Thank you for your prompt attention to this matter.
 
       const [records, policyRows] = await Promise.all([
         db.select().from(teacherSelfAttendance).where(
-          and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), gte(teacherSelfAttendance.attendanceDate, start), lte(teacherSelfAttendance.attendanceDate, end))
+          and(
+            eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            gte(teacherSelfAttendance.attendanceDate, start),
+            lte(teacherSelfAttendance.attendanceDate, end),
+          )
         ).orderBy(desc(teacherSelfAttendance.attendanceDate)),
         db.select().from(attendancePolicies).where(
           and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
@@ -4726,7 +4809,11 @@ Thank you for your prompt attention to this matter.
         if (correct === r.status) return r;
         const [updated] = await db.update(teacherSelfAttendance)
           .set({ status: correct, updatedAt: now })
-          .where(eq(teacherSelfAttendance.id, r.id))
+          .where(and(
+            eq(teacherSelfAttendance.id, r.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          ))
           .returning();
         return updated;
       }));
@@ -4770,7 +4857,11 @@ Thank you for your prompt attention to this matter.
 
       // Upsert the attendance record — select first then insert or update
       const [existing] = await db.select().from(teacherSelfAttendance).where(
-        and(eq(teacherSelfAttendance.teacherId, req.session.teacherId), eq(teacherSelfAttendance.attendanceDate, date))
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.attendanceDate, date),
+        )
       );
       const activeSessionForCorr = await storage.getActiveSession(teacher.schoolId);
       const corrSessionId = activeSessionForCorr?.id ?? null;
@@ -4778,7 +4869,11 @@ Thank you for your prompt attention to this matter.
       if (existing) {
         [attendanceRecord] = await db.update(teacherSelfAttendance)
           .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now, ...(corrSessionId ? { sessionId: corrSessionId } : {}) })
-          .where(eq(teacherSelfAttendance.id, existing.id)).returning();
+          .where(and(
+            eq(teacherSelfAttendance.id, existing.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          )).returning();
       } else {
         [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
@@ -4805,8 +4900,13 @@ Thank you for your prompt attention to this matter.
   app.get("/api/teacher/self-attendance/corrections", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       const corrections = await db.select().from(attendanceCorrectionRequests)
-        .where(eq(attendanceCorrectionRequests.teacherId, req.session.teacherId))
+        .where(and(
+          eq(attendanceCorrectionRequests.teacherId, req.session.teacherId),
+          eq(attendanceCorrectionRequests.schoolId, teacher.schoolId),
+        ))
         .orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
       res.json(corrections);
     } catch (err) {

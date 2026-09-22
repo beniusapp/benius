@@ -11,6 +11,7 @@ import {
   academicSessions,
   attendanceRecords,
   schools,
+  studentLeaveRequests,
   students,
   teachers,
   users,
@@ -22,6 +23,7 @@ const schoolIds: number[] = [];
 let schoolAId = 0;
 let schoolBId = 0;
 let studentId = 0;
+let studentBId = 0;
 let teacherAId = 0;
 let teacherBId = 0;
 let sessionAId = 0;
@@ -94,6 +96,17 @@ beforeAll(async () => {
     passwordHash: "test-only",
   }).returning({ id: students.id });
   studentId = student.id;
+  const [studentB] = await db.insert(students).values({
+    schoolId: schoolBId,
+    digitalStudentId: `ATT-B-${suffix}`,
+    name: "Attendance Identity Student B",
+    class: "5",
+    section: "A",
+    phone: "9000000002",
+    dob: "2014-01-01",
+    passwordHash: "test-only",
+  }).returning({ id: students.id });
+  studentBId = studentB.id;
 
   const [sessionA, sessionB] = await db.insert(academicSessions).values([
     {
@@ -330,5 +343,92 @@ describe("Attendance canonical persistence identity", () => {
         status: 400,
         code: "ATTENDANCE_SESSION_REQUIRED",
       });
+  });
+
+  it("rejects a mixed-school Student batch before writing any Attendance", async () => {
+    const date = "2040-05-01";
+
+    await expect(storage.upsertAttendance([
+      attendanceInput({ date }),
+      attendanceInput({ date, studentId: studentBId }),
+    ])).rejects.toThrow("Attendance entities do not belong to the same school");
+
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolAId),
+      eq(attendanceRecords.date, date),
+    ));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("rejects a foreign Teacher at the Attendance storage boundary", async () => {
+    const date = "2040-05-02";
+
+    await expect(storage.upsertAttendance([
+      attendanceInput({ date, teacherId: teacherBId }),
+    ])).rejects.toThrow("Attendance entities do not belong to the same school");
+
+    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("rejects a foreign Session at the Attendance storage boundary", async () => {
+    const date = "2040-05-03";
+
+    await expect(storage.upsertAttendance([
+      attendanceInput({ date, sessionId: otherSchoolSessionId }),
+    ])).rejects.toThrow("Attendance entities do not belong to the same school");
+
+    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("rejects Leave synchronization for a foreign Student", async () => {
+    const date = "2040-05-04";
+
+    await expect(storage.markAttendanceAsLeave(
+      studentBId, teacherAId, schoolAId, sessionAId, date, date,
+    )).rejects.toThrow("Leave Attendance entities do not belong to the same school");
+
+    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("rejects Leave synchronization for a foreign Session", async () => {
+    const date = "2040-05-05";
+
+    await expect(storage.markAttendanceAsLeave(
+      studentId, teacherAId, schoolAId, otherSchoolSessionId, date, date,
+    )).rejects.toThrow("Leave Attendance entities do not belong to the same school");
+
+    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("does not return or mutate another school's Student leave", async () => {
+    const [foreignLeave] = await db.insert(studentLeaveRequests).values({
+      studentId: studentBId,
+      schoolId: schoolBId,
+      sessionId: otherSchoolSessionId,
+      startDate: "2040-05-06",
+      endDate: "2040-05-06",
+      reason: "Tenant isolation test",
+      status: "pending_teacher",
+    }).returning();
+
+    await expect(storage.getStudentLeaveById(foreignLeave.id, schoolAId))
+      .resolves.toBeNull();
+    await expect(storage.updateStudentLeaveStatus(
+      foreignLeave.id,
+      schoolAId,
+      "approved",
+      teacherAId,
+      "teacher",
+    )).resolves.toBeNull();
+
+    const [unchanged] = await db.select().from(studentLeaveRequests)
+      .where(eq(studentLeaveRequests.id, foreignLeave.id));
+    expect(unchanged.status).toBe("pending_teacher");
+    await expect(storage.getStudentLeaveById(foreignLeave.id, schoolBId))
+      .resolves.toMatchObject({ id: foreignLeave.id, schoolId: schoolBId });
   });
 });

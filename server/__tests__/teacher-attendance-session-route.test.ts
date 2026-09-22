@@ -111,6 +111,9 @@ function mockSuccessfulDependencies() {
   vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
   vi.spyOn(storage, "getActiveSession").mockResolvedValue({ id: 777 } as any);
   vi.spyOn(storage, "getHolidayOnDate").mockResolvedValue(undefined);
+  vi.spyOn(storage, "getStudentsByIdsForSchool").mockImplementation(async studentIds =>
+    studentIds.map(id => ({ id, schoolId: teacher.schoolId })) as any
+  );
   return vi.spyOn(storage, "upsertAttendance").mockResolvedValue([]);
 }
 
@@ -225,6 +228,26 @@ describe("POST /api/attendance active Session resolution", () => {
       message: 'Attendance is locked. "School Holiday" is a school-wide holiday.',
       holidayName: "School Holiday",
     });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects the whole request when any submitted Student is outside the Teacher's school", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    vi.mocked(storage.getStudentsByIdsForSchool).mockResolvedValue([
+      { id: 101, schoolId: teacher.schoolId },
+    ] as any);
+
+    const result = await postAttendance(harness, validBody());
+
+    expect(result.status).toBe(403);
+    expect(result.body).toEqual({
+      message: "One or more students are not valid for this school",
+    });
+    expect(storage.getStudentsByIdsForSchool).toHaveBeenCalledWith(
+      [101, 102],
+      teacher.schoolId,
+    );
     expect(upsert).not.toHaveBeenCalled();
   });
 });
