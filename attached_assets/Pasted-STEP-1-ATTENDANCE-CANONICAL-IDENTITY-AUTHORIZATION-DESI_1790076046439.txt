@@ -1,0 +1,741 @@
+STEP 1 — ATTENDANCE CANONICAL IDENTITY & AUTHORIZATION DESIGN AUDIT
+
+IMPORTANT:
+This is a READ-ONLY investigation and design-definition step.
+
+DO NOT implement anything.
+
+DO NOT modify:
+- application code
+- frontend code
+- backend code
+- database data
+- database schema
+- migrations
+- indexes
+- constraints
+- foreign keys
+- triggers
+- configuration
+- environment variables
+- production
+- development data
+
+DO NOT run:
+- db:push
+- migrations
+- ALTER TABLE
+- CREATE INDEX
+- CREATE UNIQUE INDEX
+- ADD CONSTRAINT
+- DROP/DELETE/UPDATE/INSERT
+- any write operation
+
+Only inspect existing repository code, shared schema, routes, storage functions, frontend Attendance flows, academic-session logic, enrollment logic, and read-only database metadata/SELECT queries.
+
+==================================================
+OBJECTIVE
+==================================================
+
+We already completed STEP 0.
+
+STEP 0 established:
+
+- development database only
+- attendance_records currently has 0 rows
+- teacher_self_attendance has 1 row
+- attendance_records.session_id is nullable
+- attendance_records.session_id uses ON DELETE SET NULL
+- no canonical Student Attendance unique constraint exists
+- no DB-level tenant consistency constraint exists
+- enrollments has:
+    school_id
+    student_id
+    session_id
+    class_name
+    section_name
+    roll_no
+    status
+  with unique school_id + student_id + session_id
+- current Attendance tables are represented in shared/schema.ts but not tracked in migrations
+- no Student Attendance data cleanup is currently required
+
+Now we need to define the exact canonical Attendance contract BEFORE any implementation.
+
+The goal is to determine exactly:
+
+1. What makes one Student Attendance record unique?
+2. Which Academic Session owns it?
+3. Which enrollment owns the class/section?
+4. Which teacher is authorized to write it?
+5. Which tenant owns every object?
+6. What database constraints are actually required?
+7. What should happen when an Academic Session is deleted?
+8. How Student, Teacher, Admin, Calendar, Leave and Enrollment systems link to Attendance?
+9. What exact server-side authorization must happen before every Attendance write?
+10. What exact information must never be trusted from the browser?
+
+Do not fix anything yet.
+
+==================================================
+PART A — TRACE THE CURRENT STUDENT ATTENDANCE WRITE FLOW
+==================================================
+
+Trace the complete current Student Attendance write path from:
+
+Teacher Attendance frontend
+→ request payload
+→ API route
+→ authentication/session
+→ school resolution
+→ teacher resolution
+→ class/section resolution
+→ student resolution
+→ academic session resolution
+→ enrollment resolution
+→ validation
+→ storage/upsert
+→ attendance_records database write
+
+For every stage identify:
+
+- file
+- function
+- route
+- request fields
+- whether field comes from browser or server session/database
+- validation performed
+- authorization performed
+- tenant check performed
+- session check performed
+- enrollment check performed
+- Faculty Mapping check performed
+- Student active check performed
+- class/section check performed
+- whether the value can be manipulated by the browser
+
+Create a table:
+
+| Value | Current Source | Browser-Controlled? | Server-Derived? | DB-Derived? | Trusted? | Required Future Source |
+|---|---|---|---|---|---|---|
+
+Include at minimum:
+
+- schoolId
+- teacherId
+- studentId
+- academicSessionId
+- attendanceDate
+- class
+- section
+- status
+- markedBy
+- markedAt
+
+==================================================
+PART B — DETERMINE CANONICAL ATTENDANCE IDENTITY
+==================================================
+
+Investigate all existing application logic and determine whether the canonical Student Attendance identity should be:
+
+school_id
++ session_id
++ student_id
++ date
+
+Do NOT assume this is correct merely because STEP 0 proposed it.
+
+Verify against:
+
+- Teacher Attendance UI
+- Attendance API
+- storage upsert logic
+- Student Attendance reads
+- Admin Attendance reads
+- session selection
+- enrollment model
+- promotion/session changes
+- historical attendance
+- Student Registry
+- class/section changes
+- current academic session
+- previous academic sessions
+
+Answer:
+
+A. Is school_id part of logical identity?
+B. Is session_id part of logical identity?
+C. Is student_id part of logical identity?
+D. Is date part of logical identity?
+E. Can two attendance records for the same Student/date legitimately exist in different Academic Sessions?
+F. Can two records for the same Student/session/date legitimately exist?
+G. Can two schools ever share the same Student ID?
+H. Can Student IDs be reused?
+I. Can an Academic Session contain multiple attendance records for one Student/date?
+J. What exact composite unique constraint should eventually exist?
+
+Do not implement the constraint.
+
+==================================================
+PART C — DETERMINE THE AUTHORITATIVE ACADEMIC SESSION
+==================================================
+
+Trace how the Attendance system currently obtains Academic Session.
+
+Inspect:
+
+- Teacher Attendance page
+- Teacher session context/hooks
+- academic session APIs
+- current session selection
+- admin session selection
+- Student session selection
+- storage methods
+- attendance POST route
+- attendance GET routes
+
+Determine:
+
+1. Is the session selected by the teacher?
+2. Is it sent by the browser?
+3. Is it derived from authenticated school?
+4. Is there one active/current session?
+5. Can a teacher view a historical session?
+6. Can a teacher write to a historical session?
+7. Can a teacher accidentally write using the current session while viewing another session?
+8. Can Student Attendance read another session?
+9. Can Admin Attendance inspect another session?
+10. Is session ownership by school enforced?
+
+Most importantly define:
+
+CANONICAL SERVER-AUTHORITATIVE SESSION FOR A STUDENT ATTENDANCE WRITE
+
+Explain exactly where it should come from.
+
+==================================================
+PART D — DETERMINE ENROLLMENT AUTHORITY
+==================================================
+
+Inspect the actual enrollment system and determine whether:
+
+enrollments.school_id
++ enrollments.student_id
++ enrollments.session_id
+
+should be mandatory authority for Student Attendance.
+
+Trace:
+
+- enrollment creation
+- enrollment updates
+- enrollment status
+- class_name
+- section_name
+- roll_no
+- historical enrollment
+- current Student Registry class/section
+- promotion
+- session transitions
+- withdrawal/inactive behavior
+
+Answer:
+
+1. Can an active Student exist in Student Registry without an enrollment for the selected session?
+2. Should such a Student appear in Teacher Attendance?
+3. Can current Student Registry class differ from historical enrollment class?
+4. Which class/section should historical Attendance use?
+5. Should Attendance writes be allowed if no session enrollment exists?
+6. Should Attendance read/display use enrollment class/section rather than current Student Registry class/section?
+7. What enrollment statuses qualify for Attendance?
+8. Should withdrawn/transferred students remain visible in historical Attendance?
+9. What happens if enrollment is later changed?
+
+Define the authoritative rule.
+
+Do not implement it.
+
+==================================================
+PART E — DETERMINE TEACHER AUTHORIZATION
+==================================================
+
+Inspect the existing Teacher authorization model.
+
+Specifically trace:
+
+- Faculty Mapping
+- teacher assignments
+- class/section assignment
+- subject assignment
+- teacher-school ownership
+- existing isTeacherAuthorizedForAssignment or equivalent
+- Attendance route authorization
+
+Determine exactly what should authorize a Teacher to mark attendance.
+
+Compare these possibilities:
+
+1. Any active Teacher in the same school
+2. Teacher assigned to the class/section
+3. Teacher assigned to the subject
+4. Teacher assigned through Faculty Mapping
+5. Some combination
+
+Do not decide based on convenience.
+
+Use the existing application's actual authorization architecture.
+
+Answer:
+
+- What currently authorizes a Teacher?
+- What should authorize a Teacher?
+- Is Faculty Mapping currently intended to gate Attendance?
+- Does the user/project architecture say Faculty Mapping should or should not gate Attendance?
+- What exact server-side checks should occur?
+
+IMPORTANT:
+Do not modify Faculty Mapping itself.
+
+==================================================
+PART F — STUDENT TENANT OWNERSHIP
+==================================================
+
+Inspect actual DB schema and repository relationships for:
+
+students
+teachers
+users
+schools
+academic_sessions
+enrollments
+attendance_records
+
+Determine whether PostgreSQL can safely enforce:
+
+attendance.school_id = student.school_id
+
+attendance.school_id = teacher.school_id
+
+attendance.school_id = session.school_id
+
+attendance.school_id = enrollment.school_id
+
+Do NOT add constraints.
+
+Determine what composite foreign keys or supporting unique keys would be required.
+
+Report:
+
+| Relationship | Existing FK | Tenant equality enforced? | Required supporting key | Future constraint candidate |
+|---|---|---|---|---|
+
+Do not implement.
+
+==================================================
+PART G — ACADEMIC SESSION DELETION POLICY
+==================================================
+
+Investigate how Academic Sessions are created, edited, archived and deleted.
+
+Find:
+
+- Academic Session delete route
+- storage method
+- frontend delete UI
+- existing references
+- FK behaviors
+- whether sessions are expected to be permanent historical records
+
+Then evaluate these two designs:
+
+OPTION A:
+Academic Sessions cannot be deleted once referenced by historical academic data.
+
+OPTION B:
+Sessions may be deleted, but historical Attendance must preserve immutable session identity independently.
+
+Determine which model is compatible with the existing MIS architecture.
+
+Do not implement either option.
+
+Explain all existing referenced tables that would be affected by session deletion.
+
+==================================================
+PART H — STATUS CONTRACT
+==================================================
+
+Trace every Student Attendance status used by:
+
+- Teacher UI
+- Teacher POST route
+- storage
+- Admin Attendance
+- Student Attendance
+- calculations
+- reports
+- leave
+- holidays
+- tests
+
+Identify exact canonical statuses.
+
+Do not assume the following list is correct:
+
+present
+absent
+late
+halfday
+leave
+not-marked
+holiday
+
+Determine:
+
+1. Which are actual persisted Attendance statuses?
+2. Which are UI/display-only states?
+3. Which are calculated states?
+4. Which are calendar states?
+5. Which are leave states?
+6. Which should never be stored in attendance_records?
+
+Then propose the exact future database status constraint.
+
+Do not implement.
+
+==================================================
+PART I — DATE / IST CONTRACT
+==================================================
+
+Trace all Attendance date handling.
+
+Inspect:
+
+- shared/ist-time.ts
+- Teacher Attendance frontend
+- Attendance POST
+- Attendance GET
+- storage
+- Admin Attendance
+- Student Attendance
+- calendar
+- leave
+- tests
+
+Determine:
+
+1. What is the canonical Attendance date?
+2. Must it be PostgreSQL DATE?
+3. How is "today" calculated?
+4. How are future dates rejected?
+5. How is the seven-day edit window calculated?
+6. What happens around IST midnight?
+7. Does any code use host-local timezone?
+8. Does any code use UTC date extraction?
+9. Does any code use new Date("YYYY-MM-DD") with local getDate/getMonth/getFullYear?
+10. Does database GMT affect any current behavior?
+
+Define the canonical date rule.
+
+Do not modify code.
+
+==================================================
+PART J — TEACHER SELF-ATTENDANCE IDENTITY
+==================================================
+
+Separately audit:
+
+teacher_self_attendance
+
+Determine whether its logical identity should be:
+
+school_id + session_id + teacher_id + attendance_date
+
+or another combination.
+
+Trace:
+
+- check-in
+- check-out
+- leave
+- session
+- Teacher login
+- Teacher Registry
+- correction request
+- admin review
+- existing unique constraint
+
+Compare its identity with Student Attendance.
+
+Determine:
+
+1. Whether school belongs in identity
+2. Whether session belongs in identity
+3. Whether teacher belongs in identity
+4. Whether date belongs in identity
+5. Whether attendance_date should become SQL DATE
+6. Whether the current unique constraint is unsafe
+7. Whether historical self-attendance must survive session deletion
+
+Do not implement.
+
+==================================================
+PART K — CORRECTION REQUEST MODEL
+==================================================
+
+Audit:
+
+attendance_correction_requests
+
+Determine whether it is:
+
+- genuine pending approval workflow
+- immediate self-service update
+- audit record only
+- hybrid
+
+Trace:
+
+Teacher request
+→ API
+→ validation
+→ self-attendance mutation
+→ correction row
+→ status
+→ Admin UI
+→ review
+→ final state
+
+Identify what the table is actually doing today.
+
+Then define the intended future lifecycle WITHOUT IMPLEMENTING IT.
+
+Possible states must be based on existing architecture, not assumptions.
+
+==================================================
+PART L — ADMIN ATTENDANCE AUTHORITY
+==================================================
+
+Audit all Admin Attendance routes and UI.
+
+Determine:
+
+- read authority
+- summary authority
+- detail authority
+- policy authority
+- student-marking authority
+- correction authority
+- override authority
+- export/report authority
+- session authority
+
+For every endpoint determine:
+
+- role check
+- school/tenant check
+- session check
+- whether browser-supplied schoolId is trusted
+- whether Student/Teacher IDs are validated against school
+
+Do not change anything.
+
+==================================================
+PART M — STUDENT ATTENDANCE READ AUTHORITY
+==================================================
+
+Audit every Student Attendance endpoint.
+
+Determine:
+
+- how Student identity is derived
+- how school identity is derived
+- whether Student ID can be supplied by browser
+- session filtering
+- enrollment filtering
+- class/section filtering
+- active/inactive behavior
+- leave overlay
+- holiday overlay
+- monthly calculation
+- yearly calculation
+- percentage calculation
+- print/download
+
+Determine whether all Student Attendance reads are tenant-safe and Student-safe.
+
+Do not change anything.
+
+==================================================
+PART N — CROSS-SESSION BEHAVIOR
+==================================================
+
+Create a matrix:
+
+| Operation | Current Session | Historical Session | Can Read? | Can Write? | Server Session Source | Enrollment Required? |
+|---|---|---|---|---|---|---|
+
+For:
+
+- Teacher mark attendance
+- Teacher view attendance
+- Teacher attendance history
+- Admin overview
+- Admin detail
+- Student monthly attendance
+- Student yearly attendance
+- Student percentage
+- Teacher self attendance
+
+Identify every inconsistency.
+
+==================================================
+PART O — FUTURE DATABASE INVARIANTS
+==================================================
+
+Based ONLY on repository + actual DB inspection, define the future invariants.
+
+At minimum investigate:
+
+1. Student Attendance unique identity
+2. Student Attendance session NOT NULL
+3. Student Attendance tenant integrity
+4. Student Attendance Student/session enrollment integrity
+5. Student Attendance status integrity
+6. Student Attendance edit_count integrity
+7. Student Attendance date integrity
+8. Teacher self-attendance identity
+9. Teacher self-attendance tenant integrity
+10. Correction request tenant/session integrity
+11. Academic Session deletion behavior
+12. Required supporting unique keys on referenced tables
+
+For each:
+
+- invariant
+- why it matters
+- current enforcement
+- future enforcement candidate
+- whether code or DB should enforce it
+- dependencies
+- risk of implementing it
+
+Do not implement.
+
+==================================================
+PART P — ATOMIC UPSERT DESIGN
+==================================================
+
+Inspect the current attendance storage upsert.
+
+Determine:
+
+- current SELECT lookup fields
+- current UPDATE fields
+- current INSERT fields
+- race condition
+- current transaction behavior
+- current edit_count behavior
+- whether unchanged writes increment edit_count
+- how cap is handled
+- whether concurrent teachers can overwrite each other
+- whether ON CONFLICT can be used after the future unique constraint
+
+Then define the exact future atomic operation conceptually.
+
+Do not implement.
+
+==================================================
+PART Q — SECURITY THREAT MODEL
+==================================================
+
+Construct concrete threat cases for:
+
+1. Teacher from School A submits Student ID from School B
+2. Teacher from School A submits School B ID
+3. Teacher submits Student from another class
+4. Teacher submits Student not enrolled in selected session
+5. Teacher submits historical session ID
+6. Teacher submits current session while UI displays historical session
+7. Teacher submits arbitrary teacherId
+8. Student A requests Student B attendance
+9. Student changes schoolId
+10. Admin requests another school's attendance
+11. Concurrent Teacher writes same Student/date
+12. Attendance write after Student becomes inactive
+13. Attendance write after enrollment changes
+14. Session deletion after attendance exists
+
+For each classify:
+
+- current protection
+- current vulnerability
+- future server-side protection
+- future DB protection
+
+Do not exploit anything destructively.
+
+==================================================
+PART R — DO NOT IMPLEMENT
+==================================================
+
+This step must produce DESIGN ONLY.
+
+Do NOT:
+
+- add unique indexes
+- add constraints
+- make session_id NOT NULL
+- change routes
+- change frontend
+- change storage
+- change schema
+- create migrations
+- modify existing data
+- modify Teacher Attendance
+- modify Student Attendance
+- modify Admin Attendance
+- modify academic sessions
+- modify enrollment
+- modify Faculty Mapping
+
+==================================================
+FINAL REPORT FORMAT
+==================================================
+
+Return exactly these sections:
+
+1. Executive Summary
+2. Current Student Attendance Write Contract
+3. Canonical Student Attendance Identity
+4. Academic Session Authority
+5. Enrollment Authority
+6. Teacher Authorization Authority
+7. Tenant Ownership Model
+8. Academic Session Deletion Model
+9. Student Attendance Status Contract
+10. Attendance Date / IST Contract
+11. Teacher Self-Attendance Identity
+12. Correction Request Model
+13. Admin Attendance Authority
+14. Student Attendance Read Authority
+15. Cross-Session Behavior Matrix
+16. Future Database Invariants
+17. Atomic Upsert Design
+18. Security Threat Model
+19. Exact Remediation Dependencies
+20. Recommended STEP 2
+21. Files Inspected
+22. Database Objects Inspected
+
+For every important conclusion distinguish:
+
+CURRENT BEHAVIOR
+DESIRED/FUTURE CONTRACT
+REASON
+
+Do not blur current behavior with proposed future design.
+
+At the end include:
+
+IMPLEMENTATION STATUS:
+NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED.
