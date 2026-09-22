@@ -120,6 +120,8 @@ describe("Attendance read Session frontend contract", () => {
     expect(studentDashboardClient).toContain('queryKey: ["/api/student/attendance/stats", selectedSession?.id');
     expect(studentExaminationClient).toContain('queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? null]');
     expect(studentArchivesClient).toContain('queryKey: ["/api/student/archive/attendance", selectedSession?.id]');
+    expect(studentArchivesClient).toContain("attendStats.overallPercent");
+    expect(studentArchivesClient).not.toContain("attendStats.presentDays / attendStats.totalDays");
 
     for (const source of [
       studentAttendanceClient,

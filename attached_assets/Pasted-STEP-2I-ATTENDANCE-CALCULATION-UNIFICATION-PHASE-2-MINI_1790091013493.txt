@@ -1,0 +1,751 @@
+STEP 2I — ATTENDANCE CALCULATION UNIFICATION
+PHASE 2: MINIMAL IMPLEMENTATION
+
+We completed the Step 2I READ-ONLY AUDIT.
+
+AUDIT RESULT:
+FAIL — Admin, Student, and Teacher Student-Attendance calculations materially differ.
+
+The implementation below is now authorized.
+
+==================================================
+CRITICAL SCOPE
+==================================================
+
+This step is ONLY for unifying the calculation/interpretation of
+STUDENT ATTENDANCE.
+
+The authoritative calculation contract must be shared by:
+
+1. Admin Student Attendance calculations
+2. Teacher Student Attendance calculations
+3. Student Attendance calculations
+
+DO NOT include Teacher SELF-ATTENDANCE in this calculation contract.
+
+Teacher self-attendance is a separate domain and must not be changed in this
+step except where a test or compile dependency absolutely requires no-op
+compatibility.
+
+STEP 2J will separately address canonical working-day/calendar calculation.
+
+==================================================
+NON-NEGOTIABLE PROJECT RULES
+==================================================
+
+1. MULTI-TENANT
+
+Every Student Attendance calculation MUST remain scoped to:
+
+authenticated school/tenant
++
+selected Academic Session
+
+Never combine Attendance records across schools or Academic Sessions.
+
+2. STUDENT REGISTRY
+
+Student Registry is global/current.
+
+Do not redesign it.
+Do not make it session-specific.
+Do not use current Student Registry membership to replace historical
+Attendance context.
+
+3. ENROLLMENT
+
+Enrollment is NOT an Attendance prerequisite.
+
+Do not introduce any Enrollment requirement for Attendance.
+
+Enrollment may continue to provide historical class/section context according
+to Step 2H, but Attendance calculations must work for students who have
+Attendance without Enrollment.
+
+4. FACULTY MAPPING
+
+Do not introduce Faculty Mapping restrictions.
+
+5. HISTORICAL ATTENDANCE
+
+Preserve Step 2H historical roster authority:
+
+selected-session Enrollment first;
+Attendance class/section snapshot fallback;
+current Student Registry only for active-session first-time marking where
+appropriate.
+
+Historical Attendance must remain visible/calculable for:
+- promoted students
+- class/section changes
+- inactive students
+- students absent from current roster
+- students without Enrollment
+
+6. ATTENDANCE WRITERS
+
+Do NOT modify Attendance writer behavior in this step.
+
+7. DATABASE
+
+No schema changes.
+No migrations.
+No changes to Attendance record identity.
+
+8. POLICIES
+
+Do NOT change Attendance policy values.
+
+Do NOT redesign policy storage.
+
+Do NOT create policy versioning.
+
+9. WORKING DAYS
+
+Do NOT redesign or canonicalize working-day/calendar logic.
+
+Step 2J will handle that.
+
+10. IST
+
+Do not change existing IST / Asia-Kolkata behavior.
+
+11. PRODUCTION
+
+Do not access or modify production.
+
+12. UNRELATED CODE
+
+No unrelated cleanup or refactoring.
+
+==================================================
+AUTHORITATIVE CALCULATION CONTRACT
+==================================================
+
+The existing Student Attendance calculation semantics must become the single
+authoritative contract.
+
+IMPORTANT:
+
+The audit identified the Student Statistics calculation as the most complete
+existing Student Attendance interpretation because it explicitly defines
+weights for recognized Student Attendance statuses.
+
+Therefore preserve these EXISTING semantics unless the source code proves a
+different explicit configured policy is already authoritative:
+
+present = 1.0
+late = 1.0
+leave = 1.0
+halfday / half_day = 0.5
+absent = 0.0
+
+Do NOT invent new weights.
+
+Do NOT modify policy values.
+
+Do NOT silently change these weights.
+
+Unknown/unrecognized status MUST NOT be treated as present.
+
+Unknown/unrecognized status must have weight 0 and must NOT receive positive
+credit.
+
+Missing Attendance must remain distinguishable from an explicitly stored
+`absent` record.
+
+Do not silently convert a missing record into a stored Attendance record.
+
+==================================================
+AUTHORITATIVE AGGREGATION HELPER
+==================================================
+
+Create ONE shared server-side Student Attendance aggregation helper.
+
+Prefer placing it in:
+
+server/storage.ts
+
+unless an existing Attendance-specific shared calculation module is already
+the established architecture.
+
+Do not create duplicate formulas in Admin, Teacher, and Student routes.
+
+The helper must:
+
+- accept schoolId
+- accept sessionId
+- accept the relevant Student Attendance records/context
+- normalize recognized status values
+- calculate weighted attendance using the canonical weights
+- distinguish missing records from explicit `absent`
+- return consistent counts and percentage inputs
+- remain tenant/session scoped
+
+The helper must be deterministic and side-effect free.
+
+It must NOT:
+- write Attendance records
+- change policies
+- query another school
+- combine Academic Sessions
+- alter Student Registry
+- require Enrollment
+
+==================================================
+STATUS NORMALIZATION
+==================================================
+
+Use one normalization path for Student Attendance statuses.
+
+Recognized statuses:
+
+present
+absent
+late
+halfday
+half_day
+leave
+
+Normalize equivalent half-day representations to one canonical internal
+status.
+
+Unknown status:
+
+- weight = 0
+- never count as present
+- never silently become present
+
+Preserve enough information in the returned aggregation to identify unknown
+status data if existing callers expose status counts.
+
+Do not delete or rewrite existing unknown-status records.
+
+==================================================
+MISSING ATTENDANCE SEMANTICS
+==================================================
+
+Do not collapse missing and explicit absent into the same stored status.
+
+The aggregation helper must distinguish:
+
+A. Explicit Attendance record with status `absent`
+
+from
+
+B. No Attendance record for the student/date.
+
+For this step:
+
+- explicit absent has weight 0 and increments explicit absent count
+- missing has weight 0 but is tracked as missing/unmarked
+- missing must NOT be silently rewritten into `absent`
+
+The denominator must continue to follow the current Student Statistics
+calculation's existing working-date input for now.
+
+DO NOT change how working dates are generated.
+
+That belongs to Step 2J.
+
+==================================================
+PERCENTAGE
+==================================================
+
+Preserve the existing Student Statistics percentage precision:
+
+percentage =
+round(weightedAttendance / applicableWorkingDays * 1000) / 10
+
+Do not change rounding behavior.
+
+Do not change the source of applicableWorkingDays in Step 2I.
+
+Step 2J will later make working-day derivation canonical.
+
+If there are no applicable working days, preserve the existing safe behavior
+rather than producing NaN or Infinity.
+
+==================================================
+STUDENT SURFACES
+==================================================
+
+Refactor Student Attendance calculations so that:
+
+1. getStudentAttendanceStats()
+2. getStudentYearlyAttendance()
+3. Student dashboard
+4. Student archives
+5. Student examination Attendance display
+
+consume the same authoritative status interpretation.
+
+IMPORTANT:
+
+Student yearly currently returns counts rather than a percentage.
+
+Keep that API/UI purpose.
+
+Its status counts must use the same status normalization semantics as the
+authoritative aggregation helper.
+
+Therefore:
+
+present -> present count
+absent -> absent count
+late -> late count
+halfday -> halfday count
+leave -> leave count
+unknown -> unknown/unrecognized count if the existing response can safely
+expose it; otherwise do not invent a new public field without necessity.
+
+Missing records must remain distinguishable from explicit absent where the
+existing response supports that distinction.
+
+Do not redesign the Student UI.
+
+==================================================
+ADMIN STUDENT-ATTENDANCE SURFACES
+==================================================
+
+Refactor Student Attendance calculations used by:
+
+- Admin Attendance Overview
+- Admin Attendance Class Detail
+- Admin Performance Analytics Attendance
+- Admin Attendance Dashboard summaries
+
+so their percentage calculation uses the same authoritative Student
+Attendance aggregation helper.
+
+The Admin UI must no longer use:
+
+present / stored-record-count
+
+as an independent competing formula.
+
+Admin must use the same status weights:
+
+present = 1
+late = 1
+leave = 1
+halfday = 0.5
+absent = 0
+
+Unknown = 0.
+
+Missing remains missing/unmarked and is not silently converted into an
+Attendance record.
+
+IMPORTANT:
+
+Do not redesign Admin response contracts unnecessarily.
+
+If existing fields such as:
+- present
+- absent
+- leave
+- markedTotal
+are already consumed by the UI, preserve them where possible.
+
+If late/halfday counts are required to make the canonical calculation
+transparent, add only the minimum response fields necessary.
+
+Do not break existing Admin UI.
+
+==================================================
+TEACHER STUDENT-ATTENDANCE SURFACES
+==================================================
+
+Refactor Student Attendance calculations used by:
+
+- Teacher Attendance summary
+- Teacher examination Attendance summary
+- Teacher class Attendance summaries
+
+to consume the same authoritative Student Attendance aggregation helper.
+
+Remove independent formulas such as:
+
+present / totalRecords
+
+for Student Attendance percentages.
+
+Use:
+
+present = 1
+late = 1
+leave = 1
+halfday = 0.5
+absent = 0
+unknown = 0
+
+Missing remains distinct from explicit absent.
+
+Preserve Step 2H historical roster behavior.
+
+==================================================
+TEACHER SELF-ATTENDANCE
+==================================================
+
+DO NOT unify Teacher self-attendance with Student Attendance.
+
+Do NOT change its existing:
+- Present
+- Late
+- Half Day
+- Absent
+- Leave
+- Not Marked
+
+calculation in this step.
+
+Do NOT change its Session schema or uniqueness in this step.
+
+The Step 2I audit identified Teacher self-attendance Session identity as a
+separate issue.
+
+Do not scope-creep into that issue.
+
+==================================================
+ADMIN OVERVIEW STATUS COUNTS
+==================================================
+
+The audit found that Admin overview currently exposes only some status
+counts while late/halfday can still affect the denominator.
+
+Make the smallest safe change required so the Admin calculation can accurately
+consume the canonical aggregation.
+
+Prefer exposing explicit counts for:
+
+present
+absent
+late
+halfday
+leave
+missing/unmarked
+unknown
+
+ONLY if this can be done without breaking existing consumers.
+
+If existing API compatibility requires retaining old fields, retain them.
+
+Do not remove existing fields.
+
+==================================================
+COMPLETION STATUS
+==================================================
+
+The audit identified:
+
+hasAttendanceToday() currently means approximately:
+"at least one Attendance record exists"
+
+Do NOT redesign completion semantics in this step unless it is directly
+required for calculation unification.
+
+Do not turn it into a full-class completion system.
+
+If it is not part of the numeric Student Attendance calculation, leave its
+behavior unchanged.
+
+Document it as a separate known issue if necessary.
+
+==================================================
+HISTORICAL SESSION REQUIREMENTS
+==================================================
+
+All refactored calculations MUST preserve Step 2H.
+
+Test this explicitly:
+
+Session A:
+- student = Ijaz
+- class = 9-A
+- Attendance records exist
+
+Session B:
+- same student
+- class = 10-B
+- current Student Registry = 10-B
+
+When Session A is selected:
+
+- use Session A Attendance
+- use Session A historical context
+- do not use current 10-B as the historical roster
+- do not mix Session B records
+
+Also test:
+
+- historical inactive student
+- historical student missing from current roster
+- historical student without Enrollment
+- Attendance-only historical student with class/section snapshot
+
+==================================================
+TENANT ISOLATION
+==================================================
+
+Every refactored calculation must remain tenant-safe.
+
+Test:
+
+School A:
+- Student A
+- Session A
+- Attendance records
+
+School B:
+- Student B
+- Session B
+- Attendance records
+
+A School A request must never include School B records.
+
+Do not rely solely on Student IDs for tenant isolation.
+
+The selected Session must also belong to the authenticated school.
+
+==================================================
+IMPORTANT ARCHITECTURAL RULE
+==================================================
+
+Do not simply copy the Student Statistics formula into several routes.
+
+Create ONE authoritative helper and make the relevant consumers call it.
+
+There must be one implementation of:
+
+status normalization
++
+status weight
++
+weighted aggregation
+
+Student/Admin/Teacher Student Attendance must consume that implementation.
+
+==================================================
+TESTS REQUIRED
+==================================================
+
+Add or update focused tests.
+
+At minimum test:
+
+1. Present only
+   Present=10
+   expected weight=10
+
+2. Present + Absent
+   8 Present + 2 Absent
+   expected percentage=80%
+
+3. Present + Late
+   8 Present + 1 Absent + 1 Late
+   expected percentage=90%
+
+4. Present + Halfday
+   8 Present + 1 Absent + 1 Halfday
+   expected percentage=85%
+
+5. Present + Leave
+   8 Present + 1 Absent + 1 Leave
+   expected percentage=90%
+
+6. Missing Attendance
+   missing student/date remains missing/unmarked
+   and does not increment explicit absent count
+
+7. Unknown status
+   unknown status gets weight 0
+   and is never treated as present
+
+8. `halfday` and `half_day`
+   both normalize consistently
+
+9. Admin vs Student
+   same records produce identical Student Attendance percentage
+
+10. Teacher vs Student
+    same records produce identical Student Attendance percentage
+
+11. Historical Session
+    Session A calculation does not include Session B records
+
+12. Promoted student
+    Session A historical class remains authoritative
+
+13. Historical inactive student
+    still included when appropriate
+
+14. Historical student without Enrollment
+    Attendance still calculable
+
+15. Cross-tenant
+    School A cannot calculate using School B records
+
+16. No applicable working days
+    safe zero behavior; no NaN/Infinity
+
+17. Existing Step 2D regression
+
+18. Existing Step 2E regression
+
+19. Existing Step 2F regression
+
+20. Existing Step 2G regression
+
+21. Existing Step 2H regression
+
+Do NOT create production test data.
+
+Use isolated test fixtures/mocks/dev DB only according to the existing project
+test architecture.
+
+==================================================
+IMPLEMENTATION SAFETY
+==================================================
+
+Before editing:
+
+1. Identify all callers of the existing Student Attendance calculation
+   functions.
+
+2. Confirm the authoritative helper location.
+
+3. Confirm existing API response shapes.
+
+4. Confirm no existing consumer depends on the old Admin/Teacher formula.
+
+Then implement the minimum changes.
+
+Do not rewrite unrelated code.
+
+Do not rename unrelated APIs.
+
+Do not change database schema.
+
+Do not create migrations.
+
+Do not modify Attendance writers.
+
+Do not modify Student Registry.
+
+Do not modify Enrollment rules.
+
+Do not modify Faculty Mapping.
+
+Do not modify Examination.
+
+Do not modify calendar/working-day generation.
+
+Do not modify Attendance policy values.
+
+==================================================
+VALIDATION
+==================================================
+
+After implementation:
+
+1. Run focused Step 2I tests.
+
+2. Run all relevant existing Attendance tests.
+
+3. Run the Step 2D, 2E, 2F, 2G, and 2H regression tests.
+
+4. Run:
+
+npm run check
+
+5. Run:
+
+git diff --check
+
+6. Verify application restart/schema validation if this is part of the
+existing Replit workflow.
+
+7. Confirm production was not accessed or modified.
+
+==================================================
+REQUIRED FINAL REPORT
+==================================================
+
+Return a concise implementation report with:
+
+A. Result
+PASS / FAIL
+
+B. Files changed
+
+C. Authoritative helper
+- exact file
+- exact function name
+- what it does
+
+D. Canonical Student Attendance semantics
+
+Present = 1
+Late = 1
+Leave = 1
+Halfday = 0.5
+Absent = 0
+Unknown = 0
+Missing = distinct from absent
+
+E. Surfaces migrated to the helper
+- Student
+- Admin
+- Teacher Student Attendance
+
+F. Teacher self-attendance
+Confirm unchanged.
+
+G. Working-day/calendar
+Confirm unchanged and deferred to Step 2J.
+
+H. Historical Step 2H behavior
+Confirm preserved.
+
+I. Tenant/session isolation
+Confirm preserved.
+
+J. Tests
+Report exact test files/counts and pass/fail.
+
+K. npm run check
+PASS/FAIL
+
+L. git diff --check
+PASS/FAIL
+
+M. Production
+Confirm untouched.
+
+N. Schema/migrations
+Confirm unchanged.
+
+O. Explicit non-changes
+Confirm:
+- no Enrollment gate
+- no Faculty Mapping restriction
+- no Student Registry redesign
+- no Attendance writer changes
+- no policy-value changes
+- no calendar redesign
+- no unrelated fixes
+
+FINAL RULE:
+
+Implement ONLY Step 2I.
+
+If an unexpected architectural conflict is discovered that would require:
+- schema changes
+- policy redesign
+- working-day redesign
+- changing Attendance writer behavior
+- changing Student Registry
+- changing Enrollment rules
+
+STOP and report the blocker instead of making that change.

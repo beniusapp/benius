@@ -60,6 +60,10 @@ import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import {
+  aggregateStudentAttendance,
+  type StudentAttendanceAggregation,
+} from "./student-attendance-calculation";
+import {
   CURRENT_FEE_AUDIT_ACTION_OPTIONS,
   feeAuditActionLabel,
   normalizeFeeAuditActorDisplay,
@@ -4237,18 +4241,47 @@ export class DatabaseStorage {
   }
 
   // ===== DAILY ATTENDANCE SUMMARY =====
-  async getDailyAttendanceSummary(schoolId: number, sessionId: number, date: string): Promise<{ total: number; present: number; absent: number; leave: number; percentage: number }> {
-    const records = await db.select().from(attendanceRecords).where(and(
-      eq(attendanceRecords.schoolId, schoolId),
-      eq(attendanceRecords.sessionId, sessionId),
-      eq(attendanceRecords.date, date),
-    ));
-    const total = records.length;
-    const present = records.filter(r => r.status === "present").length;
-    const absent = records.filter(r => r.status === "absent").length;
-    const leave = records.filter(r => r.status === "leave").length;
-    const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
-    return { total, present, absent, leave, percentage };
+  async getDailyAttendanceSummary(schoolId: number, sessionId: number, date: string): Promise<{
+    total: number;
+    applicableTotal: number;
+    present: number;
+    absent: number;
+    leave: number;
+    late: number;
+    halfDay: number;
+    missing: number;
+    unknown: number;
+    percentage: number;
+  }> {
+    const [records, population] = await Promise.all([
+      db.select().from(attendanceRecords).where(and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.date, date),
+      )),
+      this.getAttendancePopulationForSession(schoolId, sessionId),
+    ]);
+    const applicableSlots = Math.max(population, records.length);
+    const aggregation = aggregateStudentAttendance({
+      schoolId,
+      sessionId,
+      statuses: [
+        ...records.map(record => record.status),
+        ...Array(applicableSlots - records.length).fill(null),
+      ],
+    });
+    return {
+      total: records.length,
+      applicableTotal: aggregation.applicableWorkingDays,
+      present: aggregation.present,
+      absent: aggregation.absent,
+      leave: aggregation.leave,
+      late: aggregation.late,
+      halfDay: aggregation.halfDay,
+      missing: aggregation.missing,
+      unknown: aggregation.unknown,
+      percentage: aggregation.percentage,
+    };
   }
 
   // ===== AUDIT LOGS READER =====
@@ -4792,18 +4825,16 @@ export class DatabaseStorage {
       const bucket = monthMap.get(key)!;
       bucket.workingDays++;
       bucket.total++;
-      const rec = recordMap.get(dateStr);
-      if (rec) {
-        const s = rec.status;
-        if (s === "present") bucket.present++;
-        else if (s === "absent") bucket.absent++;
-        else if (s === "halfday" || s === "half_day") bucket.halfDay++;
-        else if (s === "late") bucket.late++;
-        else if (s === "leave") bucket.leave++;
-        else bucket.present++;
-      } else {
-        bucket.absent++;
-      }
+      const aggregation = aggregateStudentAttendance({
+        schoolId,
+        sessionId,
+        statuses: [recordMap.get(dateStr)?.status ?? null],
+      });
+      bucket.present += aggregation.present;
+      bucket.absent += aggregation.absent;
+      bucket.halfDay += aggregation.halfDay;
+      bucket.late += aggregation.late;
+      bucket.leave += aggregation.leave;
     }
 
     return Array.from(monthMap.values()).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
@@ -4847,24 +4878,66 @@ export class DatabaseStorage {
         lte(attendanceRecords.date, upperBound),
       ))
       : myRecords.map(record => ({ date: record.date }));
-    const workingDays = workingDateRows.length;
+    const workingDates = [...new Set(workingDateRows.map(row => row.date))];
+    const recordByDate = new Map(myRecords.map(record => [record.date, record]));
+    const aggregation = aggregateStudentAttendance({
+      schoolId,
+      sessionId,
+      statuses: workingDates.map(date => recordByDate.get(date)?.status ?? null),
+    });
 
-    let weightedPresent = 0;
-    let totalPresent = 0, totalAbsent = 0, totalHalfDay = 0, totalLate = 0, totalLeave = 0;
+    return {
+      overallPercent: aggregation.percentage,
+      workingDays: aggregation.applicableWorkingDays,
+      daysPresent: aggregation.weightedAttendance,
+      totalPresent: aggregation.present,
+      totalAbsent: aggregation.absent,
+      totalHalfDay: aggregation.halfDay,
+      totalLate: aggregation.late,
+      totalLeave: aggregation.leave,
+    };
+  }
 
-    for (const r of myRecords) {
-      const s = r.status;
-      if (s === "present") { totalPresent++; weightedPresent += 1; }
-      else if (s === "late") { totalLate++; weightedPresent += 1; }
-      else if (s === "halfday" || s === "half_day") { totalHalfDay++; weightedPresent += 0.5; }
-      else if (s === "absent") { totalAbsent++; }
-      else if (s === "leave") { totalLeave++; weightedPresent += 1; }
-    }
-
-    const overallPercent = workingDays > 0 ? Math.round((weightedPresent / workingDays) * 1000) / 10 : 0;
-    const daysPresent = Math.round(weightedPresent * 10) / 10;
-
-    return { overallPercent, workingDays, daysPresent, totalPresent, totalAbsent, totalHalfDay, totalLate, totalLeave };
+  async getStudentAttendanceAggregatesForSessionClass(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<Array<{ student: Student; aggregation: StudentAttendanceAggregation }>> {
+    const roster = await this.getAttendanceRosterForSessionClass(
+      schoolId, sessionId, cls, section,
+    );
+    const [records, workingDateRows] = await Promise.all([
+      this.getAttendanceHistory(
+        schoolId, sessionId, cls, section, startDate, endDate,
+      ),
+      db.selectDistinct({ date: attendanceRecords.date })
+        .from(attendanceRecords)
+        .where(and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.sessionId, sessionId),
+          eq(attendanceRecords.class, cls),
+          eq(attendanceRecords.section, section),
+          gte(attendanceRecords.date, startDate),
+          lte(attendanceRecords.date, endDate),
+        )),
+    ]);
+    const workingDates = [...new Set(workingDateRows.map(row => row.date))];
+    const recordByStudentDate = new Map(
+      records.map(record => [`${record.studentId}:${record.date}`, record]),
+    );
+    return roster.map(student => ({
+      student,
+      aggregation: aggregateStudentAttendance({
+        schoolId,
+        sessionId,
+        statuses: workingDates.map(date =>
+          recordByStudentDate.get(`${student.id}:${date}`)?.status ?? null
+        ),
+      }),
+    }));
   }
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====

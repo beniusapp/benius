@@ -58,10 +58,14 @@ interface FeeRecord {
 }
 
 interface AttendanceStats {
-  totalDays: number;
-  presentDays: number;
-  absentDays: number;
-  leaveDays: number;
+  overallPercent: number;
+  workingDays: number;
+  daysPresent: number;
+  totalPresent: number;
+  totalAbsent: number;
+  totalHalfDay: number;
+  totalLate: number;
+  totalLeave: number;
   startDate: string;
 }
 
@@ -205,8 +209,8 @@ ${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank
     w.document.close();
   };
 
-  const attendPct = attendStats && attendStats.totalDays > 0
-    ? Math.round((attendStats.presentDays / attendStats.totalDays) * 100)
+  const attendPct = attendStats && attendStats.workingDays > 0
+    ? attendStats.overallPercent
     : null;
 
   return (
@@ -672,10 +676,10 @@ ${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank
                         {/* 4-cell stats grid */}
                         <div className="grid grid-cols-2 gap-3 flex-1 w-full">
                           {[
-                            { label: "Total Days",   value: attendStats.totalDays,              color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
-                            { label: "Days Present", value: attendStats.presentDays,             color: "#10b981", bg: "#f0fdf4", border: "#bbf7d0" },
-                            { label: "Days Absent",  value: attendStats.absentDays,              color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
-                            { label: "Leave Days",   value: attendStats.leaveDays ?? 0,          color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
+                            { label: "Total Days",   value: attendStats.workingDays,              color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
+                            { label: "Days Present", value: attendStats.daysPresent,              color: "#10b981", bg: "#f0fdf4", border: "#bbf7d0" },
+                            { label: "Days Absent",  value: attendStats.totalAbsent,              color: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
+                            { label: "Leave Days",   value: attendStats.totalLeave,               color: "#f59e0b", bg: "#fffbeb", border: "#fde68a" },
                           ].map(stat => (
                             <div
                               key={stat.label}
@@ -691,7 +695,7 @@ ${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank
                       </div>
 
                       {/* Progress bar */}
-                      {attendStats.totalDays > 0 && (
+                      {attendStats.workingDays > 0 && (
                         <div className="mt-6">
                           <div className="flex justify-between text-xs text-emerald-700 font-semibold mb-1.5">
                             <span>Attendance Rate</span>
@@ -704,9 +708,9 @@ ${summary.rank ? `<div class="sr"><span>Class Rank</span><span><b>${summary.rank
                             />
                           </div>
                           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-semibold">
-                            <span style={{ color: "#10b981" }}>● Present: {attendStats.presentDays}d</span>
-                            <span style={{ color: "#ef4444" }}>● Absent: {attendStats.absentDays}d</span>
-                            {(attendStats.leaveDays ?? 0) > 0 && <span style={{ color: "#f59e0b" }}>● Leave: {attendStats.leaveDays}d</span>}
+                            <span style={{ color: "#10b981" }}>● Present: {attendStats.daysPresent}d</span>
+                            <span style={{ color: "#ef4444" }}>● Absent: {attendStats.totalAbsent}d</span>
+                            {attendStats.totalLeave > 0 && <span style={{ color: "#f59e0b" }}>● Leave: {attendStats.totalLeave}d</span>}
                           </div>
                         </div>
                       )}

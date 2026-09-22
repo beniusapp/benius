@@ -1660,7 +1660,7 @@ export default function AdminDashboard() {
   // a separate cache entry for each academic year and triggers a fresh fetch
   // whenever the admin switches sessions.  The backend will receive
   // x-view-session-id via sessionFetch and can scope the response accordingly.
-  const { data: dailySummary } = useQuery<{ total: number; present: number; percentage: number }>({
+  const { data: dailySummary } = useQuery<{ total: number; applicableTotal?: number; present: number; percentage: number }>({
     queryKey: ["admin-session-summary", selectedViewSession?.id ?? null, me?.schoolId, today],
     queryFn: async ({ queryKey, signal }) => {
       const [, viewSessionId, schoolId, date] = queryKey as [string, number | null, number | undefined, string];
@@ -1848,6 +1848,7 @@ export default function AdminDashboard() {
 
   const attendancePresent = dailySummary?.present ?? 0;
   const attendanceTotal   = dailySummary?.total   ?? 0;
+  const attendanceApplicableTotal = dailySummary?.applicableTotal ?? attendanceTotal;
 
   const adminInitials = (me.role === "support_staff" && me.displayName)
     ? me.displayName.trim().split(/\s+/).slice(0, 2).map((w: string) => w[0].toUpperCase()).join("")
@@ -2128,7 +2129,7 @@ export default function AdminDashboard() {
                       {attendanceTotal ? `${attendancePctAnimated}%` : "—"}
                     </p>
                     {attendanceTotal > 0 && (
-                      <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceTotal} present</p>
+                      <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceApplicableTotal} present</p>
                     )}
                   </div>
                 </div>

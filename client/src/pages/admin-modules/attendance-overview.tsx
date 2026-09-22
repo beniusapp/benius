@@ -42,6 +42,10 @@ interface AttendanceOverview {
   present: number;
   absent: number;
   leave: number;
+  late?: number;
+  halfDay?: number;
+  missing?: number;
+  unknown?: number;
   percentage: number;
 }
 
@@ -65,6 +69,9 @@ interface SubmissionMeta {
 interface ClassDetailResponse {
   meta: SubmissionMeta;
   students: StudentAttendance[];
+  summary?: {
+    percentage: number;
+  };
 }
 
 interface TeacherRow {
@@ -308,10 +315,10 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
     const marked  = safeStudentData.filter(s => s.status !== "not-marked").length;
     const present = safeStudentData.filter(s => s.status === "present").length;
     const absent  = safeStudentData.filter(s => s.status === "absent").length;
-    const pct     = marked > 0 ? Math.round((present / marked) * 100) : 0;
+    const pct     = classDetail?.summary?.percentage ?? 0;
     const attendanceSubmitted = marked > 0;
     return { total, present, absent, pct, attendanceSubmitted };
-  }, [safeStudentData]);
+  }, [safeStudentData, classDetail?.summary?.percentage]);
 
   const filteredStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();

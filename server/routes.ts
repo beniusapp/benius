@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { AcademicSessionFinancialHistoryError, storage } from "./storage";
+import { aggregateStudentAttendance } from "./student-attendance-calculation";
 import { feePeriodLabel } from "./fee-period";
 import {
   insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
@@ -2934,6 +2935,13 @@ export async function registerRoutes(
           status: (record && record.status) ? record.status : "not-marked",
         };
       });
+      const summary = aggregateStudentAttendance({
+        schoolId,
+        sessionId: attendanceSession.id,
+        statuses: result.map(student =>
+          student.status === "not-marked" ? null : student.status
+        ),
+      });
 
       // Build submission metadata from attendance_records
       const submittedRecs = filteredRecords.filter(r => r.markedAt).sort(
@@ -2956,7 +2964,7 @@ export async function registerRoutes(
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
-      res.json({ meta, students: result });
+      res.json({ meta, students: result, summary });
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       console.error("class-detail error:", err);
@@ -2988,12 +2996,28 @@ export async function registerRoutes(
         ));
 
       const markedTotal = recs.length;
-      const present = recs.filter(r => r.status === "present").length;
-      const absent = recs.filter(r => r.status === "absent").length;
-      const leave = recs.filter(r => r.status === "leave").length;
-      const percentage = markedTotal > 0 ? Math.round((present / markedTotal) * 100) : 0;
+      const applicableSlots = Math.max(enrolledTotal, markedTotal);
+      const aggregation = aggregateStudentAttendance({
+        schoolId,
+        sessionId: attendanceSession.id,
+        statuses: [
+          ...recs.map(record => record.status),
+          ...Array(applicableSlots - markedTotal).fill(null),
+        ],
+      });
 
-      res.json({ enrolledTotal, markedTotal, present, absent, leave, percentage });
+      res.json({
+        enrolledTotal,
+        markedTotal,
+        present: aggregation.present,
+        absent: aggregation.absent,
+        leave: aggregation.leave,
+        late: aggregation.late,
+        halfDay: aggregation.halfDay,
+        missing: aggregation.missing,
+        unknown: aggregation.unknown,
+        percentage: aggregation.percentage,
+      });
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch attendance overview" });

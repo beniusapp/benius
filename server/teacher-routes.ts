@@ -3859,21 +3859,14 @@ Thank you for your prompt attention to this matter.
         yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
         yearEnd = today;
       }
-      const records = await storage.getAttendanceHistory(
+      const aggregates = await storage.getStudentAttendanceAggregatesForSessionClass(
         schoolId, attendanceSession.id, cls, section, yearStart, yearEnd,
       );
-      const byStudent: Record<number, { present: number; total: number }> = {};
-      for (const r of records) {
-        const sid = (r as any).studentId as number;
-        if (!byStudent[sid]) byStudent[sid] = { present: 0, total: 0 };
-        byStudent[sid].total++;
-        if ((r as any).status === "present") byStudent[sid].present++;
-      }
-      const summary = Object.entries(byStudent).map(([sid, data]) => ({
-        studentId: parseInt(sid),
-        attendancePct: data.total > 0 ? Math.round((data.present / data.total) * 100) : null,
-        presentDays: data.present,
-        totalDays: data.total,
+      const summary = aggregates.map(({ student, aggregation }) => ({
+        studentId: student.id,
+        attendancePct: aggregation.applicableWorkingDays > 0 ? aggregation.percentage : null,
+        presentDays: aggregation.weightedAttendance,
+        totalDays: aggregation.applicableWorkingDays,
       }));
       res.json(summary);
     } catch (error) {
@@ -4452,21 +4445,14 @@ Thank you for your prompt attention to this matter.
       const today = todayInIST();
       const yearStart = attendanceSession.startDate;
       const yearEnd = attendanceSession.endDate < today ? attendanceSession.endDate : today;
-      const records = await storage.getAttendanceHistory(
+      const aggregates = await storage.getStudentAttendanceAggregatesForSessionClass(
         schoolId, context.sessionId, cls, section, yearStart, yearEnd,
       );
-      const byStudent: Record<number, { present: number; total: number }> = {};
-      for (const r of records) {
-        const sid = (r as any).studentId as number;
-        if (!byStudent[sid]) byStudent[sid] = { present: 0, total: 0 };
-        byStudent[sid].total++;
-        if ((r as any).status === "present") byStudent[sid].present++;
-      }
-      const summary = Object.entries(byStudent).map(([sid, data]) => ({
-        studentId: parseInt(sid),
-        attendancePct: data.total > 0 ? Math.round((data.present / data.total) * 100) : null,
-        presentDays: data.present,
-        totalDays: data.total,
+      const summary = aggregates.map(({ student, aggregation }) => ({
+        studentId: student.id,
+        attendancePct: aggregation.applicableWorkingDays > 0 ? aggregation.percentage : null,
+        presentDays: aggregation.weightedAttendance,
+        totalDays: aggregation.applicableWorkingDays,
       }));
       res.json(summary);
     } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }

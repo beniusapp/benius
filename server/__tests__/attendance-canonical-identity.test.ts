@@ -408,6 +408,12 @@ describe("Attendance canonical persistence identity", () => {
         class: "9",
         section: "A",
       }),
+      attendanceInput({
+        studentId: promotedStudent.id,
+        date: "2025-05-03",
+        class: "10",
+        section: "B",
+      }),
     ]);
 
     const roster = await storage.getAttendanceRosterForSessionClass(
@@ -420,7 +426,7 @@ describe("Attendance canonical persistence identity", () => {
     ]));
 
     const history = await storage.getAttendanceHistory(
-      schoolAId, sessionAId, "9", "A", "2025-05-01", "2025-05-02",
+      schoolAId, sessionAId, "9", "A", "2025-05-01", "2025-05-03",
     );
     expect(history.map(record => record.studentId)).toEqual(expect.arrayContaining([
       promotedStudent.id,
@@ -437,17 +443,36 @@ describe("Attendance canonical persistence identity", () => {
 
     const yearly = await storage.getStudentYearlyAttendance(
       promotedStudent.id, schoolAId, sessionAId, "9", "A",
-      "2025-05-01", "2025-05-02",
+      "2025-05-01", "2025-05-03",
     );
     expect(yearly).toEqual([
-      expect.objectContaining({ workingDays: 2, present: 1, absent: 1 }),
+      expect.objectContaining({ workingDays: 2, present: 1, absent: 0 }),
     ]);
 
     const stats = await storage.getStudentAttendanceStats(
       promotedStudent.id, schoolAId, sessionAId, "9", "A",
-      "2025-05-01", "2025-05-02",
+      "2025-05-01", "2025-05-03",
     );
-    expect(stats).toMatchObject({ workingDays: 2, totalPresent: 1 });
+    expect(stats).toMatchObject({
+      workingDays: 2,
+      totalPresent: 1,
+      totalAbsent: 0,
+      overallPercent: 50,
+    });
+
+    const classAggregates = await storage.getStudentAttendanceAggregatesForSessionClass(
+      schoolAId, sessionAId, "9", "A", "2025-05-01", "2025-05-03",
+    );
+    const promotedAggregate = classAggregates.find(
+      entry => entry.student.id === promotedStudent.id,
+    )?.aggregation;
+    expect(promotedAggregate).toMatchObject({
+      applicableWorkingDays: 2,
+      present: 1,
+      absent: 0,
+      missing: 1,
+      percentage: 50,
+    });
 
     await expect(storage.getAttendancePopulationForSession(
       schoolAId, sessionAId,
