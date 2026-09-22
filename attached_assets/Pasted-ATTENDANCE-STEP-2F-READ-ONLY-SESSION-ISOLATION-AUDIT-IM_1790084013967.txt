@@ -1,0 +1,411 @@
+ATTENDANCE STEP 2F — READ-ONLY SESSION ISOLATION AUDIT
+
+IMPORTANT:
+This is an AUDIT ONLY.
+
+DO NOT modify any code.
+DO NOT modify schema.
+DO NOT create migrations.
+DO NOT modify database data.
+DO NOT change APIs.
+DO NOT change frontend behavior.
+DO NOT restart/redeploy anything unless absolutely required just to inspect the application.
+DO NOT fix anything found.
+
+We have completed Attendance Step 2E.
+
+Current canonical Attendance identity is now:
+
+    school_id + session_id + student_id + date
+
+And:
+
+- attendance_records.session_id is NOT NULL
+- unique (school_id, session_id, student_id, date) exists
+- Attendance Session FK no longer SET NULL
+- Teacher POST /api/attendance gets the active Session server-side
+- Student Registry remains GLOBAL and session-independent
+- Enrollment is NOT an Attendance prerequisite
+- Faculty Mapping is NOT an Attendance restriction
+- Any authenticated Teacher belonging to the school may mark Attendance
+- Attendance must remain strictly tenant-specific
+- Attendance must remain Academic-Session-specific
+
+The next task is to audit READ-SIDE Session isolation only.
+
+==================================================
+GOAL
+==================================================
+
+Determine whether every Attendance reader in Admin, Teacher, and Student portals correctly reads ONLY the selected Academic Session.
+
+For every Attendance read, identify:
+
+1. Which school/tenant is being used.
+2. Which Academic Session is being used.
+3. Whether session_id is explicitly included in the database query.
+4. Whether the selected Session comes from authenticated/server-authoritative context or browser input.
+5. Whether current Student Registry data is incorrectly being used to reconstruct historical Attendance.
+6. Whether date-only queries can mix Sessions.
+7. Whether calculations/aggregations can mix Sessions.
+8. Whether a selected previous Session can display historical Attendance correctly.
+9. Whether current Session data can leak into a previous Session view.
+10. Whether previous Session data can leak into the current Session view.
+
+Do NOT fix anything.
+
+==================================================
+A. FIND ALL ATTENDANCE READERS
+==================================================
+
+Search the entire repository for all reads from:
+
+    attendance_records
+
+Also search for:
+
+    attendanceRecords
+    getAttendance
+    getStudentMonthlyAttendance
+    getStudentYearlyAttendance
+    getStudentAttendanceStats
+    getAttendanceForStudentsOnDate
+    attendance history
+    attendance summary
+    attendance percentage
+    attendance statistics
+    attendance overview
+    attendance completion
+    attendance calendar
+    attendance monthly
+    attendance yearly
+
+Include:
+
+- server/storage.ts
+- server/routes.ts
+- server/teacher-routes.ts
+- any admin route files
+- any student route files
+- any service/helper files
+- all Attendance-related frontend files
+- relevant tests
+
+Create a complete inventory of every Attendance read.
+
+==================================================
+B. ADMIN ATTENDANCE READS
+==================================================
+
+Audit every Admin Attendance endpoint/query/component.
+
+For each one report:
+
+- File
+- Function/route
+- Purpose
+- Input parameters
+- School/tenant source
+- Session source
+- Whether session_id is explicitly filtered
+- Whether date is used
+- Whether current Student Registry is used
+- Whether Enrollment is used
+- Whether historical Student Registry membership can affect results
+- Whether multiple Sessions could be mixed
+- Risk level: PASS / PARTIAL / FAIL
+
+Specifically inspect:
+
+- Admin Attendance overview
+- Admin class Attendance detail
+- Admin student Attendance detail
+- Admin Attendance history
+- Admin Attendance statistics
+- Admin Attendance percentages
+- Admin Attendance completion/summary
+- Any dashboard Attendance widgets
+
+Do not assume that an optional session parameter is safe.
+Trace where it comes from and how it reaches the SQL query.
+
+==================================================
+C. TEACHER ATTENDANCE READS
+==================================================
+
+Audit every Teacher Attendance reader.
+
+Specifically inspect:
+
+- Today's Attendance
+- Attendance history
+- Attendance completion
+- Previous Session Attendance
+- Any Teacher Attendance summary/statistics
+- Any Teacher Attendance calendar/history endpoint
+
+For each:
+
+- File/function
+- Route/API
+- School source
+- Session source
+- Query conditions
+- Whether session_id is mandatory
+- Whether current Student Registry is used
+- Whether historical Session data can be displayed
+- Whether a date-only lookup can accidentally select another Session
+- PASS / PARTIAL / FAIL
+
+IMPORTANT:
+
+Teacher Attendance writing is already fixed in Step 2D/2E.
+
+Do not modify writing behavior.
+
+==================================================
+D. STUDENT ATTENDANCE READS
+==================================================
+
+Audit every Student Attendance API and UI.
+
+Specifically inspect:
+
+- Monthly Attendance
+- Yearly Attendance
+- Attendance statistics
+- Attendance percentage
+- Attendance calendar
+- Attendance history
+- Any Student Dashboard Attendance data
+
+For every reader determine:
+
+1. How Student identity is obtained.
+2. How school_id is obtained.
+3. How selected Academic Session is obtained.
+4. Whether session_id is explicitly included in SQL.
+5. Whether the calculation uses current Student Registry class/section.
+6. Whether it can accidentally include Attendance from another Session.
+7. Whether date-based maps/find() operations assume only one Attendance row per date.
+8. Whether current and historical Session Attendance can be mixed.
+
+Pay special attention to:
+
+    getStudentMonthlyAttendance()
+
+    getStudentYearlyAttendance()
+
+    getStudentAttendanceStats()
+
+These previously had date-only aggregation assumptions.
+
+Do NOT change them yet.
+
+==================================================
+E. DATE-ONLY QUERY AUDIT
+==================================================
+
+Find every Attendance query that uses:
+
+    student_id + date
+
+or:
+
+    school_id + date
+
+or:
+
+    date
+
+without session_id.
+
+For every occurrence determine whether it is:
+
+- a valid historical query that intentionally spans Sessions
+- a current-session query that should be Session-scoped
+- an aggregation that accidentally mixes Sessions
+- a presentation-only operation
+- a mutation lookup that should already have been fixed by Step 2E
+
+Do NOT modify anything.
+
+==================================================
+F. OPTIONAL SESSION PARAMETERS
+==================================================
+
+Find all APIs/functions where session is optional.
+
+Examples:
+
+    sessionId?: number
+    academicSessionId?: number
+    selectedSession
+    session query parameter
+    optional Session filter
+
+For each:
+
+- identify caller
+- identify route
+- identify default behavior
+- identify database query
+- determine whether absence of session causes:
+    a) current active Session
+    b) all Sessions
+    c) no Attendance
+    d) some other behavior
+
+This is especially important for historical views.
+
+Report whether the current behavior matches the requirement:
+
+"Attendance data must be Academic-Session-specific."
+
+==================================================
+G. ADMIN ↔ STUDENT CONSISTENCY
+==================================================
+
+Trace the actual raw Attendance data and calculations used by:
+
+- Admin Attendance
+- Student Attendance
+
+Determine whether both are reading the same authoritative attendance_records data.
+
+Then compare:
+
+- session filtering
+- date range
+- working-day denominator
+- present count
+- absent count
+- leave count
+- late/half-day handling if present
+- percentage calculation
+- holiday handling
+- Sunday handling
+
+DO NOT redesign calculations in this step.
+
+Only report whether Session isolation is already consistent.
+
+If differences are calculation differences rather than Session-isolation problems, list them separately as future work.
+
+==================================================
+H. HISTORICAL SESSION TEST
+==================================================
+
+Trace a hypothetical example:
+
+Student:
+    Ram Jaiswal
+
+Session A:
+    2021-22
+
+Session B:
+    2022-23
+
+Suppose:
+
+Session A:
+    2021-07-15 = Present
+
+Session B:
+    2022-07-15 = Absent
+
+Determine exactly what each current reader would return when:
+
+1. Admin selects Session A.
+2. Admin selects Session B.
+3. Teacher selects Session A.
+4. Teacher selects Session B.
+5. Student selects Session A.
+6. Student selects Session B.
+
+Do this by tracing the actual query/filter/calculation logic.
+
+Do NOT create test data.
+
+==================================================
+I. CURRENT STUDENT REGISTRY DEPENDENCY
+==================================================
+
+Identify every Attendance reader that uses:
+
+    students.class
+    students.section
+    students.is_active
+    current Student Registry roster
+
+Determine whether this affects historical Attendance.
+
+The requirement is:
+
+Student Registry is GLOBAL/current.
+
+Historical Attendance must remain viewable for a selected historical Session even if the student is no longer present in the current Student Registry roster.
+
+Do NOT redesign historical identity yet.
+
+Only identify the exact places where current Registry state can incorrectly hide historical Attendance.
+
+==================================================
+J. TENANT ISOLATION
+==================================================
+
+For every Attendance reader verify:
+
+    school_id
+
+is derived from authenticated/server-authoritative context.
+
+Identify any reader that:
+
+- trusts browser school_id
+- queries Attendance without school_id
+- queries Student IDs without tenant validation
+- could combine Attendance from multiple schools
+
+Do NOT fix anything.
+
+==================================================
+K. REQUIRED OUTPUT
+==================================================
+
+Return a structured report with these sections:
+
+A. Complete Attendance reader inventory
+B. Admin reader audit
+C. Teacher reader audit
+D. Student reader audit
+E. Date-only query findings
+F. Optional Session parameter findings
+G. Admin vs Student consistency findings
+H. Historical Session A/B trace
+I. Current Student Registry dependencies
+J. Tenant-isolation findings
+K. Exact PASS / PARTIAL / FAIL table
+L. Minimum files/functions that would need modification for Step 2F
+M. Recommended implementation order for Step 2F
+N. Risks during implementation
+O. Explicit confirmation that NO code/schema/database/config/production changes were made
+
+IMPORTANT:
+
+Do not propose broad Attendance redesign.
+
+Do not introduce Enrollment.
+
+Do not introduce Faculty Mapping.
+
+Do not modify Student Registry.
+
+Do not modify Attendance writers.
+
+Do not fix calculations yet.
+
+Step 2F is ONLY about ensuring Attendance READS are correctly scoped to the selected Academic Session.
+
+STOP after the audit.
