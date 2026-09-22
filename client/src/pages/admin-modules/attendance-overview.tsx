@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import { sessionFetch } from "@/lib/queryClient";
+import { sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, UserX, Loader2, Calendar, Filter, CheckCircle, Search, Eye,
@@ -12,6 +12,7 @@ import { formatDateOnly, formatDateTimeIST, formatTimeIST, todayInIST } from "@s
 
 interface Props {
   schoolId: number;
+  viewSessionId?: number | null;
   onViewStudent?: (studentId: number) => void;
 }
 
@@ -208,7 +209,7 @@ function formatDateTime(isoString: string | null): string {
   return formatDateTimeIST(isoString);
 }
 
-export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
+export default function AttendanceOverview({ schoolId, viewSessionId = null, onViewStudent }: Props) {
   const today = todayInIST();
   const [date, setDate] = useState(today);
   const [filterClass, setFilterClass] = useState("");
@@ -221,14 +222,14 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/overview", date] });
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/teacher-summary", date] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/overview", viewSessionId, date] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/teacher-summary", viewSessionId, date] });
     if (filterClass && filterSection) {
       queryClient.invalidateQueries({
-        queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
+        queryKey: ["/api/admin/attendance/class-detail", viewSessionId, filterClass, filterSection, date],
       });
     }
-  }, [date, filterClass, filterSection, queryClient]);
+  }, [date, filterClass, filterSection, viewSessionId, queryClient]);
 
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
     queryKey: ["/api/admin/school-config"],
@@ -243,9 +244,9 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   const hasSections = (schoolConfig?.sections ?? []).length > 0;
 
   const { data: overview, isLoading: overviewLoading } = useQuery<AttendanceOverview>({
-    queryKey: ["/api/admin/attendance/overview", date],
-    queryFn: async () => {
-      const r = await sessionFetch(`/api/admin/attendance/overview?date=${date}`);
+    queryKey: ["/api/admin/attendance/overview", viewSessionId, date],
+    queryFn: async ({ signal }) => {
+      const r = await sessionFetchForViewSession(`/api/admin/attendance/overview?date=${date}`, viewSessionId, { signal });
       return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
     },
     enabled: !!schoolId,
@@ -254,9 +255,9 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   });
 
   const { data: teacherSummaryData, isLoading: teacherLoading } = useQuery<TeacherSummaryResponse>({
-    queryKey: ["/api/admin/attendance/teacher-summary", date],
-    queryFn: async () => {
-      const r = await sessionFetch(`/api/admin/attendance/teacher-summary?date=${date}`);
+    queryKey: ["/api/admin/attendance/teacher-summary", viewSessionId, date],
+    queryFn: async ({ signal }) => {
+      const r = await sessionFetchForViewSession(`/api/admin/attendance/teacher-summary?date=${date}`, viewSessionId, { signal });
       return r.ok ? r.json() : { summary: { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 }, teachers: [] };
     },
     enabled: !!schoolId,
@@ -265,10 +266,12 @@ export default function AttendanceOverview({ schoolId, onViewStudent }: Props) {
   });
 
   const { data: classDetail, isLoading: studentLoading } = useQuery<ClassDetailResponse>({
-    queryKey: ["/api/admin/attendance/class-detail", filterClass, filterSection, date],
-    queryFn: async () => {
-      const r = await sessionFetch(
-        `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`
+    queryKey: ["/api/admin/attendance/class-detail", viewSessionId, filterClass, filterSection, date],
+    queryFn: async ({ signal }) => {
+      const r = await sessionFetchForViewSession(
+        `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`,
+        viewSessionId,
+        { signal },
       );
       return r.ok ? r.json() : { meta: { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null }, students: [] };
     },

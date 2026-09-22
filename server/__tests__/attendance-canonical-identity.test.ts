@@ -3,6 +3,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import {
+  AttendanceReadSessionError,
+  resolveAttendanceReadSession,
+} from "../attendance-read-session";
+import { todayInIST } from "@shared/ist-time";
+import {
   academicSessions,
   attendanceRecords,
   schools,
@@ -21,6 +26,7 @@ let teacherAId = 0;
 let teacherBId = 0;
 let sessionAId = 0;
 let sessionBId = 0;
+let otherSchoolSessionId = 0;
 
 async function createTeacher(schoolId: number, label: string) {
   const [user] = await db.insert(users).values({
@@ -48,6 +54,8 @@ function attendanceInput(overrides: Partial<{
   teacherId: number;
   date: string;
   status: string;
+    class: string;
+    section: string;
 }> = {}) {
   return {
     schoolId: schoolAId,
@@ -56,6 +64,8 @@ function attendanceInput(overrides: Partial<{
     teacherId: teacherAId,
     date: "2040-04-02",
     status: "present",
+    class: "5",
+    section: "A",
     markedBy: "Canonical identity test",
     ...overrides,
   };
@@ -101,6 +111,13 @@ beforeAll(async () => {
   ]).returning({ id: academicSessions.id });
   sessionAId = sessionA.id;
   sessionBId = sessionB.id;
+  const [otherSchoolSession] = await db.insert(academicSessions).values({
+    schoolId: schoolBId,
+    sessionName: `Attendance-Other-School-${suffix}`,
+    startDate: "2040-04-01",
+    endDate: "2041-03-31",
+  }).returning({ id: academicSessions.id });
+  otherSchoolSessionId = otherSchoolSession.id;
 }, 30_000);
 
 afterAll(async () => {
@@ -217,5 +234,101 @@ describe("Attendance canonical persistence identity", () => {
     const [preserved] = await db.select().from(attendanceRecords)
       .where(eq(attendanceRecords.id, attendance.id));
     expect(preserved.sessionId).toBe(session.id);
+  });
+
+  it("keeps every Attendance storage reader isolated by school and Session", async () => {
+    const date = todayInIST();
+    const [year, month] = date.split("-").map(Number);
+    await storage.upsertAttendance([
+      attendanceInput({ date, sessionId: sessionAId, status: "present" }),
+      attendanceInput({ date, sessionId: sessionBId, status: "absent" }),
+    ]);
+
+    const classDateA = await storage.getAttendanceByClassDate(
+      schoolAId, sessionAId, "5", "A", date,
+    );
+    const classDateB = await storage.getAttendanceByClassDate(
+      schoolAId, sessionBId, "5", "A", date,
+    );
+    expect(classDateA.map(row => row.status)).toEqual(["present"]);
+    expect(classDateB.map(row => row.status)).toEqual(["absent"]);
+
+    const dailyA = await storage.getAttendanceForStudentsOnDate(
+      schoolAId, sessionAId, [studentId], date,
+    );
+    const dailyB = await storage.getAttendanceForStudentsOnDate(
+      schoolAId, sessionBId, [studentId], date,
+    );
+    expect(dailyA.map(row => row.status)).toEqual(["present"]);
+    expect(dailyB.map(row => row.status)).toEqual(["absent"]);
+
+    const historyA = await storage.getAttendanceHistory(
+      schoolAId, sessionAId, "5", "A", date, date,
+    );
+    const historyB = await storage.getAttendanceHistory(
+      schoolAId, sessionBId, "5", "A", date, date,
+    );
+    expect(historyA.map(row => row.status)).toEqual(["present"]);
+    expect(historyB.map(row => row.status)).toEqual(["absent"]);
+
+    await expect(storage.hasAttendanceToday(
+      teacherAId, "5", "A", schoolAId, sessionAId,
+    )).resolves.toBe(true);
+    await expect(storage.hasAttendanceToday(
+      teacherAId, "5", "A", schoolAId, sessionBId,
+    )).resolves.toBe(true);
+
+    const summaryA = await storage.getDailyAttendanceSummary(
+      schoolAId, sessionAId, date,
+    );
+    const summaryB = await storage.getDailyAttendanceSummary(
+      schoolAId, sessionBId, date,
+    );
+    expect(summaryA).toMatchObject({ total: 1, present: 1, absent: 0 });
+    expect(summaryB).toMatchObject({ total: 1, present: 0, absent: 1 });
+
+    const monthlyA = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionAId, year, month,
+    );
+    const monthlyB = await storage.getStudentMonthlyAttendance(
+      studentId, schoolAId, sessionBId, year, month,
+    );
+    expect(monthlyA.find(day => day.date === date)?.status).toBe("present");
+    expect(monthlyB.find(day => day.date === date)?.status).toBe("absent");
+
+    const yearlyA = await storage.getStudentYearlyAttendance(
+      studentId, schoolAId, sessionAId, "5", "A", date, date,
+    );
+    const yearlyB = await storage.getStudentYearlyAttendance(
+      studentId, schoolAId, sessionBId, "5", "A", date, date,
+    );
+    expect(yearlyA).toEqual([expect.objectContaining({ present: 1, absent: 0 })]);
+    expect(yearlyB).toEqual([expect.objectContaining({ present: 0, absent: 1 })]);
+
+    const statsA = await storage.getStudentAttendanceStats(
+      studentId, schoolAId, sessionAId, "5", "A", date, date,
+    );
+    const statsB = await storage.getStudentAttendanceStats(
+      studentId, schoolAId, sessionBId, "5", "A", date, date,
+    );
+    expect(statsA).toMatchObject({ workingDays: 1, totalPresent: 1, totalAbsent: 0 });
+    expect(statsB).toMatchObject({ workingDays: 1, totalPresent: 0, totalAbsent: 1 });
+  });
+
+  it("validates Attendance read Sessions against the authenticated school and fails closed", async () => {
+    await expect(resolveAttendanceReadSession(schoolAId, sessionAId))
+      .resolves.toMatchObject({ id: sessionAId, schoolId: schoolAId });
+
+    await expect(resolveAttendanceReadSession(schoolAId, otherSchoolSessionId))
+      .rejects.toMatchObject<Partial<AttendanceReadSessionError>>({
+        status: 403,
+        code: "ATTENDANCE_SESSION_FORBIDDEN",
+      });
+
+    await expect(resolveAttendanceReadSession(schoolAId, undefined))
+      .rejects.toMatchObject<Partial<AttendanceReadSessionError>>({
+        status: 400,
+        code: "ATTENDANCE_SESSION_REQUIRED",
+      });
   });
 });

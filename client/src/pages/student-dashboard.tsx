@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn, sessionFetch } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { useISTToday } from "@/hooks/use-ist-today";
@@ -185,9 +185,9 @@ export default function StudentDashboard() {
     queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? fallbackAcademicYear],
     queryFn: async () => {
       const params = selectedSession
-        ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}`
+        ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}&sessionId=${selectedSession.id}`
         : `academicYear=${encodeURIComponent(fallbackAcademicYear)}`;
-      const r = await fetch(`/api/student/attendance/stats?${params}`, { credentials: "include" });
+      const r = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, selectedSession?.id);
       if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
       return r.json() as Promise<AttendanceStatsResponse>;
     },

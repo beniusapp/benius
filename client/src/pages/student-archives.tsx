@@ -7,7 +7,7 @@ import {
   BarChart3, CreditCard, BookOpen, Archive, FileCheck,
   TrendingUp, AlertCircle, ChevronDown,
 } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { formatDateOnly } from "@shared/ist-time";
 
 interface AcademicSession {
@@ -116,10 +116,7 @@ export default function StudentArchivesPage() {
   );
 
   const archiveFetch = useCallback(async (url: string) => {
-    const r = await fetch(url, {
-      credentials: "include",
-      headers: selectedSession ? { "x-view-session-id": String(selectedSession.id) } : {},
-    });
+    const r = await sessionFetchForViewSession(url, selectedSession?.id);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
   }, [selectedSession?.id]);
@@ -165,7 +162,7 @@ export default function StudentArchivesPage() {
 
   const { data: attendStats, isLoading: attendLoading } = useQuery<AttendanceStats>({
     queryKey: ["/api/student/archive/attendance", selectedSession?.id],
-    queryFn: () => archiveFetch(`/api/student/attendance/stats?academicYear=${shortYear}`),
+    queryFn: () => archiveFetch(`/api/student/attendance/stats?academicYear=${shortYear}&sessionId=${selectedSession?.id ?? ""}`),
     enabled: !!selectedSession && !!shortYear && activeTab === "attendance",
   });
 

@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, GraduationCap, Loader2,
   CheckCircle, XCircle, AlertCircle, Clock, Sun, Umbrella,
 } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
@@ -197,10 +197,10 @@ export default function StudentAttendance() {
   const sessionName      = currentSession?.sessionName ?? "—";
 
   const { data: statsData, isLoading: statsLoading } = useQuery<StatsResponse>({
-    queryKey: ["/api/student/attendance/stats", sessionStartDate, sessionEndDate],
-    queryFn: async (): Promise<StatsResponse> => {
-      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate });
-      const res = await fetch(`/api/student/attendance/stats?${params}`, { credentials: "include" });
+    queryKey: ["/api/student/attendance/stats", currentSession?.id ?? null, sessionStartDate, sessionEndDate],
+    queryFn: async ({ signal }): Promise<StatsResponse> => {
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionId: String(currentSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, currentSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load attendance stats (${res.status})`);
       return res.json();
     },
@@ -208,9 +208,10 @@ export default function StudentAttendance() {
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery<MonthlyResponse>({
-    queryKey: ["/api/student/attendance/monthly", selectedYear, selectedMonth],
-    queryFn: async (): Promise<MonthlyResponse> => {
-      const res = await fetch(`/api/student/attendance/monthly?year=${selectedYear}&month=${selectedMonth}`, { credentials: "include" });
+    queryKey: ["/api/student/attendance/monthly", currentSession?.id ?? null, selectedYear, selectedMonth],
+    queryFn: async ({ signal }): Promise<MonthlyResponse> => {
+      const params = new URLSearchParams({ year: String(selectedYear), month: String(selectedMonth), sessionId: String(currentSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/monthly?${params}`, currentSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load monthly attendance (${res.status})`);
       return res.json();
     },
@@ -218,10 +219,10 @@ export default function StudentAttendance() {
   });
 
   const { data: yearlyData, isLoading: yearlyLoading } = useQuery<YearlyResponse>({
-    queryKey: ["/api/student/attendance/yearly", sessionStartDate, sessionEndDate],
-    queryFn: async (): Promise<YearlyResponse> => {
-      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionName });
-      const res = await fetch(`/api/student/attendance/yearly?${params}`, { credentials: "include" });
+    queryKey: ["/api/student/attendance/yearly", currentSession?.id ?? null, sessionStartDate, sessionEndDate],
+    queryFn: async ({ signal }): Promise<YearlyResponse> => {
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate, sessionName, sessionId: String(currentSession?.id ?? "") });
+      const res = await sessionFetchForViewSession(`/api/student/attendance/yearly?${params}`, currentSession?.id, { signal });
       if (!res.ok) throw new Error(`Failed to load yearly attendance (${res.status})`);
       return res.json();
     },

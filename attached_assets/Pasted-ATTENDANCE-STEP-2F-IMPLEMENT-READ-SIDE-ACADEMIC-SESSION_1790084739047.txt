@@ -1,0 +1,807 @@
+ATTENDANCE STEP 2F — IMPLEMENT READ-SIDE ACADEMIC SESSION ISOLATION ONLY
+
+IMPORTANT:
+This is a focused implementation step.
+
+Attendance Step 2E is already COMPLETE and PASS.
+
+Current canonical Attendance identity:
+
+    school_id + session_id + student_id + date
+
+Current guarantees:
+
+- attendance_records.session_id is NOT NULL
+- UNIQUE(school_id, session_id, student_id, date)
+- Attendance -> Academic Session no longer uses ON DELETE SET NULL
+- Teacher Attendance writes receive the authenticated school's active Session server-side
+- Student Registry remains GLOBAL and session-independent
+- Enrollment is NOT an Attendance prerequisite
+- Faculty Mapping is NOT an Attendance restriction
+- Any authenticated Teacher belonging to the school may mark Attendance
+- Attendance remains tenant-specific
+- Production must NOT be modified
+
+This step is ONLY for READ-SIDE Academic Session isolation.
+
+==================================================
+CORE REQUIREMENT
+==================================================
+
+Every Student Attendance, Teacher Attendance, and Admin Attendance READ must be explicitly scoped to:
+
+    authenticated school_id
+    + selected/authoritative academic session_id
+
+No Attendance reader may silently read Attendance across multiple Academic Sessions.
+
+A missing or invalid Session must NEVER mean:
+
+    "read all Sessions"
+
+There must be no fallback from:
+
+    selected Session -> all Sessions
+
+For Attendance reads, Session isolation is mandatory.
+
+==================================================
+IMPORTANT SCOPE BOUNDARY
+==================================================
+
+DO NOT implement any of the following in Step 2F:
+
+- Historical Student Registry redesign
+- Student archival/deletion redesign
+- Enrollment integration
+- Faculty Mapping integration
+- Attendance calculation redesign
+- Working-day/calendar redesign
+- Holiday/Sunday redesign
+- Leave percentage redesign
+- Status redesign
+- Edit-count redesign
+- Attendance correction workflow
+- Attendance writer changes
+- Student Registry changes
+- Database schema changes
+- New Attendance tables
+- Production deployment
+
+Historical roster fidelity is a known future problem.
+
+Calculation differences between Admin and Student are a known future problem.
+
+Only Session isolation is being implemented now.
+
+==================================================
+STEP 1 — SERVER-SIDE SESSION RESOLVER
+==================================================
+
+Create or reuse one server-side helper for Attendance READS.
+
+The helper must validate:
+
+1. A Session ID was provided/resolved.
+2. The Academic Session exists.
+3. The Academic Session belongs to the authenticated school.
+4. The Session ID is therefore valid for that tenant.
+
+The helper MUST NOT trust a browser Session ID without validating ownership.
+
+Do not use browser-selected Session as authority until it passes tenant validation.
+
+The resolver should return the validated Session record/ID.
+
+If no valid Session can be resolved:
+
+    fail closed
+
+Do NOT:
+
+- read all Sessions
+- silently use another Session
+- silently fall back to an unscoped date-range query
+
+Use the project's existing Session-context architecture where appropriate instead of creating a second conflicting mechanism.
+
+If an existing helper can safely be reused after strengthening it for READ validation, prefer that rather than duplicating logic.
+
+==================================================
+STEP 2 — STORAGE READERS
+==================================================
+
+File:
+
+    server/storage.ts
+
+Change the following Attendance readers so Session is mandatory:
+
+1. getAttendanceByClassDate()
+2. getAttendanceForStudentsOnDate()
+3. getAttendanceHistory()
+4. hasAttendanceToday()
+5. getDailyAttendanceSummary()
+6. getStudentMonthlyAttendance()
+7. getStudentYearlyAttendance()
+8. getStudentAttendanceStats()
+
+The Attendance query contract must require:
+
+    schoolId
+    sessionId
+
+for all of these readers.
+
+Do NOT allow an optional Session that means "all Sessions."
+
+Every raw attendance_records query must include:
+
+    attendance_records.school_id = authenticated/validated schoolId
+
+AND:
+
+    attendance_records.session_id = validated sessionId
+
+where applicable.
+
+Do not rely only on Student IDs to establish tenant isolation.
+
+Do not remove existing date filters.
+
+Do not remove existing class/section filters.
+
+Do not redesign existing calculations.
+
+The only intended semantic change is:
+
+    records from other Academic Sessions are excluded.
+
+==================================================
+STEP 3 — getAttendanceByClassDate()
+==================================================
+
+This helper currently has no active caller.
+
+Still update its contract so that if it is used in the future, it cannot perform an unscoped Attendance read.
+
+It must require:
+
+    schoolId
+    sessionId
+    class
+    section
+    date
+
+and must include both tenant and Session predicates.
+
+Do not leave a known unsafe helper in place simply because it currently has no caller.
+
+==================================================
+STEP 4 — getAttendanceForStudentsOnDate()
+==================================================
+
+Make Session mandatory.
+
+Required query scope:
+
+    school_id
+    session_id
+    date
+
+Then apply the existing Student ID filtering.
+
+Do not rely solely on:
+
+    student_id IN (...)
+
+to establish tenant isolation.
+
+Do not redesign the Student roster logic in this step.
+
+==================================================
+STEP 5 — getAttendanceHistory()
+==================================================
+
+Make Session mandatory.
+
+Required scope:
+
+    school_id
+    session_id
+    date range
+
+Preserve the existing class/section and Student Registry behavior for now.
+
+IMPORTANT:
+
+Do NOT redesign historical roster reconstruction in this step.
+
+We already know current Student Registry state can hide historical Students.
+
+That is a separate future step.
+
+For Step 2F, only ensure the raw Attendance rows cannot come from another Academic Session.
+
+==================================================
+STEP 6 — hasAttendanceToday()
+==================================================
+
+Make this Session-specific.
+
+Required scope:
+
+    school_id
+    session_id
+    teacher_id
+    today's IST date
+
+Do not allow a record from another Session to make the current Session appear completed.
+
+Preserve the existing meaning of completion as much as possible.
+
+Only Session/tenant isolation is changing.
+
+==================================================
+STEP 7 — getDailyAttendanceSummary()
+==================================================
+
+Make this Session-specific.
+
+Required scope:
+
+    school_id
+    session_id
+    date
+
+The existing Admin dashboard route currently receives/has access to a Session header but the storage function ignores it.
+
+Change the route/storage contract so the validated Session reaches the storage query.
+
+Do not allow the dashboard to silently aggregate all Sessions.
+
+==================================================
+STEP 8 — ADMIN ROUTES
+==================================================
+
+File:
+
+    server/routes.ts
+
+Update:
+
+- Admin Attendance class detail
+- Admin Attendance overview
+- Admin Attendance teacher summary
+
+Current behavior:
+
+selected Session -> query
+
+but:
+
+no Session -> all Sessions
+
+This must change.
+
+Required behavior:
+
+1. Resolve/validate a tenant-owned Session.
+2. If no valid Session exists, fail closed.
+3. Pass validated Session ID to storage/query.
+4. Always include school_id + session_id in Attendance queries.
+
+Do not change current Attendance calculations.
+
+Do not redesign current Registry-based roster logic.
+
+==================================================
+STEP 9 — ADMIN DASHBOARD DAILY SUMMARY
+==================================================
+
+File:
+
+    server/teacher-routes.ts
+
+Route:
+
+    GET /api/attendance/daily-summary/:schoolId/:date
+
+Current problem:
+
+The dashboard sends Session context, but the backend ignores it.
+
+Change the route so:
+
+1. Path schoolId must still match authenticated school.
+2. Session must be resolved/validated for that authenticated school.
+3. Session ID must be passed to getDailyAttendanceSummary().
+4. Query must include school_id + session_id + date.
+5. Missing/invalid Session must fail closed.
+
+Do not change the dashboard's calculation semantics.
+
+==================================================
+STEP 10 — ADMIN PERFORMANCE ANALYTICS
+==================================================
+
+Route:
+
+    GET /api/admin/analytics/attendance-summary/:class/:section
+
+It already passes a Session when selected but falls back to a date-range query when Session is absent.
+
+Remove the unscoped Attendance behavior.
+
+The Attendance query must always have:
+
+    authenticated school_id
+    validated session_id
+    date range
+
+If the Session cannot be resolved, fail closed.
+
+Do not redesign the analytics calculation.
+
+Do not change its historical roster logic.
+
+==================================================
+STEP 11 — TEACHER DAILY ATTENDANCE
+==================================================
+
+File:
+
+    server/teacher-routes.ts
+
+Route:
+
+    GET /api/attendance/:schoolId/:class/:section/:date
+
+Current problem:
+
+The route supports Session context, but the normal Teacher Attendance frontend uses plain fetch() and does not send the selected Session.
+
+Required behavior:
+
+- The selected Academic Session must reach the backend.
+- The backend must validate that Session belongs to the authenticated Teacher's school.
+- Storage must receive the validated Session ID.
+- Attendance query must include school_id + session_id + date.
+- No Session -> fail closed.
+- Never read all Sessions.
+
+Update the Teacher Attendance frontend transport as minimally as necessary to send the selected Session ID/header.
+
+Do NOT redesign the Teacher Attendance UI.
+
+Do NOT change Teacher Attendance writing.
+
+Do NOT change Student Registry roster behavior.
+
+==================================================
+STEP 12 — TEACHER ATTENDANCE HISTORY
+==================================================
+
+Route:
+
+    GET /api/attendance/history/:schoolId/:class/:section/:startDate/:endDate
+
+Make Session mandatory.
+
+Update the Teacher Attendance frontend so the selected Session is sent.
+
+Backend must:
+
+- validate school
+- validate Session ownership
+- pass Session ID to getAttendanceHistory()
+- query school_id + session_id + date range
+- fail closed if Session is missing/invalid
+
+Do not redesign historical roster reconstruction.
+
+==================================================
+STEP 13 — TEACHER COMPLETION / STATUS
+==================================================
+
+Update:
+
+    /api/attendance/status/:teacherId
+    /api/teacher-me
+
+Both currently depend on hasAttendanceToday().
+
+Make the Attendance completion check Session-specific.
+
+Use:
+
+    authenticated school
+    + authenticated Teacher
+    + validated active/authoritative Session
+    + IST current date
+
+Do not allow an Attendance record from another Session to satisfy today's completion status.
+
+Do not trust a browser-supplied teacher ID as tenant authority.
+
+Preserve existing authentication behavior.
+
+==================================================
+STEP 14 — TEACHER EXAMINATION ATTENDANCE SUMMARY
+==================================================
+
+This route already has correct Session context:
+
+    /api/teacher/attendance-summary/:class/:section
+
+Preserve its current Session behavior.
+
+Only update it if the storage signature changes require a minimal caller adjustment.
+
+Do NOT redesign this route.
+
+Do NOT change its calculation.
+
+==================================================
+STEP 15 — STUDENT MONTHLY ATTENDANCE
+==================================================
+
+File:
+
+    server/routes.ts
+    server/storage.ts
+
+Route:
+
+    GET /api/student/attendance/monthly
+
+Current problem:
+
+There is no Session ID.
+
+The Student Session selector currently only influences date/year/month behavior.
+
+Change the endpoint so it receives/resolves the selected Academic Session ID.
+
+The Session must be:
+
+- obtained from authenticated Student context + validated selected Session
+- tenant-checked against the Student's school
+- passed to getStudentMonthlyAttendance()
+
+Storage must query:
+
+    school_id
+    session_id
+    student_id
+    date range
+
+Do NOT use date bounds as a substitute for Session identity.
+
+The selected Session is the authority.
+
+Preserve the existing monthly calculation and display behavior.
+
+Only exclude records belonging to other Sessions.
+
+==================================================
+STEP 16 — STUDENT YEARLY ATTENDANCE
+==================================================
+
+Route:
+
+    GET /api/student/attendance/yearly
+
+Storage:
+
+    getStudentYearlyAttendance()
+
+Change the contract so Session is mandatory.
+
+The Student-selected Session must be validated server-side against the authenticated Student's school.
+
+Storage queries involving Attendance must include:
+
+    school_id
+    session_id
+    student_id
+    date range
+
+If the working-date query uses Attendance to determine dates, it must also be Session-scoped.
+
+If the working-date query uses current Student Registry class/section, LEAVE THAT LOGIC UNCHANGED FOR THIS STEP.
+
+That is a future historical-roster/calculation task.
+
+Do not redesign the denominator.
+
+Do not redesign absent inference.
+
+Do not redesign leave/late/half-day weighting.
+
+==================================================
+STEP 17 — STUDENT ATTENDANCE STATS
+==================================================
+
+Route:
+
+    GET /api/student/attendance/stats
+
+Storage:
+
+    getStudentAttendanceStats()
+
+Make Session mandatory.
+
+Every Attendance query must include:
+
+    school_id
+    session_id
+    student_id
+    date range
+
+If working-day queries read Attendance-derived data, those queries must also be Session-scoped.
+
+Preserve existing percentage/count formulas.
+
+Do not unify Admin and Student calculations yet.
+
+==================================================
+STEP 18 — STUDENT ATTENDANCE FRONTEND
+==================================================
+
+Affected pages:
+
+- client/src/pages/student-attendance.tsx
+- client/src/pages/student-dashboard.tsx
+- client/src/pages/student-examination.tsx
+- client/src/pages/student-archives.tsx
+
+The selected Academic Session must be included in Attendance requests.
+
+Update React Query/cache keys where necessary so Session A and Session B cannot reuse the same Attendance response.
+
+IMPORTANT:
+
+Do not create a new Session selector.
+
+Use the application's existing Academic Session selection/context.
+
+Do not change visual design.
+
+Do not change calculation formulas.
+
+Do not redesign the Attendance page.
+
+==================================================
+STEP 19 — STUDENT ACADEMIC SESSION VALIDATION
+==================================================
+
+The browser may request a Session ID, but it is NOT authoritative.
+
+For Student Attendance:
+
+1. Get authenticated Student.
+2. Get authenticated Student's school.
+3. Validate requested Session belongs to that school.
+4. Only then use the Session ID in Attendance queries.
+
+Do not allow:
+
+    Student from School A
+    + Session from School B
+
+to produce Attendance data.
+
+If no valid Session is supplied, fail closed.
+
+Do not silently select all Sessions.
+
+==================================================
+STEP 20 — ADMIN/TEACHER SESSION HEADER VALIDATION
+==================================================
+
+For Admin/Teacher read requests using:
+
+    x-view-session-id
+
+validate:
+
+1. Session exists.
+2. Session belongs to authenticated user's school.
+3. Session is appropriate for the requested Attendance view.
+
+Do not merely parse the header.
+
+Do not trust the browser's Session ID.
+
+Do not change existing mutation Session authorization.
+
+This step concerns READ validation only.
+
+==================================================
+STEP 21 — CACHE / QUERY KEYS
+==================================================
+
+Inspect affected React Query keys.
+
+Where Attendance data depends on Session, the Session ID must be part of the query key.
+
+At minimum inspect:
+
+- Admin Attendance overview queries
+- Teacher Attendance daily query
+- Teacher Attendance history query
+- Student monthly Attendance query
+- Student yearly Attendance query
+- Student stats query
+- Student dashboard Attendance query
+- Student examination Attendance query
+- Student archive Attendance query
+
+Prevent:
+
+    Session A -> cached Attendance -> Session B
+
+from returning Session A data.
+
+Do not perform broad cache architecture changes.
+
+==================================================
+STEP 22 — MISSING SESSION BEHAVIOR
+==================================================
+
+For every Attendance reader:
+
+Missing/invalid Session must result in a clear fail-closed response.
+
+Acceptable behavior may be an appropriate 4xx response or the application's existing equivalent.
+
+It MUST NOT result in:
+
+- all Sessions
+- date-only Attendance
+- active + historical Sessions combined
+
+Preserve existing application error conventions.
+
+==================================================
+STEP 23 — DO NOT CHANGE THESE KNOWN FUTURE ISSUES
+==================================================
+
+Explicitly leave these unchanged:
+
+1. Historical Student Registry dependency.
+2. Current class/section vs historical class/section.
+3. Student deletion/archive behavior.
+4. Working-day calendar logic.
+5. Sunday/non-working-day rules.
+6. Holiday calculation redesign.
+7. Admin vs Student percentage formula differences.
+8. Leave percentage semantics.
+9. Late/half-day calculation redesign.
+10. Attendance edit-count behavior.
+11. Attendance correction workflow.
+12. Enrollment.
+13. Faculty Mapping.
+14. Student Registry architecture.
+15. Attendance writers.
+16. Database schema.
+
+These will be handled in later, separately audited steps.
+
+==================================================
+STEP 24 — TESTS
+==================================================
+
+Add focused tests for Session isolation.
+
+At minimum:
+
+A. TWO SESSION SEPARATION
+
+Create/test the logical case:
+
+    School 1
+    Student 1
+    Session A
+    Session B
+    same date
+
+Verify:
+
+    Session A reader -> only Session A row
+    Session B reader -> only Session B row
+
+B. CROSS-SCHOOL SESSION
+
+Verify a Session belonging to School B cannot be used by School A.
+
+C. MISSING SESSION
+
+Verify every affected Attendance reader fails closed rather than returning all Sessions.
+
+D. ADMIN
+
+Test:
+
+- overview
+- class detail
+- teacher summary
+- daily summary
+- analytics summary
+
+E. TEACHER
+
+Test:
+
+- daily Attendance
+- Attendance history
+- completion/status
+- teacher-me completion path
+
+F. STUDENT
+
+Test:
+
+- monthly
+- yearly
+- stats
+
+G. CACHE/FRONTEND
+
+Where existing frontend test infrastructure supports it, verify Session ID is part of Attendance query keys/requests.
+
+H. EXISTING BEHAVIOR
+
+Existing Step 2D and Step 2E tests must remain passing.
+
+==================================================
+STEP 25 — VALIDATION
+==================================================
+
+Run:
+
+1. Focused Attendance Session-isolation tests.
+2. Existing relevant Attendance tests.
+3. Existing Step 2D tests.
+4. Existing Step 2E canonical-identity tests.
+5. npm run check
+6. git diff --check
+
+Verify:
+
+- No raw Attendance reader can silently omit session_id.
+- No Attendance read can cross tenant.
+- No Student Attendance endpoint relies only on date bounds for Session identity.
+- Teacher normal Attendance UI actually sends Session context.
+- Admin daily summary actually uses Session context.
+- Missing/invalid Session fails closed.
+- Session is included in affected frontend query keys.
+- No production environment was modified.
+
+==================================================
+STEP 26 — REQUIRED FINAL REPORT
+==================================================
+
+After implementation report:
+
+A. Files changed
+B. Storage readers changed
+C. Routes changed
+D. Frontend transports/cache keys changed
+E. Session validation mechanism used
+F. Tests run with exact results
+G. npm run check result
+H. git diff --check result
+I. Existing Step 2D/2E tests result
+J. Confirmation that no calculation formulas were changed
+K. Confirmation that no historical Registry redesign was performed
+L. Confirmation that no Enrollment or Faculty Mapping restriction was introduced
+M. Confirmation that no Attendance writers were changed
+N. Confirmation production was untouched
+O. Any unresolved blocker
+
+STOP after Step 2F.
+
+Do NOT begin Step 2G, historical identity work, calculation unification, calendar work, or any other Attendance change.

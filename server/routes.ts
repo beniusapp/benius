@@ -25,6 +25,7 @@ import { studentAuthenticationAttemptIsRevoked } from "./session-revocation";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { resolveStudentExaminationSession } from "./student-examination-session";
+import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
@@ -1995,8 +1996,17 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const data = await storage.getStudentMonthlyAttendance(student.id, student.schoolId, year, month);
-    res.json({ schoolId: student.schoolId, studentId: student.id, year, month, days: data });
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const data = await storage.getStudentMonthlyAttendance(student.id, student.schoolId, session.id, year, month);
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, year, month, days: data });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
   });
 
   app.get("/api/student/attendance/yearly", async (req, res) => {
@@ -2025,8 +2035,17 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const data = await storage.getStudentYearlyAttendance(student.id, student.schoolId, student.class, student.section, startDate, endDate);
-    res.json({ schoolId: student.schoolId, studentId: student.id, sessionName: label, months: data });
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const data = await storage.getStudentYearlyAttendance(student.id, student.schoolId, session.id, student.class, student.section, startDate, endDate);
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, sessionName: label, months: data });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
   });
 
   app.get("/api/student/attendance/stats", async (req, res) => {
@@ -2052,8 +2071,17 @@ export async function registerRoutes(
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
 
-    const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, student.class, student.section, startDate, endDate);
-    res.json({ schoolId: student.schoolId, studentId: student.id, startDate, ...stats });
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const stats = await storage.getStudentAttendanceStats(student.id, student.schoolId, session.id, student.class, student.section, startDate, endDate);
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, startDate, ...stats });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
   });
 
   // GET resolved attendance policy for the current student
@@ -2871,16 +2899,18 @@ export async function registerRoutes(
         );
       // SQL-level filter: school_id + date + student_id IN (...) — no in-memory scan
       const studentIdList = studentRows.map(s => s.id);
-      const cdViewSessionId = (req as any).viewSessionId as number | undefined;
-      const cdActiveSession = !cdViewSessionId ? await storage.getActiveSession(schoolId) : null;
-      const cdFilterSessionId = cdViewSessionId ?? cdActiveSession?.id;
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
       const filteredRecords = studentIdList.length > 0
         ? await db.select().from(attendanceRecords).where(
             and(
               eq(attendanceRecords.schoolId, schoolId),
               eq(attendanceRecords.date, date),
               inArray(attendanceRecords.studentId, studentIdList),
-              ...(cdFilterSessionId ? [eq(attendanceRecords.sessionId, cdFilterSessionId)] : [])
+              eq(attendanceRecords.sessionId, attendanceSession.id),
             )
           )
         : [];
@@ -2918,6 +2948,7 @@ export async function registerRoutes(
       res.setHeader("Expires", "0");
       res.json({ meta, students: result });
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       console.error("class-detail error:", err);
       res.status(500).json({ message: "Failed to fetch class attendance" });
     }
@@ -2937,14 +2968,16 @@ export async function registerRoutes(
         .where(and(eq(studentsTable.schoolId, schoolId), eq(studentsTable.isActive, true)));
       const enrolledTotal = enrolledRows.length;
 
-      const viewSessionId = (req as any).viewSessionId as number | undefined;
-      const activeSession = !viewSessionId ? await storage.getActiveSession(schoolId) : null;
-      const filterSessionId = viewSessionId ?? activeSession?.id;
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
       const recs = await db.select().from(attendanceRecords)
         .where(and(
           eq(attendanceRecords.schoolId, schoolId),
           eq(attendanceRecords.date, date),
-          ...(filterSessionId ? [eq(attendanceRecords.sessionId, filterSessionId)] : [])
+          eq(attendanceRecords.sessionId, attendanceSession.id),
         ));
 
       const markedTotal = recs.length;
@@ -2955,6 +2988,7 @@ export async function registerRoutes(
 
       res.json({ enrolledTotal, markedTotal, present, absent, leave, percentage });
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch attendance overview" });
     }
   });
@@ -2966,16 +3000,18 @@ export async function registerRoutes(
     const { date } = req.query as { date?: string };
     if (!date) return res.status(400).json({ message: "date is required" });
     try {
-      const tsViewSessionId = (req as any).viewSessionId as number | undefined;
-      const tsActiveSession = !tsViewSessionId ? await storage.getActiveSession(schoolId) : null;
-      const tsFilterSessionId = tsViewSessionId ?? tsActiveSession?.id;
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
       const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
           and(
             eq(teacherSelfAttendance.schoolId, schoolId),
             eq(teacherSelfAttendance.attendanceDate, date),
-            ...(tsFilterSessionId ? [eq(teacherSelfAttendance.sessionId, tsFilterSessionId)] : [])
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           )
         ),
         db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
@@ -2983,14 +3019,14 @@ export async function registerRoutes(
           and(
             eq(attendanceCorrectionRequests.schoolId, schoolId),
             eq(attendanceCorrectionRequests.attendanceDate, date),
-            ...(tsFilterSessionId ? [eq(attendanceCorrectionRequests.sessionId, tsFilterSessionId)] : [])
+            eq(attendanceCorrectionRequests.sessionId, attendanceSession.id),
           )
         ),
         db.select().from(attendanceRecords).where(
           and(
             eq(attendanceRecords.schoolId, schoolId),
             eq(attendanceRecords.date, date),
-            ...(tsFilterSessionId ? [eq(attendanceRecords.sessionId, tsFilterSessionId)] : [])
+            eq(attendanceRecords.sessionId, attendanceSession.id),
           )
         ),
         db.select().from(attendancePolicies).where(
@@ -3086,6 +3122,7 @@ export async function registerRoutes(
         teachers: result,
       });
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       console.error("teacher-summary error:", err);
       res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
     }

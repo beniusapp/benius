@@ -1357,13 +1357,13 @@ export default function StudentExamination() {
 
   // ── Attendance ───────────────────────────────────────────────────────────────
   const { data: attendanceData } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats", selectedSession?.sessionName],
-    queryFn: async () => {
+    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? null],
+    queryFn: async ({ signal }) => {
       const base = "/api/student/attendance/stats";
       const qs   = selectedSession
-        ? `?academicYear=${encodeURIComponent(selectedSession.sessionName)}`
+        ? `?academicYear=${encodeURIComponent(selectedSession.sessionName)}&sessionId=${selectedSession.id}`
         : "";
-      const r = await fetch(base + qs, { credentials: "include" });
+      const r = await sessionFetchForViewSession(base + qs, selectedSession?.id, { signal });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },

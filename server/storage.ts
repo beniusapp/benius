@@ -909,19 +909,27 @@ export class DatabaseStorage {
   }
 
   // ===== ATTENDANCE METHODS =====
-  async getAttendanceByClassDate(schoolId: number, cls: string, section: string, date: string): Promise<AttendanceRecord[]> {
+  async getAttendanceByClassDate(schoolId: number, sessionId: number, cls: string, section: string, date: string): Promise<AttendanceRecord[]> {
     return await db.select().from(attendanceRecords).where(
-      and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date))
+      and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.class, cls),
+        eq(attendanceRecords.section, section),
+        eq(attendanceRecords.date, date),
+      )
     ).then(records => {
       return records;
     });
   }
 
-  async getAttendanceForStudentsOnDate(studentIds: number[], date: string, sessionId?: number | null): Promise<AttendanceRecord[]> {
+  async getAttendanceForStudentsOnDate(schoolId: number, sessionId: number, studentIds: number[], date: string): Promise<AttendanceRecord[]> {
     if (studentIds.length === 0) return [];
-    const conditions = [eq(attendanceRecords.date, date)];
-    if (sessionId) conditions.push(eq(attendanceRecords.sessionId, sessionId));
-    const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
+    const allRecords = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.date, date),
+    ));
     return allRecords.filter(r => studentIds.includes(r.studentId));
   }
 
@@ -973,16 +981,16 @@ export class DatabaseStorage {
     return results;
   }
 
-  async getAttendanceHistory(schoolId: number, cls: string, section: string, startDate: string, endDate: string, sessionId?: number | null): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
+  async getAttendanceHistory(schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     const studentIds = studentList.map(s => s.id);
     if (studentIds.length === 0) return [];
     const conditions = [
       eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
       gte(attendanceRecords.date, startDate),
       lte(attendanceRecords.date, endDate),
     ];
-    if (sessionId) conditions.push(eq(attendanceRecords.sessionId, sessionId));
     const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
     const filtered = allRecords.filter(r => studentIds.includes(r.studentId));
     const studentMap = new Map(studentList.map(s => [s.id, s]));
@@ -993,13 +1001,18 @@ export class DatabaseStorage {
     }));
   }
 
-  async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number): Promise<boolean> {
+  async hasAttendanceToday(teacherId: number, cls: string, section: string, schoolId: number, sessionId: number): Promise<boolean> {
     const today = todayInIST();
     const studentList = await this.getStudentsByClassSection(schoolId, cls, section);
     if (studentList.length === 0) return false;
     const studentIds = studentList.map(s => s.id);
     const records = await db.select().from(attendanceRecords).where(
-      and(eq(attendanceRecords.date, today), eq(attendanceRecords.teacherId, teacherId))
+      and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.date, today),
+        eq(attendanceRecords.teacherId, teacherId),
+      )
     );
     return records.some(r => studentIds.includes(r.studentId));
   }
@@ -4025,8 +4038,12 @@ export class DatabaseStorage {
   }
 
   // ===== DAILY ATTENDANCE SUMMARY =====
-  async getDailyAttendanceSummary(schoolId: number, date: string): Promise<{ total: number; present: number; absent: number; leave: number; percentage: number }> {
-    const records = await db.select().from(attendanceRecords).where(and(eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.date, date)));
+  async getDailyAttendanceSummary(schoolId: number, sessionId: number, date: string): Promise<{ total: number; present: number; absent: number; leave: number; percentage: number }> {
+    const records = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.date, date),
+    ));
     const total = records.length;
     const present = records.filter(r => r.status === "present").length;
     const absent = records.filter(r => r.status === "absent").length;
@@ -4451,7 +4468,7 @@ export class DatabaseStorage {
 
   // ===== STUDENT ATTENDANCE (Student-Facing) =====
 
-  async getStudentMonthlyAttendance(studentId: number, schoolId: number, year: number, month: number): Promise<{
+  async getStudentMonthlyAttendance(studentId: number, schoolId: number, sessionId: number, year: number, month: number): Promise<{
     date: string;
     dayOfWeek: number;
     status: string;
@@ -4471,6 +4488,7 @@ export class DatabaseStorage {
     const records = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, startDate),
         lte(attendanceRecords.date, endDate)
@@ -4525,7 +4543,7 @@ export class DatabaseStorage {
     return result;
   }
 
-  async getStudentYearlyAttendance(studentId: number, schoolId: number, cls: string, section: string, startDate: string, endDate: string): Promise<{
+  async getStudentYearlyAttendance(studentId: number, schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<{
     month: number;
     year: number;
     present: number;
@@ -4541,6 +4559,7 @@ export class DatabaseStorage {
       .from(attendanceRecords)
       .where(and(
         eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
         eq(attendanceRecords.class, cls),
         eq(attendanceRecords.section, section),
         gte(attendanceRecords.date, startDate),
@@ -4551,6 +4570,7 @@ export class DatabaseStorage {
     const myRecords = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, startDate),
         lte(attendanceRecords.date, endDate),
@@ -4586,7 +4606,7 @@ export class DatabaseStorage {
     return Array.from(monthMap.values()).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
   }
 
-  async getStudentAttendanceStats(studentId: number, schoolId: number, cls: string, section: string, academicStartDate: string, academicEndDate?: string): Promise<{
+  async getStudentAttendanceStats(studentId: number, schoolId: number, sessionId: number, cls: string, section: string, academicStartDate: string, academicEndDate?: string): Promise<{
     overallPercent: number;
     workingDays: number;
     daysPresent: number;
@@ -4605,6 +4625,7 @@ export class DatabaseStorage {
       .from(attendanceRecords)
       .where(and(
         eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
         eq(attendanceRecords.class, cls),
         eq(attendanceRecords.section, section),
         gte(attendanceRecords.date, academicStartDate),
@@ -4616,6 +4637,7 @@ export class DatabaseStorage {
     const myRecords = await db.select().from(attendanceRecords).where(
       and(
         eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
         eq(attendanceRecords.studentId, studentId),
         gte(attendanceRecords.date, academicStartDate),
         lte(attendanceRecords.date, upperBound),

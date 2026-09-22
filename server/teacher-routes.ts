@@ -19,6 +19,7 @@ import {
   todayInIST,
 } from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
+import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
@@ -219,9 +220,22 @@ export function registerTeacherRoutes(app: Express) {
     const data = await storage.getTeacherWithSchool(req.session.teacherId);
     if (!data) return res.status(401).json({ message: "Teacher not found" });
 
+    let attendanceSession;
+    try {
+      attendanceSession = await resolveAttendanceReadSession(
+        data.teacher.schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+
     const [todayDone, mappings] = await Promise.all([
       storage.hasAttendanceToday(
-        data.teacher.id, data.teacher.assignedClass, data.teacher.assignedSection, data.teacher.schoolId
+        data.teacher.id, data.teacher.assignedClass, data.teacher.assignedSection,
+        data.teacher.schoolId, attendanceSession.id,
       ),
       storage.getFacultyMappingsByTeacher(data.teacher.id),
     ]);
@@ -384,14 +398,27 @@ export function registerTeacherRoutes(app: Express) {
     const sid = parseInt(schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    let attendanceSession;
+    try {
+      attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+      );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
 
     // Archive look-back: resolve roster via enrollments for the viewed session.
     // Active-session view: use current student fields (class/section/isActive).
-    const studentList = viewSessionId
-      ? await storage.getStudentsByClassSectionInSession(sid, cls, section, viewSessionId)
-      : await storage.getStudentsByClassSection(sid, cls, section);
-    const records = await storage.getAttendanceForStudentsOnDate(studentList.map(s => s.id), date, viewSessionId);
+    const studentList = attendanceSession.isActive
+      ? await storage.getStudentsByClassSection(sid, cls, section)
+      : await storage.getStudentsByClassSectionInSession(
+          sid, cls, section, attendanceSession.id,
+        );
+    const records = await storage.getAttendanceForStudentsOnDate(
+      sid, attendanceSession.id, studentList.map(s => s.id), date,
+    );
 
     const result = studentList.map(student => {
       const record = records.find(r => r.studentId === student.id);
@@ -473,11 +500,17 @@ export function registerTeacherRoutes(app: Express) {
     const sid = parseInt(schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     try {
-      const records = await storage.getAttendanceHistory(sid, cls, section, startDate, endDate, viewSessionId);
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+      );
+      const records = await storage.getAttendanceHistory(
+        sid, attendanceSession.id, cls, section, startDate, endDate,
+      );
       res.json(records);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch attendance history" });
     }
   });
@@ -487,8 +520,21 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-    const done = await storage.hasAttendanceToday(teacher.id, teacher.assignedClass, teacher.assignedSection, teacher.schoolId);
-    res.json({ done });
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+      const done = await storage.hasAttendanceToday(
+        teacher.id, teacher.assignedClass, teacher.assignedSection,
+        teacher.schoolId, attendanceSession.id,
+      );
+      res.json({ done });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
   });
 
   // ===== HOMEWORK =====
@@ -3051,8 +3097,20 @@ Thank you for your prompt attention to this matter.
   app.get("/api/attendance/daily-summary/:schoolId/:date", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
-    const summary = await storage.getDailyAttendanceSummary(parseInt(req.params.schoolId), req.params.date);
-    res.json(summary);
+    try {
+      const schoolId = parseInt(req.params.schoolId);
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+      );
+      const summary = await storage.getDailyAttendanceSummary(
+        schoolId, attendanceSession.id, req.params.date,
+      );
+      res.json(summary);
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
   });
 
   // ===== COMPLAINTS BY SCHOOL (Admin only — teachers excluded) =====
@@ -3740,22 +3798,15 @@ Thank you for your prompt attention to this matter.
     const section = decodeURIComponent(req.params.section);
     // When in archive mode, use the session's own date range instead of a
     // calendar-year guess — otherwise archived years return wrong (or zero) data.
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+      );
       let yearStart: string, yearEnd: string;
-      if (viewSessionId) {
-        const sess = await storage.getAcademicSessionById(viewSessionId);
-        if (sess?.startDate && sess?.endDate) {
-          yearStart = sess.startDate;
-          yearEnd = sess.endDate;
-        } else {
-          // Session exists but has no dates — fall back to calendar heuristic
-          const today = todayInIST();
-          const year = new Date().getFullYear();
-          const aprThisYear = `${year}-04-01`;
-          yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
-          yearEnd = today;
-        }
+      if (attendanceSession.startDate && attendanceSession.endDate) {
+        yearStart = attendanceSession.startDate;
+        yearEnd = attendanceSession.endDate;
       } else {
         const today = todayInIST();
         const year = new Date().getFullYear();
@@ -3763,7 +3814,9 @@ Thank you for your prompt attention to this matter.
         yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
         yearEnd = today;
       }
-      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, yearEnd, viewSessionId ?? null);
+      const records = await storage.getAttendanceHistory(
+        schoolId, attendanceSession.id, cls, section, yearStart, yearEnd,
+      );
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
         const sid = (r as any).studentId as number;
@@ -3778,7 +3831,10 @@ Thank you for your prompt attention to this matter.
         totalDays: data.total,
       }));
       res.json(summary);
-    } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      res.status(500).json({ message: "Failed to fetch attendance summary" });
+    }
   });
 
   // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
@@ -4345,7 +4401,9 @@ Thank you for your prompt attention to this matter.
       const today = todayInIST();
       const academicYear = getAcademicYearForISTDate(today);
       const yearStart = `${academicYear.split("-")[0]}-04-01`;
-      const records = await storage.getAttendanceHistory(schoolId, cls, section, yearStart, today, context.sessionId);
+      const records = await storage.getAttendanceHistory(
+        schoolId, context.sessionId, cls, section, yearStart, today,
+      );
       const byStudent: Record<number, { present: number; total: number }> = {};
       for (const r of records) {
         const sid = (r as any).studentId as number;

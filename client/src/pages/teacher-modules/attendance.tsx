@@ -7,9 +7,9 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useISTToday } from "@/hooks/use-ist-today";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import MyAttendanceModule from "./my-attendance";
 import { addCalendarDays, dateOnlyParts } from "@shared/ist-time";
 
@@ -160,6 +160,7 @@ function DarkInput({
 
 export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
   const { toast } = useToast();
   const {
     classes,
@@ -195,11 +196,13 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const isEditable = selectedDate >= sevenDaysAgo && selectedDate <= today;
 
   const { data: students = [], isLoading, isError } = useQuery<StudentAttendance[]>({
-    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, selectedDate],
-    queryFn: async () => {
-      const res = await fetch(
+    queryKey: ["/api/attendance", teacher.schoolId, selectedSession?.id ?? null, selectedClass, selectedSection, selectedDate],
+    queryFn: async ({ queryKey, signal }) => {
+      const sessionId = queryKey[2] as number | null;
+      const res = await sessionFetchForViewSession(
         `/api/attendance/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${selectedDate}`,
-        { credentials: "include" }
+        sessionId,
+        { signal },
       );
       if (!res.ok) throw new Error("Failed to load attendance");
       return res.json();
@@ -208,11 +211,13 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: historyRecords = [], isLoading: historyLoading } = useQuery<HistoryRecord[]>({
-    queryKey: ["/api/attendance/history", teacher.schoolId, selectedClass, selectedSection, historyStartDate, historyEndDate],
-    queryFn: async () => {
-      const res = await fetch(
+    queryKey: ["/api/attendance/history", teacher.schoolId, selectedSession?.id ?? null, selectedClass, selectedSection, historyStartDate, historyEndDate],
+    queryFn: async ({ queryKey, signal }) => {
+      const sessionId = queryKey[2] as number | null;
+      const res = await sessionFetchForViewSession(
         `/api/attendance/history/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${historyStartDate}/${historyEndDate}`,
-        { credentials: "include" }
+        sessionId,
+        { signal },
       );
       if (!res.ok) throw new Error("Failed to load history");
       return res.json();

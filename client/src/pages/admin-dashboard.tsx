@@ -1831,7 +1831,7 @@ export default function AdminDashboard() {
       case "leave-requests":    return <LeaveRequests schoolId={me.schoolId} initialSection={leaveReqSubParams?.tab ?? null} onNavigateSection={(sec) => { if (sec) setLocation(`/admin-dashboard/leave-requests/${sec}`); else setLocation("/admin-dashboard/leave-requests"); }} allowedSubs={getSubsFor("leave-requests")} />;
       case "audit-logs":        return <AuditLogsModule schoolId={me.schoolId} />;
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
-      case "attendance":        return <AttendanceOverview schoolId={me.schoolId} onViewStudent={() => goToModule("student-registry")} />;
+      case "attendance":        return <AttendanceOverview schoolId={me.schoolId} viewSessionId={selectedViewSession?.id} onViewStudent={() => goToModule("student-registry")} />;
       case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} initialTab={analyticsSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/analytics/${t}`)} allowedSubs={getSubsFor("analytics")} />;
       case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
       case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
