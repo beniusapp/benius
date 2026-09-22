@@ -6629,6 +6629,35 @@ export class DatabaseStorage {
       .where(and(eq(enrollments.schoolId, schoolId), eq(enrollments.sessionId, sessionId)));
   }
 
+  /**
+   * Resolve a student's authoritative placement for one school-owned session.
+   * Enrollment status is intentionally not interpreted here.
+   */
+  async resolveEnrollmentForStudentSession(
+    schoolId: number,
+    studentId: number,
+    sessionId: number,
+  ): Promise<Enrollment | undefined> {
+    const [row] = await db
+      .select({ enrollment: enrollments })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, enrollments.schoolId),
+      ))
+      .innerJoin(academicSessions, and(
+        eq(academicSessions.id, enrollments.sessionId),
+        eq(academicSessions.schoolId, enrollments.schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.studentId, studentId),
+        eq(enrollments.sessionId, sessionId),
+      ))
+      .limit(1);
+    return row?.enrollment;
+  }
+
   /** Get full enrollment history for a single student across all sessions. */
   async getStudentEnrollmentHistory(schoolId: number, studentId: number): Promise<Enrollment[]> {
     return await db.select().from(enrollments)
