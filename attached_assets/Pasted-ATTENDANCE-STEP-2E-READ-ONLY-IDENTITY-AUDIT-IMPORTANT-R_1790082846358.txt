@@ -1,0 +1,336 @@
+ATTENDANCE STEP 2E — READ-ONLY IDENTITY AUDIT
+
+IMPORTANT:
+
+READ-ONLY AUDIT ONLY.
+
+DO NOT MODIFY ANY CODE.
+DO NOT MODIFY DATABASE.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE ANY API.
+DO NOT CHANGE FRONTEND.
+DO NOT FIX ANYTHING YET.
+
+We are implementing the Attendance requirements one small step at a
+time.
+
+The NEXT implementation change will be to make Attendance identity:
+
+    schoolId + sessionId + studentId + date
+
+instead of the current:
+
+    studentId + date
+
+But BEFORE implementing that change, perform this focused audit only.
+
+==================================================
+PROJECT REQUIREMENT
+==================================================
+
+Every Student Attendance record must belong to exactly:
+
+    SCHOOL/TENANT
+        +
+    ACADEMIC SESSION
+        +
+    STUDENT
+        +
+    DATE
+
+Therefore the canonical Attendance identity will eventually be:
+
+    school_id
+    session_id
+    student_id
+    date
+
+This is NOT about Enrollment.
+
+DO NOT introduce Enrollment into this step.
+
+Student Registry remains global.
+
+Any authenticated Teacher from the same school can mark Attendance.
+
+==================================================
+1. FIND ALL ATTENDANCE WRITERS
+==================================================
+
+Search the entire repository for every code path that creates or updates:
+
+    attendance_records
+
+including indirect storage methods.
+
+Identify every:
+
+- INSERT
+- UPDATE
+- upsert
+- synchronization
+- leave synchronization
+- correction
+- admin Attendance writer
+- Teacher Attendance writer
+- any background/job writer
+
+For each writer report:
+
+- file
+- function
+- route/caller
+- whether it supplies schoolId
+- whether it supplies sessionId
+- whether it currently identifies an existing record using
+  studentId + date
+- whether it can currently create session_id = NULL
+
+DO NOT change anything.
+
+==================================================
+2. FIND ALL studentId + date LOOKUPS
+==================================================
+
+Search the entire repository specifically for Attendance queries that
+identify an existing record using combinations such as:
+
+    student_id = ?
+    date = ?
+
+or equivalent Drizzle/query-builder logic.
+
+Also find:
+
+- findFirst
+- select
+- update
+- delete
+- upsert
+- existence checks
+
+where Attendance identity depends on studentId + date.
+
+For every occurrence report:
+
+- file
+- function
+- purpose
+- exact current identity conditions
+- whether schoolId is included
+- whether sessionId is included
+
+DO NOT change anything.
+
+==================================================
+3. INSPECT storage.upsertAttendance()
+==================================================
+
+Inspect the current implementation carefully.
+
+Document:
+
+- how it determines whether an Attendance record already exists
+- which fields are used for lookup
+- how INSERT works
+- how UPDATE works
+- how sessionId is handled
+- whether sessionId can be NULL
+- how edit_count is handled
+- whether any transaction/locking exists
+
+Do not modify it.
+
+==================================================
+4. FIND ALL ATTENDANCE UNIQUE/IDENTITY ASSUMPTIONS
+==================================================
+
+Search the repository for assumptions that one Attendance record is
+identified by:
+
+    studentId + date
+
+including:
+
+- frontend state keys
+- backend maps
+- deduplication
+- counts
+- update logic
+- delete logic
+- tests
+- helper functions
+- reports
+
+Report every relevant occurrence.
+
+DO NOT modify anything.
+
+==================================================
+5. FIND ALL DATABASE CONSTRAINTS
+==================================================
+
+Read-only inspect the current database/schema for:
+
+attendance_records
+
+Report:
+
+- primary key
+- unique constraints
+- indexes
+- foreign keys
+- nullable columns
+- session_id definition
+- school_id definition
+- student_id definition
+- date definition
+
+Specifically determine whether the database currently enforces:
+
+    school + session + student + date
+
+as a unique Attendance identity.
+
+DO NOT change the database.
+
+==================================================
+6. CHECK CURRENT DATA SAFETY
+==================================================
+
+Read-only inspect the Attendance table.
+
+Determine:
+
+- row count
+- NULL session_id count
+- NULL school_id count
+- NULL student_id count
+- duplicate rows by:
+    studentId + date
+- duplicate rows by:
+    schoolId + sessionId + studentId + date
+- any cross-school Student/Attendance mismatch
+- any session/school mismatch
+
+Do NOT modify any data.
+
+If the table is empty, explicitly report that.
+
+==================================================
+7. CHECK ALL CURRENT CALLERS
+==================================================
+
+Search all callers of:
+
+    storage.upsertAttendance()
+
+and related Attendance mutation functions.
+
+For each caller determine:
+
+- Does it pass sessionId?
+- Does it pass schoolId?
+- Can it create Attendance without sessionId?
+- Does it need special handling when the identity changes?
+
+Remember:
+
+Step 2D has already changed POST /api/attendance so that it resolves
+the active Session once and passes the explicit sessionId.
+
+Do not undo Step 2D.
+
+==================================================
+8. MINIMUM CHANGE ANALYSIS
+==================================================
+
+Based ONLY on the audit, determine the minimum files/functions that
+would need to change in the NEXT implementation step to make Attendance
+identity:
+
+    schoolId + sessionId + studentId + date
+
+Do NOT implement those changes.
+
+Do NOT suggest unrelated improvements.
+
+Do NOT include:
+
+- Enrollment
+- Faculty Mapping
+- Calendar redesign
+- Historical student redesign
+- Admin redesign
+- Student redesign
+- Leave redesign
+
+Those are separate future steps.
+
+==================================================
+9. MIGRATION REQUIREMENT
+==================================================
+
+Determine whether a database unique constraint/index will eventually
+be required for:
+
+    school_id + session_id + student_id + date
+
+Do not create it.
+
+If required, explain why.
+
+Also determine whether the current data is safe for such a constraint.
+
+==================================================
+10. OUTPUT FORMAT
+==================================================
+
+Return exactly these sections:
+
+A. ATTENDANCE WRITERS
+
+B. studentId + date IDENTITY LOOKUPS
+
+C. storage.upsertAttendance() CURRENT IDENTITY
+
+D. DATABASE CONSTRAINTS
+
+E. CURRENT DATA SAFETY
+
+F. ALL upsertAttendance() CALLERS
+
+G. MINIMUM FILES/FUNCTIONS THAT MUST CHANGE
+
+H. DATABASE CONSTRAINT REQUIRED?
+
+I. RISKS BEFORE IMPLEMENTATION
+
+J. STEP 2E IMPLEMENTATION SCOPE
+
+The final section must contain ONLY the minimum changes required to
+change Attendance identity from:
+
+    studentId + date
+
+to:
+
+    schoolId + sessionId + studentId + date
+
+==================================================
+STRICT STOP CONDITION
+==================================================
+
+THIS IS READ-ONLY.
+
+Do not edit anything.
+
+Do not create migrations.
+
+Do not change database data.
+
+Do not restart production.
+
+Do not implement Step 2E.
+
+STOP AFTER THE AUDIT REPORT.
