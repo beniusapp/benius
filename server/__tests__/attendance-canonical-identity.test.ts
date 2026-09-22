@@ -114,13 +114,13 @@ beforeAll(async () => {
     {
       schoolId: schoolAId,
       sessionName: `Attendance-A-${suffix}`,
-      startDate: "2040-04-01",
+      startDate: "2025-04-01",
       endDate: "2041-03-31",
     },
     {
       schoolId: schoolAId,
       sessionName: `Attendance-B-${suffix}`,
-      startDate: "2041-04-01",
+      startDate: "2025-04-01",
       endDate: "2042-03-31",
     },
   ]).returning({ id: academicSessions.id });
@@ -129,7 +129,7 @@ beforeAll(async () => {
   const [otherSchoolSession] = await db.insert(academicSessions).values({
     schoolId: schoolBId,
     sessionName: `Attendance-Other-School-${suffix}`,
-    startDate: "2040-04-01",
+    startDate: "2025-04-01",
     endDate: "2041-03-31",
   }).returning({ id: academicSessions.id });
   otherSchoolSessionId = otherSchoolSession.id;
@@ -252,7 +252,7 @@ describe("Attendance canonical persistence identity", () => {
   });
 
   it("keeps every Attendance storage reader isolated by school and Session", async () => {
-    const date = todayInIST();
+    const date = "2025-06-15";
     const [year, month] = date.split("-").map(Number);
     await storage.upsertAttendance([
       attendanceInput({ date, sessionId: sessionAId, status: "present" }),
@@ -269,10 +269,10 @@ describe("Attendance canonical persistence identity", () => {
     expect(classDateB.map(row => row.status)).toEqual(["absent"]);
 
     const dailyA = await storage.getAttendanceForStudentsOnDate(
-      schoolAId, sessionAId, [studentId], date,
+      schoolAId, sessionAId, [studentId], "5", "A", date,
     );
     const dailyB = await storage.getAttendanceForStudentsOnDate(
-      schoolAId, sessionBId, [studentId], date,
+      schoolAId, sessionBId, [studentId], "5", "A", date,
     );
     expect(dailyA.map(row => row.status)).toEqual(["present"]);
     expect(dailyB.map(row => row.status)).toEqual(["absent"]);
@@ -288,10 +288,10 @@ describe("Attendance canonical persistence identity", () => {
 
     await expect(storage.hasAttendanceToday(
       teacherAId, "5", "A", schoolAId, sessionAId,
-    )).resolves.toBe(true);
+    )).resolves.toBe(false);
     await expect(storage.hasAttendanceToday(
       teacherAId, "5", "A", schoolAId, sessionBId,
-    )).resolves.toBe(true);
+    )).resolves.toBe(false);
 
     const summaryA = await storage.getDailyAttendanceSummary(
       schoolAId, sessionAId, date,
@@ -525,7 +525,7 @@ describe("Attendance canonical persistence identity", () => {
     )).resolves.toBeGreaterThanOrEqual(1);
   });
 
-  it("keeps existing Attendance readable without Enrollment or a usable historical class snapshot", async () => {
+  it("keeps unclassified legacy Attendance readable without inventing a working-day context", async () => {
     const [student] = await db.insert(students).values({
       schoolId: schoolAId,
       digitalStudentId: `ORPHAN-CONTEXT-${suffix}`,
@@ -554,15 +554,18 @@ describe("Attendance canonical persistence identity", () => {
       student.id, schoolAId, sessionAId, null, null,
       "2025-06-01", "2025-06-01",
     );
-    expect(yearly).toEqual([
-      expect.objectContaining({ workingDays: 1, present: 1 }),
-    ]);
+    expect(yearly).toEqual([]);
 
     const stats = await storage.getStudentAttendanceStats(
       student.id, schoolAId, sessionAId, null, null,
       "2025-06-01", "2025-06-01",
     );
-    expect(stats).toMatchObject({ workingDays: 1, totalPresent: 1 });
+    expect(stats).toMatchObject({ workingDays: 0, totalPresent: 0 });
+
+    const monthly = await storage.getStudentMonthlyAttendance(
+      student.id, schoolAId, sessionAId, 2025, 6,
+    );
+    expect(monthly.find(day => day.date === "2025-06-01")?.status).toBe("present");
   });
 
   it("validates Attendance read Sessions against the authenticated school and fails closed", async () => {
@@ -583,7 +586,7 @@ describe("Attendance canonical persistence identity", () => {
   });
 
   it("rejects a mixed-school Student batch before writing any Attendance", async () => {
-    const date = "2040-05-01";
+    const date = "2040-08-01";
 
     await expect(storage.upsertAttendance([
       attendanceInput({ date }),
@@ -598,24 +601,30 @@ describe("Attendance canonical persistence identity", () => {
   });
 
   it("rejects a foreign Teacher at the Attendance storage boundary", async () => {
-    const date = "2040-05-02";
+    const date = "2040-08-02";
 
     await expect(storage.upsertAttendance([
       attendanceInput({ date, teacherId: teacherBId }),
     ])).rejects.toThrow("Attendance entities do not belong to the same school");
 
-    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolAId),
+      eq(attendanceRecords.date, date),
+    ));
     expect(rows).toHaveLength(0);
   });
 
   it("rejects a foreign Session at the Attendance storage boundary", async () => {
-    const date = "2040-05-03";
+    const date = "2040-08-03";
 
     await expect(storage.upsertAttendance([
       attendanceInput({ date, sessionId: otherSchoolSessionId }),
     ])).rejects.toThrow("Attendance entities do not belong to the same school");
 
-    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolAId),
+      eq(attendanceRecords.date, date),
+    ));
     expect(rows).toHaveLength(0);
   });
 

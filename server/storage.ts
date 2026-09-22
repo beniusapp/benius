@@ -63,6 +63,7 @@ import {
   aggregateStudentAttendance,
   type StudentAttendanceAggregation,
 } from "./student-attendance-calculation";
+import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import {
   CURRENT_FEE_AUDIT_ACTION_OPTIONS,
   feeAuditActionLabel,
@@ -935,11 +936,20 @@ export class DatabaseStorage {
     });
   }
 
-  async getAttendanceForStudentsOnDate(schoolId: number, sessionId: number, studentIds: number[], date: string): Promise<AttendanceRecord[]> {
+  async getAttendanceForStudentsOnDate(
+    schoolId: number,
+    sessionId: number,
+    studentIds: number[],
+    cls: string,
+    section: string,
+    date: string,
+  ): Promise<AttendanceRecord[]> {
     if (studentIds.length === 0) return [];
     const allRecords = await db.select().from(attendanceRecords).where(and(
       eq(attendanceRecords.schoolId, schoolId),
       eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.class, cls),
+      eq(attendanceRecords.section, section),
       eq(attendanceRecords.date, date),
     ));
     return allRecords.filter(r => studentIds.includes(r.studentId));
@@ -1155,6 +1165,8 @@ export class DatabaseStorage {
     const conditions = [
       eq(attendanceRecords.schoolId, schoolId),
       eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.class, cls),
+      eq(attendanceRecords.section, section),
       gte(attendanceRecords.date, startDate),
       lte(attendanceRecords.date, endDate),
     ];
@@ -1177,6 +1189,8 @@ export class DatabaseStorage {
       and(
         eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.class, cls),
+        eq(attendanceRecords.section, section),
         eq(attendanceRecords.date, today),
         eq(attendanceRecords.teacherId, teacherId),
       )
@@ -4253,22 +4267,50 @@ export class DatabaseStorage {
     unknown: number;
     percentage: number;
   }> {
-    const [records, population] = await Promise.all([
-      db.select().from(attendanceRecords).where(and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
-        eq(attendanceRecords.date, date),
-      )),
-      this.getAttendancePopulationForSession(schoolId, sessionId),
-    ]);
-    const applicableSlots = Math.max(population, records.length);
+    const records = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.date, date),
+    ));
+    const classSections = new Map<string, { class: string; section: string }>();
+    for (const record of records) {
+      if (record.class && record.section) {
+        classSections.set(`${record.class}\u0000${record.section}`, {
+          class: record.class,
+          section: record.section,
+        });
+      }
+    }
+
+    const statuses: Array<string | null> = [];
+    for (const context of classSections.values()) {
+      const workingDates = await getStudentAttendanceWorkingDates({
+        schoolId,
+        sessionId,
+        class: context.class,
+        section: context.section,
+        startDate: date,
+        endDate: date,
+      });
+      if (workingDates.length === 0) continue;
+
+      const roster = await this.getAttendanceRosterForSessionClass(
+        schoolId, sessionId, context.class, context.section,
+      );
+      const statusByStudent = new Map(
+        records
+          .filter(record =>
+            record.class === context.class && record.section === context.section
+          )
+          .map(record => [record.studentId, record.status]),
+      );
+      statuses.push(...roster.map(student => statusByStudent.get(student.id) ?? null));
+    }
+
     const aggregation = aggregateStudentAttendance({
       schoolId,
       sessionId,
-      statuses: [
-        ...records.map(record => record.status),
-        ...Array(applicableSlots - records.length).fill(null),
-      ],
+      statuses,
     });
     return {
       total: records.length,
@@ -4786,41 +4828,41 @@ export class DatabaseStorage {
     workingDays: number;
     total: number;
   }[]> {
-    const myRecords = await db.select().from(attendanceRecords).where(
-      and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
-        eq(attendanceRecords.studentId, studentId),
-        gte(attendanceRecords.date, startDate),
-        lte(attendanceRecords.date, endDate),
-      )
-    );
-
-    // Event-driven: use the selected Session's historical class/section when known.
-    // Without historical context, preserve the student's existing rows instead of
-    // inventing a class from the current Student Registry.
-    const workingDateRows = cls && section
-      ? await db.selectDistinct({ date: attendanceRecords.date })
-      .from(attendanceRecords)
-      .where(and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
+    const myRecordConditions = [
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.studentId, studentId),
+      gte(attendanceRecords.date, startDate),
+      lte(attendanceRecords.date, endDate),
+    ];
+    if (cls && section) {
+      myRecordConditions.push(
         eq(attendanceRecords.class, cls),
         eq(attendanceRecords.section, section),
-        gte(attendanceRecords.date, startDate),
-        lte(attendanceRecords.date, endDate),
-      ))
-      : myRecords.map(record => ({ date: record.date }));
-    const workingDatesSet = new Set(workingDateRows.map(r => r.date));
+      );
+    }
+    const myRecords = await db.select().from(attendanceRecords).where(
+      and(...myRecordConditions),
+    );
+
+    // Applicable dates require selected-Session historical class/section context.
+    // Raw legacy rows remain readable, but cannot define a class-specific denominator.
+    const workingDates = cls && section
+      ? await getStudentAttendanceWorkingDates({
+          schoolId, sessionId, class: cls, section, startDate, endDate,
+        })
+      : [];
     const recordMap = new Map(myRecords.map(r => [r.date, r]));
 
     const monthMap = new Map<string, { month: number; year: number; present: number; absent: number; halfDay: number; late: number; leave: number; workingDays: number; total: number }>();
 
-    for (const dateStr of workingDatesSet) {
-      const d = new Date(dateStr);
-      const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+    for (const dateStr of workingDates) {
+      const parts = dateOnlyParts(dateStr);
+      if (!parts) continue;
+      const { year, month } = parts;
+      const key = `${year}-${month}`;
       if (!monthMap.has(key)) {
-        monthMap.set(key, { month: d.getMonth() + 1, year: d.getFullYear(), present: 0, absent: 0, halfDay: 0, late: 0, leave: 0, workingDays: 0, total: 0 });
+        monthMap.set(key, { month, year, present: 0, absent: 0, halfDay: 0, late: 0, leave: 0, workingDays: 0, total: 0 });
       }
       const bucket = monthMap.get(key)!;
       bucket.workingDays++;
@@ -4853,32 +4895,35 @@ export class DatabaseStorage {
     const today = todayInIST();
     const upperBound = academicEndDate && academicEndDate < today ? academicEndDate : today;
 
-    const myRecords = await db.select().from(attendanceRecords).where(
-      and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
-        eq(attendanceRecords.studentId, studentId),
-        gte(attendanceRecords.date, academicStartDate),
-        lte(attendanceRecords.date, upperBound),
-      )
-    );
-
-    // Keep the existing event-driven rule, but source its class/section from the
-    // selected Session. If no historical context exists, count the student's own
-    // selected-Session dates rather than leaking current Registry placement.
-    const workingDateRows = cls && section
-      ? await db.selectDistinct({ date: attendanceRecords.date })
-      .from(attendanceRecords)
-      .where(and(
-        eq(attendanceRecords.schoolId, schoolId),
-        eq(attendanceRecords.sessionId, sessionId),
+    const myRecordConditions = [
+      eq(attendanceRecords.schoolId, schoolId),
+      eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.studentId, studentId),
+      gte(attendanceRecords.date, academicStartDate),
+      lte(attendanceRecords.date, upperBound),
+    ];
+    if (cls && section) {
+      myRecordConditions.push(
         eq(attendanceRecords.class, cls),
         eq(attendanceRecords.section, section),
-        gte(attendanceRecords.date, academicStartDate),
-        lte(attendanceRecords.date, upperBound),
-      ))
-      : myRecords.map(record => ({ date: record.date }));
-    const workingDates = [...new Set(workingDateRows.map(row => row.date))];
+      );
+    }
+    const myRecords = await db.select().from(attendanceRecords).where(
+      and(...myRecordConditions),
+    );
+
+    // Applicable dates require selected-Session historical class/section context.
+    // Raw legacy rows remain readable, but cannot define a class-specific denominator.
+    const workingDates = cls && section
+      ? await getStudentAttendanceWorkingDates({
+          schoolId,
+          sessionId,
+          class: cls,
+          section,
+          startDate: academicStartDate,
+          endDate: upperBound,
+        })
+      : [];
     const recordByDate = new Map(myRecords.map(record => [record.date, record]));
     const aggregation = aggregateStudentAttendance({
       schoolId,
@@ -4909,22 +4954,14 @@ export class DatabaseStorage {
     const roster = await this.getAttendanceRosterForSessionClass(
       schoolId, sessionId, cls, section,
     );
-    const [records, workingDateRows] = await Promise.all([
+    const [records, workingDates] = await Promise.all([
       this.getAttendanceHistory(
         schoolId, sessionId, cls, section, startDate, endDate,
       ),
-      db.selectDistinct({ date: attendanceRecords.date })
-        .from(attendanceRecords)
-        .where(and(
-          eq(attendanceRecords.schoolId, schoolId),
-          eq(attendanceRecords.sessionId, sessionId),
-          eq(attendanceRecords.class, cls),
-          eq(attendanceRecords.section, section),
-          gte(attendanceRecords.date, startDate),
-          lte(attendanceRecords.date, endDate),
-        )),
+      getStudentAttendanceWorkingDates({
+        schoolId, sessionId, class: cls, section, startDate, endDate,
+      }),
     ]);
-    const workingDates = [...new Set(workingDateRows.map(row => row.date))];
     const recordByStudentDate = new Map(
       records.map(record => [`${record.studentId}:${record.date}`, record]),
     );

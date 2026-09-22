@@ -275,7 +275,7 @@ describe("Teacher Attendance read Session isolation", () => {
     expect(result.status).toBe(200);
     expect(storage.getAcademicSessionById).toHaveBeenCalledWith(777);
     expect(read).toHaveBeenCalledWith(
-      teacher.schoolId, 777, [101], todayInIST(),
+      teacher.schoolId, 777, [101], "1", "A", todayInIST(),
     );
   });
 

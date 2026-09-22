@@ -413,7 +413,7 @@ export function registerTeacherRoutes(app: Express) {
       sid, attendanceSession.id, cls, section,
     );
     const records = await storage.getAttendanceForStudentsOnDate(
-      sid, attendanceSession.id, studentList.map(s => s.id), date,
+      sid, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
     );
 
     const result = studentList.map(student => {

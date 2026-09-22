@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { AcademicSessionFinancialHistoryError, storage } from "./storage";
 import { aggregateStudentAttendance } from "./student-attendance-calculation";
+import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import { feePeriodLabel } from "./fee-period";
 import {
   insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
@@ -2919,6 +2920,8 @@ export async function registerRoutes(
         ? await db.select().from(attendanceRecords).where(
             and(
               eq(attendanceRecords.schoolId, schoolId),
+              eq(attendanceRecords.class, cls),
+              eq(attendanceRecords.section, section),
               eq(attendanceRecords.date, date),
               inArray(attendanceRecords.studentId, studentIdList),
               eq(attendanceRecords.sessionId, attendanceSession.id),
@@ -2935,12 +2938,22 @@ export async function registerRoutes(
           status: (record && record.status) ? record.status : "not-marked",
         };
       });
+      const workingDates = await getStudentAttendanceWorkingDates({
+        schoolId,
+        sessionId: attendanceSession.id,
+        class: cls,
+        section,
+        startDate: date,
+        endDate: date,
+      });
       const summary = aggregateStudentAttendance({
         schoolId,
         sessionId: attendanceSession.id,
-        statuses: result.map(student =>
-          student.status === "not-marked" ? null : student.status
-        ),
+        statuses: workingDates.length > 0
+          ? result.map(student =>
+              student.status === "not-marked" ? null : student.status
+            )
+          : [],
       });
 
       // Build submission metadata from attendance_records
@@ -2988,35 +3001,22 @@ export async function registerRoutes(
       const enrolledTotal = await storage.getAttendancePopulationForSession(
         schoolId, attendanceSession.id,
       );
-      const recs = await db.select().from(attendanceRecords)
-        .where(and(
-          eq(attendanceRecords.schoolId, schoolId),
-          eq(attendanceRecords.date, date),
-          eq(attendanceRecords.sessionId, attendanceSession.id),
-        ));
-
-      const markedTotal = recs.length;
-      const applicableSlots = Math.max(enrolledTotal, markedTotal);
-      const aggregation = aggregateStudentAttendance({
-        schoolId,
-        sessionId: attendanceSession.id,
-        statuses: [
-          ...recs.map(record => record.status),
-          ...Array(applicableSlots - markedTotal).fill(null),
-        ],
-      });
+      const summary = await storage.getDailyAttendanceSummary(
+        schoolId, attendanceSession.id, date,
+      );
 
       res.json({
         enrolledTotal,
-        markedTotal,
-        present: aggregation.present,
-        absent: aggregation.absent,
-        leave: aggregation.leave,
-        late: aggregation.late,
-        halfDay: aggregation.halfDay,
-        missing: aggregation.missing,
-        unknown: aggregation.unknown,
-        percentage: aggregation.percentage,
+        markedTotal: summary.total,
+        applicableTotal: summary.applicableTotal,
+        present: summary.present,
+        absent: summary.absent,
+        leave: summary.leave,
+        late: summary.late,
+        halfDay: summary.halfDay,
+        missing: summary.missing,
+        unknown: summary.unknown,
+        percentage: summary.percentage,
       });
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;

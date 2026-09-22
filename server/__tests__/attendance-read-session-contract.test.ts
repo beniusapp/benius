@@ -64,12 +64,16 @@ describe("Attendance read Session route contract", () => {
       '// ===== ACADEMIC SESSIONS API',
     );
 
-    for (const route of [classDetail, overview, teacherSummary]) {
+    for (const route of [classDetail, teacherSummary]) {
       expect(route).toContain("resolveAttendanceReadSession(");
       expect(route).toContain("eq(attendanceRecords.schoolId, schoolId)");
       expect(route).toContain("eq(attendanceRecords.sessionId, attendanceSession.id)");
       expect(route).toContain("sendAttendanceReadSessionError(res, err)");
     }
+    expect(overview).toContain("resolveAttendanceReadSession(");
+    expect(overview).toContain("storage.getDailyAttendanceSummary(");
+    expect(overview).toContain("schoolId, attendanceSession.id, date");
+    expect(overview).toContain("sendAttendanceReadSessionError(res, err)");
   });
 
   it("fails Teacher daily, history, dashboard summary, and analytics closed without a valid Session", () => {
