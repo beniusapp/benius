@@ -1,0 +1,447 @@
+ATTENDANCE STEP 2E — READ-ONLY ARCHITECTURE AUDIT
+GLOBAL STUDENT REGISTRY + ACADEMIC SESSION
+
+IMPORTANT:
+
+THIS IS A READ-ONLY AUDIT ONLY.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE ATTENDANCE BEHAVIOR.
+DO NOT IMPLEMENT ANY FIX.
+
+The purpose of this audit is to determine exactly how Attendance should
+use the GLOBAL Student Registry together with the ACTIVE Academic Session.
+
+==================================================
+CORE PRODUCT ARCHITECTURE — MUST PRESERVE
+==================================================
+
+The Student Registry is GLOBAL and PERMANENT.
+
+Students are NOT recreated for every Academic Session.
+
+The Student Registry must continue to exist independently of:
+
+- Academic Session creation
+- Academic Session switching
+- Academic Session completion
+- Academic Session deletion
+
+Changing Academic Session must NOT reset the Student Registry.
+
+Therefore:
+
+A Student Registry record is NOT itself dependent on an Academic Session.
+
+Do NOT reinterpret Enrollment as "creating/registering the student again."
+
+==================================================
+CURRENT INTENDED ATTENDANCE MODEL
+==================================================
+
+Attendance should fundamentally work like:
+
+Student Registry
+        ↓
+Teacher Attendance roster
+        ↓
+Active Academic Session
+        ↓
+Attendance record
+
+The Academic Session provides the academic context for the attendance
+record.
+
+The Student Registry provides the student identity.
+
+Session-specific enrollment MAY contain additional academic information
+such as:
+
+- class
+- section
+- roll number
+- session-specific placement
+
+But DO NOT assume that enrollment must become a prerequisite for a
+Student Registry student to exist or appear in the Attendance roster.
+
+==================================================
+AUDIT OBJECTIVE
+==================================================
+
+Determine exactly how Attendance should combine:
+
+1. Global Student Registry
+2. Active Academic Session
+3. Session-specific Enrollment
+4. Teacher Attendance roster
+5. Historical Attendance
+
+without accidentally making session enrollment a prerequisite for the
+existence of the student.
+
+==================================================
+PART 1 — TRACE CURRENT STUDENT ATTENDANCE ROSTER
+==================================================
+
+Read-only trace the complete flow for:
+
+Teacher Attendance page
+    ↓
+student roster retrieval
+    ↓
+POST /api/attendance
+    ↓
+storage.upsertAttendance()
+
+Document:
+
+- Which API provides the Student roster?
+- Does the roster come from Student Registry?
+- Does it depend on Academic Session?
+- Does it depend on Enrollment?
+- Does it depend on current class/section?
+- Which fields are taken from Student Registry?
+- Which fields are taken from Enrollment?
+- Which fields are browser supplied?
+
+Do not change anything.
+
+==================================================
+PART 2 — STUDENT REGISTRY AUTHORITY
+==================================================
+
+Inspect the Student Registry implementation and document:
+
+- students table
+- Student primary key
+- school ownership
+- digital student ID
+- active/inactive fields
+- current class/section fields
+- any session dependency
+- any relationship with enrollments
+
+Confirm whether Student Registry is actually global/permanent in the
+current implementation.
+
+Do not modify anything.
+
+==================================================
+PART 3 — ENROLLMENT SEMANTICS
+==================================================
+
+Inspect:
+
+- enrollments table
+- enrollment creation/update APIs
+- Student Registry APIs
+- Academic Session APIs
+- Teacher Attendance APIs
+- Student roster APIs
+
+Determine what Enrollment actually represents.
+
+Specifically answer:
+
+A. Does Enrollment create the student?
+
+B. Or does Enrollment only describe a student's academic placement
+   within a particular session?
+
+C. Is Enrollment currently required for the Student Registry student
+   to appear in Teacher Attendance?
+
+D. Is there any existing application behavior proving that a student
+   without a session enrollment must be excluded from Attendance?
+
+DO NOT invent rules.
+
+Use only evidence from the current code/database.
+
+==================================================
+PART 4 — CLASS AND SECTION AUTHORITY
+==================================================
+
+Determine the intended source of class and section for Attendance.
+
+Compare:
+
+1. Student Registry current class/section
+2. Session Enrollment class/section
+3. Teacher-submitted class/section
+4. Legacy Teacher assigned class/section
+
+Document where each is currently used.
+
+Then explain the consequences of switching Academic Sessions.
+
+Example:
+
+Student Registry:
+
+    Student 1001
+    Current class = 8
+    Current section = A
+
+Session 2025–26:
+
+    Class 7
+    Section B
+
+Session 2026–27:
+
+    Class 8
+    Section A
+
+Determine which source Attendance currently uses and which source would
+be safest for:
+
+- current Attendance
+- historical Attendance
+
+DO NOT implement a change.
+
+==================================================
+PART 5 — SESSION SWITCHING
+==================================================
+
+Trace what happens when the active Academic Session changes.
+
+Determine:
+
+- Does the Student Registry change?
+- Does the Attendance roster change?
+- Does class/section change?
+- Does Enrollment change?
+- Does Attendance identity change?
+- Can an existing Student Registry student be used in the new session
+  without recreating the Student?
+
+Document actual behavior only.
+
+==================================================
+PART 6 — SESSION DELETION
+==================================================
+
+Inspect the existing Academic Session deletion behavior.
+
+Determine specifically:
+
+- What happens to Student Registry records?
+- What happens to Enrollment records?
+- What happens to Attendance records?
+- What happens to session_id on Attendance?
+- Can historical Attendance survive session deletion?
+- What current foreign-key behavior exists?
+
+DO NOT change deletion behavior.
+
+Flag any conflict between the current behavior and the requirement that
+Attendance must remain historically session-scoped.
+
+==================================================
+PART 7 — ATTENDANCE WRITE AUTHORITY
+==================================================
+
+Review the current POST /api/attendance after Step 2D.
+
+Confirm:
+
+- schoolId comes from authenticated Teacher
+- active Session comes from server
+- sessionId is passed explicitly to storage
+- browser cannot choose Session
+
+Then determine what Student validation is actually appropriate.
+
+Compare these possible concepts:
+
+A. Student exists in Student Registry and belongs to the Teacher's school.
+
+B. Student must also have an Enrollment for the active Session.
+
+C. Enrollment is optional for roster eligibility but may provide
+   class/section information.
+
+DO NOT choose B merely because an enrollment table exists.
+
+Determine the answer from the actual application architecture and the
+product requirement described at the beginning of this prompt.
+
+==================================================
+PART 8 — HISTORICAL ATTENDANCE
+==================================================
+
+Trace all Attendance read paths:
+
+- Teacher daily Attendance
+- Teacher Attendance history
+- Teacher completion
+- Student monthly Attendance
+- Student yearly/statistics
+- Admin Attendance
+- any other Attendance APIs
+
+Determine whether historical Attendance uses:
+
+- Student Registry current class/section
+- Enrollment class/section
+- Attendance snapshot class/section
+- session_id
+- current active Session
+
+Identify any place where changing the current Student Registry placement
+could incorrectly alter historical Attendance.
+
+DO NOT fix anything.
+
+==================================================
+PART 9 — LEAVE
+==================================================
+
+Read-only audit only.
+
+Determine whether Student Leave currently assumes:
+
+- Student Registry
+- Enrollment
+- active Session
+- current class/section
+
+Document whether approved Leave creates Attendance records for:
+
+- the active Session
+- a specific session
+- no session
+
+Do not change Leave.
+
+==================================================
+PART 10 — EXISTING RESOLVER
+==================================================
+
+Inspect the previously created:
+
+    resolveEnrollmentForStudentSession(
+        schoolId,
+        studentId,
+        sessionId
+    )
+
+Determine what this resolver should be used for under the GLOBAL
+Student Registry architecture.
+
+IMPORTANT:
+
+Do NOT integrate it.
+
+Determine whether it should eventually be used for:
+
+- class/section resolution
+- historical placement
+- validation
+- reporting
+- optional enrichment
+
+or whether it should NOT be used as an Attendance eligibility gate.
+
+Provide evidence.
+
+==================================================
+PART 11 — MULTI-TENANT SAFETY
+==================================================
+
+Throughout the audit verify:
+
+- Student must belong to authenticated Teacher's school.
+- Session must belong to authenticated Teacher's school.
+- Enrollment, if used, must belong to the same school.
+- No browser-provided schoolId is authoritative.
+- No browser-provided sessionId is authoritative.
+- No cross-school Student lookup is possible.
+- No cross-school Enrollment lookup is possible.
+
+Do not modify anything.
+
+==================================================
+PART 12 — FINAL ARCHITECTURE RECOMMENDATION
+==================================================
+
+At the end provide a concise recommended Attendance contract.
+
+The recommendation MUST explicitly distinguish:
+
+GLOBAL STUDENT IDENTITY
+
+from
+
+SESSION-SPECIFIC ACADEMIC CONTEXT.
+
+Answer these questions:
+
+1. What is the authoritative source for the Attendance roster?
+
+2. Does a Student need to be recreated when a new Academic Session
+   starts?
+
+3. Does a Student need session Enrollment merely to exist in the
+   Student Registry?
+
+4. Should session Enrollment be mandatory for Attendance eligibility?
+
+5. If not, what should Enrollment be used for?
+
+6. Where should Attendance obtain class/section?
+
+7. What should happen when a Student has no Enrollment for the active
+   Session?
+
+8. What should happen when Student Registry class/section differs from
+   session-specific class/section?
+
+9. What should happen to historical Attendance when the Student's
+   current class/section changes?
+
+10. What should happen when an Academic Session is switched?
+
+11. What should happen when an Academic Session is deleted?
+
+12. What should the eventual POST /api/attendance validation sequence be?
+
+==================================================
+IMPORTANT OUTPUT RULE
+==================================================
+
+This is an AUDIT ONLY.
+
+Do not:
+
+- edit files
+- modify code
+- modify schema
+- create migrations
+- modify data
+- modify APIs
+- modify frontend
+- modify Attendance behavior
+- integrate the enrollment resolver
+- fix unrelated issues
+
+Return ONLY the read-only findings and the proposed contract.
+
+Clearly separate:
+
+FACTS FOUND IN CURRENT CODE
+
+from
+
+RECOMMENDED FUTURE DESIGN
+
+from
+
+OPEN PRODUCT QUESTIONS.
+
+STOP AFTER THE AUDIT.
