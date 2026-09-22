@@ -4641,6 +4641,9 @@ Thank you for your prompt attention to this matter.
       const policy        = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
       const correctStatus = recomputeStatus(record, policy);
       if (correctStatus !== record.status) {
+        if (!attendanceSession.isActive) {
+          return res.json({ ...record, status: correctStatus });
+        }
         const [updated] = await db.update(teacherSelfAttendance)
           .set({ status: correctStatus, updatedAt: new Date() })
           .where(and(
@@ -4843,6 +4846,7 @@ Thank you for your prompt attention to this matter.
         if (!r.checkInTime) return r;
         const correct = recomputeStatus(r, policy);
         if (correct === r.status) return r;
+        if (!attendanceSession.isActive) return { ...r, status: correct };
         const [updated] = await db.update(teacherSelfAttendance)
           .set({ status: correct, updatedAt: now })
           .where(and(

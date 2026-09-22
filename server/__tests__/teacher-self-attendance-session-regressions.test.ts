@@ -3,7 +3,7 @@ import express from "express";
 import session from "express-session";
 import type { Server } from "node:http";
 import { and, eq, inArray } from "drizzle-orm";
-import { todayInIST } from "@shared/ist-time";
+import { addCalendarDays, todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceCorrectionRequests,
@@ -154,6 +154,109 @@ afterAll(async () => {
 });
 
 describe("Teacher self-attendance Session regression coverage", () => {
+  it("persists canonical status healing for the active Session today read", async () => {
+    const today = todayInIST();
+    const [record] = await db.insert(teacherSelfAttendance).values(attendanceValues({
+      sessionId: sessionAId,
+      checkInTime: new Date(`${today}T09:00:00+05:30`),
+      status: "Absent",
+    })).returning();
+
+    const result = await request("/api/teacher/self-attendance/today", sessionAId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ id: record.id, status: "Present" });
+
+    const [stored] = await db.select().from(teacherSelfAttendance).where(
+      eq(teacherSelfAttendance.id, record.id),
+    );
+    expect(stored.status).toBe("Present");
+  });
+
+  it("recalculates archived today status for display without persisting it", async () => {
+    const today = todayInIST();
+    const [record] = await db.insert(teacherSelfAttendance).values(attendanceValues({
+      sessionId: sessionBId,
+      checkInTime: new Date(`${today}T09:00:00+05:30`),
+      status: "Absent",
+    })).returning();
+
+    const result = await request("/api/teacher/self-attendance/today", sessionBId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ id: record.id, sessionId: sessionBId, status: "Present" });
+
+    const [stored] = await db.select().from(teacherSelfAttendance).where(
+      eq(teacherSelfAttendance.id, record.id),
+    );
+    expect(stored.status).toBe("Absent");
+  });
+
+  it("recalculates archived history statuses without changing any stored row", async () => {
+    const today = todayInIST();
+    const yesterday = addCalendarDays(today, -1);
+    const records = await db.insert(teacherSelfAttendance).values([
+      attendanceValues({
+        sessionId: sessionBId,
+        attendanceDate: today,
+        checkInTime: new Date(`${today}T09:00:00+05:30`),
+        status: "Absent",
+      }),
+      attendanceValues({
+        sessionId: sessionBId,
+        attendanceDate: yesterday,
+        checkInTime: new Date(`${yesterday}T09:00:00+05:30`),
+        status: "Late",
+      }),
+    ]).returning();
+
+    const result = await request(
+      `/api/teacher/self-attendance/history?startDate=${yesterday}&endDate=${today}`,
+      sessionBId,
+    );
+    expect(result.status).toBe(200);
+    expect(result.body).toHaveLength(2);
+    expect(result.body.map((row: any) => row.status)).toEqual(["Present", "Present"]);
+
+    const stored = await db.select().from(teacherSelfAttendance).where(
+      inArray(teacherSelfAttendance.id, records.map(record => record.id)),
+    );
+    expect(stored).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: records[0].id, status: "Absent" }),
+      expect.objectContaining({ id: records[1].id, status: "Late" }),
+    ]));
+  });
+
+  it("keeps active and archived records isolated while archived status is read-only", async () => {
+    const today = todayInIST();
+    const [activeRecord, archivedRecord] = await db.insert(teacherSelfAttendance).values([
+      attendanceValues({
+        sessionId: sessionAId,
+        checkInTime: new Date(`${today}T09:00:00+05:30`),
+        status: "Late",
+      }),
+      attendanceValues({
+        sessionId: sessionBId,
+        checkInTime: new Date(`${today}T09:00:00+05:30`),
+        status: "Absent",
+      }),
+    ]).returning();
+
+    const result = await request("/api/teacher/self-attendance/today", sessionBId);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      id: archivedRecord.id,
+      sessionId: sessionBId,
+      status: "Present",
+    });
+
+    const stored = await db.select().from(teacherSelfAttendance).where(
+      inArray(teacherSelfAttendance.id, [activeRecord.id, archivedRecord.id]),
+    );
+    expect(stored).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: activeRecord.id, status: "Late" }),
+      expect.objectContaining({ id: archivedRecord.id, status: "Absent" }),
+    ]));
+  });
+
   it("enforces teacher, Session, and date uniqueness while allowing valid neighboring identities", async () => {
     const date = todayInIST();
     await db.insert(teacherSelfAttendance).values(attendanceValues());

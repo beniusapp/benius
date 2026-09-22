@@ -1,0 +1,306 @@
+STEP 2L-3 — FIX ARCHIVED SELF-ATTENDANCE GET STATUS-HEALING
+
+We are continuing Attendance hardening.
+
+STEP 2L-3A READ-ONLY AUDIT RESULT:
+READY FOR IMPLEMENTATION
+
+The audit established the existing authoritative Session writability rule:
+
+A Session is writable only when:
+
+  selected/record-owned Session belongs to authenticated school
+  AND
+  academic_sessions.isActive === true
+
+Do NOT redesign this rule.
+
+The existing global checkSessionContext() already protects normal HTTP mutation routes.
+
+The confirmed defect is narrower:
+
+GET Teacher self-attendance endpoints can perform persistent status-healing UPDATEs.
+
+This allows an archived Session's Attendance record to be modified merely by being read.
+
+==================================================
+THIS STEP'S ONLY OBJECTIVE
+==================================================
+
+Prevent archived/inactive Teacher self-attendance records from being persistently modified by GET requests.
+
+Affected routes identified by the audit:
+
+1. GET /api/teacher/self-attendance/today
+
+2. GET /api/teacher/self-attendance/history
+
+Relevant code:
+  server/teacher-routes.ts
+
+The paginated history route already demonstrates the safe pattern:
+recalculate status for the response without persisting the recalculated status.
+
+==================================================
+NON-NEGOTIABLE REQUIREMENTS
+==================================================
+
+1. HISTORICAL READS MUST REMAIN AVAILABLE
+
+Archived Sessions must still be readable.
+
+Do NOT return ARCHIVE_READ_ONLY merely because the selected Session is inactive.
+
+The following must continue to work for archived Sessions:
+
+- today/history reads where applicable
+- historical self-attendance history
+- correction history/read-only information
+
+The fix is ONLY about preventing database mutation during GET.
+
+2. TENANT ISOLATION MUST REMAIN
+
+Continue deriving school from authenticated Teacher/session context.
+
+Never trust browser-supplied schoolId.
+
+Continue requiring the selected Session to belong to the authenticated school.
+
+3. SESSION ISOLATION MUST REMAIN
+
+Continue requiring:
+
+- authenticated teacher
+- authenticated school
+- validated selected Session
+- attendance date/session identity
+
+Legacy NULL-session records must remain excluded from Session-scoped operations.
+
+4. ACTIVE SESSION BEHAVIOR
+
+Preserve existing active-Session status-healing behavior ONLY if the current implementation intentionally relies on persistent healing for the active Session.
+
+Do not remove active-session functionality unnecessarily.
+
+For an active Session:
+
+- existing status recalculation behavior may remain
+- existing tenant/session predicates must remain
+
+For an inactive/archived Session:
+
+- status may be recalculated for display
+- BUT the recalculated status must NOT be persisted to the database.
+
+5. DO NOT MODIFY NORMAL MUTATION ROUTES
+
+Do NOT change:
+
+- POST /api/attendance
+- POST /api/teacher/self-attendance/check-in
+- POST /api/teacher/self-attendance/check-out
+- POST /api/teacher/self-attendance/correction
+
+The Step 2L-3A audit confirmed those are already protected by global Session mutation middleware.
+
+Do not duplicate that middleware logic into these routes.
+
+6. DO NOT MODIFY DATE RULES
+
+Preserve:
+
+- Student Attendance marking: today through exactly seven calendar days ago
+- Teacher self correction: today through exactly seven calendar days ago
+- Self check-in/check-out: today only
+
+Do not introduce Session startDate/endDate writability rules.
+
+7. DO NOT TOUCH LEAVE APPROVAL
+
+Do NOT modify:
+- Teacher leave approval
+- Student leave approval
+- leave synchronization
+
+The separate question of whether leave belonging to an archived Session may still be approved will be handled separately.
+
+==================================================
+IMPLEMENTATION GUIDANCE
+==================================================
+
+First inspect the existing implementation carefully.
+
+For:
+
+GET /api/teacher/self-attendance/today
+
+and:
+
+GET /api/teacher/self-attendance/history
+
+identify the exact UPDATE/status-healing block.
+
+Then implement the smallest change needed so that:
+
+IF selected Session is active:
+    preserve existing persistent status-healing behavior
+ELSE:
+    calculate the correct status for the response
+    DO NOT UPDATE the database
+
+Prefer reusing the already existing paginated-history response-only status pattern if appropriate.
+
+Do not create a second status calculation implementation.
+
+Use the existing canonical Attendance policy/status calculation utilities.
+
+If the existing status-healing helper can be safely changed to support a non-persisting/read-only mode, prefer that over duplicating logic.
+
+Do not refactor unrelated code.
+
+==================================================
+IMPORTANT READ-ONLY PRINCIPLE
+==================================================
+
+A GET request against an archived Session must be observational only.
+
+The request must not:
+
+- UPDATE the Attendance record
+- change status
+- change checkout/check-in values
+- create a record
+- delete a record
+- alter audit history
+
+It may calculate the status in memory for display.
+
+==================================================
+REGRESSION TESTS
+==================================================
+
+Add focused tests for this exact behavior.
+
+TEST 1 — Active Session healing
+
+Create/fixture:
+- authenticated teacher
+- authenticated school
+- active Session
+- self-attendance record whose stored status differs from canonical recalculated status
+
+Call:
+  GET /api/teacher/self-attendance/today
+
+Verify:
+- response contains the recalculated status
+- existing active-Session healing behavior is preserved
+- if current design persists healing, verify the database record is updated
+
+Do not assume persistence is required if inspection proves the active route is intentionally response-only. In that case test the actual intended existing behavior.
+
+TEST 2 — Archived Session must be read-only
+
+Create/fixture:
+- authenticated teacher
+- authenticated school
+- inactive/archived Session
+- self-attendance record with a deliberately stale status
+
+Call the applicable GET history/today endpoint with the archived Session selected.
+
+Verify:
+- request succeeds as a read
+- response contains the correct recalculated/display status
+- database stored status remains unchanged
+
+TEST 3 — Archived history must not mutate multiple records
+
+Create several archived self-attendance records with stale statuses.
+
+Call:
+  GET /api/teacher/self-attendance/history
+
+Verify:
+- all records are readable
+- response statuses are correctly calculated
+- no database rows are changed
+
+TEST 4 — Cross-Session isolation
+
+Create:
+- same teacher
+- same school
+- Session A active
+- Session B archived
+- corresponding self-attendance records
+
+Read Session B.
+
+Verify:
+- Session A records are not touched
+- Session B record is read correctly
+- Session B record is not persisted-updated because it is archived
+
+TEST 5 — Legacy NULL Session
+
+If existing test infrastructure supports it, include a legacy self-attendance row with:
+
+  session_id = NULL
+
+Verify that Session-scoped GETs do not include or mutate it.
+
+Do NOT backfill the NULL Session.
+
+==================================================
+PRESERVE EXISTING GLOBAL GUARD
+==================================================
+
+Do not modify checkSessionContext() unless inspection proves the current GET behavior cannot be fixed without changing it.
+
+The global middleware intentionally exempts GET requests.
+
+That behavior should remain.
+
+==================================================
+VERIFICATION
+==================================================
+
+Before implementation:
+inspect the existing code and tests.
+
+After implementation:
+
+Run the focused Teacher self-attendance tests.
+
+Run:
+
+  npm run check
+
+Run:
+
+  git diff --check
+
+Report:
+
+1. Exact files changed.
+2. Exact production behavior changed.
+3. Exact GET routes affected.
+4. Tests added/changed.
+5. Test results.
+6. npm run check result.
+7. git diff --check result.
+8. Confirmation that:
+   - archived reads remain available
+   - archived GET requests no longer persist status-healing changes
+   - active Session behavior is preserved
+   - normal POST mutation routes were not changed
+   - Student Attendance was not changed
+   - leave approval/synchronization was not changed
+   - no schema/migration changes occurred.
+
+STOP after Step 2L-3.
+
+Do not start Step 2L-4 automatically.
