@@ -272,12 +272,20 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
         studentId: s.studentId,
         status: localStatuses[s.studentId] || s.status,
       }));
-      const res = await apiRequest("POST", "/api/attendance", {
-        date: selectedDate,
-        records,
-        class: selectedClass,
-        section: selectedSection,
+      const res = await sessionFetchForViewSession("/api/attendance", selectedSession?.id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          date: selectedDate,
+          records,
+          class: selectedClass,
+          section: selectedSection,
+        }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Failed to save Attendance");
+      }
       return res.json();
     },
     onSuccess: (data) => {

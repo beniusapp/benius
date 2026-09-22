@@ -13,7 +13,7 @@ const WEEKDAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "
 
 type InstantInput = string | Date | null | undefined;
 
-function instant(value: InstantInput): Date | null {
+export function instant(value: InstantInput): Date | null {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   const source = String(value).trim();

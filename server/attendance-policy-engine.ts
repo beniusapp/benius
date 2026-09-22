@@ -2,6 +2,7 @@
  * Attendance Policy Engine
  * Centralised, reusable evaluation logic – no hardcoded timings anywhere else.
  */
+import { instant, SCHOOL_TIME_ZONE } from "../shared/ist-time";
 
 export interface PolicyConfig {
   policyName: string;
@@ -37,12 +38,18 @@ function timeToMinutes(hhmm: string): number {
   return h * 60 + (m ?? 0);
 }
 
-/** Convert a UTC Date to IST "HH:MM" string */
-export function utcToISTHHMM(utcDate: Date): string {
-  const ist = new Date(utcDate.getTime() + 19_800_000); // +5:30
-  const h = ist.getUTCHours().toString().padStart(2, "0");
-  const m = ist.getUTCMinutes().toString().padStart(2, "0");
-  return `${h}:${m}`;
+/** Convert a persisted instant to IST "HH:MM" using the canonical parser. */
+export function utcToISTHHMM(value: Date | string): string {
+  const parsed = instant(value);
+  if (!parsed) throw new Error("Invalid attendance timestamp");
+  const values = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SCHOOL_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(parsed);
+  const get = (type: string) => values.find(part => part.type === type)?.value ?? "00";
+  return `${get("hour")}:${get("minute")}`;
 }
 
 /**
@@ -170,14 +177,12 @@ export function recomputeStatus(
     return rec.status === "Leave" ? "Leave" : "Not Marked";
   }
 
-  const checkInDate = rec.checkInTime instanceof Date ? rec.checkInTime : new Date(rec.checkInTime as string);
-  const checkInIST  = utcToISTHHMM(checkInDate);
+  const checkInIST  = utcToISTHHMM(rec.checkInTime);
   let status = evaluateAttendanceStatus(checkInIST, policy).displayStatus;
 
   // Early checkout → Half Day (only when check-in didn't already evaluate to Leave)
   if (status !== "Leave" && rec.checkOutTime) {
-    const checkOutDate = rec.checkOutTime instanceof Date ? rec.checkOutTime : new Date(rec.checkOutTime as string);
-    const checkOutIST  = utcToISTHHMM(checkOutDate);
+    const checkOutIST  = utcToISTHHMM(rec.checkOutTime);
     const [coh, com]   = checkOutIST.split(":").map(Number);
     const coMin        = coh * 60 + (com ?? 0);
     const [hch, hcm]   = (policy.halfDayCutoffTime || "12:00").split(":").map(Number);

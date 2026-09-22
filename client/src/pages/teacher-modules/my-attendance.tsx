@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
@@ -20,6 +20,8 @@ import {
   formatDateOnlyWithWeekday,
   formatMonthYearFromDateOnly,
   formatTimeIST,
+  instantEpochMillis,
+  minutesSinceMidnightIST,
 } from "@shared/ist-time";
 
 interface AcademicSession {
@@ -147,11 +149,26 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const sessionStartDate = currentSession?.startDate ?? "";
   const sessionEndDate   = currentSession?.endDate   ?? "";
   const sessionName      = currentSession?.sessionName ?? "";
+  const sessionFetch = (url: string, init: RequestInit = {}) =>
+    sessionFetchForViewSession(url, selectedSessionId, init);
+  const sessionMutation = async (url: string, body: unknown) => {
+    const response = await sessionFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.message || "Attendance request failed");
+    }
+    return response.json();
+  };
 
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: todayRaw, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
-    queryKey: ["/api/teacher/self-attendance/today", today],
-    queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/today", { credentials: "include" }); return r.ok ? r.json() : null; },
+    queryKey: ["/api/teacher/self-attendance/today", selectedSessionId, today],
+    queryFn: async () => { const r = await sessionFetch("/api/teacher/self-attendance/today"); return r.ok ? r.json() : null; },
+    enabled: selectedSessionId !== null,
     staleTime: 0, refetchOnMount: "always",
     refetchInterval: 60000, // polling fallback — catches midnight if setTimeout missed (e.g. browser was suspended)
   });
@@ -161,20 +178,21 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const todayRec = todayRaw?.attendanceDate === today ? todayRaw : null;
 
   const { data: history = [], isLoading: historyLoading } = useQuery<SelfAttRecord[]>({
-    queryKey: ["/api/teacher/self-attendance/history", sessionStartDate, sessionEndDate],
+    queryKey: ["/api/teacher/self-attendance/history", selectedSessionId, sessionStartDate, sessionEndDate],
     queryFn: async () => {
       if (!sessionStartDate || !sessionEndDate) return [];
       const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate });
-      const r = await fetch(`/api/teacher/self-attendance/history?${params}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/teacher/self-attendance/history?${params}`);
       return r.ok ? r.json() : [];
     },
-    enabled: !!sessionStartDate,
+    enabled: selectedSessionId !== null && !!sessionStartDate,
     staleTime: 60000,
   });
 
   const { data: corrections = [], isLoading: correctionsLoading } = useQuery<CorrectionReq[]>({
-    queryKey: ["/api/teacher/self-attendance/corrections"],
-    queryFn: async () => { const r = await fetch("/api/teacher/self-attendance/corrections", { credentials: "include" }); return r.ok ? r.json() : []; },
+    queryKey: ["/api/teacher/self-attendance/corrections", selectedSessionId],
+    queryFn: async () => { const r = await sessionFetch("/api/teacher/self-attendance/corrections"); return r.ok ? r.json() : []; },
+    enabled: selectedSessionId !== null,
   });
 
   const { data: policy } = useQuery<AttendancePolicyInfo>({
@@ -188,11 +206,11 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   // ── Mutations ────────────────────────────────────────────────────────────────
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history", sessionStartDate, sessionEndDate] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history", selectedSessionId, sessionStartDate, sessionEndDate] });
   };
 
   const checkInMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/check-in", { latitude: geo.lat, longitude: geo.lng, locationVerified: geo.verified }).then(r => r.json()),
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/check-in", { latitude: geo.lat, longitude: geo.lng, locationVerified: geo.verified }),
     onSuccess: (d) => {
       if (d.status === "Leave") {
         toast({ title: "🏫 School Day Ended", description: `Attendance recorded as Leave. School ended at ${policy?.schoolEndTime ?? "—"}.`, variant: "destructive" });
@@ -207,7 +225,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   });
 
   const checkOutMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/check-out", {}).then(r => r.json()),
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/check-out", {}),
     onSuccess: (d) => { toast({ title: "✅ Checked Out!", description: `Total: ${fmtDuration(d.totalWorkingMinutes)}` }); invalidate(); },
     onError:   (e: Error) => toast({ title: "Check-out failed", description: e.message, variant: "destructive" }),
   });
@@ -218,7 +236,8 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (todayRec?.checkInTime && !todayRec?.checkOutTime) {
-      const start = new Date(todayRec.checkInTime).getTime();
+      const start = instantEpochMillis(todayRec.checkInTime);
+      if (start === null) return;
       setElapsed(Math.floor((Date.now() - start) / 1000));
       timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     }
@@ -319,7 +338,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const sevenAgo = useMemo(() => addCalendarDays(today, -7), [today]);
 
   const corrMut = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }).then(r => r.json()),
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }),
     onSuccess: () => {
       toast({ title: "✅ Attendance Corrected", description: "Your record has been updated immediately." });
       setShowModal(false); setCorrForm({ date: "", checkIn: "", checkOut: "", reason: "" });
@@ -342,16 +361,14 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   // ── School-over detection (IST) ──────────────────────────────────────────────
   const isSchoolOver = (() => {
     if (!policy?.schoolEndTime) return false;
-    const now = new Date();
-    const istNow = new Date(now.getTime() + 19_800_000);
-    const hh = String(istNow.getUTCHours()).padStart(2, "0");
-    const mm = String(istNow.getUTCMinutes()).padStart(2, "0");
-    return `${hh}:${mm}` > policy.schoolEndTime;
+    const [endHour, endMinute] = policy.schoolEndTime.split(":").map(Number);
+    return minutesSinceMidnightIST() > endHour * 60 + endMinute;
   })();
 
   // ── Render ───────────────────────────────────────────────────────────────────
   if (showHistory) {
-    return <AttendanceHistoryView teacher={teacher} onBack={() => setShowHistory(false)} />;
+    if (selectedSessionId === null) return null;
+    return <AttendanceHistoryView teacher={teacher} sessionId={selectedSessionId} onBack={() => setShowHistory(false)} />;
   }
 
   return (

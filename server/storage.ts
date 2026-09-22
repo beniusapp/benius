@@ -52,7 +52,7 @@ import {
   type PasswordResetChallenge,
   type StudentPasswordResetChallenge,
 } from "@shared/schema";
-import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
+import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
@@ -3409,7 +3409,11 @@ export class DatabaseStorage {
         eq(students.id, studentId),
         eq(students.schoolId, schoolId),
       )).then(rows => rows[0]),
-      db.select({ id: academicSessions.id }).from(academicSessions).where(and(
+      db.select({
+        id: academicSessions.id,
+        startDate: academicSessions.startDate,
+        endDate: academicSessions.endDate,
+      }).from(academicSessions).where(and(
         eq(academicSessions.id, sessionId),
         eq(academicSessions.schoolId, schoolId),
       )).then(rows => rows[0]),
@@ -3423,9 +3427,12 @@ export class DatabaseStorage {
     if (!student || !session || (teacherId !== null && !teacher)) {
       throw new Error("Leave Attendance entities do not belong to the same school");
     }
+    const boundedStart = startDate > session.startDate ? startDate : session.startDate;
+    const boundedEnd = endDate < session.endDate ? endDate : session.endDate;
+    if (boundedStart > boundedEnd) return;
 
     await db.transaction(async (tx) => {
-      for (let dateStr = startDate; dateStr <= endDate; dateStr = addCalendarDays(dateStr, 1)) {
+      for (let dateStr = boundedStart; dateStr <= boundedEnd; dateStr = addCalendarDays(dateStr, 1)) {
       if (calendarWeekday(dateStr) === 0) continue;
       const existing = await tx.select().from(attendanceRecords)
         .where(and(
@@ -3530,7 +3537,7 @@ export class DatabaseStorage {
 
   // ===== TEACHER LEAVE BALANCE (policy-driven) =====
   async getTeacherLeaveBalance(teacherId: number): Promise<{ sick: number; casual: number; earned: number }> {
-    const year = new Date().getFullYear();
+    const year = dateOnlyParts(todayInIST())!.year;
     const startOfYear = `${year}-01-01`;
     const endOfYear = `${year}-12-31`;
     const approved = await db.select().from(leaveRequests)
@@ -3542,9 +3549,8 @@ export class DatabaseStorage {
       ));
     let sick = 0, casual = 0, earned = 0;
     for (const r of approved) {
-      const start = new Date(r.startDate);
-      const end = new Date(r.endDate);
-      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      const days = (calendarDayDifference(r.startDate, r.endDate) ?? -1) + 1;
+      if (days <= 0) continue;
       const type = r.leaveType.toLowerCase();
       if (type.includes("sick")) sick += days;
       else if (type.includes("casual")) casual += days;
@@ -3596,12 +3602,11 @@ export class DatabaseStorage {
         ));
 
       let used = 0;
-      const periodStartDate = new Date(periodStart);
-      const periodEndDate = new Date(periodEnd);
       for (const r of currentApproved) {
-        const start = new Date(Math.max(new Date(r.startDate).getTime(), periodStartDate.getTime()));
-        const end = new Date(Math.min(new Date(r.endDate).getTime(), periodEndDate.getTime()));
-        used += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        const start = r.startDate > periodStart ? r.startDate : periodStart;
+        const end = r.endDate < periodEnd ? r.endDate : periodEnd;
+        const overlapDays = calendarDayDifference(start, end);
+        if (overlapDays !== null && overlapDays >= 0) used += overlapDays + 1;
       }
 
       let carryForward = 0;
@@ -3624,12 +3629,11 @@ export class DatabaseStorage {
             ));
 
           let prevUsed = 0;
-          const prevPeriodStartDate = new Date(prevPeriodStart);
-          const prevPeriodEndDate = new Date(prevPeriodEnd);
           for (const r of prevApproved) {
-            const start = new Date(Math.max(new Date(r.startDate).getTime(), prevPeriodStartDate.getTime()));
-            const end = new Date(Math.min(new Date(r.endDate).getTime(), prevPeriodEndDate.getTime()));
-            prevUsed += Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            const start = r.startDate > prevPeriodStart ? r.startDate : prevPeriodStart;
+            const end = r.endDate < prevPeriodEnd ? r.endDate : prevPeriodEnd;
+            const overlapDays = calendarDayDifference(start, end);
+            if (overlapDays !== null && overlapDays >= 0) prevUsed += overlapDays + 1;
           }
           carryForward = Math.max(0, policy.annualLimit - prevUsed);
         }
@@ -4791,8 +4795,7 @@ export class DatabaseStorage {
     const result = [];
     for (let day = 1; day <= lastDay; day++) {
       const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const d = new Date(year, month - 1, day);
-      const dayOfWeek = d.getDay();
+      const dayOfWeek = calendarWeekday(dateStr)!;
       const isSunday = dayOfWeek === 0;
       const isFuture = dateStr > today;
 

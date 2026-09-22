@@ -452,9 +452,15 @@ export function registerTeacherRoutes(app: Express) {
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
 
-    const activeSession = await storage.getActiveSession(teacher.schoolId);
-    if (!activeSession) {
-      return res.status(409).json({ message: "No active academic session found" });
+    let attendanceSession;
+    try {
+      attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+      );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
     }
 
     const submittedStudentIds = [...new Set(records.map((record: any) => Number(record.studentId)))];
@@ -497,7 +503,7 @@ export function registerTeacherRoutes(app: Express) {
       class: cls || teacher.assignedClass,
       section: section || teacher.assignedSection,
       academicYear,
-      sessionId: activeSession.id,
+      sessionId: attendanceSession.id,
     }));
 
     const saved = await storage.upsertAttendance(formattedRecords);
@@ -510,6 +516,9 @@ export function registerTeacherRoutes(app: Express) {
     const sid = parseInt(schoolId);
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
+      return res.status(400).json({ message: "Invalid Attendance date range" });
+    }
     try {
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId,
@@ -1625,12 +1634,10 @@ export function registerTeacherRoutes(app: Express) {
     const { leaveType, startDate, endDate, reason } = req.body;
     if (!leaveType || !startDate || !endDate || !reason) return res.status(400).json({ message: "All fields required" });
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) {
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
       return res.status(400).json({ message: "Invalid date range" });
     }
-    const daysRequested = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const daysRequested = calendarDayDifference(startDate, endDate)! + 1;
 
     const eligiblePolicies = await storage.getActiveLeavePoliciesBySchool(teacher.schoolId, "teacher");
     const matchedPolicy = eligiblePolicies.find(p => p.name.toLowerCase() === leaveType.toLowerCase());
@@ -1687,6 +1694,16 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(403).json({ message: "Not authorized" });
       }
     }
+    let leaveSession: Awaited<ReturnType<typeof storage.getAcademicSessionById>> | null = null;
+    if (status === "approved") {
+      if (!leave.sessionId) {
+        return res.status(409).json({ message: "Leave request has no academic Session" });
+      }
+      leaveSession = await storage.getAcademicSessionById(leave.sessionId);
+      if (!leaveSession || leaveSession.schoolId !== leave.schoolId) {
+        return res.status(403).json({ message: "Leave request Session is not valid for this school" });
+      }
+    }
     const updated = await storage.updateLeaveStatusWithApprover(
       leave.id,
       req.session.schoolId!,
@@ -1703,18 +1720,24 @@ export function registerTeacherRoutes(app: Express) {
     // When approved: sync attendance records as "Leave" for all leave dates
     if (status === "approved" && leave.teacherId) {
       const now = new Date();
-      for (let dateStr = leave.startDate; dateStr <= leave.endDate; dateStr = addCalendarDays(dateStr, 1)) {
+      const boundedStart = leave.startDate > leaveSession!.startDate ? leave.startDate : leaveSession!.startDate;
+      const boundedEnd = leave.endDate < leaveSession!.endDate ? leave.endDate : leaveSession!.endDate;
+      for (
+        let dateStr = boundedStart;
+        dateStr <= boundedEnd;
+        dateStr = addCalendarDays(dateStr, 1)
+      ) {
         const [existing] = await db.select().from(teacherSelfAttendance)
           .where(and(
             eq(teacherSelfAttendance.teacherId, leave.teacherId),
             eq(teacherSelfAttendance.schoolId, leave.schoolId),
+            eq(teacherSelfAttendance.sessionId, leaveSession!.id),
             eq(teacherSelfAttendance.attendanceDate, dateStr),
           ));
         if (!existing) {
-          const leaveActiveSession = await storage.getActiveSession(leave.schoolId);
           await db.insert(teacherSelfAttendance).values({
             teacherId: leave.teacherId, schoolId: leave.schoolId,
-            sessionId: leaveActiveSession?.id ?? null,
+            sessionId: leaveSession!.id,
             attendanceDate: dateStr, status: "Leave",
             totalWorkingMinutes: 0,
           });
@@ -1725,6 +1748,7 @@ export function registerTeacherRoutes(app: Express) {
               eq(teacherSelfAttendance.id, existing.id),
               eq(teacherSelfAttendance.teacherId, leave.teacherId),
               eq(teacherSelfAttendance.schoolId, leave.schoolId),
+              eq(teacherSelfAttendance.sessionId, leaveSession!.id),
             ));
         }
       }
@@ -3854,7 +3878,7 @@ Thank you for your prompt attention to this matter.
         yearEnd = attendanceSession.endDate;
       } else {
         const today = todayInIST();
-        const year = new Date().getFullYear();
+        const year = Number(today.slice(0, 4));
         const aprThisYear = `${year}-04-01`;
         yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
         yearEnd = today;
@@ -4593,12 +4617,16 @@ Thank you for your prompt attention to this matter.
       const today = istToday();
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
 
       const [[record], policyRows] = await Promise.all([
         db.select().from(teacherSelfAttendance).where(
           and(
             eq(teacherSelfAttendance.teacherId, req.session.teacherId),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
             eq(teacherSelfAttendance.attendanceDate, today),
           )
         ),
@@ -4619,12 +4647,14 @@ Thank you for your prompt attention to this matter.
             eq(teacherSelfAttendance.id, record.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           ))
           .returning();
         return res.json(updated);
       }
       res.json(record);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch today's record" });
     }
   });
@@ -4651,6 +4681,9 @@ Thank you for your prompt attention to this matter.
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
       const today = istToday();
       const { latitude, longitude, locationVerified } = req.body;
 
@@ -4658,6 +4691,7 @@ Thank you for your prompt attention to this matter.
         and(
           eq(teacherSelfAttendance.teacherId, req.session.teacherId),
           eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, today),
         )
       );
@@ -4673,27 +4707,27 @@ Thank you for your prompt attention to this matter.
       const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
       const status = evalResult.displayStatus; // "Present", "Late", "Half Day", or "Leave"
 
-      const activeSessionForCheckIn = await storage.getActiveSession(teacher.schoolId);
-      const checkInSessionId = activeSessionForCheckIn?.id ?? null;
       let record;
       if (existing) {
         [record] = await db.update(teacherSelfAttendance)
-          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now, ...(checkInSessionId ? { sessionId: checkInSessionId } : {}) })
+          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now })
           .where(and(
             eq(teacherSelfAttendance.id, existing.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           )).returning();
       } else {
         [record] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
-          sessionId: checkInSessionId,
+          sessionId: attendanceSession.id,
           checkInTime: now, status, locationVerified: !!locationVerified,
           latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null,
         }).returning();
       }
       res.json(record);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Check-in failed" });
     }
   });
@@ -4705,10 +4739,14 @@ Thank you for your prompt attention to this matter.
       const today = istToday();
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(
           eq(teacherSelfAttendance.teacherId, req.session.teacherId),
           eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, today),
         )
       );
@@ -4723,6 +4761,7 @@ Thank you for your prompt attention to this matter.
           eq(teacherSelfAttendance.id, existing.id),
           eq(teacherSelfAttendance.teacherId, teacher.id),
           eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
         )).returning();
 
       // Early check-out: if checkout time (IST) < halfDayCutoffTime → mark as Half Day
@@ -4743,12 +4782,14 @@ Thank you for your prompt attention to this matter.
               eq(teacherSelfAttendance.id, record.id),
               eq(teacherSelfAttendance.teacherId, teacher.id),
               eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+              eq(teacherSelfAttendance.sessionId, attendanceSession.id),
             )).returning();
         }
       }
 
       res.json(record);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Check-out failed" });
     }
   });
@@ -4763,6 +4804,9 @@ Thank you for your prompt attention to this matter.
         // Session-scoped: use the session's actual boundaries
         start = req.query.startDate as string;
         end   = req.query.endDate   as string;
+        if (!isValidDateOnly(start) || !isValidDateOnly(end) || start > end) {
+          return res.status(400).json({ message: "Invalid Attendance date range" });
+        }
       } else {
         // Legacy: last N days (max 90)
         const days = Math.min(parseInt(req.query.days as string) || 30, 90);
@@ -4772,12 +4816,16 @@ Thank you for your prompt attention to this matter.
 
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
 
       const [records, policyRows] = await Promise.all([
         db.select().from(teacherSelfAttendance).where(
           and(
             eq(teacherSelfAttendance.teacherId, req.session.teacherId),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
             gte(teacherSelfAttendance.attendanceDate, start),
             lte(teacherSelfAttendance.attendanceDate, end),
           )
@@ -4801,6 +4849,7 @@ Thank you for your prompt attention to this matter.
             eq(teacherSelfAttendance.id, r.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           ))
           .returning();
         return updated;
@@ -4808,6 +4857,7 @@ Thank you for your prompt attention to this matter.
 
       res.json(healed);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch history" });
     }
   });
@@ -4827,6 +4877,9 @@ Thank you for your prompt attention to this matter.
       if (diffDays === null)
         return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
       if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
 
       // Parse times as IST (teachers enter local Indian time)
       const checkInIST  = new Date(`${date}T${requestedCheckIn}:00+05:30`);
@@ -4848,24 +4901,24 @@ Thank you for your prompt attention to this matter.
         and(
           eq(teacherSelfAttendance.teacherId, req.session.teacherId),
           eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, date),
         )
       );
-      const activeSessionForCorr = await storage.getActiveSession(teacher.schoolId);
-      const corrSessionId = activeSessionForCorr?.id ?? null;
       let attendanceRecord;
       if (existing) {
         [attendanceRecord] = await db.update(teacherSelfAttendance)
-          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now, ...(corrSessionId ? { sessionId: corrSessionId } : {}) })
+          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now })
           .where(and(
             eq(teacherSelfAttendance.id, existing.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
             eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           )).returning();
       } else {
         [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
           teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
-          sessionId: corrSessionId,
+          sessionId: attendanceSession.id,
           checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes,
           status, locationVerified: false,
         }).returning();
@@ -4874,12 +4927,13 @@ Thank you for your prompt attention to this matter.
       // Log the correction as auto-approved for audit history
       const [correction] = await db.insert(attendanceCorrectionRequests).values({
         teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
-        sessionId: corrSessionId,
+        sessionId: attendanceSession.id,
         requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Approved",
       }).returning();
 
       res.json({ correction, attendanceRecord });
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to apply correction" });
     }
   });
@@ -4890,14 +4944,19 @@ Thank you for your prompt attention to this matter.
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
       const corrections = await db.select().from(attendanceCorrectionRequests)
         .where(and(
           eq(attendanceCorrectionRequests.teacherId, req.session.teacherId),
           eq(attendanceCorrectionRequests.schoolId, teacher.schoolId),
+          eq(attendanceCorrectionRequests.sessionId, attendanceSession.id),
         ))
         .orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
       res.json(corrections);
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch corrections" });
     }
   });
@@ -4911,6 +4970,9 @@ Thank you for your prompt attention to this matter.
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
 
       const {
         fromDate, toDate,
@@ -4923,7 +4985,11 @@ Thank you for your prompt attention to this matter.
       const conditions: ReturnType<typeof eq>[] = [
         eq(teacherSelfAttendance.teacherId, req.session.teacherId),
         eq(teacherSelfAttendance.schoolId,  teacher.schoolId),
+        eq(teacherSelfAttendance.sessionId, attendanceSession.id),
       ];
+      if ((fromDate && !isValidDateOnly(fromDate)) || (toDate && !isValidDateOnly(toDate)) || (fromDate && toDate && fromDate > toDate)) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
       if (fromDate) conditions.push(gte(teacherSelfAttendance.attendanceDate, fromDate) as any);
       if (toDate)   conditions.push(lte(teacherSelfAttendance.attendanceDate, toDate) as any);
       if (status && status !== "all") conditions.push(eq(teacherSelfAttendance.status, status) as any);

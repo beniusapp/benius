@@ -224,6 +224,27 @@ describe("Attendance canonical persistence identity", () => {
     expect(new Set(rows.map(row => row.sessionId))).toEqual(new Set([sessionAId, sessionBId]));
   });
 
+  it("clamps Leave synchronization to the validated Session boundaries", async () => {
+    const [boundedSession] = await db.insert(academicSessions).values({
+      schoolId: schoolAId,
+      sessionName: "2040 boundary",
+      startDate: "2040-04-01",
+      endDate: "2040-04-03",
+      isActive: false,
+    }).returning();
+
+    await storage.markAttendanceAsLeave(
+      studentId, teacherAId, schoolAId, boundedSession.id, "2040-03-30", "2040-04-05",
+    );
+
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolAId),
+      eq(attendanceRecords.sessionId, boundedSession.id),
+      eq(attendanceRecords.studentId, studentId),
+    ));
+    expect(rows.map(row => row.date).sort()).toEqual(["2040-04-02", "2040-04-03"]);
+  });
+
   it("lets the database reject a duplicate canonical key", async () => {
     const values = attendanceInput({ date: "2040-04-11" });
     await db.insert(attendanceRecords).values(values);

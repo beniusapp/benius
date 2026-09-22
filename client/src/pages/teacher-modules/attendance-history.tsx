@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { sessionFetchForViewSession } from "@/lib/queryClient";
 import {
   ArrowLeft, Calendar, Clock, Flame, TrendingUp, CheckCircle,
   AlertTriangle, UserX, BarChart2, FileSpreadsheet, Printer,
@@ -358,7 +359,7 @@ const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════════ */
-export default function AttendanceHistoryView({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
+export default function AttendanceHistoryView({ teacher, sessionId, onBack }: { teacher: TeacherMe; sessionId: number; onBack: () => void }) {
   const today = useISTToday();
   const todayParts = dateOnlyParts(today)!;
 
@@ -401,7 +402,12 @@ export default function AttendanceHistoryView({ teacher, onBack }: { teacher: Te
   const apiUrl = `/api/teacher/attendance/history?fromDate=${eff_from}&toDate=${eff_to}&pageSize=200`;
 
   const { data, isLoading, isError, refetch, isRefetching } = useQuery<HistResponse>({
-    queryKey: [apiUrl],
+    queryKey: [apiUrl, sessionId],
+    queryFn: async () => {
+      const response = await sessionFetchForViewSession(apiUrl, sessionId);
+      if (!response.ok) throw new Error("Failed to load Attendance history");
+      return response.json();
+    },
     staleTime: 0,
   });
 

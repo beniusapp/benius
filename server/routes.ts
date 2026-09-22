@@ -64,7 +64,7 @@ import {
 } from "./password-recovery-email";
 import path from "node:path";
 import fs from "node:fs";
-import { dateOnlyParts, getAcademicYearForISTDate, replaceCalendarYear, todayInIST } from "@shared/ist-time";
+import { dateOnlyParts, getAcademicYearForISTDate, isValidDateOnly, replaceCalendarYear, todayInIST } from "@shared/ist-time";
 import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
 import {
   buildLedgerFilterPredicates,
@@ -2022,6 +2022,9 @@ export async function registerRoutes(
     const directStart = (req.query.startDate as string) || "";
     const directEnd   = (req.query.endDate   as string) || "";
     if (directStart && directEnd) {
+      if (!isValidDateOnly(directStart) || !isValidDateOnly(directEnd) || directStart > directEnd) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
       startDate = directStart;
       endDate   = directEnd;
       label     = (req.query.sessionName as string) || directStart.slice(0, 4);
@@ -2067,6 +2070,9 @@ export async function registerRoutes(
     const directStart = (req.query.startDate as string) || "";
     const directEnd   = (req.query.endDate   as string) || "";
     if (directStart) {
+      if (!isValidDateOnly(directStart) || (directEnd && !isValidDateOnly(directEnd)) || (directEnd && directStart > directEnd)) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
       startDate = directStart;
       endDate   = directEnd || undefined;
     } else {

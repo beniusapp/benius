@@ -1004,7 +1004,7 @@ export const teacherSelfAttendance = pgTable("teacher_self_attendance", {
   longitude: text("longitude"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-}, (t) => [uniqueIndex("uq_teacher_self_attendance").on(t.teacherId, t.attendanceDate)]);
+}, (t) => [uniqueIndex("uq_teacher_self_attendance").on(t.teacherId, t.sessionId, t.attendanceDate)]);
 
 export const insertTeacherSelfAttendanceSchema = createInsertSchema(teacherSelfAttendance).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertTeacherSelfAttendance = z.infer<typeof insertTeacherSelfAttendanceSchema>;
