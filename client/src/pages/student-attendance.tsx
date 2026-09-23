@@ -143,6 +143,12 @@ export function getMonthlySummary(days: DayData[]) {
   );
 }
 
+export function getYearlyMonthPercentage(month: Pick<MonthStat, "present" | "late" | "leave" | "halfDay" | "workingDays">): number {
+  if (month.workingDays === 0) return 0;
+  const weightedAttendance = month.present + month.late + month.leave + month.halfDay * 0.5;
+  return Math.round((weightedAttendance / month.workingDays) * 1000) / 10;
+}
+
 export default function StudentAttendance() {
   const { isArchiveMode, selectedSession } = useSessionView();
   const { toast } = useToast();
@@ -773,8 +779,7 @@ export default function StudentAttendance() {
                       </thead>
                       <tbody>
                         {yearMonths.map(m => {
-                          const wd = m.workingDays || 1;
-                          const pct = wd > 0 ? Math.round(((m.present + m.halfDay * 0.5 + m.leave) / wd) * 100) : 0;
+                          const pct = getYearlyMonthPercentage(m);
                           return (
                             <tr key={`${m.year}-${m.month}`} className="border-b border-slate-50 hover:bg-slate-50">
                               <td className="py-1.5 text-left text-slate-700 font-medium">
@@ -785,7 +790,7 @@ export default function StudentAttendance() {
                               <td className="py-1.5 text-amber-500 font-semibold">{m.halfDay}</td>
                               <td className="py-1.5 text-sky-400 font-semibold">{m.leave}</td>
                               <td className="py-1.5 text-slate-400">{m.workingDays}</td>
-                              <td className={`py-1.5 font-bold ${pct >= 75 ? "text-emerald-600" : "text-red-500"}`}>{pct}%</td>
+                              <td className={`py-1.5 font-bold ${pct >= 75 ? "text-emerald-600" : "text-red-500"}`}>{pct.toFixed(1)}%</td>
                             </tr>
                           );
                         })}

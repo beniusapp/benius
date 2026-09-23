@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { aggregateStudentAttendance } from "../../../server/student-attendance-calculation";
-import { getDayCell, getMonthlySummary, type DayData } from "./student-attendance";
+import { getDayCell, getMonthlySummary, getYearlyMonthPercentage, type DayData } from "./student-attendance";
 
 function day(date: string, status = "none", isSunday = false): DayData {
   return {
@@ -74,5 +74,61 @@ describe("Student Attendance monthly display", () => {
     expect(getMonthlySummary([holiday, leave])).toMatchObject({ holiday: 1, leave: 1 });
     expect(getDayCell(holiday).label).toBe("Holiday");
     expect(getDayCell(leave).label).toBe("Approved Leave");
+  });
+});
+
+describe("Student yearly Attendance percentage", () => {
+  const month = (overrides: Partial<{
+    present: number; late: number; halfDay: number; leave: number; workingDays: number;
+  }> = {}) => ({
+    present: 0, late: 0, halfDay: 0, leave: 0, workingDays: 1,
+    ...overrides,
+  });
+
+  it.each([
+    ["Late", { late: 1 }, "late", 100],
+    ["Present", { present: 1 }, "present", 100],
+    ["Half Day", { halfDay: 1 }, "halfday", 50],
+    ["Absent", {}, "absent", 0],
+    ["Leave", { leave: 1 }, "leave", 100],
+  ] as const)("gives %s the canonical weight", (_label, counts, status, expected) => {
+    const percentage = getYearlyMonthPercentage(month(counts));
+    expect(percentage).toBe(expected);
+    expect(percentage).toBe(aggregateStudentAttendance({
+      schoolId: 1, sessionId: 2, statuses: [status],
+    }).percentage);
+    expect(percentage.toFixed(1)).toBe(expected.toFixed(1));
+  });
+
+  it("uses all status weights and keeps Missing in the existing workingDays denominator", () => {
+    const counts = month({
+      present: 1, late: 1, halfDay: 1, leave: 1, workingDays: 6,
+    });
+    const percentage = getYearlyMonthPercentage(counts);
+    expect(percentage).toBe(58.3);
+    expect(percentage.toFixed(1)).toBe("58.3");
+    expect(percentage).toBe(aggregateStudentAttendance({
+      schoolId: 1, sessionId: 2,
+      statuses: ["present", "late", "halfday", "leave", "absent", null],
+    }).percentage);
+  });
+
+  it("rounds to one decimal like Student Stats", () => {
+    const percentage = getYearlyMonthPercentage(month({ present: 1, workingDays: 3 }));
+    expect(percentage).toBe(33.3);
+    expect(percentage.toFixed(1)).toBe("33.3");
+    expect(percentage).toBe(aggregateStudentAttendance({
+      schoolId: 1, sessionId: 2, statuses: ["present", "absent", null],
+    }).percentage);
+  });
+
+  it("displays zero safely when there are no applicable dates", () => {
+    const percentage = getYearlyMonthPercentage(month({ workingDays: 0 }));
+    expect(percentage).toBe(0);
+    expect(percentage.toFixed(1)).toBe("0.0");
+    expect(Number.isFinite(percentage)).toBe(true);
+    expect(percentage).toBe(aggregateStudentAttendance({
+      schoolId: 1, sessionId: 2, statuses: [],
+    }).percentage);
   });
 });
