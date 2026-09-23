@@ -1,0 +1,1226 @@
+STEP 2L-6A — IMPLEMENTATION: MAKE STORED TEACHER SELF-ATTENDANCE STATUS AUTHORITATIVE ON READS
+
+IMPORTANT:
+THIS IS A CONTROLLED IMPLEMENTATION STEP.
+
+The purpose of this step is ONLY to stop existing Teacher Self-Attendance records from being reinterpreted using the current shared Attendance Policy during READ operations.
+
+DO NOT redesign Attendance Policy.
+DO NOT make Attendance Policy Session-specific.
+DO NOT introduce policy snapshots.
+DO NOT change Student Attendance.
+DO NOT change Student Attendance target behavior.
+DO NOT change Academic Session architecture.
+DO NOT change Student Registry.
+DO NOT change Faculty Mapping.
+DO NOT change Enrollment requirements.
+DO NOT change Teacher eligibility.
+DO NOT change check-in event semantics.
+DO NOT change checkout event semantics.
+DO NOT change correction semantics.
+DO NOT change approved-leave semantics.
+DO NOT make unrelated Attendance fixes.
+
+==================================================
+CONFIRMED PRODUCT CONTRACT
+==========================
+
+The following decisions are already finalized:
+
+1. Attendance policy has HISTORICAL SEMANTICS.
+
+2. Existing Teacher Self-Attendance must preserve its STORED HISTORICAL STATUS.
+
+   A later change to the school's shared Attendance Policy must NOT reinterpret
+   an existing Teacher Self-Attendance record.
+
+3. Attendance Policy remains SHARED ACROSS ACADEMIC SESSIONS.
+
+   Do NOT create a separate Attendance Policy per Academic Session.
+
+4. Student Attendance target remains the CURRENT SCHOOL TARGET.
+
+   Do NOT change Student Attendance target behavior.
+
+==================================================
+CORE RULE BEING IMPLEMENTED
+===========================
+
+For an EXISTING Teacher Self-Attendance record:
+
+```
+persisted attendance.status
+        ↓
+   historical truth
+        ↓
+      READ
+        ↓
+   response/aggregate
+```
+
+A READ operation must NOT do:
+
+```
+persisted status
+        ↓
+current Attendance Policy
+        ↓
+   recomputeStatus()
+        ↓
+   different status
+        ↓
+   response
+```
+
+And a READ operation must NEVER do:
+
+```
+GET
+  ↓
+recompute
+  ↓
+UPDATE database
+```
+
+because of a current policy change.
+
+The persisted status is authoritative for existing records when they are read.
+
+==================================================
+WHY THIS CHANGE IS REQUIRED
+===========================
+
+The Step 2L-5 audit found that current Teacher Self-Attendance READ paths can call
+current-policy recomputation.
+
+This can cause:
+
+1. An archived record to display a status different from the stored status.
+2. An active-session historical record to be recalculated using today's policy.
+3. An active-session GET to write the recalculated status back to the database.
+4. A current Teacher assignedClass to influence interpretation of an old record.
+5. Historical counts, late flags, rates, streaks and KPIs to change after policy edits.
+
+This violates the confirmed historical-status contract.
+
+==================================================
+AUDITED FILES
+=============
+
+The Step 2L-5 audit identified these directly affected production files:
+
+PRIMARY:
+
+```
+server/teacher-routes.ts
+
+server/routes.ts
+```
+
+The relevant paths identified by the audit include:
+
+Teacher:
+
+```
+Today GET
+Self History GET
+Detailed History GET
+```
+
+Admin:
+
+```
+Admin Teacher Summary GET
+```
+
+The audit identified current-policy recomputation in approximately:
+
+```
+server/teacher-routes.ts:4614-4663
+server/teacher-routes.ts:4800-4867
+server/teacher-routes.ts:4969-5075
+server/routes.ts:3033-3166
+```
+
+DO NOT assume these exact line numbers are unchanged.
+Reinspect the current code before editing.
+
+==================================================
+STEP 1 — REINSPECT BEFORE MODIFYING
+===================================
+
+Before changing anything:
+
+1. Reopen the current implementation of:
+
+   * Teacher Self-Attendance Today GET
+   * Teacher Self-Attendance History GET
+   * Teacher Detailed History GET
+   * Admin Teacher Summary GET
+
+2. Locate every invocation of:
+
+   * recomputeStatus
+   * Attendance Policy resolver
+   * current teacher assignedClass lookup
+   * any equivalent current-policy status recalculation
+
+3. Confirm which calculations depend on the recalculated status.
+
+4. Do not rely blindly on the previous line numbers.
+
+5. If the code has changed since the audit, adapt carefully while preserving the
+   exact architectural intent of this prompt.
+
+==================================================
+STEP 2 — CHANGE TEACHER TODAY READ
+==================================
+
+Inspect the Teacher Self-Attendance Today GET.
+
+The current implementation may:
+
+```
+read existing row
+    ↓
+resolve current policy
+    ↓
+recompute status
+    ↓
+possibly update database
+    ↓
+return result
+```
+
+Change it so that an existing stored attendance row is read as-is.
+
+Required behavior:
+
+```
+existing row
+    ↓
+stored status
+    ↓
+response
+```
+
+Do NOT call current Attendance Policy merely to determine the historical status
+of an existing row.
+
+Do NOT call recomputeStatus for this purpose.
+
+Do NOT update the row merely because the current policy produces a different
+result.
+
+If the existing row has:
+
+```
+status = "Present"
+```
+
+and the current policy would produce:
+
+```
+"Late"
+```
+
+the GET must still return:
+
+```
+"Present"
+```
+
+and must NOT update the database.
+
+If the existing row has:
+
+```
+status = "Half Day"
+```
+
+the GET must return:
+
+```
+"Half Day"
+```
+
+regardless of later policy changes.
+
+If the stored status is:
+
+```
+"Leave"
+```
+
+return "Leave".
+
+If the stored status represents an existing legitimate status according to the
+current data model, preserve it.
+
+Do not invent a new status vocabulary.
+
+==================================================
+STEP 3 — CHANGE TEACHER SELF-HISTORY READ
+=========================================
+
+Inspect the Teacher Self-Attendance History GET.
+
+Existing historical rows must use their persisted status.
+
+For each existing attendance row:
+
+```
+DB row.status
+     ↓
+historical result
+```
+
+Do NOT recompute status from:
+
+```
+current Attendance Policy
+current teacher.assignedClass
+current class mapping
+current policy thresholds
+current grace period
+current half-day cutoff
+current school end time
+```
+
+A historical row must not change merely because any of these current values
+changed.
+
+IMPORTANT:
+
+Do not remove legitimate filtering, date-range logic, Session filtering,
+teacher filtering or school filtering.
+
+Only remove the historical status reinterpretation.
+
+==================================================
+STEP 4 — CHANGE DETAILED HISTORY READ
+=====================================
+
+Inspect the detailed self-attendance history path.
+
+The audit specifically found that this path can:
+
+```
+filter using stored status
+but then recompute the returned status
+```
+
+That behavior must be eliminated.
+
+The detailed history response must consistently use the persisted status.
+
+This means:
+
+```
+stored status
+    ↓
+returned status
+    ↓
+status-dependent calculations
+```
+
+must all agree.
+
+Do not allow:
+
+```
+filter says "Present"
+but response says "Late"
+```
+
+because a current policy was applied afterward.
+
+Status-dependent values such as:
+
+```
+counts
+rates
+streaks
+badges
+KPIs
+late flags
+summaries
+```
+
+must be based on the same authoritative stored status where they are derived
+from attendance status.
+
+Do not alter unrelated mathematical definitions unless required to stop the
+current-policy status reinterpretation.
+
+==================================================
+STEP 5 — CHANGE ADMIN TEACHER SUMMARY READ
+==========================================
+
+Inspect:
+
+```
+server/routes.ts
+```
+
+Admin Teacher Self-Attendance summary/history behavior.
+
+The current implementation can recompute each selected-date self-attendance
+row using the current Attendance Policy.
+
+Stop that historical reinterpretation.
+
+Admin summary must consume the persisted attendance status.
+
+For an old row:
+
+```
+DB status = Present
+```
+
+Admin summary must not turn it into:
+
+```
+Late
+```
+
+because today's policy says the same check-in time would now be Late.
+
+Likewise, historical:
+
+```
+Half Day
+Leave
+Present
+Late
+```
+
+must remain the stored statuses.
+
+Any aggregate derived from status must use those stored statuses.
+
+Do not change:
+
+```
+school filtering
+teacher filtering
+Session filtering
+date filtering
+authorization
+Admin access rules
+```
+
+==================================================
+STEP 6 — REMOVE GET-SIDE DATABASE HEALING
+=========================================
+
+This is critical.
+
+There must be NO READ path in the affected Teacher Self-Attendance flows that
+does:
+
+```
+GET
+  ↓
+recompute current status
+  ↓
+UPDATE attendance row
+```
+
+as a "healing" or normalization mechanism.
+
+Specifically remove/disable only this behavior.
+
+Do NOT remove legitimate writes performed by explicit attendance events.
+
+The following are OUTSIDE the scope of this step:
+
+```
+check-in POST
+checkout POST
+correction POST
+approved leave synchronization
+```
+
+Those are explicit event/write paths and must not be rewritten in this step.
+
+==================================================
+STEP 7 — DO NOT CHANGE EXPLICIT EVENT WRITES
+============================================
+
+This step is READ-PATH ONLY.
+
+Do NOT modify the policy calculation used when a teacher actually performs:
+
+```
+check-in
+```
+
+Do NOT modify checkout status logic.
+
+Do NOT modify correction status logic.
+
+Do NOT modify approved leave logic.
+
+Do NOT change the attendance policy engine.
+
+Do NOT change:
+
+```
+evaluateAttendanceStatus()
+```
+
+unless it is absolutely necessary to detach it from an affected READ path.
+
+Prefer leaving:
+
+```
+server/attendance-policy-engine.ts
+```
+
+unchanged.
+
+The purpose is NOT to eliminate policy calculation from the system.
+
+The purpose is to stop current policy from being used to reinterpret EXISTING
+records merely because they are being read.
+
+==================================================
+STEP 8 — PRESERVE TENANT ISOLATION
+==================================
+
+This application is permanently multi-tenant.
+
+Do NOT weaken any tenant boundary.
+
+Every affected READ must continue respecting:
+
+```
+authenticated school/tenant
++
+teacher identity where applicable
++
+selected Academic Session
++
+attendance date/range
+```
+
+as already required by the existing architecture.
+
+Do NOT replace school-scoped queries with global queries.
+
+Do NOT fetch attendance by ID alone if the existing code also verifies:
+
+```
+school_id
+teacher_id
+session_id
+```
+
+Do NOT introduce any cross-school lookup.
+
+The fix must preserve the existing tenant-isolation behavior.
+
+==================================================
+STEP 9 — PRESERVE SESSION ISOLATION
+===================================
+
+Academic Session remains part of Attendance record identity.
+
+Do NOT remove Session filtering.
+
+Do NOT merge records from different Sessions.
+
+Do NOT infer an old Session from current teacher assignment.
+
+Do NOT change the existing handling of nullable legacy session_id records.
+
+Keep the existing selected-Session validation and ownership checks.
+
+Important:
+
+The fact that policy is shared across Sessions does NOT mean attendance records
+can be read across Sessions.
+
+Policy sharing and attendance-record Session isolation are separate concepts.
+
+==================================================
+STEP 10 — PRESERVE IST
+======================
+
+Do not modify Attendance timezone behavior.
+
+All existing application/business Attendance date/time handling remains:
+
+```
+Asia/Kolkata / IST
+```
+
+Do not introduce UTC/local-time reinterpretation as part of this fix.
+
+==================================================
+STEP 11 — FRONTEND
+==================
+
+Inspect the frontend only to verify whether it performs its own status
+recalculation.
+
+The audit found:
+
+```
+client/src/pages/teacher-modules/my-attendance.tsx
+```
+
+and
+
+```
+client/src/pages/admin-modules/attendance-overview.tsx
+```
+
+consume server-returned statuses rather than calculating policy locally.
+
+Therefore:
+
+```
+DO NOT MODIFY FRONTEND CODE
+```
+
+unless current code inspection proves that a frontend calculation independently
+reinterprets historical Teacher Self-Attendance status.
+
+If frontend changes are not required, leave frontend files untouched.
+
+==================================================
+STEP 12 — DATABASE / SCHEMA
+===========================
+
+DO NOT change the database schema.
+
+DO NOT add:
+
+```
+policy_id
+policy_version
+policy_snapshot
+historical_policy_json
+assigned_class_snapshot
+```
+
+for this step.
+
+DO NOT create migrations.
+
+DO NOT backfill historical records.
+
+The confirmed requirement is to preserve the persisted status as historical
+truth going forward.
+
+Existing legacy records whose status may already have been changed by previous
+GET-side healing cannot be reconstructed in this step.
+
+Do not attempt to repair them automatically.
+
+==================================================
+STEP 13 — LEGACY RECORDS
+========================
+
+For legacy rows:
+
+```
+use the currently stored status as the available historical result.
+```
+
+Do not attempt to reconstruct an unavailable historical policy.
+
+Do not compare the old row against today's policy.
+
+Do not change NULL-session legacy behavior.
+
+Do not perform a data migration.
+
+==================================================
+STEP 14 — CORRECTION / CHECKOUT BOUNDARY
+========================================
+
+DO NOT redesign correction or checkout in this step.
+
+However, ensure that removing GET-side recomputation does not accidentally
+disable their explicit writes.
+
+The desired separation is:
+
+```
+READ:
+    persisted status is authoritative
+
+EXPLICIT EVENT:
+    existing event-specific write logic remains untouched
+```
+
+A later step will separately audit whether checkout/correction/leave should be
+allowed to alter historical records and which policy semantics they should use.
+
+Do not answer that architectural question now.
+
+==================================================
+STEP 15 — TESTS TO ADD / MODIFY
+===============================
+
+You MAY modify/add regression tests directly related to this exact change.
+
+Do not modify unrelated tests.
+
+Use the existing test structure and database helpers.
+
+At minimum, add or update tests proving:
+
+---
+
+## TEST A — POLICY CHANGE DOES NOT ALTER STORED STATUS
+
+Create an existing Teacher Self-Attendance record with:
+
+```
+status = Present
+```
+
+Change the current Attendance Policy so that the same check-in time would now
+produce a different status.
+
+Read the record through the affected Teacher READ path.
+
+Assert:
+
+```
+returned status === stored status
+```
+
+and:
+
+```
+database status remains unchanged
+```
+
+---
+
+## TEST B — HALF DAY REMAINS HALF DAY
+
+Existing stored:
+
+```
+Half Day
+```
+
+Current policy would classify the same timestamps differently.
+
+Read the record.
+
+Assert:
+
+```
+returned status === Half Day
+```
+
+and:
+
+```
+DB status === Half Day
+```
+
+---
+
+## TEST C — CURRENT TEACHER ASSIGNMENT DOES NOT REINTERPRET HISTORY
+
+Create/store an attendance record.
+
+Change the Teacher's current assignedClass.
+
+Read historical attendance.
+
+Assert that the status remains the stored status.
+
+The current assigned class must not be used to reinterpret the old row.
+
+---
+
+## TEST D — ARCHIVED SESSION READ
+
+For an archived/older Session:
+
+```
+stored status = Present
+```
+
+Current policy would produce another status.
+
+Read the historical record.
+
+Assert:
+
+```
+returned status = Present
+```
+
+and:
+
+```
+stored status remains Present
+```
+
+This test must specifically prove that the old behavior:
+
+```
+"recalculate for display without persistence"
+```
+
+is no longer accepted.
+
+---
+
+## TEST E — ACTIVE SESSION HISTORICAL READ
+
+For an active Session and an earlier attendance date:
+
+```
+stored status = Present
+```
+
+Change current policy.
+
+Read history.
+
+Assert:
+
+```
+returned status = Present
+```
+
+and:
+
+```
+DB status remains Present
+```
+
+This protects against the previous active-session healing behavior.
+
+---
+
+## TEST F — DETAILED HISTORY CONSISTENCY
+
+Ensure detailed history does not:
+
+```
+filter using stored status
+but return a recomputed status.
+```
+
+The returned status, status filter and status-derived aggregates must be
+consistent.
+
+---
+
+## TEST G — ADMIN SUMMARY
+
+Read an affected historical record through Admin Teacher Summary.
+
+Change current policy.
+
+Assert Admin receives the persisted historical status.
+
+Ensure status-derived summary values are based on that status.
+
+---
+
+## TEST H — NO GET-SIDE WRITE
+
+Explicitly prove that a GET request does not update the attendance row merely
+because the current policy differs.
+
+---
+
+## TEST I — TENANT ISOLATION REGRESSION
+
+Do not weaken existing tenant isolation.
+
+Run the existing tenant-isolation tests covering these paths.
+
+If they already cover the behavior adequately, do not duplicate them
+unnecessarily.
+
+---
+
+## TEST J — SESSION ISOLATION REGRESSION
+
+Run/update the existing Session isolation tests.
+
+Do not allow this change to make a record from Session B visible in Session A.
+
+==================================================
+STEP 16 — EXISTING TESTS THAT CURRENTLY EXPECT HEALING
+======================================================
+
+The previous audit identified tests such as:
+
+```
+"persists canonical status healing for the active Session today read"
+
+"recalculates archived today status for display without persisting it"
+
+"recalculates archived history statuses without changing any stored row"
+
+"keeps active and archived records isolated while archived status is read-only"
+```
+
+These tests may encode the OLD behavior.
+
+Update ONLY the assertions that conflict with the newly confirmed historical
+status contract.
+
+Do not simply delete the tests.
+
+Convert them where appropriate into regression tests proving:
+
+```
+stored status is returned
+no current-policy reinterpretation occurs
+no GET-side database healing occurs
+Session isolation remains intact
+```
+
+Preserve the portions of those tests that protect:
+
+```
+tenant isolation
+teacher isolation
+Session isolation
+date isolation
+uniqueness
+NULL-session handling
+correction-history isolation
+```
+
+==================================================
+STEP 17 — RUN RELEVANT TESTS
+============================
+
+After implementation:
+
+1. Run the focused Teacher Self-Attendance regression tests.
+
+2. Run:
+
+   server/**tests**/teacher-self-attendance-session-regressions.test.ts
+
+3. Run:
+
+   server/**tests**/teacher-self-attendance-tenant-isolation.test.ts
+
+4. Run relevant Attendance IST tests if affected:
+
+   server/**tests**/attendance-ist-consistency.test.ts
+
+5. Run:
+
+   server/**tests**/attendance-read-session-contract.test.ts
+
+6. Run any additional directly affected Teacher Self-Attendance tests discovered
+   during implementation.
+
+If tests fail because they expect the OLD current-policy-healing behavior,
+update only those assertions that directly conflict with the confirmed
+historical-status contract.
+
+Do not suppress failures.
+
+Do not weaken assertions.
+
+Do not skip tests to obtain a passing result.
+
+==================================================
+STEP 18 — VERIFY EXPLICIT EVENT BEHAVIOR WAS NOT ACCIDENTALLY CHANGED
+=====================================================================
+
+After tests, inspect the diff carefully.
+
+Confirm that this implementation did NOT unintentionally change:
+
+```
+check-in policy evaluation
+checkout policy evaluation
+correction policy evaluation
+approved leave status behavior
+```
+
+If any of those changed unintentionally, revert those unrelated changes before
+finishing this step.
+
+==================================================
+STEP 19 — DIFF REVIEW
+=====================
+
+Before reporting completion:
+
+Review the complete git diff.
+
+The diff should be small and focused.
+
+Expected primary production areas:
+
+```
+server/teacher-routes.ts
+server/routes.ts
+```
+
+Tests may also be changed.
+
+Unexpected modifications to:
+
+```
+shared/schema.ts
+migrations
+Student Attendance
+Student Registry
+Academic Session
+Attendance Policy schema
+frontend
+unrelated modules
+```
+
+must be investigated and reverted unless absolutely required by this exact
+READ-path fix.
+
+==================================================
+STEP 20 — ACCEPTANCE CRITERIA
+=============================
+
+The implementation is successful only if ALL of the following are true:
+
+[ ] Existing Teacher Self-Attendance READs return persisted status.
+
+[ ] Current Attendance Policy is NOT used to reinterpret an existing stored
+Teacher Self-Attendance status during READ.
+
+[ ] Current teacher.assignedClass is NOT used to reinterpret an existing
+historical status during READ.
+
+[ ] Active-session GET no longer performs current-policy status healing.
+
+[ ] Archived-session GET does not return a status different from the stored
+status merely because of current policy.
+
+[ ] Detailed history status and status-derived aggregates are consistent with
+persisted status.
+
+[ ] Admin Teacher Summary uses persisted status.
+
+[ ] GET requests do not mutate historical status because current policy changed.
+
+[ ] Tenant isolation remains intact.
+
+[ ] Academic Session isolation remains intact.
+
+[ ] IST behavior remains intact.
+
+[ ] Check-in explicit event behavior remains unchanged.
+
+[ ] Checkout explicit event behavior remains unchanged.
+
+[ ] Correction explicit event behavior remains unchanged.
+
+[ ] Approved leave behavior remains unchanged.
+
+[ ] No schema migration is introduced.
+
+[ ] No historical data backfill is performed.
+
+[ ] No Student Attendance behavior is changed.
+
+[ ] No Attendance Policy Session-specific architecture is introduced.
+
+[ ] Relevant regression tests pass.
+
+==================================================
+IMPORTANT EDGE CASE
+===================
+
+If an existing row has a NULL status or an unexpected legacy status:
+
+DO NOT invent a replacement status.
+
+Inspect the existing contract and preserve existing behavior unless it is
+specifically part of the current-policy reinterpretation bug.
+
+Do not silently introduce new status values.
+
+==================================================
+IF YOU DISCOVER AN AMBIGUITY
+============================
+
+Do NOT make a broad architectural decision.
+
+If the ambiguity concerns:
+
+```
+correction semantics
+checkout semantics
+archived-session mutation
+policy versioning
+legacy status reconstruction
+```
+
+leave that behavior unchanged and report it.
+
+Those are intentionally deferred to a later step.
+
+==================================================
+FINAL RESPONSE FORMAT
+=====================
+
+After implementation and tests, return ONLY the following structured report:
+
+# STEP 2L-6A IMPLEMENTATION RESULT
+
+## 1. Implementation Status
+
+PASS / NEEDS CHANGES
+
+## 2. What Changed
+
+List every production file changed and explain the exact READ-path behavior
+changed.
+
+## 3. Historical Status Behavior
+
+Explicitly demonstrate:
+
+```
+stored status
+    ↓
+READ
+    ↓
+same status returned
+```
+
+and confirm current policy no longer reinterprets existing records.
+
+## 4. GET-Side Mutation
+
+State explicitly whether any affected GET path can still update a
+Teacher Self-Attendance status because of current-policy recalculation.
+
+Expected:
+
+```
+NO
+```
+
+## 5. Explicit Event Behavior
+
+Confirm whether check-in, checkout, correction and approved leave logic were
+left unchanged.
+
+## 6. Tenant Isolation
+
+PASS / NEEDS CHANGES
+
+Explain what was preserved.
+
+## 7. Session Isolation
+
+PASS / NEEDS CHANGES
+
+Explain what was preserved.
+
+## 8. IST
+
+PASS / NEEDS CHANGES
+
+Explain what was preserved.
+
+## 9. Tests
+
+For every relevant test suite:
+
+```
+TEST FILE
+RESULT
+TESTS PASSED
+TESTS FAILED
+```
+
+Clearly identify any tests that were updated because they encoded the old
+current-policy-healing behavior.
+
+## 10. Schema / Migration / Data
+
+State explicitly:
+
+```
+Schema changed: YES/NO
+Migration created: YES/NO
+Historical data changed: YES/NO
+Backfill performed: YES/NO
+```
+
+Expected for this step:
+
+```
+Schema changed: NO
+Migration created: NO
+Historical data changed: NO
+Backfill performed: NO
+```
+
+## 11. Files Changed
+
+Give the exact list.
+
+## 12. Files Intentionally Not Changed
+
+Explicitly confirm that these were not changed unless absolutely required:
+
+```
+shared/schema.ts
+server/attendance-policy-engine.ts
+Student Attendance
+Student Registry
+Academic Session
+Attendance Policy architecture
+Faculty Mapping
+Enrollment
+frontend
+```
+
+## 13. Deferred Issues
+
+List issues intentionally NOT solved in this step, especially:
+
+```
+correction policy semantics
+checkout historical-session mutation
+approved-leave historical transitions
+legacy records whose status may already have been healed
+historical policy provenance/reconstruction
+```
+
+## 14. Final Acceptance
+
+Report each criterion:
+
+```
+PASS / FAIL
+```
+
+for all acceptance criteria in Step 18.
+
+==================================================
+FINAL SAFETY RULE
+=================
+
+DO NOT START STEP 2L-6B.
+
+STOP after Step 2L-6A.
+
+Return the implementation report only.
+
+The next architectural decision will be made AFTER reviewing this result.

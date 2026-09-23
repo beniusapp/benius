@@ -4621,41 +4621,15 @@ Thank you for your prompt attention to this matter.
         teacher.schoolId, (req as any).viewSessionId,
       );
 
-      const [[record], policyRows] = await Promise.all([
-        db.select().from(teacherSelfAttendance).where(
-          and(
-            eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-            eq(teacherSelfAttendance.attendanceDate, today),
-          )
-        ),
-        db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
-        ),
-      ]);
-
-      if (!record) return res.json(null);
-
-      // Re-evaluate status against current policy and heal stale records
-      const policy        = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
-      const correctStatus = recomputeStatus(record, policy);
-      if (correctStatus !== record.status) {
-        if (!attendanceSession.isActive) {
-          return res.json({ ...record, status: correctStatus });
-        }
-        const [updated] = await db.update(teacherSelfAttendance)
-          .set({ status: correctStatus, updatedAt: new Date() })
-          .where(and(
-            eq(teacherSelfAttendance.id, record.id),
-            eq(teacherSelfAttendance.teacherId, teacher.id),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-          ))
-          .returning();
-        return res.json(updated);
-      }
-      res.json(record);
+      const [record] = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
+      );
+      res.json(record ?? null);
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch today's record" });
@@ -4823,43 +4797,16 @@ Thank you for your prompt attention to this matter.
         teacher.schoolId, (req as any).viewSessionId,
       );
 
-      const [records, policyRows] = await Promise.all([
-        db.select().from(teacherSelfAttendance).where(
-          and(
-            eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-            gte(teacherSelfAttendance.attendanceDate, start),
-            lte(teacherSelfAttendance.attendanceDate, end),
-          )
-        ).orderBy(desc(teacherSelfAttendance.attendanceDate)),
-        db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
-        ),
-      ]);
-
-      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
-      const now    = new Date();
-
-      // Re-evaluate and heal every record that has a check-in
-      const healed = await Promise.all(records.map(async r => {
-        if (!r.checkInTime) return r;
-        const correct = recomputeStatus(r, policy);
-        if (correct === r.status) return r;
-        if (!attendanceSession.isActive) return { ...r, status: correct };
-        const [updated] = await db.update(teacherSelfAttendance)
-          .set({ status: correct, updatedAt: now })
-          .where(and(
-            eq(teacherSelfAttendance.id, r.id),
-            eq(teacherSelfAttendance.teacherId, teacher.id),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-          ))
-          .returning();
-        return updated;
-      }));
-
-      res.json(healed);
+      const records = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          gte(teacherSelfAttendance.attendanceDate, start),
+          lte(teacherSelfAttendance.attendanceDate, end),
+        )
+      ).orderBy(desc(teacherSelfAttendance.attendanceDate));
+      res.json(records);
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch history" });
@@ -4966,7 +4913,7 @@ Thank you for your prompt attention to this matter.
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // GET /api/teacher/attendance/history — paginated, policy-healed history
+  // GET /api/teacher/attendance/history — paginated stored-status history
   // Security: teacherId is ALWAYS taken from the authenticated session.
   // ─────────────────────────────────────────────────────────────────────────
   app.get("/api/teacher/attendance/history", async (req, res) => {
@@ -4998,23 +4945,9 @@ Thank you for your prompt attention to this matter.
       if (toDate)   conditions.push(lte(teacherSelfAttendance.attendanceDate, toDate) as any);
       if (status && status !== "all") conditions.push(eq(teacherSelfAttendance.status, status) as any);
 
-      const [dbRecords, policyRows] = await Promise.all([
-        db.select().from(teacherSelfAttendance)
-          .where(and(...(conditions as any[])))
-          .orderBy(desc(teacherSelfAttendance.attendanceDate)),
-        db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
-        ),
-      ]);
-
-      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
-
-      // Heal stale statuses on the fly (no DB writes here — reads are fast)
-      const records = dbRecords.map(r => {
-        if (!r.checkInTime) return r;
-        const correct = recomputeStatus(r, policy);
-        return correct !== r.status ? { ...r, status: correct } : r;
-      });
+      const records = await db.select().from(teacherSelfAttendance)
+        .where(and(...(conditions as any[])))
+        .orderBy(desc(teacherSelfAttendance.attendanceDate));
 
       // ── Summary (only over DB records — absent days are generated client-side) ──
       const present  = records.filter(r => r.status === "Present").length;

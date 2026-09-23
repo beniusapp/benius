@@ -15,7 +15,7 @@ import {
   examScores, promotionOverrides, complaints, notices, visitorLogs,
   feeRecords, academicHistory, homework, classwork, users,
 } from "@shared/schema";
-import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
+import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "./attendance-policy-engine";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -3042,7 +3042,7 @@ export async function registerRoutes(
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
-      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords, policyRows] = await Promise.all([
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(
           and(
@@ -3065,9 +3065,6 @@ export async function registerRoutes(
             eq(attendanceRecords.date, date),
             eq(attendanceRecords.sessionId, attendanceSession.id),
           )
-        ),
-        db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
         ),
       ]);
 
@@ -3113,11 +3110,7 @@ export async function registerRoutes(
         const corrCount = corrMap.get(t.id) ?? 0;
         const studentMarkAt = markMap.get(t.id) ?? null;
 
-        // Re-evaluate status against current policy (heals stale records)
-        const teacherPolicy = resolvePolicy(policyRows, "TEACHER", t.assignedClass ?? "");
-        const selfStatus    = selfRec
-          ? recomputeStatus(selfRec, teacherPolicy)
-          : "Not Marked";
+        const selfStatus = selfRec?.status ?? "Not Marked";
         const isLate = selfStatus === "Late";
 
         // Collect all class-section assignments from faculty mappings

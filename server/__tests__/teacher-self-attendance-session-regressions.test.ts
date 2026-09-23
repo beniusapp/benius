@@ -7,6 +7,7 @@ import { addCalendarDays, todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceCorrectionRequests,
+  attendancePolicies,
   schools,
   teacherSelfAttendance,
   teachers,
@@ -142,6 +143,8 @@ beforeEach(async () => {
   await db.delete(teacherSelfAttendance).where(
     inArray(teacherSelfAttendance.teacherId, [teacherId, secondTeacherId]),
   );
+  await db.delete(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId));
+  await db.update(teachers).set({ assignedClass: "5" }).where(eq(teachers.id, teacherId));
 });
 
 afterAll(async () => {
@@ -154,13 +157,20 @@ afterAll(async () => {
 });
 
 describe("Teacher self-attendance Session regression coverage", () => {
-  it("persists canonical status healing for the active Session today read", async () => {
+  it("returns stored Present after a policy change without healing the active Session on GET", async () => {
     const today = todayInIST();
+    const [policy] = await db.insert(attendancePolicies).values({
+      schoolId, targetRole: "TEACHER", policyName: "Original policy",
+      applicableClasses: [], expectedArrivalTime: "09:00", gracePeriodMinutes: 60,
+      halfDayCutoffTime: "12:00", schoolEndTime: "17:00", attendanceTarget: 85,
+    }).returning({ id: attendancePolicies.id });
     const [record] = await db.insert(teacherSelfAttendance).values(attendanceValues({
       sessionId: sessionAId,
-      checkInTime: new Date(`${today}T09:00:00+05:30`),
-      status: "Absent",
+      checkInTime: new Date(`${today}T09:30:00+05:30`),
+      status: "Present",
     })).returning();
+    await db.update(attendancePolicies).set({ gracePeriodMinutes: 0 })
+      .where(eq(attendancePolicies.id, policy.id));
 
     const result = await request("/api/teacher/self-attendance/today", sessionAId);
     expect(result.status).toBe(200);
@@ -170,15 +180,21 @@ describe("Teacher self-attendance Session regression coverage", () => {
       eq(teacherSelfAttendance.id, record.id),
     );
     expect(stored.status).toBe("Present");
+    expect(stored.updatedAt).toEqual(record.updatedAt);
   });
 
-  it("recalculates archived today status for display without persisting it", async () => {
+  it("returns the archived today stored status without reinterpreting it", async () => {
     const today = todayInIST();
     const [record] = await db.insert(teacherSelfAttendance).values(attendanceValues({
       sessionId: sessionBId,
-      checkInTime: new Date(`${today}T09:00:00+05:30`),
-      status: "Absent",
+      checkInTime: new Date(`${today}T09:30:00+05:30`),
+      status: "Present",
     })).returning();
+    await db.insert(attendancePolicies).values({
+      schoolId, targetRole: "TEACHER", policyName: "Changed policy",
+      applicableClasses: [], expectedArrivalTime: "09:00", gracePeriodMinutes: 0,
+      halfDayCutoffTime: "12:00", schoolEndTime: "17:00", attendanceTarget: 85,
+    });
 
     const result = await request("/api/teacher/self-attendance/today", sessionBId);
     expect(result.status).toBe(200);
@@ -187,10 +203,11 @@ describe("Teacher self-attendance Session regression coverage", () => {
     const [stored] = await db.select().from(teacherSelfAttendance).where(
       eq(teacherSelfAttendance.id, record.id),
     );
-    expect(stored.status).toBe("Absent");
+    expect(stored.status).toBe("Present");
+    expect(stored.updatedAt).toEqual(record.updatedAt);
   });
 
-  it("recalculates archived history statuses without changing any stored row", async () => {
+  it("returns stored archived history statuses without changing any row", async () => {
     const today = todayInIST();
     const yesterday = addCalendarDays(today, -1);
     const records = await db.insert(teacherSelfAttendance).values([
@@ -214,7 +231,7 @@ describe("Teacher self-attendance Session regression coverage", () => {
     );
     expect(result.status).toBe(200);
     expect(result.body).toHaveLength(2);
-    expect(result.body.map((row: any) => row.status)).toEqual(["Present", "Present"]);
+    expect(result.body.map((row: any) => row.status)).toEqual(["Absent", "Late"]);
 
     const stored = await db.select().from(teacherSelfAttendance).where(
       inArray(teacherSelfAttendance.id, records.map(record => record.id)),
@@ -225,7 +242,106 @@ describe("Teacher self-attendance Session regression coverage", () => {
     ]));
   });
 
-  it("keeps active and archived records isolated while archived status is read-only", async () => {
+  it("preserves an earlier active-Session Present and an archived Half Day after a policy change", async () => {
+    const yesterday = addCalendarDays(todayInIST(), -1);
+    const [policy] = await db.insert(attendancePolicies).values({
+      schoolId, targetRole: "TEACHER", policyName: "Original thresholds",
+      applicableClasses: [], expectedArrivalTime: "09:00", gracePeriodMinutes: 60,
+      halfDayCutoffTime: "17:00", schoolEndTime: "18:00", attendanceTarget: 85,
+    }).returning({ id: attendancePolicies.id });
+    const [active, archived] = await db.insert(teacherSelfAttendance).values([
+      attendanceValues({
+        sessionId: sessionAId, attendanceDate: yesterday,
+        checkInTime: new Date(`${yesterday}T09:30:00+05:30`), status: "Present",
+      }),
+      attendanceValues({
+        sessionId: sessionBId, attendanceDate: yesterday,
+        checkInTime: new Date(`${yesterday}T09:00:00+05:30`),
+        checkOutTime: new Date(`${yesterday}T16:00:00+05:30`), status: "Half Day",
+      }),
+    ]).returning();
+    await db.update(attendancePolicies).set({
+      gracePeriodMinutes: 0, halfDayCutoffTime: "12:00", schoolEndTime: "17:00",
+    }).where(eq(attendancePolicies.id, policy.id));
+
+    const path = `/api/teacher/self-attendance/history?startDate=${yesterday}&endDate=${yesterday}`;
+    const activeRead = await request(path, sessionAId);
+    const archivedRead = await request(path, sessionBId);
+    expect(activeRead.body).toMatchObject([{ id: active.id, status: "Present" }]);
+    expect(archivedRead.body).toMatchObject([{ id: archived.id, status: "Half Day" }]);
+    const stored = await db.select().from(teacherSelfAttendance).where(
+      inArray(teacherSelfAttendance.id, [active.id, archived.id]),
+    );
+    expect(stored).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: active.id, status: "Present", updatedAt: active.updatedAt }),
+      expect.objectContaining({ id: archived.id, status: "Half Day", updatedAt: archived.updatedAt }),
+    ]));
+  });
+
+  it("does not reinterpret stored history after the teacher's current class changes", async () => {
+    const yesterday = addCalendarDays(todayInIST(), -1);
+    const [record] = await db.insert(teacherSelfAttendance).values(attendanceValues({
+      sessionId: sessionBId, attendanceDate: yesterday,
+      checkInTime: new Date(`${yesterday}T09:30:00+05:30`), status: "Present",
+    })).returning();
+    await db.insert(attendancePolicies).values({
+      schoolId, targetRole: "TEACHER", policyName: "Class 6 policy",
+      applicableClasses: ["6"], expectedArrivalTime: "09:00", gracePeriodMinutes: 0,
+      halfDayCutoffTime: "12:00", schoolEndTime: "17:00", attendanceTarget: 85,
+    });
+    await db.update(teachers).set({ assignedClass: "6" }).where(eq(teachers.id, teacherId));
+
+    const result = await request(
+      `/api/teacher/self-attendance/history?startDate=${yesterday}&endDate=${yesterday}`,
+      sessionBId,
+    );
+    expect(result.body).toMatchObject([{ id: record.id, status: "Present" }]);
+    const [stored] = await db.select().from(teacherSelfAttendance).where(eq(teacherSelfAttendance.id, record.id));
+    expect(stored.status).toBe("Present");
+  });
+
+  it("filters detailed history and computes summaries from the same stored statuses", async () => {
+    const today = todayInIST();
+    const yesterday = addCalendarDays(today, -1);
+    const [present, halfDay] = await db.insert(teacherSelfAttendance).values([
+      attendanceValues({
+        attendanceDate: today, checkInTime: new Date(`${today}T09:30:00+05:30`),
+        status: "Present",
+      }),
+      attendanceValues({
+        attendanceDate: yesterday, checkInTime: new Date(`${yesterday}T09:00:00+05:30`),
+        checkOutTime: new Date(`${yesterday}T16:00:00+05:30`), status: "Half Day",
+      }),
+    ]).returning();
+    await db.insert(attendancePolicies).values({
+      schoolId, targetRole: "TEACHER", policyName: "Current only",
+      applicableClasses: [], expectedArrivalTime: "09:00", gracePeriodMinutes: 0,
+      halfDayCutoffTime: "12:00", schoolEndTime: "17:00", attendanceTarget: 85,
+    });
+
+    const basePath = `/api/teacher/attendance/history?fromDate=${yesterday}&toDate=${today}`;
+    const all = await request(basePath, sessionAId);
+    expect(all.status).toBe(200);
+    expect(all.body.records).toMatchObject([
+      { id: present.id, status: "Present" },
+      { id: halfDay.id, status: "Half Day" },
+    ]);
+    expect(all.body.summary).toMatchObject({ present: 1, halfDay: 1, late: 0 });
+    expect(all.body.statistics.attendanceRate).toBe(100);
+    const filtered = await request(`${basePath}&status=Present`, sessionAId);
+    expect(filtered.body.records).toMatchObject([{ id: present.id, status: "Present" }]);
+    expect(filtered.body.summary).toMatchObject({ present: 1, halfDay: 0, late: 0 });
+    expect(filtered.body.pagination.totalRecords).toBe(1);
+    const stored = await db.select().from(teacherSelfAttendance).where(
+      inArray(teacherSelfAttendance.id, [present.id, halfDay.id]),
+    );
+    expect(stored).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: present.id, status: "Present", updatedAt: present.updatedAt }),
+      expect.objectContaining({ id: halfDay.id, status: "Half Day", updatedAt: halfDay.updatedAt }),
+    ]));
+  });
+
+  it("keeps active and archived records isolated while returning archived stored status", async () => {
     const today = todayInIST();
     const [activeRecord, archivedRecord] = await db.insert(teacherSelfAttendance).values([
       attendanceValues({
@@ -245,7 +361,7 @@ describe("Teacher self-attendance Session regression coverage", () => {
     expect(result.body).toMatchObject({
       id: archivedRecord.id,
       sessionId: sessionBId,
-      status: "Present",
+      status: "Absent",
     });
 
     const stored = await db.select().from(teacherSelfAttendance).where(

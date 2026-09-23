@@ -4,9 +4,13 @@ description: Centralized timing rules replacing hardcoded thresholds; evaluation
 ---
 
 ## The Rule
-All attendance timing thresholds (teacher check-in lateness, half-day cutoff, student attendance target %) must come from the `attendance_policies` table — never hardcoded.
+All timing thresholds for new attendance events and the current Student attendance target must come from school-wide Attendance Policy, never hardcoded. An existing Teacher Self-Attendance row's stored status is authoritative on reads; do not re-evaluate it against the current shared policy.
 
 **Why:** The old code had `if (h > 9 || (h === 9 && m > 0)) isLate = true` hardcoded in the teacher-summary route and `Target: 85%` hardcoded in the attendance-overview UI. Multi-tenant schools need per-school, per-class, per-role configuration.
+
+**Why (historical status):** The owner confirmed that a later policy change must not reinterpret or rewrite an earlier Teacher Self-Attendance result, even though Attendance Policy remains shared across Sessions. Student Attendance targets intentionally continue to use the current school rule.
+
+**How to apply:** Use current policy for explicit attendance events, not to heal existing Teacher Self-Attendance during GETs. Keep Session and tenant record isolation. Do not infer a Session-specific policy, version, or original thresholds from legacy records; those are not recoverable. Correction, checkout, and approved-leave historical transition semantics remain separate decisions.
 
 ## How to Apply
 - Engine lives at `server/attendance-policy-engine.ts` — exports `evaluateAttendanceStatus`, `resolvePolicy`, `isLateCheckIn`, `utcToISTHHMM`, `DEFAULT_POLICY`.
