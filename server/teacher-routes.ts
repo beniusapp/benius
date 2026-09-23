@@ -468,6 +468,18 @@ export function registerTeacherRoutes(app: Express) {
     if (attendanceSession.schoolId !== schoolId) {
       return res.status(403).json({ message: "Active academic session does not belong to this school" });
     }
+    if (
+      !isValidDateOnly(attendanceSession.startDate) ||
+      !isValidDateOnly(attendanceSession.endDate) ||
+      attendanceSession.startDate > attendanceSession.endDate
+    ) {
+      return res.status(409).json({ message: "Active academic session has invalid date boundaries" });
+    }
+    // All three values are YYYY-MM-DD business dates; lexical comparison is inclusive
+    // and does not convert a school calendar date into a UTC instant.
+    if (date < attendanceSession.startDate || date > attendanceSession.endDate) {
+      return res.status(400).json({ message: "Attendance date is outside the active academic session period" });
+    }
 
     const submittedStudentIds = [...new Set(records.map((record: any) => Number(record.studentId)))];
     if (

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import session from "express-session";
 import type { Server } from "node:http";
-import { addCalendarDays, getAcademicYearForISTDate, todayInIST } from "@shared/ist-time";
+import { addCalendarDays, calendarWeekday, getAcademicYearForISTDate, todayInIST } from "@shared/ist-time";
 import { registerTeacherRoutes } from "../teacher-routes";
 import { checkSessionContext } from "../routes";
 import { storage } from "../storage";
@@ -113,10 +113,12 @@ function validBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockSuccessfulDependencies() {
+function mockSuccessfulDependencies(boundaries?: { startDate: string; endDate: string }) {
   vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
   vi.spyOn(storage, "getActiveSession").mockResolvedValue({
     id: 777, schoolId: teacher.schoolId, isActive: true,
+    startDate: boundaries?.startDate ?? addCalendarDays(todayInIST(), -30),
+    endDate: boundaries?.endDate ?? addCalendarDays(todayInIST(), 30),
   } as any);
   vi.spyOn(storage, "getHolidayOnDate").mockResolvedValue(undefined);
   vi.spyOn(storage, "getStudentsByIdsForSchool").mockImplementation(async studentIds =>
@@ -135,6 +137,101 @@ afterEach(async () => {
 });
 
 describe("POST /api/attendance server-authoritative active Session", () => {
+  it("writes a date strictly inside the active Session for every Student", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies({
+      startDate: addCalendarDays(todayInIST(), -2),
+      endDate: addCalendarDays(todayInIST(), 2),
+    });
+    const date = addCalendarDays(todayInIST(), -1);
+
+    const result = await postAttendance(harness, validBody({ date }), null);
+
+    expect(result.status).toBe(200);
+    expect(storage.getActiveSession).toHaveBeenCalledOnce();
+    expect(upsert).toHaveBeenCalledOnce();
+    expect(upsert.mock.calls[0][0]).toHaveLength(2);
+    expect(upsert.mock.calls[0][0].every(record => record.date === date && record.sessionId === 777)).toBe(true);
+  });
+
+  it.each([
+    ["start", { startDate: todayInIST(), endDate: addCalendarDays(todayInIST(), 30) }, todayInIST()],
+    ["end", { startDate: addCalendarDays(todayInIST(), -30), endDate: todayInIST() }, todayInIST()],
+  ])("accepts the inclusive Session %s boundary", async (_edge, boundaries, date) => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies(boundaries);
+
+    const result = await postAttendance(harness, validBody({ date }), null);
+
+    expect(result.status).toBe(200);
+    expect(upsert.mock.calls[0][0].every(record => record.date === date && record.sessionId === 777)).toBe(true);
+  });
+
+  it.each([
+    ["before start", -2, -1, 30],
+    ["after end", -2, -30, -3],
+  ])("rejects a date immediately %s even within the correction window", async (_edge, dateOffset, startOffset, endOffset) => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies({
+      startDate: addCalendarDays(todayInIST(), startOffset),
+      endDate: addCalendarDays(todayInIST(), endOffset),
+    });
+
+    const result = await postAttendance(harness, validBody({ date: addCalendarDays(todayInIST(), dateOffset) }), null);
+
+    expect(result.status).toBe(400);
+    expect(result.body.message).toBe("Attendance date is outside the active academic session period");
+    expect(storage.getActiveSession).toHaveBeenCalledWith(teacher.schoolId);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an older date even when it is inside the active Session", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+
+    const result = await postAttendance(harness, validBody({ date: addCalendarDays(todayInIST(), -8) }), null);
+
+    expect(result.status).toBe(400);
+    expect(result.body.message).toBe("Can only edit attendance for the past 7 days");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("still rejects a future date inside the active Session", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+
+    const result = await postAttendance(harness, validBody({ date: addCalendarDays(todayInIST(), 1) }), null);
+
+    expect(result.status).toBe(400);
+    expect(result.body.message).toBe("Cannot mark attendance for future dates");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a deliberately marked Sunday outside the active Session", async () => {
+    const harness = await makeHarness();
+    const sunday = addCalendarDays(todayInIST(), -calendarWeekday(todayInIST())!);
+    const upsert = mockSuccessfulDependencies({
+      startDate: addCalendarDays(sunday, -30),
+      endDate: addCalendarDays(sunday, -1),
+    });
+
+    const result = await postAttendance(harness, validBody({ date: sunday }), null);
+
+    expect(result.status).toBe(400);
+    expect(result.body.message).toBe("Attendance date is outside the active academic session period");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if the active Session has invalid date boundaries", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies({ startDate: "2026-02-30", endDate: todayInIST() });
+
+    const result = await postAttendance(harness, validBody(), null);
+
+    expect(result.status).toBe(409);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it("resolves the authenticated school's active Session once for every Student", async () => {
     const harness = await makeHarness();
     const upsert = mockSuccessfulDependencies();

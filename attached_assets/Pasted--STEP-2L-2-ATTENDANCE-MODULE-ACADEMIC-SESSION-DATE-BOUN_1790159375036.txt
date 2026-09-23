@@ -1,0 +1,637 @@
+# STEP 2L-2 — ATTENDANCE MODULE
+
+## ACADEMIC SESSION DATE-BOUNDARY ENFORCEMENT
+
+### CONTROLLED AUDIT + IMPLEMENTATION
+
+We have completed and accepted Step 2L-1.
+
+Step 2L-1 changed Teacher Attendance writes so the server resolves the ACTIVE Academic Session from the authenticated school's `req.session.schoolId`. The browser's `x-view-session-id` can no longer override the write Session.
+
+Now implement ONLY the next Attendance fix identified by the audit:
+
+> **Teacher Attendance dates must be inside the Academic Session's start/end date boundaries.**
+
+---
+
+# 1. HARD REQUIREMENTS — DO NOT CHANGE
+
+These are permanent Attendance requirements.
+
+### Multi-tenant isolation
+
+* `req.session.schoolId` is authoritative.
+* Never trust a browser-provided school ID for ownership.
+* Never allow cross-school Attendance access, calculation, or writes.
+* Academic Session must belong to the authenticated school.
+
+### Student Registry
+
+* Student Registry is GLOBAL/PERMANENT.
+* Do NOT recreate/reset Students per Academic Session.
+* Do NOT make Enrollment a prerequisite for Attendance marking.
+
+### Teacher authorization
+
+Any authenticated Teacher belonging to the same school may mark Attendance.
+
+Do NOT introduce:
+
+* Faculty Mapping restrictions
+* class assignment restrictions
+* subject assignment restrictions
+
+unless such a check already existed and is required for security.
+
+### Existing correction window
+
+KEEP the existing active-Session correction rule exactly as it currently works:
+
+* Today is writable.
+* Previous 7 days are writable.
+* Therefore today through today-minus-seven-days inclusive remains allowed.
+* Older dates remain rejected.
+* Future dates remain rejected.
+* Existing holiday/edit restrictions remain unchanged.
+
+**Do not replace the 7-day rule.**
+
+We are adding a Session-boundary check in addition to the existing rules.
+
+### Archived Sessions
+
+Archived Academic Sessions remain read-only.
+
+Do not weaken the existing archived-session mutation protection.
+
+### Sunday
+
+A Sunday can be a valid Attendance date.
+
+If a Sunday is deliberately marked and:
+
+* it belongs to the active Academic Session,
+* it passes the existing Attendance rules,
+* and it is not blocked by an existing holiday restriction,
+
+then it must remain valid and count as Attendance.
+
+Do NOT make every Sunday automatically a working day.
+
+### Timezone
+
+All Attendance business dates must continue using:
+
+**IST / Asia/Kolkata**
+
+Do not introduce UTC date comparisons for Attendance business-date validation.
+
+### Scope
+
+This step is ONLY about enforcing Academic Session date boundaries on Attendance writes.
+
+Do NOT implement the other pending Attendance fixes yet:
+
+1. Physical Student deletion/history preservation.
+2. Student UI Sunday display/counting.
+3. NULL Session investigation for Teacher Self-Attendance/correction records.
+
+---
+
+# 2. REQUIRED BEHAVIOR
+
+For every Teacher Student-Attendance write:
+
+```text
+Authenticated Teacher
+        ↓
+Authenticated School
+        ↓
+Server resolves ACTIVE Academic Session
+        ↓
+Validate Attendance date
+        ↓
+7-day correction rules
+        +
+Academic Session start/end boundaries
+        ↓
+Write Attendance using resolved Session ID
+```
+
+The Attendance date must satisfy BOTH:
+
+### Rule A — Existing correction/date rule
+
+Keep the existing rules exactly as they are.
+
+AND
+
+### Rule B — Academic Session boundary
+
+The Attendance date must be:
+
+```text
+session.start_date <= attendance_date <= session.end_date
+```
+
+assuming the Session has both boundaries.
+
+The comparison must be by **IST business date**, not timestamp/UTC conversion.
+
+---
+
+# 3. IMPORTANT EDGE CASE
+
+Do not blindly assume the database field names.
+
+Before editing, inspect the actual Academic Session schema/model and determine:
+
+* Session ID field
+* school/tenant field
+* start date field
+* end date field
+* active/status field
+
+Use the actual existing schema.
+
+Do not create duplicate Session-date fields.
+
+Do not create a new table.
+
+Do not create a migration unless the existing Academic Session schema genuinely lacks the required boundary information.
+
+If the existing Academic Session already has start/end dates, use those fields.
+
+---
+
+# 4. AUDIT BEFORE IMPLEMENTATION
+
+Before making changes, inspect:
+
+1. `server/teacher-routes.ts`
+2. The current `POST /api/attendance` implementation.
+3. The Step 2L-1 active Session resolution that was just implemented.
+4. The Academic Session schema/model in `shared/schema.ts` or the actual source of truth.
+5. `storage.getActiveSession` and related Session storage methods.
+6. Existing IST/date-only helper functions.
+7. Existing 7-day Attendance validation.
+8. Existing holiday/calendar validation.
+9. Existing archived-session mutation guard.
+10. Existing Teacher Attendance tests.
+
+Identify the exact point where the Attendance date is currently validated.
+
+Then add the Session-boundary validation at the appropriate point.
+
+---
+
+# 5. IMPLEMENTATION REQUIREMENT
+
+The server must use the SAME active Academic Session resolved in Step 2L-1.
+
+Do not:
+
+* resolve one Session for validation and another Session for writing;
+* use `x-view-session-id`;
+* trust a browser-selected Session;
+* query another school;
+* silently switch to another Session.
+
+The resolved Session should be the single authoritative Session for this request.
+
+Conceptually:
+
+```text
+const activeSession = await storage.getActiveSession(authenticatedSchoolId);
+
+validate attendanceDate against activeSession.startDate/endDate;
+
+write all Attendance rows using activeSession.id;
+```
+
+Use the project's existing architecture and naming conventions rather than copying this pseudocode literally.
+
+---
+
+# 6. DATE COMPARISON REQUIREMENT
+
+Be very careful about date/time handling.
+
+Attendance dates are business dates.
+
+Academic Session boundaries are business dates.
+
+Compare them as IST/date-only values.
+
+Do NOT introduce logic such as:
+
+```text
+new Date(attendanceDate).toISOString()
+```
+
+if that can cause a timezone boundary shift.
+
+Do NOT compare arbitrary UTC timestamps against Session date-only values.
+
+Use the project's existing date-only/IST utilities where appropriate.
+
+---
+
+# 7. REQUIRED TEST CASES
+
+Add or update focused tests for the actual production route/storage behavior.
+
+At minimum verify all of the following.
+
+### Test 1 — Date inside Session
+
+Example:
+
+Session:
+
+```text
+01-Apr-2026 → 31-Mar-2027
+```
+
+Attendance:
+
+```text
+15-Sep-2026
+```
+
+Expected:
+
+```text
+PASS
+```
+
+Attendance is written using the active Session ID.
+
+---
+
+### Test 2 — Date exactly on Session start
+
+Attendance:
+
+```text
+01-Apr-2026
+```
+
+Expected:
+
+```text
+PASS
+```
+
+The start date is inclusive.
+
+---
+
+### Test 3 — Date exactly on Session end
+
+Attendance:
+
+```text
+31-Mar-2027
+```
+
+Expected:
+
+```text
+PASS
+```
+
+The end date is inclusive.
+
+---
+
+### Test 4 — Date immediately before Session start
+
+Attendance:
+
+```text
+31-Mar-2026
+```
+
+Expected:
+
+```text
+REJECT
+```
+
+No Attendance row should be written.
+
+---
+
+### Test 5 — Date immediately after Session end
+
+Attendance:
+
+```text
+01-Apr-2027
+```
+
+Expected:
+
+```text
+REJECT
+```
+
+No Attendance row should be written.
+
+---
+
+### Test 6 — Older date but inside Session
+
+If the date is older than the existing 7-day correction window but inside the Session:
+
+Expected:
+
+```text
+REJECT
+```
+
+The existing 7-day rule must still win.
+
+This proves we did not accidentally remove the correction window.
+
+---
+
+### Test 7 — Date inside 7-day window but outside Session
+
+This is the key regression test.
+
+Example:
+
+Session starts:
+
+```text
+01-Apr-2026
+```
+
+Suppose the current date is within the first seven days of the Session.
+
+Try an Attendance date before:
+
+```text
+01-Apr-2026
+```
+
+Expected:
+
+```text
+REJECT
+```
+
+Even though the date falls within the existing 7-day correction window, it must fail the Session boundary check.
+
+---
+
+### Test 8 — Future date inside Session
+
+A future date that falls within the Session boundaries:
+
+Expected:
+
+```text
+REJECT
+```
+
+The existing future-date rule remains unchanged.
+
+---
+
+### Test 9 — Sunday inside Session
+
+A Sunday that falls inside the active Session and otherwise passes the existing rules:
+
+Expected:
+
+```text
+PASS
+```
+
+If deliberately marked, it remains valid.
+
+---
+
+### Test 10 — Sunday outside Session
+
+A Sunday outside the Session boundary:
+
+Expected:
+
+```text
+REJECT
+```
+
+The Session boundary is authoritative.
+
+---
+
+### Test 11 — Multiple students
+
+Submit multiple students in one Attendance request.
+
+Expected:
+
+* all valid rows are associated with the same server-resolved active Session ID;
+* Session boundary is checked against the request's Attendance date;
+* no row is written outside the Session.
+
+---
+
+### Test 12 — No active Session
+
+If the authenticated school has no active Session:
+
+Expected:
+
+* existing Step 2L-1 behavior remains;
+* request fails safely;
+* no Attendance row is written.
+
+---
+
+### Test 13 — Cross-school Session protection
+
+Attempt to manipulate browser/session-related input toward another school's Session.
+
+Expected:
+
+* existing tenant protection remains intact;
+* no cross-school Attendance write is possible.
+
+Remember that Step 2L-1 made the browser Session header non-authoritative for writes.
+
+Do not weaken that behavior.
+
+---
+
+# 8. ERROR RESPONSE
+
+Use the project's existing error-response conventions.
+
+The rejection should clearly indicate that the Attendance date is outside the Academic Session period, but do not redesign the API response structure.
+
+Do not expose unnecessary database details.
+
+Choose the HTTP status consistent with the existing validation/error conventions.
+
+---
+
+# 9. DATABASE SAFETY
+
+Do not change the database schema if the required Session start/end fields already exist.
+
+Do not create:
+
+* new Attendance Session-date columns
+* duplicate Session tables
+* duplicate calendar tables
+* new Enrollment requirements
+* new Student tables
+
+This is primarily a server-side validation fix.
+
+---
+
+# 10. DO NOT CHANGE THESE EXISTING BEHAVIORS
+
+After implementation, explicitly verify that these remain unchanged:
+
+### Student Registry
+
+Global/permanent.
+
+### Teacher authorization
+
+Any authenticated same-school Teacher may mark Attendance.
+
+### 7-day correction
+
+Today through seven days ago remains writable according to existing rules.
+
+### Archived Session
+
+Still read-only.
+
+### Sunday
+
+A deliberately marked Sunday remains valid.
+
+### Holidays
+
+Existing holiday restrictions remain unchanged.
+
+### Tenant isolation
+
+Still enforced using authenticated school context.
+
+### Session selection
+
+Step 2L-1 server-authoritative active Session behavior remains intact.
+
+### Admin Attendance
+
+Do not modify.
+
+### Student Attendance UI
+
+Do not modify yet.
+
+### Teacher Self-Attendance
+
+Do not modify yet.
+
+---
+
+# 11. VALIDATION COMMANDS
+
+Run the relevant focused Attendance tests.
+
+Then run the project's actual type/check command:
+
+```text
+npm run check
+```
+
+Do NOT report `npm check` as the project check command.
+
+Also verify the application starts/restarts successfully if the project workflow supports this.
+
+---
+
+# 12. REQUIRED FINAL REPORT
+
+After implementation, report:
+
+## A. Files changed
+
+List every changed file.
+
+## B. Code path changed
+
+Identify the exact route/function where the Session boundary is enforced.
+
+## C. Session fields used
+
+State the actual Academic Session start/end fields used.
+
+## D. Date handling
+
+Explain how Attendance date and Session dates are compared and confirm IST/date-only semantics.
+
+## E. Existing rules preserved
+
+Explicitly confirm:
+
+* 7-day correction window
+* future-date rejection
+* archived-session protection
+* Sunday behavior
+* holiday behavior
+* tenant isolation
+* server-authoritative Session selection from Step 2L-1
+
+## F. Tests
+
+Report PASS/FAIL for every required test above.
+
+## G. Test totals
+
+Report the exact number of tests passed/failed.
+
+## H. `npm run check`
+
+Report the actual result.
+
+## I. Remaining Attendance issues
+
+Do NOT fix them in this step.
+
+Only report whether these remain:
+
+1. Physical Student deletion destroys historical Attendance.
+2. Student UI does not properly display/count marked Sunday.
+3. NULL Session investigation for Teacher Self-Attendance/correction records.
+
+---
+
+# 13. CRITICAL SCOPE CONTROL
+
+This is a controlled implementation.
+
+If you discover another Attendance issue while working:
+
+* do NOT automatically fix it;
+* report it under "Remaining Attendance issues";
+* only fix the Session date-boundary issue described in this prompt.
+
+Do not perform a broad Attendance refactor.
+
+Do not redesign the Attendance architecture.
+
+Do not modify unrelated modules.
+
+The expected result is a **small, targeted change that prevents Attendance from being written outside the active Academic Session's start/end dates while preserving every existing Attendance rule and Step 2L-1 behavior.**
