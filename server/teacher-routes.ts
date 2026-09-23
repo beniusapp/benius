@@ -451,16 +451,22 @@ export function registerTeacherRoutes(app: Express) {
 
     const teacher = await storage.getTeacherById(req.session.teacherId);
     if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId || teacher.schoolId !== schoolId) {
+      return res.status(403).json({ message: "Teacher does not belong to this school" });
+    }
 
-    let attendanceSession;
-    try {
-      attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId,
-        (req as any).viewSessionId,
-      );
-    } catch (error) {
-      if (sendAttendanceReadSessionError(res, error)) return;
-      throw error;
+    // The selected view Session is validated by the global archive guard, but
+    // only the authenticated school's active Session determines the write ID.
+    const attendanceSession = await storage.getActiveSession(schoolId);
+    if (!attendanceSession || !attendanceSession.isActive || !Number.isInteger(attendanceSession.id)) {
+      return res.status(409).json({
+        message: "No active academic session is available for Attendance marking.",
+        code: "ATTENDANCE_SESSION_UNAVAILABLE",
+      });
+    }
+    if (attendanceSession.schoolId !== schoolId) {
+      return res.status(403).json({ message: "Active academic session does not belong to this school" });
     }
 
     const submittedStudentIds = [...new Set(records.map((record: any) => Number(record.studentId)))];
@@ -471,7 +477,7 @@ export function registerTeacherRoutes(app: Express) {
     }
     const ownedStudents = await storage.getStudentsByIdsForSchool(
       submittedStudentIds,
-      teacher.schoolId,
+      schoolId,
     );
     if (ownedStudents.length !== submittedStudentIds.length) {
       return res.status(403).json({ message: "One or more students are not valid for this school" });
@@ -480,7 +486,7 @@ export function registerTeacherRoutes(app: Express) {
     // Rule A — Holiday Lockdown: reject attendance if the date is a school-wide holiday.
     // This is the single source of truth enforced at the API layer so no attendance
     // record (and therefore no working-day count) can ever be created on a holiday.
-    const holiday = await storage.getHolidayOnDate(teacher.schoolId, date);
+    const holiday = await storage.getHolidayOnDate(schoolId, date);
     if (holiday) {
       return res.status(423).json({
         message: `Attendance is locked. "${holiday.title}" is a school-wide holiday.`,
@@ -496,7 +502,7 @@ export function registerTeacherRoutes(app: Express) {
     const formattedRecords = records.map((r: any) => ({
       studentId: r.studentId,
       teacherId: teacher.id,
-      schoolId: teacher.schoolId,
+      schoolId,
       date,
       status: r.status,
       markedBy,

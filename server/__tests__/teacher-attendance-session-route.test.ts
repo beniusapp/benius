@@ -4,6 +4,7 @@ import session from "express-session";
 import type { Server } from "node:http";
 import { addCalendarDays, getAcademicYearForISTDate, todayInIST } from "@shared/ist-time";
 import { registerTeacherRoutes } from "../teacher-routes";
+import { checkSessionContext } from "../routes";
 import { storage } from "../storage";
 
 type Harness = {
@@ -30,14 +31,7 @@ async function makeHarness(role: "teacher" | "admin" = "teacher"): Promise<Harne
     resave: false,
     saveUninitialized: false,
   }));
-  app.use((req, _res, next) => {
-    const rawSessionId = req.headers["x-view-session-id"];
-    if (typeof rawSessionId === "string") {
-      const sessionId = Number(rawSessionId);
-      if (Number.isInteger(sessionId)) (req as any).viewSessionId = sessionId;
-    }
-    next();
-  });
+  app.use(checkSessionContext);
   app.post("/test/authenticate", (req, res) => {
     if (role === "teacher") req.session.teacherId = teacher.id;
     else req.session.userId = 999;
@@ -121,7 +115,9 @@ function validBody(overrides: Record<string, unknown> = {}) {
 
 function mockSuccessfulDependencies() {
   vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
-  vi.spyOn(storage, "getActiveSession").mockResolvedValue({ id: 777 } as any);
+  vi.spyOn(storage, "getActiveSession").mockResolvedValue({
+    id: 777, schoolId: teacher.schoolId, isActive: true,
+  } as any);
   vi.spyOn(storage, "getHolidayOnDate").mockResolvedValue(undefined);
   vi.spyOn(storage, "getStudentsByIdsForSchool").mockImplementation(async studentIds =>
     studentIds.map(id => ({ id, schoolId: teacher.schoolId })) as any
@@ -138,8 +134,8 @@ afterEach(async () => {
   ));
 });
 
-describe("POST /api/attendance selected Session resolution", () => {
-  it("resolves the selected tenant Session once and passes it with every existing field", async () => {
+describe("POST /api/attendance server-authoritative active Session", () => {
+  it("resolves the authenticated school's active Session once for every Student", async () => {
     const harness = await makeHarness();
     const upsert = mockSuccessfulDependencies();
     const selectedSession = vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
@@ -152,6 +148,8 @@ describe("POST /api/attendance selected Session resolution", () => {
     const result = await postAttendance(harness, validBody({ date }));
 
     expect(result.status).toBe(200);
+    expect(storage.getActiveSession).toHaveBeenCalledOnce();
+    expect(storage.getActiveSession).toHaveBeenCalledWith(teacher.schoolId);
     expect(selectedSession).toHaveBeenCalledTimes(1);
     expect(selectedSession).toHaveBeenCalledWith(777);
     expect(upsert).toHaveBeenCalledTimes(1);
@@ -184,74 +182,94 @@ describe("POST /api/attendance selected Session resolution", () => {
     ]);
   });
 
-  it("rejects the request without writing when the selected Session is invalid", async () => {
+  it("marks Attendance without any view-Session header", async () => {
     const harness = await makeHarness();
-    vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
-    const selectedSession = vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue(undefined);
-    const activeSession = vi.spyOn(storage, "getActiveSession");
-    const holiday = vi.spyOn(storage, "getHolidayOnDate");
-    const upsert = vi.spyOn(storage, "upsertAttendance");
+    const upsert = mockSuccessfulDependencies();
+    const selectedSession = vi.spyOn(storage, "getAcademicSessionById");
 
-    const result = await postAttendance(harness, validBody());
+    const result = await postAttendance(harness, validBody(), null);
 
-    expect(result.status).toBe(403);
-    expect(result.body.code).toBe("ATTENDANCE_SESSION_FORBIDDEN");
-    expect(selectedSession).toHaveBeenCalledWith(777);
-    expect(activeSession).not.toHaveBeenCalled();
-    expect(holiday).not.toHaveBeenCalled();
-    expect(upsert).not.toHaveBeenCalled();
+    expect(result.status).toBe(200);
+    expect(storage.getActiveSession).toHaveBeenCalledWith(teacher.schoolId);
+    expect(selectedSession).not.toHaveBeenCalled();
+    expect(upsert.mock.calls[0][0].every(record => record.sessionId === 777)).toBe(true);
   });
 
-  it("rejects a selected Session belonging to another school", async () => {
+  it("cannot override the server-resolved Session with another active same-school header", async () => {
     const harness = await makeHarness();
-    vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
-    const selectedSession = vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
+    const upsert = mockSuccessfulDependencies();
+    vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
       id: 888,
-      schoolId: teacher.schoolId + 1,
+      schoolId: teacher.schoolId,
+      isActive: true,
     } as any);
-    const activeSession = vi.spyOn(storage, "getActiveSession");
-    const upsert = vi.spyOn(storage, "upsertAttendance");
+
+    const result = await postAttendance(harness, validBody({ sessionId: 999_999 }), 888);
+
+    expect(result.status).toBe(200);
+    expect(storage.getActiveSession).toHaveBeenCalledWith(teacher.schoolId);
+    expect(upsert.mock.calls[0][0].every(record => record.sessionId === 777)).toBe(true);
+  });
+
+  it("rejects a foreign school's header before writing", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
+      id: 888, schoolId: teacher.schoolId + 1, isActive: true,
+    } as any);
 
     const result = await postAttendance(harness, validBody(), 888);
 
     expect(result.status).toBe(403);
-    expect(result.body.code).toBe("ATTENDANCE_SESSION_FORBIDDEN");
-    expect(selectedSession).toHaveBeenCalledWith(888);
-    expect(activeSession).not.toHaveBeenCalled();
+    expect(result.body.code).toBe("ARCHIVE_READ_ONLY");
+    expect(storage.getActiveSession).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
   });
 
-  it("requires the selected Session header", async () => {
+  it("keeps archived same-school Sessions read-only", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
+      id: 888, schoolId: teacher.schoolId, isActive: false,
+    } as any);
+
+    const result = await postAttendance(harness, validBody(), 888);
+
+    expect(result.status).toBe(403);
+    expect(result.body.code).toBe("ARCHIVE_READ_ONLY");
+    expect(storage.getActiveSession).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("fails safely when the authenticated school has no active Session", async () => {
     const harness = await makeHarness();
     vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
     const selectedSession = vi.spyOn(storage, "getAcademicSessionById");
+    const activeSession = vi.spyOn(storage, "getActiveSession").mockResolvedValue(undefined);
+    const upsert = vi.spyOn(storage, "upsertAttendance");
+
+    const result = await postAttendance(harness, validBody(), null);
+
+    expect(result.status).toBe(409);
+    expect(result.body.code).toBe("ATTENDANCE_SESSION_UNAVAILABLE");
+    expect(selectedSession).not.toHaveBeenCalled();
+    expect(activeSession).toHaveBeenCalledWith(teacher.schoolId);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Teacher whose school differs from the authenticated school", async () => {
+    const harness = await makeHarness();
+    vi.spyOn(storage, "getTeacherById").mockResolvedValue({
+      ...teacher, schoolId: teacher.schoolId + 1,
+    } as any);
     const activeSession = vi.spyOn(storage, "getActiveSession");
     const upsert = vi.spyOn(storage, "upsertAttendance");
 
     const result = await postAttendance(harness, validBody(), null);
 
-    expect(result.status).toBe(400);
-    expect(result.body.code).toBe("ATTENDANCE_SESSION_REQUIRED");
-    expect(selectedSession).not.toHaveBeenCalled();
+    expect(result.status).toBe(403);
     expect(activeSession).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
-  });
-
-  it("ignores a body-supplied Session and writes the validated header Session", async () => {
-    const harness = await makeHarness();
-    const upsert = mockSuccessfulDependencies();
-    const selectedSession = vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
-      id: 777,
-      schoolId: teacher.schoolId,
-    } as any);
-
-    const result = await postAttendance(harness, validBody({ sessionId: 999_999 }));
-
-    expect(result.status).toBe(200);
-    const [records] = upsert.mock.calls[0];
-    expect(records.every(record => record.sessionId === 777)).toBe(true);
-    expect(selectedSession).toHaveBeenCalledWith(777);
-    expect(storage.getActiveSession).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -261,30 +279,53 @@ describe("POST /api/attendance selected Session resolution", () => {
     const harness = await makeHarness();
     const teacherLookup = vi.spyOn(storage, "getTeacherById");
     const activeSession = vi.spyOn(storage, "getActiveSession");
-    const selectedSession = vi.spyOn(storage, "getAcademicSessionById");
     const upsert = vi.spyOn(storage, "upsertAttendance");
 
-    const result = await postAttendance(harness, validBody({ date }));
+    const result = await postAttendance(harness, validBody({ date }), null);
 
     expect(result.status).toBe(400);
     expect(teacherLookup).not.toHaveBeenCalled();
     expect(activeSession).not.toHaveBeenCalled();
-    expect(selectedSession).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1, 7])("preserves a date %i days ago as writable", async daysAgo => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    const date = addCalendarDays(todayInIST(), -daysAgo);
+
+    const result = await postAttendance(harness, validBody({ date }), null);
+
+    expect(result.status).toBe(200);
+    expect(upsert.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ date, sessionId: 777 })]),
+    );
+  });
+
+  it("accepts deliberately marked Sunday under the active Session", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    let sunday = todayInIST();
+    while (new Date(`${sunday}T12:00:00+05:30`).getUTCDay() !== 0) {
+      sunday = addCalendarDays(sunday, -1);
+    }
+
+    const result = await postAttendance(harness, validBody({ date: sunday }), null);
+
+    expect(result.status).toBe(200);
+    expect(upsert.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ date: sunday, sessionId: 777 })]),
+    );
   });
 
   it("preserves the school-holiday restriction", async () => {
     const harness = await makeHarness();
     const upsert = mockSuccessfulDependencies();
-    vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
-      id: 777,
-      schoolId: teacher.schoolId,
-    } as any);
     vi.mocked(storage.getHolidayOnDate).mockResolvedValue({
       title: "School Holiday",
     } as any);
 
-    const result = await postAttendance(harness, validBody());
+    const result = await postAttendance(harness, validBody(), null);
 
     expect(result.status).toBe(423);
     expect(result.body).toEqual({
@@ -297,15 +338,11 @@ describe("POST /api/attendance selected Session resolution", () => {
   it("rejects the whole request when any submitted Student is outside the Teacher's school", async () => {
     const harness = await makeHarness();
     const upsert = mockSuccessfulDependencies();
-    vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
-      id: 777,
-      schoolId: teacher.schoolId,
-    } as any);
     vi.mocked(storage.getStudentsByIdsForSchool).mockResolvedValue([
       { id: 101, schoolId: teacher.schoolId },
     ] as any);
 
-    const result = await postAttendance(harness, validBody());
+    const result = await postAttendance(harness, validBody(), null);
 
     expect(result.status).toBe(403);
     expect(result.body).toEqual({
