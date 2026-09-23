@@ -143,6 +143,31 @@ afterEach(async () => {
 });
 
 describe("POST /api/attendance server-authoritative active Session", () => {
+  it("preserves the submitted Attendance while attributing the mark to its Teacher in IST", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    const body = validBody();
+
+    expect((await postAttendance(harness, body, null)).status).toBe(200);
+
+    const records = upsert.mock.calls[0][0];
+    expect(records).toHaveLength(2);
+    expect(records.map(({ markedBy, ...record }) => record)).toEqual([
+      expect.objectContaining({
+        studentId: 101, teacherId: teacher.id, schoolId: teacher.schoolId,
+        sessionId: 777, date: body.date, class: "4", section: "B", status: "present",
+      }),
+      expect.objectContaining({
+        studentId: 102, teacherId: teacher.id, schoolId: teacher.schoolId,
+        sessionId: 777, date: body.date, class: "4", section: "B", status: "absent",
+      }),
+    ]);
+    for (const record of records) {
+      expect(record.markedBy).toMatch(/^Attendance Teacher at .+ IST$/);
+      expect(record.markedBy).not.toMatch(/\d{4}-\d{2}-\d{2}T.*Z/);
+    }
+  });
+
   it("writes a date strictly inside the active Session for every Student", async () => {
     const harness = await makeHarness();
     const upsert = mockSuccessfulDependencies({

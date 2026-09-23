@@ -12,6 +12,7 @@ import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import MyAttendanceModule from "./my-attendance";
 import { addCalendarDays, dateOnlyParts } from "@shared/ist-time";
+import { formatAttendanceMarkedBy } from "@/lib/attendance-marked-by";
 
 interface StudentAttendance {
   studentId: number;
@@ -568,7 +569,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                         {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
                       </span>
                       <div className="hidden sm:block text-xs text-white/40 text-right max-w-[180px]">
-                        <p className="truncate">{r.markedBy}</p>
+                        <p className="truncate">{formatAttendanceMarkedBy(r.markedBy)}</p>
                         <p>Edits: {r.editCount}/3</p>
                       </div>
                     </div>
@@ -749,7 +750,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
                     {student.markedBy && (
                       <span className="text-[10px] text-white/40 truncate max-w-[200px]" data-testid={`text-audit-${student.studentId}`}>
                         <Clock className="w-3 h-3 inline mr-0.5 -mt-px" />
-                        {student.markedBy}
+                        {formatAttendanceMarkedBy(student.markedBy)}
                       </span>
                     )}
                   </div>

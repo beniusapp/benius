@@ -9,6 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatDateOnly, formatDateTimeIST, formatTimeIST, todayInIST } from "@shared/ist-time";
+import { formatAttendanceMarkedBy } from "@/lib/attendance-marked-by";
 
 interface Props {
   schoolId: number;
@@ -536,7 +537,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                         <span>
                           Submitted by:{" "}
                           <span className="font-semibold text-white">
-                            {submissionMeta.submittedBy ? `Tr. ${submissionMeta.submittedBy}` : "Unknown"}
+                            {submissionMeta.submittedBy ? `Tr. ${formatAttendanceMarkedBy(submissionMeta.submittedBy)}` : "Unknown"}
                           </span>{" "}
                           at{" "}
                           <span className="font-semibold text-emerald-400">
@@ -549,7 +550,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400">
                             <PenLine className="w-3 h-3" />
                             Modified by{" "}
-                            <span className="font-semibold">{submissionMeta.modifiedBy ?? "Admin"}</span>{" "}
+                            <span className="font-semibold">{submissionMeta.modifiedBy ? formatAttendanceMarkedBy(submissionMeta.modifiedBy) : "Admin"}</span>{" "}
                             on {formatDateTime(submissionMeta.lastModifiedAt)}
                           </span>
                         </div>

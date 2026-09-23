@@ -14,6 +14,7 @@ import {
   addCalendarDays,
   calendarDayDifference,
   calendarWeekday,
+  formatDateTimeIST,
   getAcademicYearForISTDate,
   isValidDateOnly,
   todayInIST,
@@ -532,7 +533,7 @@ export function registerTeacherRoutes(app: Express) {
     const [academicStartYear, academicEndYear] = getAcademicYearForISTDate(date).split("-");
     const academicYear = `${academicStartYear}-${academicEndYear.slice(-2)}`;
 
-    const markedBy = `${teacher.fullName} at ${new Date().toISOString()}`;
+    const markedBy = `${teacher.fullName} at ${formatDateTimeIST(new Date())}`;
     const formattedRecords = records.map((r: any) => ({
       studentId: r.studentId,
       teacherId: teacher.id,
