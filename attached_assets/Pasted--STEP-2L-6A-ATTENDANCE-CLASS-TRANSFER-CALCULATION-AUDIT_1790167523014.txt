@@ -1,0 +1,565 @@
+# STEP 2L-6A — ATTENDANCE CLASS-TRANSFER CALCULATION AUDIT
+
+## PHASE
+
+The application is currently in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **READ-ONLY AUDIT**.
+
+### HARD REQUIREMENT
+
+**DO NOT MODIFY ANY FILE.**
+
+Do not modify application code, tests, schema, migrations, configuration, memory files, or production.
+
+Do not fix anything yet.
+
+The purpose of this step is to establish the exact current behavior of Attendance calculations when a Student changes class/section during the SAME Academic Session.
+
+---
+
+# CONTEXT
+
+Previous Attendance audits established:
+
+* Student Registry is GLOBAL/PERMANENT.
+* Academic Session enrollment is separate from the global Student Registry.
+* Attendance is school + Academic Session scoped.
+* Historical Attendance preserves class/section context.
+* Direct Teacher marking is server-authoritative to the active Academic Session.
+* Leave approval now obeys active Session, archived Session, 7-day, holiday, and class/section integrity rules.
+* Same-school Teachers do NOT require Faculty Mapping to mark Attendance.
+* Sunday stored-mark behavior is already accepted.
+* Historical deleted-Student identity preservation is implemented in development.
+
+The latest audit identified one remaining calculation concern:
+
+> A same-Session class transfer can hide earlier Attendance marks from Student yearly/statistics calculations.
+
+The current observation was:
+
+* Monthly may read all Attendance records for the Student.
+* Yearly/statistics may resolve one Session enrollment class/section and filter Attendance to that class/section.
+* Admin daily aggregation may retain the historical class/section saved on the Attendance record.
+
+This MUST be verified against the actual current code.
+
+---
+
+# OBJECTIVE
+
+Determine exactly whether a Student who changes class/section during the SAME Academic Session can have earlier Attendance excluded from:
+
+* yearly totals
+* statistics
+* other cumulative Attendance calculations
+
+Also determine whether the behavior is intentional or an implementation inconsistency.
+
+Do NOT decide the product policy.
+
+Do NOT propose a fix yet.
+
+---
+
+# SCOPE
+
+Audit ONLY:
+
+### Student Attendance
+
+* monthly calculation
+* yearly calculation
+* statistics
+* working-day calculation
+* Attendance status totals
+
+### Admin Attendance
+
+* daily aggregation
+* class/section aggregation
+* historical Attendance display
+* totals where relevant
+
+### Teacher Attendance
+
+Only inspect relevant historical/calculation paths if they directly participate in this issue.
+
+### Data model
+
+Inspect:
+
+* Student
+* Academic Session
+* Session enrollment
+* Attendance record
+* class/section fields stored on Attendance
+
+### APIs/services
+
+Trace the exact server functions and route paths responsible for the above calculations.
+
+---
+
+# DO NOT AUDIT OR CHANGE
+
+Do NOT work on:
+
+* IST
+* `markedBy` UTC text
+* Student deletion preservation
+* identity UUIDs
+* digital ID reuse
+* leave approval
+* holiday behavior
+* Sunday policy
+* Teacher authorization
+* Faculty Mapping
+* Academic Session mutation guards
+* migration/deployment
+* production
+* Examination
+* Promotion
+* product decisions
+
+---
+
+# PHASE A — TRACE THE DATA MODEL
+
+Inspect the actual schema and relevant code.
+
+Determine:
+
+1. How Student is globally stored.
+2. How Academic Session enrollment is stored.
+3. Whether one Student can have multiple enrollment records in the SAME Session.
+4. How class/section changes are represented.
+5. How Attendance stores class/section.
+6. Whether Attendance class/section is historical or mutable.
+7. Whether Attendance is uniquely identified by Student + Session + date.
+8. Whether multiple Attendance rows for the same Student/date are possible.
+
+Do not change anything.
+
+---
+
+# PHASE B — TRACE STUDENT MONTHLY CALCULATION
+
+Find the exact route/function/service used by Student Attendance monthly view.
+
+Document:
+
+* source Attendance query
+* school filter
+* Student filter
+* Academic Session filter
+* class/section filter
+* date filter
+* working-day calculation
+* status aggregation
+* handling of Attendance rows whose class/section differs from current Session enrollment
+
+Answer explicitly:
+
+> Does monthly Attendance include all valid Attendance records for the Student within the selected Academic Session regardless of historical class/section?
+
+If yes, prove it from code.
+
+If no, explain exactly what filter removes records.
+
+---
+
+# PHASE C — TRACE STUDENT YEARLY CALCULATION
+
+Find the exact route/function/service used for yearly Attendance.
+
+Document:
+
+* source query
+* Student filter
+* school filter
+* Session filter
+* class/section filter
+* working-date derivation
+* status aggregation
+* denominator
+* treatment of historical class/section
+
+Answer explicitly:
+
+> If a Student was in Class A for part of the Session and Class B later in the same Session, are Class A Attendance records included in the Student's yearly Attendance?
+
+Do not assume.
+
+Show the exact filtering logic.
+
+---
+
+# PHASE D — TRACE STUDENT STATISTICS
+
+Find the exact statistics calculation.
+
+Document:
+
+* source Attendance query
+* Session resolution
+* enrollment resolution
+* class/section selection
+* status aggregation
+* working-day calculation
+* whether historical class/section Attendance survives the filter
+
+Answer:
+
+> Can a same-Session class transfer cause earlier Attendance to disappear from Student statistics?
+
+Again, determine from code rather than guessing.
+
+---
+
+# PHASE E — TRACE ADMIN ATTENDANCE
+
+Inspect Admin Attendance aggregation.
+
+Determine:
+
+1. Whether Admin aggregation uses Attendance's saved class/section.
+2. Whether historical Class A Attendance remains visible after the Student moves to Class B.
+3. Whether totals are calculated per historical class/section.
+4. Whether Admin calculations use current Student class/section instead.
+5. Whether Admin behavior differs from Student yearly/statistics behavior.
+
+Document exact functions and relevant query/filter conditions.
+
+---
+
+# PHASE F — TRACE TEACHER ATTENDANCE
+
+Only where relevant.
+
+Determine whether Teacher historical Attendance views:
+
+* use Attendance's stored class/section
+* use current Student class/section
+* use Session enrollment
+* filter out historical class/section records
+
+Do not redesign Teacher views.
+
+---
+
+# PHASE G — BUILD A CONTROLLED DEVELOPMENT TEST SCENARIO
+
+If the existing test infrastructure permits a safe isolated fixture, construct or inspect a development-only scenario:
+
+### School
+
+School A
+
+### Academic Session
+
+Session S
+
+### Student
+
+Student X
+
+### Enrollment history
+
+Student X:
+
+* Class A / Section A1 during earlier part of Session S
+* Class B / Section B1 during later part of Session S
+
+### Attendance
+
+Create historical Attendance records:
+
+* several dates while in Class A/A1
+* several dates while in Class B/B1
+
+The Attendance records must preserve the class/section that applied when each mark was recorded.
+
+Then inspect the outputs of:
+
+* Student monthly
+* Student yearly
+* Student statistics
+* Admin daily/aggregate
+
+Do NOT alter production.
+
+Do NOT commit fixture changes unless the existing test framework requires temporary local fixtures.
+
+Prefer static/code inspection if fixture creation would modify persistent project state.
+
+---
+
+# PHASE H — CONTROL TEST
+
+Also test/inspect the simpler case:
+
+Student remains in the same class/section for the entire Session.
+
+Determine whether:
+
+* monthly
+* yearly
+* statistics
+* Admin
+
+all include the same Attendance records.
+
+This establishes the baseline before class transfer.
+
+---
+
+# PHASE I — MULTI-TENANT CHECK
+
+While tracing the queries, verify that class-transfer calculations remain constrained by:
+
+* authenticated school/tenant
+* Student
+* Academic Session
+
+Explicitly identify any query that could accidentally mix:
+
+* another school's Student
+* another school's Session
+* another Session's enrollment
+* another Session's Attendance
+
+Do NOT fix anything.
+
+Report only.
+
+---
+
+# PHASE J — DETERMINE THE EXACT MISMATCH
+
+At the end, classify the observed behavior into one of these categories:
+
+### A — NO BUG
+
+All Student calculations correctly include historical same-Session Attendance.
+
+### B — QUERY/FILTER BUG
+
+Historical Attendance exists and is valid, but one or more calculations incorrectly exclude it because of current enrollment/class filtering.
+
+### C — DATA MODEL LIMITATION
+
+The current data model cannot represent the historical class-transfer semantics required by the existing Attendance requirements.
+
+### D — PRODUCT DECISION REQUIRED
+
+The code has internally consistent behavior, but the correct treatment of class-transfer Attendance has not yet been defined as a product rule.
+
+### E — MIXED
+
+Different calculations use different semantics and therefore produce inconsistent results.
+
+Do not choose based on preference.
+
+Base the classification on actual code and test evidence.
+
+---
+
+# PHASE K — DO NOT FIX
+
+This is critical.
+
+Even if you find a clear bug:
+
+**DO NOT IMPLEMENT THE FIX IN STEP 2L-6A.**
+
+Do not edit:
+
+* `server/storage.ts`
+* `server/routes.ts`
+* Student Attendance client code
+* Admin Attendance client code
+* tests
+* schema
+* migrations
+
+unless absolutely necessary for a temporary, non-persistent diagnostic fixture.
+
+The next step will be decided only after reviewing this audit.
+
+---
+
+# FINAL REPORT FORMAT
+
+Return the following exact sections.
+
+## 1. VERDICT
+
+Use exactly one:
+
+**STEP 2L-6A AUDIT COMPLETE — NO ISSUE FOUND**
+
+or
+
+**STEP 2L-6A AUDIT COMPLETE — ISSUE FOUND**
+
+Do NOT say ACCEPTED/NOT ACCEPTED because this is an audit, not an implementation step.
+
+---
+
+## 2. DATA MODEL FINDINGS
+
+Explain:
+
+* Student model
+* Session enrollment model
+* class-transfer representation
+* Attendance class/section storage
+* uniqueness/identity relevant to the issue
+
+---
+
+## 3. MONTHLY CALCULATION
+
+State exactly:
+
+* query
+* filters
+* Session handling
+* class/section handling
+* result for class transfer
+
+---
+
+## 4. YEARLY CALCULATION
+
+State exactly:
+
+* query
+* filters
+* Session handling
+* class/section handling
+* result for class transfer
+
+---
+
+## 5. STATISTICS CALCULATION
+
+State exactly:
+
+* query
+* filters
+* Session handling
+* class/section handling
+* result for class transfer
+
+---
+
+## 6. ADMIN CALCULATION/DISPLAY
+
+State exactly:
+
+* historical class/section behavior
+* aggregation behavior
+* difference from Student calculations, if any
+
+---
+
+## 7. TEACHER CALCULATION/DISPLAY
+
+Only report if relevant to this issue.
+
+---
+
+## 8. CONTROL SCENARIO
+
+Report:
+
+* same class/section throughout Session
+* class transfer during same Session
+
+Show expected stored records versus observed calculation output.
+
+---
+
+## 9. MULTI-TENANT / SESSION ISOLATION
+
+Confirm whether all inspected calculations are constrained to:
+
+* correct school
+* correct Student
+* correct Academic Session
+
+Report any weakness without fixing it.
+
+---
+
+## 10. EXACT ISSUE
+
+If an issue exists, state:
+
+* affected API/route
+* affected function
+* affected calculation
+* exact filter causing the issue
+* example of Attendance that is incorrectly excluded
+* whether Admin behavior differs from Student behavior
+
+---
+
+## 11. PRODUCT DECISION REQUIRED
+
+Only if genuinely required.
+
+Do not invent a product decision.
+
+If code clearly violates the existing requirement, say so.
+
+If the requirement itself is ambiguous, identify the exact ambiguity.
+
+---
+
+## 12. FILES CHANGED
+
+Expected:
+
+**NONE**
+
+If anything changed, list every file and explain why.
+
+---
+
+## 13. TESTS
+
+Report exact commands/results.
+
+If no test fixture was created, say so.
+
+Do not claim tests passed if they were not run.
+
+---
+
+## 14. PRODUCTION STATUS
+
+Explicitly state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# FINAL HARD STOP
+
+After completing the audit:
+
+**STOP.**
+
+Do not implement Step 2L-6B or any other fix.
+
+Do not automatically fix the class-transfer issue.
+
+Wait for the next instruction.
+
+The only goal of Step 2L-6A is to establish the exact current behavior and evidence.
