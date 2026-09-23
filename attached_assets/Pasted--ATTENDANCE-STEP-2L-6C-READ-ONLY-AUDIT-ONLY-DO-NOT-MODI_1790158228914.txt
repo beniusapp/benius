@@ -1,0 +1,676 @@
+# ATTENDANCE — STEP 2L-6C
+
+# READ-ONLY AUDIT ONLY
+
+# DO NOT MODIFY ANYTHING
+
+IMPORTANT:
+
+This is a **READ-ONLY AUDIT**.
+
+The Attendance module is already built.
+
+Do NOT modify:
+
+* code
+* database
+* schema
+* migrations
+* data
+* APIs
+* frontend
+* configuration
+* workflows
+
+Do NOT implement any fix.
+
+Do NOT refactor.
+
+Do NOT redesign.
+
+Do NOT create a new architecture.
+
+The purpose of this step is ONLY to resolve the remaining questions from the previous Attendance Requirements Audit using the decisions below.
+
+==================================================
+CONFIRMED PRODUCT DECISIONS
+===========================
+
+The following decisions are FINAL for this audit:
+
+### DECISION 1 — HISTORICAL STUDENT ATTENDANCE
+
+Historical Attendance MUST remain visible even if the Student's current Student Registry row is physically deleted.
+
+Therefore:
+
+Student Registry
+=
+Global / Permanent Student Master
+
+BUT
+
+Historical Attendance
+=
+must remain independently recoverable for the selected Academic Session.
+
+Example:
+
+Student Registry:
+
+```
+RAM JAISWAL
+student_id = 123
+```
+
+Academic Session:
+
+```
+2021–2022
+```
+
+Attendance:
+
+```
+student_id = 123
+session_id = 2021–2022
+date = historical date
+status = Present
+```
+
+Later:
+
+```
+Student Registry row 123 is physically deleted.
+```
+
+When:
+
+```
+Academic Session 2021–2022
+```
+
+is selected, the historical Attendance record MUST still be displayable.
+
+IMPORTANT:
+
+Do NOT implement this requirement.
+
+ONLY audit whether the CURRENT implementation satisfies it.
+
+Determine exactly what happens when the Student Registry row is physically deleted.
+
+Determine whether Attendance data itself survives.
+
+Determine whether Admin/Student/Teacher historical Attendance reads can still retrieve the record.
+
+Determine whether the historical Student name/identity can still be displayed.
+
+Do NOT assume that a foreign key cascade is acceptable merely because it is currently implemented.
+
+==================================================
+DECISION 2 — SUNDAY ATTENDANCE
+==============================
+
+A Sunday MAY be a valid Attendance day.
+
+If Attendance is deliberately marked on Sunday:
+
+```
+the Attendance record counts.
+```
+
+Therefore:
+
+Sunday itself MUST NOT automatically invalidate an Attendance record.
+
+The audit must determine:
+
+* whether Teacher marking on Sunday is currently allowed
+* whether the Attendance record is stored
+* whether the server calculation counts it
+* whether Student calculation counts it
+* whether Admin calculation counts it
+* whether Student UI hides it
+* whether calendar logic incorrectly excludes it
+
+IMPORTANT:
+
+Do NOT redesign the calendar.
+
+Do NOT introduce a new Sunday policy.
+
+Simply compare current behavior against the confirmed requirement:
+
+```
+DELIBERATELY MARKED SUNDAY ATTENDANCE COUNTS.
+```
+
+==================================================
+DECISION 3 — ACTIVE SESSION 7-DAY CORRECTION WINDOW
+===================================================
+
+The existing 7-day correction/edit behavior is intentional.
+
+Therefore:
+
+### ACTIVE SESSION
+
+A Teacher may correct/edit Attendance for dates within the existing 7-day correction window.
+
+That behavior MUST remain.
+
+### ARCHIVED SESSION
+
+Attendance belonging to an archived Academic Session MUST be read-only.
+
+Therefore:
+
+```
+Active Session
+    ↓
+current Attendance + existing 7-day correction behavior
+
+Archived Session
+    ↓
+read-only
+```
+
+IMPORTANT:
+
+Do NOT remove the 7-day correction window.
+
+Do NOT redesign correction.
+
+Do NOT change correction behavior in this step.
+
+ONLY verify current behavior.
+
+==================================================
+STEP 2D — CRITICAL VERIFICATION
+===============================
+
+Step 2D was previously implemented with the following intended behavior:
+
+```
+Authenticated Teacher
+        ↓
+authenticated school
+        ↓
+server resolves ACTIVE Academic Session
+        ↓
+sessionId determined server-side
+        ↓
+same sessionId applied to ALL Attendance records
+        ↓
+Attendance records persisted
+```
+
+The previous audit now reports that the current POST appears to use:
+
+```
+x-view-session-id
+```
+
+as the Session source.
+
+This MUST be investigated before ANY implementation.
+
+DO NOT change Step 2D.
+
+DO NOT fix it.
+
+DO NOT redesign it.
+
+ONLY determine the exact current behavior.
+
+Inspect the complete current:
+
+```
+POST /api/attendance
+```
+
+flow.
+
+Trace:
+
+1. Authentication.
+2. Authenticated school resolution.
+3. Academic Session resolution.
+4. `x-view-session-id`.
+5. Any other Session headers/body/query parameters.
+6. Active Session lookup.
+7. Session ownership validation.
+8. Archived Session validation.
+9. Which exact `sessionId` is ultimately passed to Attendance creation.
+10. Whether one `sessionId` is resolved once and reused for every Student in the request.
+11. Behavior when `x-view-session-id` is:
+
+    * absent
+    * the active Session
+    * another Session belonging to the same school
+    * an archived Session
+    * a Session belonging to another school
+    * invalid/nonexistent
+12. Behavior if the browser attempts to manipulate the header.
+
+IMPORTANT:
+
+Do NOT confuse:
+
+```
+"browser may provide a Session ID"
+```
+
+with:
+
+```
+"browser is authoritative."
+```
+
+Determine whether the server independently resolves and enforces the authenticated school's active Session.
+
+The question is NOT whether the header is validated.
+
+The question is:
+
+```
+WHO determines the Session used for the Attendance write?
+```
+
+SERVER
+or
+BROWSER
+
+Report the exact current behavior.
+
+==================================================
+HISTORICAL STUDENT IDENTITY AUDIT
+=================================
+
+Trace how historical Attendance is displayed.
+
+Inspect:
+
+* attendance_records
+* students
+* any foreign keys
+* cascade behavior
+* Attendance queries
+* Student Attendance API
+* Admin Attendance API
+* Teacher Attendance/history API
+* Student name lookup
+* historical roster construction
+* joins between Attendance and students
+* any fallback identity logic
+* Enrollment relationships
+* session-specific class/section stored in Attendance
+
+Determine:
+
+### CASE A — STUDENT ACTIVE
+
+Student exists in Student Registry.
+
+Can historical Attendance be displayed?
+
+### CASE B — STUDENT SOFT-DEACTIVATED
+
+Student row remains but is inactive.
+
+Can historical Attendance be displayed?
+
+### CASE C — STUDENT PHYSICALLY DELETED
+
+Student row no longer exists.
+
+Does:
+
+* Attendance row survive?
+* Attendance query still return it?
+* Admin display it?
+* Student display it?
+* Teacher display it?
+* Student name remain available?
+* historical identity become anonymous/missing?
+* the Attendance row get deleted through cascade?
+
+Do NOT change anything.
+
+Do NOT create snapshots.
+
+Do NOT propose a schema redesign.
+
+Only report current behavior.
+
+==================================================
+SUNDAY ATTENDANCE TRACE
+=======================
+
+Trace one deliberately marked Sunday through the complete system:
+
+Teacher marks:
+
+```
+Sunday
+Student X
+Present
+```
+
+Determine:
+
+1. Is POST accepted?
+2. Is the Attendance row persisted?
+3. Is `session_id` persisted?
+4. Is Sunday considered a working day by server calculation?
+5. Is the record included in Attendance percentage?
+6. Is it included in Admin Attendance?
+7. Is it included in Student Attendance?
+8. Does Student UI display it?
+9. Does any UI hide it?
+10. Does any server-side filter remove it?
+
+If different layers behave differently, identify the exact difference.
+
+IMPORTANT:
+
+The requirement is:
+
+```
+If deliberately marked, Sunday Attendance counts.
+```
+
+Do NOT interpret this as:
+
+```
+"Every Sunday must automatically become a working day."
+```
+
+Those are different requirements.
+
+==================================================
+7-DAY CORRECTION TRACE
+======================
+
+Trace the existing Teacher Attendance correction flow.
+
+Verify:
+
+### ACTIVE SESSION
+
+* current date
+* yesterday
+* date within 7-day window
+* date older than 7 days
+
+Determine which are writable/read-only.
+
+### ARCHIVED SESSION
+
+Determine whether any Attendance write/correction can occur.
+
+Inspect:
+
+* route-level checks
+* global middleware
+* session resolver
+* mutation guard
+* frontend restrictions
+* backend restrictions
+
+The backend/server behavior is authoritative.
+
+Do NOT modify anything.
+
+==================================================
+TENANT ISOLATION
+================
+
+While tracing all of the above, preserve the existing tenant requirement.
+
+Verify:
+
+School A Teacher:
+
+```
+cannot read School B Attendance
+cannot create School B Attendance
+cannot modify School B Attendance
+```
+
+School A Student:
+
+```
+cannot read School B Attendance
+```
+
+School A Admin:
+
+```
+cannot read School B Attendance
+```
+
+Pay particular attention to:
+
+* physically deleted Student cases
+* historical Attendance
+* Session resolution
+* Attendance correction
+* `x-view-session-id`
+
+Do NOT weaken any tenant check.
+
+==================================================
+SESSION ISOLATION
+=================
+
+Verify:
+
+```
+Session A Attendance
+    ≠
+Session B Attendance
+```
+
+Historical Attendance must remain associated with its original Session.
+
+Determine whether any Attendance query can accidentally use:
+
+* current active Session
+* current Student class
+* current Student section
+* current Enrollment
+
+instead of the Attendance record's historical Session/class/section.
+
+Do NOT change anything.
+
+==================================================
+DATABASE AUDIT
+==============
+
+Read-only inspect the relevant schema definitions and relationships.
+
+At minimum:
+
+* attendance_records
+* teacher_self_attendance
+* teacher_self_attendance_corrections
+* students
+* teachers
+* academic_sessions
+* enrollments
+* calendar_events
+* any Attendance-related tables
+
+Determine:
+
+* primary keys
+* foreign keys
+* nullable Session IDs
+* cascade behavior
+* stored historical fields
+* indexes/unique constraints relevant to Attendance
+
+Do NOT modify schema.
+
+Do NOT run migrations.
+
+Do NOT alter data.
+
+==================================================
+IMPORTANT OUT-OF-SCOPE ITEMS
+============================
+
+DO NOT:
+
+* make Enrollment mandatory
+* introduce Faculty Mapping restrictions
+* restrict Teachers by class
+* restrict Teachers by subject
+* recreate Students per Academic Session
+* create Session-specific Student Registry
+* redesign Working-Day Calendar
+* create a new Attendance architecture
+* add policy snapshots
+* change Attendance calculation engine
+* remove the 7-day correction window
+* change archived-session protection
+* implement historical identity preservation
+* backfill legacy NULL Session IDs
+* modify Step 2D
+* modify Student Attendance
+* modify Admin Attendance
+* modify Teacher Attendance
+* modify database
+* modify frontend
+* modify APIs
+* modify configuration
+
+This is investigation only.
+
+==================================================
+REQUIRED OUTPUT
+===============
+
+Return ONLY an audit report.
+
+Use this table:
+
+| Question / Requirement | Current Status | Exact Current Behavior | Evidence | Required Change? |
+| ---------------------- | -------------- | ---------------------- | -------- | ---------------- |
+
+Use ONLY:
+
+Current Status:
+
+* PASS
+* PARTIAL
+* FAIL
+
+Required Change:
+
+* NO
+* YES
+* NEEDS DECISION
+
+==================================================
+FINAL REPORT
+============
+
+After the table provide:
+
+### A. HISTORICAL STUDENT DELETION
+
+State exactly what happens when a Student Registry row is physically deleted.
+
+Answer separately:
+
+* Attendance row
+* Admin visibility
+* Student visibility
+* Teacher visibility
+* historical Student identity/name
+
+### B. SUNDAY ATTENDANCE
+
+State exactly what happens from:
+
+Teacher marking
+→ database
+→ server calculation
+→ Admin
+→ Student
+→ UI
+
+Identify any discrepancy.
+
+### C. 7-DAY CORRECTION
+
+State exactly:
+
+* Active Session current date
+* Active Session within 7 days
+* Active Session older than 7 days
+* Archived Session
+
+### D. STEP 2D
+
+State clearly:
+
+```
+WHO CURRENTLY DETERMINES THE WRITE SESSION?
+```
+
+and explain the exact POST flow.
+
+Do NOT propose a fix yet.
+
+### E. MINIMUM ACTUAL GAPS
+
+List ONLY requirements that the current implementation demonstrably fails.
+
+Do not list code-quality improvements.
+
+Do not list architecture preferences.
+
+Do not list optional enhancements.
+
+### F. MUST REMAIN UNCHANGED
+
+Explicitly state the existing behavior that must remain unchanged based on the confirmed decisions.
+
+==================================================
+ABSOLUTE RULE
+=============
+
+THIS IS AN AUDIT ONLY.
+
+NO CODE CHANGES.
+
+NO DATABASE CHANGES.
+
+NO MIGRATION.
+
+NO DATA CHANGES.
+
+NO REFACTORING.
+
+NO FRONTEND CHANGES.
+
+NO API CHANGES.
+
+NO CONFIGURATION CHANGES.
+
+NO IMPLEMENTATION.
+
+NO BACKFILL.
+
+NO ENROLLMENT IMPLEMENTATION.
+
+NO FACULTY MAPPING IMPLEMENTATION.
+
+NO NEW ATTENDANCE ARCHITECTURE.
+
+STOP AFTER THE AUDIT REPORT.
