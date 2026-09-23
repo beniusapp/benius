@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey, foreignKey } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey, foreignKey, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -168,6 +168,7 @@ export type StudentPasswordResetChallenge = typeof studentPasswordResetChallenge
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  attendanceIdentityKey: uuid("attendance_identity_key").notNull().defaultRandom(),
   digitalStudentId: varchar("digital_student_id", { length: 50 }).notNull().unique(),
   name: text("name").notNull(),
   class: varchar("class", { length: 20 }).notNull(),
@@ -226,7 +227,11 @@ export const teachers = pgTable("teachers", {
 
 export const attendanceRecords = pgTable("attendance_records", {
   id: serial("id").primaryKey(),
-  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  originalStudentId: integer("original_student_id").notNull(),
+  identityKey: uuid("identity_key").notNull(),
+  studentNameSnapshot: text("student_name_snapshot").notNull(),
+  studentCodeSnapshot: varchar("student_code_snapshot", { length: 50 }).notNull(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "restrict" }),
@@ -242,7 +247,7 @@ export const attendanceRecords = pgTable("attendance_records", {
   uniqueIndex("attendance_records_canonical_identity_uidx").on(
     table.schoolId,
     table.sessionId,
-    table.studentId,
+    table.identityKey,
     table.date,
   ),
 ]);

@@ -2904,10 +2904,11 @@ export async function registerRoutes(
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
-      const historicalRoster = await storage.getAttendanceRosterForSessionClass(
+      const historicalRoster = await storage.getAttendanceReportRosterForSessionClass(
         schoolId, attendanceSession.id, cls, section,
       );
       const studentIdList = historicalRoster.map(student => student.id);
+      const identityKeyList = historicalRoster.map(student => student.identityKey);
       const profileRows = studentIdList.length > 0
         ? await db.select({
             studentId: studentProfiles.studentId,
@@ -2929,13 +2930,14 @@ export async function registerRoutes(
               eq(attendanceRecords.class, cls),
               eq(attendanceRecords.section, section),
               eq(attendanceRecords.date, date),
-              inArray(attendanceRecords.studentId, studentIdList),
+              inArray(attendanceRecords.identityKey, identityKeyList),
               eq(attendanceRecords.sessionId, attendanceSession.id),
             )
           )
         : [];
       const result = studentRows.map(student => {
-        const record = filteredRecords.find(r => r.studentId === student.id);
+        const rosterStudent = historicalRoster.find(candidate => candidate.id === student.id);
+        const record = filteredRecords.find(r => r.identityKey === rosterStudent?.identityKey);
         return {
           studentId: student.id,
           name: student.name,

@@ -952,7 +952,7 @@ export class DatabaseStorage {
       eq(attendanceRecords.section, section),
       eq(attendanceRecords.date, date),
     ));
-    return allRecords.filter(r => studentIds.includes(r.studentId));
+    return allRecords.filter(r => r.studentId !== null && studentIds.includes(r.studentId));
   }
 
   async getAttendanceRosterForSessionClass(
@@ -964,7 +964,11 @@ export class DatabaseStorage {
     const [session, enrolledInClass, allSessionEnrollments, attendanceStudents, currentStudents] = await Promise.all([
       this.getAcademicSessionForSchool(sessionId, schoolId),
       this.getStudentsByClassSectionInSession(schoolId, cls, section, sessionId),
-      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
+      db.select({ studentId: enrollments.studentId, identityKey: students.attendanceIdentityKey })
+        .from(enrollments).innerJoin(students, and(
+          eq(students.id, enrollments.studentId),
+          eq(students.schoolId, enrollments.schoolId),
+        )).where(and(
         eq(enrollments.schoolId, schoolId),
         eq(enrollments.sessionId, sessionId),
       )),
@@ -994,30 +998,62 @@ export class DatabaseStorage {
     return [...roster.values()];
   }
 
+  async getAttendanceReportRosterForSessionClass(
+    schoolId: number, sessionId: number, cls: string, section: string,
+  ): Promise<Array<Pick<Student, "id" | "name" | "digitalStudentId" | "class" | "section" | "photoUrl" | "schoolId"> & { identityKey: string }>> {
+    const live = await this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section);
+    const records = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.sessionId, sessionId),
+      eq(attendanceRecords.class, cls), eq(attendanceRecords.section, section),
+    ));
+    const liveByIdentity = new Set(live.map(student => student.attendanceIdentityKey));
+    const result = new Map<string, any>(live.map(student => [student.attendanceIdentityKey, {
+      id: student.id, name: student.name, digitalStudentId: student.digitalStudentId,
+      class: student.class, section: student.section, photoUrl: student.photoUrl,
+      schoolId, identityKey: student.attendanceIdentityKey,
+    }]));
+    for (const record of records) {
+      if (!liveByIdentity.has(record.identityKey) && !result.has(record.identityKey)) {
+        result.set(record.identityKey, {
+          // Negative row IDs avoid colliding with a later student reusing the
+          // deleted student's numeric primary key.
+          id: -record.id, name: record.studentNameSnapshot,
+          digitalStudentId: record.studentCodeSnapshot, class: cls, section,
+          photoUrl: null, schoolId, identityKey: record.identityKey,
+        });
+      }
+    }
+    return [...result.values()];
+  }
+
   async getAttendancePopulationForSession(schoolId: number, sessionId: number): Promise<number> {
     const [session, enrolledRows, attendanceRows, currentActiveRows] = await Promise.all([
       this.getAcademicSessionForSchool(sessionId, schoolId),
-      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
+      db.select({ studentId: enrollments.studentId, identityKey: students.attendanceIdentityKey })
+        .from(enrollments).innerJoin(students, and(
+          eq(students.id, enrollments.studentId),
+          eq(students.schoolId, enrollments.schoolId),
+        )).where(and(
         eq(enrollments.schoolId, schoolId),
         eq(enrollments.sessionId, sessionId),
       )),
-      db.selectDistinct({ studentId: attendanceRecords.studentId }).from(attendanceRecords).where(and(
+      db.selectDistinct({ identityKey: attendanceRecords.identityKey }).from(attendanceRecords).where(and(
         eq(attendanceRecords.schoolId, schoolId),
         eq(attendanceRecords.sessionId, sessionId),
       )),
-      db.select({ studentId: students.id }).from(students).where(and(
+      db.select({ studentId: students.id, identityKey: students.attendanceIdentityKey }).from(students).where(and(
         eq(students.schoolId, schoolId),
         eq(students.isActive, true),
       )),
     ]);
-    const enrolledStudentIds = new Set(enrolledRows.map(row => row.studentId));
+    const enrolledStudentIds = new Set(enrolledRows.map(row => row.identityKey));
     return new Set([
-      ...enrolledRows.map(row => row.studentId),
-      ...attendanceRows.map(row => row.studentId),
+      ...enrolledRows.map(row => row.identityKey),
+      ...attendanceRows.map(row => row.identityKey),
       ...(session?.isActive
         ? currentActiveRows
-            .filter(row => !enrolledStudentIds.has(row.studentId))
-            .map(row => row.studentId)
+            .filter(row => !enrolledStudentIds.has(row.identityKey))
+            .map(row => row.identityKey)
         : []),
     ]).size;
   }
@@ -1090,7 +1126,7 @@ export class DatabaseStorage {
       }
 
       const [ownedStudents, ownedTeachers, ownedSessions] = await Promise.all([
-        tx.select({ id: students.id, schoolId: students.schoolId }).from(students)
+        tx.select({ id: students.id, schoolId: students.schoolId, isActive: students.isActive, attendanceIdentityKey: students.attendanceIdentityKey, name: students.name, digitalStudentId: students.digitalStudentId }).from(students)
           .where(inArray(students.id, studentIds)),
         tx.select({ id: teachers.id, schoolId: teachers.schoolId }).from(teachers)
           .where(inArray(teachers.id, teacherIds)),
@@ -1119,7 +1155,7 @@ export class DatabaseStorage {
         and(
           eq(attendanceRecords.schoolId, rec.schoolId),
           eq(attendanceRecords.sessionId, rec.sessionId),
-          eq(attendanceRecords.studentId, rec.studentId),
+          eq(attendanceRecords.identityKey, ownedStudents.find(student => student.id === rec.studentId)!.attendanceIdentityKey),
           eq(attendanceRecords.date, rec.date),
         )
       );
@@ -1150,6 +1186,10 @@ export class DatabaseStorage {
           class: rec.class,
           section: rec.section,
           academicYear: rec.academicYear,
+           originalStudentId: rec.studentId,
+           identityKey: ownedStudents.find(student => student.id === rec.studentId)!.attendanceIdentityKey,
+           studentNameSnapshot: ownedStudents.find(student => student.id === rec.studentId)!.name,
+           studentCodeSnapshot: ownedStudents.find(student => student.id === rec.studentId)!.digitalStudentId,
         }).returning();
         results.push(created);
       }
@@ -1159,9 +1199,7 @@ export class DatabaseStorage {
   }
 
   async getAttendanceHistory(schoolId: number, sessionId: number, cls: string, section: string, startDate: string, endDate: string): Promise<(AttendanceRecord & { studentName: string; dsid: string })[]> {
-    const studentList = await this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section);
-    const studentIds = studentList.map(s => s.id);
-    if (studentIds.length === 0) return [];
+    const studentList = await this.getAttendanceReportRosterForSessionClass(schoolId, sessionId, cls, section);
     const conditions = [
       eq(attendanceRecords.schoolId, schoolId),
       eq(attendanceRecords.sessionId, sessionId),
@@ -1171,12 +1209,13 @@ export class DatabaseStorage {
       lte(attendanceRecords.date, endDate),
     ];
     const allRecords = await db.select().from(attendanceRecords).where(and(...conditions));
-    const filtered = allRecords.filter(r => studentIds.includes(r.studentId));
-    const studentMap = new Map(studentList.map(s => [s.id, s]));
+    const rosterIdentityKeys = new Set(studentList.map(s => s.identityKey));
+    const filtered = allRecords.filter(r => rosterIdentityKeys.has(r.identityKey));
+    const studentMap = new Map(studentList.map(s => [s.identityKey, s]));
     return filtered.map(r => ({
       ...r,
-      studentName: studentMap.get(r.studentId)?.name || "Unknown",
-      dsid: studentMap.get(r.studentId)?.digitalStudentId || "",
+      studentName: r.studentNameSnapshot,
+      dsid: r.studentCodeSnapshot,
     }));
   }
 
@@ -1195,7 +1234,7 @@ export class DatabaseStorage {
         eq(attendanceRecords.teacherId, teacherId),
       )
     );
-    return records.some(r => studentIds.includes(r.studentId));
+    return records.some(r => r.studentId !== null && studentIds.includes(r.studentId));
   }
 
   // ===== HOMEWORK METHODS =====
@@ -3405,7 +3444,12 @@ export class DatabaseStorage {
       throw new Error("Attendance sessionId is required");
     }
     const [student, session, teacher] = await Promise.all([
-      db.select({ id: students.id }).from(students).where(and(
+       db.select({
+         id: students.id,
+         attendanceIdentityKey: students.attendanceIdentityKey,
+         name: students.name,
+         digitalStudentId: students.digitalStudentId,
+       }).from(students).where(and(
         eq(students.id, studentId),
         eq(students.schoolId, schoolId),
       )).then(rows => rows[0]),
@@ -3438,7 +3482,7 @@ export class DatabaseStorage {
         .where(and(
           eq(attendanceRecords.schoolId, schoolId),
           eq(attendanceRecords.sessionId, sessionId),
-          eq(attendanceRecords.studentId, studentId),
+           eq(attendanceRecords.originalStudentId, studentId),
           eq(attendanceRecords.date, dateStr),
         ));
       if (existing.length > 0) {
@@ -3447,7 +3491,11 @@ export class DatabaseStorage {
           .where(eq(attendanceRecords.id, existing[0].id));
       } else if (teacherId !== null) {
         await tx.insert(attendanceRecords).values({
-          studentId, teacherId, schoolId, sessionId, date: dateStr,
+          studentId, originalStudentId: studentId,
+          identityKey: student.attendanceIdentityKey,
+          studentNameSnapshot: student.name,
+          studentCodeSnapshot: student.digitalStudentId,
+          teacherId, schoolId, sessionId, date: dateStr,
           status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
         });
       }
@@ -4955,7 +5003,7 @@ export class DatabaseStorage {
     startDate: string,
     endDate: string,
   ): Promise<Array<{ student: Student; aggregation: StudentAttendanceAggregation }>> {
-    const roster = await this.getAttendanceRosterForSessionClass(
+    const roster = await this.getAttendanceReportRosterForSessionClass(
       schoolId, sessionId, cls, section,
     );
     const [records, workingDates] = await Promise.all([
@@ -4967,15 +5015,15 @@ export class DatabaseStorage {
       }),
     ]);
     const recordByStudentDate = new Map(
-      records.map(record => [`${record.studentId}:${record.date}`, record]),
+      records.map(record => [`${record.identityKey}:${record.date}`, record]),
     );
     return roster.map(student => ({
-      student,
+      student: student as unknown as Student,
       aggregation: aggregateStudentAttendance({
         schoolId,
         sessionId,
         statuses: workingDates.map(date =>
-          recordByStudentDate.get(`${student.id}:${date}`)?.status ?? null
+          recordByStudentDate.get(`${(student as any).identityKey}:${date}`)?.status ?? null
         ),
       }),
     }));

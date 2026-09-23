@@ -43,6 +43,7 @@
 - [Student recovery frontend authority](student-recovery-frontend-authority.md) — route-only UI steps carry no secrets; server sessions authorize progress and stale requests cannot navigate forward.
 - [Student recovery email authority](student-recovery-email-authority.md) — Registry `students.email` is the sole recovery destination; email changes atomically invalidate pending challenges.
 - [Historical Attendance roster authority](historical-attendance-roster-authority.md) — Enrollment gives selected-session placement, but existing Attendance remains visible without Enrollment.
+- [Deleted Student Attendance identity](deleted-student-attendance-identity.md) — historical reporting must distinguish a deleted Student from a later Registry row reusing the same numeric ID.
 - [Student Attendance calculation contract](student-attendance-calculation-contract.md) — all Student/Admin/Teacher Student-Attendance percentages share canonical status weights and missing semantics.
 - [Student Attendance working days](student-attendance-working-days.md) — applicable dates require exact tenant, Session, class/section Attendance evidence within inclusive Session bounds.
 - [Teacher self-attendance Session identity](teacher-self-attendance-session-identity.md) — new records are Session-scoped; legacy nullable rows stay isolated, and uniqueness migrations must handle constraint-backed indexes.

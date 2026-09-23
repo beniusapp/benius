@@ -171,10 +171,19 @@ describe("Attendance canonical persistence identity", () => {
 
   it("does not cross-match another school's row", async () => {
     const date = "2040-04-04";
+    await expect(db.insert(attendanceRecords).values({
+      schoolId: schoolBId,
+      sessionId: otherSchoolSessionId,
+      studentId,
+      teacherId: teacherBId,
+      date,
+      status: "absent",
+      markedBy: "Cross-tenant fixture",
+    })).rejects.toThrow("does not belong to school");
     const [otherSchoolRow] = await db.insert(attendanceRecords).values({
       schoolId: schoolBId,
-      sessionId: sessionAId,
-      studentId,
+      sessionId: otherSchoolSessionId,
+      studentId: studentBId,
       teacherId: teacherBId,
       date,
       status: "absent",
@@ -799,15 +808,15 @@ describe("Student monthly approved-leave Session isolation", () => {
     await db.insert(attendanceRecords).values([
       attendanceInput({ date: sunday, status: "late", sessionId: sessionAId }),
       attendanceInput({ date: sunday, status: "absent", sessionId: sessionBId }),
-      attendanceInput({ date: sunday, status: "leave", schoolId: schoolBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
-      attendanceInput({ date: "2040-07-22", status: "absent", schoolId: schoolBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
+      attendanceInput({ date: sunday, status: "leave", schoolId: schoolBId, studentId: studentBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
+      attendanceInput({ date: "2040-07-22", status: "absent", schoolId: schoolBId, studentId: studentBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
       attendanceInput({ date: "2040-08-05", status: "present", sessionId: sessionAId }),
     ]);
 
     const [selected, alternate, otherSchool, otherMonth] = await Promise.all([
       storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 7),
       storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionBId, 2040, 7),
-      storage.getStudentMonthlyAttendance(studentId, schoolBId, otherSchoolSessionId, 2040, 7),
+      storage.getStudentMonthlyAttendance(studentBId, schoolBId, otherSchoolSessionId, 2040, 7),
       storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 8),
     ]);
 
