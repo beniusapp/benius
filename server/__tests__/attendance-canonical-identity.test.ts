@@ -793,4 +793,30 @@ describe("Student monthly approved-leave Session isolation", () => {
       isApprovedLeave: true,
     });
   });
+
+  it("returns marked Sundays only for the selected school, Session, and month", async () => {
+    const sunday = "2040-07-08";
+    await db.insert(attendanceRecords).values([
+      attendanceInput({ date: sunday, status: "late", sessionId: sessionAId }),
+      attendanceInput({ date: sunday, status: "absent", sessionId: sessionBId }),
+      attendanceInput({ date: sunday, status: "leave", schoolId: schoolBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
+      attendanceInput({ date: "2040-07-22", status: "absent", schoolId: schoolBId, sessionId: otherSchoolSessionId, teacherId: teacherBId }),
+      attendanceInput({ date: "2040-08-05", status: "present", sessionId: sessionAId }),
+    ]);
+
+    const [selected, alternate, otherSchool, otherMonth] = await Promise.all([
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 7),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionBId, 2040, 7),
+      storage.getStudentMonthlyAttendance(studentId, schoolBId, otherSchoolSessionId, 2040, 7),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 8),
+    ]);
+
+    expect(selected.find(day => day.date === sunday)).toMatchObject({ isSunday: true, status: "late" });
+    expect(selected.find(day => day.date === "2040-07-15")).toMatchObject({ isSunday: true, status: "none" });
+    expect(selected.find(day => day.date === "2040-07-22")).toMatchObject({ isSunday: true, status: "none" });
+    expect(alternate.find(day => day.date === sunday)?.status).toBe("absent");
+    expect(otherSchool.find(day => day.date === sunday)?.status).toBe("leave");
+    expect(selected.every(day => day.date.startsWith("2040-07"))).toBe(true);
+    expect(otherMonth.find(day => day.date === "2040-08-05")?.status).toBe("present");
+  });
 });

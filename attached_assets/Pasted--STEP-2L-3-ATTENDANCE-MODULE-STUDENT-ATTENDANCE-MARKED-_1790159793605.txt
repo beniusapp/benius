@@ -1,0 +1,636 @@
+# STEP 2L-3 — ATTENDANCE MODULE
+
+## STUDENT ATTENDANCE — MARKED SUNDAY DISPLAY & MONTHLY COUNT CONSISTENCY
+
+### CONTROLLED AUDIT + IMPLEMENTATION
+
+We have completed and accepted:
+
+* Step 2L-1 — server-authoritative Academic Session selection for Teacher Attendance writes.
+* Step 2L-2 — Academic Session date-boundary enforcement for Teacher Student-Attendance writes.
+
+Now address ONLY the following remaining Attendance issue identified by the Step 2L-6C audit:
+
+> A deliberately marked Sunday is accepted and counted by the server/database, but the Student Attendance UI does not consistently display the stored Sunday status or include it correctly in the monthly UI tally.
+
+This step must make the Student Attendance UI consistent with the authoritative Attendance record and server-side calculation.
+
+---
+
+# 1. HARD REQUIREMENTS — DO NOT CHANGE
+
+## Multi-tenant isolation
+
+* `req.session.schoolId` remains authoritative.
+* Never trust browser-provided school IDs for ownership.
+* Never allow cross-school Attendance access.
+
+## Student Registry
+
+Student Registry remains GLOBAL/PERMANENT.
+
+Do NOT:
+
+* recreate Students per Academic Session;
+* reset Students when Session changes;
+* make Enrollment a prerequisite merely for displaying historical Attendance.
+
+## Academic Session
+
+Student Attendance must remain Academic Session-specific.
+
+When a Student selects an Academic Session, the UI must display Attendance belonging to that Session only.
+
+Do not mix records from another Session.
+
+## Sunday rule
+
+This is extremely important:
+
+### A Sunday is NOT automatically a working day.
+
+If there is NO Attendance record for Sunday:
+
+* do not invent an Attendance status;
+* do not count the Sunday as Present/Absent/Late/Half Day;
+* do not make the Sunday appear as a marked working day.
+
+If there IS a deliberately stored Attendance record for Sunday:
+
+* display the actual stored Attendance status;
+* include it in the appropriate Attendance calculation/tally exactly as the server interprets it.
+
+The existence of an Attendance record is what matters.
+
+## Authoritative Attendance source
+
+Student Attendance must continue using the same authoritative Attendance data as Admin/Teacher Attendance.
+
+Do not create a second Attendance source.
+
+Do not calculate a different Sunday status in the frontend.
+
+## IST
+
+Attendance business dates remain IST / Asia/Kolkata.
+
+Do not introduce UTC date conversion for Sunday/date matching.
+
+## Existing Attendance rules
+
+Do not change:
+
+* 7-day correction window;
+* archived Session protection;
+* Academic Session date boundaries;
+* holiday rules;
+* Teacher Attendance authorization;
+* server-authoritative Session resolution;
+* Student Registry behavior;
+* Enrollment rules;
+* tenant isolation.
+
+---
+
+# 2. CURRENT ISSUE TO FIX
+
+The Step 2L-6C audit found:
+
+* The monthly Student Attendance API returns the Sunday Attendance record/status.
+* The Student Attendance calendar can identify Sunday but displays `"Sunday"` instead of the actual Attendance status.
+* The monthly Student Attendance UI tally skips Sunday records.
+* The stored Sunday status can therefore be visible only indirectly, such as through a tooltip, while the main calendar/tally is inconsistent.
+
+Fix this inconsistency.
+
+---
+
+# 3. AUDIT BEFORE EDITING
+
+Before making changes, inspect the current implementation.
+
+At minimum inspect:
+
+1. `client/src/pages/student-attendance.tsx`
+2. Student Attendance API/query used by that page.
+3. Any Student Attendance monthly-summary calculation.
+4. Any shared Attendance status/type definitions.
+5. Server-side Attendance status-weighting/calculation used for Student/Admin Attendance.
+6. How calendar cells are generated.
+7. How Sunday cells are currently detected.
+8. How Attendance records are matched to calendar dates.
+9. How monthly totals are calculated/displayed.
+10. Any existing tests for Student Attendance.
+
+Do not assume the frontend data shape.
+
+Trace the actual flow:
+
+```text
+Database Attendance record
+        ↓
+Student Attendance API
+        ↓
+Student Attendance page
+        ↓
+Calendar date cell
+        ↓
+Status display
+        ↓
+Monthly tally
+```
+
+Identify exactly where Sunday is being excluded or replaced by the generic `"Sunday"` label.
+
+---
+
+# 4. REQUIRED FUNCTIONAL BEHAVIOR
+
+## Case A — Sunday with no Attendance record
+
+Example:
+
+```text
+Date: Sunday
+Attendance record: NONE
+```
+
+Expected:
+
+* Sunday remains visibly identifiable as Sunday.
+* It must NOT show Present/Absent/Late/etc.
+* It must NOT be counted in Attendance totals.
+* Do not create an artificial record.
+* Do not treat it as a working day merely because the calendar displays Sunday.
+
+---
+
+## Case B — Sunday marked Present
+
+Example:
+
+```text
+Date: Sunday
+Attendance record: Present
+```
+
+Expected:
+
+* Calendar cell shows Sunday.
+* Actual Attendance status is shown as Present.
+* The record is included in the monthly tally exactly as the server defines Present.
+* No special Sunday exclusion.
+
+---
+
+## Case C — Sunday marked Absent
+
+Example:
+
+```text
+Date: Sunday
+Attendance record: Absent
+```
+
+Expected:
+
+* Actual Absent status is displayed.
+* It is included in the appropriate monthly calculation.
+* Do not suppress it merely because it is Sunday.
+
+---
+
+## Case D — Sunday marked Late
+
+If the existing Attendance system supports Late:
+
+Expected:
+
+* Actual Late status is displayed.
+* Monthly calculation follows the existing server-side Late weighting.
+* Do not invent a Sunday-specific weighting.
+
+---
+
+## Case E — Sunday marked Half Day
+
+If the existing Attendance system supports Half Day:
+
+Expected:
+
+* Actual Half Day status is displayed.
+* Monthly calculation follows the existing server-side weighting.
+* Do not create a separate Sunday rule.
+
+---
+
+## Case F — Sunday marked using any other existing valid status
+
+If additional valid Attendance statuses exist:
+
+* Display the actual stored status.
+* Use the existing status calculation.
+* Do not hard-code a new Sunday-specific mapping.
+
+---
+
+# 5. IMPORTANT: DO NOT DUPLICATE BUSINESS LOGIC
+
+The frontend must NOT invent its own Sunday Attendance calculation.
+
+If the backend already provides:
+
+* monthly totals,
+* status counts,
+* weighted totals,
+* working-day counts,
+* or other authoritative summary values,
+
+reuse those values where appropriate.
+
+If the frontend must calculate a display value from returned daily records, use the existing shared status semantics rather than introducing a second Sunday-specific calculation.
+
+The goal is:
+
+```text
+Stored Attendance status
+        ↓
+same status semantics
+        ↓
+calendar display + monthly tally
+```
+
+not:
+
+```text
+Sunday
+  ↓
+special frontend calculation
+  ↓
+different result
+```
+
+---
+
+# 6. CALENDAR CELL REQUIREMENT
+
+A Sunday calendar cell may continue to visually identify itself as Sunday.
+
+However:
+
+### If an Attendance record exists:
+
+The cell must also expose/display the actual Attendance status.
+
+For example, conceptually:
+
+```text
+Sunday
+Present
+```
+
+or the existing UI's equivalent visual treatment.
+
+Do NOT redesign the calendar.
+
+Do NOT introduce a new calendar component.
+
+Use the existing status badges/classes/components where possible.
+
+### If no Attendance record exists:
+
+Keep the existing Sunday/non-working appearance.
+
+Do not display a fabricated status.
+
+---
+
+# 7. MONTHLY TALLY REQUIREMENT
+
+Find the exact code responsible for the Student Attendance monthly tally.
+
+Currently the audit indicates Sunday records are skipped.
+
+Fix that condition.
+
+The correct conceptual behavior is:
+
+```text
+For each Attendance record returned for the selected Session/month:
+
+    if record exists:
+        process its actual status
+    else:
+        no Attendance count
+```
+
+Do NOT use:
+
+```text
+if Sunday:
+    skip
+```
+
+unless the Sunday has no record.
+
+The fact that a date is Sunday alone must NOT exclude an existing Attendance record.
+
+---
+
+# 8. SESSION ISOLATION
+
+The selected Academic Session must remain authoritative for Student Attendance.
+
+Test that:
+
+```text
+Session A + Sunday Attendance
+```
+
+does not appear when the Student switches to:
+
+```text
+Session B
+```
+
+and vice versa.
+
+Do not solve the Sunday issue by broadening the query to all Sessions.
+
+---
+
+# 9. HISTORICAL STUDENT SUPPORT
+
+Do not modify the Student Registry/deletion behavior in this step.
+
+Do not attempt to solve the separate physical Student deletion issue here.
+
+That will be handled separately.
+
+Only ensure that the existing Student Attendance UI behavior remains compatible with the Attendance records currently returned by the API.
+
+---
+
+# 10. API / BACKEND CHANGES
+
+Prefer a frontend-only change if the existing API already returns the required Sunday Attendance record/status, as the Step 2L-6C audit indicates it does.
+
+Do NOT modify backend Attendance storage/calculation unless the audit proves that the existing API is actually failing to return required data.
+
+If backend modification is genuinely required:
+
+* make the smallest possible change;
+* preserve Session filtering;
+* preserve tenant filtering;
+* preserve existing status semantics;
+* preserve IST date handling;
+* do not change Attendance persistence.
+
+---
+
+# 11. NO AUTOMATIC SUNDAY WORKING-DAY CHANGE
+
+This requirement must be explicitly tested.
+
+Example:
+
+```text
+Sunday
+No Attendance record
+```
+
+Expected:
+
+* Sunday does not become a working day.
+* It does not increase Present/Absent/Late/Half-Day counts.
+* It does not affect the existing working-day denominator unless the existing system explicitly defines it from another authoritative source.
+
+Do not change school calendar configuration.
+
+Do not change holiday/calendar tables.
+
+Do not create Sunday Attendance records automatically.
+
+---
+
+# 12. REQUIRED TESTS
+
+Add/update focused tests for the actual relevant code.
+
+At minimum test:
+
+### Test 1 — Sunday without Attendance
+
+Expected:
+
+* no status displayed;
+* no monthly Attendance count;
+* Sunday remains identifiable as Sunday.
+
+### Test 2 — Sunday Present
+
+Expected:
+
+* Present displayed;
+* Present tally includes the record.
+
+### Test 3 — Sunday Absent
+
+Expected:
+
+* Absent displayed;
+* Absent tally includes the record according to existing semantics.
+
+### Test 4 — Sunday Late
+
+If supported:
+
+* Late displayed;
+* existing Late weighting/counting used.
+
+### Test 5 — Sunday Half Day
+
+If supported:
+
+* Half Day displayed;
+* existing Half Day weighting/counting used.
+
+### Test 6 — Weekday regression
+
+Verify normal weekday Attendance behavior is unchanged.
+
+Test at least one Present and one Absent weekday.
+
+### Test 7 — Saturday regression
+
+Verify Saturday behavior is unchanged.
+
+### Test 8 — Session isolation
+
+Create/use Sunday Attendance in Session A.
+
+Verify it does not appear under Session B.
+
+### Test 9 — Month isolation
+
+A Sunday Attendance record from another month must not affect the selected month's tally.
+
+### Test 10 — No fabricated Sunday record
+
+Verify that viewing a month containing an unmarked Sunday does not create or infer an Attendance record.
+
+### Test 11 — Existing status weighting
+
+Verify that Sunday uses the same status weighting as the equivalent weekday status.
+
+Do not introduce a Sunday-specific weight.
+
+### Test 12 — Tenant isolation
+
+Verify Attendance from another school cannot appear in Student Attendance.
+
+---
+
+# 13. UI SAFETY
+
+Keep the existing Student Attendance UI design.
+
+Do NOT:
+
+* redesign the page;
+* replace the calendar;
+* change navigation;
+* change unrelated styling;
+* add unrelated features;
+* change Student profile behavior;
+* change Admin Attendance;
+* change Teacher Attendance;
+* change Teacher Self-Attendance.
+
+Only fix the Sunday status display and monthly counting inconsistency.
+
+---
+
+# 14. VALIDATION
+
+Run the relevant focused Student Attendance tests.
+
+Then run:
+
+```text
+npm run check
+```
+
+Confirm the application starts successfully.
+
+If there are existing unrelated test failures, distinguish them clearly from failures caused by this change.
+
+---
+
+# 15. REQUIRED FINAL REPORT
+
+After implementation, report:
+
+## A. Files changed
+
+List every changed file.
+
+## B. Exact root cause
+
+Explain exactly why marked Sunday Attendance was previously:
+
+* hidden/obscured in the calendar;
+* excluded from the monthly tally.
+
+## C. Exact fix
+
+Explain how the UI now obtains and displays the stored Sunday status.
+
+## D. Monthly calculation
+
+Explain how a marked Sunday now participates in the existing Attendance tally.
+
+## E. Unmarked Sunday
+
+Confirm that an unmarked Sunday is still NOT treated as a working day and is NOT counted.
+
+## F. Session isolation
+
+Confirm Sunday Attendance remains restricted to the selected Academic Session.
+
+## G. Tenant isolation
+
+Confirm school isolation remains intact.
+
+## H. Tests
+
+Provide PASS/FAIL results for every required test.
+
+## I. Test totals
+
+Provide exact passed/failed test counts.
+
+## J. `npm run check`
+
+Report the exact result.
+
+## K. Application startup
+
+Report whether the application restarted successfully.
+
+## L. Remaining Attendance issues
+
+Do NOT fix them in this step.
+
+Explicitly report whether these remain:
+
+1. Physical Student deletion can remove historical Attendance.
+2. Nullable Session records in Teacher Self-Attendance/correction logs still need investigation.
+
+---
+
+# 16. CRITICAL SCOPE CONTROL
+
+This is a narrowly controlled Step 2L-3 implementation.
+
+ONLY fix:
+
+> **Student Attendance display and monthly counting of deliberately marked Sundays.**
+
+Do NOT fix:
+
+* physical Student deletion;
+* historical Student identity preservation;
+* Teacher Self-Attendance nullable Session records;
+* Attendance policy versioning;
+* working-day calendar architecture;
+* Session architecture;
+* Enrollment architecture;
+* Teacher authorization;
+* Admin Attendance;
+* Teacher Attendance;
+* Student Registry.
+
+Do not perform a broad refactor.
+
+Do not change database schema.
+
+Do not create migrations.
+
+Do not change Attendance business rules.
+
+The final behavior must be:
+
+```text
+UNMARKED SUNDAY
+→ remains unmarked
+→ not a working day merely because it is Sunday
+→ not counted
+
+MARKED SUNDAY
+→ actual stored status displayed
+→ counted using existing status semantics
+→ same behavior as the equivalent status on another valid Attendance day
+```
+
+Preserve all Step 2L-1 and Step 2L-2 behavior exactly.

@@ -30,7 +30,7 @@ interface StudentMeResponse {
   schoolId?: number;
 }
 
-interface DayData {
+export interface DayData {
   date: string;
   dayOfWeek: number;
   status: string;
@@ -92,14 +92,14 @@ const MONTH_NAMES = [
 ];
 const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-function getDayCell(day: DayData): {
+export function getDayCell(day: DayData): {
   bg: string;
   ring: string;
   dot: string | null;
   label: string;
   textColor: string;
 } {
-  if (day.isSunday || day.isHoliday) {
+  if ((day.isSunday || day.isHoliday) && day.status === "none") {
     return { bg: "bg-slate-100", ring: "", dot: null, label: day.isHoliday ? (day.holidayName || "Holiday") : "Sunday", textColor: "text-slate-400" };
   }
   if (day.isFuture) {
@@ -120,7 +120,27 @@ function getDayCell(day: DayData): {
   if (day.status === "leave") {
     return { bg: "bg-sky-100", ring: "ring-2 ring-sky-400", dot: null, label: "Leave", textColor: "text-sky-700" };
   }
+  if (day.status !== "none") {
+    return { bg: "bg-slate-100", ring: "", dot: null, label: day.status, textColor: "text-slate-700" };
+  }
   return { bg: "", ring: "", dot: null, label: "Not marked", textColor: "text-slate-300" };
+}
+
+export function getMonthlySummary(days: DayData[]) {
+  return days.reduce(
+    (acc, d) => {
+      if (d.isFuture || (d.isSunday && d.status === "none")) return acc;
+      if (d.isHoliday && d.status === "none") { acc.holiday++; return acc; }
+      if (d.isApprovedLeave && d.status === "none") { acc.leave++; return acc; }
+      if (d.status === "present") acc.present++;
+      else if (d.status === "absent") acc.absent++;
+      else if (d.status === "half_day" || d.status === "halfday") acc.halfDay++;
+      else if (d.status === "late") acc.late++;
+      else if (d.status === "leave") acc.leave++;
+      return acc;
+    },
+    { present: 0, absent: 0, halfDay: 0, late: 0, leave: 0, holiday: 0 },
+  );
 }
 
 export default function StudentAttendance() {
@@ -270,19 +290,7 @@ export default function StudentAttendance() {
   const days = monthlyData?.days || [];
   const firstDayOfMonth = days.length > 0 ? calendarWeekday(days[0].date) ?? 0 : 0;
 
-  const monthlySummary = days.reduce(
-    (acc, d) => {
-      if (d.isSunday || d.isFuture) return acc;
-      if (d.isHoliday) { acc.holiday++; return acc; }
-      if (d.isApprovedLeave && d.status === "none") { acc.leave++; return acc; }
-      if (d.status === "present") acc.present++;
-      else if (d.status === "absent") acc.absent++;
-      else if (d.status === "half_day" || d.status === "late") acc.halfDay++;
-      else if (d.status === "leave") acc.leave++;
-      return acc;
-    },
-    { present: 0, absent: 0, halfDay: 0, leave: 0, holiday: 0 }
-  );
+  const monthlySummary = getMonthlySummary(days);
 
   const yearMonths = yearlyData?.months || [];
   const maxWorkingDays = Math.max(...yearMonths.map(m => m.workingDays), 1);
@@ -513,8 +521,9 @@ export default function StudentAttendance() {
                   ))}
                   {/* Date cells */}
                   {days.map((day) => {
-                    const { bg, ring, dot, textColor } = getDayCell(day);
+                    const { bg, ring, dot, textColor, label } = getDayCell(day);
                     const dayNum = dayOfMonthFromDateOnly(day.date) ?? 0;
+                    const markedSunday = day.isSunday && day.status !== "none" && !day.isFuture;
                     return (
                       <button
                         key={day.date}
@@ -524,14 +533,19 @@ export default function StudentAttendance() {
                           aspect-square flex flex-col items-center justify-center rounded-full sm:rounded-xl
                           transition-all duration-150 relative
                           ${bg} ${ring} ${textColor}
-                          ${!day.isFuture && !day.isSunday ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"}
+                          ${!day.isFuture && (!day.isSunday || markedSunday) ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"}
                           text-[11px] sm:text-sm font-semibold
                           focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-400
                         `}
                         data-testid={`day-cell-${day.date}`}
-                        aria-label={`${dayNum} - ${getDayCell(day).label}`}
+                        aria-label={`${dayNum} - ${markedSunday ? "Sunday - " : ""}${label}`}
                       >
                         {dayNum}
+                        {markedSunday && (
+                          <span className="text-[9px] sm:text-[10px] leading-none text-center">
+                            Sun<br />{label}
+                          </span>
+                        )}
                         {dot && (
                           <span className={`absolute bottom-1 w-1.5 h-1.5 rounded-full ${dot}`} />
                         )}
@@ -564,14 +578,10 @@ export default function StudentAttendance() {
                   {!tooltip.day.isHoliday && !tooltip.day.isApprovedLeave && tooltip.day.status === "none" && (
                     <p className="text-slate-400">— Not marked yet</p>
                   )}
-                  {!tooltip.day.isHoliday && tooltip.day.status !== "none" && (
+                  {tooltip.day.status !== "none" && (
                     <>
                       <p className="capitalize">
-                        {tooltip.day.status === "present" && "✅ Present"}
-                        {tooltip.day.status === "absent" && "❌ Absent"}
-                        {tooltip.day.status === "half_day" && "⚠️ Half Day"}
-                        {tooltip.day.status === "late" && "⚠️ Late"}
-                        {tooltip.day.status === "leave" && "🔵 Leave"}
+                        {getDayCell(tooltip.day).label}
                       </p>
                       {tooltip.day.markedBy && (
                         <p className="text-slate-400 mt-1 text-[10px] truncate max-w-[200px]">
@@ -614,11 +624,12 @@ export default function StudentAttendance() {
                 <Calendar className="w-4 h-4 text-[#10b981]" />
                 <span className="text-sm font-bold text-slate-700">{MONTH_NAMES[selectedMonth - 1]} {selectedYear} — Summary</span>
               </div>
-              <div className="grid grid-cols-5 divide-x divide-slate-100">
+              <div className="grid grid-cols-6 divide-x divide-slate-100">
                 {[
                   { icon: <CheckCircle className="w-4 h-4 text-emerald-500" />, label: "Present", val: monthlySummary.present, color: "text-emerald-600" },
                   { icon: <XCircle className="w-4 h-4 text-red-400" />, label: "Absent", val: monthlySummary.absent, color: "text-red-500" },
                   { icon: <AlertCircle className="w-4 h-4 text-amber-500" />, label: "Half Day", val: monthlySummary.halfDay, color: "text-amber-600" },
+                  { icon: <Clock className="w-4 h-4 text-amber-500" />, label: "Late", val: monthlySummary.late, color: "text-amber-600" },
                   { icon: <Clock className="w-4 h-4 text-sky-400" />, label: "Leave", val: monthlySummary.leave, color: "text-sky-500" },
                   { icon: <Sun className="w-4 h-4 text-slate-400" />, label: "Holiday", val: monthlySummary.holiday, color: "text-slate-500" },
                 ].map(({ icon, label, val, color }) => (
