@@ -47,3 +47,4 @@
 - [Student Attendance calculation contract](student-attendance-calculation-contract.md) — all Student/Admin/Teacher Student-Attendance percentages share canonical status weights and missing semantics.
 - [Student Attendance working days](student-attendance-working-days.md) — applicable dates require exact tenant, Session, class/section Attendance evidence within inclusive Session bounds.
 - [Teacher self-attendance Session identity](teacher-self-attendance-session-identity.md) — new records are Session-scoped; legacy nullable rows stay isolated, and uniqueness migrations must handle constraint-backed indexes.
+- [Attendance mutation test isolation](attendance-mutation-test-isolation.md) — shared Student/date fixtures and multiple active Sessions can mask or falsely fail guarded leave-approval regressions.

@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { storage, evaluatePromotion } from "./storage";
+import { storage, evaluatePromotion, AttendanceLeaveMutationError } from "./storage";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import multer from "multer";
@@ -502,6 +502,20 @@ export function registerTeacherRoutes(app: Express) {
     if (ownedStudents.length !== submittedStudentIds.length) {
       return res.status(403).json({ message: "One or more students are not valid for this school" });
     }
+    const targetClass = cls || teacher.assignedClass;
+    const targetSection = section || teacher.assignedSection;
+    if (!targetClass || !targetSection) {
+      return res.status(400).json({ message: "Attendance class and section are required" });
+    }
+    // This checks Student placement, not the Teacher's Faculty Mapping. Every
+    // same-school Teacher retains permission to mark any valid class roster.
+    const roster = await storage.getAttendanceRosterForSessionClass(
+      schoolId, attendanceSession.id, targetClass, targetSection,
+    );
+    const rosterIds = new Set(roster.map(student => student.id));
+    if (submittedStudentIds.some(studentId => !rosterIds.has(studentId))) {
+      return res.status(400).json({ message: "One or more students do not belong to this class and section in the active session" });
+    }
 
     // Rule A — Holiday Lockdown: reject attendance if the date is a school-wide holiday.
     // This is the single source of truth enforced at the API layer so no attendance
@@ -526,8 +540,8 @@ export function registerTeacherRoutes(app: Express) {
       date,
       status: r.status,
       markedBy,
-      class: cls || teacher.assignedClass,
-      section: section || teacher.assignedSection,
+      class: targetClass,
+      section: targetSection,
       academicYear,
       sessionId: attendanceSession.id,
     }));
@@ -1947,9 +1961,19 @@ export function registerTeacherRoutes(app: Express) {
     const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
     if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
     const { teacherComment: approveComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "approved", teacher.id, "teacher", undefined, undefined, approveComment || undefined);
-    if (!updated) return res.status(404).json({ message: "Leave request not found" });
-    await storage.markAttendanceAsLeave(leave.studentId, teacher.id, teacher.schoolId, leave.sessionId, leave.startDate, leave.endDate);
+    let updated;
+    try {
+      updated = await storage.approveStudentLeaveWithAttendance({
+        leaveId: leave.id, studentId: leave.studentId, teacherId: teacher.id,
+        schoolId: teacher.schoolId, sessionId: leave.sessionId,
+        expectedStatus: "pending_teacher", reviewedBy: teacher.id, reviewerRole: "teacher",
+        teacherComment: approveComment || undefined,
+      });
+    } catch (error) {
+      if (error instanceof AttendanceLeaveMutationError) return res.status(error.status).json({ message: error.message });
+      throw error;
+    }
+    if (!updated) return res.status(409).json({ message: "Leave request is no longer pending teacher approval" });
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
       actionBy: teacher.id, actionByRole: "teacher",
@@ -3256,14 +3280,24 @@ Thank you for your prompt attention to this matter.
     const student = await storage.getStudentById(leave.studentId);
     if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const { adminComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, schoolId, "approved", req.session.userId!, "admin", undefined, adminComment || undefined);
-    if (!updated) return res.status(404).json({ message: "Leave request not found" });
     // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
     // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.
     const classTeacher = student
       ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
       : null;
-    await storage.markAttendanceAsLeave(leave.studentId, classTeacher?.id ?? null, leave.schoolId, leave.sessionId, leave.startDate, leave.endDate);
+    let updated;
+    try {
+      updated = await storage.approveStudentLeaveWithAttendance({
+        leaveId: leave.id, studentId: leave.studentId, teacherId: classTeacher?.id ?? null,
+        schoolId, sessionId: leave.sessionId,
+        expectedStatus: "forwarded_to_admin", reviewedBy: req.session.userId!, reviewerRole: "admin",
+        adminComment: adminComment || undefined,
+      });
+    } catch (error) {
+      if (error instanceof AttendanceLeaveMutationError) return res.status(error.status).json({ message: error.message });
+      throw error;
+    }
+    if (!updated) return res.status(409).json({ message: "Leave request is no longer awaiting admin approval" });
     await storage.createAuditLog({
       schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
       actionBy: req.session.userId!, actionByRole: "admin",

@@ -52,7 +52,7 @@ import {
   type PasswordResetChallenge,
   type StudentPasswordResetChallenge,
 } from "@shared/schema";
-import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST, dateOnlyParts, todayInIST } from "@shared/ist-time";
+import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST, dateOnlyParts, isValidDateOnly, todayInIST } from "@shared/ist-time";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
@@ -115,6 +115,13 @@ export class AcademicSessionFinancialHistoryError extends Error {
   constructor() {
     super("This academic session has financial history and cannot be deleted. Archive it instead.");
     this.name = "AcademicSessionFinancialHistoryError";
+  }
+}
+
+export class AttendanceLeaveMutationError extends Error {
+  constructor(message: string, readonly status: number = 409) {
+    super(message);
+    this.name = "AttendanceLeaveMutationError";
   }
 }
 
@@ -3439,69 +3446,141 @@ export class DatabaseStorage {
     return { success: true };
   }
 
-  async markAttendanceAsLeave(studentId: number, teacherId: number | null, schoolId: number, sessionId: number, startDate: string, endDate: string): Promise<void> {
-    if (!Number.isInteger(sessionId) || sessionId <= 0) {
-      throw new Error("Attendance sessionId is required");
-    }
-    const [student, session, teacher] = await Promise.all([
-       db.select({
-         id: students.id,
-         attendanceIdentityKey: students.attendanceIdentityKey,
-         name: students.name,
-         digitalStudentId: students.digitalStudentId,
-       }).from(students).where(and(
-        eq(students.id, studentId),
-        eq(students.schoolId, schoolId),
-      )).then(rows => rows[0]),
-      db.select({
-        id: academicSessions.id,
-        startDate: academicSessions.startDate,
-        endDate: academicSessions.endDate,
-      }).from(academicSessions).where(and(
+  async approveStudentLeaveWithAttendance(input: {
+    leaveId: number;
+    studentId: number;
+    teacherId: number | null;
+    schoolId: number;
+    sessionId: number;
+    expectedStatus: "pending_teacher" | "forwarded_to_admin";
+    reviewedBy: number;
+    reviewerRole: "teacher" | "admin";
+    teacherComment?: string;
+    adminComment?: string;
+  }): Promise<StudentLeaveRequest | null> {
+    const { leaveId, studentId, teacherId, schoolId, sessionId } = input;
+    return db.transaction(async tx => {
+      // Lock the leave and its Session before validating. Activation must wait
+      // until this Attendance write commits, rather than archiving it mid-write.
+      const [leave] = await tx.select().from(studentLeaveRequests).where(and(
+        eq(studentLeaveRequests.id, leaveId),
+        eq(studentLeaveRequests.schoolId, schoolId),
+      )).for("update");
+      if (!leave || leave.status !== input.expectedStatus) return null;
+      if (leave.studentId !== studentId || leave.sessionId !== sessionId) {
+        throw new AttendanceLeaveMutationError("Leave request does not belong to this Student and Session", 403);
+      }
+      const [session] = await tx.select().from(academicSessions).where(and(
         eq(academicSessions.id, sessionId),
         eq(academicSessions.schoolId, schoolId),
-      )).then(rows => rows[0]),
-      teacherId === null
-        ? Promise.resolve(null)
-        : db.select({ id: teachers.id }).from(teachers).where(and(
-            eq(teachers.id, teacherId),
-            eq(teachers.schoolId, schoolId),
-          )).then(rows => rows[0] ?? null),
-    ]);
-    if (!student || !session || (teacherId !== null && !teacher)) {
-      throw new Error("Leave Attendance entities do not belong to the same school");
-    }
-    const boundedStart = startDate > session.startDate ? startDate : session.startDate;
-    const boundedEnd = endDate < session.endDate ? endDate : session.endDate;
-    if (boundedStart > boundedEnd) return;
+      )).for("update");
+      const [active] = await tx.select({ id: academicSessions.id }).from(academicSessions)
+        .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true))).limit(1);
+      if (!session || !session.isActive || active?.id !== sessionId) {
+        throw new AttendanceLeaveMutationError("Attendance can only be changed in the active academic session");
+      }
+      if (!isValidDateOnly(session.startDate) || !isValidDateOnly(session.endDate) ||
+          session.startDate > session.endDate ||
+          !isValidDateOnly(leave.startDate) || !isValidDateOnly(leave.endDate) ||
+          leave.startDate > leave.endDate) {
+        throw new AttendanceLeaveMutationError("Invalid Attendance date range", 400);
+      }
+      const [student] = await tx.select().from(students).where(and(
+        eq(students.id, studentId), eq(students.schoolId, schoolId),
+      ));
+      const [teacher] = teacherId === null ? [null] : await tx.select({ id: teachers.id }).from(teachers)
+        .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)));
+      if (!student || (teacherId !== null && !teacher)) {
+        throw new AttendanceLeaveMutationError("Leave Attendance entities do not belong to the same school", 403);
+      }
 
-    await db.transaction(async (tx) => {
-      for (let dateStr = boundedStart; dateStr <= boundedEnd; dateStr = addCalendarDays(dateStr, 1)) {
-      if (calendarWeekday(dateStr) === 0) continue;
-      const existing = await tx.select().from(attendanceRecords)
-        .where(and(
+      const today = todayInIST();
+      const earliest = addCalendarDays(today, -7);
+      const dates: string[] = [];
+      for (let date = leave.startDate; date <= leave.endDate; date = addCalendarDays(date, 1)) {
+        if (calendarWeekday(date) === 0) continue; // Preserve the existing leave-specific Sunday skip.
+        if (date < session.startDate || date > session.endDate) {
+          throw new AttendanceLeaveMutationError("Attendance date is outside the active academic session period", 400);
+        }
+        if (date > today) throw new AttendanceLeaveMutationError("Cannot mark attendance for future dates", 400);
+        if (date < earliest) throw new AttendanceLeaveMutationError("Can only edit attendance for the past 7 days", 400);
+        dates.push(date);
+      }
+      const holidays = dates.length ? await tx.select({ date: calendarEvents.date }).from(calendarEvents).where(and(
+        eq(calendarEvents.schoolId, schoolId),
+        eq(calendarEvents.eventType, "holiday"),
+        eq(calendarEvents.audienceScope, "All_School"),
+        inArray(calendarEvents.date, dates),
+      )) : [];
+      const holidayDates = new Set(holidays.map(holiday => holiday.date));
+
+      const [enrollment] = await tx.select({
+        class: enrollments.className, section: enrollments.sectionName,
+      }).from(enrollments).where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.studentId, studentId),
+      )).limit(1);
+      const [snapshot] = enrollment ? [null] : await tx.select({
+        class: attendanceRecords.class, section: attendanceRecords.section,
+      }).from(attendanceRecords).where(and(
+        eq(attendanceRecords.schoolId, schoolId),
+        eq(attendanceRecords.sessionId, sessionId),
+        eq(attendanceRecords.identityKey, student.attendanceIdentityKey),
+        isNotNull(attendanceRecords.class),
+        isNotNull(attendanceRecords.section),
+      )).orderBy(attendanceRecords.date, attendanceRecords.id).limit(1);
+      const cls = enrollment?.class || snapshot?.class || (student.isActive ? student.class : null);
+      const section = enrollment?.section || snapshot?.section || (student.isActive ? student.section : null);
+
+      // Validate every date before the first update; the transaction also rolls
+      // back both Attendance and approval if any database write fails.
+      const changes: Array<{ date: string; existing: AttendanceRecord | undefined }> = [];
+      for (const date of dates) {
+        if (holidayDates.has(date)) continue;
+        const [existing] = await tx.select().from(attendanceRecords).where(and(
           eq(attendanceRecords.schoolId, schoolId),
           eq(attendanceRecords.sessionId, sessionId),
-           eq(attendanceRecords.originalStudentId, studentId),
-          eq(attendanceRecords.date, dateStr),
+          eq(attendanceRecords.identityKey, student.attendanceIdentityKey),
+          eq(attendanceRecords.date, date),
         ));
-      if (existing.length > 0) {
-        await tx.update(attendanceRecords)
-          .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
-          .where(eq(attendanceRecords.id, existing[0].id));
-      } else if (teacherId !== null) {
-        await tx.insert(attendanceRecords).values({
-          studentId, originalStudentId: studentId,
-          identityKey: student.attendanceIdentityKey,
-          studentNameSnapshot: student.name,
-          studentCodeSnapshot: student.digitalStudentId,
-          teacherId, schoolId, sessionId, date: dateStr,
-          status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
-        });
+        if ((existing && (!existing.class?.trim() || !existing.section?.trim())) ||
+            (!existing && teacherId !== null && (!cls?.trim() || !section?.trim()))) {
+          throw new AttendanceLeaveMutationError("Authoritative Student class and section are required for Attendance");
+        }
+        changes.push({ date, existing });
       }
-      // If teacherId is null (admin path) and no existing record, skip INSERT to avoid FK violation.
-      // The leave request itself is the source of truth for the leave.
+      for (const { date, existing } of changes) {
+        if (existing) {
+          await tx.update(attendanceRecords)
+            .set({ status: "leave", markedBy: "System (Leave Approved)", markedAt: new Date() })
+            .where(and(eq(attendanceRecords.id, existing.id),
+              eq(attendanceRecords.schoolId, schoolId), eq(attendanceRecords.sessionId, sessionId)));
+        } else if (teacherId !== null) {
+          await tx.insert(attendanceRecords).values({
+            studentId, originalStudentId: studentId,
+            identityKey: student.attendanceIdentityKey,
+            studentNameSnapshot: student.name,
+            studentCodeSnapshot: student.digitalStudentId,
+            teacherId, schoolId, sessionId, date,
+            class: cls!, section: section!,
+            status: "leave", editCount: 0, markedBy: "System (Leave Approved)", markedAt: new Date(),
+          });
+        }
+        // Preserve admin approval without a class teacher: no new Attendance row.
       }
+      const [approved] = await tx.update(studentLeaveRequests).set({
+        status: "approved",
+        reviewedBy: input.reviewedBy,
+        reviewerRole: input.reviewerRole,
+        ...(input.teacherComment !== undefined && { teacherComment: input.teacherComment }),
+        ...(input.adminComment !== undefined && { adminComment: input.adminComment }),
+      }).where(and(
+        eq(studentLeaveRequests.id, leaveId),
+        eq(studentLeaveRequests.schoolId, schoolId),
+        eq(studentLeaveRequests.status, input.expectedStatus),
+      )).returning();
+      return approved ?? null;
     });
   }
 

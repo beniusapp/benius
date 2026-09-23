@@ -6,7 +6,7 @@ import {
   AttendanceReadSessionError,
   resolveAttendanceReadSession,
 } from "../attendance-read-session";
-import { todayInIST } from "@shared/ist-time";
+import { addCalendarDays, todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceRecords,
@@ -73,6 +73,18 @@ function attendanceInput(overrides: Partial<{
     markedBy: "Canonical identity test",
     ...overrides,
   };
+}
+
+async function leaveForSync(date: string, sessionId = sessionAId, leaveStudentId = studentId, endDate = date) {
+  const [leave] = await db.insert(studentLeaveRequests).values({
+    studentId: leaveStudentId, schoolId: schoolAId, sessionId,
+    startDate: date, endDate, reason: "Canonical identity test", status: "pending_teacher",
+  }).returning();
+  return storage.approveStudentLeaveWithAttendance({
+    leaveId: leave.id, studentId: leaveStudentId, teacherId: teacherAId,
+    schoolId: schoolAId, sessionId, expectedStatus: "pending_teacher",
+    reviewedBy: teacherAId, reviewerRole: "teacher",
+  });
 }
 
 beforeAll(async () => {
@@ -210,48 +222,58 @@ describe("Attendance canonical persistence identity", () => {
   });
 
   it("uses the canonical identity for Leave synchronization", async () => {
-    const date = "2040-04-09";
+    const date = addCalendarDays(todayInIST(), -1);
     const [created] = await storage.upsertAttendance([attendanceInput({ date, status: "present" })]);
-    await storage.markAttendanceAsLeave(studentId, teacherAId, schoolAId, sessionAId, date, date);
+    await db.update(academicSessions).set({ isActive: true }).where(eq(academicSessions.id, sessionAId));
+    try {
+      await leaveForSync(date);
+    } finally {
+      await db.update(academicSessions).set({ isActive: false }).where(eq(academicSessions.id, sessionAId));
+    }
 
     const [updated] = await db.select().from(attendanceRecords)
       .where(eq(attendanceRecords.id, created.id));
     expect(updated.status).toBe("leave");
   });
 
-  it("keeps Leave synchronization separate across Sessions", async () => {
-    const date = "2040-04-10";
-    await storage.markAttendanceAsLeave(studentId, teacherAId, schoolAId, sessionAId, date, date);
-    await storage.markAttendanceAsLeave(studentId, teacherAId, schoolAId, sessionBId, date, date);
+  it("does not synchronize Leave into an inactive Session with the same Student and date", async () => {
+    const date = addCalendarDays(todayInIST(), -2);
+    await db.update(academicSessions).set({ isActive: true }).where(eq(academicSessions.id, sessionAId));
+    try {
+      await leaveForSync(date);
+      await expect(leaveForSync(date, sessionBId)).rejects.toThrow("active academic session");
+    } finally {
+      await db.update(academicSessions).set({ isActive: false }).where(eq(academicSessions.id, sessionAId));
+    }
 
     const rows = await db.select().from(attendanceRecords).where(and(
       eq(attendanceRecords.schoolId, schoolAId),
       eq(attendanceRecords.studentId, studentId),
       eq(attendanceRecords.date, date),
     ));
-    expect(rows).toHaveLength(2);
-    expect(new Set(rows.map(row => row.sessionId))).toEqual(new Set([sessionAId, sessionBId]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sessionId).toBe(sessionAId);
   });
 
-  it("clamps Leave synchronization to the validated Session boundaries", async () => {
+  it("rejects a leave extending outside Session boundaries rather than clamping it", async () => {
     const [boundedSession] = await db.insert(academicSessions).values({
       schoolId: schoolAId,
-      sessionName: "2040 boundary",
-      startDate: "2040-04-01",
-      endDate: "2040-04-03",
-      isActive: false,
+      sessionName: `Leave boundary ${suffix}`,
+      startDate: todayInIST(),
+      endDate: addCalendarDays(todayInIST(), 1),
+      isActive: true,
     }).returning();
 
-    await storage.markAttendanceAsLeave(
-      studentId, teacherAId, schoolAId, boundedSession.id, "2040-03-30", "2040-04-05",
-    );
+    await expect(leaveForSync(addCalendarDays(todayInIST(), -2), boundedSession.id))
+      .rejects.toThrow("outside the active academic session period");
 
     const rows = await db.select().from(attendanceRecords).where(and(
       eq(attendanceRecords.schoolId, schoolAId),
       eq(attendanceRecords.sessionId, boundedSession.id),
       eq(attendanceRecords.studentId, studentId),
     ));
-    expect(rows.map(row => row.date).sort()).toEqual(["2040-04-02", "2040-04-03"]);
+    expect(rows).toHaveLength(0);
+    await db.update(academicSessions).set({ isActive: false }).where(eq(academicSessions.id, boundedSession.id));
   });
 
   it("lets the database reject a duplicate canonical key", async () => {
@@ -659,24 +681,32 @@ describe("Attendance canonical persistence identity", () => {
   });
 
   it("rejects Leave synchronization for a foreign Student", async () => {
-    const date = "2040-05-04";
+    const date = addCalendarDays(todayInIST(), -1);
+    await db.update(academicSessions).set({ isActive: false }).where(eq(academicSessions.id, sessionBId));
+    await db.update(academicSessions).set({ isActive: true }).where(eq(academicSessions.id, sessionAId));
+    try {
+      await expect(leaveForSync(date, sessionAId, studentBId))
+        .rejects.toThrow("Leave Attendance entities do not belong to the same school");
+    } finally {
+      await db.update(academicSessions).set({ isActive: false }).where(eq(academicSessions.id, sessionAId));
+      await db.update(academicSessions).set({ isActive: true }).where(eq(academicSessions.id, sessionBId));
+    }
 
-    await expect(storage.markAttendanceAsLeave(
-      studentBId, teacherAId, schoolAId, sessionAId, date, date,
-    )).rejects.toThrow("Leave Attendance entities do not belong to the same school");
-
-    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.date, date), eq(attendanceRecords.studentId, studentBId),
+    ));
     expect(rows).toHaveLength(0);
   });
 
   it("rejects Leave synchronization for a foreign Session", async () => {
-    const date = "2040-05-05";
+    const date = addCalendarDays(todayInIST(), -1);
 
-    await expect(storage.markAttendanceAsLeave(
-      studentId, teacherAId, schoolAId, otherSchoolSessionId, date, date,
-    )).rejects.toThrow("Leave Attendance entities do not belong to the same school");
+    await expect(leaveForSync(date, otherSchoolSessionId))
+      .rejects.toThrow("active academic session");
 
-    const rows = await db.select().from(attendanceRecords).where(eq(attendanceRecords.date, date));
+    const rows = await db.select().from(attendanceRecords).where(and(
+      eq(attendanceRecords.date, date), eq(attendanceRecords.sessionId, otherSchoolSessionId),
+    ));
     expect(rows).toHaveLength(0);
   });
 

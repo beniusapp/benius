@@ -127,6 +127,9 @@ function mockSuccessfulDependencies(boundaries?: { startDate: string; endDate: s
   vi.spyOn(storage, "getStudentsByIdsForSchool").mockImplementation(async studentIds =>
     studentIds.map(id => ({ id, schoolId: teacher.schoolId })) as any
   );
+  vi.spyOn(storage, "getAttendanceRosterForSessionClass").mockResolvedValue([
+    { id: 101 }, { id: 102 },
+  ] as any);
   return vi.spyOn(storage, "upsertAttendance").mockResolvedValue([]);
 }
 
@@ -453,6 +456,45 @@ describe("POST /api/attendance server-authoritative active Session", () => {
       teacher.schoolId,
     );
     expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a class mismatch without changing Teacher class authorization", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    vi.mocked(storage.getAttendanceRosterForSessionClass).mockResolvedValue([{ id: 101 }] as any);
+
+    const result = await postAttendance(harness, validBody(), null);
+    expect(result.status).toBe(400);
+    expect(result.body.message).toMatch(/do not belong to this class/);
+    expect(storage.getAttendanceRosterForSessionClass).toHaveBeenCalledWith(
+      teacher.schoolId, 777, "4", "B",
+    );
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows a same-school Teacher without a Faculty Mapping to mark another class's valid roster", async () => {
+    const harness = await makeHarness();
+    const upsert = mockSuccessfulDependencies();
+    const result = await postAttendance(harness, validBody(), null);
+    expect(result.status).toBe(200);
+    expect(upsert).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an unauthenticated Attendance mark", async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(session({ secret: "unauthenticated-attendance", resave: false, saveUninitialized: false }));
+    registerTeacherRoutes(app);
+    const server = await new Promise<Server>(resolve => {
+      const next = app.listen(0, "127.0.0.1", () => resolve(next));
+    });
+    openServers.push(server);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind");
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/attendance`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(validBody()),
+    });
+    expect(response.status).toBe(401);
   });
 });
 
