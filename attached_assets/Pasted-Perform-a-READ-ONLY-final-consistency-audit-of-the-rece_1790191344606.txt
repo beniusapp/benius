@@ -1,0 +1,225 @@
+Perform a READ-ONLY final consistency audit of the recently implemented Teacher Self-Attendance Working Days and canonical rate calculation.
+
+This is an AUDIT ONLY.
+
+ABSOLUTE RULE
+
+Do NOT modify any files.
+
+Do NOT:
+
+- change code
+- refactor
+- change database schema
+- create migrations
+- change APIs
+- change Attendance Policy behavior
+- change Student Attendance
+- change authentication
+- change production
+- create test accounts
+- modify attendance records
+- modify holidays
+- modify Working Days configuration
+
+Use source-code inspection, existing automated tests, and safe read-only checks only.
+
+AUDIT 1 — CANONICAL RATE
+
+Confirm there is exactly ONE authoritative server-side Teacher Self-Attendance rate calculation.
+
+Verify:
+
+- applicable working days
+- school Working Days configuration
+- All_School holiday exclusion
+- missing working-day attendance = Absent
+- Present = 1.0
+- Late = 1.0
+- Half Day = 0.5
+- Absent = 0
+- Leave = 0
+- future dates excluded
+- Session start boundary
+- Session end boundary
+- today calculated using IST
+- one-decimal rounding
+- zero applicable days behavior
+
+Identify any other Teacher Self-Attendance rate calculation that still exists.
+
+AUDIT 2 — TEACHER SCREENS
+
+Inspect:
+
+- "client/src/pages/teacher-modules/my-attendance.tsx"
+- "client/src/pages/teacher-modules/attendance-history.tsx"
+
+Verify both consume the canonical server-side rate rather than independently calculating different percentages.
+
+Report any remaining duplicate/local rate formula.
+
+AUDIT 3 — API CONSISTENCY
+
+Inspect:
+
+- "GET /api/teacher/self-attendance/rate"
+- Teacher attendance history endpoint
+- Working Days Admin GET/PUT endpoints
+
+Verify:
+
+- authenticated school is authoritative
+- authenticated Teacher is authoritative
+- selected Academic Session is validated
+- no client-supplied school ID can bypass tenant isolation
+- Working Days configuration is school-scoped
+- malformed configuration cannot silently become all-days-OFF
+- all-days-OFF cannot be saved
+
+AUDIT 4 — SESSION BOUNDARY
+
+Verify that the canonical rate never counts dates:
+
+- before Session start
+- after Session end
+- after today in IST
+
+Also verify that generated calendar dates cannot escape the selected Academic Session.
+
+AUDIT 5 — HOLIDAYS
+
+Verify the canonical rate uses the existing school-owned calendar.
+
+Confirm:
+
+- "All_School" holiday excludes the date
+- targeted/class-specific holidays do not affect the general Teacher Self-Attendance rate
+- no synthetic Absent row is created for holidays
+
+AUDIT 6 — WORKING DAYS
+
+Verify:
+
+Default:
+
+- Mon–Fri ON
+- Sat/Sun OFF
+
+Verify the configuration is:
+
+- school-wide
+- tenant-isolated
+- stored using existing "school_metadata"
+- not Session-specific
+
+Confirm changing Working Days does not rewrite historical attendance records.
+
+AUDIT 7 — IST
+
+Inspect date handling and confirm business dates use the existing IST/date-only helpers where applicable.
+
+Look specifically for unsafe use of:
+
+- UTC date conversion
+- browser-local date conversion
+- server-local timezone
+- "new Date()" logic that can shift a YYYY-MM-DD business date
+
+Do not change anything. Only report findings.
+
+AUDIT 8 — STUDENT ATTENDANCE ISOLATION
+
+Confirm this Teacher Self-Attendance implementation did not modify or reuse the Student Attendance rate contract incorrectly.
+
+Student Attendance behavior must remain unchanged.
+
+AUDIT 9 — MULTI-TENANT SECURITY
+
+Verify all relevant Teacher Self-Attendance reads and Working Days reads/writes are constrained to the authenticated school.
+
+Look for:
+
+- request-supplied school IDs used without authorization
+- unscoped attendance queries
+- unscoped holiday queries
+- unscoped Working Days metadata reads/writes
+- Session lookup without school ownership validation
+
+Report PASS/FAIL for each.
+
+AUDIT 10 — AUTOMATED TESTS
+
+Inspect the tests added for this feature.
+
+Confirm coverage exists for the important rules.
+
+Run only the relevant existing test suite if needed.
+
+Do not add or modify tests during this audit.
+
+FINAL REPORT
+
+Return only:
+
+A. Canonical rate
+
+PASS/FAIL + explanation
+
+B. Teacher screens
+
+PASS/FAIL + any duplicate calculation found
+
+C. APIs
+
+PASS/FAIL + explanation
+
+D. Academic Session boundaries
+
+PASS/FAIL
+
+E. Holidays
+
+PASS/FAIL
+
+F. Working Days
+
+PASS/FAIL
+
+G. IST
+
+PASS/FAIL
+
+H. Student Attendance isolation
+
+PASS/FAIL
+
+I. Multi-tenant isolation
+
+PASS/FAIL
+
+J. Automated tests
+
+PASS/FAIL + test count
+
+K. Findings
+
+List only actual findings.
+
+For every finding, classify it as:
+
+- DEFECT
+- RISK
+- INFORMATIONAL
+
+Do not fix anything.
+
+FINAL SAFETY GATE
+
+If everything passes, explicitly state:
+
+"10L-11A AUDIT PASS — NO CODE CHANGES REQUIRED."
+
+If a defect is found, stop after reporting it.
+
+No implementation work is authorized by this prompt.
