@@ -193,7 +193,14 @@ export const students = pgTable("students", {
   email: varchar("email", { length: 255 }),
 }, (table) => [
   uniqueIndex("students_id_school_uniq").on(table.id, table.schoolId),
+  uniqueIndex("students_attendance_identity_key_uidx").on(table.attendanceIdentityKey),
 ]);
+
+/** Permanent reservations for attendance identities.  This intentionally has
+ * no student foreign key: deleting a student must not release its identity. */
+export const attendanceIdentityReservations = pgTable("attendance_identity_reservations", {
+  identityKey: uuid("identity_key").primaryKey(),
+});
 
 export const teachers = pgTable("teachers", {
   id: serial("id").primaryKey(),

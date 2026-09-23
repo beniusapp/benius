@@ -323,9 +323,9 @@ describe("canonical Student Attendance working dates", () => {
     expect(daily).toMatchObject({
       total: 2,
       applicableTotal: 4,
-      present: 1,
-      missing: 3,
-      percentage: 25,
+      present: 2,
+      missing: 2,
+      percentage: 50,
     });
     expect(stats).toMatchObject({
       workingDays: 1,

@@ -409,15 +409,23 @@ export function registerTeacherRoutes(app: Express) {
       throw error;
     }
 
-    const studentList = await storage.getAttendanceRosterForSessionClass(
-      sid, attendanceSession.id, cls, section,
-    );
-    const records = await storage.getAttendanceForStudentsOnDate(
-      sid, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
-    );
+    // The date view is a live marking roster only inside the active correction
+    // window. Older/archived dates are historical reads and must include rows
+    // whose live Student FK was nulled by physical deletion.
+    const historicalView = !attendanceSession.isActive || date < addCalendarDays(todayInIST(), -7);
+    const studentList = historicalView
+      ? await storage.getAttendanceReportRosterForSessionClass(sid, attendanceSession.id, cls, section)
+      : await storage.getAttendanceRosterForSessionClass(sid, attendanceSession.id, cls, section);
+    const records = historicalView
+      ? await storage.getAttendanceByClassDate(sid, attendanceSession.id, cls, section, date)
+      : await storage.getAttendanceForStudentsOnDate(
+          sid, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
+        );
 
     const result = studentList.map(student => {
-      const record = records.find(r => r.studentId === student.id);
+      const record = historicalView
+        ? records.find(r => r.identityKey === ("identityKey" in student ? student.identityKey : student.attendanceIdentityKey))
+        : records.find(r => r.studentId === student.id);
       return {
         studentId: student.id,
         name: student.name,

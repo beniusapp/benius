@@ -4335,6 +4335,10 @@ export class DatabaseStorage {
     }
 
     const statuses: Array<string | null> = [];
+    // A Student can have a session roster placement in one class and a
+    // historical mark in another. Count the dated mark once, in its saved
+    // class, rather than adding a second "missing" entry from the roster.
+    const markedIdentityKeys = new Set(records.map(record => record.identityKey));
     for (const context of classSections.values()) {
       const workingDates = await getStudentAttendanceWorkingDates({
         schoolId,
@@ -4346,17 +4350,19 @@ export class DatabaseStorage {
       });
       if (workingDates.length === 0) continue;
 
-      const roster = await this.getAttendanceRosterForSessionClass(
+      const roster = await this.getAttendanceReportRosterForSessionClass(
         schoolId, sessionId, context.class, context.section,
       );
-      const statusByStudent = new Map(
+      const statusByIdentity = new Map(
         records
           .filter(record =>
             record.class === context.class && record.section === context.section
           )
-          .map(record => [record.studentId, record.status]),
+          .map(record => [record.identityKey, record.status]),
       );
-      statuses.push(...roster.map(student => statusByStudent.get(student.id) ?? null));
+      statuses.push(...roster
+        .filter(student => statusByIdentity.has(student.identityKey) || !markedIdentityKeys.has(student.identityKey))
+        .map(student => statusByIdentity.get(student.identityKey) ?? null));
     }
 
     const aggregation = aggregateStudentAttendance({

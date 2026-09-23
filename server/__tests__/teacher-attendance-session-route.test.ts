@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import express from "express";
 import session from "express-session";
 import type { Server } from "node:http";
 import { addCalendarDays, calendarWeekday, getAcademicYearForISTDate, todayInIST } from "@shared/ist-time";
+import { academicSessions, attendanceRecords, schools, students, teachers, users } from "@shared/schema";
 import { registerTeacherRoutes } from "../teacher-routes";
 import { checkSessionContext } from "../routes";
+import { db, pool } from "../db";
 import { storage } from "../storage";
 
 type Harness = {
@@ -538,6 +541,111 @@ describe("PATCH /api/leave/:id/status Session validation", () => {
 });
 
 describe("Teacher Attendance read Session isolation", () => {
+  it("returns a deleted Student snapshot for an archived Session but not the active marking roster", async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const date = todayInIST();
+    let fixtureSchoolId: number | undefined;
+    let sessionId: number | undefined;
+    let studentId: number | undefined;
+    let fixtureTeacherId: number | undefined;
+    let fixtureUserId: number | undefined;
+
+    try {
+      const [fixtureSchool] = await db.insert(schools).values({
+        name: `Route Fixture School ${suffix}`, code: `TR-${suffix.slice(-7)}`,
+      }).returning({ id: schools.id });
+      fixtureSchoolId = fixtureSchool.id;
+      const [fixtureUser] = await db.insert(users).values({
+        email: `teacher-attendance-route-${suffix}@example.test`,
+        passwordHash: "test-only",
+        role: "teacher",
+        schoolId: fixtureSchool.id,
+      }).returning({ id: users.id });
+      fixtureUserId = fixtureUser.id;
+      const [fixtureTeacher] = await db.insert(teachers).values({
+        userId: fixtureUser.id,
+        schoolId: fixtureSchool.id,
+        fullName: `Route Fixture Teacher ${suffix}`,
+        phone: "9000000099",
+        subject: "Attendance",
+        assignedClass: "1",
+        assignedSection: "A",
+      }).returning({ id: teachers.id });
+      fixtureTeacherId = fixtureTeacher.id;
+      const [fixtureSession] = await db.insert(academicSessions).values({
+        schoolId: fixtureSchool.id,
+        sessionName: `Route Fixture ${suffix}`,
+        startDate: date,
+        endDate: addCalendarDays(date, 30),
+        isActive: false,
+      }).returning({ id: academicSessions.id });
+      sessionId = fixtureSession.id;
+      const [fixtureStudent] = await db.insert(students).values({
+        schoolId: fixtureSchool.id,
+        digitalStudentId: `ROUTE-${suffix}`,
+        name: "Deleted Route Student",
+        class: "1",
+        section: "A",
+        phone: "9000000088",
+        dob: "2015-01-01",
+        passwordHash: "test-only",
+      }).returning();
+      studentId = fixtureStudent.id;
+      await storage.upsertAttendance([{
+        studentId: fixtureStudent.id,
+        teacherId: fixtureTeacher.id,
+        schoolId: fixtureSchool.id,
+        sessionId: fixtureSession.id,
+        date,
+        status: "absent",
+        class: "1",
+        section: "A",
+        markedBy: "Route Fixture Teacher",
+      }]);
+
+      // Physical deletion must leave the attendance row and its snapshots behind.
+      await pool.query(`DELETE FROM "students" WHERE id = $1`, [fixtureStudent.id]);
+
+      const harness = await makeHarness();
+      vi.spyOn(storage, "getTeacherById").mockResolvedValue({ ...teacher, schoolId: fixtureSchool.id } as any);
+      let archived = true;
+      vi.spyOn(storage, "getAcademicSessionById").mockImplementation(async () => ({
+        id: fixtureSession.id,
+        schoolId: fixtureSchool.id,
+        isActive: !archived,
+      } as any));
+
+      const historical = await getTeacherRoute(
+        harness,
+        `/api/attendance/${fixtureSchool.id}/1/A/${date}`,
+        fixtureSession.id,
+      );
+      expect(historical.status).toBe(200);
+      expect(historical.body).toEqual([expect.objectContaining({
+        name: "Deleted Route Student",
+        dsid: `ROUTE-${suffix}`,
+        status: "absent",
+        hasRecord: true,
+      })]);
+
+      archived = false;
+      const live = await getTeacherRoute(
+        harness,
+        `/api/attendance/${fixtureSchool.id}/1/A/${date}`,
+        fixtureSession.id,
+      );
+      expect(live.status).toBe(200);
+      expect(live.body).toEqual([]);
+    } finally {
+      if (sessionId) await db.delete(attendanceRecords).where(eq(attendanceRecords.sessionId, sessionId));
+      if (studentId) await pool.query(`DELETE FROM "students" WHERE id = $1`, [studentId]);
+      if (sessionId) await db.delete(academicSessions).where(eq(academicSessions.id, sessionId));
+      if (fixtureTeacherId) await db.delete(teachers).where(eq(teachers.id, fixtureTeacherId));
+      if (fixtureUserId) await db.delete(users).where(eq(users.id, fixtureUserId));
+      if (fixtureSchoolId) await db.delete(schools).where(eq(schools.id, fixtureSchoolId));
+    }
+  });
+
   it("passes a validated tenant Session to the daily Attendance storage reader", async () => {
     const harness = await makeHarness();
     vi.spyOn(storage, "getTeacherById").mockResolvedValue(teacher as any);
