@@ -1,0 +1,140 @@
+Perform a **VERY SMALL UI/behavior verification only** for the recently implemented Teacher Self-Attendance Working Days feature.
+
+## IMPORTANT
+
+This is a verification pass, NOT an implementation task.
+
+Do NOT:
+
+* redesign anything
+* refactor anything
+* change APIs
+* change database schema
+* change Attendance Policy logic
+* change Student Attendance
+* change rate calculation
+* change Academic Session behavior
+* change tenant/security architecture
+* change UI styling unless a clear functional defect prevents use
+
+Only identify and report actual problems.
+
+## VERIFY THESE FLOWS
+
+### 1. Admin Working Days UI
+
+Open:
+
+Admin → School Setup → Attendance Policy
+
+Verify that the Working Days section is visible and understandable.
+
+Verify default configuration for an unconfigured school:
+
+* Monday ON
+* Tuesday ON
+* Wednesday ON
+* Thursday ON
+* Friday ON
+* Saturday OFF
+* Sunday OFF
+
+### 2. Save Saturday OFF
+
+Keep Saturday OFF and save.
+
+Verify:
+
+* save succeeds
+* reload still shows Saturday OFF
+* no unrelated Attendance Policy settings change
+
+### 3. Enable Saturday
+
+Turn Saturday ON and save.
+
+Verify:
+
+* save succeeds
+* reload still shows Saturday ON
+* no unrelated Attendance Policy settings change
+
+### 4. All Days OFF Protection
+
+Attempt to turn all seven days OFF.
+
+Verify:
+
+* save is rejected/prevented
+* the system does not store an all-OFF configuration
+* existing valid configuration remains intact
+
+### 5. Teacher Self-Attendance Rate
+
+Open the Teacher Self-Attendance screens.
+
+Verify that the displayed rate comes from the new canonical server-side calculation.
+
+Verify:
+
+* Saturday OFF → Saturday is not applicable to the rate
+* Saturday ON → Saturday can become an applicable working day
+* missing attendance on an applicable working day contributes 0
+* Present/Late = full credit
+* Half Day = half credit
+* Absent/Leave = zero credit
+
+Do not modify stored attendance records just for testing unless absolutely necessary.
+
+### 6. Holiday Override
+
+Using an existing/test-safe `All_School` holiday if available, verify:
+
+* holiday date is excluded even when its weekday is ON
+* no Absent is created merely because the holiday has no attendance entry
+
+Do not modify the calendar unless an existing safe test mechanism is already available.
+
+### 7. Academic Session
+
+Verify the Teacher Self-Attendance rate does not include dates outside the selected Academic Session.
+
+Verify future dates are not counted.
+
+### 8. Tenant Isolation
+
+If the development environment has safe access to multiple school tenants, verify:
+
+* School A's Working Days cannot be viewed or changed by School B.
+* Teacher Self-Attendance rate only uses the authenticated school's data.
+
+Do not create new tenants or alter production data.
+
+### 9. Final Check
+
+Report ONLY:
+
+A. UI verification result
+B. Working Days save/load result
+C. Saturday ON/OFF result
+D. All-OFF protection result
+E. Teacher rate result
+F. Holiday result
+G. Academic Session result
+H. Tenant isolation result
+I. Any actual defects found
+
+## CODE CHANGE RULE
+
+Prefer **ZERO code changes**.
+
+If a genuine functional defect is discovered:
+
+* stop
+* report the exact defect
+* identify the smallest file/API involved
+* DO NOT automatically fix it
+
+No production deployment.
+No migration.
+No unrelated changes.
