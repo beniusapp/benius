@@ -1,0 +1,297 @@
+We have now approved the following business requirement for the School MIS Attendance system.
+
+## APPROVED BUSINESS REQUIREMENT
+
+Each school/tenant must be able to configure which days of the week are normal working days.
+
+Default:
+
+* Monday = Working
+* Tuesday = Working
+* Wednesday = Working
+* Thursday = Working
+* Friday = Working
+* Saturday = Non-working
+* Sunday = Non-working
+
+But a school may enable Saturday and/or Sunday as working days.
+
+Example:
+
+School A:
+Monday–Friday = working
+Saturday = non-working
+Sunday = non-working
+
+School B:
+Monday–Saturday = working
+Sunday = non-working
+
+The configuration MUST be school/tenant-specific.
+
+---
+
+## ATTENDANCE BEHAVIOR
+
+The working-day configuration determines whether Teacher Self-Attendance is expected on a particular date.
+
+If the weekday is NOT configured as a working day:
+
+→ Teacher attendance is not required.
+→ The date is excluded from the Teacher Self-Attendance rate denominator.
+
+If the weekday IS configured as a working day:
+
+→ Teacher attendance is expected.
+→ If the teacher has no attendance record, the date is treated as Absent for rate calculation.
+→ If the teacher checks in, the EXISTING Attendance Policy timing logic determines the stored status.
+
+Do NOT create a new Saturday-specific attendance status.
+
+---
+
+## EXISTING ATTENDANCE POLICY MUST REMAIN RESPONSIBLE FOR TIMING
+
+For a configured working day, including Saturday/Sunday when enabled, continue using the existing Attendance Policy rules:
+
+* Expected Arrival
+* Grace Period
+* Half-Day Cutoff
+* School End Time
+* Present
+* Late
+* Half Day
+* Leave
+
+Do not duplicate or replace the existing timing/status engine.
+
+---
+
+## HOLIDAY PRIORITY
+
+A declared school holiday overrides the normal working-day configuration.
+
+Example:
+
+Saturday is configured as a working day.
+
+But Principal/Admin declares that Saturday as a school holiday.
+
+Result:
+
+→ Holiday
+→ Attendance not required
+→ Date excluded from Teacher Self-Attendance rate
+
+The holiday must be evaluated using the existing school calendar/holiday mechanism where possible.
+
+Do not create a second holiday system.
+
+---
+
+## TEACHER SELF-ATTENDANCE RATE CONTRACT
+
+Use the following approved business rules:
+
+1. Rate period:
+   Selected Academic Session start date → today in IST.
+
+2. Working day:
+   Determined by the school's configured weekday working-day settings.
+
+3. Holiday:
+   Excluded.
+
+4. Future date:
+   Excluded.
+
+5. Working day with no Teacher Self-Attendance record:
+   Absent.
+
+6. Status weights:
+   Present = 1.0
+   Late = 1.0
+   Half Day = 0.5
+   Leave = 0
+   Absent = 0
+
+7. Percentage:
+   Earned attendance / applicable working days × 100.
+
+8. Rounding:
+   1 decimal place.
+
+9. Zero applicable days:
+   0.0%.
+
+10. Academic Session boundaries:
+    Strictly enforced.
+
+11. Timezone:
+    IST / Asia/Kolkata.
+
+---
+
+# IMPORTANT: THIS IS A PRE-IMPLEMENTATION AUDIT ONLY
+
+DO NOT CHANGE ANY CODE YET.
+
+DO NOT CREATE A MIGRATION YET.
+
+DO NOT MODIFY THE DATABASE YET.
+
+DO NOT MODIFY THE UI YET.
+
+DO NOT MODIFY Teacher Self-Attendance yet.
+
+We first need to determine the smallest safe implementation path.
+
+---
+
+# PLEASE INSPECT
+
+Determine:
+
+### 1. Existing configuration location
+
+Find the most appropriate existing school-level configuration location for storing:
+
+```text
+workingDays
+```
+
+or equivalent.
+
+Check whether an existing school configuration mechanism can safely store this without creating an unnecessary new table.
+
+Prefer reusing an existing school configuration mechanism if it is already appropriate.
+
+Do not change anything.
+
+### 2. Existing Attendance Policy UI
+
+Determine where the simplest UI addition could go.
+
+We ultimately want Admin to be able to select:
+
+Monday ☑
+Tuesday ☑
+Wednesday ☑
+Thursday ☑
+Friday ☑
+Saturday ☐
+Sunday ☐
+
+But do not implement it yet.
+
+Tell us the exact component/file where this would fit naturally.
+
+### 3. Existing holiday mechanism
+
+Confirm exactly how the existing school calendar holiday system can be reused.
+
+Do not create another holiday mechanism.
+
+### 4. Teacher Self-Attendance calculation paths
+
+We know the audit found three different percentage implementations.
+
+Trace them again and identify:
+
+* Server history rate
+* My Attendance rate
+* Detailed Attendance History rate
+
+For each one, explain the minimum changes required to make all three follow the approved contract above.
+
+Do not make those changes yet.
+
+### 5. Teacher Self-Attendance date generation
+
+Determine the safest way to identify:
+
+* working weekday
+* non-working weekday
+* holiday
+* future date
+* Academic Session boundary
+* missing attendance record
+
+Do not generate database attendance rows for missing dates merely to calculate the percentage unless the existing architecture absolutely requires it.
+
+Prefer calculation/display logic over creating fake attendance records.
+
+### 6. Existing Attendance Policy status engine
+
+Confirm that enabling Saturday/Sunday as working days will NOT require changing:
+
+`resolvePolicy`
+`evaluateAttendanceStatus`
+
+or the existing Teacher check-in status engine.
+
+If changes are required, explain why.
+
+### 7. Multi-tenant safety
+
+Confirm that the working-day configuration will be scoped to the authenticated `schoolId`.
+
+A school must NEVER be able to read or modify another school's working-day configuration.
+
+### 8. Academic Session safety
+
+Determine whether working-day configuration should be:
+
+A. School-wide, applying to all Academic Sessions
+
+or
+
+B. Academic Session-specific.
+
+Do not decide silently.
+
+Inspect the existing architecture and explain which is the smaller/safer fit.
+
+### 9. IST
+
+Confirm that weekday/date determination will use the application's existing IST / Asia-Kolkata date helpers and will not use server-local timezone.
+
+---
+
+# REQUIRED OUTPUT
+
+Return only an implementation planning report with:
+
+## A. Existing configuration that can be reused
+
+## B. Exact files/components that would need modification
+
+## C. Exact database/schema impact
+
+## D. Exact API impact
+
+## E. Exact Teacher Self-Attendance calculation impact
+
+## F. Holiday integration
+
+## G. Academic Session scope
+
+## H. Multi-tenant safety
+
+## I. IST/date handling
+
+## J. Smallest safe implementation plan
+
+## K. Risks or edge cases
+
+## L. Tests that should be added
+
+## M. Files that should NOT be changed
+
+At the end explicitly confirm:
+
+**No files changed.**
+**No database changes made.**
+**No production changes made.**
+
+Do not implement anything until I review this planning report.
