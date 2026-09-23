@@ -11,6 +11,7 @@ import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useArchiveMode } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
 import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
+import { isSessionAttendanceDate, recentSessionAttendanceDates } from "./teacher-attendance-display-dates";
 import { useISTToday } from "@/hooks/use-ist-today";
 import {
   addCalendarDays,
@@ -289,12 +290,11 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
   // ── 7-day timeline data ──────────────────────────────────────────────────────
   const timeline = useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const dateStr = addCalendarDays(today, -(6 - i));
+    return recentSessionAttendanceDates(today, sessionStartDate, sessionEndDate).map(dateStr => {
       const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
       return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true, isHoliday: rate?.holidayDates.includes(dateStr) ?? false, rec };
     });
-  }, [history, todayRec, today, rate]);
+  }, [history, todayRec, today, rate, sessionStartDate, sessionEndDate]);
 
   // ── Navigable monthly calendar ───────────────────────────────────────────────
   const initialTodayParts = dateOnlyParts(today)!;
@@ -335,10 +335,14 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     for (let i = 0; i < firstWeekday; i++) cells.push(null);
     for (let d = 1; d <= lastDay; d++) {
       const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      if (!isSessionAttendanceDate(dateStr, sessionStartDate, sessionEndDate, today)) {
+        cells.push(null);
+        continue;
+      }
       cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true });
     }
     return cells;
-  }, [history, today, calYear, calMonth, rate]);
+  }, [history, today, calYear, calMonth, rate, sessionStartDate, sessionEndDate]);
 
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
