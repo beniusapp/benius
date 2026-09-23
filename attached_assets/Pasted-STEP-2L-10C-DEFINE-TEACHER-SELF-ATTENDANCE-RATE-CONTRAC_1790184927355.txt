@@ -1,0 +1,516 @@
+STEP 2L-10C — DEFINE TEACHER SELF-ATTENDANCE RATE CONTRACT
+DECISION / SPECIFICATION ONLY — NO CODE CHANGES
+
+Context:
+STEP 2L-10A and STEP 2L-10B audited Teacher Self-Attendance.
+
+The audits established:
+
+- Teacher Self-Attendance has an existing mechanism for recording attendance status.
+- Existing Attendance Policy determines the stored status of a new Teacher Self-Attendance event.
+- Historical stored Teacher status must not be reinterpreted when Attendance Policy changes later.
+- Teacher Self-Attendance is school/tenant scoped.
+- Teacher Self-Attendance is Academic Session scoped.
+- Application/business/display date logic uses IST / Asia/Kolkata.
+- However, there is currently NO authoritative business contract defining the Teacher Self-Attendance RATE/PERCENTAGE.
+- Three existing implementations currently calculate the rate differently:
+  1. Server Teacher Self-Attendance history
+  2. Teacher My Attendance
+  3. Teacher Attendance History
+
+IMPORTANT:
+
+This step is NOT an implementation step.
+
+DO NOT modify source code.
+
+DO NOT modify tests.
+
+DO NOT modify database/schema.
+
+DO NOT create migrations.
+
+DO NOT modify UI.
+
+DO NOT refactor anything.
+
+DO NOT select an existing implementation as correct.
+
+DO NOT silently copy Student Attendance rules.
+
+DO NOT invent a business rule and treat it as already approved.
+
+The purpose of this step is to create a clear Teacher Self-Attendance RATE CONTRACT that the project owner can review and explicitly approve.
+
+==================================================
+PROJECT-WIDE NON-NEGOTIABLE RULES
+==================================================
+
+1. MULTI-TENANT / MULTI-SCHOOL
+
+All Teacher Self-Attendance data and calculations must remain isolated to the authenticated school/tenant.
+
+Never permit or suggest:
+- cross-school Teacher attendance
+- cross-school calculations
+- another school's Academic Session
+- mixing attendance records between schools
+
+2. ACADEMIC SESSION
+
+Teacher Self-Attendance must remain explicitly associated with the selected school-owned Academic Session.
+
+Do not mix records from different Sessions.
+
+Do not use legacy null-Session rows in Session-scoped calculations.
+
+The policy decision must explicitly state how the Session's start/end dates affect the rate.
+
+3. IST
+
+Application/business/display date logic must use:
+Asia/Kolkata / IST
+
+Do not introduce BST, UTC date semantics, or another local timezone for business-date decisions.
+
+4. STUDENT ATTENDANCE IS SEPARATE
+
+Do not assume that Student Attendance rules automatically apply to Teachers.
+
+Student Attendance has its own established contract.
+
+Teacher Self-Attendance requires a Teacher-specific contract.
+
+5. CLASS TRANSFER
+
+Do not reopen or discuss the previously skipped same-Session Student class-transfer issue.
+
+6. PRODUCTION
+
+Do not perform any production/deployment/migration work.
+
+==================================================
+PART 1 — CREATE THE DECISION SHEET
+==================================================
+
+Create a concise decision sheet containing exactly these nine areas.
+
+For EACH area provide:
+
+- Decision Question
+- Relevant current implementation behavior
+- Available choices/options
+- Consequence of each option
+- "PROJECT OWNER DECISION" field left clearly open for approval
+
+IMPORTANT:
+
+The "current implementation behavior" is evidence only.
+
+Do NOT label it as the recommended choice.
+
+Do NOT call any option "best", "correct", or "authoritative" unless the project owner explicitly chooses it.
+
+==================================================
+A. APPLICABLE / WORKING DAYS
+==================================================
+
+Decision:
+
+What makes a Teacher Self-Attendance date applicable for attendance-rate calculation?
+
+Present the possible models neutrally:
+
+Option A:
+Only dates with an actual Teacher Self-Attendance record are applicable.
+
+Option B:
+Calendar/scheduled working dates are applicable even if no attendance record exists.
+
+Option C:
+Working dates come from an explicit school working-day/calendar configuration, if such a configuration exists.
+
+Option D:
+Another explicitly defined rule.
+
+Explain the effect on unmarked days.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+B. SATURDAY / SUNDAY
+==================================================
+
+Decide separately:
+
+1. Is Saturday an applicable Teacher Self-Attendance day?
+2. Is Sunday an applicable Teacher Self-Attendance day?
+3. If a Teacher deliberately has a stored attendance record on Saturday/Sunday, should that stored record count?
+4. Should weekend records ever be ignored?
+
+Do NOT assume Sunday is automatically non-working.
+
+Do NOT assume Sunday is automatically working.
+
+Present the current implementation differences neutrally.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+C. HOLIDAYS
+==================================================
+
+Decide:
+
+1. Do school holidays affect Teacher Self-Attendance rate calculation?
+2. Should All_School holidays be excluded?
+3. Should targeted/class-specific holidays be excluded?
+4. If a Teacher has a deliberately stored attendance record on a holiday, should it count?
+5. Does a holiday without an attendance record count in the denominator?
+
+Clearly distinguish:
+- holiday policy
+- attendance marking restriction
+- attendance-rate calculation
+
+Do not assume they are the same thing.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+D. STATUS WEIGHTS
+==================================================
+
+Define rate contribution for each stored Teacher Self-Attendance status:
+
+- Present
+- Late
+- Half Day
+- Leave
+- Absent
+- Not Marked / Missing, if applicable
+
+For each status provide a blank decision field.
+
+Use this format:
+
+| Status | Possible contribution | PROJECT OWNER DECISION |
+|--------|-----------------------|------------------------|
+| Present | e.g. 1.0 | [OPEN] |
+| Late | e.g. 1.0 / another value | [OPEN] |
+| Half Day | e.g. 0.5 / another value | [OPEN] |
+| Leave | e.g. 1.0 / 0 / another value | [OPEN] |
+| Absent | e.g. 0 | [OPEN] |
+| Missing | e.g. 0 / excluded | [OPEN] |
+
+Do not import Student Attendance weights automatically.
+
+==================================================
+E. MISSING / UNMARKED DAYS
+==================================================
+
+Define what happens when a Teacher has no attendance record for an applicable date.
+
+Distinguish:
+
+1. No database row exists.
+2. A row exists with status "Not Marked".
+3. A generated/display-only date exists in Attendance History.
+
+Decide whether each should:
+
+- be excluded from denominator
+- count as absent
+- count as another status
+- have another explicitly defined treatment
+
+Do not silently convert missing days to Absent.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+F. FUTURE DATES
+==================================================
+
+Define whether future-dated attendance records can affect the rate.
+
+Decide:
+
+1. Should future dates be excluded from the rate?
+2. Should future stored rows be ignored?
+3. Should future dates be considered Scheduled rather than attendance days?
+4. What should happen if a future attendance row somehow exists?
+
+Keep write validation and rate calculation conceptually separate.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+G. ACADEMIC SESSION BOUNDARY
+==================================================
+
+Define whether the Teacher Self-Attendance rate must be constrained to:
+
+Academic Session start date <= applicable date <= Academic Session end date
+
+Decide separately:
+
+1. Stored attendance rows outside Session boundaries.
+2. Generated/display-only dates outside Session boundaries.
+3. Future dates beyond today but inside Session.
+4. Historical dates before Session start.
+5. Dates after Session end.
+
+Also state that Session ID isolation remains mandatory regardless of this decision.
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+H. RATE PERIOD / DISPLAY CONSISTENCY
+==================================================
+
+Define what "Attendance Rate" means.
+
+Possible choices:
+
+Option A:
+Entire selected Academic Session.
+
+Option B:
+Selected report/date range.
+
+Option C:
+Current month.
+
+Option D:
+Different named metrics may exist, but each must have a clearly defined period and label.
+
+Then decide:
+
+1. Should Teacher "My Attendance" and "Attendance History" show the same rate when viewing the same period?
+2. Should the server and client use exactly the same calculation?
+3. Should CSV/export use the same underlying rate?
+4. Should print/PDF use the same underlying rate?
+5. If different screens intentionally show different periods, must the UI label the period explicitly?
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+I. ROUNDING / ZERO APPLICABLE DAYS
+==================================================
+
+Decide:
+
+1. Percentage precision:
+   - whole number
+   - one decimal
+   - another precision
+
+2. Rounding method:
+   - standard rounding
+   - floor
+   - ceiling
+   - another defined method
+
+3. If there are zero applicable days:
+   - display 0%
+   - display N/A
+   - another defined result
+
+PROJECT OWNER DECISION:
+[LEAVE OPEN]
+
+==================================================
+PART 2 — SEPARATE STATUS POLICY FROM RATE POLICY
+==================================================
+
+Explicitly document:
+
+A. EXISTING STATUS POLICY
+
+What Attendance Policy already determines for a newly recorded Teacher Self-Attendance event.
+
+B. NEW RATE POLICY
+
+The decisions being made in this Step 2L-10C.
+
+Make it explicit that:
+
+"Attendance Policy determines the stored attendance status; the Teacher Self-Attendance Rate Contract determines how stored statuses/dates contribute to the rate."
+
+Do not change the existing status engine.
+
+==================================================
+PART 3 — IDENTIFY CURRENT IMPLEMENTATION DIFFERENCES
+==================================================
+
+After the decision sheet, include a short neutral table:
+
+| Surface | Current behavior | Potential consequence |
+|---------|------------------|-----------------------|
+| Server rate | ... | ... |
+| My Attendance | ... | ... |
+| Attendance History | ... | ... |
+
+Include the previously identified issue:
+
+Detailed Attendance History can generate past weekdays outside the selected Academic Session when the selected date range extends beyond the Session.
+
+Do NOT fix it.
+
+State:
+
+"This is a known implementation issue/risk to address AFTER the Teacher Self-Attendance Rate Contract is approved."
+
+==================================================
+PART 4 — PROPOSED CONTRACT TEMPLATE
+==================================================
+
+Create a final contract template that can later become the authoritative project specification.
+
+Use exactly this structure:
+
+TEACHER SELF-ATTENDANCE RATE CONTRACT
+
+1. Scope
+2. Tenant / School Isolation
+3. Academic Session Identity
+4. Applicable Days
+5. Saturday
+6. Sunday
+7. Holidays
+8. Present Weight
+9. Late Weight
+10. Half Day Weight
+11. Leave Weight
+12. Absent Weight
+13. Missing / Not Marked
+14. Future Dates
+15. Session Start Boundary
+16. Session End Boundary
+17. Rate Period
+18. Numerator
+19. Denominator
+20. Formula
+21. Rounding / Precision
+22. Zero Applicable Days
+23. My Attendance Display
+24. Attendance History Display
+25. Export Behavior
+26. Historical Stored Status
+27. IST / Asia-Kolkata
+
+Every item should initially say:
+
+"DECISION REQUIRED"
+
+unless it is an already-established project rule such as:
+- tenant isolation
+- selected Session identity
+- historical stored status preservation
+- IST
+
+Do not fill unresolved items with guesses.
+
+==================================================
+PART 5 — DECISION IMPACT SUMMARY
+==================================================
+
+At the end, provide a short summary:
+
+"These decisions will determine the future implementation of the Teacher Self-Attendance rate."
+
+List which existing code areas are likely to be affected AFTER approval, without modifying them.
+
+For example:
+- server rate calculation
+- My Attendance KPI
+- Attendance History rate
+- generated History date handling
+- exports if applicable
+- focused tests
+
+Do not propose broad refactoring.
+
+==================================================
+PART 6 — FINAL OUTPUT
+==================================================
+
+Return the result in exactly this structure:
+
+STEP 2L-10C — TEACHER SELF-ATTENDANCE RATE CONTRACT DECISION SHEET
+
+1. PURPOSE
+
+2. EXISTING ESTABLISHED RULES
+   - Only confirmed rules
+
+3. DECISION A — APPLICABLE / WORKING DAYS
+
+4. DECISION B — SATURDAY / SUNDAY
+
+5. DECISION C — HOLIDAYS
+
+6. DECISION D — STATUS WEIGHTS
+
+7. DECISION E — MISSING / UNMARKED
+
+8. DECISION F — FUTURE DATES
+
+9. DECISION G — ACADEMIC SESSION BOUNDARY
+
+10. DECISION H — RATE PERIOD / DISPLAY CONSISTENCY
+
+11. DECISION I — ROUNDING / ZERO APPLICABLE DAYS
+
+12. STATUS POLICY VS RATE POLICY
+
+13. CURRENT IMPLEMENTATION DIFFERENCES
+
+14. AUTHORITATIVE CONTRACT TEMPLATE
+
+15. IMPLEMENTATION IMPACT — AFTER APPROVAL ONLY
+
+16. FINAL OWNER DECISION
+   - State clearly that implementation must wait until the project owner approves the unresolved decisions.
+
+17. FILES CHANGED
+   MUST BE: NONE
+
+18. TESTS CHANGED
+   MUST BE: NONE
+
+19. DATABASE/SCHEMA CHANGED
+   MUST BE: NONE
+
+20. PRODUCTION
+   MUST BE: NOT TOUCHED
+
+FINAL SAFETY GATE:
+
+Before completing this step, verify:
+
+- NO source files changed
+- NO test files changed
+- NO schema changed
+- NO migrations created
+- NO UI changed
+- NO database changes
+- NO production/deployment work
+- NO Student Attendance rules changed
+- NO Student class-transfer work reopened
+- NO existing Teacher Self-Attendance formula declared authoritative
+- NO new business rule invented
+- NO unresolved decision silently filled in
+
+If any file was modified, STOP and report it immediately instead of continuing.
+
+This step ends with a DECISION SHEET only.
+DO NOT IMPLEMENT THE RATE CONTRACT.
