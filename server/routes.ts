@@ -3,6 +3,7 @@ import { type Server } from "http";
 import { AcademicSessionFinancialHistoryError, storage } from "./storage";
 import { aggregateStudentAttendance } from "./student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
+import { getWorkingDays, parseWorkingDays, saveWorkingDays } from "./teacher-working-days";
 import { feePeriodLabel } from "./fee-period";
 import {
   insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
@@ -1597,6 +1598,35 @@ export async function registerRoutes(
     }
     await storage.setClassExamTypesMetadata(schoolId, classExamTypes);
     res.json({ message: "Class-exam-type mapping saved" });
+  });
+
+  // Teacher self-attendance weekdays are school-wide, never selected by URL or view Session.
+  app.get("/api/admin/teacher-working-days", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin" || !req.session.schoolId)
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      res.json(await getWorkingDays(req.session.schoolId));
+    } catch (error) {
+      console.error("Failed to read Teacher working days", error);
+      res.status(500).json({ message: "Invalid school working-day configuration" });
+    }
+  });
+
+  app.put("/api/admin/teacher-working-days", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin" || !req.session.schoolId)
+      return res.status(403).json({ message: "Admin access required" });
+    let days;
+    try {
+      days = parseWorkingDays(req.body);
+    } catch {
+      return res.status(400).json({ message: "Select at least one day and provide all seven boolean weekdays" });
+    }
+    try {
+      res.json(await saveWorkingDays(req.session.schoolId, days));
+    } catch (error) {
+      console.error("Failed to save Teacher working days", error);
+      res.status(500).json({ message: "Failed to save working days" });
+    }
   });
 
   app.put("/api/school-metadata/:schoolId/:metaKey", async (req, res) => {

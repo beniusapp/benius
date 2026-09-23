@@ -21,6 +21,8 @@ import {
 } from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
 import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
+import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
+import { WEEKDAYS } from "./teacher-working-days";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
@@ -4678,6 +4680,8 @@ Thank you for your prompt attention to this matter.
       const today = istToday();
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId, (req as any).viewSessionId,
       );
@@ -4832,6 +4836,22 @@ Thank you for your prompt attention to this matter.
     }
   });
 
+  // Full selected-Session rate; never trusts Teacher or school IDs from the request.
+  app.get("/api/teacher/self-attendance/rate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || !req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
+      const session = await resolveAttendanceReadSession(teacher.schoolId, (req as any).viewSessionId);
+      res.json(await getTeacherSelfRate(teacher.schoolId, teacher.id, session));
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      console.error("[self-attendance/rate]", err);
+      res.status(500).json({ message: "Failed to calculate attendance rate" });
+    }
+  });
+
   // GET history — accepts startDate/endDate (session bounds) or falls back to last N days
   app.get("/api/teacher/self-attendance/history", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
@@ -4854,6 +4874,8 @@ Thank you for your prompt attention to this matter.
 
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId, (req as any).viewSessionId,
       );
@@ -4863,8 +4885,8 @@ Thank you for your prompt attention to this matter.
           eq(teacherSelfAttendance.teacherId, req.session.teacherId),
           eq(teacherSelfAttendance.schoolId, teacher.schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-          gte(teacherSelfAttendance.attendanceDate, start),
-          lte(teacherSelfAttendance.attendanceDate, end),
+          gte(teacherSelfAttendance.attendanceDate, start > attendanceSession.startDate ? start : attendanceSession.startDate),
+          lte(teacherSelfAttendance.attendanceDate, end < attendanceSession.endDate ? end : attendanceSession.endDate),
         )
       ).orderBy(desc(teacherSelfAttendance.attendanceDate));
       res.json(records);
@@ -4982,6 +5004,8 @@ Thank you for your prompt attention to this matter.
     try {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId, (req as any).viewSessionId,
       );
@@ -5002,8 +5026,10 @@ Thank you for your prompt attention to this matter.
       if ((fromDate && !isValidDateOnly(fromDate)) || (toDate && !isValidDateOnly(toDate)) || (fromDate && toDate && fromDate > toDate)) {
         return res.status(400).json({ message: "Invalid Attendance date range" });
       }
-      if (fromDate) conditions.push(gte(teacherSelfAttendance.attendanceDate, fromDate) as any);
-      if (toDate)   conditions.push(lte(teacherSelfAttendance.attendanceDate, toDate) as any);
+      conditions.push(gte(teacherSelfAttendance.attendanceDate,
+        fromDate && fromDate > attendanceSession.startDate ? fromDate : attendanceSession.startDate) as any);
+      conditions.push(lte(teacherSelfAttendance.attendanceDate,
+        toDate && toDate < attendanceSession.endDate ? toDate : attendanceSession.endDate) as any);
       if (status && status !== "all") conditions.push(eq(teacherSelfAttendance.status, status) as any);
 
       const records = await db.select().from(teacherSelfAttendance)
@@ -5023,9 +5049,7 @@ Thank you for your prompt attention to this matter.
       const summary = { present, late, halfDay, absent, leave, totalWorkingMinutes, avgWorkingMinutes };
 
       // ── Statistics ────────────────────────────────────────────────────────
-      const attended = present + late + halfDay;
-      const total    = attended + absent + leave;
-      const attendanceRate = total > 0 ? Math.round((attended / total) * 100) : 0;
+      const rate = await getTeacherSelfRate(teacher.schoolId, teacher.id, attendanceSession);
 
       // Streak: consecutive Present/Late/Half Day working days (most-recent first)
       const sorted = [...records].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
@@ -5033,7 +5057,7 @@ Thank you for your prompt attention to this matter.
       for (const r of sorted) {
         const dow = calendarWeekday(r.attendanceDate);
         if (dow === null) continue;
-        if (dow === 0 || dow === 6) continue;
+        if (!rate.workingDays[WEEKDAYS[dow]] || rate.holidayDates.includes(r.attendanceDate)) continue;
         const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
         if (ok) { cur++; if (cur > longestStreak) longestStreak = cur; }
         else    { if (streak === 0) streak = cur; cur = 0; }
@@ -5041,7 +5065,7 @@ Thank you for your prompt attention to this matter.
       if (streak === 0) streak = cur;
 
       const statistics = {
-        attendanceRate,
+        ...rate,
         streak,
         longestStreak,
         totalWorkingHours: +(totalWorkingMinutes / 60).toFixed(1),
@@ -5063,6 +5087,7 @@ Thank you for your prompt attention to this matter.
         pagination: { page: pageNum, pageSize: pageSizeNum, totalRecords, totalPages },
       });
     } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
       console.error("[attendance/history]", err);
       res.status(500).json({ message: "Failed to fetch attendance history" });
     }

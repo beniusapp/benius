@@ -10,6 +10,7 @@ import {
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useArchiveMode } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
+import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
 import { useISTToday } from "@/hooks/use-ist-today";
 import {
   addCalendarDays,
@@ -97,11 +98,6 @@ function getDayLabel(dateStr: string): string {
   return formatDateOnlyWithWeekday(dateStr);
 }
 
-function isWeekend(dateStr: string): boolean {
-  const weekday = calendarWeekday(dateStr);
-  return weekday === 0 || weekday === 6;
-}
-
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
   const isArchiveMode = useArchiveMode();
@@ -112,6 +108,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   useEffect(() => {
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate"] });
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
   }, [today]);
 
@@ -189,6 +186,18 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     staleTime: 60000,
   });
 
+  const { data: rate, isError: rateError } = useQuery<TeacherSelfRate>({
+    queryKey: ["/api/teacher/self-attendance/rate", selectedSessionId, today],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/teacher/self-attendance/rate");
+      if (!r.ok) throw new Error("Failed to load Attendance rate");
+      return r.json();
+    },
+    enabled: selectedSessionId !== null,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
   const { data: corrections = [], isLoading: correctionsLoading } = useQuery<CorrectionReq[]>({
     queryKey: ["/api/teacher/self-attendance/corrections", selectedSessionId],
     queryFn: async () => { const r = await sessionFetch("/api/teacher/self-attendance/corrections"); return r.ok ? r.json() : []; },
@@ -207,6 +216,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
     queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history", selectedSessionId, sessionStartDate, sessionEndDate] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate", selectedSessionId] });
   };
 
   const checkInMut = useMutation({
@@ -246,13 +256,11 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
   // ── Derived analytics ────────────────────────────────────────────────────────
   const kpi = useMemo(() => {
-    const workdays = history.filter(r => !isWeekend(r.attendanceDate));
+    const workdays = history.filter(r => rate && isWorkingDate(r.attendanceDate, rate));
     const present  = workdays.filter(r => r.status === "Present").length;
     const late     = workdays.filter(r => r.status === "Late").length;
     const halfDay  = workdays.filter(r => r.status === "Half Day").length;
     const absent   = workdays.filter(r => r.status === "Absent").length;
-    const marked   = present + late + halfDay;
-    const rate     = workdays.length > 0 ? Math.round((marked / workdays.length) * 100) : 0;
     const durations = history.filter(r => r.totalWorkingMinutes > 0).map(r => r.totalWorkingMinutes);
     const avgDur   = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
 
@@ -262,7 +270,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     let prevDate: string | null = null;
     for (const r of sorted) {
       if (r.attendanceDate === today) continue;
-      if (isWeekend(r.attendanceDate)) continue;
+      if (!rate || !isWorkingDate(r.attendanceDate, rate)) continue;
       const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
       if (ok) {
         cur++;
@@ -271,8 +279,8 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       } else { if (streak === 0) streak = 0; cur = 0; }
       prevDate = r.attendanceDate;
     }
-    return { present, late, halfDay, absent, rate, avgDur, streak, longest };
-  }, [history, today]);
+    return { present, late, halfDay, absent, avgDur, streak, longest };
+  }, [history, today, rate]);
 
   function isPrevWorkday(earlier: string, later: string): boolean {
     const diff = calendarDayDifference(earlier, later);
@@ -284,9 +292,9 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     return Array.from({ length: 7 }, (_, i) => {
       const dateStr = addCalendarDays(today, -(6 - i));
       const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
-      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isWeekend: isWeekend(dateStr), rec };
+      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true, isHoliday: rate?.holidayDates.includes(dateStr) ?? false, rec };
     });
-  }, [history, todayRec, today]);
+  }, [history, todayRec, today, rate]);
 
   // ── Navigable monthly calendar ───────────────────────────────────────────────
   const initialTodayParts = dateOnlyParts(today)!;
@@ -323,14 +331,14 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     const lastDate = calendarMonthEndDate(yr, mo + 1);
     const firstWeekday = calendarWeekday(firstDate) ?? 0;
     const lastDay = lastDate ? dateOnlyParts(lastDate)!.day : 0;
-    const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isWeekend: boolean } | null> = [];
+    const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isNonWorking: boolean } | null> = [];
     for (let i = 0; i < firstWeekday; i++) cells.push(null);
     for (let d = 1; d <= lastDay; d++) {
       const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isWeekend: isWeekend(dateStr) });
+      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true });
     }
     return cells;
-  }, [history, today, calYear, calMonth]);
+  }, [history, today, calYear, calMonth, rate]);
 
   // ── Correction modal ─────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
@@ -344,6 +352,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       setShowModal(false); setCorrForm({ date: "", checkIn: "", checkOut: "", reason: "" });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
     },
     onError: (e: Error) => toast({ title: "Correction failed", description: e.message, variant: "destructive" }),
@@ -368,7 +377,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   // ── Render ───────────────────────────────────────────────────────────────────
   if (showHistory) {
     if (selectedSessionId === null) return null;
-    return <AttendanceHistoryView teacher={teacher} sessionId={selectedSessionId} onBack={() => setShowHistory(false)} />;
+    return <AttendanceHistoryView teacher={teacher} sessionId={selectedSessionId} sessionStart={sessionStartDate} sessionEnd={sessionEndDate} onBack={() => setShowHistory(false)} />;
   }
 
   return (
@@ -550,9 +559,10 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       </div>
 
       {/* ── KPI Row ── */}
+      {rateError && <p role="alert" className="text-red-300 text-xs">Could not load the Attendance rate. Please retry later.</p>}
       <div className="grid grid-cols-2 gap-3" data-testid="section-kpi">
         {[
-          { label: "Attendance Rate", value: `${kpi.rate}%`,          icon: TrendingUp, color: "text-[#D4AF37]",  bg: "bg-[#D4AF37]/10"  },
+          { label: "Attendance Rate (Session)", value: rate ? `${rate.attendanceRate.toFixed(1)}%` : "—", icon: TrendingUp, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
           { label: "Present (Month)", value: kpi.present,              icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
           { label: "Late Arrivals",   value: kpi.late,                 icon: AlertTriangle, color: "text-amber-400",  bg: "bg-amber-500/10"  },
           { label: "Half Day",        value: kpi.halfDay,              icon: Clock,       color: "text-orange-400", bg: "bg-orange-500/10" },
@@ -622,7 +632,7 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
           {(historyLoading && !history.length) ? (
             Array.from({ length: 7 }).map((_, i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-white/5" />)
           ) : (
-            timeline.map(({ dateStr, label, isToday, isWeekend: wk, rec }) => {
+            timeline.map(({ dateStr, label, isToday, isNonWorking: wk, isHoliday, rec }) => {
               const s = rec ? statusColors(rec.status) : statusColors("Not Marked");
               return (
                 <div
@@ -635,15 +645,15 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
                     <p className={`text-sm font-medium ${isToday ? "text-[#D4AF37]" : "text-white"}`}>
                       {label}{isToday && <span className="ml-1.5 text-[10px] text-[#D4AF37]/70">Today</span>}
                     </p>
-                    {wk ? (
-                      <p className="text-xs text-white/30">Weekend</p>
+                     {wk ? (
+                       <p className="text-xs text-white/30">{isHoliday ? "School holiday" : "Non-working day"}{rec && ` · Stored: ${rec.status}`}</p>
                     ) : rec?.checkInTime ? (
                       <p className="text-xs text-white/40 tabular-nums">{fmtTime(rec.checkInTime)}{rec.checkOutTime ? ` – ${fmtTime(rec.checkOutTime)}` : " (active)"} · {fmtDuration(rec.totalWorkingMinutes)}</p>
                     ) : (
                       <p className="text-xs text-white/25">—</p>
                     )}
                   </div>
-                  {!wk && (
+                   {!wk && (
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${s.badge} flex-shrink-0`}>
                       {rec?.status ?? "—"}
                     </span>
@@ -687,11 +697,11 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
               const s = cell.rec ? statusColors(cell.rec.status) : null;
               return (
                 <div key={cell.dateStr} className={`flex flex-col items-center py-1.5 rounded-lg ${cell.isToday ? "bg-[#D4AF37]/15 ring-1 ring-[#D4AF37]/40" : ""}`}>
-                  <span className={`text-xs font-medium ${cell.isToday ? "text-[#D4AF37]" : cell.isWeekend ? "text-white/25" : "text-white/70"}`}>{cell.d}</span>
-                  {s && !cell.isWeekend && (
+                   <span className={`text-xs font-medium ${cell.isToday ? "text-[#D4AF37]" : cell.isNonWorking ? "text-white/25" : "text-white/70"}`}>{cell.d}</span>
+                   {s && !cell.isNonWorking && (
                     <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${s.dot}`} />
                   )}
-                  {!s && !cell.isWeekend && cell.dateStr < today && (
+                   {!s && !cell.isNonWorking && cell.dateStr < today && cell.dateStr >= sessionStartDate && cell.dateStr <= sessionEndDate && (
                     <div className="w-1.5 h-1.5 rounded-full mt-0.5 bg-white/10" />
                   )}
                 </div>

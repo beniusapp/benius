@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
 import { useISTToday } from "@/hooks/use-ist-today";
+import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
 import {
   addCalendarDays,
   calendarMonthEndDate,
@@ -39,8 +40,8 @@ interface HistSummary {
   totalWorkingMinutes: number; avgWorkingMinutes: number;
 }
 
-interface HistStats {
-  attendanceRate: number; streak: number; longestStreak: number;
+interface HistStats extends TeacherSelfRate {
+  streak: number; longestStreak: number;
   totalWorkingHours: number; avgDailyHours: number;
 }
 
@@ -97,27 +98,28 @@ function statusCfg(s: string) {
     case "Half Day":  return { dot: "bg-orange-400",  badge: "bg-orange-500/20  text-orange-300  border-orange-500/30",  rowBorder: "border-orange-500/10"  };
     case "Absent":    return { dot: "bg-red-400",     badge: "bg-red-500/20     text-red-300     border-red-500/30",     rowBorder: "border-red-500/10"     };
     case "Leave":     return { dot: "bg-slate-400",   badge: "bg-slate-500/20  text-slate-300   border-slate-500/30",   rowBorder: "border-slate-500/10"   };
-    case "Weekend":   return { dot: "bg-sky-400/30",    badge: "bg-sky-500/10    text-sky-300/60    border-sky-500/10",     rowBorder: "border-white/5"         };
+    case "Non-working": return { dot: "bg-sky-400/30", badge: "bg-sky-500/10 text-sky-300/60 border-sky-500/10", rowBorder: "border-white/5" };
     case "Holiday":   return { dot: "bg-blue-400",     badge: "bg-blue-500/20   text-blue-300      border-blue-500/30",    rowBorder: "border-blue-500/10"    };
     case "Scheduled": return { dot: "bg-violet-400/50",badge: "bg-violet-500/10 text-violet-300/70 border-violet-500/20",  rowBorder: "border-violet-500/5"   };
     default:          return { dot: "bg-white/15",     badge: "bg-white/5       text-white/30      border-white/10",       rowBorder: "border-white/5"        };
   }
 }
 
-/** Build a complete day-by-day list for the date range, filling absent/weekend entries */
-function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: string): DayEntry[] {
+/** Build report days within the selected Session, without persisting missing-day rows. */
+function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: string, rate: TeacherSelfRate): DayEntry[] {
   // Normalize attendanceDate — defensive slice(0,10) handles any ISO datetime leak
   const recMap = new Map(dbRecords.map(r => [String(r.attendanceDate).slice(0, 10), r]));
   const list: DayEntry[] = [];
 
   for (let dateStr = from; dateStr <= to; dateStr = addCalendarDays(dateStr, 1)) {
-    const dow     = calendarWeekday(dateStr);
-    const isWk    = dow === 0 || dow === 6;
+    const isWk    = !isWorkingDate(dateStr, rate);
+    const isHoliday = rate.holidayDates.includes(dateStr);
     const isFut   = dateStr > today;
     const record  = recMap.get(dateStr) ?? null;
 
     let effectiveStatus: string;
-    if (isWk)        effectiveStatus = "Weekend";
+    if (isHoliday)   effectiveStatus = "Holiday";
+    else if (isWk)   effectiveStatus = "Non-working";
     else if (isFut)  effectiveStatus = "Scheduled";
     else if (record) effectiveStatus = record.status ?? "Not Marked";
     else             effectiveStatus = "Absent";
@@ -131,14 +133,14 @@ function buildDayList(from: string, to: string, dbRecords: HistRecord[], today: 
 /* ── CSV Export ───────────────────────────────────────────────────── */
 function exportCSV(teacherName: string, period: string, days: DayEntry[]) {
   const rows = days
-    .filter(d => !d.isFuture && d.effectiveStatus !== "Weekend" && d.effectiveStatus !== "Scheduled")
+    .filter(d => !d.isFuture && (d.record || (d.effectiveStatus !== "Non-working" && d.effectiveStatus !== "Holiday" && d.effectiveStatus !== "Scheduled")))
     .map(d => [
       d.dateStr,
       dayName(d.dateStr),
       fmtTime(d.record?.checkInTime),
       fmtTime(d.record?.checkOutTime),
       fmtDuration(d.record?.totalWorkingMinutes ?? 0),
-      d.effectiveStatus,
+      d.record?.status ?? d.effectiveStatus,
     ]);
 
   const headers = ["Date", "Day", "Check In", "Check Out", "Duration", "Status"];
@@ -157,7 +159,7 @@ function exportCSV(teacherName: string, period: string, days: DayEntry[]) {
 function exportPDF(teacherName: string, period: string, days: DayEntry[]) {
   const statusColor: Record<string, string> = {
     Present: "#10b981", Late: "#f59e0b", "Half Day": "#f97316",
-    Absent: "#ef4444", Leave: "#6b7280", Weekend: "#888",
+    Absent: "#ef4444", Leave: "#6b7280", "Non-working": "#888", Holiday: "#3b82f6",
   };
 
   const tableRows = days
@@ -170,7 +172,7 @@ function exportPDF(teacherName: string, period: string, days: DayEntry[]) {
         <td>${fmtTime(d.record?.checkInTime)}</td>
         <td>${fmtTime(d.record?.checkOutTime)}</td>
         <td>${fmtDuration(d.record?.totalWorkingMinutes ?? 0)}</td>
-        <td style="color:${c};font-weight:600">${d.effectiveStatus}</td>
+        <td style="color:${c};font-weight:600">${d.record?.status ?? d.effectiveStatus}${d.record && d.isWeekend ? " (excluded from rate)" : ""}</td>
       </tr>`;
     }).join("");
 
@@ -257,8 +259,9 @@ function DayCard({ entry }: { entry: DayEntry }) {
               {entry.effectiveStatus}
             </span>
           </div>
-          {!entry.isWeekend && !entry.isFuture && entry.record && (
+          {!entry.isFuture && entry.record && (
             <div className="flex flex-wrap gap-3 mt-2 text-xs text-white/45">
+              {entry.isWeekend && <span>Stored status: {entry.record.status} (excluded from rate)</span>}
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {fmtTime(entry.record.checkInTime)}
@@ -309,9 +312,7 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
           const entry   = dayMap.get(cell.dateStr);
           const cfg     = entry ? statusCfg(entry.effectiveStatus) : null;
           const isToday = cell.dateStr === today;
-          const isPast  = cell.dateStr < today;
-          const weekday = calendarWeekday(cell.dateStr);
-          const isWk    = weekday === 0 || weekday === 6;
+          const isWk    = entry?.isWeekend ?? true;
           return (
             <div
               key={cell.dateStr}
@@ -324,16 +325,13 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
               {cfg && !entry?.isWeekend && !entry?.isFuture && (
                 <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${cfg.dot}`} />
               )}
-              {!cfg && !isWk && isPast && (
-                <div className="w-1.5 h-1.5 rounded-full mt-0.5 bg-red-400/35" title="Absent" />
-              )}
             </div>
           );
         })}
       </div>
       <div className="flex flex-wrap gap-3 justify-center pt-1 border-t border-white/5">
         {[["Present","bg-emerald-400"],["Late","bg-amber-400"],["Half Day","bg-orange-400"],
-          ["Absent","bg-red-400/40"],["Leave","bg-slate-400"],["Weekend","bg-sky-400/30"]].map(([lbl, cls]) => (
+          ["Absent","bg-red-400/40"],["Leave","bg-slate-400"],["Non-working","bg-sky-400/30"]].map(([lbl, cls]) => (
           <div key={lbl} className="flex items-center gap-1.5 text-[10px] text-white/45">
             <div className={`w-2 h-2 rounded-full ${cls}`} /> {lbl}
           </div>
@@ -344,7 +342,7 @@ function MonthCalendar({ year, month, dayList }: { year: number; month: number; 
 }
 
 /* ── Status Filter Pills ──────────────────────────────────────────── */
-type StatusFilter = "all" | "Present" | "Late" | "Half Day" | "Absent" | "Leave" | "Scheduled" | "Weekend";
+type StatusFilter = "all" | "Present" | "Late" | "Half Day" | "Absent" | "Leave" | "Scheduled" | "Non-working" | "Holiday";
 
 const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
   { value: "all",        label: "All",        active: "bg-white/20 text-white border-white/30" },
@@ -359,7 +357,7 @@ const STATUS_PILLS: { value: StatusFilter; label: string; active: string }[] = [
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════════ */
-export default function AttendanceHistoryView({ teacher, sessionId, onBack }: { teacher: TeacherMe; sessionId: number; onBack: () => void }) {
+export default function AttendanceHistoryView({ teacher, sessionId, sessionStart, sessionEnd, onBack }: { teacher: TeacherMe; sessionId: number; sessionStart: string; sessionEnd: string; onBack: () => void }) {
   const today = useISTToday();
   const todayParts = dateOnlyParts(today)!;
 
@@ -415,7 +413,9 @@ export default function AttendanceHistoryView({ teacher, sessionId, onBack }: { 
   const stats     = data?.statistics;
 
   /* Full day list for the current range */
-  const allDays = useMemo(() => buildDayList(eff_from, eff_to, dbRecords, today), [eff_from, eff_to, dbRecords, today]);
+  const allDays = useMemo(() => data && sessionStart && sessionEnd
+    ? buildDayList(eff_from > sessionStart ? eff_from : sessionStart, eff_to < sessionEnd ? eff_to : sessionEnd, dbRecords, today, data.statistics)
+    : [], [eff_from, eff_to, dbRecords, today, data, sessionStart, sessionEnd]);
 
   /* Client-side summary computed from the full day list */
   const clientSummary = useMemo(() => {
@@ -433,11 +433,6 @@ export default function AttendanceHistoryView({ teacher, sessionId, onBack }: { 
     };
   }, [allDays]);
 
-  const attendanceRate = useMemo(() => {
-    const att = clientSummary.present + clientSummary.late + clientSummary.halfDay;
-    const tot = att + clientSummary.absent + clientSummary.leave;
-    return tot > 0 ? Math.round((att / tot) * 100) : 0;
-  }, [clientSummary]);
 
   /* Apply status filter — future "Scheduled" days are included and visible */
   const filteredDays = useMemo(() => {
@@ -664,7 +659,7 @@ export default function AttendanceHistoryView({ teacher, sessionId, onBack }: { 
           <div className="space-y-4" data-testid="view-monthly">
             {/* High-level stat grid */}
             <div className="grid grid-cols-2 gap-3">
-              <StatCard label="Attendance Rate"   value={`${attendanceRate}%`}             color="text-[#D4AF37]"   bg="bg-[#D4AF37]/10"   icon={TrendingUp} />
+              <StatCard label="Attendance Rate (Session)" value={stats ? `${stats.attendanceRate.toFixed(1)}%` : "—"} color="text-[#D4AF37]" bg="bg-[#D4AF37]/10" icon={TrendingUp} />
               <StatCard label="Present Days"      value={clientSummary.present}             color="text-emerald-400" bg="bg-emerald-500/10"  icon={CheckCircle} />
               <StatCard label="Absent Days"       value={clientSummary.absent}              color="text-red-400"     bg="bg-red-500/10"      icon={UserX} />
               <StatCard label="Leave Days"        value={clientSummary.leave}               color="text-slate-400"   bg="bg-slate-500/10"    icon={Calendar} />

@@ -9,6 +9,68 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
+type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+type WorkingDays = Record<Weekday, boolean>;
+const WEEKDAYS: Weekday[] = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+function WorkingDaysSection({ schoolId, isArchiveMode }: { schoolId: number; isArchiveMode: boolean }) {
+  const { toast } = useToast();
+  const [draft, setDraft] = useState<WorkingDays | null>(null);
+  const { data, isLoading, isError } = useQuery<WorkingDays>({
+    queryKey: ["/api/admin/teacher-working-days", schoolId],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/teacher-working-days", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load working days");
+      return r.json();
+    },
+    enabled: !!schoolId,
+  });
+  useEffect(() => { if (data) setDraft(data); }, [data]);
+  const save = useMutation({
+    mutationFn: async (days: WorkingDays) => {
+      const r = await apiRequest("PUT", "/api/admin/teacher-working-days", days);
+      return r.json() as Promise<WorkingDays>;
+    },
+    onSuccess: saved => {
+      setDraft(saved);
+      queryClient.setQueryData(["/api/admin/teacher-working-days", schoolId], saved);
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/attendance/history"] });
+      toast({ title: "Working days saved" });
+    },
+    onError: (error: Error) => toast({ title: "Could not save working days", description: error.message, variant: "destructive" }),
+  });
+  const anyOn = draft && WEEKDAYS.some(day => draft[day]);
+  return (
+    <section className="rounded-2xl border border-amber-500/20 bg-[#1A2942] p-5 space-y-3" data-testid="teacher-working-days">
+      <div>
+        <h3 className="text-sm font-bold text-white">Working Days</h3>
+        <p className="text-xs text-white/45 mt-1">School-wide Teacher Self-Attendance expectation. All-School holidays still take priority.</p>
+      </div>
+      {isError ? <p role="alert" className="text-xs text-red-300">Could not load working days. Changes are unavailable.</p> :
+        isLoading || !draft ? <p className="text-xs text-white/40">Loading working days…</p> : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {WEEKDAYS.map(day => (
+                <label key={day} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2.5 text-sm text-white/75 capitalize cursor-pointer">
+                  <input type="checkbox" checked={draft[day]} disabled={isArchiveMode || save.isPending}
+                    onChange={e => setDraft({ ...draft, [day]: e.target.checked })}
+                    data-testid={`working-day-${day}`} className="accent-[#D4AF37]" />
+                  {day}
+                </label>
+              ))}
+            </div>
+            {!anyOn && <p role="alert" className="text-xs text-red-300">At least one working day is required.</p>}
+            <Button onClick={() => save.mutate(draft)} disabled={isArchiveMode || save.isPending || !anyOn || JSON.stringify(draft) === JSON.stringify(data)}
+              className="bg-[#D4AF37] text-[#0A1628] hover:bg-amber-300" data-testid="save-working-days">
+              {save.isPending ? "Saving…" : "Save Working Days"}
+            </Button>
+          </>
+        )}
+    </section>
+  );
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface PolicyForm {
@@ -617,6 +679,7 @@ export function AttendancePolicySetup({ schoolId, isArchiveMode = false }: { sch
 
   return (
     <div className="space-y-5">
+      <WorkingDaysSection schoolId={schoolId} isArchiveMode={isArchiveMode} />
       {/* Resolution note */}
       <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
         <p className="text-xs text-white/25 leading-relaxed">
