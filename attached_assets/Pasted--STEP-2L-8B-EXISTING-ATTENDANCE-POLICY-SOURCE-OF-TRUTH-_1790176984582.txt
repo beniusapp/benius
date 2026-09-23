@@ -1,0 +1,811 @@
+# STEP 2L-8B — EXISTING ATTENDANCE POLICY SOURCE-OF-TRUTH AUDIT
+
+## PHASE
+
+The application is in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **READ-ONLY AUDIT**.
+
+Do NOT modify code, schema, database, migrations, tests, configuration, production, or application behavior.
+
+The purpose of this step is ONLY to determine whether the existing application already contains an authoritative Attendance policy/rule that defines:
+
+* working days
+* Sundays
+* holidays
+* approved leave
+* Attendance percentage applicability
+* missing Attendance
+* applicable Attendance dates
+
+If such an existing rule exists, that rule is the **SOURCE OF TRUTH**.
+
+Do NOT invent a new rule.
+
+Do NOT choose a preferred Attendance model.
+
+Do NOT redesign Attendance calculations.
+
+---
+
+# CORE PROJECT REQUIREMENT
+
+The user's explicit requirement is:
+
+> **We follow the existing Attendance rule already defined by the application.**
+
+Therefore:
+
+**Existing Attendance policy/configuration/code = source of truth.**
+
+The implementation must NOT introduce a new interpretation simply because another behavior might be more common in school MIS systems.
+
+---
+
+# IMPORTANT EXISTING REQUIREMENTS
+
+Preserve these permanently:
+
+1. Multi-tenant / multi-school isolation.
+2. All Attendance operations are school/tenant scoped.
+3. Attendance is Academic Session-specific.
+4. Student Registry is global/permanent.
+5. Archived Sessions are read-only.
+6. Active Session retains the existing 7-day correction window.
+7. Sunday is not automatically a working day.
+8. A deliberately marked Sunday uses normal stored Attendance status semantics.
+9. Application/business/display timestamps use IST / Asia/Kolkata.
+10. Same-Session class-transfer calculation issue is intentionally SKIPPED.
+
+---
+
+# CONTEXT FROM STEP 2L-8A
+
+Step 2L-8A was a READ-ONLY audit.
+
+It found that the current implementation has record-driven working-day behavior in several calculation paths:
+
+`server/student-attendance-working-days.ts`
+
+The helper currently identifies distinct dates with Attendance evidence for:
+
+* school
+* Academic Session
+* class
+* section
+
+It does not itself check:
+
+* weekday
+* Sunday
+* holiday
+* approved leave
+* individual Student
+
+Step 2L-8A also found differences between:
+
+* Student Monthly
+* Student Yearly
+* Student Statistics
+* Teacher Attendance
+* Admin Attendance
+
+Step 2L-8A identified possible inconsistencies around:
+
+* targeted holidays
+* approved leave without Attendance rows
+* entirely unmarked days/classes
+* monthly Session boundaries
+* Sunday/automatic leave behavior
+
+However:
+
+**DO NOT assume any of these are bugs yet.**
+
+First determine what the existing Attendance policy says.
+
+---
+
+# PRIMARY QUESTION
+
+Answer this exact question:
+
+> **Does the existing application already define an authoritative Attendance rule that determines which dates are considered applicable/working days and how Attendance statuses such as Leave, Absent, Missing, Sunday, and Holiday should affect Attendance calculations?**
+
+If YES:
+
+Determine the exact rule and use it as the source of truth.
+
+If NO:
+
+State clearly:
+
+> **NO AUTHORITATIVE EXISTING ATTENDANCE RULE FOUND**
+
+Do NOT invent a replacement.
+
+---
+
+# PHASE A — FIND THE EXISTING ATTENDANCE POLICY
+
+Search the entire codebase for existing Attendance policy/configuration.
+
+Do not limit the search to filenames containing "attendance".
+
+Search for concepts such as:
+
+* attendance policy
+* working days
+* working day
+* attendance percentage
+* attendance calculation
+* attendance rules
+* attendance settings
+* holiday policy
+* Sunday
+* leave policy
+* absent
+* missing
+* applicable days
+* total working days
+* attendance weight
+* half day
+* late
+* leave
+* school configuration
+* academic session policy
+* calendar
+* calendar events
+* working date
+
+Inspect:
+
+* School Setup
+* Admin configuration
+* Attendance settings
+* school metadata/configuration
+* policy tables
+* configuration JSON
+* shared constants
+* helper functions
+* calculation utilities
+* backend routes
+* frontend hooks
+* tests
+
+---
+
+# PHASE B — IDENTIFY THE AUTHORITATIVE SOURCE
+
+For every candidate policy source, determine:
+
+1. File/table/configuration name.
+2. Exact key/field/function.
+3. Who owns it:
+
+   * school
+   * Session
+   * Student
+   * class
+   * global application
+4. Whether it is persisted.
+5. Whether Admin can configure it.
+6. Whether it is actually consumed by Attendance calculations.
+7. Whether it is merely UI text or a real business rule.
+8. Whether another source overrides it.
+
+Do NOT call something "policy" merely because it contains Attendance-related words.
+
+It must actually influence Attendance behavior or explicitly define the intended behavior.
+
+---
+
+# PHASE C — SCHOOL SETUP
+
+Inspect the existing:
+
+**Admin → School Setup**
+
+especially any Attendance-related configuration.
+
+Determine whether School Setup already defines:
+
+* working days
+* weekly working schedule
+* Sunday behavior
+* holidays
+* leave behavior
+* Attendance calculation rules
+* percentage denominator
+* absent behavior
+* missing behavior
+* half-day weight
+* late weight
+* leave weight
+* minimum Attendance
+* Attendance applicability
+
+If such configuration exists, document the exact source.
+
+If School Setup has no such rule, say so explicitly.
+
+Do not add anything.
+
+---
+
+# PHASE D — ATTENDANCE CALCULATION POLICY
+
+Trace the actual calculation path.
+
+Starting from:
+
+* Student yearly
+* Student stats
+* Teacher cumulative Attendance
+* Admin class Attendance
+
+follow the calls until the system determines:
+
+> "This date is applicable."
+
+Identify the exact rule being used.
+
+Compare it against the policy/configuration discovered in Phase A-C.
+
+Do NOT modify the calculation.
+
+---
+
+# PHASE E — STATUS POLICY
+
+Determine whether the existing policy defines the meaning/weight of:
+
+* Present
+* Absent
+* Late
+* Half Day
+* Leave
+* Missing/no record
+
+If the application already has explicit weights, document them.
+
+If the application does NOT define a status weight through policy, document the hard-coded behavior separately.
+
+Do not replace hard-coded behavior.
+
+---
+
+# PHASE F — SUNDAY POLICY
+
+Find the existing source-of-truth for Sunday behavior.
+
+Determine whether the application explicitly defines:
+
+* Sunday is non-working
+* Sunday can be manually marked
+* Sunday Attendance counts if marked
+* Sunday is skipped from automatic leave
+* Sunday affects percentage
+
+Do not infer policy from generic school practice.
+
+Only report what the existing application establishes.
+
+---
+
+# PHASE G — HOLIDAY POLICY
+
+Find the existing source-of-truth for holidays.
+
+Determine:
+
+1. Where holidays are configured.
+2. Whether they are school-wide.
+3. Whether they have audience/class scope.
+4. Whether they are Session-specific.
+5. Whether a holiday prevents Attendance marking.
+6. Whether a holiday prevents automatic Leave Attendance.
+7. Whether a holiday is excluded from Attendance percentage.
+8. Whether a manually stored Attendance row on a holiday counts.
+
+Important:
+
+If the existing holiday configuration defines only calendar display and does NOT define Attendance applicability, say so.
+
+Do not invent a policy.
+
+---
+
+# PHASE H — APPROVED LEAVE POLICY
+
+Find the existing source-of-truth for approved leave.
+
+Determine whether existing policy explicitly states that:
+
+* approved leave counts as Attendance
+* approved leave counts as a working day
+* approved leave receives weight 1
+* approved leave requires an Attendance row
+* approved leave automatically creates Attendance
+* approved leave without an Attendance row should count
+
+If no existing policy answers these questions:
+
+State:
+
+> **Existing policy does not define this behavior.**
+
+Do NOT choose a new rule.
+
+---
+
+# PHASE I — MISSING ATTENDANCE POLICY
+
+Find whether the existing application explicitly defines:
+
+> What happens when a Student has no Attendance record on a working day?
+
+Determine whether the policy says:
+
+* Missing
+* Absent
+* Not applicable
+* zero
+* excluded
+* something else
+
+Distinguish:
+
+**policy definition**
+
+from
+
+**current implementation behavior**.
+
+This distinction is mandatory.
+
+---
+
+# PHASE J — WORKING-DAY POLICY
+
+Determine whether the existing application explicitly defines working days as:
+
+* calendar weekdays
+* configured weekly schedule
+* school calendar
+* Attendance-record evidence
+* class-level Attendance evidence
+* Student-specific Attendance evidence
+* some combination
+
+Do not infer.
+
+Trace the actual authoritative source.
+
+If the only "rule" is a helper implementation and there is no separate policy/configuration, classify that separately as:
+
+> **Implementation-defined behavior**
+
+rather than calling it a configurable policy.
+
+---
+
+# PHASE K — SESSION POLICY
+
+Determine whether the existing Attendance policy is:
+
+* school-wide
+* Academic Session-specific
+* dynamically inherited from current school configuration
+* based on Attendance records
+
+Important:
+
+Do not introduce Session-specific policy unless it already exists.
+
+However, verify that existing calculations do not violate the permanent requirement:
+
+> Attendance data must remain isolated by Academic Session.
+
+---
+
+# PHASE L — COMPARE POLICY WITH CURRENT IMPLEMENTATION
+
+Create a comparison table:
+
+| Attendance Rule            | Existing Authoritative Rule | Current Implementation | Match? |
+| -------------------------- | --------------------------- | ---------------------- | ------ |
+| Working day                |                             |                        |        |
+| Sunday                     |                             |                        |        |
+| Holiday                    |                             |                        |        |
+| Present                    |                             |                        |        |
+| Absent                     |                             |                        |        |
+| Late                       |                             |                        |        |
+| Half Day                   |                             |                        |        |
+| Leave                      |                             |                        |        |
+| Missing/no record          |                             |                        |        |
+| Percentage denominator     |                             |                        |        |
+| Approved Leave without row |                             |                        |        |
+| Marked Sunday              |                             |                        |        |
+| Marked holiday             |                             |                        |        |
+
+For each row:
+
+* quote/describe the actual source
+* identify the implementation location
+* say PASS / MISMATCH / UNDEFINED
+
+Do NOT rank behavior.
+
+Do NOT recommend a new policy.
+
+---
+
+# PHASE M — DISTINGUISH THREE DIFFERENT THINGS
+
+For every rule, clearly separate:
+
+### 1. AUTHORITATIVE POLICY
+
+What the existing application says should happen.
+
+### 2. CURRENT IMPLEMENTATION
+
+What the code actually does.
+
+### 3. UNDEFINED
+
+Where the application has no explicit rule.
+
+This distinction is the most important part of this audit.
+
+---
+
+# PHASE N — EXISTING TESTS
+
+Inspect existing Attendance tests.
+
+Determine whether tests establish any existing Attendance policy.
+
+Tests can be evidence of intended behavior, but do NOT automatically treat a test as policy if it merely reflects an implementation detail.
+
+For each relevant test:
+
+* file
+* test name
+* behavior established
+* whether it appears to represent a permanent business rule
+
+Do not modify tests.
+
+---
+
+# PHASE O — DOCUMENTATION / MEMORY
+
+Inspect existing project documentation and memory files for Attendance rules.
+
+Relevant areas may include:
+
+* `.agents/memory/`
+* project documentation
+* README
+* developer notes
+* Attendance specifications
+
+Use documentation only to identify an already-established project requirement.
+
+Do not create or modify documentation.
+
+---
+
+# PHASE P — MULTI-TENANT SAFETY
+
+Verify that any discovered Attendance policy is not accidentally shared across tenants where it should be school-specific.
+
+Determine:
+
+* policy ownership
+* school ID
+* Session ID where applicable
+
+Do not change anything.
+
+---
+
+# PHASE Q — SAME-SESSION CLASS TRANSFER
+
+Explicitly SKIP the previously identified class-transfer issue.
+
+Do not:
+
+* design transfer history
+* change enrollment
+* change class resolution
+* change yearly calculation
+* change stats calculation
+* introduce transfer dates
+
+Only note:
+
+> **Same-Session class-transfer calculation issue remains intentionally SKIPPED.**
+
+---
+
+# PHASE R — NO PRODUCT DECISION
+
+Do NOT ask the developer to choose a new rule if an existing rule can be found.
+
+Use the existing rule.
+
+Only identify a product decision as required when:
+
+1. no existing policy exists, AND
+2. the implementation behavior cannot be safely derived from an existing explicit rule.
+
+If a rule is undefined, do not fill the gap yourself.
+
+---
+
+# PHASE S — NO IMPLEMENTATION
+
+This is READ-ONLY.
+
+Do NOT:
+
+* modify code
+* modify schema
+* create migrations
+* change calculations
+* change UI
+* change Attendance policy
+* add configuration
+* change tests
+* modify database
+* modify production
+
+---
+
+# PHASE T — FILE CONTROL
+
+Expected:
+
+**FILES CHANGED: NONE**
+
+If any file is accidentally changed:
+
+* stop
+* report the exact file
+* do not continue with implementation
+* do not silently change unrelated files
+
+---
+
+# PHASE U — TESTS
+
+Do not create or modify tests.
+
+You may inspect existing tests.
+
+If you run tests only for verification, report:
+
+* exact command
+* exact result
+
+This remains a source-code audit, not an implementation step.
+
+---
+
+# PHASE V — PRODUCTION
+
+Do NOT query production.
+
+Do NOT modify production.
+
+Do NOT migrate production.
+
+Do NOT deploy production.
+
+Final report must state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# FINAL REPORT
+
+Return exactly these sections:
+
+## 1. VERDICT
+
+Use exactly one:
+
+**STEP 2L-8B AUDIT COMPLETE — EXISTING POLICY FOUND**
+
+or
+
+**STEP 2L-8B AUDIT COMPLETE — EXISTING POLICY PARTIALLY FOUND**
+
+or
+
+**STEP 2L-8B AUDIT COMPLETE — NO AUTHORITATIVE EXISTING POLICY FOUND**
+
+or
+
+**STEP 2L-8B AUDIT COMPLETE — CONFLICTING POLICY SOURCES FOUND**
+
+---
+
+## 2. EXISTING ATTENDANCE POLICY SOURCE
+
+Identify the exact authoritative source.
+
+Include:
+
+* file/table/configuration
+* key/field/function
+* owner
+* persistence
+* whether Admin-configurable
+* how Attendance uses it
+
+---
+
+## 3. WORKING-DAY RULE
+
+State exactly what the existing application defines.
+
+---
+
+## 4. SUNDAY RULE
+
+State exactly what the existing application defines.
+
+---
+
+## 5. HOLIDAY RULE
+
+State exactly what the existing application defines.
+
+---
+
+## 6. LEAVE RULE
+
+State exactly what the existing application defines.
+
+---
+
+## 7. MISSING ATTENDANCE RULE
+
+State exactly what the existing application defines.
+
+---
+
+## 8. STATUS WEIGHTS
+
+Document the existing rules for:
+
+* Present
+* Absent
+* Late
+* Half Day
+* Leave
+* Missing
+
+---
+
+## 9. PERCENTAGE DENOMINATOR RULE
+
+State exactly how the existing policy defines applicable Attendance days.
+
+---
+
+## 10. POLICY VS IMPLEMENTATION COMPARISON
+
+Provide the complete table from Phase L.
+
+---
+
+## 11. MISMATCHES
+
+List ONLY mismatches between an existing authoritative rule and actual implementation.
+
+For each:
+
+* severity
+* source-of-truth
+* implementation location
+* impact
+
+Do not call undefined behavior a mismatch.
+
+---
+
+## 12. UNDEFINED AREAS
+
+List only rules for which no authoritative existing policy was found.
+
+Do not propose a new rule.
+
+---
+
+## 13. EXISTING TEST EVIDENCE
+
+List relevant tests inspected and what they establish.
+
+---
+
+## 14. DOCUMENTATION EVIDENCE
+
+List relevant existing documentation/memory sources.
+
+---
+
+## 15. SESSION ISOLATION
+
+State how the existing Attendance policy relates to Academic Session isolation.
+
+---
+
+## 16. TENANT ISOLATION
+
+State how the policy is scoped by school/tenant.
+
+---
+
+## 17. CLASS-TRANSFER ISSUE
+
+State exactly:
+
+> **Same-Session class-transfer calculation issue remains intentionally SKIPPED and was NOT modified.**
+
+---
+
+## 18. FILES CHANGED
+
+Expected:
+
+**NONE**
+
+---
+
+## 19. TESTS
+
+State:
+
+* Tests modified: **NO**
+* Tests run: YES/NO
+* Exact command/result if run.
+
+---
+
+## 20. PRODUCTION STATUS
+
+State exactly:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# HARD STOP
+
+This is an **AUDIT ONLY**.
+
+Do not implement fixes.
+
+Do not redesign Attendance.
+
+Do not invent missing policy.
+
+Do not make product decisions.
+
+Use the existing Attendance policy as the source of truth.
+
+After completing the report:
+
+**STOP and wait for further instruction.**
