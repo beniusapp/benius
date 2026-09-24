@@ -679,6 +679,8 @@ describe("Teacher Attendance read Session isolation", () => {
       vi.spyOn(storage, "getAcademicSessionById").mockImplementation(async () => ({
         id: fixtureSession.id,
         schoolId: fixtureSchool.id,
+        startDate: date,
+        endDate: addCalendarDays(date, 30),
         isActive: !archived,
       } as any));
 
@@ -719,6 +721,8 @@ describe("Teacher Attendance read Session isolation", () => {
     vi.spyOn(storage, "getAcademicSessionById").mockResolvedValue({
       id: 777,
       schoolId: teacher.schoolId,
+      startDate: addCalendarDays(todayInIST(), -30),
+      endDate: addCalendarDays(todayInIST(), 30),
       isActive: true,
     } as any);
     vi.spyOn(storage, "getAttendanceRosterForSessionClass").mockResolvedValue([

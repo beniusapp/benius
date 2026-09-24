@@ -1,0 +1,196 @@
+# 10L-12E-R — Repair Two Existing Teacher Attendance Test Fixtures
+
+This is a separate, narrowly scoped test-fixture repair following the 10L-12E verification stop.
+
+## Background
+
+10L-12E itself has been implemented correctly:
+
+* Teacher Student-Attendance UI is disabled only for `All_School` holidays.
+* Targeted holidays do not incorrectly disable Save.
+* Server authorization was not changed.
+* Server holiday write rules were not changed.
+
+During verification, **92 of 94 tests passed**.
+
+Exactly two existing tests failed:
+
+File:
+
+```text
+server/__tests__/teacher-attendance-session-route.test.ts
+```
+
+Failures:
+
+```text
+1. “returns a deleted Student snapshot for an archived Session but not the active marking roster”
+   Expected HTTP 200
+   Received HTTP 400
+
+2. “passes a validated tenant Session to the daily Attendance storage reader”
+   Expected HTTP 200
+   Received HTTP 400
+```
+
+The investigation showed that both tests construct/mock a Session without:
+
+```text
+startDate
+endDate
+```
+
+The existing 10L-12B daily-read Session boundary validation now requires valid Session boundaries and therefore correctly rejects those incomplete test Sessions with HTTP 400.
+
+## Objective
+
+Repair **ONLY those two existing test fixtures** so they represent a valid Academic Session.
+
+The purpose is to make the existing tests compatible with the already-established Session-boundary contract.
+
+## STRICT RESTRICTIONS
+
+Do NOT change any production code.
+
+Do NOT change:
+
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* `client/src/pages/teacher-modules/attendance.tsx`
+* `attendance-holiday-lock.ts`
+* 10L-12B implementation
+* 10L-12E implementation
+* holiday logic
+* Attendance logic
+* Session validation logic
+* authorization
+* database schema
+* migrations
+* production data
+
+Do NOT weaken or bypass Session boundary validation.
+
+Do NOT change the expected HTTP status from `200` to `400`.
+
+Do NOT modify unrelated tests.
+
+## Required change
+
+Open:
+
+```text
+server/__tests__/teacher-attendance-session-route.test.ts
+```
+
+Locate ONLY these two failing tests:
+
+```text
+1. “returns a deleted Student snapshot for an archived Session but not the active marking roster”
+
+2. “passes a validated tenant Session to the daily Attendance storage reader”
+```
+
+Inspect their existing Session mocks/fixtures.
+
+Add appropriate valid:
+
+```text
+startDate
+endDate
+```
+
+values to those mocked Sessions.
+
+Choose dates that are logically compatible with each test's existing Session scenario.
+
+Do not alter the meaning of the tests.
+
+The tests should continue to verify exactly what their names describe.
+
+### Important
+
+The fixture Session must remain:
+
+* associated with the correct school/tenant;
+* associated with the intended Academic Session;
+* compatible with the test's archived/active scenario;
+* valid under the existing Session date-boundary contract.
+
+Do not introduce a new helper or refactor the test suite unless absolutely necessary.
+
+Prefer the smallest possible edit: add the missing Session boundary fields to the two existing fixtures.
+
+## Verification
+
+After the fixture-only changes:
+
+### 1. Run the previously failing test file
+
+```text
+server/__tests__/teacher-attendance-session-route.test.ts
+```
+
+Both previously failing tests must pass.
+
+### 2. Run the relevant Teacher Attendance tests
+
+Confirm the existing Teacher Attendance route tests continue to pass.
+
+### 3. Run the 10L-12E focused tests
+
+Confirm the new holiday-lock tests still pass:
+
+* `All_School` holiday blocks Save.
+* Targeted holiday for current section does not block Save.
+* Targeted holiday for another section does not block Save.
+
+### 4. Run:
+
+```bash
+npm run check
+```
+
+### 5. Run:
+
+```bash
+git diff --check
+```
+
+### 6. Inspect final diff
+
+The final diff must contain ONLY the necessary changes to the two existing test fixtures in:
+
+```text
+server/__tests__/teacher-attendance-session-route.test.ts
+```
+
+No production files should be changed by this step.
+
+## If anything unexpected happens
+
+STOP.
+
+Do not fix additional failures.
+
+Do not modify production code.
+
+Report the exact failure and wait for further instructions.
+
+## Final report
+
+Report:
+
+1. The two test fixtures updated.
+2. The `startDate` and `endDate` values added.
+3. Confirmation that the test meanings were unchanged.
+4. Previously failing tests now pass.
+5. Total relevant tests passed.
+6. `npm run check` result.
+7. `git diff --check` result.
+8. Final diff contents.
+9. Confirmation that **NO production code was changed**.
+10. Confirmation that 10L-12B and 10L-12E implementation were untouched.
+
+Final line, only if everything passes:
+
+**10L-12E-R COMPLETE — TWO EXISTING TEST FIXTURES ALIGNED WITH SESSION BOUNDARY CONTRACT — NO PRODUCTION CODE CHANGED.**
