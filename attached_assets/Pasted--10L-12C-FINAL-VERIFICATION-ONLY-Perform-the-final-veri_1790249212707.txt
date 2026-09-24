@@ -1,0 +1,114 @@
+# 10L-12C — FINAL VERIFICATION ONLY
+
+Perform the final verification of the already-implemented **10L-12C Teacher Self-Attendance Session Boundary Fix**.
+
+## IMPORTANT
+
+**DO NOT CHANGE CODE.**
+
+This is verification only.
+
+Do not modify:
+
+* `server/teacher-routes.ts`
+* Teacher Self-Attendance rate calculation
+* Teacher Working Days
+* Attendance rules
+* 10L-12B
+* 10L-12C-R test
+* database/schema/migrations
+* historical data
+
+If any test fails, **STOP and report the failure. Do not fix it.**
+
+## What must be verified
+
+Confirm that every Teacher Self-Attendance mutation:
+
+* Check-in
+* Check-out
+* Correction/Edit
+
+rejects an Attendance business date outside the selected Academic Session **before any database write**.
+
+### Verify these cases
+
+**Allowed:**
+
+* Session start date.
+* Session end date.
+
+**Rejected:**
+
+* One day before Session start.
+* One day after Session end.
+* A date belonging to another Academic Session.
+
+Also verify:
+
+* Cross-school Session cannot be used.
+* Archived Session mutation remains rejected.
+* Existing 7-day correction rule still works.
+* IST/date-only handling remains correct.
+* Rejected requests produce **no database mutation**.
+
+## Run tests
+
+Run the focused 10L-12C tests, including:
+
+```text
+server/__tests__/teacher-self-attendance-session-regressions.test.ts
+```
+
+Also run the relevant existing Teacher Self-Attendance tests, including the corrected detailed-history test.
+
+Then run:
+
+```bash
+npm run check
+```
+
+and:
+
+```bash
+git diff --check
+```
+
+## Final diff check
+
+Inspect `git diff`.
+
+The purpose is to confirm that the current code contains the intended 10L-12C implementation and that no unexpected changes are present.
+
+## Do NOT change anything
+
+If everything passes, report success.
+
+If anything fails, report:
+
+* exact test;
+* exact failure;
+* whether it is related to 10L-12C;
+* and STOP.
+
+Do not repair anything during this verification.
+
+## Final report
+
+Report:
+
+1. Tests run and results.
+2. Confirmation that Session start/end boundaries work.
+3. Confirmation that out-of-Session dates are rejected.
+4. Confirmation that rejected mutations perform no DB write.
+5. Confirmation of cross-school protection.
+6. Confirmation of archived-Session protection.
+7. Confirmation of 7-day correction protection.
+8. `npm run check` result.
+9. `git diff --check` result.
+10. Final diff status.
+11. Confirmation that no files were changed during verification.
+
+If everything passes, finish with exactly:
+
+**10L-12C COMPLETE — TEACHER SELF-ATTENDANCE SESSION WRITE BOUNDARY VERIFIED — NO CODE CHANGES MADE DURING FINAL VERIFICATION.**
