@@ -13,6 +13,7 @@ import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pag
 import MyAttendanceModule from "./my-attendance";
 import { addCalendarDays, dateOnlyParts } from "@shared/ist-time";
 import { formatAttendanceMarkedBy } from "@/lib/attendance-marked-by";
+import { canSaveStudentAttendance, schoolWideAttendanceHoliday, type AttendanceCalendarEvent } from "./attendance-holiday-lock";
 
 interface StudentAttendance {
   studentId: number;
@@ -248,7 +249,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const calMonth = selectedDateParts?.month ?? 0;
   const calYear = selectedDateParts?.year ?? 0;
 
-  const { data: calendarEventsForMonth = [] } = useQuery<{ id: number; date: string; eventType: string; title: string }[]>({
+  const { data: calendarEventsForMonth = [] } = useQuery<AttendanceCalendarEvent[]>({
     queryKey: ["/api/teacher/calendar", calYear, calMonth],
     queryFn: async () => {
       const res = await fetch(
@@ -263,7 +264,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const holidayOnDate = useMemo(
-    () => calendarEventsForMonth.find(e => e.date === selectedDate && e.eventType === "holiday"),
+    () => schoolWideAttendanceHoliday(calendarEventsForMonth, selectedDate),
     [calendarEventsForMonth, selectedDate]
   );
   const isHolidayDate = !!holidayOnDate;
@@ -596,7 +597,9 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
 
   /* ── MARK ATTENDANCE ── */
   const allAtLimit = students.length > 0 && students.every(s => s.editCount >= 3);
-  const canSave = !isArchiveMode && isEditable && !allAtLimit && students.length > 0 && !isHolidayDate;
+  const canSave = canSaveStudentAttendance({
+    isArchiveMode, isEditable, allAtLimit, studentCount: students.length, holiday: holidayOnDate,
+  });
 
   if (!selectedDate) {
     return <p className="p-6 text-white/70">Attendance dates for this Session have not started yet.</p>;
