@@ -1518,13 +1518,20 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { title, date, eventType, schoolId } = req.body;
     if (!title || !date || !eventType || !schoolId) return res.status(400).json({ message: "All fields required" });
-    const event = await storage.createCalendarEvent({ schoolId: parseInt(schoolId), title, date, eventType });
+    const requestedSchoolId = Number(schoolId);
+    if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId !== req.session.schoolId) {
+      return res.status(403).json({ message: "School access denied" });
+    }
+    const event = await storage.createCalendarEvent({ schoolId: requestedSchoolId, title, date, eventType });
     res.status(201).json(event);
   });
 
   app.get("/api/calendar/:schoolId", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const schoolId = parseInt(req.params.schoolId);
+    const schoolId = Number(req.params.schoolId);
+    if (!Number.isSafeInteger(schoolId) || schoolId !== req.session.schoolId) {
+      return res.status(403).json({ message: "School access denied" });
+    }
     // Calendar is a global module — show all events; no session-date filtering
     const list = await storage.getCalendarEvents(schoolId);
     res.json(list);
