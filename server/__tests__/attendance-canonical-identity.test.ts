@@ -10,6 +10,7 @@ import { addCalendarDays, todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceRecords,
+  calendarEvents,
   enrollments,
   examScores,
   schools,
@@ -871,5 +872,43 @@ describe("Student monthly approved-leave Session isolation", () => {
     expect(otherSchool.find(day => day.date === sunday)?.status).toBe("leave");
     expect(selected.every(day => day.date.startsWith("2040-07"))).toBe(true);
     expect(otherMonth.find(day => day.date === "2040-08-05")?.status).toBe("present");
+  });
+});
+
+describe("Student monthly holiday audience", () => {
+  it("uses selected-Session placement and school to expose only applicable holidays", async () => {
+    await db.insert(enrollments).values([
+      { schoolId: schoolAId, studentId, sessionId: sessionAId, className: "5", sectionName: "A" },
+      { schoolId: schoolAId, studentId, sessionId: sessionBId, className: "5", sectionName: "B" },
+    ]);
+    await db.insert(calendarEvents).values([
+      { schoolId: schoolAId, date: "2040-09-15", title: "Everyone", eventType: "holiday", audienceScope: "All_School" },
+      { schoolId: schoolAId, date: "2040-09-16", title: "Section A", eventType: "holiday", audienceScope: "Specific_Section", targetClass: "5", targetSection: "A" },
+      { schoolId: schoolAId, date: "2040-09-17", title: "Section B", eventType: "holiday", audienceScope: "Specific_Section", targetClass: "5", targetSection: "B" },
+      { schoolId: schoolAId, date: "2040-09-18", title: "Other class", eventType: "holiday", audienceScope: "Entire_Class", targetClass: "6" },
+      { schoolId: schoolBId, date: "2040-09-19", title: "Other school", eventType: "holiday", audienceScope: "All_School" },
+      { schoolId: schoolAId, date: "2041-04-15", title: "Next Session", eventType: "holiday", audienceScope: "Specific_Section", targetClass: "5", targetSection: "B" },
+    ]);
+    await db.insert(attendanceRecords).values(attendanceInput({ date: "2040-09-16", status: "present" }));
+
+    const [selected, otherSession, otherSchool, outside, inside] = await Promise.all([
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 9),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionBId, 2040, 9),
+      storage.getStudentMonthlyAttendance(studentBId, schoolBId, otherSchoolSessionId, 2040, 9),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2041, 4),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionBId, 2041, 4),
+    ]);
+    const on = (days: typeof selected, date: string) => days.find(day => day.date === date);
+    expect(on(selected, "2040-09-15")).toMatchObject({ isHoliday: true, holidayName: "Everyone" });
+    expect(on(otherSession, "2040-09-15")?.isHoliday).toBe(true);
+    expect(on(selected, "2040-09-16")).toMatchObject({ isHoliday: true, status: "present" });
+    expect(on(otherSession, "2040-09-16")?.isHoliday).toBe(false);
+    expect(on(selected, "2040-09-17")?.isHoliday).toBe(false);
+    expect(on(otherSession, "2040-09-17")).toMatchObject({ isHoliday: true, holidayName: "Section B" });
+    expect(on(selected, "2040-09-18")?.isHoliday).toBe(false);
+    expect(on(selected, "2040-09-19")?.isHoliday).toBe(false);
+    expect(on(otherSchool, "2040-09-19")?.isHoliday).toBe(true);
+    expect(on(outside, "2041-04-15")).toMatchObject({ isInSession: false, isHoliday: false });
+    expect(on(inside, "2041-04-15")).toMatchObject({ isInSession: true, isHoliday: true });
   });
 });

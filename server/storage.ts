@@ -4901,6 +4901,10 @@ export class DatabaseStorage {
     if (!session || session.schoolId !== schoolId) {
       throw new Error("Invalid Academic Session for Student monthly Attendance");
     }
+    const studentClassSection = await this.resolveAttendanceClassSectionForStudent(schoolId, sessionId, studentId);
+    const holidayAudience = studentClassSection
+      ? buildCalendarAudienceFilter([{ cls: studentClassSection.class, sec: studentClassSection.section }])!
+      : eq(calendarEvents.audienceScope, "All_School");
 
     const records = await db.select().from(attendanceRecords).where(
       and(
@@ -4916,6 +4920,7 @@ export class DatabaseStorage {
       and(
         eq(calendarEvents.schoolId, schoolId),
         eq(calendarEvents.eventType, "holiday"),
+        holidayAudience,
         gte(calendarEvents.date, startDate),
         lte(calendarEvents.date, endDate)
       )
