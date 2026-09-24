@@ -3,7 +3,7 @@ import express from "express";
 import session from "express-session";
 import type { Server } from "node:http";
 import { and, eq, inArray } from "drizzle-orm";
-import { addCalendarDays, todayInIST } from "@shared/ist-time";
+import { addCalendarDays, calendarWeekday, todayInIST } from "@shared/ist-time";
 import {
   academicSessions,
   attendanceCorrectionRequests,
@@ -364,7 +364,22 @@ describe("Teacher self-attendance Session regression coverage", () => {
       { id: halfDay.id, status: "Half Day" },
     ]);
     expect(all.body.summary).toMatchObject({ present: 1, halfDay: 1, late: 0 });
-    expect(all.body.statistics.attendanceRate).toBe(100);
+    const [selectedSession] = await db.select().from(academicSessions)
+      .where(eq(academicSessions.id, sessionAId));
+    const isWorkingDay = (date: string) => {
+      const weekday = calendarWeekday(date);
+      return weekday !== null && weekday >= 1 && weekday <= 5;
+    };
+    let applicableDays = 0;
+    for (let date = selectedSession.startDate; date <= today && date <= selectedSession.endDate; date = addCalendarDays(date, 1)) {
+      if (isWorkingDay(date)) applicableDays++;
+    }
+    const earned = (isWorkingDay(today) ? 1 : 0) + (isWorkingDay(yesterday) ? 0.5 : 0);
+    expect(all.body.statistics).toMatchObject({
+      applicableDays,
+      earned,
+      attendanceRate: Math.round((earned / applicableDays) * 1000) / 10,
+    });
     const filtered = await request(`${basePath}&status=Present`, sessionAId);
     expect(filtered.body.records).toMatchObject([{ id: present.id, status: "Present" }]);
     expect(filtered.body.summary).toMatchObject({ present: 1, halfDay: 0, late: 0 });
