@@ -14,10 +14,31 @@ function day(date: string, status = "none", isSunday = false): DayData {
     isApprovedLeave: false,
     isSunday,
     isFuture: false,
+    isInSession: true,
   };
 }
 
 describe("Student Attendance monthly display", () => {
+  it.each(["2026-08-31", "2026-10-01"])("does not display %s outside the selected Session as attendance", date => {
+    const outside = {
+      ...day(date, "absent"),
+      isInSession: false,
+      isHoliday: true,
+      holidayName: "Calendar event",
+      isApprovedLeave: true,
+    };
+    expect(getDayCell(outside).label).toBe("Outside academic session");
+    expect(getMonthlySummary([outside])).toEqual({
+      present: 0, absent: 0, halfDay: 0, late: 0, leave: 0, holiday: 0,
+    });
+  });
+
+  it("preserves an in-Session attendance status and monthly count", () => {
+    const inside = day("2026-09-01", "present");
+    expect(getDayCell(inside).label).toBe("Present");
+    expect(getMonthlySummary([inside]).present).toBe(1);
+  });
+
   it("keeps an unmarked Sunday identified as Sunday without fabricating a count", () => {
     const sunday = day("2026-09-06", "none", true);
     expect(getDayCell(sunday).label).toBe("Sunday");

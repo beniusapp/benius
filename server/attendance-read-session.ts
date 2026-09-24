@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { isAttendanceDateInSession, type AttendanceSessionDates } from "@shared/attendance-session-date";
 
 export class AttendanceReadSessionError extends Error {
   readonly status: number;
@@ -56,4 +57,14 @@ export function sendAttendanceReadSessionError(
   if (!(error instanceof AttendanceReadSessionError)) return false;
   res.status(error.status).json({ message: error.message, code: error.code });
   return true;
+}
+
+export function requireAttendanceDateInSession(date: string, session: AttendanceSessionDates): void {
+  if (!isAttendanceDateInSession(date, session)) {
+    throw new AttendanceReadSessionError(
+      "Attendance date is outside the selected academic session.",
+      400,
+      "ATTENDANCE_DATE_OUTSIDE_SESSION",
+    );
+  }
 }

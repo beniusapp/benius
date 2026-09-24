@@ -53,6 +53,7 @@ import {
   type StudentPasswordResetChallenge,
 } from "@shared/schema";
 import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST, dateOnlyParts, isValidDateOnly, todayInIST } from "@shared/ist-time";
+import { isAttendanceDateInSession } from "@shared/attendance-session-date";
 import { db } from "./db";
 import { pool } from "./db";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
@@ -4890,11 +4891,16 @@ export class DatabaseStorage {
     isApprovedLeave: boolean;
     isSunday: boolean;
     isFuture: boolean;
+    isInSession: boolean;
   }[]> {
     const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
     const lastDay = new Date(year, month, 0).getDate();
     const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     const today = todayInIST();
+    const session = await this.getAcademicSessionById(sessionId);
+    if (!session || session.schoolId !== schoolId) {
+      throw new Error("Invalid Academic Session for Student monthly Attendance");
+    }
 
     const records = await db.select().from(attendanceRecords).where(
       and(
@@ -4929,13 +4935,14 @@ export class DatabaseStorage {
     const result = [];
     for (let day = 1; day <= lastDay; day++) {
       const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const isInSession = isAttendanceDateInSession(dateStr, session);
       const dayOfWeek = calendarWeekday(dateStr)!;
       const isSunday = dayOfWeek === 0;
       const isFuture = dateStr > today;
 
-      const record = records.find(r => r.date === dateStr);
-      const holiday = holidays.find(h => h.date === dateStr);
-      const isApprovedLeave = leaves.some(l => l.startDate <= dateStr && l.endDate >= dateStr);
+      const record = isInSession ? records.find(r => r.date === dateStr) : undefined;
+      const holiday = isInSession ? holidays.find(h => h.date === dateStr) : undefined;
+      const isApprovedLeave = isInSession && leaves.some(l => l.startDate <= dateStr && l.endDate >= dateStr);
 
       result.push({
         date: dateStr,
@@ -4948,6 +4955,7 @@ export class DatabaseStorage {
         isApprovedLeave,
         isSunday,
         isFuture,
+        isInSession,
       });
     }
 

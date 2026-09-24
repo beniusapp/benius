@@ -28,7 +28,7 @@ import { studentAuthenticationAttemptIsRevoked } from "./session-revocation";
 import { registerFeesRoutes } from "./fees-routes";
 import { requireStudentFeeSession } from "./student-fee-session-context";
 import { resolveStudentExaminationSession } from "./student-examination-session";
-import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
+import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { calculateLateFee } from "./late-fee-engine";
 import { buildLateFeeInfo } from "./late-fee-display";
 import { ledgerPaymentMethodLabel } from "./payment-method-label";
@@ -2934,6 +2934,7 @@ export async function registerRoutes(
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
+      requireAttendanceDateInSession(date, attendanceSession);
       const historicalRoster = await storage.getAttendanceReportRosterForSessionClass(
         schoolId, attendanceSession.id, cls, section,
       );
@@ -3036,6 +3037,7 @@ export async function registerRoutes(
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
+      requireAttendanceDateInSession(date, attendanceSession);
       const enrolledTotal = await storage.getAttendancePopulationForSession(
         schoolId, attendanceSession.id,
       );
@@ -3074,6 +3076,7 @@ export async function registerRoutes(
         (req as any).viewSessionId,
         { allowActiveFallback: true },
       );
+      requireAttendanceDateInSession(date, attendanceSession);
       const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
         storage.getTeachersBySchool(schoolId),
         db.select().from(teacherSelfAttendance).where(

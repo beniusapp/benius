@@ -41,6 +41,7 @@ export interface DayData {
   isApprovedLeave: boolean;
   isSunday: boolean;
   isFuture: boolean;
+  isInSession: boolean;
 }
 
 interface MonthlyResponse {
@@ -99,6 +100,9 @@ export function getDayCell(day: DayData): {
   label: string;
   textColor: string;
 } {
+  if (!day.isInSession) {
+    return { bg: "", ring: "", dot: null, label: "Outside academic session", textColor: "text-slate-300" };
+  }
   if ((day.isSunday || day.isHoliday) && day.status === "none") {
     return { bg: "bg-slate-100", ring: "", dot: null, label: day.isHoliday ? (day.holidayName || "Holiday") : "Sunday", textColor: "text-slate-400" };
   }
@@ -129,7 +133,7 @@ export function getDayCell(day: DayData): {
 export function getMonthlySummary(days: DayData[]) {
   return days.reduce(
     (acc, d) => {
-      if (d.isFuture || (d.isSunday && d.status === "none")) return acc;
+      if (!d.isInSession || d.isFuture || (d.isSunday && d.status === "none")) return acc;
       if (d.isHoliday && d.status === "none") { acc.holiday++; return acc; }
       if (d.isApprovedLeave && d.status === "none") { acc.leave++; return acc; }
       if (d.status === "present") acc.present++;
@@ -529,17 +533,17 @@ export default function StudentAttendance() {
                   {days.map((day) => {
                     const { bg, ring, dot, textColor, label } = getDayCell(day);
                     const dayNum = dayOfMonthFromDateOnly(day.date) ?? 0;
-                    const markedSunday = day.isSunday && day.status !== "none" && !day.isFuture;
+                    const markedSunday = day.isInSession && day.isSunday && day.status !== "none" && !day.isFuture;
                     return (
                       <button
                         key={day.date}
                         onClick={e => { e.stopPropagation(); handleDayClick(day, e); }}
-                        disabled={day.isFuture}
+                        disabled={!day.isInSession || day.isFuture}
                         className={`
                           aspect-square flex flex-col items-center justify-center rounded-full sm:rounded-xl
                           transition-all duration-150 relative
                           ${bg} ${ring} ${textColor}
-                          ${!day.isFuture && (!day.isSunday || markedSunday) ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"}
+                          ${day.isInSession && !day.isFuture && (!day.isSunday || markedSunday) ? "cursor-pointer hover:scale-105 active:scale-95" : "cursor-default"}
                           text-[11px] sm:text-sm font-semibold
                           focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-emerald-400
                         `}

@@ -740,6 +740,20 @@ describe("Attendance canonical persistence identity", () => {
 });
 
 describe("Student monthly approved-leave Session isolation", () => {
+  it("keeps calendar cells before and after the Session free of attendance status", async () => {
+    const [before, inside, after] = await Promise.all([
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2025, 3),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2040, 4),
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, sessionAId, 2041, 4),
+    ]);
+    expect(before.every(day => !day.isInSession && day.status === "none")).toBe(true);
+    expect(after.every(day => !day.isInSession && day.status === "none")).toBe(true);
+    expect(inside.find(day => day.date === "2040-04-01")?.isInSession).toBe(true);
+    await expect(
+      storage.getStudentMonthlyAttendance(studentId, schoolAId, otherSchoolSessionId, 2040, 4),
+    ).rejects.toThrow("Invalid Academic Session");
+  });
+
   it("includes approved leave from the selected Session", async () => {
     const date = "2040-07-10";
     await db.insert(studentLeaveRequests).values({

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { formatDateOnly, formatDateTimeIST, formatTimeIST, todayInIST } from "@shared/ist-time";
 import { formatAttendanceMarkedBy } from "@/lib/attendance-marked-by";
+import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props {
   schoolId: number;
@@ -219,7 +220,15 @@ function formatDateTime(isoString: string | null): string {
 
 export default function AttendanceOverview({ schoolId, viewSessionId = null, onViewStudent }: Props) {
   const today = todayInIST();
-  const [date, setDate] = useState(today);
+  const { selectedSession } = useSessionView();
+  const session = selectedSession?.id === viewSessionId ? selectedSession : null;
+  const [requestedDate, setDate] = useState(today);
+  const lastDate = session && session.endDate < today ? session.endDate : today;
+  const date = session && session.startDate > lastDate
+    ? ""
+    : session && requestedDate < session.startDate
+      ? session.startDate
+      : requestedDate > lastDate ? lastDate : requestedDate;
   const [filterClass, setFilterClass] = useState("");
   const [filterSection, setFilterSection] = useState("");
   const [studentSearch, setStudentSearch] = useState("");
@@ -257,7 +266,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
       const r = await sessionFetchForViewSession(`/api/admin/attendance/overview?date=${date}`, viewSessionId, { signal });
       return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && !!date,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -268,7 +277,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
       const r = await sessionFetchForViewSession(`/api/admin/attendance/teacher-summary?date=${date}`, viewSessionId, { signal });
       return r.ok ? r.json() : { summary: { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 }, teachers: [] };
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && !!date,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -283,7 +292,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
       );
       return r.ok ? r.json() : { meta: { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null }, students: [] };
     },
-    enabled: !!filterClass && !!filterSection,
+    enabled: !!date && !!filterClass && !!filterSection,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -369,6 +378,10 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
   const displayDate = formatDateOnly(date);
   const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, onLeave: 0, halfDay: 0, pendingCorrections: 0, totalCorrections: 0 };
 
+  if (!date) {
+    return <p className="p-6 text-white/70">Attendance dates for this Session have not started yet.</p>;
+  }
+
   return (
     <div className="space-y-5">
       {/* ── HEADER ── */}
@@ -414,7 +427,8 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
             <input
               type="date"
               value={date}
-              max={today}
+              min={session?.startDate}
+              max={lastDate}
               onChange={e => setDate(e.target.value)}
               className="h-11 px-3 rounded-xl border border-white/20 bg-[#1A2942] text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#D4AF37]"
               data-testid="input-attendance-date"

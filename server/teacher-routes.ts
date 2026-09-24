@@ -20,7 +20,7 @@ import {
   todayInIST,
 } from "../shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
-import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
+import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
 import { validateGradingRules } from "@shared/examination-calculation-engine";
@@ -407,6 +407,12 @@ export function registerTeacherRoutes(app: Express) {
         teacher.schoolId,
         (req as any).viewSessionId,
       );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+    try {
+      requireAttendanceDateInSession(date, attendanceSession);
     } catch (error) {
       if (sendAttendanceReadSessionError(res, error)) return;
       throw error;

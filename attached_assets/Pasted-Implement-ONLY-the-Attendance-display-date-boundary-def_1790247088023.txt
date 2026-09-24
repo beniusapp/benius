@@ -1,0 +1,191 @@
+Implement ONLY the **Attendance display date-boundary defects** identified in the 10L-12A audit.
+
+This is a narrow implementation step.
+
+## DEFECTS TO FIX
+
+Attendance screens can display/generate attendance dates outside the selected Academic Session.
+
+Affected areas identified by the audit:
+
+1. Admin Attendance daily overview/class detail/teacher summary
+2. Teacher Student Attendance roster read/display
+3. Student Attendance monthly calendar
+
+The underlying Student Attendance working-day contract and canonical percentage calculations are already established and MUST NOT be changed.
+
+## REQUIRED RULE
+
+For every selected Academic Session:
+
+An attendance date may be displayed as an attendance date ONLY when:
+
+`Session Start Date <= Attendance Date <= Session End Date`
+
+Use the existing validated selected Academic Session.
+
+Use date-only business dates and existing IST/date helpers.
+
+Do NOT convert business dates through UTC.
+
+## 1. ADMIN ATTENDANCE
+
+Inspect the affected Admin Attendance reads identified by the audit:
+
+`server/routes.ts`
+
+approximately:
+
+* `2924–3058`
+* `3065–3171`
+
+and corresponding UI:
+
+`client/src/pages/admin-modules/attendance-overview.tsx`
+
+Prevent dates outside the selected Session from being treated as attendance dates.
+
+Important:
+
+* Do NOT change the Admin Attendance reporting purpose.
+* Do NOT change stored records.
+* Do NOT change Student Attendance calculations.
+* Do NOT change the meaning of `Not Marked`.
+* Do NOT invent attendance records for out-of-Session dates.
+
+If the requested date is outside the selected Session, it must not be treated as a valid attendance date for that Session.
+
+## 2. TEACHER STUDENT-ATTENDANCE ROSTER
+
+Inspect:
+
+`server/teacher-routes.ts`
+
+around the affected roster read:
+
+approximately `397–447`.
+
+Prevent the Teacher Student Attendance roster from presenting an out-of-Session date as an attendance date.
+
+Keep the existing write protections unchanged.
+
+Do NOT change:
+
+* seven-day correction rule
+* All_School holiday write lock
+* Student enrollment contract
+* attendance status semantics
+
+This step is display/read-boundary correction only.
+
+## 3. STUDENT MONTHLY CALENDAR
+
+Inspect:
+
+`server/storage.ts`
+
+around:
+
+`4882–4955`
+
+and:
+
+`client/src/pages/student-attendance.tsx`
+
+Prevent the monthly calendar from treating dates outside the selected Session as attendance dates.
+
+Keep the existing calendar grid if needed.
+
+Out-of-Session dates may remain visually present as ordinary calendar cells if required by the existing calendar layout, but they must NOT be represented as Student Attendance dates/statuses for the selected Session.
+
+Do NOT modify the Student Attendance percentage formula.
+
+Do NOT change the established Student working-day/evidence-based contract.
+
+## 4. SESSION VALIDATION
+
+Use the existing Session ownership/validation mechanisms.
+
+Do not trust a client-supplied Session blindly.
+
+The selected Session must belong to the authenticated school.
+
+Preserve multi-tenant isolation.
+
+## 5. IST
+
+Use existing project helpers such as:
+
+* `todayInIST`
+* date-only Session boundaries
+* existing calendar/date helpers
+
+Do not introduce new timezone logic.
+
+Do not use UTC conversion for attendance business dates.
+
+## 6. DO NOT CHANGE
+
+Do NOT change:
+
+* Teacher Self-Attendance rate
+* Teacher Self-Attendance Working Days
+* Teacher Self-Attendance status rules
+* Student Attendance percentage formula
+* Student Attendance working-day contract
+* holiday audience behavior
+* Teacher targeted-holiday UI behavior
+* Attendance Policy
+* Academic Session schema
+* database schema
+* stored attendance records
+* authentication
+* production
+
+Those are separate tasks.
+
+## 7. TESTS
+
+Add ONLY focused tests for the corrected Session boundaries.
+
+At minimum verify:
+
+1. Admin cannot treat a date before Session start as an attendance date.
+2. Admin cannot treat a date after Session end as an attendance date.
+3. Teacher Student Attendance roster does not expose an out-of-Session attendance date.
+4. Student monthly calendar does not treat dates before Session start as attendance dates.
+5. Student monthly calendar does not treat dates after Session end as attendance dates.
+6. A valid in-Session date still behaves exactly as before.
+7. Selected Session must belong to the authenticated school.
+8. Existing Student percentage calculation remains unchanged.
+
+Run the relevant tests.
+
+Run TypeScript/check.
+
+Inspect the final diff.
+
+## FINAL SAFETY GATE
+
+Report:
+
+A. Files changed
+B. Admin boundary fix
+C. Teacher boundary fix
+D. Student calendar boundary fix
+E. Tenant/Session validation
+F. IST handling
+G. Tests passed
+H. TypeScript/check
+I. Final diff
+J. Any remaining issue
+
+If the fix is successful, explicitly state:
+
+`10L-12B COMPLETE — SESSION DISPLAY BOUNDARIES FIXED — NO OTHER CHANGES MADE.`
+
+If another defect is discovered while implementing this step, STOP and report it rather than expanding scope.
+
+No production changes.
+No migration.
+No unrelated refactoring.

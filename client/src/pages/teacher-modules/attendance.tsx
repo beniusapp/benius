@@ -135,12 +135,13 @@ function DarkSelect({
 
 /* Shared dark-styled date / text input */
 function DarkInput({
-  type = "text", value, onChange, placeholder, max, className = "", testId,
+  type = "text", value, onChange, placeholder, min, max, className = "", testId,
 }: {
   type?: string;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   placeholder?: string;
+  min?: string;
   max?: string;
   className?: string;
   testId?: string;
@@ -151,6 +152,7 @@ function DarkInput({
       value={value}
       onChange={onChange}
       placeholder={placeholder}
+      min={min}
       max={max}
       data-testid={testId}
       className={`w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30 placeholder:text-white/30 ${className}`}
@@ -185,7 +187,15 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
     setter(cls);
     setSelectedSection("");
   }, []);
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [requestedDate, setSelectedDate] = useState(today);
+  const sessionStart = selectedSession?.startDate ?? null;
+  const sessionEnd = selectedSession?.endDate ?? null;
+  const lastSessionDate = sessionEnd && sessionEnd < today ? sessionEnd : today;
+  const selectedDate = selectedSession && (!sessionStart || !sessionEnd || sessionStart > lastSessionDate)
+    ? ""
+    : sessionStart && requestedDate < sessionStart
+      ? sessionStart
+      : requestedDate > lastSessionDate ? lastSessionDate : requestedDate;
   const [searchQuery, setSearchQuery] = useState("");
   const [localStatuses, setLocalStatuses] = useState<Record<number, string>>({});
 
@@ -208,7 +218,7 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
       if (!res.ok) throw new Error("Failed to load attendance");
       return res.json();
     },
-    enabled: view === "mark",
+    enabled: view === "mark" && !!selectedDate && !!selectedSession,
   });
 
   const { data: historyRecords = [], isLoading: historyLoading } = useQuery<HistoryRecord[]>({
@@ -588,6 +598,10 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
   const allAtLimit = students.length > 0 && students.every(s => s.editCount >= 3);
   const canSave = !isArchiveMode && isEditable && !allAtLimit && students.length > 0 && !isHolidayDate;
 
+  if (!selectedDate) {
+    return <p className="p-6 text-white/70">Attendance dates for this Session have not started yet.</p>;
+  }
+
   return (
     <div className="space-y-4 pb-24" data-testid="view-mark">
       {isArchiveMode && (
@@ -629,7 +643,8 @@ export default function AttendanceModule({ teacher }: { teacher: TeacherMe }) {
             <DarkInput
               type="date"
               value={selectedDate}
-              max={today}
+              min={sessionStart ?? undefined}
+              max={lastSessionDate}
               onChange={(e) => { setSelectedDate(e.target.value); setLocalStatuses({}); }}
               testId="input-date"
             />
