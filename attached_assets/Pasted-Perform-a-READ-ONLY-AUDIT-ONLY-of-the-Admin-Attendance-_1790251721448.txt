@@ -1,0 +1,89 @@
+Perform a **READ-ONLY AUDIT ONLY** of the Admin → Attendance historical teacher assignment behavior.
+
+## Goal
+
+Find out one simple thing:
+
+When Admin views **old/historical Attendance**, does the system show:
+
+1. the teacher's **assignment at that historical Session/time**, or
+2. the teacher's **current assignment**?
+
+## Important
+
+Do NOT change any code.
+
+Do NOT change tests.
+
+Do NOT change database data.
+
+Do NOT change schema or migrations.
+
+Do NOT redesign anything.
+
+Do NOT fix anything.
+
+Just inspect the existing implementation and report what it actually does.
+
+## Check
+
+Trace the Admin Attendance historical teacher summary from:
+
+* the Admin Attendance UI
+* the relevant API/server route
+* the database/storage query
+* teacher assignment data used by that query
+
+Determine whether the displayed class/section comes from:
+
+* historical/dated assignment data, OR
+* the teacher's current assignment data.
+
+Also check whether the selected Academic Session is respected.
+
+## Very simple example to use
+
+Consider:
+
+* Session 2025 → Teacher A assigned to Class 5
+* Session 2026 → Teacher A assigned to Class 8
+
+When Admin opens 2025 historical Attendance:
+
+Does the system show:
+
+**Class 5** → historical assignment
+
+or
+
+**Class 8** → current assignment?
+
+Do not create fake data unless existing tests/fixtures already provide suitable examples.
+
+## Also verify
+
+* authenticated school/tenant isolation
+* selected Academic Session
+* historical Attendance records themselves
+* whether teacher identity remains correct after historical data is viewed
+
+Do not broaden this into a general Attendance audit.
+
+## Output
+
+Report only:
+
+1. **What the current code does**
+2. **Which files/functions are responsible**
+3. Whether it uses **historical assignment** or **current assignment**
+4. Whether this is a confirmed defect or simply a business-rule question
+5. Relevant tests already covering this behavior
+6. Any important limitation
+
+## Final requirement
+
+The final diff must remain empty.
+
+If anything unexpected would require a code change, STOP and report it instead.
+
+Do not modify anything.
