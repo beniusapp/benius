@@ -1,0 +1,169 @@
+READ-ONLY AUDIT ONLY.
+
+Perform an END-TO-END audit of the complete Timetable system across all three portals:
+
+1. Admin Portal → Timetable Master
+2. Teacher Portal → Timetable
+3. Student Portal → Timetable
+
+IMPORTANT PROJECT RULES:
+
+* Multi-tenant / multi-school isolation is mandatory.
+* Academic Session-specific data must be isolated by authenticated School/Tenant + Academic Session ID.
+* Global configuration must remain school-scoped and must never leak between schools.
+* Do not assume something is Global or Session-based. Verify it from the actual code/schema/API behavior.
+
+DO NOT CHANGE ANYTHING.
+
+### PART 1 — ADMIN TIMETABLE MASTER
+
+Trace the complete flow:
+UI → API → server route → storage → database.
+
+Determine:
+
+* Is timetable configuration/data GLOBAL within a school?
+* Is it Academic Session-based?
+* Is `sessionId` stored?
+* Is `schoolId` stored?
+* Is `sessionId` used when creating/updating?
+* Is `sessionId` used when reading?
+* Is `sessionId` used when deleting?
+* What unique constraints/indexes exist?
+* Can Session A and Session B have separate timetables?
+* Can one Session overwrite another Session's timetable?
+* Can School A access or modify School B's timetable?
+
+### PART 2 — TEACHER TIMETABLE
+
+Trace:
+
+UI → API → server → storage → database.
+
+Determine:
+
+* Which timetable records does Teacher see?
+* How is School ID determined?
+* How is Academic Session ID determined?
+* Does Teacher see the currently selected Academic Session?
+* Can Teacher see another Session's timetable?
+* Can Teacher see another school's timetable?
+* Does Teacher timetable use the same timetable data as Admin?
+
+### PART 3 — STUDENT TIMETABLE
+
+Trace:
+
+UI → API → server → storage → database.
+
+Determine:
+
+* Which timetable records does Student see?
+* How is School ID determined?
+* How is Academic Session ID determined?
+* Does Student see the student's selected/current Academic Session?
+* Can Student see another Session's timetable?
+* Can Student see another school's timetable?
+* Does Student timetable use the same timetable data as Admin?
+
+### PART 4 — CLASSIFICATION
+
+For the timetable system, classify each major piece as:
+
+GLOBAL within School
+OR
+ACADEMIC-SESSION-BASED
+OR
+MIXED
+
+Use this table:
+
+| Component                       | Global / Session / Mixed | schoolId | sessionId | Notes |
+| ------------------------------- | ------------------------ | -------- | --------- | ----- |
+| Timetable Master configuration  |                          |          |           |       |
+| Timetable records               |                          |          |           |       |
+| Teacher timetable               |                          |          |           |       |
+| Student timetable               |                          |          |           |       |
+| Timetable slots/periods         |                          |          |           |       |
+| Class/Section timetable mapping |                          |          |           |       |
+
+IMPORTANT:
+"Global" means GLOBAL WITHIN THE SAME SCHOOL ONLY.
+It must never mean shared across schools.
+
+### PART 5 — MULTI-TENANT SECURITY
+
+Verify every timetable API for:
+
+* authenticated school/tenant
+* requested school ID vs authenticated school ID
+* session ID authorization
+* cross-school read
+* cross-school create
+* cross-school update
+* cross-school delete
+
+### PART 6 — SESSION SWITCHING
+
+Check what happens when Admin/Teacher changes Academic Session.
+
+Does the timetable change with the selected Session?
+
+Does Student automatically use the correct Session?
+
+Are old Session timetable records still visible?
+
+Can Session A data overwrite Session B?
+
+### PART 7 — FINAL ARCHITECTURE
+
+Give a simple final answer:
+
+1. TIMETABLE IS CURRENTLY:
+   GLOBAL / SESSION-BASED / MIXED
+
+2. ADMIN:
+   GLOBAL / SESSION / MIXED
+
+3. TEACHER:
+   GLOBAL / SESSION / MIXED
+
+4. STUDENT:
+   GLOBAL / SESSION / MIXED
+
+5. MULTI-TENANT ISOLATION:
+   PASS / FAIL
+
+6. SESSION ISOLATION:
+   PASS / FAIL
+
+7. CROSS-SCHOOL ACCESS:
+   POSSIBLE / NOT POSSIBLE
+
+8. CROSS-SESSION ACCESS:
+   POSSIBLE / NOT POSSIBLE
+
+9. CONFIRMED DEFECTS:
+   list only actual confirmed defects
+
+10. RECOMMENDED NEXT FIX:
+    smallest safe fix, if any
+
+IMPORTANT:
+
+* READ-ONLY ONLY.
+* No code changes.
+* No schema changes.
+* No migrations.
+* No database writes.
+* No timetable creation/update/deletion.
+* No test data creation.
+* Do not fix anything yet.
+
+Run:
+
+* `npm run check`
+* `git diff --check`
+* inspect `git diff`
+
+The final working tree must remain unchanged.
