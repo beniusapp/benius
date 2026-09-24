@@ -1,0 +1,185 @@
+# 10L-12C — Teacher Self-Attendance Write Session Boundary Fix
+
+We are continuing the existing Attendance hardening work.
+
+**10L-12B is COMPLETE and must remain untouched.**
+
+Implement **ONLY 10L-12C**.
+
+## Objective
+
+Fix the remaining Attendance defect identified in the 10L-12A audit:
+
+> Teacher Self-Attendance check-in, check-out, and correction/write operations can currently accept/store a business date outside the selected Academic Session.
+
+Every Teacher Self-Attendance mutation must verify that its attendance business date belongs to the **selected Academic Session**, using the already validated Session for the authenticated school.
+
+### Required rule
+
+For every Teacher Self-Attendance write:
+
+```text
+Academic Session start date <= attendance business date <= Academic Session end date
+```
+
+If the date is outside the selected Session:
+
+* reject the mutation;
+* do not create a record;
+* do not update an existing record;
+* do not bypass the existing mutation protections.
+
+## Important existing requirements — MUST PRESERVE
+
+1. **Multi-tenant isolation is mandatory.**
+
+   * Never trust a client-supplied school ID.
+   * The Session must belong to the authenticated Teacher's school.
+   * Do not allow cross-school Session access or mutation.
+
+2. **Academic Session is authoritative.**
+
+   * Use the existing validated/selected Academic Session resolution already used by Attendance.
+   * Do not create a second or competing Session-resolution mechanism.
+
+3. **Archived Sessions remain read-only.**
+
+   * Preserve the existing global mutation guard / Session mutation protection.
+   * Do NOT weaken or bypass archived-Session protection.
+
+4. **IST / Asia/Kolkata remains the application business timezone.**
+
+   * Use the existing IST/date-only helpers.
+   * Do not introduce UTC/local-server timezone conversions.
+
+5. Preserve the existing:
+
+   * Teacher Self-Attendance rate calculation.
+   * Teacher Working Days configuration.
+   * All_School holiday handling.
+   * Targeted holiday behavior.
+   * Present/Late/Half Day/Leave semantics.
+   * Existing 7-day correction window.
+   * Existing check-in/check-out behavior.
+   * Existing authorization.
+   * Existing database schema.
+   * Existing historical Attendance records.
+
+## Scope
+
+Inspect the existing Teacher Self-Attendance mutation routes, especially the code previously identified around:
+
+```text
+server/teacher-routes.ts
+  approximately lines 4721–4829
+  approximately lines 4899–4968
+```
+
+These locations are approximate. Follow the actual current code.
+
+Identify every Teacher Self-Attendance mutation that accepts or derives an Attendance business date, including:
+
+* check-in;
+* check-out;
+* correction/edit;
+* any other existing Self-Attendance mutation that can create/update Attendance for a date.
+
+For EACH mutation:
+
+1. Resolve/validate the selected Academic Session using the existing authoritative Session mechanism.
+2. Confirm the Session belongs to the authenticated school.
+3. Determine the actual Attendance business date using the existing IST/date-only logic.
+4. Verify that the date falls within the inclusive Session boundaries.
+5. Reject before any database mutation when outside the Session.
+6. Preserve all existing validation and mutation rules.
+
+## Do NOT
+
+Do NOT:
+
+* redesign Teacher Self-Attendance;
+* change the rate formula;
+* change Teacher Working Days;
+* change holiday semantics;
+* change Student Attendance;
+* change Admin Attendance;
+* change Teacher Student Attendance;
+* change Session structure;
+* change Student Registry;
+* change enrollment;
+* change database schema;
+* add migrations;
+* alter existing historical records;
+* change the 7-day correction rule;
+* change archived-Session behavior;
+* change tenant architecture;
+* refactor unrelated code;
+* modify 10L-12B behavior.
+
+This is a **minimal defensive validation fix only**.
+
+## Tests
+
+Add focused tests proving:
+
+### Must PASS / allow
+
+* A Self-Attendance mutation dated exactly on the Session start date.
+* A Self-Attendance mutation dated exactly on the Session end date, where the existing mutation rules otherwise allow it.
+
+### Must REJECT
+
+* A date one day before the Session start.
+* A date one day after the Session end.
+* A date outside the selected Session but belonging to another Academic Session.
+* A Session belonging to another school must not be usable for the authenticated Teacher.
+* Archived Session mutation must remain rejected.
+
+Also ensure existing 7-day correction protections still behave exactly as before.
+
+Tests should verify that rejected out-of-Session mutations cause **no database write**.
+
+## Verification
+
+After implementation:
+
+1. Run the focused Teacher Self-Attendance tests.
+2. Run the relevant Attendance tests that could be affected.
+3. Run:
+
+```bash
+npm run check
+```
+
+4. Run:
+
+```bash
+git diff --check
+```
+
+5. Inspect the final diff carefully.
+
+6. Restart the development app if that is part of the existing workflow.
+
+## Final report
+
+Report:
+
+* exact files changed;
+* exact mutation routes protected;
+* how Session ownership was validated;
+* how the date boundary was enforced;
+* confirmation that IST/date-only logic was preserved;
+* tests passed;
+* `npm run check` result;
+* `git diff --check` result;
+* confirmation that no schema/migration/data changes were made;
+* confirmation that 10L-12B was not altered.
+
+If you discover another unrelated defect while doing this work:
+
+**STOP and report it. Do not fix it under 10L-12C.**
+
+Final line must be:
+
+**10L-12C COMPLETE — TEACHER SELF-ATTENDANCE SESSION WRITE BOUNDARY FIXED — NO OTHER CHANGES MADE.**

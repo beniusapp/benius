@@ -4733,6 +4733,7 @@ Thank you for your prompt attention to this matter.
         teacher.schoolId, (req as any).viewSessionId,
       );
       const today = istToday();
+      requireAttendanceDateInSession(today, attendanceSession);
       const { latitude, longitude, locationVerified } = req.body;
 
       const [existing] = await db.select().from(teacherSelfAttendance).where(
@@ -4790,6 +4791,7 @@ Thank you for your prompt attention to this matter.
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId, (req as any).viewSessionId,
       );
+      requireAttendanceDateInSession(today, attendanceSession);
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(
           eq(teacherSelfAttendance.teacherId, req.session.teacherId),
@@ -4920,6 +4922,7 @@ Thank you for your prompt attention to this matter.
       const attendanceSession = await resolveAttendanceReadSession(
         teacher.schoolId, (req as any).viewSessionId,
       );
+      requireAttendanceDateInSession(date, attendanceSession);
 
       // Parse times as IST (teachers enter local Indian time)
       const checkInIST  = new Date(`${date}T${requestedCheckIn}:00+05:30`);

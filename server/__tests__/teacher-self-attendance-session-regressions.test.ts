@@ -15,9 +15,12 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { registerTeacherRoutes } from "../teacher-routes";
+import { checkSessionContext } from "../routes";
 
 const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 let schoolId = 0;
+let foreignSchoolId = 0;
+let foreignSessionId = 0;
 let sessionAId = 0;
 let sessionBId = 0;
 let teacherId = 0;
@@ -50,12 +53,14 @@ async function request(
   selectedSessionId: number,
   method = "GET",
   body: Record<string, unknown> = {},
+  enforceArchiveGuard = false,
 ) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       cookie,
       "x-view-session-id": String(selectedSessionId),
+      ...(enforceArchiveGuard ? { "x-test-archive-guard": "1" } : {}),
       ...(method !== "GET" ? { "content-type": "application/json" } : {}),
     },
     ...(method !== "GET" ? { body: JSON.stringify(body) } : {}),
@@ -75,12 +80,26 @@ function attendanceValues(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function mutationRows() {
+  return {
+    attendance: await db.select().from(teacherSelfAttendance)
+      .where(eq(teacherSelfAttendance.teacherId, teacherId)),
+    corrections: await db.select().from(attendanceCorrectionRequests)
+      .where(eq(attendanceCorrectionRequests.teacherId, teacherId)),
+  };
+}
+
 beforeAll(async () => {
   const [school] = await db.insert(schools).values({
     name: `Self Session Regression ${suffix}`,
     code: `SSR-${suffix.slice(-8)}`,
   }).returning({ id: schools.id });
   schoolId = school.id;
+  const [foreignSchool] = await db.insert(schools).values({
+    name: `Self Session Foreign ${suffix}`,
+    code: `SSF-${suffix.slice(-8)}`,
+  }).returning({ id: schools.id });
+  foreignSchoolId = foreignSchool.id;
   teacherId = await createTeacher("primary");
   secondTeacherId = await createTeacher("secondary");
   const [sessionA, sessionB] = await db.insert(academicSessions).values([
@@ -103,6 +122,15 @@ beforeAll(async () => {
   ]).returning({ id: academicSessions.id });
   sessionAId = sessionA.id;
   sessionBId = sessionB.id;
+  const [foreignSession] = await db.insert(academicSessions).values({
+    schoolId: foreignSchoolId,
+    sessionName: `Foreign Session ${suffix}`,
+    startDate: "2025-04-01",
+    endDate: "2041-03-31",
+    isActive: true,
+    status: "active",
+  }).returning({ id: academicSessions.id });
+  foreignSessionId = foreignSession.id;
 
   const app = express();
   app.use(express.json());
@@ -118,6 +146,11 @@ beforeAll(async () => {
     }
     next();
   });
+  // Existing regression cases exercise the route in isolation; opt into the real
+  // global middleware for the archived-Session mutation case.
+  app.use((req, res, next) => req.headers["x-test-archive-guard"] === "1"
+    ? checkSessionContext(req, res, next)
+    : next());
   app.post("/test/authenticate", (req, res) => {
     req.session.teacherId = teacherId;
     req.session.schoolId = schoolId;
@@ -144,6 +177,9 @@ beforeEach(async () => {
     inArray(teacherSelfAttendance.teacherId, [teacherId, secondTeacherId]),
   );
   await db.delete(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId));
+  await db.update(academicSessions).set({
+    startDate: "2025-04-01", endDate: "2041-03-31", isActive: true, status: "active",
+  }).where(eq(academicSessions.id, sessionAId));
   await db.update(teachers).set({ assignedClass: "5" }).where(eq(teachers.id, teacherId));
 });
 
@@ -154,6 +190,7 @@ afterAll(async () => {
     );
   }
   if (schoolId) await db.delete(schools).where(eq(schools.id, schoolId));
+  if (foreignSchoolId) await db.delete(schools).where(eq(schools.id, foreignSchoolId));
 });
 
 describe("Teacher self-attendance Session regression coverage", () => {
@@ -496,5 +533,94 @@ describe("Teacher self-attendance Session regression coverage", () => {
     expect(detailedA.body.records).toHaveLength(1);
     expect(detailedA.body.records[0]).toMatchObject({ id: recordA.id, sessionId: sessionAId });
     expect(detailedA.body.records[0].id).not.toBe(recordB.id);
+  });
+});
+
+describe("Teacher self-attendance write date boundaries", () => {
+  const correctionBody = (date: string) => ({
+    date, requestedCheckIn: "09:00", requestedCheckOut: "16:00",
+    reason: "Boundary regression",
+  });
+
+  it("allows corrections on both inclusive Session boundaries", async () => {
+    const today = todayInIST();
+    const yesterday = addCalendarDays(today, -1);
+    await db.update(academicSessions).set({ startDate: yesterday, endDate: today })
+      .where(eq(academicSessions.id, sessionAId));
+
+    for (const date of [yesterday, today]) {
+      const response = await request("/api/teacher/self-attendance/correction", sessionAId, "POST", correctionBody(date));
+      expect(response.status).toBe(200);
+      expect(response.body.attendanceRecord.attendanceDate).toBe(date);
+    }
+  });
+
+  it("allows check-in and check-out on today's inclusive Session boundary", async () => {
+    const today = todayInIST();
+    await db.update(academicSessions).set({ startDate: today, endDate: today })
+      .where(eq(academicSessions.id, sessionAId));
+    const checkIn = await request("/api/teacher/self-attendance/check-in", sessionAId, "POST");
+    expect(checkIn.status).toBe(200);
+    expect(checkIn.body.attendanceDate).toBe(today);
+    const checkOut = await request("/api/teacher/self-attendance/check-out", sessionAId, "POST");
+    expect(checkOut.status).toBe(200);
+    expect(checkOut.body.attendanceDate).toBe(today);
+    expect(checkOut.body.checkOutTime).toBeTruthy();
+  });
+
+  it.each(["before", "after"] as const)("rejects %s the selected Session with no insert, update, or correction log", async side => {
+    const today = todayInIST();
+    await db.update(academicSessions).set(side === "before"
+      ? { startDate: addCalendarDays(today, 1), endDate: addCalendarDays(today, 2) }
+      : { startDate: addCalendarDays(today, -2), endDate: addCalendarDays(today, -1) })
+      .where(eq(academicSessions.id, sessionAId));
+    // A pre-existing row must not be changed even if its date is now outside the Session.
+    await db.insert(teacherSelfAttendance).values(attendanceValues());
+    const before = await mutationRows();
+    for (const [path, body] of [
+      ["/api/teacher/self-attendance/check-in", {}],
+      ["/api/teacher/self-attendance/check-out", {}],
+      ["/api/teacher/self-attendance/correction", correctionBody(today)],
+    ] as const) {
+      const result = await request(path, sessionAId, "POST", body);
+      expect(result.status).toBe(400);
+      expect(result.body.code).toBe("ATTENDANCE_DATE_OUTSIDE_SESSION");
+      expect(await mutationRows()).toEqual(before);
+    }
+    // The same date is valid in Session B; it cannot authorize writes in Session A.
+    const [otherSession] = await db.select().from(academicSessions)
+      .where(eq(academicSessions.id, sessionBId));
+    expect(today >= otherSession.startDate && today <= otherSession.endDate).toBe(true);
+  });
+
+  it("rejects another school's Session before any mutation", async () => {
+    const before = await mutationRows();
+    for (const [path, body] of [
+      ["/api/teacher/self-attendance/check-in", {}],
+      ["/api/teacher/self-attendance/check-out", {}],
+      ["/api/teacher/self-attendance/correction", correctionBody(todayInIST())],
+    ] as const) {
+      const result = await request(path, foreignSessionId, "POST", body);
+      expect(result.status).toBe(403);
+      expect(result.body.code).toBe("ATTENDANCE_SESSION_FORBIDDEN");
+      expect(await mutationRows()).toEqual(before);
+    }
+  });
+
+  it("keeps the global archived-Session write guard in force", async () => {
+    const before = await mutationRows();
+    const result = await request("/api/teacher/self-attendance/check-in", sessionBId, "POST", {}, true);
+    expect(result.status).toBe(403);
+    expect(result.body.code).toBe("ARCHIVE_READ_ONLY");
+    expect(await mutationRows()).toEqual(before);
+  });
+
+  it("keeps the seven-day correction limit unchanged", async () => {
+    const before = await mutationRows();
+    const result = await request("/api/teacher/self-attendance/correction", sessionAId, "POST",
+      correctionBody(addCalendarDays(todayInIST(), -8)));
+    expect(result.status).toBe(400);
+    expect(result.body.message).toBe("Corrections only allowed within the last 7 days");
+    expect(await mutationRows()).toEqual(before);
   });
 });
