@@ -1,0 +1,153 @@
+### ATTENDANCE — FINAL SESSION ARCHITECTURE VERIFICATION
+
+Perform a **READ-ONLY audit only**.
+
+Do NOT change:
+
+* code
+* database
+* schema
+* migrations
+* tests
+* data
+
+We want to verify whether the **entire Attendance module** is correctly Academic Session-based.
+
+Audit all three surfaces:
+
+1. **Admin Attendance**
+2. **Teacher Attendance**
+3. **Student Attendance**
+
+### Verify these areas
+
+For each surface, trace:
+
+```text
+UI → API → Server → Storage/DB
+```
+
+Check whether Attendance operations are always restricted by:
+
+```text
+Authenticated School ID
++
+Academic Session ID
+```
+
+Verify:
+
+* Attendance reads
+* Attendance creation
+* Attendance updates/corrections
+* Attendance calculations
+* Daily attendance
+* Monthly attendance
+* Yearly attendance
+* Attendance history
+* Student attendance
+* Teacher self-attendance
+* Admin attendance
+* Session switching
+* Active Session
+* Archived Session
+* Date/session boundaries
+* Holiday handling
+* Working-day calculations
+
+### Multi-tenant check
+
+Confirm that:
+
+```text
+School A + Session A
+```
+
+cannot access or modify:
+
+```text
+School B + any Session
+```
+
+Also confirm that a Session belonging to another School cannot be used.
+
+### Session switching check
+
+Verify:
+
+```text
+2025–26 Attendance
+```
+
+and
+
+```text
+2026–27 Attendance
+```
+
+are completely separated.
+
+Changing the selected Session must not mix attendance records.
+
+### New Academic Session
+
+Verify what happens when a new Session becomes active:
+
+* Does old attendance remain?
+* Does the new Session get fresh attendance?
+* Can old attendance be modified?
+* Can old attendance appear in the new Session?
+* Are calculations Session-specific?
+
+### IMPORTANT
+
+We already believe Attendance is Session-based, but this audit is being done to **independently verify the current implementation**.
+
+Do not assume the previous audit is correct.
+
+Check the actual current code.
+
+### Final response
+
+Give me ONLY:
+
+#### 1. ADMIN ATTENDANCE
+
+PASS/FAIL + simple explanation
+
+#### 2. TEACHER ATTENDANCE
+
+PASS/FAIL + simple explanation
+
+#### 3. STUDENT ATTENDANCE
+
+PASS/FAIL + simple explanation
+
+#### 4. DATABASE
+
+Show the important Attendance tables/fields and where `sessionId` is enforced.
+
+#### 5. SESSION ISOLATION
+
+PASS/FAIL
+
+#### 6. MULTI-TENANT ISOLATION
+
+PASS/FAIL
+
+#### 7. NEW SESSION BEHAVIOR
+
+Explain simply what happens to old and new Attendance data.
+
+#### 8. PROBLEMS FOUND
+
+List only confirmed problems.
+
+#### 9. FINAL VERDICT
+
+Answer clearly:
+
+> Is the entire Attendance module currently correctly Session-based for Admin, Teacher, and Student?
+
+Do not implement anything.
+Stop after the audit.
