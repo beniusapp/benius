@@ -1,0 +1,355 @@
+We are preparing this existing School MIS for a future Android + iOS mobile application.
+
+Before creating any mobile application, fix the two blockers identified in the previous READ-ONLY architecture audit.
+
+IMPORTANT:
+Do NOT create the mobile application yet.
+Do NOT install React Native or Expo.
+Do NOT change the frontend UI.
+Do NOT perform a broad refactor.
+Do NOT change unrelated functionality.
+
+The existing web application must continue working exactly as before except for the security/data-isolation corrections described below.
+
+==================================================
+BLOCKER 1 — SCHOOL/TENANT AUTHORIZATION
+=======================================
+
+Review the existing `/api/schools` listing, creation, and deletion endpoints identified during the audit.
+
+Files previously identified:
+
+* server/routes.ts
+* relevant authentication/session middleware and authorization helpers
+
+Ensure these operations cannot be performed by an unauthenticated user or an unauthorized role.
+
+Determine the intended administrative authorization model from the existing application before changing it.
+
+Requirements:
+
+1. Unauthenticated users must not be able to access protected school-management operations.
+
+2. A normal Teacher or Student must not be able to perform Admin-only school-management operations.
+
+3. An Admin must only be able to access/manage the school/tenant that the authenticated Admin is authorized to manage.
+
+4. Never trust a client-supplied school ID as authorization.
+
+5. The authenticated session must be the source of authority for the school/tenant.
+
+6. Preserve existing legitimate Admin functionality.
+
+7. Do not introduce cross-school access.
+
+8. Do not weaken any existing authorization checks.
+
+9. Do not change public endpoints that are intentionally public unless the audit proves they are incorrectly exposed.
+
+Before modifying the endpoints, inspect the existing Admin authentication and authorization patterns elsewhere in the application and reuse the established pattern rather than inventing a completely new authorization system.
+
+==================================================
+BLOCKER 2 — EXAM CONTROLLER ACADEMIC SESSION ISOLATION
+======================================================
+
+This is a NON-NEGOTIABLE requirement for this MIS.
+
+The entire Admin → Exam Controller module must be explicitly scoped to:
+
+```
+authenticated school/tenant
++
+selected Academic Session ID
+```
+
+Every Exam Controller operation must respect both boundaries.
+
+This includes:
+
+* reading aggregated examination data
+* reading promotion outcomes
+* promotion overrides
+* creating overrides
+* updating overrides
+* deleting overrides
+* bulk deleting overrides
+* executing promotion
+* promotion decision ledger
+* history linkage
+* cleanup operations
+* any related Exam Controller state
+
+Previously identified issue:
+
+Promotion overrides are currently school-scoped but do not contain/consistently enforce Academic Session ID.
+
+The aggregated Exam Controller read can therefore combine session-filtered examination data with overrides that are not Session-filtered.
+
+This must be corrected.
+
+==================================================
+REQUIRED IMPLEMENTATION
+=======================
+
+First inspect the existing schema and all relevant usages before changing anything.
+
+Previously identified files include:
+
+* server/teacher-routes.ts
+* server/storage.ts
+* shared/schema.ts
+* relevant Exam Controller frontend files
+* relevant academic session helpers
+* relevant promotion/history code
+
+Do not assume these are the only affected files. Search the entire repository for all reads/writes/usages of promotion overrides and Exam Controller data.
+
+Determine:
+
+A. Current promotion override schema
+
+B. Every place where overrides are created
+
+C. Every place where overrides are read
+
+D. Every place where overrides are updated
+
+E. Every place where overrides are deleted
+
+F. Every place where overrides participate in Exam Controller aggregation
+
+G. Every place where overrides participate in promotion execution
+
+H. Every place where historical promotion information is generated/read
+
+Then implement the smallest safe schema/API change necessary to make promotion overrides explicitly Academic Session scoped.
+
+The intended conceptual model is:
+
+promotion_override
+school_id
+academic_session_id
+class_id / class
+section
+student_id
+...
+
+The exact field names/types should follow the existing project conventions.
+
+==================================================
+SESSION OWNERSHIP
+=================
+
+The server must NOT trust an arbitrary Academic Session ID supplied by the mobile/web client.
+
+When an Academic Session ID is supplied:
+
+1. Resolve it through the authenticated school/tenant.
+
+2. Verify that the Session belongs to the authenticated school.
+
+3. Reject a Session belonging to another school.
+
+4. Do not silently switch to another school's Session.
+
+5. For Exam Controller operations, require an explicit selected Academic Session where the operation is Session-owned.
+
+6. Do not accidentally fall back to another Session for an Exam Controller operation.
+
+7. A new Academic Session must start with a fresh Exam Controller operational context.
+
+8. Previous Session overrides must never appear in the new Session.
+
+9. Historical/archived Session data must remain available only within its own Session context.
+
+==================================================
+CRITICAL CROSS-SCHOOL TEST
+==========================
+
+Create tests that prove:
+
+School A + Session A1
+cannot access:
+
+School B + Session B1
+
+even if the client attempts to supply School B or Session B1 identifiers.
+
+Also test:
+
+School A + Session A1
+cannot see School A + Session A2 Exam Controller overrides when viewing Session A1.
+
+And:
+
+School A + Session A2
+cannot see Session A1 overrides.
+
+And:
+
+New Session A2 has no operational Exam Controller overrides copied from A1 unless there is an explicitly existing business rule requiring historical data, and even then the historical record must not become an active override in A2.
+
+==================================================
+LEGACY DATA / MIGRATION
+=======================
+
+Before modifying the database schema, inspect existing promotion override records.
+
+Do NOT blindly assign existing records to the current Academic Session.
+
+Determine how existing records can be mapped safely to their correct Academic Session from existing data.
+
+If an existing record cannot be reliably mapped:
+
+* do not guess
+* do not silently assign a Session
+* report the records requiring manual review
+
+If a migration is required:
+
+1. Create a proper Drizzle migration.
+2. Preserve existing data.
+3. Explain exactly how existing records are handled.
+4. Add appropriate indexes/constraints following existing database conventions.
+5. Do not delete historical records.
+
+==================================================
+DATABASE CONSTRAINTS
+====================
+
+Review whether the existing uniqueness constraint for promotion overrides is currently something like:
+
+school + class + section + student
+
+If Academic Session is part of the business identity, update the constraint appropriately so that separate Sessions can legitimately contain separate overrides.
+
+Do not create duplicate/conflicting records within the SAME:
+
+school + academic_session + class + section + student
+
+unless the existing business model explicitly requires multiple override records.
+
+==================================================
+EXAM CONTROLLER FRONTEND
+========================
+
+Inspect:
+
+client/src/pages/admin-modules/exam-controller.tsx
+
+Ensure the frontend always operates against the currently selected Academic Session.
+
+The frontend must not be allowed to accidentally submit an override without the selected Session where Session is required.
+
+However:
+
+IMPORTANT:
+Frontend checks are NOT the security boundary.
+
+The backend must enforce the school + Academic Session boundary independently.
+
+==================================================
+WEB REGRESSION SAFETY
+=====================
+
+Do not break the existing web application.
+
+Existing workflows that should continue working:
+
+* Admin login
+* Teacher login
+* Student login
+* School configuration
+* Examination
+* Attendance
+* Timetable
+* Student examination results
+* Admin Exam Controller
+* Promotion review
+* Promotion execution
+* Academic history
+
+Run the existing validation commands:
+
+npm run check
+npm test
+npm run build
+
+If tests fail because of unrelated pre-existing problems, clearly distinguish them from failures caused by your changes.
+
+==================================================
+IST REQUIREMENT
+===============
+
+Do not introduce any new application-facing timezone behavior.
+
+Continue using:
+
+Asia/Kolkata / IST
+
+for application/business/display timestamps.
+
+Do not change database UTC storage policy unless there is a separate explicit requirement.
+
+==================================================
+MULTI-TENANT REQUIREMENT
+========================
+
+This requirement is permanent.
+
+Every school-scoped operation must remain constrained to the authenticated school/tenant.
+
+Never:
+
+* trust client-supplied school ID as authority
+* allow cross-school reads
+* allow cross-school writes
+* allow cross-school calculations
+* allow cross-school promotion operations
+* allow cross-school Exam Controller access
+
+==================================================
+IMPLEMENTATION PROCESS
+======================
+
+Before editing:
+
+1. Search the complete repository.
+2. Identify all affected code paths.
+3. Explain the proposed minimal change.
+4. Then implement it.
+
+After implementation:
+
+1. Run tests/type checks/build.
+2. Verify migration correctness.
+3. Verify tenant isolation.
+4. Verify Academic Session isolation.
+5. Verify new Session freshness.
+6. Verify historical Session access.
+7. Verify Exam Controller override creation/read/update/delete/execution.
+8. Verify existing web workflows.
+
+Do NOT proceed to mobile development after this step.
+
+==================================================
+FINAL REPORT
+============
+
+When finished, provide me with:
+
+1. Files changed
+2. Database/schema changes
+3. Migration name
+4. API changes
+5. Authorization changes
+6. Exam Controller Session-isolation changes
+7. Tests added
+8. Test results
+9. Build result
+10. Any unresolved issues
+11. Any existing records that require manual review
+
+Most importantly:
+
+DO NOT create the mobile application in this step.
