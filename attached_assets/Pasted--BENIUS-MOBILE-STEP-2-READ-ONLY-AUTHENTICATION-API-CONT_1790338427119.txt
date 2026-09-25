@@ -1,0 +1,776 @@
+# BENIUS MOBILE — STEP 2
+
+## READ-ONLY AUTHENTICATION & API CONTRACT AUDIT
+
+We are continuing development of the existing BENIUS school management application.
+
+IMPORTANT CONTEXT:
+
+Step 1 of the BENIUS native mobile application has already been completed successfully.
+
+The native mobile application exists at:
+
+`artifacts/benius-mobile/`
+
+It is an Expo + React Native + TypeScript application.
+
+Step 1 created the mobile foundation, including:
+
+* Expo Router
+* React Native foundation
+* TanStack Query
+* Secure session storage foundation
+* Network state handling
+* Academic Session context
+* Auth context foundation
+* Role-aware navigation placeholders
+* Student / Teacher / Admin home placeholders
+* Central mobile API layer
+* IST / Asia/Kolkata date helpers
+* Error and network handling
+* Safe mobile project structure
+
+The existing BENIUS web application is still the primary working application.
+
+The current backend uses Express + PostgreSQL + Drizzle and browser-based Express sessions.
+
+Step 1 intentionally DID NOT implement real mobile authentication.
+
+The current mobile login screen explicitly indicates that sign-in is not yet available.
+
+---
+
+## PRIMARY OBJECTIVE
+
+---
+
+Perform a COMPLETE READ-ONLY AUDIT of the existing BENIUS authentication and session architecture specifically to determine how native mobile authentication should safely work.
+
+DO NOT implement anything in this step.
+
+DO NOT modify application code.
+
+DO NOT modify database schema.
+
+DO NOT modify routes.
+
+DO NOT modify authentication.
+
+DO NOT modify `.replit`.
+
+DO NOT modify package files.
+
+DO NOT modify environment variables.
+
+DO NOT install dependencies.
+
+DO NOT create database migrations.
+
+DO NOT create new API endpoints.
+
+DO NOT change the existing web application.
+
+DO NOT change the mobile application.
+
+This is an inspection and architecture-analysis step only.
+
+---
+
+## NON-NEGOTIABLE BENIUS REQUIREMENTS
+
+---
+
+These requirements must remain true throughout the audit and all future mobile development.
+
+### 1. MULTI-TENANT / MULTI-SCHOOL ISOLATION
+
+BENIUS is permanently multi-tenant / multi-school.
+
+Every authenticated mobile operation must remain bound to the authenticated school/tenant.
+
+A mobile client must NEVER be able to:
+
+* switch to another school by changing an ID
+* read another school's students
+* read another school's teachers
+* read another school's attendance
+* read another school's examination data
+* read another school's fees
+* read another school's timetable
+* read another school's policies
+* read another school's academic sessions
+* read another school's administrative data
+
+Do not weaken or bypass existing school authorization.
+
+Do not propose client-controlled school IDs as an authorization mechanism.
+
+The backend must remain the source of truth for school identity.
+
+### 2. ACADEMIC SESSION ISOLATION
+
+BENIUS uses Academic Sessions.
+
+Academic Session ID must remain explicitly respected by all session-sensitive operations.
+
+Especially remember the strict requirement for:
+
+Admin → Exam Controller
+
+Every Exam Controller operation must remain scoped to:
+
+* authenticated school/tenant
+* selected Academic Session ID
+
+A new Academic Session must have a fresh and isolated Exam Controller context.
+
+Previous-session operational data must not leak into a new session.
+
+Do not propose authentication changes that bypass Academic Session handling.
+
+### 3. IST
+
+Application/business/display time must use:
+
+`Asia/Kolkata`
+
+Do not introduce browser/device timezone behavior for BENIUS business dates or displayed application timestamps.
+
+### 4. WEB APPLICATION MUST KEEP WORKING
+
+The existing web application must continue using its current authentication mechanism unless a future implementation plan explicitly provides backward-compatible changes.
+
+Do not replace the web authentication system during this audit.
+
+---
+
+# PART 1 — FIND THE EXISTING AUTHENTICATION FLOWS
+
+---
+
+Inspect the actual BENIUS source code.
+
+Identify every authentication/login flow currently implemented.
+
+At minimum investigate:
+
+### ADMIN
+
+Find:
+
+* admin login endpoint
+* admin authentication logic
+* admin PIN/password flow
+* PIN challenge flow
+* session creation
+* session fields
+* authentication middleware
+* logout
+* session expiration
+* current-user/admin identity retrieval
+
+### TEACHER
+
+Find:
+
+* teacher login endpoint
+* teacher credential validation
+* teacher session creation
+* teacher session fields
+* teacher authorization checks
+* logout
+* current-user/teacher identity retrieval
+
+### STUDENT
+
+Find:
+
+* student login endpoint
+* DSID/password or equivalent credential validation
+* student session creation
+* student session fields
+* school binding
+* academic session handling
+* logout
+* current-user/student identity retrieval
+
+### SUPPORT / OTHER ROLES
+
+Inspect whether BENIUS has any additional authenticated roles.
+
+Identify:
+
+* role
+* login flow
+* session fields
+* authorization mechanism
+
+Do not assume the three roles above are the only roles.
+
+---
+
+# PART 2 — MAP THE CURRENT SESSION ARCHITECTURE
+
+---
+
+Inspect the actual implementation and document:
+
+* Express session configuration
+* session store
+* session cookie configuration
+* cookie name
+* HTTP-only behavior
+* Secure behavior
+* SameSite behavior
+* session secret handling
+* session expiration/maxAge
+* session regeneration
+* logout/session destruction
+* session persistence
+* relevant PostgreSQL session tables
+* relevant middleware
+* authentication helper functions
+* authorization helper functions
+
+Identify exactly which session properties are currently used for:
+
+* admin identity
+* teacher identity
+* student identity
+* support identity
+* role
+* schoolId
+* studentId
+* teacherId
+* adminId
+* selected academic session
+* other security-sensitive state
+
+Do not make assumptions.
+
+Report exact file paths and relevant function/route names.
+
+---
+
+# PART 3 — INSPECT THE ACTUAL LOGIN API CONTRACTS
+
+---
+
+For every login endpoint found, document:
+
+* HTTP method
+* exact route
+* request body
+* required fields
+* validation
+* authentication logic
+* response body
+* HTTP status codes
+* session changes
+* cookies returned
+* error responses
+* rate limiting, if any
+* lockout behavior, if any
+* PIN challenge behavior, if any
+
+Also identify:
+
+* logout endpoints
+* current authenticated user endpoints
+* session validation endpoints
+* password/PIN change endpoints
+* password reset endpoints
+* account recovery endpoints
+
+Only report what actually exists.
+
+Do not invent routes.
+
+---
+
+# PART 4 — DETERMINE WHETHER CURRENT AUTH WORKS FOR NATIVE MOBILE
+
+---
+
+Analyze the existing browser-session architecture from the perspective of:
+
+React Native / Expo mobile clients.
+
+Specifically determine whether the current mobile application can safely use:
+
+1. browser-style session cookies
+2. HTTP-only cookies
+3. SecureStore
+4. native token authentication
+5. access-token + refresh-token authentication
+6. another existing mechanism, if one already exists
+
+For each option explain:
+
+* whether BENIUS already supports it
+* what changes would be required
+* whether it affects the existing web application
+* security implications
+* logout/revocation implications
+* multi-device implications
+* session expiration implications
+* how school/tenant identity would remain server-controlled
+
+Do NOT implement any option.
+
+---
+
+# PART 5 — CHECK CORS / ORIGIN / COOKIE REQUIREMENTS
+
+---
+
+Inspect the backend for:
+
+* CORS configuration
+* origin restrictions
+* credentials configuration
+* cookie settings
+* proxy configuration
+* HTTPS assumptions
+* mobile request compatibility
+* API base URL assumptions
+
+Determine whether the existing API can be called by a native Expo application.
+
+Important:
+
+Do not simply say "CORS is not needed for native apps."
+
+Analyze the actual BENIUS implementation and explain what matters for:
+
+* Expo development
+* Android
+* iOS
+* production mobile builds
+
+---
+
+# PART 6 — INSPECT THE MOBILE API FOUNDATION
+
+---
+
+Inspect:
+
+`artifacts/benius-mobile/`
+
+Especially:
+
+* `lib/api.ts`
+* `lib/secure-session.ts`
+* `contexts/AuthContext.tsx`
+* `contexts/SessionContext.tsx`
+* `components/Authenticated.tsx`
+* routing/layout files
+* relevant configuration
+
+Determine:
+
+* how authentication is currently represented
+* whether credentials are currently stored
+* whether fake authentication exists
+* whether role information is trusted from the client
+* whether school identity is trusted from the client
+* how API errors are handled
+* how authentication expiration could be handled
+* how SecureStore is intended to be used
+
+IMPORTANT:
+
+Do not add fake authentication.
+
+Do not create demo credentials.
+
+Do not store passwords.
+
+Do not store PINs.
+
+Do not store authentication secrets in AsyncStorage.
+
+Do not make the client authoritative for role or school.
+
+---
+
+# PART 7 — TRACE AUTHENTICATION THROUGH THE BACKEND
+
+---
+
+Trace the complete flow:
+
+LOGIN
+→ credential verification
+→ session/token creation
+→ school binding
+→ role determination
+→ authenticated API request
+→ authorization
+→ logout
+→ session/token invalidation
+
+Do this separately for:
+
+* Admin
+* Teacher
+* Student
+* other authenticated roles, if present
+
+Show the actual files/functions involved.
+
+Where useful, provide a compact flow such as:
+
+Mobile Login
+→ Backend Route
+→ Credential Validation
+→ Session/Token Creation
+→ Authenticated Request
+→ School Authorization
+→ Role Authorization
+→ API Response
+
+But base it on actual BENIUS code.
+
+---
+
+# PART 8 — IDENTIFY MOBILE-SPECIFIC AUTH RISKS
+
+---
+
+Identify any risks that would matter specifically when adding native mobile authentication.
+
+Examples to investigate:
+
+* session fixation
+* session regeneration
+* credential exposure
+* token exposure
+* insecure local storage
+* long-lived authentication
+* missing logout invalidation
+* device/session revocation
+* refresh-token rotation
+* replay risk
+* weak client-side role checks
+* client-controlled school IDs
+* cross-school access
+* Academic Session confusion
+* expired sessions
+* concurrent mobile sessions
+* password/PIN exposure in logs
+* authentication data appearing in API logs
+* insecure HTTP
+* development-vs-production URL handling
+
+Do not fix these risks yet.
+
+Classify each as:
+
+* Existing behavior
+* Potential concern
+* Confirmed issue
+* Requires product decision
+
+Only classify something as a confirmed issue when the code clearly demonstrates it.
+
+---
+
+# PART 9 — CHECK CURRENT API RESPONSE CONSISTENCY
+
+---
+
+Inspect representative authenticated APIs and determine whether they consistently return:
+
+* authentication errors
+* authorization errors
+* validation errors
+* not-found errors
+* server errors
+
+Identify current patterns such as:
+
+* HTTP 401
+* HTTP 403
+* HTTP 404
+* HTTP 422
+* HTTP 500
+
+Determine whether a native mobile client can reliably distinguish:
+
+* unauthenticated
+* unauthorized
+* invalid request
+* expired session
+* server failure
+* network failure
+
+Do not standardize or modify the API yet.
+
+---
+
+# PART 10 — CHECK ACADEMIC SESSION AUTHENTICATION INTERACTION
+
+---
+
+Inspect how the existing web application handles:
+
+* `x-view-session-id`
+* Academic Session selection
+* sessionStorage
+* active Academic Session
+* authenticated school
+* student session
+* teacher session
+* admin session
+
+Determine how the mobile application should conceptually handle:
+
+AUTHENTICATED SCHOOL
++
+AVAILABLE ACADEMIC SESSIONS
++
+SELECTED ACADEMIC SESSION
+
+without allowing the mobile client to use an Academic Session belonging to another school.
+
+Again:
+
+DO NOT IMPLEMENT THIS.
+
+Only analyze and recommend the contract.
+
+---
+
+# PART 11 — DESIGN THE FUTURE MOBILE AUTH CONTRACT
+
+---
+
+Based ONLY on the actual BENIUS code you inspected, recommend the minimum safe architecture for native mobile authentication.
+
+The recommendation must address:
+
+### Authentication
+
+How mobile credentials should be submitted.
+
+### Session/token
+
+Whether mobile should use:
+
+* existing session cookies
+* a dedicated mobile session
+* access token
+* refresh token
+* another mechanism
+
+If recommending a new mechanism, explain exactly why it is necessary.
+
+### Secure storage
+
+Specify what should and should not be stored on the device.
+
+For example:
+
+Allowed candidates:
+
+* short-lived access credential
+* refresh credential, if implemented
+* minimal non-sensitive session metadata
+
+Never store:
+
+* password
+* PIN
+* database credentials
+* school authorization secrets
+
+### School identity
+
+Explain how schoolId should be established and verified by the backend.
+
+### Role
+
+Explain how role should be established and verified by the backend.
+
+### Academic Session
+
+Explain how available sessions and selected session should be handled.
+
+### Logout
+
+Explain how mobile logout should invalidate the authentication state.
+
+### Expiration
+
+Explain how expired authentication should be detected and handled.
+
+### Multiple devices
+
+Explain whether the proposed architecture supports multiple mobile devices safely.
+
+### Web compatibility
+
+Explain how the mobile authentication contract can coexist with the current web session architecture without breaking the web application.
+
+---
+
+# PART 12 — MINIMAL FUTURE IMPLEMENTATION PLAN
+
+---
+
+After the audit, provide a future implementation plan in small safe stages.
+
+For example:
+
+Phase A
+Backend authentication contract
+
+Phase B
+Mobile login
+
+Phase C
+Secure credential/session storage
+
+Phase D
+Authenticated API client
+
+Phase E
+Logout/session expiry
+
+Phase F
+Role-based navigation
+
+Phase G
+Academic Session selection
+
+But adjust the stages according to the actual BENIUS code.
+
+Do not implement these phases now.
+
+---
+
+# PART 13 — FILE CHANGE PLAN
+
+---
+
+At the end, provide two separate lists.
+
+### EXISTING FILES THAT WOULD LIKELY NEED CHANGES LATER
+
+Give exact paths.
+
+### NEW FILES THAT WOULD LIKELY BE NEEDED LATER
+
+Give exact paths and their purpose.
+
+Do not create them now.
+
+---
+
+# PART 14 — WEB SAFETY CHECK
+
+---
+
+Explicitly verify that this audit caused:
+
+* no web UI changes
+* no backend code changes
+* no database changes
+* no migration changes
+* no authentication changes
+* no mobile runtime behavior changes
+
+If Replit automatically modifies anything during inspection, report exactly what changed.
+
+---
+
+# FINAL REPORT FORMAT
+
+---
+
+Return a structured report with these sections:
+
+1. EXECUTIVE SUMMARY
+
+2. EXISTING AUTHENTICATION FLOWS
+
+3. ADMIN AUTHENTICATION
+
+4. TEACHER AUTHENTICATION
+
+5. STUDENT AUTHENTICATION
+
+6. OTHER ROLES
+
+7. SESSION ARCHITECTURE
+
+8. CURRENT LOGIN API CONTRACTS
+
+9. LOGOUT / SESSION INVALIDATION
+
+10. CORS / COOKIE / NATIVE MOBILE COMPATIBILITY
+
+11. MOBILE AUTH FOUNDATION AUDIT
+
+12. ACADEMIC SESSION INTERACTION
+
+13. MULTI-TENANT / SCHOOL ISOLATION CONSIDERATIONS
+
+14. MOBILE-SPECIFIC AUTH RISKS
+
+15. API ERROR/STATUS BEHAVIOR
+
+16. RECOMMENDED MOBILE AUTH CONTRACT
+
+17. MINIMUM FUTURE IMPLEMENTATION PLAN
+
+18. FILES THAT WOULD NEED CHANGES LATER
+
+19. FILES THAT WOULD NEED TO BE CREATED LATER
+
+20. WHAT WAS NOT CHANGED
+
+21. OPEN QUESTIONS / PRODUCT DECISIONS
+
+For every important technical finding, include:
+
+* exact file path
+* route/function/component name
+* what the code currently does
+* why it matters for mobile
+
+Do not provide generic recommendations disconnected from the actual BENIUS code.
+
+---
+
+# ABSOLUTE STOP CONDITION
+
+---
+
+STOP after completing the audit and report.
+
+DO NOT implement authentication.
+
+DO NOT modify the existing web application.
+
+DO NOT modify the backend.
+
+DO NOT modify the database.
+
+DO NOT modify the mobile application.
+
+DO NOT create endpoints.
+
+DO NOT create migrations.
+
+DO NOT install packages.
+
+DO NOT commit changes.
+
+This Step 2 is READ-ONLY architecture discovery.
+
+Wait for my review before making any implementation changes.
+
+# END — BENIUS MOBILE STEP 2
