@@ -1,0 +1,587 @@
+# BENIUS MOBILE — STEP 4 COMPLETION VERIFICATION
+
+## Signed-In Authentication + Academic Session + Tenant Isolation + UI Fidelity Verification
+
+The previous Step 4 run only verified that the development environment, database, API, web preview, and Expo preview start successfully.
+
+It explicitly reported:
+
+* No school records exist in the fresh development database.
+* No signed-in mobile flow was tested.
+
+Therefore, DO NOT mark Step 4 complete yet.
+
+This task is a VERIFICATION AND COMPLETION PASS for Step 4.
+
+Do not begin Step 5.
+
+Do not implement the full Student/Teacher/Admin mobile modules.
+
+Do not redesign the application.
+
+---
+
+# 1. FIRST: INSPECT WHAT STEP 4 ACTUALLY IMPLEMENTED
+
+Before changing anything, inspect the current repository and determine whether the previous Step 4 work actually implemented:
+
+* Mobile authentication integration
+* Mobile bearer authentication
+* Refresh handling
+* Concurrent 401 handling
+* Academic Session context
+* Academic Session persistence
+* Academic Session selector foundation
+* Session-aware query keys
+* Session header/context
+* Tenant ownership validation
+* Role isolation
+* Logout cleanup
+* UI-fidelity foundation
+
+Do not assume these were implemented merely because the previous run said the application starts.
+
+Report actual files and implementation details.
+
+---
+
+# 2. CREATE ONLY MINIMAL DEVELOPMENT TEST DATA IF REQUIRED
+
+The fresh development database currently contains no school records.
+
+For verification purposes only, determine whether safe development seed/test data can be created.
+
+If required, create the MINIMUM disposable development-only test data necessary to exercise:
+
+* One school/tenant
+* One valid Admin
+* One valid Teacher
+* One valid Student
+* At least two Academic Sessions belonging to the same school
+* If required by the existing authentication implementation, the minimum related records needed for those accounts to authenticate
+
+IMPORTANT:
+
+* Development database only.
+* Do not modify production.
+* Do not alter existing real data.
+* Do not create fake credentials that bypass authentication.
+* Do not weaken authentication to make testing easier.
+* Do not add test bypasses to production code.
+* Do not hardcode credentials into the application.
+* Clearly document any development seed data created.
+
+If creating valid authentication test users is impossible without knowing existing credential requirements, stop and explain exactly what is missing rather than weakening authentication.
+
+---
+
+# 3. ACTUALLY TEST MOBILE LOGIN
+
+Use the actual mobile application and backend integration.
+
+Verify the real flow for each supported role.
+
+At minimum test the role(s) supported by the Step 3 mobile authentication implementation.
+
+Verify:
+
+LOGIN
+↓
+server authentication
+↓
+mobile access credential
+↓
+mobile refresh credential
+↓
+SecureStore
+↓
+authenticated application state
+
+Do not merely inspect source code.
+
+Perform an actual signed-in development test wherever technically possible.
+
+---
+
+# 4. TEST /api/mobile/auth/me
+
+After login:
+
+Call:
+
+GET /api/mobile/auth/me
+
+Verify that the server derives the authenticated identity from the mobile credential.
+
+Confirm the response contains the correct:
+
+* Principal
+* Role
+* School/Tenant
+* Allowed modules/permissions where applicable
+
+Confirm that these values are NOT simply trusted from client-supplied values.
+
+---
+
+# 5. TEST ACCESS CREDENTIAL EXPIRATION
+
+Verify the actual access credential lifecycle.
+
+If safely testable in development:
+
+* Use an expired/invalid access credential.
+* Confirm the API rejects it.
+* Confirm the mobile client attempts the proper refresh flow.
+* Confirm it does not repeatedly retry forever.
+
+Do not weaken production expiration settings merely for testing.
+
+---
+
+# 6. TEST REFRESH ROTATION
+
+Perform a real refresh flow.
+
+Verify:
+
+Old refresh credential
+↓
+refresh endpoint
+↓
+new access credential
++
+new refresh credential
+
+Confirm the old refresh credential cannot simply be reused after successful rotation.
+
+Confirm refresh credentials are stored hashed server-side.
+
+---
+
+# 7. TEST CONCURRENT 401 HANDLING
+
+Verify the mobile API client behavior when multiple requests encounter an expired access credential at approximately the same time.
+
+Expected architecture:
+
+Request A → 401
+Request B → 401
+Request C → 401
+
+```
+             ↓
+
+     ONE refresh operation
+
+             ↓
+
+   new access credential
+
+             ↓
+
+   retry eligible requests
+```
+
+Confirm there is no refresh storm.
+
+Confirm rotated refresh credentials are not accidentally reused.
+
+---
+
+# 8. TEST LOGOUT
+
+Perform actual mobile logout.
+
+After logout verify:
+
+* Access credential is removed.
+* Refresh credential is removed.
+* Authenticated user state is removed.
+* Selected Academic Session is removed.
+* Session-sensitive cache is cleared.
+* Protected endpoints are no longer accessible using the revoked credential.
+* Application returns to the correct authentication state.
+
+---
+
+# 9. VERIFY ACADEMIC SESSION APIs
+
+Inspect and actually call the correct existing role-specific Academic Session endpoints.
+
+Known routes include:
+
+GET /api/admin/academic-sessions
+
+GET /api/teacher/academic-sessions
+
+GET /api/student/academic-sessions
+
+Verify the actual route behavior rather than assuming these are interchangeable.
+
+For each supported role document:
+
+* Exact endpoint
+* Authentication requirement
+* Response shape
+* Available sessions
+* Active session behavior
+* Archived session behavior
+* Future session behavior
+* Any role-specific restrictions
+
+---
+
+# 10. TEST SESSION OWNERSHIP
+
+This is mandatory.
+
+Create/use two schools only if necessary for a development isolation test:
+
+School A
+School B
+
+Then verify:
+
+School A authenticated user
+MUST NOT be able to select/access
+School B Academic Session.
+
+Test both:
+
+* Normal session retrieval
+* Direct attempt to reference another school's session ID
+
+The backend must reject unauthorized cross-school session access.
+
+Do not rely solely on mobile UI restrictions.
+
+---
+
+# 11. TEST SESSION PERSISTENCE
+
+Perform an actual mobile flow:
+
+1. Sign in.
+2. Load available Academic Sessions.
+3. Select Session A.
+4. Navigate away.
+5. Remount relevant screens/providers.
+6. Confirm Session A remains selected.
+7. Restart/reload the mobile application if the environment allows.
+8. Confirm the saved session is restored only after server validation.
+
+Specifically verify that the previously identified cleanup bug in:
+
+artifacts/benius-mobile/contexts/SessionContext.tsx
+
+is actually fixed.
+
+Do not simply report that the code "looks correct."
+
+---
+
+# 12. TEST INVALID SAVED SESSION
+
+Store/select an Academic Session ID that is:
+
+* Invalid, OR
+* No longer authorized, OR
+* Belongs to another school
+
+Then restore the application.
+
+Expected behavior:
+
+The application MUST NOT operate under that session.
+
+It must validate the session against server-authoritative available sessions and select an appropriate valid session or require selection according to existing BENIUS rules.
+
+---
+
+# 13. TEST SESSION SWITCHING
+
+Perform:
+
+Session A selected
+↓
+load session-sensitive context
+↓
+switch to Session B
+↓
+verify Session B becomes active
+
+Confirm:
+
+* Selected session changes.
+* Persistence changes.
+* API context changes.
+* Session-sensitive queries invalidate/refetch.
+* Session A cached data cannot incorrectly appear under Session B.
+* Tenant identity remains unchanged.
+
+---
+
+# 14. VERIFY TANSTACK QUERY CACHE ISOLATION
+
+Inspect actual query keys.
+
+Any Academic Session-sensitive query must include sufficient identity to prevent accidental reuse between:
+
+* Different Academic Sessions
+* Different authenticated users
+* Different schools/tenants where applicable
+
+Do not claim this is complete merely because SessionContext exists.
+
+Show representative actual query keys from the codebase.
+
+---
+
+# 15. VERIFY FINAL SESSION HEADER/CONTEXT MECHANISM
+
+Inspect the existing web convention:
+
+x-view-session-id
+
+Determine what the mobile application actually sends.
+
+Do not assume that:
+
+X-Academic-Session-Id
+
+is supported.
+
+Document:
+
+* Exact header/context name
+* Mobile API client implementation
+* Backend consumer
+* Validation path
+* School ownership validation
+* Missing-session behavior
+* Invalid-session behavior
+
+If the existing backend already supports `x-view-session-id` correctly, prefer reuse rather than inventing an unnecessary second mechanism.
+
+---
+
+# 16. VERIFY ROLE ISOLATION
+
+Using real development authentication, verify that:
+
+Admin → receives Admin identity
+
+Teacher → receives Teacher identity
+
+Student → receives Student identity
+
+Support Staff → receives Support Staff identity, if supported
+
+Confirm a client cannot simply modify:
+
+role
+schoolId
+userId
+studentId
+teacherId
+
+and become another principal.
+
+The server must remain authoritative.
+
+---
+
+# 17. VERIFY UI FIDELITY REQUIREMENT
+
+This is now a permanent BENIUS Mobile requirement.
+
+Inspect the existing BENIUS web application.
+
+The existing web application's actual mobile/responsive appearance is the VISUAL AND INTERACTION SOURCE OF TRUTH.
+
+Verify that Step 4 has not introduced a separate mobile design language.
+
+Inspect and document the actual existing web patterns for:
+
+* Navigation
+* Buttons
+* Inputs
+* Cards
+* Tables
+* Tabs
+* Dialogs
+* Toasts
+* Alerts
+* Badges
+* Typography
+* Spacing
+* Colors
+* Icons
+* Loading states
+* Empty states
+* Error states
+
+The purpose of Step 4 is NOT to implement every mobile screen.
+
+However, the architecture must make future native reproduction of these existing web patterns possible.
+
+The mobile application must remain:
+
+NATIVE REACT NATIVE / EXPO
+
+Do NOT use WebView as a shortcut.
+
+Document any actual UI-fidelity foundation already created.
+
+If none exists yet, implement only the minimum reusable foundation required for future faithful reproduction.
+
+Do not redesign BENIUS.
+
+---
+
+# 18. IST VERIFICATION
+
+Verify that mobile date/time helpers use:
+
+Asia/Kolkata
+
+and that the mobile session foundation does not introduce browser/device-local timezone behavior for BENIUS business/display timestamps.
+
+Inspect the existing shared IST utilities where relevant.
+
+Do not create a competing timezone implementation.
+
+---
+
+# 19. TEST WEB REGRESSION
+
+After all changes:
+
+Verify that the existing BENIUS web application still:
+
+* Builds
+* Starts
+* Serves the application
+* Reaches `/api/healthz`
+
+Do not alter web authentication behavior for mobile convenience.
+
+---
+
+# 20. DATABASE SAFETY
+
+If development seed data was added, report:
+
+* Exact tables
+* Number/type of records
+* Whether they are disposable test data
+
+Confirm:
+
+* Production was not modified.
+* No destructive schema changes occurred.
+* No existing application records were deleted.
+
+---
+
+# 21. FINAL REPORT MUST BE EVIDENCE-BASED
+
+Do not give a generic "everything passed" report.
+
+For every Step 4 requirement, classify it as:
+
+PASS — actually tested/verified
+
+PARTIAL — implemented but not fully tested
+
+FAIL — does not work
+
+NOT TESTABLE — explain exactly why
+
+Provide evidence such as:
+
+* Endpoint tested
+* File inspected
+* Test name
+* Test result
+* Relevant behavior
+* Exact limitation
+
+---
+
+# 22. REQUIRED FINAL REPORT STRUCTURE
+
+Return exactly these sections:
+
+## 1. Environment
+
+## 2. Development Test Data
+
+## 3. Mobile Authentication
+
+## 4. Access Credential
+
+## 5. Refresh + Rotation
+
+## 6. Concurrent 401 Handling
+
+## 7. Logout
+
+## 8. Academic Sessions
+
+## 9. Session Ownership / Tenant Isolation
+
+## 10. Session Persistence
+
+## 11. Session Switching
+
+## 12. TanStack Query Cache Isolation
+
+## 13. Final Session Header / Context
+
+## 14. Role Isolation
+
+## 15. UI Fidelity Foundation
+
+## 16. IST
+
+## 17. Database Changes
+
+## 18. Automated Tests
+
+## 19. Web Regression
+
+## 20. Mobile Validation
+
+## 21. Known Limitations
+
+## 22. Step 4 Status
+
+For "Step 4 Status", do NOT say PASS unless the core authentication and Academic Session flows were actually tested.
+
+---
+
+# 23. ABSOLUTE STOP
+
+After this verification pass:
+
+STOP.
+
+Do not begin Step 5.
+
+Do not implement full Student/Teacher/Admin modules.
+
+Do not implement Examination.
+
+Do not implement Attendance.
+
+Do not implement Timetable.
+
+Do not implement Fees.
+
+Do not implement Exam Controller.
+
+Do not redesign the UI.
+
+Wait for my next instruction.
