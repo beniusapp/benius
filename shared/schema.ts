@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, index, jsonb, check, primaryKey, foreignKey, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, unique, index, jsonb, check, primaryKey, foreignKey, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -192,7 +192,7 @@ export const students = pgTable("students", {
   aadharNumber: varchar("aadhar_number", { length: 12 }),
   email: varchar("email", { length: 255 }),
 }, (table) => [
-  uniqueIndex("students_id_school_uniq").on(table.id, table.schoolId),
+  unique("students_id_school_uniq").on(table.id, table.schoolId),
   uniqueIndex("students_attendance_identity_key_uidx").on(table.attendanceIdentityKey),
 ]);
 

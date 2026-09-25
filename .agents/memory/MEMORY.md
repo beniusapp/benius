@@ -50,3 +50,4 @@
 - [Teacher self-attendance working days](teacher-self-attendance-working-days.md) — current school-wide weekdays determine rate eligibility across Sessions; only All_School holidays override them.
 - [Attendance mutation test isolation](attendance-mutation-test-isolation.md) — shared Student/date fixtures and multiple active Sessions can mask or falsely fail guarded leave-approval regressions.
 - [Timetable session selection](timetable-session-selection.md) — selected Academic Session takes priority over active for Teacher reads and writes; never silently fall back from an invalid selection.
+- [Publish foreign-key ordering](publish-foreign-key-ordering.md) — verify the generated publish diff's order; a new parent unique constraint may be emitted after its dependent foreign key.
