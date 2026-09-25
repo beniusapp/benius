@@ -3221,14 +3221,20 @@ Thank you for your prompt attention to this matter.
 
   // ===== DAILY ATTENDANCE SUMMARY =====
   app.get("/api/attendance/daily-summary/:schoolId/:date", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    if (!Number.isInteger(schoolId) || schoolId <= 0) {
+      return res.status(400).json({ message: "Invalid school ID" });
+    }
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
     try {
-      const schoolId = parseInt(req.params.schoolId);
       const attendanceSession = await resolveAttendanceReadSession(
         schoolId,
         (req as any).viewSessionId,
       );
+      requireAttendanceDateInSession(req.params.date, attendanceSession);
       const summary = await storage.getDailyAttendanceSummary(
         schoolId, attendanceSession.id, req.params.date,
       );

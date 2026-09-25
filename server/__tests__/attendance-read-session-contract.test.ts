@@ -103,6 +103,10 @@ describe("Attendance read Session route contract", () => {
       expect(route).toContain("attendanceSession.id");
       expect(route).toContain("sendAttendanceReadSessionError(res,");
     }
+
+    expect(dailySummary).toContain('req.session.userRole !== "admin"');
+    expect(dailySummary).toContain("req.session.schoolId !== schoolId");
+    expect(dailySummary).toContain("requireAttendanceDateInSession(req.params.date, attendanceSession)");
   });
 });
 
