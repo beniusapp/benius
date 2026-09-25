@@ -1,0 +1,73 @@
+We completed Timetable Stage 1 (Database + Storage).
+
+Do NOT modify the database/schema/migration again.
+
+Before changing code, perform a READ-ONLY audit of the **27 `npm run check` errors** caused by the new required Timetable Storage signatures.
+
+### Scope
+
+Audit ONLY Timetable API/server callers.
+
+Focus on:
+
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* any other server file that directly calls the Timetable Storage methods
+
+Do NOT change:
+
+* UI files
+* Database/schema
+* migrations
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated modules
+
+### For every failing caller, report
+
+1. File + line
+2. Storage method being called
+3. What session information the route currently has
+4. Whether the route is Admin / Teacher / Student
+5. Whether the route should use:
+
+   * selected `x-view-session-id`, or
+   * another already-established session source
+6. Whether the route currently has authenticated-school validation
+7. Whether the route is a read or mutation
+8. Whether archived-session protection will be enforced by Storage after the fix
+
+### Required audit coverage
+
+Make sure you identify callers for:
+
+* Admin timetable class view
+* Admin timetable structure read
+* Admin timetable structure save/replace
+* Admin timetable batch save
+* Admin timetable delete
+* Admin timetable publish
+* Admin timetable status
+* Admin collision/slot checks
+* Teacher timetable read
+* Teacher class timetable read
+* Teacher structure read
+* Teacher slot/collision check
+* Teacher single-slot save/update/delete
+* Teacher batch save/delete
+* Student timetable read
+* Any other direct Timetable Storage caller
+
+### Important
+
+Do NOT fix anything yet.
+
+The purpose of this step is to produce an exact route-by-route implementation map so we can make the smallest safe Stage 2 change.
+
+End with:
+
+**TIMETABLE STAGE 2 — API AUDIT — READY / NOT READY**
+
+Also report whether all 27 type-check errors are explained by the Stage 1 required-session signature changes.
