@@ -101,6 +101,22 @@ export async function apiRequest(
   return res;
 }
 
+/** Mutation transport pinned to the session that owns the Timetable editor. */
+export async function apiRequestForViewSession(
+  method: string,
+  url: string,
+  data: unknown,
+  viewSessionId: number,
+): Promise<Response> {
+  const res = await sessionFetchForViewSession(url, viewSessionId, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  await throwIfResNotOk(res);
+  return res;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 
 /* ─── Default query function — underpins every useQuery() call ───────────── */

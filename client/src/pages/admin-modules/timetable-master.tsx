@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import { apiRequestForViewSession, queryClient, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props { schoolId: number; classes: string[]; sections: string[]; subjects: string[]; initialTab?: string; onNavigateTab?: (tab: string) => void; allowedSubs?: string[] }
@@ -49,9 +49,21 @@ interface StructureRow {
 
 type TabType = "schedule" | "structure" | "publish";
 
-export default function TimetableMaster({ schoolId, classes, sections, subjects, initialTab, onNavigateTab, allowedSubs }: Props) {
+export default function TimetableMaster(props: Props) {
+  const { selectedSession, sessions, isSessionsLoading } = useSessionView();
+  const session = selectedSession ?? sessions.find(s => s.isActive) ?? null;
+  if (!session) {
+    return <div className="rounded-xl border border-white/10 bg-[#1A2942] p-8 text-white/60">
+      {isSessionsLoading ? "Loading academic session…" : "No academic session available for Timetable."}
+    </div>;
+  }
+  // A new editor instance discards all local drafts, pending deletes, popovers,
+  // and dirty structure rows synchronously when the selected session changes.
+  return <TimetableSessionEditor key={session.id} {...props} sessionId={session.id} isArchiveMode={!session.isActive} />;
+}
+
+function TimetableSessionEditor({ schoolId, classes, sections, subjects, initialTab, onNavigateTab, allowedSubs, sessionId, isArchiveMode }: Props & { sessionId: number; isArchiveMode: boolean }) {
   const { toast } = useToast();
-  const { isArchiveMode } = useSessionView();
   const CLASS_LIST = classes;
   const SECTION_LIST = sections;
   const SUBJECT_LIST = subjects;
@@ -67,6 +79,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const [selectedClass, setSelectedClass] = useState("");
   const [selectedSection, setSelectedSection] = useState("");
   const [draftMap, setDraftMap] = useState<DraftMap>({});
+  const [draftSessionId, setDraftSessionId] = useState<number | null>(null);
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [popTeacher, setPopTeacher] = useState<string>("");
   const [popSubject, setPopSubject] = useState<string>("");
@@ -75,6 +88,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const [structClass, setStructClass] = useState("");
   const [structRows, setStructRows] = useState<StructureRow[]>([]);
   const [structDirty, setStructDirty] = useState(false);
+  const [structDraftSessionId, setStructDraftSessionId] = useState<number | null>(null);
 
   const { data: teachers = [] } = useQuery<{ id: number; fullName: string }[]>({
     queryKey: ["/api/schools", schoolId, "teachers"],
@@ -85,11 +99,12 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
     enabled: !!schoolId,
   });
 
-  const { data: classViewData, isLoading: gridLoading } = useQuery<{ entries: SlotEntry[]; structure: StructureRow[] }>({
-    queryKey: ["/api/timetable/class-view", selectedClass, selectedSection],
-    queryFn: async () => {
-      const r = await sessionFetch(`/api/timetable/class-view?class=${selectedClass}&section=${selectedSection}`);
-      if (!r.ok) return { entries: [], structure: [] };
+  const { data: classViewData, isLoading: gridLoading, isError: gridError, error: gridFailure } = useQuery<{ entries: SlotEntry[]; structure: StructureRow[] }>({
+    queryKey: ["/api/timetable/class-view", sessionId, selectedClass, selectedSection],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, cls, section] = queryKey as [string, number, string, string];
+      const r = await sessionFetchForViewSession(`/api/timetable/class-view?class=${encodeURIComponent(cls)}&section=${encodeURIComponent(section)}`, querySessionId, { signal });
+      if (!r.ok) throw new Error(`Timetable could not be loaded (${r.status})`);
       return r.json();
     },
     enabled: !!selectedClass && !!selectedSection,
@@ -98,11 +113,13 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   const gridStructure: StructureRow[] = classViewData?.structure ?? [];
 
   // ── Structure query ──
-  const { data: savedStructure = [], isLoading: structLoading } = useQuery<StructureRow[]>({
-    queryKey: ["/api/timetable/structure", structClass],
-    queryFn: async () => {
-      const r = await sessionFetch(`/api/timetable/structure?class=${encodeURIComponent(structClass)}`);
-      return r.ok ? r.json() : [];
+  const { data: savedStructure = [], isLoading: structLoading, isError: structError, error: structFailure } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", sessionId, structClass],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, cls] = queryKey as [string, number, string];
+      const r = await sessionFetchForViewSession(`/api/timetable/structure?class=${encodeURIComponent(cls)}`, querySessionId, { signal });
+      if (!r.ok) throw new Error(`Timetable structure could not be loaded (${r.status})`);
+      return r.json();
     },
     enabled: !!structClass,
     select: (data) => data.map((d: StructureRow, i: number) => ({ ...d, sortOrder: d.sortOrder ?? i })),
@@ -111,7 +128,9 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   // When class changes in Structure tab, reset rows to saved structure
   const handleStructClassChange = (cls: string) => {
     setStructClass(cls);
+    setStructRows([]);
     setStructDirty(false);
+    setStructDraftSessionId(null);
   };
 
   // Sync structRows when savedStructure loads
@@ -130,12 +149,14 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
     };
     setStructRows([...existing, newRow]);
     setStructDirty(true);
+    setStructDraftSessionId(sessionId);
   }
 
   function removeRow(idx: number) {
     const updated = displayStructRows.filter((_, i) => i !== idx).map((r, i) => ({ ...r, sortOrder: i }));
     setStructRows(updated);
     setStructDirty(true);
+    setStructDraftSessionId(sessionId);
   }
 
   function updateRow(idx: number, field: keyof StructureRow, value: string | number | boolean) {
@@ -143,6 +164,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
     updated[idx] = { ...updated[idx], [field]: value };
     setStructRows(updated);
     setStructDirty(true);
+    setStructDraftSessionId(sessionId);
   }
 
   function moveRow(idx: number, dir: -1 | 1) {
@@ -152,30 +174,36 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
     [arr[idx], arr[target]] = [arr[target], arr[idx]];
     setStructRows(arr.map((r, i) => ({ ...r, sortOrder: i })));
     setStructDirty(true);
+    setStructDraftSessionId(sessionId);
   }
 
   const saveStructMutation = useMutation({
-    mutationFn: async () => {
-      if (!structClass) throw new Error("Please select a class before saving.");
-      const rows = displayStructRows.map((r, i) => ({
+    mutationFn: async ({ targetSessionId, cls, rows }: { targetSessionId: number; cls: string; rows: StructureRow[] }) => {
+      const res = await apiRequestForViewSession("POST", "/api/timetable/structure", { class: cls, rows: rows.map((r, i) => ({
         periodNumber: r.periodNumber,
         label: r.label,
         startTime: r.startTime,
         endTime: r.endTime,
         isBreak: r.isBreak,
         sortOrder: i,
-      }));
-      const res = await apiRequest("POST", "/api/timetable/structure", { class: structClass, rows });
+      })) }, targetSessionId);
       const data = await res.json();
       return data as { saved: unknown[] };
     },
-    onSuccess: () => {
-      toast({ title: "Structure saved", description: `Bell schedule for Class ${structClass} has been saved.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
+    onSuccess: (_data, { targetSessionId, cls }) => {
+      toast({ title: "Structure saved", description: `Bell schedule for Class ${cls} has been saved.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       setStructDirty(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/structure", structClass] });
+      setStructDraftSessionId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/structure", targetSessionId, cls] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", targetSessionId, cls] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
+
+  function saveStructure() {
+    if (isArchiveMode || !structClass || !structDirty || structDraftSessionId !== sessionId) return;
+    saveStructMutation.mutate({ targetSessionId: sessionId, cls: structClass, rows: displayStructRows });
+  }
 
   // ── Schedule tab logic ──
   const hasDraft = Object.keys(draftMap).length > 0;
@@ -211,7 +239,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
   }
 
   function applyPopoverChange(isDelete: boolean) {
-    if (!popover) return;
+    if (!popover || isArchiveMode) return;
     const key = `${popover.day}-${popover.period}`;
     if (isDelete) {
       setDraftMap(prev => ({ ...prev, [key]: null }));
@@ -219,38 +247,45 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
       if (!popTeacher || !popSubject) return;
       setDraftMap(prev => ({ ...prev, [key]: { teacherId: parseInt(popTeacher), subject: popSubject } }));
     }
+    setDraftSessionId(sessionId);
     setPopover(null);
   }
 
   const saveMutation = useMutation({
-    mutationFn: async (): Promise<{ saved: unknown[]; errors: string[] }> => {
-      if (!selectedClass || !selectedSection) throw new Error("Please select a class and section before saving.");
-      const changes = Object.entries(draftMap).map(([key, draft]) => {
-        const [day, period] = key.split("-").map(Number);
-        if (draft === null) {
-          return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: null, subject: null, _delete: true };
-        }
-        return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: draft.teacherId, subject: draft.subject };
-      });
-      const res = await apiRequest("POST", "/api/timetable/admin/save-batch", { changes });
+    mutationFn: async ({ targetSessionId, changes }: { targetSessionId: number; cls: string; section: string; changes: unknown[] }): Promise<{ saved: unknown[]; errors: string[] }> => {
+      const res = await apiRequestForViewSession("POST", "/api/timetable/admin/save-batch", { changes }, targetSessionId);
       const data = await res.json();
       return data as { saved: unknown[]; errors: string[] };
     },
-    onSuccess: (data: { saved: unknown[]; errors: string[] }) => {
+    onSuccess: (data, { targetSessionId, cls, section }) => {
       if (data.errors && data.errors.length > 0) {
         toast({ title: "Saved with warnings", description: data.errors.join("; "), variant: "destructive" });
       } else {
-        toast({ title: "Timetable saved", description: `${data.saved?.length ?? 0} slot(s) updated for Class ${selectedClass}-${selectedSection}.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
+        toast({ title: "Timetable saved", description: `${data.saved?.length ?? 0} slot(s) updated for Class ${cls}-${section}.`, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
       }
       setDraftMap({});
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", selectedClass, selectedSection] });
+      setDraftSessionId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", targetSessionId, cls, section] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-status", targetSessionId] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
-  function discardDrafts() { setDraftMap({}); setPopover(null); }
-  function handleClassChange(val: string) { setSelectedClass(val); setDraftMap({}); setPopover(null); }
-  function handleSectionChange(val: string) { setSelectedSection(val); setDraftMap({}); setPopover(null); }
+  function saveChanges() {
+    if (isArchiveMode || !selectedClass || !selectedSection || !hasDraft || draftSessionId !== sessionId) return;
+    const changes = Object.entries(draftMap).map(([key, draft]) => {
+      const [day, period] = key.split("-").map(Number);
+      if (draft === null) {
+        return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: null, subject: null, _delete: true };
+      }
+      return { dayOfWeek: day, period, class: selectedClass, section: selectedSection, teacherId: draft.teacherId, subject: draft.subject };
+    });
+    saveMutation.mutate({ targetSessionId: sessionId, cls: selectedClass, section: selectedSection, changes });
+  }
+
+  function discardDrafts() { setDraftMap({}); setDraftSessionId(null); setPopover(null); }
+  function handleClassChange(val: string) { setSelectedClass(val); discardDrafts(); }
+  function handleSectionChange(val: string) { setSelectedSection(val); discardDrafts(); }
 
   if (!hasConfig) {
     return (
@@ -343,7 +378,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                 <button onClick={discardDrafts} className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-discard-changes">
                   <X className="w-4 h-4" /> Discard
                 </button>
-                <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-save-changes">
+                <button onClick={saveChanges} disabled={saveMutation.isPending || isArchiveMode} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-save-changes">
                   {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   Save Changes
                 </button>
@@ -365,6 +400,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
             </div>
           ) : gridLoading ? (
             <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
+          ) : gridError ? (
+            <p role="alert" className="text-sm text-red-400">{gridFailure?.message ?? "Timetable could not be loaded."}</p>
           ) : gridStructure.length === 0 ? (
             <div className="rounded-xl border border-blue-500/20 bg-blue-900/10 p-10 text-center space-y-3">
               <Settings className="w-8 h-8 text-blue-400/50 mx-auto" />
@@ -421,7 +458,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                         const key = `${dayIdx}-${p}`;
                         const isPopoverOpen = popover?.day === dayIdx && popover?.period === p;
                         return (
-                          <td key={dayIdx} className="border-b border-r border-white/10 relative p-1 min-w-[110px]" onClick={e => { e.stopPropagation(); openPopover(dayIdx, p); }}>
+                          <td key={dayIdx} className="border-b border-r border-white/10 relative p-1 min-w-[110px]" onClick={e => { e.stopPropagation(); if (!isArchiveMode) openPopover(dayIdx, p); }}>
                             <div className={`rounded-lg p-2 min-h-[54px] flex flex-col justify-center cursor-pointer transition-colors ${
                               slot?.isDelete ? "bg-red-900/20 border border-red-500/30"
                               : slot?.isDraft ? "bg-amber-900/20 border border-amber-500/40"
@@ -463,11 +500,11 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                                 </div>
                                 <div className="flex gap-2 pt-1">
                                   {(slot || (key in draftMap && draftMap[key] !== null)) && (
-                                    <button onClick={() => applyPopoverChange(true)} className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1" data-testid={`button-pop-delete-${dayIdx}-${p}`}>
+                                    <button onClick={() => applyPopoverChange(true)} disabled={isArchiveMode} className="h-11 px-3 rounded-lg border border-red-500/40 text-red-400 hover:bg-red-900/20 text-xs font-semibold flex items-center gap-1" data-testid={`button-pop-delete-${dayIdx}-${p}`}>
                                       <Trash2 className="w-3 h-3" /> Clear
                                     </button>
                                   )}
-                                  <button onClick={() => applyPopoverChange(false)} disabled={!popTeacher || !popSubject} className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1" data-testid={`button-pop-apply-${dayIdx}-${p}`}>
+                                  <button onClick={() => applyPopoverChange(false)} disabled={isArchiveMode || !popTeacher || !popSubject} className="flex-1 h-11 rounded-lg bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-semibold flex items-center justify-center gap-1" data-testid={`button-pop-apply-${dayIdx}-${p}`}>
                                     <Pencil className="w-3 h-3" /> Apply
                                   </button>
                                 </div>
@@ -486,7 +523,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
 
           {hasDraft && selectedClass && selectedSection && (
             <div className="sticky bottom-4 flex justify-end">
-              <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-save-changes-bottom">
+              <button onClick={saveChanges} disabled={saveMutation.isPending || isArchiveMode} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-save-changes-bottom">
                 {saveMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                 Save Changes
               </button>
@@ -512,10 +549,10 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
             </div>
             {structClass && structDirty && (
               <div className="flex gap-2 ml-auto">
-                <button onClick={() => { setStructRows(savedStructure); setStructDirty(false); }} className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-struct-discard">
+                <button onClick={() => { setStructRows(savedStructure); setStructDirty(false); setStructDraftSessionId(null); }} className="h-11 px-4 rounded-xl border border-white/20 text-white/70 hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-struct-discard">
                   <X className="w-4 h-4" /> Discard
                 </button>
-                <button onClick={() => saveStructMutation.mutate()} disabled={saveStructMutation.isPending} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-struct-save">
+                <button onClick={saveStructure} disabled={saveStructMutation.isPending || isArchiveMode} className="h-11 px-5 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-semibold text-sm flex items-center gap-2 transition-colors min-w-[130px] justify-center" data-testid="button-struct-save">
                   {saveStructMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   Save Structure
                 </button>
@@ -530,6 +567,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
             </div>
           ) : structLoading ? (
             <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>
+          ) : structError ? (
+            <p role="alert" className="text-sm text-red-400">{structFailure?.message ?? "Timetable structure could not be loaded."}</p>
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-white/40">Define the daily period schedule for Class {structClass} — teachers and students will see these times in their timetable view.</p>
@@ -546,8 +585,8 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                 <div key={idx} className={`rounded-xl border p-4 flex flex-wrap items-center gap-3 ${row.isBreak ? "bg-amber-900/10 border-amber-500/20" : "bg-[#1A2942] border-white/10"}`} data-testid={`struct-row-${idx}`}>
                   {/* Drag order buttons */}
                   <div className="flex flex-col gap-0.5">
-                    <button onClick={() => moveRow(idx, -1)} disabled={idx === 0} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▲</button>
-                    <button onClick={() => moveRow(idx, 1)} disabled={idx === displayStructRows.length - 1} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▼</button>
+                    <button onClick={() => moveRow(idx, -1)} disabled={isArchiveMode || idx === 0} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▲</button>
+                    <button onClick={() => moveRow(idx, 1)} disabled={isArchiveMode || idx === displayStructRows.length - 1} className="w-6 h-6 rounded text-white/30 hover:text-white disabled:opacity-20 text-xs flex items-center justify-center bg-white/5">▼</button>
                   </div>
 
                   {/* Break/Period badge */}
@@ -560,6 +599,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                   <div className="flex-1 min-w-[120px]">
                     <label className="block text-[10px] text-white/40 mb-0.5">Label</label>
                     <input
+                      disabled={isArchiveMode}
                       value={row.label}
                       onChange={e => updateRow(idx, "label", e.target.value)}
                       placeholder={row.isBreak ? "Lunch Break" : `Period ${row.periodNumber}`}
@@ -573,6 +613,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                     <label className="block text-[10px] text-white/40 mb-0.5">Start</label>
                     <input
                       type="time"
+                      disabled={isArchiveMode}
                       value={row.startTime}
                       onChange={e => updateRow(idx, "startTime", e.target.value)}
                       className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
@@ -585,6 +626,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                     <label className="block text-[10px] text-white/40 mb-0.5">End</label>
                     <input
                       type="time"
+                      disabled={isArchiveMode}
                       value={row.endTime}
                       onChange={e => updateRow(idx, "endTime", e.target.value)}
                       className="w-full h-9 px-2 rounded-lg bg-[#0A1628] border border-white/15 text-white text-sm focus:outline-none focus:ring-1 focus:ring-[#10b981]"
@@ -598,6 +640,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                       <label className="block text-[10px] text-white/40 mb-0.5">Period #</label>
                       <input
                         type="number"
+                      disabled={isArchiveMode}
                         min={1}
                         value={row.periodNumber}
                         onChange={e => updateRow(idx, "periodNumber", parseInt(e.target.value) || 1)}
@@ -608,7 +651,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
                   )}
 
                   {/* Delete */}
-                  <button onClick={() => removeRow(idx)} className="ml-auto flex-shrink-0 w-9 h-9 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-900/20 flex items-center justify-center transition-colors" data-testid={`button-struct-delete-${idx}`}>
+                  <button onClick={() => removeRow(idx)} disabled={isArchiveMode} className="ml-auto flex-shrink-0 w-9 h-9 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-900/20 flex items-center justify-center transition-colors" data-testid={`button-struct-delete-${idx}`}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -616,10 +659,10 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
 
               {/* Add buttons */}
               <div className="flex gap-3 pt-2">
-                <button onClick={() => addRow(false)} className="h-11 px-4 rounded-xl border border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-period">
+                <button onClick={() => addRow(false)} disabled={isArchiveMode} className="h-11 px-4 rounded-xl border border-[#10b981]/40 text-[#10b981] hover:bg-[#10b981]/10 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-period">
                   <Plus className="w-4 h-4" /> Add Period
                 </button>
-                <button onClick={() => addRow(true)} className="h-11 px-4 rounded-xl border border-amber-500/40 text-amber-400 hover:bg-amber-900/15 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-break">
+                <button onClick={() => addRow(true)} disabled={isArchiveMode} className="h-11 px-4 rounded-xl border border-amber-500/40 text-amber-400 hover:bg-amber-900/15 text-sm font-medium flex items-center gap-2 transition-colors" data-testid="button-add-break">
                   <Coffee className="w-4 h-4" /> Add Break
                 </button>
               </div>
@@ -627,7 +670,7 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
               {/* Sticky save */}
               {structDirty && (
                 <div className="sticky bottom-4 flex justify-end pt-2">
-                  <button onClick={() => saveStructMutation.mutate()} disabled={saveStructMutation.isPending} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-struct-save-bottom">
+                  <button onClick={saveStructure} disabled={saveStructMutation.isPending || isArchiveMode} className="h-12 px-6 rounded-2xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-60 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-colors" data-testid="button-struct-save-bottom">
                     {saveStructMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                     Save Structure
                   </button>
@@ -639,38 +682,35 @@ export default function TimetableMaster({ schoolId, classes, sections, subjects,
       )}
 
       {activeTab === "publish" && (
-        <PublishTab schoolId={schoolId} />
+        <PublishTab sessionId={sessionId} isArchiveMode={isArchiveMode} />
       )}
     </div>
   );
 }
 
-function PublishTab({ schoolId }: { schoolId: number }) {
+function PublishTab({ sessionId, isArchiveMode }: { sessionId: number; isArchiveMode: boolean }) {
   const { toast } = useToast();
-  const { isArchiveMode } = useSessionView();
 
-  const { data: statuses = [], isLoading, refetch } = useQuery<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]>({
-    queryKey: ["/api/timetable/class-status"],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/timetable/class-status");
-      return r.ok ? r.json() : [];
+  const { data: statuses = [], isLoading, isError, error } = useQuery<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]>({
+    queryKey: ["/api/timetable/class-status", sessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const querySessionId = queryKey[1] as number;
+      const r = await sessionFetchForViewSession("/api/timetable/class-status", querySessionId, { signal });
+      if (!r.ok) throw new Error(`Timetable status could not be loaded (${r.status})`);
+      return r.json();
     },
   });
 
   const publishMutation = useMutation({
-    mutationFn: async ({ cls, section }: { cls: string; section: string }) => {
-      const r = await fetch("/api/timetable/publish", {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ class: cls, section }),
-      });
-      if (!r.ok) throw new Error("Failed to publish");
+    mutationFn: async ({ cls, section, targetSessionId }: { cls: string; section: string; targetSessionId: number }) => {
+      if (isArchiveMode) throw new Error("Archived sessions are read-only");
+      const r = await apiRequestForViewSession("PATCH", "/api/timetable/publish", { class: cls, section }, targetSessionId);
       return r.json();
     },
-    onSuccess: (data) => {
+    onSuccess: (data, { targetSessionId }) => {
       toast({ title: "Published", description: data.message, className: "border-emerald-500 bg-emerald-900/30 text-emerald-100" });
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-status", targetSessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", targetSessionId] });
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to publish timetable", variant: "destructive" });
@@ -678,6 +718,7 @@ function PublishTab({ schoolId }: { schoolId: number }) {
   });
 
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin text-[#D4AF37]" /></div>;
+  if (isError) return <p role="alert" className="text-sm text-red-400">{error?.message ?? "Timetable status could not be loaded."}</p>;
 
   if (statuses.length === 0) {
     return (
@@ -718,7 +759,7 @@ function PublishTab({ schoolId }: { schoolId: number }) {
               </div>
               {hasUnpublished && (
                 <button
-                  onClick={() => publishMutation.mutate({ cls: s.class, section: s.section })}
+                  onClick={() => publishMutation.mutate({ cls: s.class, section: s.section, targetSessionId: sessionId })}
                   disabled={publishMutation.isPending || isArchiveMode}
                   className="w-full h-10 rounded-lg bg-[#D4AF37] hover:bg-[#c9a632] disabled:opacity-60 text-[#0A1628] font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
                   data-testid={`button-publish-${s.class}-${s.section}`}
