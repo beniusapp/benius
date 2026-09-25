@@ -1,0 +1,487 @@
+# BENIUS MOBILE — STEP 4B
+
+## Close Remaining Foundation Gaps
+
+Step 4 verification was completed and correctly reported as PARTIAL.
+
+Do NOT start Step 5.
+
+Do NOT build the full Student, Teacher, Admin, Attendance, Examination, Timetable, Fees, Reports, or other application modules.
+
+Do NOT redesign BENIUS.
+
+This is a focused Step 4 completion/foundation pass.
+
+---
+
+# 1. IMPORTANT CONTEXT
+
+The previous verification established that the following backend behavior is working:
+
+* Mobile authentication
+* Admin PIN challenge
+* Server-derived principal identity
+* School/tenant binding
+* Refresh-token rotation
+* Refresh-token reuse rejection
+* Logout revocation
+* Academic Session API
+* Academic Session ownership validation
+* Cross-school session rejection
+* `x-view-session-id`
+* IST helpers
+* Role isolation for tested scenarios
+* Web build
+* Mobile Expo checks
+
+The remaining limitation is primarily the lack of an Android/iOS device or emulator with native SecureStore support.
+
+DO NOT fake native-device test results.
+
+DO NOT add authentication bypasses.
+
+DO NOT weaken security.
+
+DO NOT claim native runtime behavior was tested if it was not.
+
+---
+
+# 2. VERIFY MOBILE AUTH CLIENT IMPLEMENTATION
+
+Perform a detailed source-level audit of:
+
+artifacts/benius-mobile/lib/api.ts
+
+artifacts/benius-mobile/lib/secure-session.ts
+
+artifacts/benius-mobile/contexts/AuthContext.tsx
+
+Verify that the implementation correctly handles:
+
+## Login
+
+Successful login stores:
+
+* access credential
+* access expiration
+* refresh credential
+* server-derived user summary
+
+using secure native storage.
+
+Never store:
+
+* password
+* PIN
+
+in persistent storage.
+
+## Access Expiration
+
+When an access credential is expired or receives 401:
+
+* attempt refresh when appropriate
+* use one shared refresh operation
+* update stored credentials after successful rotation
+* retry the original request where safe
+
+## Concurrent Refresh
+
+Confirm the existing `refreshFlight` implementation cannot create multiple simultaneous refresh requests.
+
+Expected:
+
+401
+401
+401
+
+→ one refresh
+
+→ new credentials
+
+→ retry requests
+
+If the implementation has an actual race condition, fix it.
+
+Do not merely document it.
+
+---
+
+# 3. NATIVE-DEVICE LIMITATION MUST REMAIN EXPLICIT
+
+Do NOT claim that SecureStore was runtime-tested if no native device/emulator is available.
+
+Instead verify that:
+
+* SecureStore is the actual production storage mechanism.
+* Browser preview does not pretend to support native authentication.
+* Browser preview does not persist passwords/PINs.
+* Native Android/iOS builds will use SecureStore.
+* Auth restoration logic calls `/api/mobile/auth/me`.
+* Invalid credentials cause clean auth reset.
+
+If practical, add deterministic unit tests around the auth-state logic that do NOT pretend to replace native SecureStore testing.
+
+---
+
+# 4. STRENGTHEN ACADEMIC SESSION FOUNDATION
+
+Verify:
+
+artifacts/benius-mobile/contexts/SessionContext.tsx
+
+The following behavior must be implemented:
+
+AUTHENTICATE
+↓
+fetch server-authoritative sessions
+↓
+validate saved session
+↓
+restore valid session
+↓
+otherwise use server-authoritative default
+↓
+expose selected session to mobile API layer
+
+The selected session must be keyed/persisted by the authenticated identity context so that one user's session selection cannot accidentally appear for another user.
+
+Do not rely on only:
+
+sessionId
+
+as a global storage key.
+
+---
+
+# 5. SESSION SWITCHING
+
+Ensure the reusable SessionContext exposes a clean operation conceptually equivalent to:
+
+selectAcademicSession(sessionId)
+
+The operation must:
+
+1. Validate that the session exists in the authenticated user's server-authoritative session list.
+2. Update the selected session.
+3. Persist it safely.
+4. Ensure `x-view-session-id` is used on subsequent session-sensitive requests.
+5. Invalidate/refetch appropriate TanStack Query data.
+6. Never expose the previous session's data as the current session.
+
+Do not implement full application module queries yet.
+
+---
+
+# 6. QUERY CACHE FOUNDATION
+
+Because no full mobile modules exist yet, do not invent fake module queries.
+
+However, establish/document a clear rule for future developers:
+
+EVERY SESSION-SENSITIVE QUERY MUST INCLUDE THE SELECTED ACADEMIC SESSION ID IN ITS QUERY KEY.
+
+Example pattern only:
+
+[
+resource,
+schoolId,
+authenticatedPrincipal,
+academicSessionId,
+...
+]
+
+Use the actual project conventions.
+
+The purpose is to prevent:
+
+Session A cache
+being reused for
+Session B.
+
+Also ensure authenticated identity and tenant boundaries cannot be accidentally crossed.
+
+---
+
+# 7. UI FIDELITY — THIS IS A HARD REQUIREMENT
+
+This requirement is permanent.
+
+The existing BENIUS web application is the source of truth for the mobile UI.
+
+The native application must reproduce the existing web application's actual responsive/mobile appearance as closely as technically possible.
+
+Do NOT create a new mobile design language.
+
+Do NOT simplify screens merely because they are mobile.
+
+Do NOT replace existing BENIUS layouts with generic mobile cards.
+
+Do NOT invent different labels.
+
+Do NOT invent different navigation.
+
+Do NOT change workflows.
+
+Do NOT use WebView.
+
+The implementation must remain genuine React Native / Expo.
+
+---
+
+# 8. AUDIT THE ACTUAL WEB MOBILE UI
+
+Inspect the existing web application at mobile viewport dimensions where practical.
+
+Identify actual reusable patterns for:
+
+* App shell
+* Header
+* Navigation
+* Sidebar/drawer
+* Bottom navigation if present
+* Buttons
+* Inputs
+* Selects
+* Dropdowns
+* Cards
+* Tables
+* Tabs
+* Modals
+* Dialogs
+* Toasts
+* Alerts
+* Badges
+* Loading states
+* Empty states
+* Error states
+* Typography
+* Colors
+* Spacing
+* Icons
+* Search
+* Filters
+
+Do not assume these patterns.
+
+Inspect the actual BENIUS source code and styles.
+
+---
+
+# 9. CREATE A MOBILE UI FIDELITY MAP
+
+Create a concise internal/documented mapping such as:
+
+WEB BENIUS COMPONENT
+→ NATIVE BENIUS COMPONENT
+
+Examples:
+
+Web Button
+→ Native BENIUS Button
+
+Web Input
+→ Native BENIUS Input
+
+Web Card
+→ Native BENIUS Card
+
+Web Dialog
+→ Native BENIUS Dialog
+
+Web Toast
+→ Native BENIUS Toast
+
+Web Badge
+→ Native BENIUS Badge
+
+Web Table
+→ Native BENIUS responsive table/list equivalent
+
+Web Navigation
+→ Native BENIUS navigation equivalent
+
+This is NOT permission to redesign the components.
+
+The goal is to reproduce the existing web appearance and behavior natively.
+
+---
+
+# 10. DO NOT OVERBUILD UI IN STEP 4B
+
+Only create the reusable foundation necessary to preserve UI fidelity.
+
+Do NOT implement complete application screens.
+
+Do NOT implement:
+
+* Admin Dashboard
+* Teacher Dashboard
+* Student Dashboard
+* Attendance
+* Examination
+* Timetable
+* Fees
+* Reports
+* School Setup
+* Exam Controller
+
+Those belong to future steps.
+
+---
+
+# 11. WEB AUTH REGRESSION
+
+If practical, verify one authenticated web flow using the existing web authentication mechanism.
+
+The purpose is only regression verification.
+
+Do NOT change web authentication to accommodate mobile.
+
+Confirm:
+
+* Web login remains unchanged.
+* Web session behavior remains unchanged.
+* Existing web routes remain available.
+* Mobile bearer authentication remains separate.
+
+If authenticated browser testing is impossible in the current environment, report:
+
+NOT TESTABLE
+
+Do not fake a PASS.
+
+---
+
+# 12. ADMIN / TEACHER / STUDENT SESSION ROUTES
+
+Where practical, inspect and verify the existing web routes:
+
+GET /api/admin/academic-sessions
+
+GET /api/teacher/academic-sessions
+
+GET /api/student/academic-sessions
+
+Do not assume the mobile route is equivalent.
+
+Document whether each route has different response or authorization behavior.
+
+Do not change these routes unless a concrete mobile compatibility issue requires it.
+
+---
+
+# 13. TESTS
+
+Run all relevant Step 4 tests again.
+
+At minimum:
+
+* Mobile auth route tests
+* Mobile TypeScript
+* Expo Doctor
+* Web build
+* Relevant API tests
+* Academic Session tests
+* Tenant isolation tests
+* Role isolation tests
+
+Do not attempt to make unrelated legacy TypeScript errors disappear.
+
+---
+
+# 14. NATIVE DEVICE TEST STATUS
+
+At the end explicitly state:
+
+NATIVE DEVICE TESTING:
+AVAILABLE / NOT AVAILABLE
+
+If unavailable, clearly list:
+
+* SecureStore runtime test — NOT TESTED
+* Native login UI flow — NOT TESTED
+* App restart restore — NOT TESTED
+* Native session switching — NOT TESTED
+
+Do not classify these as PASS.
+
+---
+
+# 15. DATABASE
+
+Do not create another test dataset unless required.
+
+Do not change production.
+
+Do not make destructive migrations.
+
+Do not create permanent fake users.
+
+---
+
+# 16. FINAL REPORT
+
+Return:
+
+## A. What was changed
+
+## B. Mobile authentication implementation status
+
+## C. Academic Session implementation status
+
+## D. Tenant isolation
+
+## E. Role isolation
+
+## F. Session persistence
+
+## G. Session switching
+
+## H. API/session header
+
+## I. TanStack Query session isolation foundation
+
+## J. BENIUS Web → BENIUS Mobile UI fidelity map
+
+## K. Tests
+
+## L. Native device testing limitation
+
+## M. Web regression
+
+## N. Database changes
+
+## O. Remaining limitations
+
+## P. Step 4 Final Status
+
+Use:
+
+PASS
+
+only if every item that can reasonably be tested in the current environment passes.
+
+Use:
+
+PARTIAL
+
+if native device testing remains unavailable.
+
+Do not claim a false PASS.
+
+---
+
+# 17. ABSOLUTE STOP
+
+After this task:
+
+STOP.
+
+Do not start Step 5.
+
+Do not implement application modules.
+
+Do not redesign BENIUS.
+
+Wait for my next instruction.
