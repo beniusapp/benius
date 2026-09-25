@@ -1,0 +1,610 @@
+# BENIUS MOBILE APPLICATION — STEP 1
+
+# CREATE THE NATIVE MOBILE FOUNDATION
+
+We are now beginning development of the native BENIUS mobile application.
+
+IMPORTANT:
+The existing BENIUS web application is already working and must remain fully intact.
+
+We are NOT replacing the web application.
+
+We are NOT converting the web application into mobile.
+
+We are creating a separate native mobile client inside the same Replit project.
+
+==================================================
+TARGET
+======
+
+Build the foundation for:
+
+BENIUS Android App
++
+BENIUS iOS App
+
+Use:
+
+* React Native
+* Expo
+* TypeScript
+
+The mobile application must be a real native React Native application.
+
+DO NOT build a WebView wrapper.
+
+DO NOT reuse the existing React DOM pages directly.
+
+DO NOT make the mobile application depend on browser-only APIs.
+
+==================================================
+PROJECT STRUCTURE
+=================
+
+Create a dedicated:
+
+mobile/
+
+directory.
+
+The existing project must remain structurally intact.
+
+The intended architecture is:
+
+BENIUS/
+├── client/              # EXISTING WEB — DO NOT REPLACE
+├── server/              # EXISTING BACKEND
+├── shared/              # EXISTING SHARED CODE
+├── migrations/          # EXISTING DATABASE
+└── mobile/              # NEW NATIVE MOBILE APPLICATION
+
+Do not move existing web files into mobile/.
+
+Do not rename the existing client directory.
+
+Do not duplicate the backend.
+
+Do not create a second database.
+
+==================================================
+MOBILE ARCHITECTURE
+===================
+
+The architecture must be:
+
+```
+             PostgreSQL
+                 ↑
+                 │
+          BENIUS Backend
+                 ↑
+      ┌──────────┴──────────┐
+      │                     │
+  BENIUS Web          BENIUS Mobile
+                          │
+                 React Native + Expo
+                          │
+                   Android + iOS
+```
+
+The mobile application MUST communicate with the BENIUS backend APIs.
+
+The mobile application MUST NEVER connect directly to PostgreSQL.
+
+The mobile application MUST NOT contain database credentials.
+
+The backend remains the source of truth.
+
+==================================================
+TECHNOLOGY
+==========
+
+Use:
+
+* React Native
+* Expo
+* TypeScript
+* Expo Router if appropriate
+* TanStack Query for server state
+* React Native compatible UI primitives
+* Secure native credential/session storage
+* React Native Safe Area support
+* Keyboard-aware mobile forms
+* FlatList/SectionList or FlashList where appropriate for large datasets
+
+Do not introduce unnecessary dependencies.
+
+Before installing packages, inspect the existing package setup and choose stable versions compatible with the current Node/Expo environment.
+
+==================================================
+PERFORMANCE REQUIREMENTS
+========================
+
+BENIUS is intended for potentially heavy usage.
+
+Design the mobile foundation for:
+
+* large student lists
+* large teacher rosters
+* attendance lists
+* examination marks
+* timetable data
+* fee data
+* multiple concurrent users
+* slow networks
+* intermittent network connectivity
+* repeated API requests
+
+Use:
+
+* server-state caching
+* request deduplication
+* pagination support
+* list virtualization
+* debounced search where appropriate
+* controlled re-rendering
+* memoization where useful
+* pull-to-refresh
+* loading states
+* error states
+* retry behavior
+
+Do NOT preload the entire school database into the phone.
+
+Do NOT fetch unlimited datasets when a paginated endpoint is available.
+
+Do NOT put large datasets into global React state unnecessarily.
+
+==================================================
+MULTI-TENANT REQUIREMENT
+========================
+
+This is a permanent BENIUS requirement.
+
+The mobile app must always operate within the authenticated user's school/tenant.
+
+Never create mobile logic that allows:
+
+School A
+↓
+School B data
+
+The mobile client must not allow the user to select an arbitrary schoolId and use it to access data.
+
+The backend remains authoritative for tenant authorization.
+
+The mobile client may display the authenticated school, but it must never treat a client-selected schoolId as authorization.
+
+==================================================
+ACADEMIC SESSION REQUIREMENT
+============================
+
+Academic Session is extremely important in BENIUS.
+
+The mobile architecture must support:
+
+Authenticated School
++
+Selected Academic Session ID
+
+as separate concepts.
+
+Create a centralized mobile Academic Session state/provider.
+
+It must support:
+
+* loading available Academic Sessions from the backend
+* selecting a Session
+* remembering the selected Session securely/appropriately
+* switching Session
+* clearing invalid Session selection
+* refreshing Session data
+* displaying the currently selected Session
+* passing the selected Session to APIs where required
+
+Do NOT hard-code an Academic Session.
+
+Do NOT assume the current year permanently.
+
+Do NOT allow the mobile client to bypass backend Session validation.
+
+For Examination and promotion functionality, the backend will remain authoritative for Session ownership.
+
+==================================================
+AUTHENTICATION FOUNDATION
+=========================
+
+The existing BENIUS web application uses server-side sessions and browser cookies.
+
+Do NOT simply copy browser authentication code into React Native.
+
+Create a mobile authentication abstraction that can later support the approved BENIUS mobile authentication contract.
+
+For this step:
+
+Create clean interfaces/services for:
+
+* login
+* logout
+* session restoration
+* current-user retrieval
+* authentication state
+* token/session storage abstraction
+* unauthorized-session handling
+
+Use secure native storage where credentials/session material needs persistence.
+
+Do NOT hard-code credentials.
+
+Do NOT store passwords in AsyncStorage or plain text.
+
+Do NOT invent a new authentication protocol yet if the backend does not already support one.
+
+If the existing backend authentication is not yet mobile-compatible, create the abstraction/interface and clearly document what backend contract is still required.
+
+Do NOT weaken existing web authentication.
+
+==================================================
+ROLE ARCHITECTURE
+=================
+
+BENIUS has different user roles.
+
+Prepare navigation architecture for:
+
+* Admin
+* Teacher
+* Student
+
+Do not assume that one role can access another role's screens.
+
+Create a role-aware navigation foundation.
+
+The first version can contain placeholder screens.
+
+For example:
+
+Authentication
+↓
+Role Resolution
+↓
+Admin Navigation
+Teacher Navigation
+Student Navigation
+
+Do NOT implement privileged Admin functionality yet.
+
+==================================================
+INITIAL MOBILE SCREENS
+======================
+
+Create clean placeholder/native screens for:
+
+1. Splash / App Loading
+2. Login
+3. Authentication Loading
+4. Student Home
+5. Teacher Home
+6. Admin Home
+7. Academic Session Selector
+8. Profile / Account
+9. Settings
+10. Generic Error
+11. Network Error
+
+These are foundation screens only.
+
+Do not attempt to reproduce every BENIUS web page yet.
+
+==================================================
+MOBILE DESIGN LANGUAGE
+======================
+
+The application should feel like a modern professional school-management mobile application.
+
+Requirements:
+
+* clean
+* fast
+* minimal visual clutter
+* mobile-first layouts
+* comfortable touch targets
+* clear typography
+* accessible contrast
+* consistent spacing
+* reusable components
+* light and dark mode architecture if practical
+
+Do NOT simply shrink the desktop web UI.
+
+The mobile app should have its own navigation and layout optimized for phones.
+
+However, BENIUS branding and terminology should remain consistent with the existing web application.
+
+==================================================
+REUSABLE COMPONENTS
+===================
+
+Create a foundation for reusable components such as:
+
+* AppHeader
+* ScreenContainer
+* LoadingState
+* EmptyState
+* ErrorState
+* PrimaryButton
+* SecondaryButton
+* FormField
+* PasswordField
+* SessionSelector
+* UserAvatar/ProfileHeader
+* ListItem
+* Card
+* ConfirmationDialog
+* OfflineBanner
+* PullToRefresh
+
+Keep components small and reusable.
+
+Do not create a giant monolithic App component.
+
+==================================================
+API LAYER
+=========
+
+Create a dedicated mobile API layer.
+
+Example conceptual structure:
+
+mobile/
+src/
+api/
+client
+auth
+sessions
+student
+teacher
+admin
+
+Do not hard-code API URLs throughout screens.
+
+Create one centralized API client.
+
+The API client must eventually support:
+
+* authentication
+* cookies/tokens according to the approved mobile contract
+* timeout handling
+* retry rules
+* HTTP error normalization
+* unauthorized handling
+* request cancellation where useful
+* selected Academic Session propagation
+
+Do not duplicate API request code in every screen.
+
+==================================================
+STATE MANAGEMENT
+================
+
+Use TanStack Query for server state.
+
+Separate:
+
+SERVER STATE
+
+from:
+
+LOCAL UI STATE
+
+Do not put API datasets into one giant global context.
+
+Use contexts/providers only where appropriate, such as:
+
+* Auth
+* Academic Session
+* Theme/app configuration
+
+==================================================
+OFFLINE FOUNDATION
+==================
+
+Do not attempt full offline functionality yet.
+
+However, architect the application so offline support can be added safely later.
+
+The mobile application should:
+
+* detect network availability
+* display a useful offline state
+* avoid pretending a write succeeded when the server did not confirm it
+* support retrying safe read requests
+
+Do NOT implement offline examination marks or attendance writes yet.
+
+Those require careful idempotency and conflict handling.
+
+==================================================
+IST REQUIREMENT
+===============
+
+BENIUS uses:
+
+Asia/Kolkata / IST
+
+for application/business/display time.
+
+The mobile application must respect this.
+
+Do not use the device's arbitrary timezone as the BENIUS business timezone.
+
+Create a shared mobile date/time utility boundary so future screens use BENIUS IST rules consistently.
+
+Do not change the existing backend timezone implementation.
+
+==================================================
+SECURITY
+========
+
+Do not expose:
+
+* database credentials
+* server secrets
+* session secrets
+* admin PIN
+* payment secrets
+* API private keys
+
+inside the mobile bundle.
+
+Never trust mobile role information for authorization.
+
+The backend must continue enforcing authorization.
+
+==================================================
+EXISTING WEB APPLICATION SAFETY
+===============================
+
+This is critical.
+
+DO NOT:
+
+* rewrite client/
+* rewrite server/
+* change database schema
+* modify existing migrations
+* modify existing web routes
+* remove existing pages
+* replace Wouter
+* replace existing React Query implementation
+* change existing authentication
+* change existing payment logic
+* change existing Exam Controller
+* change existing Academic Session logic
+
+unless absolutely required merely to make the mobile foundation compile.
+
+Prefer zero modifications outside mobile/.
+
+If a backend change is genuinely required for the mobile foundation, STOP and report it instead of silently changing backend behavior.
+
+==================================================
+BUILD CONFIGURATION
+===================
+
+Create the necessary Expo/React Native configuration for the mobile directory.
+
+The mobile project should have clear scripts for development.
+
+For example, determine appropriate scripts such as:
+
+npm run mobile:dev
+
+or equivalent.
+
+Do not break:
+
+npm run dev
+npm run build
+npm start
+npm run check
+npm test
+
+from the existing BENIUS project.
+
+If the repository uses a workspace/monorepo configuration, integrate mobile cleanly without disrupting the existing applications.
+
+==================================================
+TESTING
+=======
+
+At minimum verify:
+
+1. TypeScript compilation.
+2. Mobile project dependency resolution.
+3. Expo configuration validity.
+4. Navigation renders.
+5. Login screen renders.
+6. Role routing foundation renders.
+7. Academic Session state can initialize.
+8. API layer can be imported without errors.
+9. Existing web project still builds.
+10. Existing backend still starts/builds as before.
+
+Do not claim Android/iOS device testing unless actually performed.
+
+==================================================
+DOCUMENTATION
+=============
+
+Create:
+
+mobile/README.md
+
+Document:
+
+* how the mobile project is structured
+* how to start the mobile development environment
+* Android development approach
+* iOS development approach
+* API architecture
+* authentication architecture
+* Academic Session architecture
+* tenant isolation principles
+* performance principles
+* future Student/Teacher/Admin development phases
+
+Clearly state that PostgreSQL is accessed only through the BENIUS backend.
+
+==================================================
+IMPORTANT FINAL RULE
+====================
+
+This is ONLY MOBILE FOUNDATION — STEP 1.
+
+Do NOT implement:
+
+* full Student module
+* full Teacher module
+* full Admin module
+* Attendance
+* Timetable
+* Examination
+* Exam Controller
+* Fees
+* Payments
+* Reports
+* Notifications
+
+yet.
+
+We will build those incrementally after the foundation is verified.
+
+==================================================
+FINAL RESPONSE REQUIRED
+=======================
+
+After implementation, report:
+
+1. Exact files created.
+2. Exact existing files modified, if any.
+3. Packages installed.
+4. Mobile architecture.
+5. Authentication foundation.
+6. Academic Session foundation.
+7. Navigation structure.
+8. Performance architecture.
+9. Tenant-isolation safeguards.
+10. IST handling.
+11. Commands to run the mobile app.
+12. TypeScript/check result.
+13. Existing web build/check result.
+14. Any errors or unresolved items.
+
+Most importantly:
+
+Confirm whether any existing BENIUS web/backend/database files were modified.
+
+STOP after Step 1.
+
+Do not automatically proceed to Step 2.
