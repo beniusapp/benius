@@ -1,0 +1,1180 @@
+# BENIUS MOBILE — STEP 3
+
+## IMPLEMENT NATIVE MOBILE AUTHENTICATION CONTRACT
+
+We are continuing development of the existing BENIUS school management application.
+
+The objective of BENIUS Mobile is:
+
+> Build a complete functional replica of the existing BENIUS web application as a proper native-feeling Android/iOS application while using the SAME BENIUS backend, SAME PostgreSQL database, SAME business rules, SAME calculations, SAME permissions, SAME school/tenant isolation, and SAME workflows.
+
+The mobile frontend will use React Native + Expo + TypeScript.
+
+The existing web application must continue working.
+
+---
+
+# VERIFIED CURRENT ARCHITECTURE
+
+---
+
+The previous read-only Step 2 audit confirmed:
+
+Running backend entry point:
+
+`artifacts/api-server/src/index.ts`
+
+which imports:
+
+`artifacts/api-server/src/legacy-index.ts`
+
+Backend:
+
+* Express
+* PostgreSQL
+* Drizzle
+* PostgreSQL-backed Express sessions
+* existing browser-cookie authentication
+
+Existing authentication routes include:
+
+ADMIN:
+
+`POST /api/login`
+
+`POST /api/admin/initialize`
+
+`POST /api/admin/verify-pin`
+
+TEACHER:
+
+`POST /api/teacher-login`
+
+STUDENT:
+
+`POST /api/student-login`
+
+SUPPORT STAFF:
+
+Support staff authentication is handled through:
+
+`POST /api/login`
+
+Existing identity/session fields include combinations of:
+
+* userId
+* schoolId
+* userRole
+* admin identity
+* teacherId
+* studentId
+* staffId
+* allowedModules
+* authIssuedAt
+* studentAuthIssuedAt
+
+Existing current-user routes include:
+
+`GET /api/me`
+
+`GET /api/teacher-me`
+
+`GET /api/student-me`
+
+Existing logout routes include:
+
+`POST /api/logout`
+
+`POST /api/teacher-logout`
+
+`POST /api/student-logout`
+
+The current web authentication is session-cookie based.
+
+The existing mobile foundation currently expects a future bearer-style authentication transport but intentionally has no real credentials implemented.
+
+---
+
+# CRITICAL OBJECTIVE
+
+---
+
+Implement a secure, server-issued authentication mechanism specifically for native mobile clients.
+
+The mobile authentication mechanism must coexist with the existing web authentication.
+
+DO NOT replace the existing web authentication.
+
+DO NOT break existing browser login.
+
+DO NOT convert the entire web application to token authentication.
+
+DO NOT remove Express sessions.
+
+DO NOT remove existing login routes.
+
+DO NOT change existing web authentication behavior unless absolutely required for security compatibility and explicitly documented.
+
+The new mobile authentication contract must be additive.
+
+---
+
+# NON-NEGOTIABLE BENIUS RULES
+
+---
+
+## 1. MULTI-TENANT SCHOOL ISOLATION
+
+BENIUS is permanently multi-tenant.
+
+Every mobile authenticated identity must be server-derived.
+
+The mobile client must NEVER be authoritative for:
+
+* schoolId
+* role
+* permissions
+* studentId
+* teacherId
+* adminId
+* staffId
+
+A client-supplied school ID must never grant access.
+
+The backend must determine the authenticated user's school from the authenticated credential.
+
+Every mobile API operation must remain constrained to that authenticated school.
+
+Never allow cross-school access.
+
+---
+
+## 2. ACADEMIC SESSION ISOLATION
+
+Academic Sessions are school-scoped.
+
+The mobile application must eventually support:
+
+Authenticated School
+→ Available Academic Sessions
+→ Selected Academic Session
+
+A selected Academic Session must be verified by the backend as belonging to the authenticated school.
+
+Do NOT trust a client-supplied Academic Session ID merely because it exists.
+
+For session-sensitive operations, the backend must verify:
+
+authenticated principal
++
+authenticated school
++
+selected Academic Session
+
+The Admin → Exam Controller requirement is especially strict:
+
+Every Exam Controller operation must be scoped to:
+
+* authenticated school
+* selected Academic Session ID
+
+Previous-session operational data must never leak into a new session.
+
+---
+
+## 3. IST
+
+All BENIUS application/business/display time handling must use:
+
+`Asia/Kolkata`
+
+Do not introduce device-local timezone behavior for BENIUS business dates.
+
+---
+
+## 4. WEB APPLICATION MUST CONTINUE WORKING
+
+The current web application must remain operational.
+
+Existing browser authentication must continue to work.
+
+Existing web session cookies must continue to work.
+
+Existing web login flows must continue to work.
+
+Do not migrate web authentication to the mobile mechanism.
+
+---
+
+# MOBILE AUTHENTICATION DESIGN
+
+---
+
+Implement a dedicated mobile authentication contract using:
+
+* short-lived access credential
+* rotating refresh credential
+* server-side persisted credential records
+* hashed refresh credential storage
+* revocation
+* expiration
+* device/session identity
+* SecureStore on native mobile
+
+The exact cryptographic/token implementation should use established secure libraries already available in the project where possible.
+
+Do not invent custom cryptography.
+
+Do not store plaintext refresh credentials in the database.
+
+Do not store passwords or PINs on the device.
+
+---
+
+# IMPORTANT: DATABASE SAFETY
+
+---
+
+Before changing the database schema:
+
+1. Inspect the existing Drizzle schema and migration system.
+2. Identify the correct schema location.
+3. Identify how migrations are currently generated and applied.
+4. Do NOT use automatic destructive schema push.
+5. Do NOT drop tables.
+6. Do NOT alter existing tables destructively.
+7. Do NOT change existing data.
+8. Create a proper additive migration if a new mobile-auth table is required.
+
+The database is populated and belongs to the existing BENIUS application.
+
+Preserve all existing data.
+
+---
+
+# MOBILE CREDENTIAL DATA MODEL
+
+---
+
+Create an additive server-side representation for mobile authentication sessions/credentials.
+
+The design should support at minimum:
+
+* unique mobile session/device identifier
+* authenticated principal/user identity
+* role
+* schoolId
+* hashed refresh credential
+* refresh credential family/rotation identity
+* createdAt
+* lastUsedAt
+* expiresAt
+* revokedAt
+* optional device metadata
+* optional credential version/reuse detection state
+
+Do NOT store:
+
+* plaintext password
+* plaintext PIN
+* database credentials
+* long-lived plaintext bearer credentials
+
+Prefer storing only hashes of refresh credentials.
+
+Access credentials may be short-lived and need not be persisted if the approved implementation uses self-contained signed credentials, but the refresh credential MUST have server-side revocation/rotation support.
+
+---
+
+# MOBILE AUTH ENDPOINTS
+
+---
+
+Add a dedicated mobile authentication route namespace.
+
+Prefer:
+
+`/api/mobile/auth/...`
+
+Do not overload existing web login endpoints with incompatible response behavior.
+
+The exact routes should be:
+
+### Login
+
+`POST /api/mobile/auth/login`
+
+### Refresh
+
+`POST /api/mobile/auth/refresh`
+
+### Current identity
+
+`GET /api/mobile/auth/me`
+
+### Logout current mobile session
+
+`POST /api/mobile/auth/logout`
+
+### Logout all mobile sessions
+
+Only implement this if the existing product/security architecture can support it safely and without affecting web sessions.
+
+If implemented:
+
+`POST /api/mobile/auth/logout-all`
+
+Do NOT expose unnecessary endpoints.
+
+---
+
+# LOGIN CONTRACT
+
+---
+
+The mobile login endpoint must support the actual BENIUS roles.
+
+At minimum:
+
+* Admin
+* Teacher
+* Student
+* Support Staff
+
+Do not create separate fake authentication rules.
+
+Use the existing BENIUS credential validation rules.
+
+### ADMIN
+
+Preserve the existing flow:
+
+Email + Password
+→ account validation
+→ initialization requirement OR PIN challenge
+→ successful completion
+→ mobile authentication credential
+
+If Admin initialization is required, the mobile API must return a clear server-defined state indicating that the initialization step is required.
+
+If PIN verification is required, support the existing six-digit PIN + challenge flow securely.
+
+Do not return or log sensitive challenge data unnecessarily.
+
+Do not store the PIN.
+
+### TEACHER
+
+Preserve:
+
+Email + Password
+→ existing teacher validation
+→ teacher identity
+→ school identity
+→ role
+→ mustChangePassword state
+
+If the teacher must change password, the mobile client must be told through a server-defined state.
+
+Do not bypass this requirement.
+
+### STUDENT
+
+Preserve:
+
+DSID + Password
+→ existing student validation
+→ student identity
+→ school identity
+
+Do not allow the mobile client to provide a school ID to select a student.
+
+### SUPPORT STAFF
+
+Support staff currently exists in BENIUS.
+
+Do not silently remove it.
+
+Return:
+
+* role
+* allowed modules
+
+based on server authority.
+
+Do not let the mobile client manufacture `allowedModules`.
+
+---
+
+# SERVER-SIDE PRINCIPAL
+
+---
+
+After successful mobile authentication, every request using the mobile access credential must resolve a server-side principal.
+
+The principal should contain the minimum required information such as:
+
+* principal/user ID
+* role
+* schoolId
+* relevant entity ID
+* mobile session/device ID
+* credential issuance information
+
+Do not trust role or school identity supplied by the mobile request body.
+
+Do not trust role or school identity supplied through arbitrary headers.
+
+---
+
+# MOBILE AUTH MIDDLEWARE
+
+---
+
+Create dedicated middleware for mobile bearer authentication.
+
+It should:
+
+1. Read the Authorization header.
+2. Validate the access credential.
+3. Verify expiration.
+4. Verify signature/authority if applicable.
+5. Resolve the mobile session/device identity.
+6. Verify that the mobile credential has not been revoked.
+7. Resolve the authenticated BENIUS principal.
+8. Resolve the principal's school from server-side data.
+9. Attach the verified principal to the request.
+10. Reject invalid credentials with HTTP 401.
+
+Do not use:
+
+`schoolId` from request body
+
+as authentication authority.
+
+Do not use:
+
+`role` from request body
+
+as authentication authority.
+
+---
+
+# REFRESH TOKEN ROTATION
+
+---
+
+Implement refresh rotation safely.
+
+The intended lifecycle is:
+
+Login
+↓
+Access Credential + Refresh Credential
+↓
+Mobile API requests use Access Credential
+↓
+Access Credential expires
+↓
+Refresh Credential submitted
+↓
+Server validates refresh credential
+↓
+Old refresh credential becomes invalid
+↓
+New refresh credential issued
+↓
+New access credential issued
+
+Implement reuse detection where practical.
+
+If a rotated refresh credential is reused, revoke the affected credential family/session appropriately.
+
+Do not allow indefinite refresh-token reuse.
+
+---
+
+# LOGOUT
+
+---
+
+Mobile logout must revoke the server-side mobile credential/session.
+
+After logout:
+
+* existing access authority should no longer be accepted once the server-side revocation model requires rejection
+* refresh credential must no longer work
+* local SecureStore credentials must be cleared
+
+Do not destroy the user's existing web browser session when mobile logout occurs.
+
+Mobile logout and web logout must remain independent.
+
+---
+
+# PASSWORD CHANGE / ACCOUNT REVOCATION
+
+---
+
+Inspect existing password-change and account-revocation behavior.
+
+Where an existing BENIUS password change or account deactivation requires invalidating authenticated sessions, integrate the mobile credential records into that revocation model where appropriate.
+
+Do not weaken current revocation behavior.
+
+Do not assume that changing a web session automatically revokes a mobile credential.
+
+Do not leave indefinitely valid mobile refresh credentials after an account has been revoked.
+
+---
+
+# SECURE STORAGE
+
+---
+
+Update:
+
+`artifacts/benius-mobile/lib/secure-session.ts`
+
+to store only approved mobile authentication material.
+
+Use Expo SecureStore on native platforms.
+
+Never use AsyncStorage for authentication secrets.
+
+Never store:
+
+* password
+* PIN
+* database credentials
+* raw server secrets
+
+The mobile app should be able to:
+
+* save approved credentials
+* restore them after application restart
+* clear them on logout
+* clear them after unrecoverable authentication failure
+
+---
+
+# UPDATE MOBILE API TRANSPORT
+
+---
+
+Update:
+
+`artifacts/benius-mobile/lib/api.ts`
+
+to support the real mobile authentication contract.
+
+It must:
+
+* attach the access credential as `Authorization: Bearer ...`
+* handle HTTP 401
+* attempt refresh only through the approved refresh endpoint
+* prevent infinite refresh loops
+* clear authentication state when refresh fails
+* distinguish network failure from authentication failure
+* preserve useful server error messages
+* avoid logging credentials
+* avoid logging Authorization headers
+* avoid logging passwords/PINs
+* avoid logging sensitive profile responses
+
+Use a single centralized transport.
+
+Do not create separate ad-hoc fetch implementations in every screen.
+
+---
+
+# AUTH CONTEXT
+
+---
+
+Update:
+
+`artifacts/benius-mobile/contexts/AuthContext.tsx`
+
+so that the mobile application can:
+
+1. start
+2. restore SecureStore credentials
+3. call `/api/mobile/auth/me`
+4. verify the credentials with the backend
+5. establish authenticated state
+6. determine server-provided role
+7. load the appropriate navigation
+8. clear state when authentication is invalid
+
+The mobile client must NOT decide:
+
+"I am Admin"
+
+or:
+
+"I am Teacher"
+
+based only on locally stored data.
+
+The server response must establish the identity.
+
+---
+
+# ROLE NAVIGATION
+
+---
+
+Keep the existing role-aware navigation foundation.
+
+After successful authentication:
+
+Admin
+→ Admin mobile area
+
+Teacher
+→ Teacher mobile area
+
+Student
+→ Student mobile area
+
+Support Staff
+→ Support Staff mobile area
+
+Do not build all modules yet.
+
+Use the existing placeholder home screens where necessary.
+
+---
+
+# ACADEMIC SESSION FOUNDATION
+
+---
+
+Do NOT implement all Academic Session functionality yet.
+
+But make the authentication architecture ready for it.
+
+The mobile application must distinguish:
+
+Authenticated School
+from
+Selected Academic Session.
+
+Do not place Academic Session ID into the authentication credential merely as permanent identity.
+
+A user may select another valid Academic Session belonging to the same school.
+
+The backend must later validate that selection.
+
+---
+
+# SESSION HEADER — IMPORTANT
+
+---
+
+The existing web application uses:
+
+`x-view-session-id`
+
+The current mobile foundation proposed:
+
+`X-Academic-Session-Id`
+
+DO NOT introduce a second competing meaning without a reason.
+
+For this step:
+
+1. Keep the authentication contract independent of Academic Session.
+2. Do not make the access credential represent the selected Academic Session.
+3. Prepare the mobile API layer so a future agreed session header can be attached centrally.
+4. Do not mass-change existing backend endpoints yet.
+
+The exact Academic Session contract will be handled in the next dedicated step.
+
+---
+
+# SECURITY REQUIREMENTS
+
+---
+
+The implementation must include protections appropriate for native mobile authentication.
+
+At minimum:
+
+### HTTPS expectation
+
+Mobile authentication must require HTTPS outside local development.
+
+Do not allow production credentials over HTTP.
+
+### Credential secrecy
+
+Never log:
+
+* password
+* PIN
+* access credential
+* refresh credential
+* Authorization header
+
+### Refresh credential storage
+
+Store only a hash server-side.
+
+### Expiration
+
+Access credentials must be short-lived.
+
+Refresh credentials must have an explicit expiration.
+
+### Revocation
+
+Support server-side revocation.
+
+### Device/session isolation
+
+A mobile session must be independently revocable.
+
+### Tenant isolation
+
+Every authenticated principal must remain school-bound.
+
+### Role isolation
+
+The server must determine role.
+
+### Replay protection
+
+Rotated refresh credentials must not remain reusable.
+
+---
+
+# EXISTING WEB AUTHENTICATION
+
+---
+
+Do not replace:
+
+`POST /api/login`
+
+`POST /api/teacher-login`
+
+`POST /api/student-login`
+
+or the existing browser session mechanism.
+
+Do not make the web application depend on mobile bearer authentication.
+
+The desired architecture is:
+
+Web
+→ existing Express session
+
+Mobile
+→ dedicated mobile authentication contract
+
+Both
+→ same BENIUS backend
+→ same PostgreSQL
+→ same business/domain rules
+
+---
+
+# EXISTING SECURITY ISSUES
+
+---
+
+The Step 2 audit identified existing issues including:
+
+* secure:false session cookie
+* session-secret fallback
+* lack of session regeneration in existing web login transitions
+* response-body logging
+* mixed-role session fields
+* incomplete authentication timestamp behavior
+* inconsistent Academic Session validation on some GET paths
+
+Do NOT use this Step 3 as an excuse to rewrite the entire backend.
+
+However:
+
+Any new mobile authentication code must NOT reproduce these weaknesses.
+
+For the mobile authentication boundary:
+
+* fail safely if required production secrets are missing
+* do not log credentials or sensitive responses
+* use secure credential handling
+* implement proper credential lifecycle
+* keep tenant boundaries explicit
+
+If an existing shared utility must be changed for mobile security, make the smallest safe change and document it.
+
+---
+
+# DATABASE MIGRATION SAFETY
+
+---
+
+If a migration is required:
+
+* use the existing migration tooling
+* create an additive migration
+* do not drop existing tables
+* do not rename existing production columns unnecessarily
+* do not delete data
+* do not run destructive schema push
+
+After migration:
+
+* verify existing web tables remain intact
+* verify existing web API behavior
+* verify mobile authentication tables/records are isolated
+
+---
+
+# TESTING REQUIREMENTS
+
+---
+
+Create automated tests for the new mobile authentication contract.
+
+At minimum test:
+
+### Valid authentication
+
+* valid admin
+* valid teacher
+* valid student
+* valid support staff if supported by current data model
+
+### Invalid authentication
+
+* wrong password
+* invalid DSID/password
+* inactive account
+* revoked account
+* invalid PIN challenge
+* invalid admin state
+
+### Tenant isolation
+
+Attempt to use mobile credentials to access another school's resources.
+
+Must fail.
+
+### Credential lifecycle
+
+* access credential expiration
+* refresh
+* refresh rotation
+* refresh reuse
+* logout
+* revoked credential
+* expired refresh credential
+
+### Role isolation
+
+A credential issued for one role must not become another role through client input.
+
+### School isolation
+
+Changing a client-supplied schoolId must not change server authority.
+
+### Web compatibility
+
+Existing web login endpoints must continue to work.
+
+---
+
+# MOBILE UI REQUIREMENTS
+
+---
+
+Do not build the full BENIUS application in this step.
+
+Only make the authentication screens functional.
+
+The mobile flow should support:
+
+### Login
+
+Role-aware authentication according to the server contract.
+
+Do not create a fake role selector that grants access.
+
+If role selection is needed only to choose which credential form to display, it must NOT determine authorization.
+
+### Loading
+
+Show a proper loading state while restoring authentication.
+
+### Error
+
+Show useful authentication errors without exposing server internals.
+
+### Logout
+
+Provide a working logout action from the authenticated foundation.
+
+### Session expiry
+
+If authentication expires and refresh fails:
+
+→ clear local credentials
+→ clear authenticated state
+→ return to login
+
+Do not leave the user on a fake authenticated screen.
+
+---
+
+# PERFORMANCE
+
+---
+
+Keep the mobile authentication implementation lightweight.
+
+Avoid:
+
+* repeated `/me` calls
+* unnecessary refresh requests
+* multiple concurrent refresh requests
+* duplicate API clients
+* excessive SecureStore reads
+
+If multiple API requests receive 401 simultaneously, implement a single refresh operation rather than refreshing separately for every request.
+
+---
+
+# FILES TO INSPECT / LIKELY CHANGE
+
+---
+
+Backend:
+
+`artifacts/api-server/src/index.ts`
+
+`artifacts/api-server/src/legacy-index.ts`
+
+`artifacts/api-server/src/routes/routes.ts`
+
+`artifacts/api-server/src/teacher-routes.ts`
+
+`artifacts/api-server/src/session-revocation.ts`
+
+Existing database schema/migration locations
+
+Mobile:
+
+`artifacts/benius-mobile/lib/api.ts`
+
+`artifacts/benius-mobile/lib/secure-session.ts`
+
+`artifacts/benius-mobile/contexts/AuthContext.tsx`
+
+`artifacts/benius-mobile/contexts/SessionContext.tsx`
+
+`artifacts/benius-mobile/components/Authenticated.tsx`
+
+`artifacts/benius-mobile/app/index.tsx`
+
+Relevant mobile login/navigation files.
+
+Do not modify unrelated BENIUS modules.
+
+---
+
+# IMPORTANT EXISTING MOBILE BUG
+
+---
+
+The Step 2 audit identified:
+
+`artifacts/benius-mobile/contexts/SessionContext.tsx`
+
+currently removes the saved Academic Session selection in an effect cleanup, including on ordinary remount.
+
+DO NOT fix this in Step 3 unless it is directly necessary for authentication.
+
+Record it for the next Academic Session step.
+
+---
+
+# REQUIRED IMPLEMENTATION REPORT
+
+---
+
+After implementation, return a detailed report containing:
+
+## 1. WHAT WAS IMPLEMENTED
+
+Exact files changed.
+
+## 2. MOBILE AUTH API
+
+List exact new routes and request/response contracts.
+
+## 3. DATABASE
+
+List any new tables and migration files.
+
+Explain exactly what is stored.
+
+## 4. AUTHENTICATION FLOW
+
+Show:
+
+Admin
+
+Teacher
+
+Student
+
+Support Staff
+
+flows separately.
+
+## 5. ACCESS CREDENTIAL
+
+Explain:
+
+* lifetime
+* validation
+* signing/verification
+* whether persisted
+
+## 6. REFRESH CREDENTIAL
+
+Explain:
+
+* storage
+* hashing
+* expiration
+* rotation
+* reuse detection
+* revocation
+
+## 7. MOBILE SECURE STORAGE
+
+Explain exactly what is stored on device.
+
+## 8. SCHOOL/TENANT ISOLATION
+
+Explain how school identity is server-derived and protected.
+
+## 9. ROLE ISOLATION
+
+Explain how role is server-derived.
+
+## 10. ACADEMIC SESSION
+
+Explain what was deliberately NOT changed yet.
+
+## 11. WEB COMPATIBILITY
+
+Verify existing web authentication still works.
+
+## 12. TEST RESULTS
+
+Report:
+
+* TypeScript
+* backend tests
+* mobile tests
+* web tests
+* database migration verification
+* Expo preview
+
+## 13. SECURITY CHECK
+
+Confirm:
+
+* no credentials logged
+* no passwords stored
+* no PINs stored
+* no refresh tokens stored plaintext
+* no client-controlled school authorization
+* no client-controlled role authorization
+
+## 14. REMAINING ISSUES
+
+Clearly distinguish:
+
+* implemented
+* existing issue
+* deferred
+* requires product decision
+
+---
+
+# ABSOLUTE SCOPE LIMIT
+
+---
+
+This is MOBILE AUTHENTICATION ONLY.
+
+DO NOT implement:
+
+* Attendance
+* Examination
+* Exam Controller
+* Timetable
+* Fees
+* Notices
+* Reports
+* School Setup
+* Student modules
+* Teacher modules
+* Admin modules
+* Push notifications
+* payments
+* offline writes
+* full Academic Session module
+
+Those will be handled in later stages.
+
+---
+
+# FINAL SAFETY REQUIREMENT
+
+---
+
+Before finishing:
+
+Run verification that the existing web application still:
+
+* starts
+* builds
+* passes TypeScript validation where it previously passed
+* responds to its health endpoint
+* serves the existing web application
+
+Also verify the mobile application:
+
+* starts
+* renders
+* reaches login
+* does not contain fake authentication
+* does not contain hardcoded credentials
+
+If any test fails, report the exact failure instead of hiding it.
+
+Do not make unrelated fixes.
+
+---
+
+# STOP CONDITION
+
+---
+
+After completing the mobile authentication implementation and verification report:
+
+STOP.
+
+Do not proceed to Attendance, Examination, Timetable, Fees, or other BENIUS modules.
+
+Wait for my review before beginning the next mobile stage.
+
+# END — BENIUS MOBILE STEP 3

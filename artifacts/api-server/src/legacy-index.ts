@@ -14,9 +14,12 @@ import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 import { enforceSessionRevocation } from "./session-revocation";
 import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
+import { rejectBearerOutsideMobileAuth } from "./mobile-auth-policy";
+import { ensureMobileAuthSchema } from "./mobile-auth-schema";
 
 const app = express();
 const httpServer = createServer(app);
+app.use(rejectBearerOutsideMobileAuth);
 app.use("/api", healthRouter);
 
 declare module "http" {
@@ -60,11 +63,12 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const isMobileAuthResponse = path.startsWith("/api/mobile/auth/");
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
+    if (!isMobileAuthResponse) capturedJsonResponse = bodyJson;
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 
@@ -1326,6 +1330,7 @@ app.use((req, res, next) => {
   // RULE: whenever you add a column to shared/schema.ts you MUST also add a
   // matching `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to the
   // migration block above.  This check enforces that rule at every startup.
+  await ensureMobileAuthSchema(pool);
   await assertNoSchemaDrift(pool);
 
   await registerRoutes(httpServer, app);

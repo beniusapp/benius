@@ -8,6 +8,7 @@ type SessionState = { sessions: AcademicSession[]; selectedId: number | null; lo
 const Context = createContext<SessionState | null>(null);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const currentRole = user?.role;
   const [storedId, setStoredId] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const key = user ? `benius.session.${user.schoolId}.${user.role}.${user.id}` : null;
@@ -23,8 +24,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [key]);
   const query = useQuery({
     queryKey: ['sessions', user?.schoolId, user?.role, user?.id],
-    queryFn: ({ signal }) => apiGet<AcademicSession[]>(sessionsPath[user!.role], { signal }),
-    enabled: !!user,
+    queryFn: ({ signal }) => {
+      if (!currentRole || currentRole === 'support_staff') throw new Error('Academic sessions are not available in mobile authentication.');
+      return apiGet<AcademicSession[]>(sessionsPath[currentRole], { signal });
+    },
+    // These legacy endpoints are cookie-only. Keep mobile authentication separate
+    // until native academic-session endpoints are explicitly approved.
+    enabled: false,
     staleTime: 60_000,
   });
   const sessions = (query.data ?? []).filter(s => s.schoolId === user?.schoolId);

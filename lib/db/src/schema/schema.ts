@@ -165,6 +165,63 @@ export const studentPasswordResetChallenges = pgTable("student_password_reset_ch
 ]);
 export type StudentPasswordResetChallenge = typeof studentPasswordResetChallenges.$inferSelect;
 
+/**
+ * Opaque, independently revocable native-mobile credentials.  Refresh token
+ * rows are retained after rotation so attempted reuse can revoke their session.
+ */
+export const mobileAuthSessions = pgTable("mobile_auth_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  deviceId: uuid("device_id").notNull().defaultRandom(),
+  principalId: integer("principal_id").notNull(),
+  principalEntityId: integer("principal_entity_id"),
+  role: varchar("role", { length: 30 }).notNull(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  principalPasswordVersion: varchar("principal_password_version", { length: 64 }).notNull(),
+  accessTokenHash: varchar("access_token_hash", { length: 64 }).notNull().unique(),
+  accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }).notNull(),
+  authIssuedAt: timestamp("auth_issued_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => [
+  index("mobile_auth_sessions_principal_idx").on(table.role, table.principalId, table.schoolId),
+  uniqueIndex("mobile_auth_sessions_device_id_uidx").on(table.deviceId),
+  check("mobile_auth_sessions_role_chk", sql`${table.role} IN ('admin', 'teacher', 'student', 'support_staff')`),
+]);
+
+export const mobileAuthRefreshTokens = pgTable("mobile_auth_refresh_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id").notNull().references(() => mobileAuthSessions.id, { onDelete: "cascade" }),
+  familyId: uuid("family_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => [
+  index("mobile_auth_refresh_session_idx").on(table.sessionId, table.expiresAt),
+  index("mobile_auth_refresh_family_idx").on(table.familyId),
+]);
+
+export const mobileAuthChallenges = pgTable("mobile_auth_challenges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  challengeHash: varchar("challenge_hash", { length: 64 }).notNull().unique(),
+  principalId: integer("principal_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  purpose: varchar("purpose", { length: 30 }).notNull(),
+  authIssuedAt: timestamp("auth_issued_at", { withTimezone: true }).notNull(),
+  principalPasswordVersion: varchar("principal_password_version", { length: 64 }).notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+}, (table) => [
+  index("mobile_auth_challenges_active_idx").on(table.principalId, table.purpose, table.consumedAt),
+  check("mobile_auth_challenges_purpose_chk", sql`${table.purpose} IN ('admin_pin', 'admin_initialize')`),
+  check("mobile_auth_challenges_attempts_chk", sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 5`),
+]);
+
 export const students = pgTable("students", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
@@ -653,7 +710,11 @@ export const securityAudit = pgTable("security_audit", {
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("security_audit_mobile_auth_throttle_idx")
+    .on(table.ipAddress, table.createdAt)
+    .where(sql`${table.action} = 'mobile_auth_attempt'`),
+]);
 
 export const insertSecurityAuditSchema = createInsertSchema(securityAudit).omit({ id: true, createdAt: true });
 export type InsertSecurityAudit = z.infer<typeof insertSecurityAuditSchema>;

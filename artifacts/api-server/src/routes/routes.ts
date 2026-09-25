@@ -23,6 +23,7 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
 import { registerTeacherRoutes, resolveTimetableSessionId } from "../teacher-routes";
+import { registerMobileAuthRoutes } from "../mobile-auth-routes";
 import { registerStudentPasswordRecoveryRoutes } from "../student-password-recovery-routes";
 import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
 import { registerFeesRoutes } from "../fees-routes";
@@ -6058,6 +6059,7 @@ tfoot td:last-child{text-align:right;}
   registerFeesRoutes(app);
   registerStudentPasswordRecoveryRoutes(app);
   registerTeacherRoutes(app);
+  registerMobileAuthRoutes(app);
 
   return httpServer;
 }

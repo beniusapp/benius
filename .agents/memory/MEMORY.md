@@ -1,1 +1,2 @@
 - [BENIUS database preservation](benius-database-preservation.md) — avoid force-pushing the inherited schema when Drizzle proposes truncating populated tables.
+- [Native mobile auth boundary](native-mobile-auth-boundary.md) — keep mobile bearer auth separate from web cookies; browser preview is not a sign-in client.

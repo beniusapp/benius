@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 const KEY = 'benius.mobile.session';
-// Future approved mobile transport only. Web preview deliberately never stores credentials.
+// Native mobile session material only; browser previews never persist bearer credentials.
 export async function readApprovedSession(): Promise<string | null> {
   return Platform.OS === 'web' ? null : SecureStore.getItemAsync(KEY);
 }
