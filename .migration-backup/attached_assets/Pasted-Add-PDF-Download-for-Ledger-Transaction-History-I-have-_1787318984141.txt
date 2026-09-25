@@ -1,0 +1,173 @@
+Add PDF Download for Ledger & Transaction History
+
+I have verified the Student Portal. The Invoice and Payment Receipt already work correctly: they can be opened in Chrome and downloaded/saved as PDF using the browser's PDF functionality.
+
+Now I need you to implement the same professional PDF capability for the Admin Portal → Fees & Payments, specifically:
+
+1. Ledger — PDF Download
+
+Add a clear "Download PDF" action to the Ledger section.
+
+The PDF must be generated from the actual ledger data, not by taking a screenshot or simply printing the webpage UI.
+
+The generated PDF should include:
+
+- School logo and school information
+- School name
+- Academic Session
+- Report title: Fee Ledger
+- Applied filters
+- Student name / Student ID where applicable
+- Invoice Number
+- Receipt Number
+- Fee Name / Fee Type
+- Fee Period
+- Payment Date
+- Payment Mode
+- Amount
+- Payment Status
+- Any other important ledger information already available in the ledger
+
+The PDF must reflect the currently selected filters. If the user filters by academic session, date, student, payment mode, status, etc., the downloaded PDF must contain only the filtered records.
+
+2. Transaction History — PDF Download
+
+Add a clear "Download PDF" action to the Transaction History section.
+
+Again, generate the PDF from the actual transaction/payment data, not a screenshot of the page.
+
+Include appropriate transaction information such as:
+
+- School information and logo
+- Academic Session
+- Report title: Payment Transaction Report
+- Applied filters
+- Student Name / Student ID
+- Invoice Number
+- Receipt Number
+- Payment Date & Time
+- Payment Mode
+- Amount
+- Payment Status
+- Payment ID / Order ID for online payments where applicable
+- Transaction/reference number where applicable
+- Any other important transaction information already displayed in the transaction history
+
+3. Important — Do NOT change existing Invoice/Receipt PDFs
+
+The existing:
+
+- Student Portal Invoice PDF
+- Student Portal Payment Receipt PDF
+- Admin Receipt rendering
+
+are already working correctly.
+
+Do not modify, redesign, or break those existing PDF/receipt renderers unless absolutely necessary.
+
+This task is specifically to add PDF export for:
+
+Admin Portal → Fees & Payments → Ledger
+
+and
+
+Admin Portal → Fees & Payments → Transaction History
+
+4. PDF Quality
+
+The PDF must be a proper professional document suitable for school accounting records.
+
+Requirements:
+
+- Clean A4 layout
+- Proper margins
+- School branding
+- Clear table headers
+- Readable font sizes
+- Proper column widths
+- Automatic pagination for large datasets
+- Repeat table headers on every page
+- Page numbers
+- Report generation date/time in IST
+- No content should be cut off
+- No overlapping columns/text
+- Amounts must be formatted correctly in INR
+- Maintain consistent styling with the existing invoice/receipt design
+
+5. Large Data Sets
+
+Do not generate the PDF only from the records currently rendered on screen if the ledger/transaction table uses pagination or lazy loading.
+
+The PDF must contain all records matching the currently selected filters, even if those records are spread across multiple pages in the UI.
+
+Do not silently truncate the report.
+
+If there are no matching records, show a clear message such as:
+
+"No records found for the selected filters."
+
+and do not generate an empty/broken PDF.
+
+6. Security & Data Accuracy
+
+Use the same authorization and tenant isolation already used by the Fees & Payments module.
+
+A user must only be able to export data belonging to their authorized school/tenant.
+
+Do not expose data from another school.
+
+The PDF must use the same authoritative database values used by the ledger/transaction screens. Do not recalculate or invent financial values.
+
+7. Download Behaviour
+
+When the user clicks:
+
+Download PDF
+
+the application should generate and download the PDF directly.
+
+Use meaningful filenames, for example:
+
+- "Fee-Ledger-2027-2028.pdf"
+- "Payment-Transaction-Report-2027-2028.pdf"
+
+If filters are applied, the filename may include a useful filter/date identifier.
+
+8. Implementation
+
+Before changing code:
+
+1. Inspect the existing Fees & Payments Ledger implementation.
+2. Inspect the Transaction History implementation.
+3. Identify the existing API/query used to retrieve the authoritative data.
+4. Check whether the project already has a PDF-generation library/utility.
+5. Reuse the existing PDF infrastructure where appropriate instead of introducing an unnecessary new dependency.
+6. Check the existing Invoice and Receipt PDF implementation for branding, fonts, school information, pagination, and formatting patterns.
+7. Implement the Ledger and Transaction PDF exports using the same established architecture where possible.
+
+Do not create a second conflicting PDF system if an existing reusable PDF utility already exists.
+
+9. Testing
+
+After implementation, test all of the following:
+
+- Ledger with normal data
+- Ledger with filters
+- Ledger with many records / multiple PDF pages
+- Transaction History with normal data
+- Transaction History with filters
+- Transaction History with online payments
+- Transaction History with offline payments
+- Empty-result filters
+- Different academic sessions
+- Correct school/tenant isolation
+- Correct INR amounts
+- Correct Invoice and Receipt numbers
+- Correct dates and IST timestamps
+- PDF opens successfully
+- PDF downloads successfully from Chrome/mobile
+- No existing Invoice or Receipt functionality is affected
+
+Finally, verify that the downloaded PDFs are actual PDF files, not HTML files renamed with ".pdf", and that they open correctly in standard PDF viewers.
+
+Do not make unrelated changes to the Fees & Payments module.

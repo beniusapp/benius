@@ -1,0 +1,850 @@
+# STEP 2L-4A — ATTENDANCE MODULE
+
+## HISTORICAL STUDENT IDENTITY + PHYSICAL-DELETION PRESERVATION
+
+### VERIFICATION-ONLY AUDIT — NO CHANGES
+
+Step 2L-4 has been implemented in the development environment.
+
+Before we accept Step 2L-4, perform a **strict verification-only audit** of the implementation.
+
+## CRITICAL RULE
+
+### DO NOT CHANGE ANYTHING.
+
+This is an audit only.
+
+Do NOT:
+
+* modify source code;
+* modify `shared/schema.ts`;
+* modify migrations;
+* create a new migration;
+* alter the database schema;
+* alter database data;
+* backfill data;
+* delete data;
+* run destructive SQL;
+* modify indexes;
+* modify triggers;
+* modify APIs;
+* modify frontend code;
+* modify Student Registry behavior;
+* modify Attendance behavior;
+* deploy/publish anything;
+* modify production.
+
+You may inspect files, schema definitions, migration SQL, database metadata, existing development data, and run **read-only verification queries/tests**.
+
+If a problem is discovered, report it. Do not fix it.
+
+---
+
+# 1. CONTEXT
+
+Step 2L-4 addressed this problem:
+
+Previously:
+
+```text
+Student physically deleted
+        ↓
+attendance_records.student_id
+        ↓
+ON DELETE CASCADE
+        ↓
+historical Attendance deleted ❌
+```
+
+The implemented design claims to provide:
+
+```text
+Student physically deleted
+        ↓
+students row deleted
+        ↓
+attendance_records preserved
+        ↓
+student_id becomes NULL
+        ↓
+historical identity snapshot remains
+        ↓
+historical Attendance remains accessible
+```
+
+The implementation reportedly introduced:
+
+* historical `identity_key`;
+* historical Student name snapshot;
+* historical digital-ID snapshot;
+* nullable `student_id`;
+* `ON DELETE SET NULL`;
+* revised Attendance uniqueness;
+* triggers protecting historical identity;
+* migration/backfill logic.
+
+We need to verify that this is actually safe and correct.
+
+---
+
+# 2. PRIMARY VERIFICATION QUESTIONS
+
+Answer these questions from the actual code/schema/database.
+
+## Q1 — What exactly is `identity_key`?
+
+Show the exact implementation.
+
+Determine:
+
+* where it is generated;
+* when it is generated;
+* what source fields are used;
+* whether it is immutable;
+* whether it is tied to the original Student identity;
+* whether it is school/tenant scoped;
+* whether it can ever change after Attendance creation;
+* whether it can ever be reused.
+
+Do NOT infer from naming.
+
+Show the exact code/schema/migration evidence.
+
+---
+
+# 3. IDENTITY REUSE SAFETY
+
+This is the most important verification.
+
+Determine what happens in this sequence:
+
+```text
+Student A
+    ↓
+identity_key = X
+    ↓
+Attendance records created
+    ↓
+Student A physically deleted
+    ↓
+student_id = NULL
+    ↓
+Student B is later created
+```
+
+Verify whether Student B can ever receive:
+
+* Student A's numeric ID;
+* Student A's digital ID;
+* Student A's identity key;
+* another combination that could cause Student B to be associated with Student A's historical Attendance.
+
+The answer must be based on actual database constraints and generation logic.
+
+---
+
+# 4. IDENTITY_KEY UNIQUENESS
+
+Inspect the exact database constraints.
+
+Determine whether `identity_key` is:
+
+* globally unique;
+* school-specific unique;
+* unique only within Attendance;
+* unique per Student;
+* or something else.
+
+Explain why the chosen scope is correct for a multi-tenant application.
+
+For example, verify whether this is intentional:
+
+```text
+School A + identity_key X
+School B + identity_key X
+```
+
+versus requiring:
+
+```text
+identity_key X globally unique
+```
+
+Do not assume either model is correct.
+
+Explain what the actual implementation guarantees.
+
+---
+
+# 5. ATTENDANCE UNIQUE CONSTRAINT
+
+The Step 2L-4 report says the canonical unique index changed to:
+
+```text
+(school_id, session_id, identity_key, date)
+```
+
+Verify the exact production/development database constraint.
+
+Answer:
+
+1. Does this index actually exist?
+2. Is it UNIQUE?
+3. Are there any older unique constraints still present?
+4. Could the old `(school_id, session_id, student_id, date)` constraint conflict with `student_id = NULL` behavior?
+5. Can two historical records accidentally exist for the same Student/Session/date?
+6. Can a deleted Student's historical record coexist correctly with a replacement Student's record?
+
+Show the exact constraints/indexes.
+
+---
+
+# 6. FOREIGN KEY VERIFICATION
+
+Verify the exact current FK:
+
+```text
+attendance_records.student_id
+        ↓
+students.id
+```
+
+Confirm:
+
+* `student_id` is nullable;
+* `ON DELETE SET NULL` is actually installed;
+* `ON UPDATE` behavior;
+* referenced table/column;
+* constraint name;
+* no duplicate/old CASCADE FK remains.
+
+Also verify:
+
+```text
+enrollments.student_id
+        ↓
+students.id
+```
+
+and confirm whether its existing cascade behavior is intentional and does not delete Attendance indirectly.
+
+---
+
+# 7. INDIRECT CASCADE ANALYSIS
+
+Do a complete dependency analysis of:
+
+```text
+students
+```
+
+Find every FK that references `students.id`.
+
+For each one report:
+
+| Table | Column | Delete action | Could deletion affect Attendance? |
+| ----- | ------ | ------------- | --------------------------------- |
+
+We specifically need to rule out:
+
+```text
+Student
+ ↓
+another table
+ ↓
+Attendance
+ ↓
+CASCADE
+```
+
+The Step 2L-4 report said no foreign keys point *to* `attendance_records`.
+
+Verify that independently.
+
+---
+
+# 8. TRIGGER VERIFICATION
+
+The Step 2L-4 report says:
+
+> Insert/update triggers protect the saved identity.
+
+Inspect the exact trigger definitions.
+
+For every relevant trigger determine:
+
+* trigger name;
+* table;
+* BEFORE/AFTER;
+* INSERT/UPDATE/DELETE event;
+* exact condition;
+* exact behavior.
+
+Answer:
+
+### Can a client/API update:
+
+```text
+identity_key
+historical_student_name
+historical_digital_id
+```
+
+after Attendance creation?
+
+If yes, explain under what circumstances.
+
+If no, show why.
+
+Also verify that normal Attendance marking still works.
+
+Do NOT change the triggers.
+
+---
+
+# 9. HISTORICAL SNAPSHOT VERIFICATION
+
+Determine exactly which Attendance fields preserve historical Student identity.
+
+For example, verify whether the actual implementation stores:
+
+```text
+identity_key
+student_name_snapshot
+digital_id_snapshot
+```
+
+or different fields.
+
+For each field report:
+
+* data type;
+* nullable/non-nullable;
+* when populated;
+* whether it can change;
+* whether existing Attendance rows are guaranteed to have it.
+
+Do not assume all existing rows are populated.
+
+---
+
+# 10. EXISTING DATA / BACKFILL SAFETY
+
+Inspect:
+
+```text
+migrations/014_attendance_student_preservation.sql
+```
+
+Do not execute it.
+
+Determine exactly what order the migration uses.
+
+Verify whether it:
+
+1. Adds required columns.
+2. Backfills historical identity.
+3. Verifies unresolved rows.
+4. Fails/aborts if unresolved rows exist.
+5. Changes `student_id` nullability.
+6. Changes FK behavior.
+7. Installs triggers.
+8. Changes indexes.
+9. Performs any destructive operation.
+
+Report the exact order.
+
+---
+
+# 11. BACKFILL CORRECTNESS
+
+Verify the backfill matching logic.
+
+The Attendance row must be matched to the correct Student using appropriate tenant isolation.
+
+Determine:
+
+* what columns are used for matching;
+* whether `school_id` is part of the match;
+* what happens if multiple Students could match;
+* what happens if no Student matches;
+* whether ambiguous matches fail safely.
+
+The migration must never silently assign one Student's historical identity to another Student.
+
+---
+
+# 12. PRODUCTION MIGRATION SAFETY
+
+This is a development application, but the migration must be safe for an eventual production database containing real Attendance records.
+
+Do NOT run anything against production.
+
+Instead, statically audit whether the migration would safely handle:
+
+### Case A
+
+Production has:
+
+```text
+0 Attendance rows
+```
+
+### Case B
+
+Production has:
+
+```text
+1,000 Attendance rows
+```
+
+all linked to valid Students.
+
+### Case C
+
+Production has Attendance rows with unexpected/null/legacy values.
+
+### Case D
+
+Production has duplicate identity/date combinations.
+
+### Case E
+
+Production has Students that have already been deactivated.
+
+Determine whether the migration:
+
+* safely handles the case;
+* fails closed;
+* could partially modify data;
+* could delete data;
+* could create incorrect identity mappings.
+
+---
+
+# 13. TRANSACTION SAFETY
+
+Inspect whether migration 014 runs inside an appropriate database transaction.
+
+Determine:
+
+* whether the migration is atomic;
+* what happens if the backfill fails halfway through;
+* what happens if trigger creation fails;
+* what happens if index creation fails;
+* whether the database could be left in a partially migrated state.
+
+If the migration is not transaction-safe, report the exact risk.
+
+Do NOT modify it.
+
+---
+
+# 14. IDEMPOTENCY
+
+The Step 2L-4 report says the migration was run twice successfully in development.
+
+Verify this claim from the migration itself and migration system.
+
+Determine whether running migration 014 twice is genuinely safe or whether the migration runner simply prevents it from being executed twice.
+
+These are different things.
+
+Report:
+
+* migration-runner behavior;
+* SQL idempotency;
+* whether duplicate columns/indexes/triggers could occur if SQL were manually rerun.
+
+Do not rerun the migration.
+
+---
+
+# 15. ROLLBACK ANALYSIS
+
+The Step 2L-4 report says:
+
+> Rollback is not safe after physical deletion without a deliberate recovery migration.
+
+Verify this.
+
+Explain what would happen if:
+
+```text
+Student A
+ ↓
+Attendance preserved
+ ↓
+Student A physically deleted
+ ↓
+student_id = NULL
+```
+
+and then someone attempted to restore the previous FK:
+
+```text
+ON DELETE CASCADE
+```
+
+or restore `student_id NOT NULL`.
+
+Determine whether historical Attendance would become invalid.
+
+No rollback should be executed.
+
+---
+
+# 16. HISTORICAL READ PATH VERIFICATION
+
+Inspect the actual Attendance read queries.
+
+Verify that historical queries can use:
+
+```text
+historical snapshot
+```
+
+when:
+
+```text
+student_id IS NULL
+```
+
+instead of requiring:
+
+```text
+students.id EXISTS
+```
+
+Specifically inspect:
+
+* Student Attendance data retrieval;
+* Admin Attendance;
+* Teacher Attendance history;
+* historical roster;
+* aggregates;
+* monthly/yearly statistics.
+
+Identify any remaining query where:
+
+```text
+INNER JOIN students
+```
+
+would silently eliminate deleted-Student Attendance.
+
+Do not fix anything.
+
+Report every problematic read path.
+
+---
+
+# 17. ACTIVE ATTENDANCE ROSTER VERIFICATION
+
+Verify that preserving historical Attendance does NOT cause deleted Students to reappear in active Attendance marking.
+
+After:
+
+```text
+Student physically deleted
+```
+
+the normal active Teacher Attendance roster must not resurrect that Student.
+
+Do not change roster behavior.
+
+Only verify it.
+
+---
+
+# 18. AUTHENTICATION LIMITATION
+
+The current Student portal authenticates through the Student Registry.
+
+Therefore, after physical deletion:
+
+```text
+Student Registry identity gone
+```
+
+the deleted Student cannot authenticate through the normal Student portal.
+
+Verify that Step 2L-4 did NOT accidentally create a fake authentication path.
+
+This is acceptable for this step.
+
+Historical data preservation and historical portal authentication are separate requirements.
+
+Report this as a limitation, not a defect, unless the implementation accidentally changes authentication.
+
+---
+
+# 19. TENANT ISOLATION
+
+Verify every identity lookup/backfill uses the correct school context.
+
+Test/inspect this scenario:
+
+```text
+School A
+Student ID = 100
+Identity = X
+
+School B
+Student ID = 200
+Identity = X
+```
+
+Determine whether Attendance for School A can ever resolve to School B's Student.
+
+Also verify historical queries always retain:
+
+```text
+school_id
++
+session_id
+```
+
+scoping.
+
+---
+
+# 20. ACADEMIC SESSION ISOLATION
+
+Verify:
+
+```text
+Attendance.school_id
+Attendance.session_id
+Attendance.identity_key
+Attendance.date
+```
+
+remain correctly associated.
+
+A Student deletion must NOT:
+
+* remove Session history;
+* change Session IDs;
+* merge records across Sessions;
+* cause Session A Attendance to appear in Session B.
+
+---
+
+# 21. PHYSICAL-DELETION INTEGRATION TEST REVIEW
+
+Inspect:
+
+```text
+server/__tests__/attendance-student-deletion-preservation.test.ts
+```
+
+Verify that the test actually performs a physical database Student deletion and does NOT merely:
+
+* deactivate the Student;
+* mock deletion;
+* bypass the actual FK;
+* manually set `student_id = NULL`.
+
+Confirm the test sequence is genuinely:
+
+```text
+create Student
+→ create Attendance
+→ physically DELETE Student
+→ query Attendance
+→ verify Attendance remains
+```
+
+Also inspect whether the test verifies:
+
+* identity snapshot;
+* Session;
+* class;
+* section;
+* school;
+* ID/code reuse;
+* duplicate prevention.
+
+---
+
+# 22. TEST QUALITY
+
+Review the relevant tests for false positives.
+
+A test should fail if:
+
+```text
+Attendance disappears
+```
+
+and should fail if:
+
+```text
+Attendance survives but identity is wrong
+```
+
+and should fail if:
+
+```text
+replacement Student receives old Attendance
+```
+
+and should fail if:
+
+```text
+School B can see School A's historical Attendance
+```
+
+Report any test that is too weak to prove the requirement.
+
+Do NOT modify tests.
+
+---
+
+# 23. DATABASE STATE
+
+Use read-only inspection to report the current development schema state:
+
+* `attendance_records.student_id` nullability;
+* FK action;
+* identity columns;
+* snapshot columns;
+* unique indexes;
+* triggers.
+
+Do not modify anything.
+
+---
+
+# 24. REQUIRED FINAL VERIFICATION TABLE
+
+Return this exact structure:
+
+| Verification                                                   | PASS / PARTIAL / FAIL | Evidence |
+| -------------------------------------------------------------- | --------------------- | -------- |
+| identity_key is immutable                                      |                       |          |
+| identity_key cannot be reused incorrectly                      |                       |          |
+| tenant isolation of identity                                   |                       |          |
+| unique Attendance constraint                                   |                       |          |
+| `student_id` nullable                                          |                       |          |
+| `ON DELETE SET NULL` installed                                 |                       |          |
+| no old CASCADE FK remains                                      |                       |          |
+| no indirect cascade deletes Attendance                         |                       |          |
+| historical identity snapshot preserved                         |                       |          |
+| triggers correctly protect identity                            |                       |          |
+| existing-data backfill safe                                    |                       |          |
+| ambiguous backfill fails safely                                |                       |          |
+| migration ordering safe                                        |                       |          |
+| migration transaction safety                                   |                       |          |
+| migration idempotency                                          |                       |          |
+| rollback limitation understood                                 |                       |          |
+| historical Admin reads work                                    |                       |          |
+| historical Teacher reads work                                  |                       |          |
+| historical Student Attendance data path works where applicable |                       |          |
+| deleted Students excluded from active roster                   |                       |          |
+| Session isolation preserved                                    |                       |          |
+| tenant isolation preserved                                     |                       |          |
+| physical-deletion integration test is genuine                  |                       |          |
+| ID/code reuse protection tested                                |                       |          |
+| no historical Attendance deletion                              |                       |          |
+
+---
+
+# 25. FINAL REQUIRED REPORT
+
+After the verification, provide:
+
+## A. Overall verdict
+
+Choose exactly one:
+
+```text
+SAFE TO ACCEPT
+```
+
+or
+
+```text
+SAFE WITH CONDITIONS
+```
+
+or
+
+```text
+NOT SAFE TO ACCEPT
+```
+
+Do not modify anything to reach the verdict.
+
+## B. Identity model
+
+Explain exactly how `identity_key` works.
+
+## C. Database model
+
+Explain the final FK/index/trigger structure.
+
+## D. Physical deletion behavior
+
+Explain exactly what happens when a Student is physically deleted.
+
+## E. Historical identity behavior
+
+Explain exactly how historical Attendance identifies the deleted Student.
+
+## F. Existing-data migration safety
+
+Explain whether migration 014 is safe for a populated database.
+
+## G. Production migration prerequisites
+
+List exactly what must be verified before applying this migration to production.
+
+## H. Test quality
+
+State whether the existing tests genuinely prove the requirement.
+
+## I. Remaining risks
+
+List any unresolved technical risks.
+
+## J. Changes made
+
+This MUST say:
+
+```text
+NO CODE CHANGES
+NO SCHEMA CHANGES
+NO DATA CHANGES
+NO MIGRATIONS EXECUTED
+NO PRODUCTION CHANGES
+```
+
+unless something was accidentally changed. If anything changed accidentally, report it immediately.
+
+---
+
+# 26. ABSOLUTE SCOPE CONTROL
+
+This is verification only.
+
+Do not fix discovered issues.
+
+Do not "improve" the implementation.
+
+Do not refactor.
+
+Do not create migrations.
+
+Do not alter data.
+
+Do not deploy.
+
+Do not modify production.
+
+The purpose of Step 2L-4A is to answer one question:
+
+> **Is the Step 2L-4 historical Attendance preservation design technically safe, tenant-safe, Session-safe, identity-safe, and migration-safe?**
+
+If the answer is NO or CONDITIONAL, stop there and clearly identify the exact issue so it can be addressed in a separate controlled step.

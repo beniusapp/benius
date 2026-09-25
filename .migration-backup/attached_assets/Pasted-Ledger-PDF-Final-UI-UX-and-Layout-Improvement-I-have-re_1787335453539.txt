@@ -1,0 +1,721 @@
+Ledger PDF — Final UI/UX and Layout Improvement
+
+I have reviewed the current generated Fee Ledger PDF carefully. The data and calculation logic are now correct, but the PDF needs a final professional redesign so that it is readable, audit-friendly, and suitable for printing/sharing with a school principal, accountant, or auditor.
+
+IMPORTANT — DO NOT CHANGE FUNCTIONAL LOGIC
+
+Do not modify:
+
+- "selectedIds"
+- "selectAllMatching"
+- "excludedIds"
+- Selection behavior
+- "Select All Matching" behavior
+- Individual selection behavior
+- Exclusion behavior
+- Pagination behavior
+- Invoice/payment calculations
+- Outstanding calculation
+- Payment aggregation logic
+- Existing GET "/api/admin/fees/ledger/pdf" behavior
+- Existing POST "/api/admin/fees/ledger/pdf" selection behavior
+- Tx Report PDF
+- Export Ledger
+- Database schema
+- Any unrelated files
+
+The current backend selection implementation is already verified. This task is only for improving the Ledger PDF rendering and presentation, except for the minimum backend data changes required if a field is genuinely needed by the PDF.
+
+Primary file:
+
+server/ledger-pdf.ts
+
+Only touch the Ledger PDF route in "server/fees-routes.ts" if absolutely necessary to provide data that the renderer already needs.
+
+---
+
+1. Overall PDF Objective
+
+The final PDF should look like a professional school financial ledger, not like a raw database export.
+
+It should be:
+
+- Clean
+- Highly readable
+- Compact but not cramped
+- Suitable for A4 landscape printing
+- Easy to audit
+- Easy to scan row-by-row
+- Professional enough to share with the Principal, accountant, auditor, or school management
+- Consistent across multiple pages
+
+The current PDF is technically correct, but the table is too dense and some text becomes difficult to read at normal phone/PDF-viewer zoom.
+
+---
+
+2. Page Layout
+
+Continue using:
+
+A4 Landscape
+
+Use approximately:
+
+32pt left margin
+32pt right margin
+32pt top margin
+32pt bottom margin
+
+Use the available width efficiently.
+
+Do NOT make the table unnecessarily narrow.
+
+The table must remain within the printable page width with no horizontal overflow.
+
+---
+
+3. Report Header
+
+Create a professional two-sided header.
+
+Left side
+
+Show:
+
+School Name
+
+Below it:
+
+School address
+
+Below that:
+
+Phone • Email
+
+Use the existing school profile data.
+
+If the school logo is available, display it neatly beside/above the school identity without consuming excessive vertical space.
+
+Right side
+
+Show:
+
+FEE LEDGER REPORT
+
+Below:
+
+"Academic Session: 2027–28"
+
+Below:
+
+"Generated: 21 Aug 2026, 11:20 PM IST"
+
+Below:
+
+"Records: 29"
+
+Use the actual session, timestamp, and record count dynamically.
+
+Do not hard-code these values.
+
+---
+
+4. Report Description
+
+Immediately below the title, add a small professional subtitle:
+
+«Invoice-wise fee ledger showing billed amount, payments received, and outstanding balance.»
+
+Keep it subtle and compact.
+
+---
+
+5. Filter / Scope Information
+
+The PDF must clearly communicate what data is included.
+
+If filters are active, show something like:
+
+Filters: Status = Overdue | Class = 6A | Fee Name = Quarterly Fee
+
+Only display filters that are actually active.
+
+If there are no filters:
+
+Scope: All matching records for this session
+
+This is important because the PDF may contain records from multiple pages.
+
+---
+
+6. Table Columns
+
+Keep these 17 columns:
+
+1. Invoice No.
+2. Receipt No.
+3. Student
+4. DSID
+5. Class
+6. Section
+7. Fee Name
+8. Fee Type
+9. Fee Period
+10. Frequency
+11. Amount
+12. Due Date
+13. Status
+14. Paid On
+15. Paid
+16. Outstanding
+17. Payment Method
+18. Reference No.
+
+IMPORTANT:
+
+If the existing implementation combines Class + Section into one column, it is acceptable to keep it combined as long as it remains readable.
+
+However, do not remove any of the important financial fields.
+
+Use professional column names:
+
+- "Class"
+- "Outstanding"
+- "Payment Method"
+- "Reference No."
+
+Avoid abbreviations such as:
+
+- "Cls"
+- "Outstdg."
+- "Method"
+
+---
+
+7. Column Widths
+
+Use the full available table width intelligently.
+
+Prioritize width for:
+
+- Student
+- Fee Name
+- Fee Type
+- Fee Period
+- Payment Method
+- Reference No.
+
+Keep narrow identifiers such as Invoice No., Receipt No., and DSID relatively narrow.
+
+Do NOT give excessive width to:
+
+- Status
+- Amount
+- Paid
+- Outstanding
+- Due Date
+- Paid On
+
+Those values are short.
+
+The final column widths must add up exactly to the available table width.
+
+Add a programmatic assertion/check so accidental width overflow is caught during development.
+
+---
+
+8. Text Wrapping
+
+This is very important.
+
+Do NOT allow text to be clipped.
+
+The following columns should support wrapping:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Fee Name
+- Fee Type
+- Fee Period
+- Payment Method
+- Reference No.
+
+Long values should wrap to 2–3 lines when necessary.
+
+Examples:
+
+Random2Student
+
+should remain readable.
+
+A long reference such as:
+
+pay_ABC123XYZ987654
+
+should wrap rather than disappear outside the cell.
+
+---
+
+9. Dynamic Row Height
+
+Do not use one fixed row height for every row.
+
+Before rendering each row:
+
+1. Measure the wrapped content.
+2. Determine the tallest cell.
+3. Calculate the row height from that cell.
+4. Add reasonable vertical padding.
+5. Render the complete row.
+
+Short rows should remain compact.
+
+Long rows should automatically become taller.
+
+No text should overlap another row.
+
+No text should be clipped.
+
+No text should be rendered outside its cell.
+
+---
+
+10. Typography
+
+Use a clear hierarchy.
+
+Report title
+
+Approximately:
+
+15–16 pt bold
+
+Column headers
+
+Approximately:
+
+7–8 pt bold
+
+Normal table text
+
+Approximately:
+
+7–8 pt
+
+Narrow identifier columns
+
+Approximately:
+
+6.5–7 pt
+
+Do not make the entire table 5–6 pt just to fit everything.
+
+Readability is more important than squeezing every column.
+
+---
+
+11. Table Header
+
+Create a dark professional header row with white text.
+
+Column headings should be vertically centered.
+
+Use enough height so wrapped column titles do not collide.
+
+Example:
+
+Invoice No. | Receipt No. | Student | DSID | Class | Fee Name | Fee Type |
+Fee Period | Frequency | Amount | Due Date | Status | Paid On |
+Paid | Outstanding | Payment Method | Reference No.
+
+---
+
+12. Alternating Rows
+
+Use subtle alternating row backgrounds.
+
+For example:
+
+- white
+- very light grey/blue
+
+Do not use strong colors.
+
+The purpose is simply to help the reader follow a row across many columns.
+
+---
+
+13. Status Display
+
+Status should be visually obvious.
+
+Use a small rounded status pill.
+
+Examples:
+
+Paid
+
+Green/light-green background with dark green text.
+
+Due
+
+Amber/light-yellow background with dark amber text.
+
+Overdue
+
+Red/light-red background with dark red text.
+
+Partial
+
+Blue/light-blue background with dark blue text.
+
+Waived
+
+Grey background with dark grey text.
+
+Do not rely on color alone; the status text must remain clearly readable.
+
+---
+
+14. Financial Amount Formatting
+
+Use Indian currency formatting consistently.
+
+Examples:
+
+₹1,000
+₹12,000
+₹1,00,000
+
+Do not display unnecessary decimal values such as:
+
+₹1000.00
+
+unless the actual amount contains paise.
+
+Align monetary values consistently, preferably right-aligned.
+
+Columns:
+
+- Amount
+- Paid
+- Outstanding
+
+should be visually easy to compare.
+
+---
+
+15. Dates
+
+Use a consistent readable Indian-style date format.
+
+For example:
+
+22 Apr 2027
+20 Aug 2026
+
+Avoid inconsistent formats such as:
+
+2027-04-22
+22/04/27
+Apr 22
+
+Use one format throughout the report.
+
+If a date does not exist, display:
+
+—
+
+rather than blank space.
+
+---
+
+16. Missing Values
+
+Use a consistent em dash:
+
+—
+
+for unavailable values.
+
+Examples:
+
+- No receipt number → "—"
+- No paid date → "—"
+- No payment method → "—"
+- No reference → "—"
+
+Do not use inconsistent combinations of:
+
+-
+--
+blank
+N/A
+null
+undefined
+
+---
+
+17. Payment Method
+
+The Payment Method should represent the aggregated payment state correctly.
+
+If all payments for an invoice used the same method:
+
+Online
+Cash
+UPI
+Bank Transfer
+
+If multiple different methods were used:
+
+Multiple
+
+Do not expose raw database values if a cleaner display label is already available.
+
+---
+
+18. Reference Number
+
+Display the latest/most recent payment reference as currently implemented.
+
+If it is too long:
+
+- Wrap it
+- Do not clip it
+- Do not overlap neighboring columns
+
+---
+
+19. Totals Section
+
+At the end of the complete report, show a professional totals section.
+
+The totals must be calculated from the exact records included in the PDF.
+
+Show:
+
+TOTAL INVOICED       ₹XX,XXX
+TOTAL PAID          ₹XX,XXX
+TOTAL OUTSTANDING   ₹XX,XXX
+
+The values must be aligned vertically.
+
+Use a subtle dark/navy totals header or separator.
+
+Do not make the totals unnecessarily large.
+
+IMPORTANT:
+
+Totals must be calculated from the selected/exported dataset after all filters and selection rules have been applied.
+
+---
+
+20. Multi-Page Behavior
+
+The report may contain hundreds or thousands of invoices.
+
+Every page must:
+
+- Repeat the school/report header appropriately
+- Repeat the table column headers
+- Maintain consistent column widths
+- Maintain consistent typography
+- Maintain consistent row wrapping
+- Avoid splitting a row incorrectly
+- Continue naturally onto the next page
+
+Do not put the totals section in the middle of the dataset.
+
+Totals should appear only after the final record.
+
+If the totals section does not fit on the current page, move it entirely to the next page.
+
+---
+
+21. Page Number
+
+Footer should show:
+
+Left:
+
+Mary Immaculate School • Fee Ledger Report • Session 2027–28
+
+Right:
+
+Page 1 of 2
+
+Use the actual school name and session dynamically.
+
+Do not show duplicate page numbers in multiple places.
+
+---
+
+22. Important Audit Requirement
+
+The PDF must make it immediately clear that:
+
+Invoice amount ≠ amount paid ≠ outstanding amount.
+
+For every invoice:
+
+Outstanding = max(Invoice Amount − Total Paid, 0)
+
+Do not change this calculation.
+
+The status displayed must continue coming from the existing invoice status logic.
+
+Do not derive or recalculate the status inside the PDF renderer.
+
+---
+
+23. Preserve Existing Data
+
+The renderer must continue receiving and displaying:
+
+- Invoice Number
+- Receipt Number
+- Student Name
+- DSID
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Invoice Amount
+- Due Date
+- Status
+- Paid Date
+- Total Paid
+- Outstanding
+- Payment Method
+- Reference Number
+
+Do not silently remove any of these fields just to make the table fit.
+
+---
+
+24. Do Not Duplicate Data
+
+Do not add:
+
+- Payment ID
+- Order ID
+- Failure reason
+- Auth code
+- Individual payment breakdown
+
+unless those fields are already part of the existing Ledger PDF specification.
+
+Those belong to the transaction/payment report rather than this invoice-centric ledger.
+
+---
+
+25. Final Verification
+
+After implementation, verify all of the following:
+
+Layout
+
+- [ ] A4 landscape
+- [ ] No horizontal overflow
+- [ ] No clipped text
+- [ ] No overlapping text
+- [ ] Dynamic row heights work
+- [ ] Long names wrap correctly
+- [ ] Long fee names wrap correctly
+- [ ] Long references wrap correctly
+- [ ] Column headers remain readable
+
+Data
+
+- [ ] Invoice number correct
+- [ ] Receipt number correct
+- [ ] Student correct
+- [ ] DSID correct
+- [ ] Class/Section correct
+- [ ] Fee Name correct
+- [ ] Fee Type correct
+- [ ] Fee Period correct
+- [ ] Frequency correct
+- [ ] Amount correct
+- [ ] Due Date correct
+- [ ] Status correct
+- [ ] Paid On correct
+- [ ] Paid amount correct
+- [ ] Outstanding correct
+- [ ] Payment Method correct
+- [ ] Reference correct
+
+Filtering
+
+- [ ] Search filter still works
+- [ ] Status filter still works
+- [ ] Class filter still works
+- [ ] Fee Name filter still works
+- [ ] Fee Type filter still works
+- [ ] Academic session isolation remains intact
+
+Selection
+
+- [ ] Individual selected invoices export correctly
+- [ ] Selected invoices across different pages export correctly
+- [ ] Select All Matching exports all matching records
+- [ ] Excluded invoices are omitted correctly
+- [ ] Clearing selection returns to normal filtered export
+- [ ] Pagination does not incorrectly limit the PDF
+
+Totals
+
+- [ ] Total Invoiced is correct
+- [ ] Total Paid is correct
+- [ ] Total Outstanding is correct
+- [ ] Totals represent exactly the records included in the PDF
+
+Regression protection
+
+Confirm explicitly:
+
+«Tx Report PDF was not modified.»
+
+Confirm explicitly:
+
+«Export Ledger was not modified.»
+
+Confirm explicitly:
+
+«Selection state implementation was not modified.»
+
+Confirm explicitly:
+
+«No database schema was changed.»
+
+Confirm explicitly:
+
+«No unrelated files were changed.»
+
+---
+
+FINAL REQUIREMENT
+
+Before finishing, generate one Ledger PDF containing enough records to span at least 2 pages and visually inspect it.
+
+Pay special attention to:
+
+1. Long student names
+2. Long fee names
+3. Long payment references
+4. Multiple payment methods
+5. Unpaid invoices
+6. Paid invoices
+7. Overdue invoices
+8. Rows containing missing receipt/payment/reference values
+9. Totals
+10. Page 1 → Page 2 continuation
+
+The final PDF should look like a real professional school fee ledger/report, not a developer-generated database table.
+
+Do not change functionality that is already working. This task is primarily a PDF rendering, readability, layout, and professional presentation improvement.

@@ -1,0 +1,52 @@
+Do NOT change, fix, refactor, or modify any code yet. I only want you to inspect and explain the current implementation first.
+
+I need you to investigate the Admin Portal’s Academic Session and session-switching behavior for a brand-new school.
+
+Scenario:
+
+* Super Master creates a new school, e.g. Mouse International School.
+* Super Master provides the principal with the school code and initial credentials.
+* Principal logs in and changes the password.
+* Principal enters the Admin Portal for the first time.
+* The top bar currently shows “No Session (Active)”.
+* Principal goes to School Setup → Academic Session.
+* Principal creates the school’s FIRST academic session, e.g. 2026–2027.
+
+Expected business behavior:
+
+* Since this is the FIRST academic session for this school, 2026–2027 should automatically become ACTIVE.
+* It should NOT be shown as ARCHIVED.
+* There is no previous session to archive because this is the school’s first session.
+* The top session indicator should then correctly show 2026–2027 as the active session.
+* There should be no financial/session data from any other session because this school has never had one.
+
+I also need you to investigate the current session-switcher UI:
+
+* Where is the session selector implemented?
+* How is the selected session stored and propagated across the Admin Portal?
+* Why does the session-switching behavior appear incorrect when navigating downward through the Admin Portal/pages?
+* Does the selector/header remain synchronized when navigating between modules?
+* Is there any route/provider/remount behavior that causes the selected session to disappear, reset, or become inconsistent?
+* How are ACTIVE vs ARCHIVED sessions determined and displayed?
+* What exactly happens in the database when the first session is created?
+* Is there any existing logic that assumes a previous session always exists?
+
+IMPORTANT:
+Do not modify anything.
+Do not create migrations.
+Do not change database records.
+Do not change UI.
+Do not fix the issue yet.
+
+First give me a clear investigation report covering:
+
+1. Current first-session creation flow.
+2. Why the first session is currently becoming ARCHIVED, if that is actually happening.
+3. What the code currently considers ACTIVE vs ARCHIVED.
+4. Current session-selector/header architecture.
+5. Why session switching/navigation may be behaving incorrectly.
+6. Relevant database/session relationships.
+7. Exact files/routes/components involved.
+8. What you recommend changing later, WITHOUT implementing it now.
+
+I will review your findings first. Only after that I will give you the next instruction.

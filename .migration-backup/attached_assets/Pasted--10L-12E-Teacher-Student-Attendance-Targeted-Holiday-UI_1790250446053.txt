@@ -1,0 +1,190 @@
+# 10L-12E — Teacher Student-Attendance Targeted-Holiday UI Alignment
+
+We are continuing the Attendance hardening work.
+
+Already completed and MUST remain untouched:
+
+* 10L-12B — Session display boundaries
+* 10L-12C — Teacher Self-Attendance Session write boundary
+* 10L-12C-R — Existing rate test correction
+* 10L-12D — Student targeted-holiday display
+
+Implement **ONLY 10L-12E**.
+
+## Objective
+
+Fix the Teacher → Student Attendance marking UI so that it does not incorrectly disable Attendance marking because of a targeted holiday belonging to another class/section.
+
+The existing server-side write rule is authoritative:
+
+> **Only an `All_School` holiday locks Teacher Student-Attendance marking.**
+
+Targeted class/section holidays do NOT currently lock the Teacher Student-Attendance write API.
+
+Therefore the UI must not impose a stricter rule than the server.
+
+## Required behavior
+
+### All_School holiday
+
+If the selected Attendance date has an `All_School` holiday:
+
+```text
+Teacher marking = BLOCKED
+```
+
+Preserve the existing behavior.
+
+### Targeted holiday for another class/section
+
+Example:
+
+```text
+Holiday = Class 5-A
+Teacher is marking = Class 5-B
+```
+
+The UI must NOT disable Attendance marking because of this holiday.
+
+```text
+Teacher marking = ALLOWED
+```
+
+### Targeted holiday for the current class/section
+
+Do not invent a new business rule.
+
+The existing server write contract says targeted holidays do not themselves lock the Attendance write.
+
+Therefore the UI should not block the write solely because the selected class/section has a targeted holiday.
+
+```text
+Teacher marking = ALLOWED
+```
+
+The existing server-side authorization and all other existing Attendance restrictions remain authoritative.
+
+## Important
+
+Do NOT change the server holiday-lock rule.
+
+Do NOT change:
+
+* `All_School` holiday semantics;
+* Student Attendance;
+* Admin Attendance;
+* Teacher Self-Attendance;
+* Attendance percentage calculations;
+* Working Days;
+* Academic Session logic;
+* 7-day correction rule;
+* Attendance statuses;
+* Student Registry;
+* enrollment;
+* database schema;
+* migrations;
+* stored holiday records;
+* 10L-12B;
+* 10L-12C;
+* 10L-12D.
+
+This is a **Teacher marking UI alignment fix only**.
+
+## Relevant existing code
+
+The 10L-12A audit identified the likely UI area around:
+
+```text
+client/src/pages/teacher-modules/attendance.tsx
+approximately lines 241–257
+approximately line 589
+```
+
+and the existing server holiday behavior around:
+
+```text
+server/teacher-routes.ts
+approximately lines 4414–4446
+```
+
+Line numbers are approximate. Inspect the current code.
+
+Identify exactly how the Teacher marking screen determines that a date should be disabled because of a holiday.
+
+Align that UI decision with the existing server rule.
+
+## Security
+
+Do not weaken any existing authorization.
+
+The teacher must still be authorized to mark the selected class/section through the existing authorization mechanism.
+
+Only the incorrect targeted-holiday UI blocking should be removed.
+
+## Tests
+
+Add focused tests proving:
+
+1. `All_School` holiday disables Teacher Student-Attendance marking.
+2. Targeted holiday for another class/section does NOT disable marking.
+3. Targeted holiday for the current class/section does NOT itself disable marking, consistent with the existing server write contract.
+4. Existing non-holiday Attendance restrictions remain unchanged.
+5. Existing Teacher authorization remains unchanged.
+
+If there is already a shared holiday helper, prefer reusing it rather than creating duplicate holiday logic.
+
+## Verification
+
+Run:
+
+1. Focused Teacher Student-Attendance tests.
+2. Relevant existing Attendance tests.
+3. Relevant holiday tests.
+
+Then:
+
+```bash
+npm run check
+```
+
+and:
+
+```bash
+git diff --check
+```
+
+Inspect the final diff.
+
+Restart the development app if that is part of the existing workflow.
+
+## Strict scope
+
+If you discover another issue, STOP and report it.
+
+Do not fix:
+
+* Student holiday behavior;
+* Admin holiday behavior;
+* Self-Attendance behavior;
+* holiday storage;
+* server holiday policy;
+* any other 10L-12A findings.
+
+## Final report
+
+Report:
+
+* exact files changed;
+* exact UI logic changed;
+* confirmation that `All_School` holidays remain blocking;
+* confirmation that targeted holidays no longer incorrectly block the UI;
+* tests passed;
+* `npm run check`;
+* `git diff --check`;
+* final diff;
+* confirmation that no schema/migration/data changes were made;
+* confirmation that 10L-12B, 10L-12C, and 10L-12D were not altered.
+
+If everything passes, finish with:
+
+**10L-12E COMPLETE — TEACHER TARGETED-HOLIDAY UI OVER-BLOCKING FIXED — NO OTHER CHANGES MADE.**

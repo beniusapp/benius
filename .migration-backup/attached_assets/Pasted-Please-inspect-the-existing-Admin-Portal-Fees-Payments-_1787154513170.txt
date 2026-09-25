@@ -1,0 +1,79 @@
+Please inspect the existing Admin Portal → Fees & Payments → Ledger & Transactions module carefully.
+
+I am asking for an audit/information only. DO NOT change, modify, refactor, or add anything to the code.
+
+In the Ledger & Transactions table there is a column named Status.
+
+I want you to identify the complete list of all possible status values that the system currently supports/displays for a fee/invoice record.
+
+For example, I can currently see:
+
+- Paid
+- Due
+
+I want you to verify whether the system also has statuses such as:
+
+- Overdue
+- Partially Paid
+- Cancelled
+- Failed
+- Refunded
+- Waived
+- Pending
+- Processing
+- etc.
+
+Do NOT assume these statuses exist. Only report statuses that are actually implemented in the current application.
+
+Please inspect the relevant:
+
+1. Database/schema fields
+2. Backend/API logic
+3. Fee/invoice status calculation logic
+4. Payment status logic
+5. Ledger & Transactions frontend/table
+6. Filters/dropdowns related to Status
+7. Any enums/constants/types used for fee/payment status
+
+Then give me a clear answer in this exact structure:
+
+1. Complete Status List
+
+List every status that the Ledger & Transactions system can currently use.
+
+For each status, tell me:
+
+- Exact status name/value used in the code
+- What it means
+- When it is assigned
+- Whether it is actually visible in the Ledger & Transactions Status column
+
+2. Statuses Visible in the UI
+
+Tell me exactly which statuses can currently appear in the Status column of Ledger & Transactions.
+
+3. Payment Attempt vs Invoice Status
+
+Very importantly, distinguish between:
+
+- Invoice/Fee status — e.g. Due, Paid, Overdue
+- Payment attempt status — e.g. Failed, Cancelled, Captured, Refunded
+
+I do NOT want payment-attempt statuses incorrectly mixed into the invoice Status column.
+
+For example, a payment attempt can be Failed, while the invoice itself may still remain Due.
+
+4. Status Filter
+
+Check the All Status filter in Ledger & Transactions and tell me every option currently available there.
+
+5. Final Answer
+
+At the end, give me a simple table:
+
+Status| Type| Meaning| Appears in Ledger Status column?
+...| Invoice/Fee| ...| Yes/No
+
+Again: this is an inspection only. Do not make any code or database changes.
+
+I want the answer based strictly on the existing implementation, not assumptions or recommendations.

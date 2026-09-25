@@ -1,0 +1,448 @@
+Step 1 — Immutable Fee Component Snapshot Schema
+
+We are implementing the Fee Component Breakdown enhancement for the Student Fee Receipt.
+
+This step is SCHEMA ONLY.
+
+CRITICAL RULES
+
+1. DO NOT modify payment processing.
+2. DO NOT modify Razorpay order creation.
+3. DO NOT modify Razorpay webhook logic.
+4. DO NOT modify Razorpay payment verification.
+5. DO NOT modify offline payment processing.
+6. DO NOT modify invoice generation logic.
+7. DO NOT modify receipt generation/rendering.
+8. DO NOT modify fee-period calculation.
+9. DO NOT modify late-fee calculation.
+10. DO NOT modify concession logic.
+11. DO NOT redesign "fee_structures.amount".
+12. DO NOT add or implement concession snapshots in this step.
+13. DO NOT backfill or reconstruct historical data.
+14. DO NOT copy data from the current "fee_structures.breakdown" into existing historical invoices.
+15. DO NOT modify existing application/business logic.
+16. This step must contain only the database/schema foundation required for a future immutable fee-component snapshot.
+
+---
+
+1. Current Problem
+
+The current system stores fee components only in:
+
+"fee_structures.breakdown"
+
+The existing structure is:
+
+Array<{
+  name: string;
+  purpose: string;
+  amount: number;
+}>
+
+This is a live configuration.
+
+The forensic audit confirmed that:
+
+- "fee_structures.breakdown" is NOT copied to "fee_records"
+- "fee_records" currently has no component snapshot field
+- historical invoices therefore have no immutable component information
+- the student receipt currently correctly does NOT display historical fee components
+- reading "fee_structures.breakdown" from the receipt would be incorrect because administrators can change the fee structure after invoice generation
+
+We need to create the database capability to safely store the component breakdown at invoice creation time in a later implementation step.
+
+---
+
+2. Required Schema Change
+
+Add exactly one new column to "fee_records":
+
+breakdown_snapshot
+
+Database type:
+
+JSONB
+
+It must be:
+
+NOT NULL
+
+with a default of:
+
+[]
+
+Conceptually:
+
+breakdown_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb
+
+The stored shape must be:
+
+Array<{
+  name: string;
+  purpose: string;
+  amount: number;
+}>
+
+Use the existing project's naming conventions and Drizzle schema conventions.
+
+---
+
+3. Update "shared/schema.ts"
+
+Update the existing "feeRecords" Drizzle schema to include the new field.
+
+Use the project's existing JSONB/type-definition style.
+
+The field should represent:
+
+breakdownSnapshot: jsonb("breakdown_snapshot")
+  .$type<Array<{
+    name: string;
+    purpose: string;
+    amount: number;
+  }>>()
+  .notNull()
+  .default([])
+
+However, first inspect the existing schema conventions and follow the project's established formatting/types rather than blindly copying this syntax.
+
+Do not change any existing "feeRecords" fields.
+
+Do not rename existing columns.
+
+Do not change existing defaults.
+
+Do not change existing types.
+
+Do not change relationships.
+
+---
+
+4. Database Migration
+
+Create the appropriate database migration for the new column.
+
+Equivalent SQL:
+
+ALTER TABLE fee_records
+ADD COLUMN breakdown_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+Use the project's existing migration mechanism.
+
+Do not manually modify production data.
+
+Do not backfill historical values.
+
+Do not populate the new column from "fee_structures.breakdown".
+
+---
+
+5. VERY IMPORTANT — NO HISTORICAL BACKFILL
+
+Existing "fee_records" must remain historically honest.
+
+For all existing invoices:
+
+breakdown_snapshot = []
+
+Do NOT do this:
+
+fee_records.breakdown_snapshot = fee_structures.breakdown
+
+Do NOT query the current fee structure and populate old invoices.
+
+Do NOT attempt to determine which fee structure originally created an invoice.
+
+Do NOT reconstruct historical component values.
+
+This would violate the project's immutable financial-history requirement.
+
+The default "[]" is intentional.
+
+---
+
+6. No Invoice Generation Changes
+
+In this step, DO NOT modify any invoice creation path.
+
+Specifically do NOT modify:
+
+- "server/index.ts"
+- "server/fees-routes.ts" invoice-generation logic
+- "server/routes.ts" invoice creation logic
+- auto-invoice cron
+- manual invoice generation
+- bulk invoice generation
+- offline-payment invoice auto-creation
+- admin single-invoice creation
+
+The new column must simply exist in the database/schema.
+
+The actual population of:
+
+breakdown_snapshot
+
+will be handled in a separate Step 2 after this schema change has been verified.
+
+---
+
+7. No Receipt Changes
+
+Do NOT modify the receipt handler.
+
+Do NOT modify:
+
+GET /api/student/fees/:id/receipt
+
+Do not add component rows.
+
+Do not change the fee table.
+
+Do not read:
+
+fee_structures.breakdown
+
+from the receipt.
+
+Do not modify receipt HTML.
+
+Do not modify receipt CSS.
+
+The receipt must remain exactly as it is after the previous audit cleanup.
+
+---
+
+8. No Admin Transaction Detail Changes
+
+Do NOT modify:
+
+GET /api/admin/fees/:id/transaction-detail
+
+Do not change its response in this step.
+
+The existing dead "feeRow.breakdown" handling will be addressed separately after the snapshot-writing architecture is implemented.
+
+---
+
+9. No Concession Changes
+
+This step is NOT implementing:
+
+- "original_amount"
+- "concession_amount"
+- "concession_type_snap"
+- "concession_percent_snap"
+
+Do NOT add those columns.
+
+Do NOT change the meaning of:
+
+fee_structures.amount
+
+The forensic audit established that "fee_structures.amount" currently represents the net amount entered by the administrator.
+
+The gross/net/concession architecture requires a separate product decision and must not be mixed into this step.
+
+---
+
+10. Data Integrity Requirements
+
+The new column must preserve the existing component structure exactly:
+
+{
+  name: string;
+  purpose: string;
+  amount: number;
+}
+
+Do not add:
+
+- category
+- feeType
+- percentage
+- currency
+- tax
+- metadata
+- IDs
+- timestamps
+- calculated totals
+
+Do not redesign the existing "fee_structures.breakdown" structure.
+
+---
+
+11. Migration Safety
+
+The migration must be backward compatible.
+
+Requirements:
+
+- Existing "fee_records" remain valid.
+- Existing application queries must continue working.
+- Existing invoices must not change financially.
+- Existing payment records must not change.
+- Existing receipts must not change.
+- Existing fee structures must not change.
+- Existing students must not change.
+
+Because the column has:
+
+NOT NULL DEFAULT []
+
+all existing rows should receive an empty array safely.
+
+---
+
+12. Verification Before Finishing
+
+After implementing the schema migration:
+
+Verify database structure
+
+Confirm:
+
+fee_records.breakdown_snapshot
+
+exists.
+
+Confirm:
+
+type = JSONB
+NOT NULL = true
+DEFAULT = []
+
+Verify existing records
+
+Confirm existing "fee_records" have:
+
+[]
+
+and that no historical component data was inserted.
+
+Verify schema
+
+Confirm "shared/schema.ts" correctly represents the database column.
+
+Verify application startup
+
+Confirm the application starts normally.
+
+Verify tests
+
+Run the existing test suite.
+
+Do not modify existing tests just to make them pass.
+
+Report:
+
+- total tests
+- passed
+- failed
+- warnings
+
+---
+
+13. Files Allowed to Change
+
+Only files strictly required for this schema-only step may be changed.
+
+Expected:
+
+shared/schema.ts
+DB migration file
+
+If the project's migration tooling requires another metadata file to be updated automatically, that is acceptable.
+
+Before modifying any other file, stop and report why it is required.
+
+---
+
+14. Files / Systems That MUST NOT Change
+
+Do not modify:
+
+server/index.ts
+server/routes.ts
+server/fees-routes.ts
+server/storage.ts
+server/fee-period.ts
+server/late-fee-engine.ts
+client/
+Razorpay integration
+Razorpay webhook
+Razorpay verification
+offline payment processing
+payment_records
+payment_attempts
+fee_structures
+students
+schools
+invoice generation logic
+receipt generation logic
+receipt HTML
+receipt CSS
+authorization/session logic
+
+---
+
+15. Final Report
+
+After completing Step 1, return a concise implementation report containing:
+
+A. Files Changed
+
+List every changed file.
+
+B. Database Change
+
+Confirm:
+
+fee_records.breakdown_snapshot
+JSONB
+NOT NULL
+DEFAULT []
+
+C. Historical Data Safety
+
+Explicitly confirm:
+
+- no historical invoice data was reconstructed
+- no existing "fee_records" breakdown was fabricated
+- no "fee_structures.breakdown" was copied into historical invoices
+- existing invoices remain unchanged
+
+D. Business Logic
+
+Confirm:
+
+- invoice generation unchanged
+- payment processing unchanged
+- Razorpay unchanged
+- offline payment unchanged
+- receipt unchanged
+- concession logic unchanged
+- fee-period logic unchanged
+- late-fee logic unchanged
+
+E. Tests
+
+Report:
+
+Existing tests: X
+Passed: X
+Failed: X
+Warnings: X
+
+F. Scope Confirmation
+
+End with:
+
+STEP 1 COMPLETE — SCHEMA ONLY.
+
+No invoice-generation, payment, receipt, concession,
+fee-period, late-fee, Razorpay, offline-payment,
+or authorization logic was modified.
+
+Do not proceed to Step 2 automatically.
+
+Wait for explicit approval before implementing snapshot population during invoice generation.

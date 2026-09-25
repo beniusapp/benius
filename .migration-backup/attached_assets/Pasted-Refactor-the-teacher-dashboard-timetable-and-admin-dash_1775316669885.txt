@@ -1,0 +1,35 @@
+Refactor the /teacher-dashboard/timetable and /admin-dashboard/timetable-master modules to implement a Strict Source-of-Truth model. All data must be isolated by school_id.
+
+1. THE ADMIN 'SOURCE OF TRUTH' (/admin-dashboard/timetable-master):
+
+Class/Subject Management: Ensure there is a section (or a pre-existing table) where the Admin defines the valid Classes, Sections, and Subjects for their specific school.
+
+Admin Override: When the Admin clicks a slot to edit, they select from these pre-defined lists.
+
+Save Mechanism: Changes only commit to the database (scoped to school_id) when the 'Save Changes' button is clicked.
+
+2. THE TEACHER 'RESTRICTED SELECTION' (/teacher-dashboard/timetable):
+
+Data Locking: When a teacher clicks a slot to 'Add/Edit', the dropdowns for Class, Section, and Subject must be populated ONLY from the lists created by their Admin in Step 1.
+
+Forbidden Manual Entry: Teachers cannot type in new Class or Subject names. They must select from the school’s official list to ensure data consistency.
+
+Collision Logic: If a teacher selects a slot (e.g., 10A, Mon, P1) already taken by another teacher in the same school, trigger the prompt: 'This slot is already booked by [Teacher Name] for [Subject].'
+
+Save Mechanism: All edits are local until the teacher clicks the 'Save Changes' button.
+
+3. DATABASE & MULTI-TENANCY LOGIC:
+
+The Query Constraint: Every SELECT query used to populate these dropdowns must include WHERE school_id = ?.
+
+No Data Merging: Ensure that 'School A' teachers never see 'School B' subjects or classes, even if the teacher IDs are similar.
+
+Relational Structure: Logic must be SQL-compatible for easy migration to a local machine, using foreign keys or shared IDs between the school_config and timetables tables.
+
+4. UI/UX REQUIREMENTS:
+
+Theme: Benius Emerald Green (#10b981).
+
+Validation Feedback: If a teacher tries to save without selecting a required field (Class/Subject), highlight the field in Red.
+
+Device Optimization: Ensure dropdowns are touch-friendly for the Motorola 60 Fusion.

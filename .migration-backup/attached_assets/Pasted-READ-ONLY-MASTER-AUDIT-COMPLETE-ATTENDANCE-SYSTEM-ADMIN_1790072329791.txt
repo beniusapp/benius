@@ -1,0 +1,882 @@
+READ-ONLY MASTER AUDIT — COMPLETE ATTENDANCE SYSTEM
+ADMIN + TEACHER + STUDENT
+END-TO-END FUNCTIONALITY, LOGIC, DATA FLOW, WIRING, SECURITY, AND COMPLETENESS
+
+IMPORTANT:
+DO NOT MODIFY ANYTHING.
+
+This is a complete investigation/audit only.
+
+Do NOT:
+- change code
+- create migrations
+- modify database schema
+- modify APIs
+- modify frontend
+- modify tests
+- fix bugs
+- refactor
+- optimize
+- redesign
+- delete anything
+
+I want to completely understand how Attendance works in this MIS before we remediate anything.
+
+The system is a multi-tenant school MIS serving 1,000+ independent schools.
+
+STRICT NON-NEGOTIABLE REQUIREMENT:
+Every school is a separate tenant.
+
+All Attendance data and operations MUST be isolated by authenticated school/tenant.
+
+The authenticated session's schoolId is authoritative.
+Never treat browser-supplied schoolId as authorization.
+
+Application-facing business/date/time behavior must use IST / Asia/Kolkata.
+
+Academic Session is an important session-scoped concept and must be explicitly audited wherever Attendance depends on it.
+
+==================================================
+PART 1 — FIND EVERYTHING RELATED TO ATTENDANCE
+==================================================
+
+First locate EVERY Attendance-related component in the entire codebase.
+
+Search all:
+
+- frontend pages
+- frontend components
+- hooks
+- API clients
+- backend routes
+- storage methods
+- database schema
+- migrations
+- SQL
+- utilities
+- calculation functions
+- reports
+- dashboards
+- cron/jobs
+- notifications
+- permissions
+- middleware
+- tests
+- configuration
+- Academic Session dependencies
+
+Do not assume file names contain "attendance".
+
+Create a complete inventory.
+
+For every relevant file provide:
+
+- exact path
+- purpose
+- whether frontend/backend/shared/test
+- what Attendance functionality it implements
+- what other Attendance component it communicates with
+
+==================================================
+PART 2 — ATTENDANCE ARCHITECTURE
+==================================================
+
+Explain the overall Attendance architecture in simple but technically precise language.
+
+Answer:
+
+1. What is the central Attendance entity?
+2. What database table(s) store attendance?
+3. Is there one attendance table or multiple?
+4. What is the primary key?
+5. What uniquely identifies an attendance record?
+6. Is attendance stored:
+   - per student/day?
+   - per class/day?
+   - per subject/period?
+   - per teacher?
+   - another model?
+
+7. What are the possible attendance statuses?
+
+For example, determine whether the system supports:
+
+- Present
+- Absent
+- Late
+- Half Day
+- Leave
+- Holiday
+- Not Marked
+- Excused
+- Other
+
+Do NOT assume these exist. Report exactly what the code implements.
+
+8. Which fields are stored versus calculated?
+
+9. Which values are authoritative?
+
+10. Which values are derived?
+
+==================================================
+PART 3 — DATABASE DEEP AUDIT
+==================================================
+
+Inspect the exact Attendance schema.
+
+For every Attendance-related table provide:
+
+- table name
+- every column
+- data type
+- nullable/non-nullable
+- default
+- primary key
+- foreign keys
+- unique constraints
+- check constraints
+- indexes
+- schoolId/tenant field
+- academicSessionId field if any
+- studentId
+- teacherId
+- classId
+- sectionId
+- subjectId
+- date
+- period/time
+- status
+- timestamps
+- createdBy/updatedBy if present
+
+Explain every column in plain English.
+
+Then identify:
+
+- orphan-risk relationships
+- missing foreign keys
+- missing tenant constraints
+- missing indexes
+- duplicate-record risks
+- conflicting sources of truth
+
+==================================================
+PART 4 — ADMIN ATTENDANCE
+==================================================
+
+Find the complete Admin Attendance module.
+
+Explain EVERYTHING the Admin can do.
+
+For each feature provide:
+
+UI
+→ frontend state
+→ API
+→ backend route
+→ authorization
+→ storage/database
+→ response
+→ UI result
+
+Cover every button/action/filter/search/export/report/etc.
+
+Specifically investigate:
+
+- View attendance
+- Search
+- Filter
+- Date selection
+- Class selection
+- Section selection
+- Student selection
+- Teacher selection
+- Academic Session selection
+- Attendance correction
+- Manual marking
+- Bulk marking
+- Edit
+- Delete
+- Lock/unlock
+- Approval
+- Override
+- Reports
+- Export
+- Summary
+- Monthly attendance
+- Daily attendance
+- Attendance percentage
+- Absence lists
+- Any dashboard/cards/charts
+
+Do not assume a feature exists.
+Explicitly say:
+
+IMPLEMENTED
+or
+PARTIALLY IMPLEMENTED
+or
+UI ONLY
+or
+BACKEND ONLY
+or
+NOT IMPLEMENTED
+
+==================================================
+PART 5 — TEACHER ATTENDANCE
+==================================================
+
+Find the complete Teacher Attendance module.
+
+Explain the teacher workflow from beginning to end.
+
+Example:
+
+Teacher Login
+→ Teacher Dashboard
+→ Attendance
+→ select class/section/date
+→ roster
+→ mark attendance
+→ save
+→ backend
+→ database
+→ confirmation
+
+But do not assume this exact workflow.
+
+Trace the actual implementation.
+
+Determine:
+
+- How teacher identity is determined
+- How school is determined
+- How class/section authorization works
+- Whether Faculty Mapping is required
+- Whether Enrollment is required
+- Whether Student Registry is the roster source
+- Whether inactive students appear
+- Whether Academic Session is required
+- Whether date is IST
+- Whether teachers can edit previous dates
+- Whether teachers can edit attendance after submission
+- Whether teachers can delete records
+- Whether attendance can be overwritten
+- Whether attendance is locked
+- Whether there is submission/approval
+- Whether teacher can mark attendance for another teacher's class
+- Whether teacher can access another school's data
+- Whether teacher can manipulate studentId/classId/sectionId in browser requests
+
+Trace every API and storage call.
+
+==================================================
+PART 6 — STUDENT ATTENDANCE
+==================================================
+
+Find the complete Student Attendance module.
+
+Explain what the Student sees.
+
+Determine:
+
+- daily attendance
+- monthly attendance
+- attendance percentage
+- subject-wise attendance
+- class-wise attendance
+- present/absent history
+- leave
+- late
+- attendance summary
+- attendance calendar
+- current session
+- previous sessions
+- reports
+- downloadable information
+
+Determine exactly where Student Attendance data comes from.
+
+For every Student Attendance API:
+
+- route
+- authentication
+- student identity source
+- school identity source
+- academic session source
+- database query
+- filtering
+- calculation
+
+Verify that the browser cannot supply another studentId/schoolId to access another student's attendance.
+
+==================================================
+PART 7 — ADMIN ↔ TEACHER ↔ STUDENT DATA FLOW
+==================================================
+
+This is extremely important.
+
+Explain exactly how the three modules are linked.
+
+Create a conceptual data flow:
+
+ADMIN
+  ↓
+?
+  ↓
+ATTENDANCE DATABASE
+  ↓
+TEACHER
+  ↓
+?
+  ↓
+STUDENT
+
+Determine:
+
+1. Where attendance is created.
+2. Where attendance is edited.
+3. Where attendance is stored.
+4. Where attendance is calculated.
+5. Where attendance is displayed.
+6. Whether Admin and Teacher use the SAME attendance records.
+7. Whether Student uses the SAME attendance records.
+8. Whether there are duplicate attendance stores.
+9. Whether any module calculates attendance independently.
+10. Whether Admin corrections automatically appear to Student.
+11. Whether Teacher corrections automatically appear to Student.
+12. Whether Student data can ever diverge from Admin/Teacher data.
+
+Explain the exact linkage.
+
+==================================================
+PART 8 — STUDENT REGISTRY / ENROLLMENT LINK
+==================================================
+
+Determine exactly how Attendance finds students.
+
+Trace:
+
+Student Registry
+→ Enrollment
+→ Class
+→ Section
+→ Attendance
+
+Determine whether Attendance uses:
+
+- current students.classId
+- current students.sectionId
+- session-scoped enrollment
+- historical enrollment
+- another mechanism
+
+This is especially important because students may move classes/sections between Academic Sessions.
+
+Check what happens if:
+
+- student changes section
+- student changes class
+- student is promoted
+- student is inactive
+- student is transferred
+- student is newly enrolled
+- student has historical enrollment
+
+Determine whether historical attendance remains attached to the correct class/section/session.
+
+==================================================
+PART 9 — ACADEMIC SESSION
+==================================================
+
+Audit Academic Session handling throughout Attendance.
+
+For EVERY Attendance read/write operation determine:
+
+- Is academicSessionId used?
+- Where does it come from?
+- Is it server-authoritative?
+- Is it browser supplied?
+- Is it derived from the current session?
+- Is it optional?
+- Is it required?
+
+Determine whether attendance from:
+
+Academic Session A
+
+can ever appear in:
+
+Academic Session B.
+
+Test conceptually for:
+
+- same student
+- same class
+- same section
+- same date
+- different academic sessions
+
+Also determine whether a new Academic Session starts with clean Attendance context.
+
+==================================================
+PART 10 — DATE AND TIME / IST
+==================================================
+
+Audit every Attendance date/time operation.
+
+Determine:
+
+- how "today" is calculated
+- server timezone
+- browser timezone
+- database timezone
+- date serialization
+- date parsing
+- date comparison
+- attendance day boundaries
+- createdAt
+- updatedAt
+- whether UTC timestamps are converted to IST
+
+Look specifically for:
+
+new Date()
+toISOString()
+DATE/TIMESTAMP conversions
+database NOW()
+CURRENT_DATE
+local date parsing
+
+Determine whether a user near midnight IST can accidentally mark attendance for the wrong date.
+
+Confirm whether application-facing Attendance dates use:
+
+Asia/Kolkata / IST.
+
+==================================================
+PART 11 — ATTENDANCE CALCULATIONS
+==================================================
+
+Trace every attendance calculation.
+
+For each calculation explain:
+
+- formula
+- source records
+- filters
+- date range
+- session
+- student
+- class
+- section
+- status inclusion/exclusion
+
+Identify calculations for:
+
+- daily percentage
+- monthly percentage
+- yearly percentage
+- cumulative percentage
+- present count
+- absent count
+- working days
+- attended days
+- leave
+- late
+- any minimum attendance rule
+
+Determine whether different modules use different formulas.
+
+This is critical.
+
+Admin percentage
+vs
+Teacher percentage
+vs
+Student percentage
+
+must be compared.
+
+==================================================
+PART 12 — WORKING DAYS / HOLIDAYS / WEEKENDS
+==================================================
+
+Determine exactly how the system treats:
+
+- Sunday
+- Saturday
+- weekends
+- school holidays
+- declared holidays
+- vacation
+- exam days
+- non-working days
+- half days
+
+Determine whether working days are:
+
+- stored
+- calculated
+- configurable
+- hardcoded
+- based on attendance records
+- based on school calendar
+
+Identify any mismatch between Admin/Teacher/Student calculations.
+
+==================================================
+PART 13 — ATTENDANCE CORRECTIONS
+==================================================
+
+Trace all correction mechanisms.
+
+Determine:
+
+- who can correct
+- what they can correct
+- whether reason is required
+- whether old value is preserved
+- whether audit history exists
+- whether correction is visible to Student
+- whether correction affects percentage immediately
+- whether correction is session-safe
+- whether correction is tenant-safe
+
+Look for direct database updates without audit.
+
+==================================================
+PART 14 — LOCKING / SUBMISSION / APPROVAL
+==================================================
+
+Determine whether Attendance has lifecycle states.
+
+For example:
+
+Draft
+Marked
+Submitted
+Approved
+Locked
+
+Do not assume these exist.
+
+If they exist, explain:
+
+- who controls them
+- where stored
+- how enforced
+- whether backend enforces them
+- whether UI-only
+- whether locked attendance can still be modified through API
+
+If no lifecycle exists, explicitly state that.
+
+==================================================
+PART 15 — SECURITY / TENANT ISOLATION
+==================================================
+
+Perform a dedicated security audit.
+
+Check every Attendance endpoint for:
+
+- schoolId authorization
+- studentId authorization
+- teacherId authorization
+- classId authorization
+- sectionId authorization
+- academicSessionId authorization
+- date authorization
+
+Look specifically for IDOR risks.
+
+Examples:
+
+Teacher A changing:
+
+studentId=B's student
+
+classId=B's class
+
+sectionId=B's section
+
+schoolId=B's school
+
+Student A requesting Student B's attendance.
+
+Admin from School A requesting School B attendance.
+
+Browser manipulating IDs.
+
+Report each finding with:
+
+- route
+- file
+- attack scenario
+- current protection
+- severity
+
+DO NOT exploit production.
+Use static/code-level analysis only.
+
+==================================================
+PART 16 — AUTHORIZATION MATRIX
+==================================================
+
+Create a matrix:
+
+| Operation | Admin | Teacher | Student |
+|-----------|-------|---------|---------|
+
+Include:
+
+- View
+- Create
+- Edit
+- Delete
+- Bulk mark
+- Correct
+- Approve
+- Lock
+- Unlock
+- Export
+- View reports
+- View percentage
+- View history
+
+Mark:
+
+YES
+NO
+PARTIAL
+UI ONLY
+BACKEND ONLY
+
+==================================================
+PART 17 — API INVENTORY
+==================================================
+
+List EVERY Attendance API.
+
+For each:
+
+- HTTP method
+- route
+- file
+- authenticated role
+- tenant enforcement
+- inputs
+- outputs
+- database tables
+- Academic Session behavior
+- date behavior
+- security notes
+
+Do not omit internal/helper endpoints.
+
+==================================================
+PART 18 — UI INVENTORY
+==================================================
+
+List every Attendance screen/component.
+
+For each:
+
+- route/page
+- role
+- purpose
+- fields
+- buttons
+- filters
+- tables
+- charts
+- empty states
+- loading states
+- error states
+- pagination
+- export
+- mobile/responsive behavior
+
+Identify UI elements that appear functional but are not wired to backend behavior.
+
+==================================================
+PART 19 — TEST COVERAGE
+==================================================
+
+Find every Attendance test.
+
+Classify:
+
+- unit
+- integration
+- API
+- frontend
+- tenant isolation
+- Academic Session
+- date/time
+- calculation
+- concurrency
+- authorization
+- regression
+
+Report:
+
+- existing coverage
+- important missing coverage
+- tests that appear weak or mock too much
+- critical untested paths
+
+Do NOT add tests yet.
+
+==================================================
+PART 20 — ORPHAN / DEAD / PARTIAL FEATURES
+==================================================
+
+Find:
+
+- unused Attendance APIs
+- unused storage functions
+- dead UI buttons
+- TODOs
+- commented Attendance code
+- legacy Attendance implementation
+- duplicate Attendance implementation
+- old tables
+- old calculations
+- frontend calling nonexistent routes
+- backend routes with no frontend caller
+
+Clearly distinguish:
+
+ACTIVE
+LEGACY
+DEAD
+PARTIAL
+UNKNOWN
+
+==================================================
+PART 21 — END-TO-END SCENARIOS
+==================================================
+
+Trace these scenarios completely through the actual code.
+
+SCENARIO A:
+Admin views today's attendance.
+
+SCENARIO B:
+Teacher marks a student Present.
+
+SCENARIO C:
+Teacher marks a student Absent.
+
+SCENARIO D:
+Teacher edits previously saved attendance.
+
+SCENARIO E:
+Admin corrects Teacher-entered attendance.
+
+SCENARIO F:
+Student opens Attendance and views the result.
+
+SCENARIO G:
+Student changes class/section.
+
+SCENARIO H:
+Academic Session changes.
+
+SCENARIO I:
+Student becomes inactive.
+
+SCENARIO J:
+Two users simultaneously modify the same attendance record.
+
+SCENARIO K:
+A Teacher attempts to access another school's student.
+
+SCENARIO L:
+A Student attempts to access another student's attendance.
+
+For each scenario explain:
+
+UI
+→ API
+→ authorization
+→ validation
+→ storage
+→ database
+→ calculation
+→ returned result
+→ displayed result
+
+==================================================
+PART 22 — FINAL VERDICT
+==================================================
+
+DO NOT give a generic "Attendance looks good."
+
+I need a precise engineering audit.
+
+Finish with:
+
+### A. Attendance architecture summary
+
+Explain the whole system in plain English.
+
+### B. What is fully wired
+
+Admin
+Teacher
+Student
+
+### C. What is partially wired
+
+### D. What is UI-only
+
+### E. What is backend-only
+
+### F. What is not implemented
+
+### G. Actual defects
+
+Only list things that are genuinely incorrect or broken.
+
+### H. Security defects
+
+Especially tenant/IDOR/session issues.
+
+### I. Data consistency defects
+
+### J. Academic Session defects
+
+### K. IST/date/time defects
+
+### L. Calculation inconsistencies
+
+### M. Concurrency/transaction defects
+
+### N. Missing auditability
+
+### O. Missing test coverage
+
+### P. Recommended remediation order
+
+DO NOT implement anything.
+
+Rank remediation only by technical severity/urgency, not by preference.
+
+For every remediation candidate provide:
+
+1. Problem
+2. Evidence
+3. Files/routes/tables involved
+4. Why it matters
+5. Proposed remediation scope
+6. Whether migration is required
+7. Whether existing data is affected
+8. Tests that should be added
+
+IMPORTANT:
+Do not make any fixes as part of this audit.
+
+I want the complete Attendance picture first.

@@ -1,0 +1,136 @@
+Make ONLY the following small UI enhancement to the Fee Structure cards.
+
+Goal
+
+For fee structures with Monthly or Quarterly frequency, when invoices have been generated, show the latest generated fee period directly beside/below the existing Last Invoices Generated information.
+
+Currently the card shows something like:
+
+Last Invoices Generated
+🕐 19 Aug 2026, 03:15 PM
+
+I want it to additionally show:
+
+Latest Fee Period
+August 2026
+
+For a quarterly fee, show the appropriate quarter period, for example:
+
+Latest Fee Period
+July–September 2026
+
+Important display rules
+
+Monthly
+
+Display the latest generated invoice's actual fee period in a human-readable format.
+
+Example:
+
+- "2026-08-01" → August 2026
+- "2026-09-01" → September 2026
+
+Do NOT display raw ISO values such as:
+
+- "2026-08"
+- "2026-08-01"
+
+Quarterly
+
+Display the actual latest generated quarterly period as a human-readable date range.
+
+Examples:
+
+- "2026-04-01 → 2026-06-30" → April–June 2026
+- "2026-07-01 → 2026-09-30" → July–September 2026
+- "2027-01-01 → 2027-03-31" → January–March 2027
+
+Which fee structures should show it?
+
+Show Latest Fee Period ONLY for:
+
+- Monthly
+- Quarterly
+
+Do NOT add this new field for:
+
+- Annual
+- One-Time
+
+The existing Annual/One-Time card behavior should remain exactly as it is.
+
+Data source
+
+Use the actual latest generated invoice/fee period associated with that fee structure.
+
+Do not calculate or guess the period from today's date.
+
+The displayed period must correspond to the most recently generated invoice.
+
+If no invoice has ever been generated for that fee structure, do not show a misleading period. Either hide the "Latest Fee Period" row or show an appropriate empty state consistent with the existing UI.
+
+Placement
+
+Keep the existing:
+
+Last Invoices Generated
+
+information unchanged.
+
+Add the new information immediately below it, for example:
+
+🕐 Last Invoices Generated
+19 Aug 2026, 03:15 PM
+
+Latest Fee Period
+August 2026
+
+For quarterly:
+
+🕐 Last Invoices Generated
+19 Aug 2026, 03:15 PM
+
+Latest Fee Period
+July–September 2026
+
+Keep the existing visual style, spacing, typography, colors, and responsive behavior.
+
+Critical constraints
+
+This is a display-only change.
+
+DO NOT modify:
+
+- Invoice generation logic
+- Fee calculations
+- Fee period calculation logic
+- Invoice creation
+- Invoice numbering
+- Payment logic
+- Payment records
+- Razorpay/Online payments
+- UPI/QR payments
+- Cash/Cheque/Bank Transfer/Demand Draft
+- Database schema unless absolutely required to retrieve an already-existing value
+- Academic session logic
+- Due dates
+- Late fee/penalty logic
+- Any existing validation
+
+Reuse the existing fee-period utilities/helpers if they already exist instead of creating duplicate date-period logic.
+
+Verification
+
+After implementing:
+
+1. Verify a Monthly fee structure after generating invoices.
+2. Confirm the card shows the correct latest monthly period.
+3. Verify a Quarterly fee structure after generating invoices.
+4. Confirm the card shows the correct quarterly period.
+5. Verify Annual and One-Time cards remain unchanged.
+6. Confirm the displayed period comes from the latest generated invoice, not today's date.
+7. Run TypeScript checks.
+8. Run the existing test suite.
+9. Confirm no unrelated files or payment functionality were changed.
+
+Keep the implementation minimal and touch only the files/components necessary for this UI enhancement.

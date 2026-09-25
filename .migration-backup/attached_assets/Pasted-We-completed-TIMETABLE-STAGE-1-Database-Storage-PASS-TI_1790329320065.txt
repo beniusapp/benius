@@ -1,0 +1,514 @@
+We completed:
+
+* TIMETABLE STAGE 1 — Database + Storage — PASS
+* TIMETABLE STAGE 2 — API/Server — PASS
+* TIMETABLE STAGE 3A — Admin UI Audit — READY FOR FIX
+
+Now implement the **smallest safe fixes** for the defects identified in the Stage 3A audit.
+
+## CRITICAL SCOPE
+
+Change ONLY the Admin Timetable UI and its directly required client-side Timetable/session helper code.
+
+Primary file:
+
+`client/src/pages/admin-modules/timetable-master.tsx`
+
+If a directly related client helper must change, keep it minimal and report it.
+
+Do NOT change:
+
+* `shared/schema.ts`
+* migrations
+* `server/storage.ts`
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* Teacher Timetable UI
+* Student Timetable UI
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated modules
+
+Do NOT change the database or server/API behavior.
+
+---
+
+# 1. SESSION MUST BE THE IDENTITY OF THE ADMIN TIMETABLE
+
+The selected Academic Session must be the explicit identity of the Admin Timetable page.
+
+Use the canonical selected Session from the existing Admin Session View context.
+
+Rules:
+
+* selected Session H is authoritative when selected
+* active Session A is only the fallback when no selected Session exists
+* do not invent another Session-selection mechanism
+* do not use mutable global state as a substitute for the selected Session
+
+Where possible, capture the resolved Session ID for each query/request rather than reading a mutable value later.
+
+---
+
+# 2. FIX ALL TIMETABLE QUERY KEYS
+
+Add the resolved Academic Session ID to every Admin Timetable query key that represents Session-owned data.
+
+At minimum:
+
+### Class-view
+
+Current:
+
+`[endpoint, class, section]`
+
+Change conceptually to:
+
+`[endpoint, sessionId, class, section]`
+
+### Structure
+
+Current:
+
+`[endpoint, class]`
+
+Change conceptually to:
+
+`[endpoint, sessionId, class]`
+
+### Status
+
+Current:
+
+`[endpoint]`
+
+Change conceptually to:
+
+`[endpoint, sessionId, ...relevant class/section identity if applicable]`
+
+Do not blindly add Session IDs to genuinely school-global data such as the teacher list.
+
+The purpose is:
+
+Session A cache ≠ Session B cache.
+
+---
+
+# 3. REQUEST MUST USE THE SAME SESSION AS THE QUERY KEY
+
+This is very important.
+
+Do not create a situation where:
+
+* query key says Session A
+* request header sends Session B
+
+The Session ID captured for the query must be the same Session ID sent to the API.
+
+For every Timetable request:
+
+* use the selected Session when available
+* otherwise use the active Session
+* if there is no resolved Session, do not make the Timetable request
+
+This applies to:
+
+* class-view
+* structure
+* status
+* batch save
+* structure save
+* publish
+
+---
+
+# 4. FIX PUBLISH — HIGH PRIORITY
+
+The current Publish request uses native `fetch()` without the selected-session header.
+
+Replace that with the existing session-aware client transport/helper.
+
+Publish MUST explicitly target the currently resolved selected Session.
+
+Expected:
+
+Admin selects Session B
+→ clicks Publish
+→ request carries Session B
+→ server publishes Session B only.
+
+Do not rely on the server's active-session fallback for Publish.
+
+Do not create a new transport mechanism.
+
+---
+
+# 5. FIX TIMETABLE DRAFT CROSS-SESSION LEAK — HIGH PRIORITY
+
+Current problem:
+
+Admin makes unsaved changes in Session A → switches to Session B → A's draft remains.
+
+This must be prevented.
+
+The safest preferred behavior is:
+
+### When Academic Session changes:
+
+Clear:
+
+* timetable slot drafts
+* pending `_delete` entries
+* dirty timetable state
+* unsaved structure changes
+* dirty structure state
+* any open Timetable editor/popover state
+
+Do NOT carry unsaved changes from Session A into Session B.
+
+Do not attempt to merge drafts between Sessions.
+
+---
+
+# 6. ALSO PROTECT AGAINST A STALE SAVE
+
+Clearing on session switch is required, but also add a small defensive guard.
+
+A save operation must not submit a draft if that draft belongs to a different Session from the current resolved Session.
+
+If the existing draft structure can safely be changed to include its originating `sessionId`, do so minimally.
+
+Expected:
+
+```text
+Draft created in Session A
+Current Session = A
+→ Save allowed
+
+Draft created in Session A
+Current Session = B
+→ Save must NOT submit A draft to B
+```
+
+If the draft is already cleared synchronously on Session switch, the guard is still preferred where it can be implemented without unnecessary refactoring.
+
+Do NOT introduce a large state-management redesign.
+
+---
+
+# 7. FIX STRUCTURE DRAFT CROSS-SESSION LEAK — HIGH PRIORITY
+
+The same protection applies to period/bell structure.
+
+When Session changes:
+
+* clear dirty structure rows
+* clear structure dirty state
+* clear local structure edits
+* ensure the next structure display comes from the newly selected Session
+
+A dirty structure originating from Session A must never replace Session B's structure.
+
+If a structure save occurs:
+
+* it must use the current Session
+* it must save only the current Session's structure
+
+---
+
+# 8. SESSION SWITCH CLEANUP
+
+When Academic Session changes:
+
+1. clear timetable drafts
+2. clear pending deletes
+3. clear structure drafts
+4. close timetable editor/popover if appropriate
+5. reset dirty state
+6. ensure queries use the new Session ID
+7. ensure old Session data cannot remain as the active editor state
+
+Do not unnecessarily reset unrelated Admin page state.
+
+Class/section can remain selected if that is safe.
+
+---
+
+# 9. ARCHIVED SESSION UI
+
+The server already blocks archived/inactive Session mutations.
+
+Keep that server protection.
+
+Additionally, Admin Timetable UI must disable all mutation controls when `isArchiveMode === true`.
+
+At minimum disable:
+
+* Apply
+* Clear
+* Add/edit slot
+* Delete slot
+* Batch Save
+* Structure editing inputs
+* Add period
+* Remove period
+* Reorder period
+* Structure Save
+* Structure Save/Replace
+* Publish
+
+Do NOT disable normal reads.
+
+Archived Session should remain viewable.
+
+Do not remove server-side protection.
+
+---
+
+# 10. QUERY INVALIDATION
+
+Make invalidation Session-aware.
+
+After successful batch timetable save/delete:
+
+invalidate/refetch the current Session's:
+
+* class-view
+* relevant status query
+
+After successful structure save/delete:
+
+invalidate/refetch the current Session's:
+
+* structure
+* class-view, because class-view includes structure information
+
+After Publish:
+
+refresh the current Session's status.
+
+Do not invalidate unrelated Sessions.
+
+Do not invalidate all Timetable Sessions unnecessarily.
+
+---
+
+# 11. NO-SESSION / REQUEST FAILURE HANDLING
+
+Do not treat a missing Session or failed Timetable request as a genuine empty timetable.
+
+If there is no resolved Session:
+
+* do not make the Timetable API request
+* show/use the existing loading/empty/error mechanism appropriately
+* do not create drafts against a null Session
+
+If a Timetable request returns a non-OK response:
+
+* preserve the existing error handling pattern if available
+* do not silently convert the failure into valid empty Timetable data
+
+Do not redesign the application's global error system.
+
+---
+
+# 12. IMPORTANT SESSION SWITCH RACE PROTECTION
+
+Avoid this situation:
+
+```text
+Session A request starts
+↓
+Admin switches to Session B
+↓
+A response arrives later
+↓
+A data gets placed into B's editor
+```
+
+Use the existing React Query/session-aware mechanisms where possible.
+
+Do not introduce unnecessary custom request infrastructure.
+
+If React Query's session-specific key plus query function closure already prevents this, keep the solution simple.
+
+---
+
+# 13. DO NOT CHANGE GLOBAL SESSION ARCHITECTURE
+
+Do NOT modify:
+
+* `selectedViewSession`
+* global Admin Session context architecture
+* Academic Session database
+* server Session middleware
+
+Use the existing canonical mechanism.
+
+---
+
+# 14. TESTS
+
+Add/update focused Admin Timetable UI tests for these exact scenarios:
+
+### Test A — Query identity
+
+Session A and Session B produce different query keys.
+
+### Test B — Request transport
+
+Session A request sends A.
+
+Session B request sends B.
+
+### Test C — Publish
+
+Publish for Session B sends Session B.
+
+### Test D — Draft isolation
+
+Create unsaved draft in Session A.
+
+Switch to Session B.
+
+Verify A draft is gone/not reusable.
+
+### Test E — Structure draft isolation
+
+Create dirty structure in A.
+
+Switch to B.
+
+Verify A structure draft is gone/not reusable.
+
+### Test F — Stale save protection
+
+A-origin draft must not be saved into B.
+
+### Test G — Archived Session
+
+Archived Session:
+
+* reads remain available
+* mutation controls are disabled
+
+### Test H — Mutation invalidation
+
+Batch save/delete refreshes current Session class-view/status.
+
+Structure save refreshes current Session structure/class-view.
+
+Publish refreshes current Session status.
+
+### Test I — Fresh Session
+
+A new Session with no timetable data displays empty data.
+
+It must not display drafts or cached data from another Session.
+
+### Test J — Session switching
+
+A → B:
+
+* B data loads
+* A drafts disappear
+* B saves use B
+* A cache/draft cannot leak into B
+
+Use focused tests only. Do not rewrite unrelated tests.
+
+---
+
+# 15. VERIFICATION
+
+Run:
+
+1. Focused Admin Timetable UI tests
+2. Existing relevant Timetable tests
+3. `npm run check`
+4. `git diff --check`
+
+Then inspect the complete diff.
+
+Confirm explicitly:
+
+* no schema changes
+* no migration changes
+* no Storage changes
+* no server/API changes
+* no Teacher UI changes
+* no Student UI changes
+* no Attendance changes
+* no Leave changes
+* no Examination changes
+* no unrelated refactoring
+
+Restart the application if required and confirm it starts successfully.
+
+---
+
+# 16. FINAL REPORT
+
+Report:
+
+### Files changed
+
+Exact files.
+
+### Session identity
+
+How the selected Session is now used.
+
+### Query/cache
+
+Which query keys became Session-aware.
+
+### Requests
+
+Which requests now send the same Session ID as their query identity.
+
+### Publish
+
+Confirm selected Session is explicitly sent.
+
+### Draft isolation
+
+Confirm timetable and structure drafts cannot cross Sessions.
+
+### Archive UI
+
+List controls disabled for archived Sessions.
+
+### Invalidation
+
+Confirm current Session queries refresh correctly.
+
+### Tests
+
+Exact passed/failed counts.
+
+### npm run check
+
+PASS/FAIL.
+
+### git diff --check
+
+PASS/FAIL.
+
+### Scope
+
+Confirm no unrelated modules changed.
+
+### Remaining concerns
+
+Only actual verified concerns. Do not speculate.
+
+End with exactly one:
+
+**TIMETABLE STAGE 3A — ADMIN UI FIX — PASS**
+
+or
+
+**TIMETABLE STAGE 3A — ADMIN UI FIX — INCOMPLETE**

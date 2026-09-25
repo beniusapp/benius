@@ -1,0 +1,121 @@
+Please improve the readability of the existing receipt PDF.
+
+Current Problem
+
+The receipt is currently fitting within the intended print layout, but the text inside important sections such as:
+
+- Fee/Ledger Details
+- Payment Details
+- Online Transaction Details
+- Transaction Verification
+- Student Information
+- Payment Summary
+
+is now too small. On a phone, I have to zoom in to read the receipt clearly.
+
+The receipt should look professional and comfortable to read without zooming excessively.
+
+Required Change
+
+Increase the print/PDF text size slightly, especially for the actual data/value text.
+
+Do NOT redesign the receipt.
+
+Do NOT change the existing visual design, colors, borders, cards, layout structure, section order, branding, or data.
+
+Keep the same receipt design exactly as it currently appears.
+
+Important Balance
+
+Do NOT simply increase every element blindly.
+
+Instead:
+
+1. Increase the readable body/value text slightly.
+2. Keep section headings/labels appropriately sized.
+3. Recover the required vertical space by reducing unnecessary whitespace rather than making the text extremely small.
+4. Keep the existing two-column layout where it already exists.
+5. Keep the header compact.
+6. Keep the signature and footer compact but readable.
+7. Keep the amount prominently displayed.
+8. Maintain comfortable spacing between rows so the receipt does not look cramped.
+
+Print/PDF Only
+
+Apply these changes ONLY inside the print CSS / "@media print" rules.
+
+Do NOT change the normal screen/web version of the receipt.
+
+The browser screen version must remain exactly as it is.
+
+Page Behavior
+
+The normal receipt should preferably remain 1 page when the content reasonably fits.
+
+However, do NOT solve the one-page requirement by making the text tiny.
+
+If a receipt genuinely contains a large amount of data, it is acceptable for it to continue onto a second page rather than making the entire receipt unreadably small.
+
+The priority should be:
+
+Readable text > professional spacing > one-page fit.
+
+Important
+
+Do NOT remove, hide, truncate, abbreviate, or omit any existing data.
+
+Do NOT remove any:
+
+- Ledger/Fee Details
+- Payment Details
+- Online Transaction Details
+- Transaction Verification
+- Student Information
+- Notes
+- Signature
+- Footer
+- Payment IDs
+- Order IDs
+- Receipt Number
+- Invoice Number
+- Transaction information
+
+All existing data must remain exactly as it is.
+
+Suggested Direction
+
+Please inspect the current print CSS and make a small, controlled adjustment to the typography.
+
+For example, if the current print body/value text was reduced to around 9–9.5px, bring it back closer to a normal readable print size, approximately 10–11px where appropriate.
+
+Do not use one font size for everything.
+
+Use a hierarchy such as:
+
+- Main data/value text → slightly larger
+- Labels → slightly smaller but clearly readable
+- Section headings → compact but readable
+- Amount → remain prominent
+- Footer/legal text → can remain smaller
+
+Also optimize vertical spacing intelligently so the larger text does not unnecessarily create huge gaps.
+
+Verification
+
+After making the change:
+
+1. Restart/rebuild the application if required.
+2. Open a normal receipt.
+3. Click Receipt.
+4. Let Chrome open the Print / Save as PDF preview.
+5. Check the actual PDF preview, not just the HTML page.
+6. Verify the Ledger/Fee Details and Transaction Details are clearly readable without excessive zoom.
+7. Test at least:
+   - UPI receipt
+   - Online/Razorpay receipt
+   - Cash receipt
+   - Demand Draft receipt
+
+Do not report the task as complete until the actual Chrome Save as PDF preview has been checked.
+
+The goal is a professional, readable receipt with the existing design preserved, not the smallest possible one-page PDF.

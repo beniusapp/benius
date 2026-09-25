@@ -1,0 +1,56 @@
+Refactor the BENIUS Home Page (root route /) into a high-end, professional SaaS landing page. The design must be high-impact, minimalist, and ultra-modern.
+
+1. THE VISUAL LANGUAGE & PALETTE:
+
+Primary Colors: Deep Navy (#0f172a) for the background with Benius Emerald Green (#10b981) and Electric Blue (#3b82f6) as glow/gradient accents.
+
+Glassmorphism: Use semi-transparent backgrounds with backdrop-filter: blur(12px) for the portal cards.
+
+Typography: Use a clean, bold Sans-Serif font (like Inter or Plus Jakarta Sans). Headers should have a subtle text-gradient.
+
+2. THE HERO SECTION (Animations & Writing):
+
+Heading: A bold, centered headline: 'The Future of School Management, Simplified.'
+
+Sub-heading: 'Empowering 10,000+ minds with real-time attendance, smart timetables, and secure administration.'
+
+Background Animation: Implement a subtle 'Aura' or 'Gradient Pulse' in the background that moves slowly. Use Framer Motion for smooth 'Fade-In-Up' animations for all text.
+
+3. THE THREE INTERACTIVE PORTALS (The Core):
+Create three distinct, high-quality cards that serve as direct gateways. Each must feature a unique Lucide-React icon and a hover-scale effect.
+
+Portal 1: ADMINISTRATION (The Command Center)
+
+Action: Direct link to /admin-login.
+
+Visual: A shield or command icon.
+
+Description: 'Secure operations, faculty mapping, and global school oversight.'
+
+Portal 2: TEACHERS (The Classroom Hub)
+
+Action: Direct link to /teacher-login.
+
+Visual: A book or smart-dashboard icon.
+
+Description: 'Manage your schedule, track student growth, and resolve classroom peer reports.'
+
+Portal 3: STUDENTS (The Learning Path)
+
+Action: Direct link to /student-login.
+
+Visual: A graduation cap or personal-growth icon.
+
+Description: 'View your daily timetable, track your attendance, and access your profile.'
+
+4. TECH SPECS & MULTI-TENANCY:
+
+Responsive Design: The layout must shift perfectly from a 3-column desktop view to a single-column stack on the Motorola 60 Fusion.
+
+Footer: A professional footer stating: 'BENIUS: Multi-Tenant Secure Infrastructure' to give school owners confidence.
+
+Performance: Ensure animations are lightweight (CSS-based or Framer Motion) to keep the initial load time under 1.5 seconds.
+
+5. UI INTERACTIVITY:
+
+Add a subtle 'Glow' effect that follows the mouse cursor or appears behind the active portal card being hovered over.

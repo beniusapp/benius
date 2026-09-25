@@ -1,0 +1,286 @@
+Upgrade the Full Details PDF opened from:
+
+Fees & Payments → Ledger & Transactions → Student → Full Detail PDF
+
+I want this to become a complete, professional Transaction Audit & Payment Detail Report.
+
+Do NOT remove existing useful information. Add all relevant information available from the database/payment gateway.
+
+1. Fee & Invoice
+
+Include:
+
+- Fee Record ID
+- Invoice Number
+- Receipt Number
+- Fee name and fee type
+- Fee description
+- Fee period
+- Frequency
+- Academic Session
+- Invoice creation date/time in IST
+- Due date
+- Base fee
+- Late fee
+- Discount/concession if historically available
+- Total charged
+- Gross amount received
+- Refund total
+- Net amount retained
+- Outstanding balance
+- Fee status
+
+2. Student Details
+
+Include:
+
+- Student name
+- DSID
+- Admission number if actually available
+- Class/Section
+- Roll number
+- Academic Session
+- Guardian name
+- Student contact only when necessary, preferably masked
+
+3. Payment Summary
+
+For EVERY payment transaction include:
+
+- Payment Record ID
+- Payment Attempt ID
+- Attempt number
+- Payment source/channel
+- Payment status
+- Payment outcome
+- Requested amount
+- Captured amount
+- Currency
+- Payment date & exact time in IST
+
+For Razorpay payments also include:
+
+- Razorpay Payment ID
+- Razorpay Order ID
+- Payment method
+- Card network
+- Masked card last 4
+- Bank/issuer
+- Bank RRN
+- Authorization code
+- Relevant transaction/reference ID
+
+4. Complete Payment Lifecycle
+
+Show the complete timeline when available:
+
+- Payment created
+- Payment authorized
+- Payment captured
+- Payment failed
+- Payment cancelled
+- Webhook received
+- Webhook processed
+- API verification/enrichment
+- Refund initiated
+- Refund processed
+- Reversal events
+
+Every timestamp must be displayed in IST with exact date and time.
+
+For successful Razorpay payments, use the authoritative captured timestamp for Paid Date & Time, not a DATE-only field.
+
+5. Payment Attempts
+
+IMPORTANT: Do NOT show only successful payment_records.
+
+Read "payment_attempts" and include all attempts related to this fee/invoice, including:
+
+- Successful
+- Failed
+- Cancelled
+- Authorized
+- Pending
+- Refunded/partially refunded
+
+For failed attempts include, when available:
+
+- Failure code
+- Failure reason
+- Failure source
+- Failure step
+- Error description
+- Attempt timestamp
+
+This is required for proper dispute investigation.
+
+6. Refunds & Reversals
+
+If applicable, include:
+
+- Refund ID
+- Razorpay refund ID
+- Refund amount
+- Refund status
+- Refund reason
+- Requested timestamp
+- Provider-created timestamp
+- Processed timestamp
+- Failed refund reason
+- Total refunded
+- Net amount after refunds
+
+7. Financial Reconciliation
+
+Clearly show:
+
+Total Charged
+Gross Received
+Total Refunded
+Net Retained
+Outstanding Balance
+
+Do not incorrectly treat gross payments as net received after refunds.
+
+8. Verification & Gateway Evidence
+
+Include a compact verification section:
+
+- Razorpay payment verification status
+- Webhook signature verification: Verified / Unverified
+- Webhook processing status
+- Provider event type
+- API enrichment status
+- Reconciliation status/error
+- Payment source
+- Verification timestamp
+
+Show the verification RESULT only.
+
+9. Complete Audit Timeline
+
+Do not limit the PDF to only the latest 10 generic audit records.
+
+Include all relevant events for this transaction, including:
+
+- Invoice creation
+- Payment attempts
+- Payment success/failure
+- Webhook events
+- Verification events
+- Payment record creation
+- Refund/reversal events
+- Manual corrections
+- Offline payment changes
+- Important audit events
+
+Show:
+
+- Date/time in IST
+- Event
+- Status
+- Actor/source
+- Reason/description where available
+
+10. SECURITY — VERY IMPORTANT
+
+The report must contain useful audit information but MUST NEVER expose sensitive secrets.
+
+REMOVE/MASK:
+
+- Razorpay HMAC/webhook signature
+- Razorpay secret/API keys
+- Full card number
+- CVV
+- Card expiry
+- Full UPI VPA
+- Full email where unnecessary
+- Full phone number where unnecessary
+- Audit/request IP addresses in the normal PDF
+- Raw webhook payload
+- Raw Razorpay response
+- Passwords/hashes
+- Aadhaar or other highly sensitive identity data
+- Idempotency/internal security keys
+
+For webhook verification, show only:
+
+Webhook Signature: Verified
+
+Never print the actual signature.
+
+Mask sensitive values instead of removing useful identifiers where possible.
+
+11. Data Accuracy Rules
+
+IMPORTANT:
+
+- Never assume a payment is "captured" when the authoritative status is unavailable.
+- Never fabricate timestamps.
+- Never use a DATE-only field when an authoritative payment timestamp exists.
+- Prefer authoritative Razorpay lifecycle timestamps for Razorpay payments.
+- Clearly label unavailable information as "Unavailable".
+- Do not infer historical discounts/concessions from the current fee structure.
+- Keep payment_attempts, payment_records, fee_records, refunds, webhook events and audit records correctly linked to the same fee/invoice.
+- Ensure all child queries are properly school/tenant scoped.
+
+12. Final PDF Structure
+
+Organize the PDF professionally:
+
+1. Transaction Summary
+2. Fee & Invoice Details
+3. Student Details
+4. Payment Details
+5. Razorpay/Gateway Details
+6. Complete Payment Attempt History
+7. Payment Lifecycle Timeline
+8. Refund & Reversal Details
+9. Financial Reconciliation
+10. Verification & Webhook Status
+11. Complete Audit Timeline
+12. Notes
+
+Keep it readable and suitable for:
+
+- School accounting
+- Payment disputes
+- Parent/student support
+- Internal audit
+- Gateway investigation
+- Financial reconciliation
+
+IMPORTANT — BEFORE CODING
+
+First inspect the existing database schema and current transaction-detail API.
+
+Use the actual existing fields and relationships. Do not invent columns.
+
+Identify where each piece of information comes from:
+"fee_records"
+"payment_records"
+"payment_attempts"
+"payment_attempt_events"
+"refunds"
+"refund_events"
+"webhook events"
+"fee_audit_log"
+and other existing relevant tables.
+
+Then implement the PDF using the existing authoritative data.
+
+Do not create a migration unless absolutely required.
+
+After implementation, test at least:
+
+1. Successful Razorpay payment
+2. Failed Razorpay attempt
+3. Multiple attempts for one invoice
+4. Refund/partial refund
+5. Cash/offline payment
+6. Payment with missing optional gateway fields
+7. Payment with missing/unavailable timestamps
+
+Verify that all timestamps display correctly in IST with exact date and time.
+
+Most importantly: the PDF should contain every relevant audit/payment detail available in the system, but never expose secrets or sensitive payment/security data.

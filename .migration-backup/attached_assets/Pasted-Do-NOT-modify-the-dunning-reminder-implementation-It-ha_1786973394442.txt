@@ -1,0 +1,54 @@
+Do NOT modify the dunning/reminder implementation. It has already been independently audited and verified with 614/614 tests passing.
+
+I want you to now investigate and resolve ONLY the existing TypeScript/build errors reported by:
+
+npx tsc --noEmit
+
+The previous audit reported 18 TypeScript errors in unrelated modules, including:
+
+- academic-sessions.tsx — missing Checkbox
+- deactivated-students.tsx — Set iteration / target issue
+- exam-controller.tsx — Set iteration issues
+- fees-manager.tsx — Set iteration issues and missing setGenSessionId
+- non-teaching-staff.tsx — Set iteration issue
+- student-registry.tsx — number/string mismatch
+- teacher-registry.tsx — Set-related issue
+- session-copy-center.tsx — strict-mode function declaration / Set issues
+
+Requirements:
+
+1. First run "npx tsc --noEmit" and capture the current exact error list.
+2. Fix only genuine TypeScript/build issues.
+3. Do NOT change:
+   - server/dunning.ts
+   - dunning stage logic
+   - D-2/D+0/D+3/D+7/D+14 behavior
+   - catch-up logic
+   - retry logic
+   - provider timeout logic
+   - payment race protection
+   - multi-tenant isolation
+   - dunning database logic
+   - notification provider behavior
+4. Do not weaken TypeScript configuration merely to hide errors.
+5. Do not use "any" as a workaround unless there is a legitimate existing architectural reason.
+6. For Set iteration errors, determine whether the correct fix is the TypeScript target/configuration or the affected code. Do not blindly modify tsconfig just to suppress errors.
+7. For missing variables/functions such as "setGenSessionId", inspect the surrounding component state and determine the correct intended implementation rather than deleting functionality.
+8. Preserve all existing functionality and UI behavior.
+9. After fixes, run:
+   - "npx tsc --noEmit"
+   - "npx vitest run"
+10. Confirm that the dunning tests still pass 614/614.
+11. Report:
+
+- exact files changed
+- exact errors fixed
+- any errors remaining
+- TypeScript result
+- test files count
+- total tests
+- passed
+- failed
+- duration
+
+Most importantly: do not make unrelated refactors and do not modify the already-audited dunning system.

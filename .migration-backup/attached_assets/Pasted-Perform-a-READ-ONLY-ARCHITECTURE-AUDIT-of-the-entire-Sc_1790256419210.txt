@@ -1,0 +1,357 @@
+Perform a **READ-ONLY ARCHITECTURE AUDIT** of the entire School MIS application.
+
+## MAIN OBJECTIVE
+
+Determine exactly which modules/data in the application are:
+
+### A. GLOBAL / SESSION-INDEPENDENT
+
+Meaning:
+
+* Data belongs to the School/Tenant.
+* Creating a new Academic Session does NOT recreate/reset it.
+* Switching Academic Session does NOT change it.
+* Deleting/archiving an Academic Session does NOT delete it.
+* The data continues across Academic Sessions unless there is an explicit separate business rule.
+
+Example concept:
+Student Registry.
+
+### B. ACADEMIC-SESSION-BASED
+
+Meaning:
+
+* Data belongs to a specific School/Tenant + Academic Session.
+* A new Academic Session gets fresh/isolated operational data.
+* Switching Session changes the data being viewed/used.
+* Previous Session data remains attached to that previous Session.
+* Previous Session data must not leak into the new Session.
+
+### C. MIXED / UNCLEAR
+
+Use this category when:
+
+* part of a module is global and another part is Session-based, OR
+* the current implementation is inconsistent, OR
+* the business rule cannot be determined from the code.
+
+DO NOT GUESS.
+
+---
+
+# MULTI-TENANT REQUIREMENT
+
+For EVERY module/data category, also determine:
+
+* Is it explicitly scoped to authenticated `schoolId` / tenant?
+* Can one school's data be accessed from another school?
+* Is tenant isolation enforced in reads?
+* Is tenant isolation enforced in writes?
+* Is the data global only WITHIN a school, rather than globally across all schools?
+
+Important distinction:
+
+"Global" means:
+
+> GLOBAL ACROSS ACADEMIC SESSIONS WITHIN THE SAME SCHOOL.
+
+It does NOT mean:
+
+> shared between different schools.
+
+Never recommend cross-school shared data.
+
+---
+
+# AUDIT ALL MAJOR MODULES
+
+Inspect the complete application and identify all major modules, including wherever applicable:
+
+* School Setup
+* School Profile / School Metadata
+* Academic Session
+* Student Registry
+* Student Enrollment / Placement
+* Teacher Registry
+* Teacher Assignments / Faculty Mapping
+* Classes
+* Sections
+* Subjects
+* Class-Subject Mapping
+* Exam / Examination
+* Exam Controller
+* Teacher Examination
+* Student Examination
+* Attendance
+* Leave
+* Holidays
+* Timetable
+* Fees
+* Payments
+* Homework
+* Assignments
+* Notices / Announcements
+* Library
+* Transport
+* Communication
+* Reports
+* Promotion
+* Academic History
+* User / Role / Authentication
+* Any other module actually present in the codebase
+
+Do NOT assume a module exists.
+
+If something does not exist, clearly say:
+
+`NOT PRESENT / NOT IMPLEMENTED`
+
+---
+
+# FOR EACH MODULE
+
+Create a table with:
+
+| Module | Global or Session-Based | School/Tenant Scoped? | Evidence | Notes |
+| ------ | ----------------------- | --------------------- | -------- | ----- |
+
+For example:
+
+| Module | Classification | Tenant | Evidence | Notes |
+| Student Registry | GLOBAL | Yes | students.schoolId, etc. | Survives Session changes |
+| Attendance | SESSION | Yes | attendance.schoolId + academicSessionId | Session-specific |
+
+Use the actual code/schema evidence, not assumptions.
+
+---
+
+# VERY IMPORTANT: LOOK FOR MIXED MODULES
+
+Pay special attention to modules where:
+
+* UI appears Session-based but database data is global.
+* Database contains `academicSessionId` but some APIs ignore it.
+* Some tables are Session-based while related metadata is global.
+* New Session incorrectly reuses previous Session operational data.
+* Old Session data is accidentally modified when the current Session is changed.
+* Session switching changes something that should be global.
+* Session deletion could delete something that should survive.
+* Session creation incorrectly copies previous operational data.
+
+Identify these clearly.
+
+---
+
+# ACADEMIC SESSION CREATION
+
+Trace what actually happens when a new Academic Session is created.
+
+Determine:
+
+* Which data is created automatically?
+* Which data is copied from the previous Session?
+* Which data remains unchanged?
+* Which data is reset/fresh?
+* Which data is linked to the new Session?
+* Whether any old Session data is accidentally reused.
+
+Do not change anything.
+
+---
+
+# ACADEMIC SESSION SWITCHING
+
+Trace what happens when Admin/Teacher/Student switches the selected Academic Session.
+
+Determine whether:
+
+* global data remains unchanged,
+* Session data changes correctly,
+* old Session data leaks into the new Session,
+* current Session data is accidentally used for historical Session views.
+
+Again: READ ONLY.
+
+---
+
+# ACADEMIC SESSION DELETION / ARCHIVING
+
+Determine what happens to each category when a Session is:
+
+* archived
+* deleted, if deletion is supported
+
+Identify whether:
+
+* Global data survives correctly.
+* Session data remains tied to the old Session.
+* Any global data is accidentally deleted/reset.
+* Any Session data incorrectly survives as current operational data.
+
+Do NOT actually delete or modify anything.
+
+---
+
+# STUDENT REGISTRY SPECIAL CHECK
+
+Verify that Student Registry is truly global within a school:
+
+* Student record survives Academic Session changes.
+* Student record is not recreated for every Session.
+* Student ID remains the same.
+* Historical Session data can continue referencing the Student.
+* Enrollment/placement is separate from the permanent Student identity.
+
+Do not change Student Registry.
+
+---
+
+# ATTENDANCE SPECIAL CHECK
+
+Attendance was already fully audited.
+
+Do NOT redo the Attendance implementation.
+
+Only classify its architectural position:
+
+`SESSION-BASED`
+
+and confirm that the completed Attendance Session isolation remains intact.
+
+---
+
+# EXAMINATION SPECIAL CHECK
+
+Classify separately:
+
+* School Setup examination configuration
+* Exam Controller
+* Teacher Examination
+* Student Examination
+
+Do NOT fix anything.
+
+We only want to know whether each is:
+
+* GLOBAL
+* SESSION-BASED
+* MIXED/UNCLEAR
+* NOT PRESENT
+
+Pay special attention to the existing requirement that Exam Controller must be strongly Academic Session ID focused.
+
+---
+
+# OUTPUT
+
+Keep the report clear and structured.
+
+## PART 1 — EXECUTIVE SUMMARY
+
+Give:
+
+* Total major modules found.
+* Number classified GLOBAL.
+* Number classified SESSION-BASED.
+* Number classified MIXED/UNCLEAR.
+* Number NOT PRESENT.
+
+## PART 2 — MASTER TABLE
+
+Provide the complete module table.
+
+## PART 3 — GLOBAL MODULES
+
+List each confirmed Global module and explain briefly why.
+
+## PART 4 — SESSION-BASED MODULES
+
+List each confirmed Session-based module and explain briefly why.
+
+## PART 5 — MIXED / UNCLEAR MODULES
+
+List each and explain exactly what is mixed or unclear.
+
+## PART 6 — NEW SESSION BEHAVIOR
+
+Explain what actually resets, what remains, and what gets copied when a new Session is created.
+
+## PART 7 — SESSION SWITCHING
+
+Explain what actually changes when switching Session.
+
+## PART 8 — SESSION ARCHIVE/DELETE
+
+Explain what happens to Global and Session data.
+
+## PART 9 — PROBLEMS FOUND
+
+List ONLY confirmed implementation problems.
+
+Separate:
+
+* CONFIRMED DEFECT
+* POTENTIAL ISSUE
+* BUSINESS RULE QUESTION
+
+Do not label something a defect unless the code clearly contradicts an established requirement.
+
+## PART 10 — RECOMMENDED NEXT STEPS
+
+DO NOT implement anything.
+
+Simply order the findings by:
+
+1. Must clarify first
+2. Important architectural issue
+3. Lower-priority issue
+4. Intentional/currently correct
+
+Do NOT use scores or rankings.
+
+---
+
+# STRICT RULES
+
+This is a **READ-ONLY DISCOVERY AUDIT**.
+
+DO NOT:
+
+* modify production code
+* modify tests
+* modify database
+* modify schema
+* create migrations
+* create new modules
+* refactor
+* change Academic Session behavior
+* change Attendance
+* change Student Registry
+* change Exam Controller
+* make any fixes
+
+If an issue is found, REPORT IT ONLY.
+
+Run existing relevant tests only if useful for confirming behavior.
+
+You may run:
+
+`npm run check`
+
+and:
+
+`git diff --check`
+
+Finally inspect:
+
+`git diff`
+
+Expected:
+
+`NO CODE CHANGES`
+
+## FINAL LINE
+
+If the audit completes successfully:
+
+`STEP 1 COMPLETE — GLOBAL vs SESSION-BASED ARCHITECTURE AUDIT COMPLETE — NO CODE CHANGES.`

@@ -1,0 +1,105 @@
+Implement ONLY the defect identified by the 10L-11A audit.
+
+DEFECT
+
+"client/src/pages/teacher-modules/my-attendance.tsx"
+
+Generated Teacher Self-Attendance dates can appear outside the selected Academic Session.
+
+Specifically:
+
+- Seven-day timeline around "my-attendance.tsx:290–297" generates dates without enforcing the selected Session boundaries.
+- Monthly calendar around "my-attendance.tsx:328–340" generates dates without enforcing the selected Session boundaries.
+
+The canonical Teacher Self-Attendance RATE is already correctly Session-bounded.
+
+REQUIRED FIX
+
+Make the My Attendance generated/displayed dates respect the selected Academic Session.
+
+For the selected Session:
+
+- Never display a generated attendance date before Session start.
+- Never display a generated attendance date after Session end.
+- Also do not display future dates beyond today's IST date where the existing Teacher Self-Attendance display contract excludes future dates.
+
+Use the existing Academic Session and IST/date-only helpers already present in the project.
+
+The effective display boundary should therefore be:
+
+"Session Start → earlier of Session End and today in IST"
+
+SEVEN-DAY TIMELINE
+
+Keep the existing seven-day timeline behavior.
+
+Only filter/clamp generated dates so that dates outside the effective Session/date boundary are not displayed.
+
+Do NOT redesign the timeline.
+
+MONTHLY CALENDAR
+
+Keep the existing monthly calendar behavior.
+
+Only prevent dates outside the effective Session/date boundary from being treated/displayed as Teacher Self-Attendance dates.
+
+Do NOT redesign the calendar.
+
+IMPORTANT
+
+Do NOT change:
+
+- canonical rate calculation
+- Working Days configuration
+- Attendance Policy
+- holiday behavior
+- Teacher attendance status rules
+- Student Attendance
+- Academic Session schema
+- database schema
+- APIs
+- tenant/security model
+- authentication
+- historical attendance records
+
+Do NOT create synthetic attendance rows.
+
+Do NOT change stored data.
+
+TESTS
+
+Add only the smallest focused tests needed for this defect.
+
+At minimum verify:
+
+1. A historical Session does not generate/display dates before its start.
+2. A Session does not generate/display dates after its end.
+3. Future dates are not displayed beyond the existing effective boundary.
+4. A normal current active Session still displays its valid recent dates.
+5. The canonical rate remains unchanged.
+
+Run the relevant tests and TypeScript/check.
+
+Inspect the final diff.
+
+Verify no unrelated files changed.
+
+FINAL REPORT
+
+Return:
+
+A. Exact file changed
+B. Exact defect fixed
+C. Seven-day timeline result
+D. Monthly calendar result
+E. Session boundary result
+F. Future-date result
+G. Tests passed
+H. TypeScript/check result
+I. Final diff summary
+
+Then explicitly state:
+
+"10L-11B COMPLETE — NO OTHER CHANGES MADE."
+
+STOP after this fix and verification.

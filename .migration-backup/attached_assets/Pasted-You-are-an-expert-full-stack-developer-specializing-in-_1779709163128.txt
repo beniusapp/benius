@@ -1,0 +1,29 @@
+You are an expert full-stack developer specializing in multi-tenant workflows. I need you to build the reminder notification system for the "Exam Controller" dashboard using the specific UI actions shown in the file "1000085717.png".
+
+### 🎯 The Requirement: Noticeboard Integration & Automated Copywriting
+When an administrator uses the reminder buttons, the system must cross-publish an official notice directly to the target teachers' noticeboard route (`teacher-dashboard/noticeboard`).
+
+1. **Individual Row Action ("Remind" Button):**
+   - Clicking the 'Remind' button next to an individual class section (e.g., Class 1 - Sec A in "1000085717.png") must target only the specific teacher assigned to that section.
+   - It should generate a highly professional, pre-formatted record in the noticeboard table explicitly mapped to that teacher's ID.
+   - **Notice Copy Template:**
+     * **Topic:** ⚠️ URGENT: Marks Ledger Submission Pending - [Term Name]
+     * **Content:** 
+       "Dear Faculty Member,
+       
+       This is an official administrative reminder that the academic marks ledger for **[Class Name] - [Section Name]** for **[Term Name]** is currently incomplete or awaiting your final lock. 
+       
+       Please review your grading data, complete any missing entries, and lock the ledger inside your workspace as soon as possible to prevent delays in final academic advancement processing.
+       
+       Thank you for your prompt attention to this matter.
+       — School Administration"
+
+2. **Global Bulk Action ("Remind All Pending" Button):**
+   - Clicking the primary 'Remind All Pending (37)' button must identify *every* teacher across the tenant school who currently has a ledger marked as 'In Progress' or 'Not Started'.
+   - The system must dynamically batch-insert individual, tailored notices (using the format above) to each respective negligent teacher's noticeboard simultaneously.
+
+3. **Multi-Tenant Guardrails & System Status Updates:**
+   - Both actions must be tightly scoped to the current tenant school ID (`Mary Immaculate School - MIS`) to prevent cross-school notice delivery.
+   - Upon a successful click, show a clean, temporary frontend toast notification to the Admin (e.g., *"Reminders successfully dispatched to the assigned teacher noticeboards."*).
+
+Please write the backend controller notification logic, handle any necessary database schema operations linking the exam controller states to the teacher noticeboard table, and connect the onClick handlers to the buttons shown in "1000085717.png".

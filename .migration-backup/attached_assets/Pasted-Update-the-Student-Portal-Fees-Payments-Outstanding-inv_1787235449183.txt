@@ -1,0 +1,137 @@
+Update the Student Portal → Fees & Payments → Outstanding invoice cards.
+
+The current implementation has already been audited. The card currently displays the Fee Name, Invoice Number, Amount, Due Date, Academic Session, and conditional information such as Fee Period, Late Fee Policy, and “What’s Included”.
+
+The underlying fee record already contains both feeType and frequency, but they are currently not displayed as separate fields.
+
+Required change
+
+Add these two fields to every Outstanding invoice card:
+
+- Fee Type
+- Frequency
+
+Example:
+
+Math book
+Fee Type: Math
+Frequency: One-Time
+Invoice No.: INV-0093
+Due: 31 Mar 2028
+₹600
+
+Use the actual values from the existing fee record/API response. Do not hardcode or derive fake values.
+
+Placement
+
+Keep the current card design and hierarchy intact.
+
+Place Fee Type and Frequency in a compact information area near the invoice title/Invoice Number so they are easy to understand but do not make the card unnecessarily tall.
+
+The visual hierarchy should remain:
+
+1. Fee Name
+2. Fee Type + Frequency
+3. Invoice Number
+4. Fee Period / Due Date
+5. Amount
+6. Existing conditional information
+7. Existing payment actions
+
+Use the existing typography, spacing, colors, borders, badges, and responsive design system. Do not redesign the entire card.
+
+Data mapping
+
+Continue using the existing "/api/student/fees" response and existing fee record fields.
+
+- Fee Name → existing "feeName"
+- Fee Type → existing "feeType"
+- Frequency → existing "frequency"
+- Invoice Number → existing permanent "invoiceNumber"
+
+Do not create a new database field if "feeType" and "frequency" already exist.
+
+Important fallback behavior
+
+If "feeType" is missing/null, do not display an empty or broken field.
+
+If "frequency" is missing/null, do not display an empty or broken field.
+
+Do not replace the existing Fee Name fallback behavior.
+
+The current title behavior must remain:
+
+"feeName || feeType"
+
+Invoice number protection
+
+Keep the current behavior exactly as it is.
+
+The displayed Invoice Number must continue to come from the permanent:
+
+"fee_records.invoice_number"
+
+It must NOT use:
+
+- receipt number
+- Razorpay order ID
+- Razorpay payment ID
+- payment attempt ID
+- any temporary/generated payment identifier
+
+Payment must never overwrite the invoice number.
+
+Do NOT change
+
+Do not modify:
+
+- Payment logic
+- Pay Now
+- Try Again
+- Pay at School
+- Razorpay integration
+- Payment attempts
+- Duplicate-payment protection
+- Invoice generation
+- Invoice numbering
+- Receipt numbering
+- Receipt generation
+- Fee calculations
+- Late-fee calculations
+- Outstanding balance calculations
+- Academic-session logic
+- API business logic unless absolutely required to expose an already-existing field
+- Database schema unless you discover that the existing fields are genuinely unavailable
+
+Do not change the existing invoice PDF or receipt PDF.
+
+Responsive/mobile requirement
+
+This is primarily a mobile Student Portal view, so make sure Fee Type and Frequency remain readable on narrow screens.
+
+Do not allow the new fields to:
+
+- overlap the amount
+- overlap Pay Now
+- break the card layout
+- create horizontal scrolling
+- make the card excessively tall
+
+Validation
+
+After implementing:
+
+1. Verify multiple different Outstanding invoices.
+2. Confirm each invoice shows its correct Fee Type.
+3. Confirm each invoice shows its correct Frequency.
+4. Confirm Invoice Number remains correct and permanent.
+5. Confirm Fee Name remains unchanged.
+6. Confirm Amount and Due Date remain unchanged.
+7. Confirm Late Fee Policy and “What’s Included” still work.
+8. Confirm Pay Now/Try Again behavior is completely unchanged.
+9. Test both desktop and mobile layouts.
+10. Run the existing TypeScript/build checks and relevant tests.
+
+This is a small presentation enhancement only. Do not refactor or redesign the Fees & Payments module.
+
+Before making changes, inspect the existing component and API mapping, then make the minimum necessary changes.

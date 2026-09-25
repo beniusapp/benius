@@ -1,0 +1,214 @@
+ATTENDANCE FIX #2 — TEACHER LEAVE APPROVAL
+
+We completed Attendance Fix #1 successfully.
+
+Now fix ONLY the second confirmed Attendance defect.
+
+Problem
+
+Route:
+
+"PATCH /api/leave/:id/status"
+
+When a Teacher Leave request is approved, the route can create/update "teacher_self_attendance" for the Leave's Academic Session.
+
+Current problem:
+
+The route checks the Leave's school and session ownership, but it does not require that the Leave's Academic Session is currently active.
+
+Therefore:
+
+Archived Session
+→ Teacher Leave approved
+→ Teacher Self-Attendance can be created/updated
+
+This violates the Attendance rule:
+
+«Archived Academic Sessions are read-only.»
+
+---
+
+REQUIRED FIX
+
+Before Teacher Leave approval creates or updates "teacher_self_attendance":
+
+1. Identify the Leave's Academic Session.
+2. Verify that the Session belongs to the authenticated school.
+3. Verify that the Session is the currently active/writable Session.
+4. If the Session is archived/inactive:
+
+REJECT
+
+Do not create or update "teacher_self_attendance".
+
+Use the project's existing Session authorization/error conventions.
+
+---
+
+IMPORTANT
+
+Do NOT change normal Teacher Leave behavior for the active Session.
+
+For an active Session:
+
+Teacher Leave approval
+→ existing Attendance synchronization continues normally
+
+For an archived Session:
+
+Teacher Leave approval
+→ Attendance write is blocked
+
+Do not silently modify archived Attendance.
+
+---
+
+ALSO CHECK
+
+Before changing code, inspect the existing route and storage flow.
+
+Confirm exactly where:
+
+Leave approval
+→ teacher_self_attendance
+
+is created/updated.
+
+Make the smallest possible fix at the correct authorization/mutation boundary.
+
+Do not duplicate Session logic unnecessarily.
+
+---
+
+SCOPE LIMIT
+
+Change ONLY what is necessary for this defect and its focused tests.
+
+Do NOT change:
+
+- Attendance schema
+- Attendance calculations
+- Student Attendance
+- Admin Attendance
+- Teacher Attendance UI
+- Teacher self-attendance rate calculation
+- Daily summary API
+- Timetable
+- Examination
+- Academic Session architecture
+- unrelated Leave behavior
+- unrelated refactoring
+
+No migration is expected.
+
+---
+
+REQUIRED TESTS
+
+Add/update focused tests.
+
+At minimum verify:
+
+Test 1 — Active Session
+
+Teacher Leave approval for the active Session:
+
+PASS
+
+Existing Teacher self-attendance synchronization should continue.
+
+Test 2 — Archived Session
+
+Teacher Leave approval for an archived Session:
+
+REJECT
+
+No "teacher_self_attendance" row may be created or updated.
+
+Test 3 — Different-school Session
+
+If applicable, verify a Leave cannot use a Session belonging to another school.
+
+REJECT
+
+Test 4 — Existing behavior
+
+Verify unrelated Leave approval behavior remains unchanged.
+
+---
+
+VERIFICATION
+
+After implementation:
+
+1. Run the focused Leave/Attendance tests.
+2. Run:
+
+"npm run check"
+
+3. Run:
+
+"git diff --check"
+
+4. Inspect the final diff.
+
+Confirm:
+
+- only intended files changed;
+- no schema/migration changes;
+- no unrelated modules changed;
+- no Attendance calculation changes.
+
+Restart the application if required.
+
+---
+
+FINAL RESPONSE
+
+Return:
+
+1. Files changed
+
+Exact files.
+
+2. What changed
+
+Simple explanation.
+
+3. Active Session
+
+PASS/FAIL
+
+4. Archived Session
+
+PASS/FAIL
+
+5. Multi-school protection
+
+PASS/FAIL
+
+6. Tests
+
+Exact count and result.
+
+7. "npm run check"
+
+PASS/FAIL
+
+8. "git diff --check"
+
+PASS/FAIL
+
+9. Final diff scope
+
+Confirm no unrelated changes.
+
+10. Final verdict
+
+Only if everything passes:
+
+ATTENDANCE FIX #2 — PASS
+
+Otherwise clearly state what remains.
+
+STOP after this fix and verification.

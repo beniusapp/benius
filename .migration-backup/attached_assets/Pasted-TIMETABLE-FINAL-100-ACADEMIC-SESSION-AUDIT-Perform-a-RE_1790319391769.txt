@@ -1,0 +1,382 @@
+TIMETABLE — FINAL 100% ACADEMIC SESSION AUDIT
+
+Perform a READ-ONLY audit only.
+
+Do NOT change:
+
+- code
+- database
+- schema
+- migrations
+- tests
+- data
+
+We have decided the final architecture:
+
+«The ENTIRE Timetable module must be 100% Academic Session-based.»
+
+There must be no Global Timetable data.
+
+Every Timetable operation must belong to:
+
+Authenticated School
++
+Academic Session
+
+---
+
+Audit all Timetable surfaces
+
+Trace the complete flow:
+
+Admin Timetable Master
+        ↓
+Timetable Database
+        ↓
+Teacher Timetable
+        ↓
+Student Timetable
+
+Audit:
+
+1. Admin Timetable Master
+
+Check:
+
+- Period/bell structure
+- Bell timings
+- Breaks
+- Class timetable
+- Section timetable
+- Create
+- Update
+- Delete
+- Save batch
+- Publish
+- Status
+- Collision checking
+- Session switching
+
+For every operation determine whether it uses:
+
+schoolId + sessionId
+
+---
+
+2. Teacher Timetable
+
+Check:
+
+- Teacher timetable reads
+- Class timetable reads
+- Structure reads
+- Create
+- Update
+- Delete
+- Batch save
+- Collision checking
+- Session switching
+
+Verify that the selected Academic Session is always transported to the server.
+
+---
+
+3. Student Timetable
+
+Check:
+
+- Timetable reads
+- Period/bell structure
+- Class/section filtering
+- Session switching
+
+Verify that the Student can see ONLY the selected Academic Session.
+
+---
+
+DATABASE AUDIT
+
+Inspect:
+
+"timetable_entries"
+
+Report:
+
+- current columns
+- whether "session_id" exists
+- whether it is nullable
+- foreign key
+- indexes
+- unique constraints
+- whether the unique constraint includes "session_id"
+
+"timetable_structure"
+
+Report:
+
+- current columns
+- whether "session_id" exists
+- whether it is nullable
+- foreign key
+- indexes
+- unique constraints
+
+The final architecture requires:
+
+timetable_entries
+=
+school + session + class + section + day + period
+
+and:
+
+timetable_structure
+=
+school + session + class + period
+
+---
+
+CURRENT DATA AUDIT
+
+Check the development database.
+
+For "timetable_entries" report:
+
+- total rows
+- rows with session ID
+- rows with NULL session ID
+
+For "timetable_structure" report:
+
+- total rows
+- rows with session ID
+- rows with NULL session ID
+
+Do not modify any data.
+
+---
+
+SESSION ISOLATION
+
+Verify these scenarios:
+
+Scenario A
+
+Session A timetable exists.
+
+Session B timetable exists.
+
+Can Session A read Session B?
+
+Must be:
+
+NO
+
+Scenario B
+
+Create/update/delete in Session A.
+
+Can it affect Session B?
+
+Must be:
+
+NO
+
+Scenario C
+
+Same class + section + day + period exists in Session A and Session B.
+
+Must be allowed.
+
+Example:
+
+Session A
+Class 5 / A / Monday / Period 1
+
+Session B
+Class 5 / A / Monday / Period 1
+
+These must NOT conflict.
+
+Scenario D
+
+Period 1 can have different timing in different Academic Sessions.
+
+Must be allowed.
+
+Example:
+
+2025–26
+Period 1 = 8:00–8:40
+
+2026–27
+Period 1 = 8:30–9:10
+
+These must NOT conflict.
+
+---
+
+MULTI-TENANT ISOLATION
+
+Verify:
+
+School A + Session A
+
+cannot access or modify:
+
+School B + Session A
+School B + Session B
+
+All server/storage operations must derive or validate school ownership from authentication.
+
+Do not trust client-supplied school IDs.
+
+---
+
+ARCHIVED SESSION
+
+Verify:
+
+Active Session
+
+allows normal Timetable changes.
+
+But:
+
+Archived Session
+
+must be read-only.
+
+Verify:
+
+- create
+- update
+- delete
+- publish
+- status changes
+- structure changes
+
+are blocked for archived Sessions.
+
+---
+
+NEW SESSION
+
+Verify what happens when a new Academic Session is created.
+
+Final requirement:
+
+New Session = Fresh Timetable
+
+There must be NO automatic carry-over of:
+
+- periods
+- bell timings
+- breaks
+- class timetable
+- teacher timetable
+- student timetable
+- publish state
+
+The old Session remains separate.
+
+---
+
+IMPORTANT BUILDING-PHASE DECISION
+
+This project is still in BUILDING phase.
+
+Data loss is acceptable.
+
+The current development database can be reset/recreated if required.
+
+We already know the old timetable structure may contain Global rows.
+
+Do NOT design a complicated migration just to preserve those old rows.
+
+If the current Global structure must be discarded to achieve the clean 100% Session-based design, that is acceptable.
+
+---
+
+FINAL REPORT
+
+Return ONLY:
+
+1. ADMIN TIMETABLE
+
+PASS/FAIL for Session-based behavior.
+
+2. TEACHER TIMETABLE
+
+PASS/FAIL.
+
+3. STUDENT TIMETABLE
+
+PASS/FAIL.
+
+4. PERIOD/BELL STRUCTURE
+
+PASS/FAIL for Session-based behavior.
+
+5. DATABASE
+
+Show the current schema/constraints for both timetable tables.
+
+6. CURRENT DATA
+
+Show the NULL/session-linked counts.
+
+7. SESSION ISOLATION
+
+PASS/FAIL.
+
+8. MULTI-TENANT ISOLATION
+
+PASS/FAIL.
+
+9. ARCHIVED SESSION
+
+PASS/FAIL.
+
+10. NEW SESSION
+
+Explain whether it starts with a fresh timetable.
+
+11. REQUIRED CHANGES
+
+List every confirmed change needed to make the ENTIRE module 100% Academic Session-based.
+
+Separate:
+
+DATABASE CHANGES
+SERVER/API CHANGES
+STORAGE CHANGES
+ADMIN UI CHANGES
+TEACHER UI CHANGES
+STUDENT UI CHANGES
+TESTS
+
+12. DATA MIGRATION
+
+State whether migration is required.
+
+Remember:
+
+Data loss is acceptable in the BUILDING phase.
+
+13. FINAL ARCHITECTURE
+
+Give a very simple final diagram:
+
+School
+  ↓
+Academic Session
+  ↓
+Timetable Structure
+  ↓
+Timetable Entries
+  ↓
+Teacher / Student Views
+
+Do NOT implement anything.
+
+STOP after the audit.

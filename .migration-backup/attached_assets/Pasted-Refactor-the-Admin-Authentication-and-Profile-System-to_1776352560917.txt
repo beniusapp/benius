@@ -1,0 +1,57 @@
+Refactor the Admin Authentication and Profile System to implement professional-grade security and recovery workflows.
+
+1. FIRST-TIME LOGIN (Initialization Mode):
+
+Detection: If a user is logging in with a temporary 'Super Master' password for the first time, redirect them to a 'Secure Your Account' setup page.
+
+Required Actions:
+
+New Password: Admin must set a strong unique password.
+
+6-Digit Secure PIN: Admin must set a 6-digit numeric PIN for second-layer authentication.
+
+Recovery Contacts: Force the entry of a verified Gmail and Phone Number.
+
+Finalization: Only after these are set, mark the account as 'Initialized' and allow access to the dashboard.
+
+2. TWO-FACTOR LOGIN (Standard Entry):
+
+On every login after the first setup:
+
+Step 1: Admin enters Gmail and Password.
+
+Step 2: If password is correct, show a high-contrast numeric keypad to enter the 6-Digit PIN.
+
+Success: Redirect to /admin-dashboard only if both layers match.
+
+3. THE ADMIN PROFILE CENTER (Right-Side Sidebar):
+
+Place the Profile Section on the RIGHT side of the dashboard (this is the modern standard for 'Account/Personal' settings).
+
+Features:
+
+Profile View: Display Admin name, verified Email, and Phone.
+
+Update Security: Options to 'Update Password' and 'Reset 6-Digit PIN' (requires current password/PIN to change).
+
+Recovery Setup: A section to update secondary recovery info for the 'Forgot Password' flow.
+
+UI Style: Match the Attendance Module's Simple/Clean UI (White background, Bold Black text, no blurs).
+
+4. SECURE RECOVERY (Forgot Password):
+
+On the Login page, if 'Forgot Password' is clicked:
+
+OTP Verification: Send a 6-digit verification code to the registered Gmail/Phone.
+
+PIN Challenge: After OTP verification, the system must ask for the 6-Digit PIN as a final identity check.
+
+Reset: Only then allow the password to be updated.
+
+5. UI & VISIBILITY (Motorola G60 Fusion):
+
+Use high-contrast inputs (Black ink on White background).
+
+Ensure the numeric PIN pad buttons are large and touch-friendly for mobile.
+
+Log every successful and failed login attempt in a security_audit table with the IP address and device name.

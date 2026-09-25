@@ -1,0 +1,648 @@
+STEP 3B — STUDENT DASHBOARD IST CORRECTION
+
+IMPORTANT:
+Step 3 — Full Application IST Read-Only Audit — is COMPLETE and ACCEPTED.
+
+STEP 3A — Student Timetable IST Correction — is COMPLETE and ACCEPTED.
+
+Now implement ONLY STEP 3B.
+
+This task is specifically for:
+
+client/src/pages/student-dashboard.tsx
+
+DO NOT fix any other Step 3 findings.
+
+==================================================
+1. OBJECTIVE
+==================================================
+
+Make Student Dashboard completely independent of the browser's local timezone.
+
+The application's canonical timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+Student Dashboard must use IST for:
+
+1. Academic-year fallback calculation
+2. Current-time greeting
+
+The browser timezone MUST NOT determine either value.
+
+A student using the application from:
+
+India
+UTC
+Europe/London
+America/New_York
+or any other timezone
+
+must receive the same Student Dashboard business date/year and time-of-day behavior for the same instant.
+
+==================================================
+2. FIRST — INSPECT CURRENT CODE
+==================================================
+
+Before modifying anything, inspect the CURRENT implementation of:
+
+client/src/pages/student-dashboard.tsx
+
+The Step 3 audit identified relevant code around:
+
+- lines 31-35
+- line 114-119
+- request around line 179
+
+Do NOT assume the line numbers are unchanged.
+
+Also inspect:
+
+shared/ist-time.ts
+
+and:
+
+client/src/hooks/use-ist-today.ts
+
+Inspect any existing shared academic-year or IST helpers that are already used elsewhere.
+
+DO NOT implement from assumptions.
+
+First identify exactly:
+
+- how Student Dashboard calculates academic year
+- where browser-local Date methods are used
+- how the greeting is calculated
+- whether the greeting is reactive
+- whether academic year is fetched from an API or calculated as fallback
+- whether the current dashboard already has an IST-aware utility available
+
+Then make the smallest safe correction.
+
+==================================================
+3. ACADEMIC YEAR — MUST USE IST
+==================================================
+
+The Step 3 audit identified browser-local logic similar to:
+
+getFullYear()
+getMonth()
+
+for the Student Dashboard academic-year fallback.
+
+This must be removed from the business-date calculation.
+
+The fallback academic year must be based on the current IST business date.
+
+Use the existing canonical IST helper:
+
+todayInIST()
+
+and/or the existing shared academic-year helper if one exists.
+
+Do NOT duplicate academic-year boundary logic inside Student Dashboard if an existing shared helper already defines it.
+
+The application's existing academic-year convention must remain unchanged.
+
+ONLY the timezone source must change.
+
+==================================================
+4. IMPORTANT ACADEMIC-YEAR BOUNDARY
+==================================================
+
+The existing application convention must be preserved.
+
+From the accepted Attendance IST implementation:
+
+2026-03-31 → academic year 2025-26
+
+2026-04-01 → academic year 2026-27
+
+Therefore the Student Dashboard fallback must behave according to the same IST business-date boundary.
+
+Test the exact boundary:
+
+2026-03-31 23:59:59 IST
+
+must still use the previous academic year.
+
+2026-04-01 00:00:00 IST
+
+must use the new academic year.
+
+The browser timezone must not alter this.
+
+==================================================
+5. GREETING — MUST USE IST
+==================================================
+
+The Step 3 audit identified browser-local:
+
+getHours()
+
+being used for the Student Dashboard greeting.
+
+Replace this with an explicit IST wall-clock calculation.
+
+Use an existing shared helper if available.
+
+If no suitable helper exists, add the smallest reusable helper to:
+
+shared/ist-time.ts
+
+Do NOT create duplicate timezone logic inside:
+
+student-dashboard.tsx
+
+The greeting must be determined from:
+
+Asia/Kolkata
+
+not browser-local time.
+
+==================================================
+6. GREETING BUSINESS RULE
+==================================================
+
+IMPORTANT:
+
+Do NOT change the existing greeting boundaries.
+
+First inspect the current implementation and document its existing ranges.
+
+For example, if the existing code is conceptually:
+
+morning
+afternoon
+evening
+
+preserve exactly those existing hour boundaries.
+
+Only replace the source of the hour with IST.
+
+Do not redesign the greeting.
+
+Do not change:
+
+- greeting text
+- UI
+- styling
+- layout
+- icons
+- student information
+- dashboard cards
+- ordering
+
+==================================================
+7. BROWSER TIMEZONE INDEPENDENCE
+==================================================
+
+The same instant must produce the same Student Dashboard business result regardless of browser timezone.
+
+Explicitly test scenarios where:
+
+IST and browser local date differ.
+
+For example, test an instant where the IST date is:
+
+2026-04-01
+
+while the browser timezone is still on:
+
+2026-03-31
+
+The Student Dashboard academic-year fallback must use:
+
+2026-04-01
+
+because the application uses IST.
+
+Similarly, test an instant where the IST hour differs from the browser hour.
+
+The greeting must follow IST.
+
+==================================================
+8. REACTIVE GREETING
+==================================================
+
+Inspect whether the greeting is calculated only once during initial render.
+
+If the existing dashboard is intended to update the greeting as time progresses, make the smallest safe change necessary to keep it IST-correct.
+
+Do NOT introduce high-frequency polling.
+
+Prefer existing shared IST mechanisms.
+
+If a timer is needed, it should be lightweight and aligned appropriately with the relevant IST time boundary.
+
+Do not modify unrelated components or global timer behavior.
+
+==================================================
+9. ACADEMIC YEAR SOURCE PRIORITY
+==================================================
+
+Inspect the actual dashboard data flow carefully.
+
+If the Student Dashboard receives an authoritative academic year from the server/API, preserve that behavior.
+
+Only correct the fallback path identified by the Step 3 audit.
+
+Do NOT replace an authoritative server-provided value with a frontend-derived value.
+
+The requirement is:
+
+SERVER/authoritative academic-year value
+→ preserve
+
+IST-based frontend fallback
+→ correct
+
+Browser-local fallback
+→ remove
+
+==================================================
+10. SHARED IST ARCHITECTURE
+==================================================
+
+Reuse existing shared utilities wherever possible.
+
+Relevant existing utilities may include:
+
+- todayInIST()
+- dateOnlyParts()
+- getAcademicYearForISTDate()
+- SCHOOL_TIME_ZONE
+- minutesSinceMidnightIST()
+
+Use the actual utilities present in the repository.
+
+Do not create duplicate implementations.
+
+If a helper is genuinely missing, add the smallest reusable helper to:
+
+shared/ist-time.ts
+
+and add focused tests.
+
+Do not modify existing IST helpers unnecessarily.
+
+==================================================
+11. NO BROWSER-LOCAL BUSINESS DATE LOGIC
+==================================================
+
+Within the scoped Student Dashboard logic, do not use browser-local:
+
+- getFullYear()
+- getMonth()
+- getDate()
+- getDay()
+- getHours()
+- getMinutes()
+- getSeconds()
+- setFullYear()
+- setMonth()
+- setDate()
+- setHours()
+- setMinutes()
+- setSeconds()
+
+for business-date/time decisions.
+
+Do not use:
+
+new Date()
+
+as a substitute for IST business-date logic unless it is handling an absolute instant and the timezone behavior is explicitly controlled.
+
+Do not use browser-local locale formatting for business-date decisions.
+
+==================================================
+12. DATE-ONLY SAFETY
+==================================================
+
+If the dashboard handles an academic-year date or other date-only value:
+
+Prefer:
+
+YYYY-MM-DD
+
+and the existing shared IST/date-only helpers.
+
+Do not unnecessarily convert date-only values through:
+
+new Date("YYYY-MM-DD")
+
+because browser timezone conversion can create date shifts.
+
+==================================================
+13. MULTI-TENANT SAFETY
+==================================================
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+Do NOT change:
+
+- student authentication
+- authenticated school/tenant context
+- schoolId authorization
+- student identity
+- dashboard API authorization
+- school filtering
+- class/section filtering
+- any tenant ownership logic
+
+A Student from School A must never receive Student Dashboard data belonging to School B.
+
+Do not trust a client-provided schoolId for authorization.
+
+This task is ONLY timezone correction.
+
+==================================================
+14. ACADEMIC SESSION SAFETY
+==================================================
+
+Preserve existing Academic Session behavior.
+
+Do NOT:
+
+- redesign Academic Session
+- add session requirements
+- remove session requirements
+- change session selection
+- change session authorization
+- change examination session behavior
+
+If Student Dashboard uses Academic Session information, preserve its current behavior.
+
+Only correct the IST fallback/greeting logic.
+
+==================================================
+15. BACKEND SCOPE
+==================================================
+
+This should normally be a frontend/shared-utility change.
+
+Do NOT modify backend routes unless inspection proves there is a direct Student Dashboard backend timezone defect required for this exact Step 3B issue.
+
+The Step 3 audit specifically identified:
+
+client/src/pages/student-dashboard.tsx
+
+as the affected area.
+
+If backend changes are not required, leave backend files untouched.
+
+==================================================
+16. DATABASE / SCHEMA
+==================================================
+
+DO NOT:
+
+- modify database schema
+- create migrations
+- modify database data
+- modify timestamp column types
+- change PostgreSQL timezone
+- change UTC persistence
+
+==================================================
+17. PROCESS TIMEZONE
+==================================================
+
+DO NOT add:
+
+TZ=Asia/Kolkata
+
+to:
+
+- package.json
+- Replit configuration
+- Node startup
+- workflow
+- environment configuration
+
+Use explicit IST logic.
+
+==================================================
+18. TEST REQUIREMENTS
+==================================================
+
+Add/update focused tests covering:
+
+A. Academic-year fallback before IST year boundary
+
+B. Academic-year fallback exactly at IST year boundary
+
+C. Academic-year fallback immediately after IST year boundary
+
+D. Greeting based on IST hour
+
+E. Browser timezone independence
+
+F. IST date differing from browser date
+
+G. IST hour differing from browser hour
+
+Test under:
+
+TZ=UTC
+
+TZ=Asia/Kolkata
+
+TZ=Europe/London
+
+TZ=America/New_York
+
+The expected Student Dashboard business result must remain identical for the same absolute instant.
+
+==================================================
+19. REQUIRED IST BOUNDARY TESTS
+==================================================
+
+At minimum test:
+
+2026-03-31 23:59:59 IST
+
+2026-04-01 00:00:00 IST
+
+2026-04-01 00:00:01 IST
+
+Verify the academic-year fallback follows the application's existing convention.
+
+Also test representative greeting times based on the application's existing greeting boundaries.
+
+Do not invent new greeting boundaries.
+
+==================================================
+20. IMPORTANT CROSS-TIMEZONE TEST
+==================================================
+
+Create at least one test where:
+
+IST date = 2026-04-01
+
+but the host/browser timezone still has:
+
+2026-03-31
+
+Verify Student Dashboard uses the IST date.
+
+Also test a case where:
+
+IST hour = one greeting period
+
+while browser local hour = a different greeting period.
+
+Verify Student Dashboard uses the IST greeting.
+
+==================================================
+21. NO UNRELATED CHANGES
+==================================================
+
+DO NOT fix:
+
+- Student Timetable
+- Teacher approval history
+- Visitor Log
+- Google Calendar scheduler
+- Fee CURRENT_DATE
+- Financial report CURRENT_DATE
+- Admin Calendar
+- Teacher Calendar
+- Student Calendar
+- Homework
+- Classwork
+- Profile date-only formatting
+- Absolute timestamp display
+- Examination timestamp formatting
+- Attendance
+
+Step 3A Student Timetable is already COMPLETE.
+
+Do not modify it.
+
+Do not touch Attendance.
+
+==================================================
+22. VERIFICATION
+==================================================
+
+After implementation run:
+
+npm run check
+
+Run all relevant Student Dashboard tests.
+
+Run the relevant shared IST tests.
+
+Run:
+
+git diff --check
+
+Restart the application/workflow and verify startup.
+
+Do not run migrations.
+
+Do not touch production.
+
+Do not modify production data.
+
+==================================================
+23. SOURCE SCAN
+==================================================
+
+After implementation perform a focused source scan of:
+
+client/src/pages/student-dashboard.tsx
+
+for browser-local business date/time logic.
+
+Confirm that no remaining browser-local:
+
+getFullYear()
+getMonth()
+getDate()
+getDay()
+getHours()
+getMinutes()
+getSeconds()
+
+are used for Student Dashboard business decisions.
+
+If an unrelated Date usage exists, do not automatically modify it.
+
+Classify it as:
+
+- business-date/time logic requiring IST
+OR
+- absolute timestamp / safe non-business usage
+
+Only modify the actual Step 3B defect.
+
+==================================================
+24. FINAL REPORT
+==================================================
+
+Return a complete verification report containing:
+
+1. Exact files changed
+2. Exact components/functions changed
+3. Existing academic-year logic discovered
+4. How academic-year fallback now obtains the IST date
+5. Confirmation that authoritative server academic-year values were preserved
+6. Existing greeting boundaries discovered
+7. How greeting hour is now calculated in IST
+8. Whether any reactive greeting update was required
+9. Shared IST helpers reused
+10. Any new helper added
+11. Tests added/updated
+12. Test results
+13. npm run check result
+14. git diff --check result
+15. Application startup result
+16. Source-scan result
+17. Confirmation that no database/schema/migration changes were made
+18. Confirmation that UTC persistence was unchanged
+19. Confirmation that multi-tenant isolation was preserved
+20. Confirmation that Academic Session behavior was preserved
+21. Confirmation that Step 3A Student Timetable was not modified
+22. Confirmation that Attendance was not modified
+23. Confirmation that no unrelated Step 3 findings were modified
+24. Any remaining Student Dashboard IST issues, if any
+
+==================================================
+25. FINAL RULE
+==================================================
+
+IMPLEMENT ONLY STEP 3B.
+
+Student Dashboard must use:
+
+Asia/Kolkata / IST
+
+for:
+
+- academic-year fallback business date
+- current greeting time
+
+regardless of browser timezone.
+
+Preserve all existing business rules and UI behavior.
+
+Do not redesign the dashboard.
+
+Do not change tenant isolation.
+
+Do not change Academic Session architecture.
+
+Do not modify database persistence.
+
+Do not touch Step 3A.
+
+Do not fix unrelated modules.
+
+Make the smallest safe implementation necessary.
+
+Then provide the complete verification report.

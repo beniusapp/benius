@@ -1,0 +1,131 @@
+You are working on the existing multi-tenant school ERP application.
+
+I want to make one focused change to the Admin Portal:
+
+Admin Portal → Fees & Payments → Record Offline Payment
+
+OBJECTIVE
+
+Currently, when an admin searches for a student, multiple unpaid invoices can appear and the UI allows selecting multiple invoices together for one offline payment.
+
+I do NOT want bulk/multi-invoice offline payments.
+
+Change the workflow so that:
+
+«ONE offline payment transaction must apply to ONE invoice only.»
+
+The admin must record each unpaid invoice separately.
+
+REQUIRED BEHAVIOR
+
+When the admin searches for a student:
+
+1. Show all eligible unpaid/outstanding invoices for that student.
+2. Keep the existing invoice information visible:
+   - Fee Name
+   - Invoice Number
+   - Academic Session
+   - Due Date
+   - Amount
+   - Existing relevant status information
+3. The admin must be able to select only one invoice at a time.
+4. Remove/disable multi-selection behavior.
+5. Do NOT show a "2 invoices selected", "3 invoices selected", combined total, or any bulk-payment summary.
+6. The payment-details step must always correspond to exactly one selected invoice.
+7. The admin records the offline payment for that single invoice.
+8. After successful recording, the invoice becomes paid according to the existing system behavior.
+9. If the student has another unpaid invoice, the admin can record another offline payment separately by selecting that invoice and completing another transaction.
+
+IMPORTANT ACCOUNTING RULE
+
+Enforce this rule at the backend/API level as well as the frontend:
+
+One offline payment record → exactly one fee/invoice record.
+
+Do not rely only on disabling the checkbox UI.
+
+The server must reject any request attempting to submit multiple invoice/fee IDs for a single offline payment transaction.
+
+RECEIPT / NUMBERING
+
+Preserve the existing invoice and receipt architecture completely.
+
+For each offline payment:
+
+- The existing permanent "invoice_number" must remain unchanged.
+- Generate/store the appropriate receipt number using the existing receipt-number logic.
+- One receipt must correspond to the one invoice that was paid.
+- Do not overwrite the invoice number with the receipt number.
+- Preserve all existing payment-history/audit records.
+
+DO NOT CHANGE
+
+This is a narrowly scoped offline-payment workflow change.
+
+Do NOT modify:
+
+- Razorpay integration
+- Online payment flow
+- Razorpay orders
+- Razorpay payments
+- Webhooks
+- Payment attempts
+- Payment failure handling
+- Payment cancellation handling
+- Refund logic
+- Payment history architecture
+- Invoice generation
+- Invoice numbering
+- Receipt numbering
+- Fee calculation
+- Late-fee calculation
+- Academic-session logic
+- Student fee records
+- Database schema unless absolutely required to enforce the one-invoice rule
+- Existing UI design unnecessarily
+
+Do not introduce any bulk-payment option elsewhere.
+
+UI REQUIREMENT
+
+Preserve the current design and styling.
+
+Simply change the selection behavior from:
+
+Multiple invoices → one payment
+
+to:
+
+One invoice → one payment
+
+Use a single-selection interaction such as a radio/selectable card rather than checkboxes if that fits the existing design.
+
+The payment button should remain disabled until exactly one invoice is selected.
+
+VALIDATION / TESTING
+
+Test at minimum:
+
+1. Student with one unpaid invoice → can record payment successfully.
+2. Student with two unpaid invoices → can select only one.
+3. Student with multiple unpaid invoices → cannot submit them together.
+4. Attempting a multi-invoice API request directly must be rejected by the backend.
+5. Pay Invoice A → Invoice A becomes paid.
+6. Invoice B remains unpaid.
+7. Admin can then separately record payment for Invoice B.
+8. Each payment creates its own correct payment/receipt history.
+9. Existing online Razorpay payments continue working exactly as before.
+10. Existing failed/cancelled payment history remains unchanged.
+
+FINAL REQUIREMENT
+
+Before making changes, inspect the existing frontend component, API endpoint, validation, database/payment-record creation logic, and receipt-generation flow.
+
+Make the smallest possible change required to enforce:
+
+ONE INVOICE = ONE OFFLINE PAYMENT TRANSACTION.
+
+Do not redesign the Fees & Payments module.
+Do not modify unrelated functionality.
+
+After implementation, run the relevant tests/type checks and report exactly what was changed and what was verified.

@@ -1,0 +1,826 @@
+# STEP 2L-4 — ATTENDANCE MODULE
+
+## HISTORICAL ATTENDANCE PRESERVATION AFTER PHYSICAL STUDENT DELETION
+
+### DEEP AUDIT + CONTROLLED IMPLEMENTATION
+
+We have completed and accepted:
+
+* Step 2L-1 — Server-authoritative Academic Session selection for Teacher Attendance writes.
+* Step 2L-2 — Academic Session date-boundary enforcement.
+* Step 2L-3 — Student Attendance marked-Sunday display and monthly-count consistency.
+
+Now address the remaining critical Attendance issue:
+
+> **Physical deletion of a Student currently deletes historical Student Attendance because `attendance_records.student_id` uses `ON DELETE CASCADE`.**
+
+Our required business behavior is:
+
+> **Historical Attendance must survive even if the Student Registry record is physically deleted.**
+
+This is a data-integrity requirement.
+
+This step must be handled very carefully.
+
+---
+
+# 1. NON-NEGOTIABLE BUSINESS REQUIREMENT
+
+Student Registry is GLOBAL/PERMANENT.
+
+However:
+
+### Historical Attendance is permanent historical data.
+
+If a Student is physically deleted from the global Student Registry:
+
+```text
+Student Registry record
+        ↓
+PHYSICALLY DELETED
+```
+
+historical Attendance records must NOT be deleted.
+
+For example:
+
+```text
+Student ID: STU123
+Academic Session: 2025-26
+Attendance:
+  10-Apr-2025 Present
+  11-Apr-2025 Absent
+  12-Apr-2025 Present
+```
+
+If the Student Registry record is later physically deleted:
+
+```text
+STU123
+```
+
+the historical Attendance rows must remain.
+
+The system must still be able to display historical Attendance for that deleted Student when the relevant historical Attendance is accessed through the appropriate existing historical workflow.
+
+---
+
+# 2. IMPORTANT DISTINCTION
+
+Do NOT interpret this requirement as:
+
+> "Never delete students."
+
+That is NOT the requirement.
+
+The Student Registry may continue to support its existing physical deletion behavior if that behavior is intentionally supported by the application.
+
+The requirement is:
+
+> **Deleting the Student Registry identity must not destroy historical Attendance data.**
+
+Do not remove or disable Student deletion unless absolutely necessary and explicitly reported.
+
+---
+
+# 3. HARD REQUIREMENTS — DO NOT CHANGE
+
+## Multi-tenant isolation
+
+Every Attendance record remains strictly school/tenant-specific.
+
+Never allow:
+
+* one school's Student to access another school's Attendance;
+* one school's historical Attendance to appear in another school;
+* a deleted Student identity to be reused across schools in a way that causes historical data leakage.
+
+Authenticated school context remains authoritative.
+
+---
+
+## Academic Session isolation
+
+Every Student Attendance record must remain tied to its Academic Session.
+
+Historical Attendance must continue to be isolated by:
+
+```text
+school + academic session
+```
+
+Do not remove the Attendance Session relationship.
+
+Do not make Attendance global across Sessions.
+
+---
+
+## Student Registry
+
+Student Registry remains global/permanent.
+
+Do NOT:
+
+* recreate students per Academic Session;
+* make Enrollment mandatory for Attendance;
+* copy the entire Student record into every Session;
+* redesign Student Registry.
+
+---
+
+## Existing Attendance behavior
+
+Do not change:
+
+* Teacher Attendance marking;
+* Step 2L-1 server-authoritative Session resolution;
+* Step 2L-2 Session date boundaries;
+* 7-day correction window;
+* archived Session protection;
+* Sunday behavior;
+* holiday rules;
+* Attendance status semantics;
+* Student Attendance monthly calculation;
+* Admin Attendance behavior unless required to preserve historical records.
+
+---
+
+# 4. FIRST: DEEP AUDIT BEFORE EDITING
+
+Do NOT immediately change the foreign key.
+
+First inspect the complete dependency chain.
+
+At minimum inspect:
+
+### Database/schema
+
+* `attendance_records`
+* `students`
+* `enrollments`
+* `academic_sessions`
+* all related Attendance tables
+* foreign keys involving `students.id`
+* foreign keys involving `attendance_records.student_id`
+* indexes
+* unique constraints
+* delete/update actions
+
+Especially confirm:
+
+```text
+attendance_records.student_id
+        ↓
+students.id
+```
+
+and the exact current `ON DELETE` behavior.
+
+---
+
+# 5. FIND ALL STUDENT DELETION PATHS
+
+Search the entire codebase for every physical Student deletion path.
+
+Look for:
+
+* SQL DELETE statements;
+* ORM `.delete()` calls;
+* storage delete methods;
+* Admin Student deletion;
+* bulk Student deletion;
+* cascade deletion;
+* cleanup routines;
+* import/replacement routines;
+* test-only deletion paths that reflect production behavior.
+
+Identify the exact production deletion flow.
+
+Do NOT assume there is only one deletion path.
+
+---
+
+# 6. TRACE ALL ATTENDANCE READ PATHS
+
+This is critical.
+
+Find every place where historical Attendance is read.
+
+At minimum inspect:
+
+### Student Attendance
+
+* Student monthly Attendance
+* Student historical Attendance
+* Student Session-specific Attendance
+* Attendance summary APIs
+
+### Admin Attendance
+
+* Admin Student Attendance
+* Admin Attendance reports
+* Admin historical Attendance
+
+### Teacher Attendance
+
+* Teacher historical Attendance
+* Teacher Attendance history
+* any Attendance reporting
+
+### Backend/storage
+
+Find every query that currently does something like:
+
+```text
+JOIN students
+```
+
+to obtain the Student name or identity.
+
+Determine whether such joins make historical Attendance disappear after the Student row is deleted.
+
+---
+
+# 7. HISTORICAL IDENTITY REQUIREMENT
+
+This is a critical part of the fix.
+
+If the Student Registry row is physically deleted, historical Attendance still needs a usable identity.
+
+At minimum, historical Attendance must retain enough information to identify the Student for historical display/reporting.
+
+Do NOT rely on the current `students` row existing forever.
+
+The implementation must answer:
+
+> "If `students.id` no longer exists, how does the historical Attendance row know who it belonged to?"
+
+Inspect whether the current Attendance schema already contains any historical identity fields such as:
+
+* student name;
+* admission/roll number;
+* registration number;
+* student code;
+* other immutable identity.
+
+Do not assume these fields exist.
+
+---
+
+# 8. IMPORTANT: DO NOT COPY CURRENT MUTABLE STUDENT DATA BLINDLY
+
+Do NOT solve the problem by simply copying every current Student field into Attendance.
+
+We need historical identity, not a duplicate Student Registry.
+
+Identify the minimum immutable/display identity required by existing Attendance screens.
+
+For example, depending on the actual schema, this could be something equivalent to:
+
+```text
+student_id
+historical_student_name
+historical_admission_number
+```
+
+But this is ONLY an example.
+
+Use the actual project schema and existing identity model.
+
+Do not invent unnecessary fields.
+
+---
+
+# 9. CHOOSE THE SAFEST DESIGN BASED ON AUDIT
+
+After the audit, determine the smallest safe implementation.
+
+Possible approaches may include:
+
+### Option A — Preserve Student FK but prevent physical deletion
+
+Only acceptable if the application explicitly requires Students to remain undeletable.
+
+However, this conflicts with the current requirement that physical deletion may occur, so do NOT choose this simply because it is easier.
+
+### Option B — Change Attendance FK delete behavior and preserve historical identity separately
+
+For example:
+
+```text
+student deleted
+        ↓
+Attendance remains
+        ↓
+student_id becomes NULL or otherwise preserved
+        +
+historical identity remains stored
+```
+
+This may be appropriate if the existing architecture supports nullable historical references.
+
+### Option C — Historical Attendance snapshot identity
+
+Attendance keeps its original immutable identity information so it can render even when the Student Registry row disappears.
+
+This may be appropriate if existing Attendance UI depends heavily on Student joins.
+
+### Other approach
+
+If the audit identifies a safer existing architecture, use it.
+
+---
+
+# 10. DO NOT GUESS
+
+The implementation must be based on the actual schema and production code.
+
+Before choosing the design, report:
+
+1. Current FK behavior.
+2. Current Student deletion behavior.
+3. Every Attendance read that depends on the Student row.
+4. Whether historical identity is currently persisted anywhere.
+5. Which tables would be affected by changing Student deletion behavior.
+6. Whether Enrollment also cascades.
+7. Whether other modules depend on the current Student FK.
+
+Only then implement the minimum safe solution.
+
+---
+
+# 11. DATA MIGRATION SAFETY
+
+If a schema/FK change is required:
+
+* create the smallest necessary migration;
+* preserve all existing Attendance records;
+* do not delete historical Attendance;
+* do not rewrite unrelated historical data;
+* do not reset Attendance;
+* do not recreate Students.
+
+Before applying the migration, determine how existing Attendance rows will behave.
+
+The migration must be safe for existing production/development data.
+
+---
+
+# 12. CRITICAL EXISTING-DATA REQUIREMENT
+
+The fix must work for:
+
+### Existing Attendance rows
+
+Not just newly created rows.
+
+Suppose the database already contains:
+
+```text
+attendance_records
+student_id = 123
+```
+
+and Student 123 is physically deleted.
+
+After the fix, historical Attendance must remain accessible.
+
+Do not implement a solution that only protects future Attendance records while existing historical rows remain vulnerable.
+
+If existing historical records need a migration/backfill, identify it explicitly.
+
+---
+
+# 13. STUDENT DELETION TEST
+
+Create a focused database-backed integration test.
+
+The test should:
+
+### Step 1
+
+Create:
+
+* a school;
+* an Academic Session;
+* a Student;
+* valid Attendance records for that Student.
+
+### Step 2
+
+Verify Attendance exists.
+
+### Step 3
+
+Physically delete the Student using the SAME production deletion path.
+
+### Step 4
+
+Verify:
+
+```text
+students row → gone
+attendance_records → STILL EXISTS
+```
+
+### Step 5
+
+Verify the historical Attendance retains enough identity information for the existing historical Attendance workflow.
+
+### Step 6
+
+Verify another school's Student/Attendance cannot access the deleted Student's historical records.
+
+---
+
+# 14. REQUIRED TEST CASES
+
+At minimum implement/test all of these.
+
+## Test 1 — Physical Student deletion
+
+Student is physically deleted.
+
+Expected:
+
+* Student Registry row is gone.
+* Historical Attendance remains.
+
+---
+
+## Test 2 — Multiple historical Sessions
+
+Student has Attendance in:
+
+```text
+Session A
+Session B
+```
+
+Student is physically deleted.
+
+Expected:
+
+* Attendance from Session A remains.
+* Attendance from Session B remains.
+* Session isolation remains intact.
+
+---
+
+## Test 3 — Historical identity
+
+After Student deletion:
+
+Expected:
+
+* historical Attendance still identifies the Student using the project's appropriate historical identity fields;
+* no blank/unknown Student unless that is genuinely unavoidable and documented.
+
+---
+
+## Test 4 — Historical class/section
+
+If historical Attendance stores/reconstructs class and section:
+
+Expected:
+
+* historical class/section remains available after Student deletion;
+* do not use the Student's current class/section as a substitute.
+
+---
+
+## Test 5 — Student Attendance historical view
+
+Use the existing Student Attendance historical workflow.
+
+Expected:
+
+* historical Attendance remains retrievable where the application currently supports it;
+* no current Student Registry join should silently eliminate the historical record.
+
+If the current Student UI fundamentally requires the Student Registry row to authenticate a deleted Student, do NOT invent a new login/access mechanism in this step.
+
+Instead, document that limitation separately while ensuring the underlying historical Attendance remains preserved.
+
+---
+
+## Test 6 — Admin Attendance
+
+Admin historical Attendance/reporting must still be able to retrieve the historical Attendance record.
+
+---
+
+## Test 7 — Teacher historical Attendance
+
+Teacher historical Attendance/reporting must not lose the historical record because of the deleted Student.
+
+---
+
+## Test 8 — Tenant isolation
+
+Create two schools with Students/Attendance.
+
+Delete Student from School A.
+
+Expected:
+
+* School B cannot retrieve School A's historical Attendance.
+* No cross-school lookup is possible.
+
+---
+
+## Test 9 — New Attendance after deletion
+
+A physically deleted Student must not unexpectedly appear in the normal active Student Attendance roster.
+
+Do NOT create a new active Student workflow automatically.
+
+---
+
+## Test 10 — Existing Attendance calculations
+
+Verify historical Attendance calculations still work where the application currently calculates from Attendance records.
+
+Do not change the existing status weighting.
+
+---
+
+## Test 11 — Session isolation
+
+Historical Attendance remains associated with its original Academic Session.
+
+Deleting the Student must not remove or merge Session relationships.
+
+---
+
+## Test 12 — No duplicate historical rows
+
+The fix must not duplicate existing Attendance records.
+
+---
+
+# 15. REFERENTIAL-INTEGRITY CHECK
+
+After implementation, inspect the final FK behavior.
+
+Clearly report:
+
+```text
+attendance_records.student_id
+        ↓
+students.id
+```
+
+and the resulting delete action.
+
+If `student_id` becomes nullable or another design is used, explain exactly why.
+
+Do not leave an ambiguous orphan-reference design.
+
+---
+
+# 16. IMPORTANT IDENTITY SAFETY
+
+Consider Student ID reuse.
+
+If the application allows a new Student to receive an identifier that resembles/reuses an old identifier, historical Attendance must NOT become associated with the new Student accidentally.
+
+The historical Attendance identity must remain tied to the original historical identity.
+
+Do not rely solely on a reusable mutable Student ID for historical display.
+
+---
+
+# 17. API/FRONTEND COMPATIBILITY
+
+Do not redesign the Attendance UI.
+
+Do not add a new Student management interface.
+
+Only make the minimum read-path changes necessary so historical Attendance is not lost because of a missing Student Registry row.
+
+Preserve:
+
+* existing UI;
+* existing Session selection;
+* existing Attendance statuses;
+* existing calendar behavior;
+* existing monthly calculations.
+
+---
+
+# 18. DO NOT CHANGE THESE
+
+Do NOT modify:
+
+* Step 2L-1 Session resolution;
+* Step 2L-2 date-boundary validation;
+* Step 2L-3 Sunday behavior;
+* 7-day correction;
+* archived Session protection;
+* Teacher authorization;
+* Enrollment prerequisite behavior;
+* Academic Session architecture;
+* Attendance policy;
+* working-day rules;
+* holiday rules;
+* Student creation workflow;
+* Student login workflow;
+* Admin promotion/examination modules.
+
+Unless a tiny dependency change is absolutely required for preserving historical Attendance, leave these untouched.
+
+---
+
+# 19. MIGRATION REQUIREMENTS IF SCHEMA CHANGES
+
+If a database migration is necessary:
+
+Before running it, report:
+
+1. Current schema.
+2. New schema.
+3. Exact FK change.
+4. How existing Attendance records are preserved.
+5. How historical identity is populated.
+6. Whether any existing rows require backfill.
+7. Whether rollback is safe.
+8. Whether the migration is idempotent.
+
+Do NOT run a destructive migration.
+
+Do NOT use:
+
+```text
+DELETE FROM attendance_records
+```
+
+or equivalent cleanup logic.
+
+---
+
+# 20. VALIDATION COMMANDS
+
+Run the focused database/integration tests.
+
+Run the relevant Attendance tests.
+
+Then run:
+
+```text id="4j5exn"
+npm run check
+```
+
+Verify the application restarts successfully.
+
+If there are unrelated failures, distinguish them from failures caused by this change.
+
+---
+
+# 21. REQUIRED FINAL REPORT
+
+Your final report MUST contain these sections.
+
+## A. Root cause
+
+Explain exactly why physical Student deletion currently removes historical Attendance.
+
+## B. Current dependency chain
+
+Show:
+
+```text
+Student deletion
+        ↓
+FK/cascade
+        ↓
+Attendance impact
+```
+
+## C. Design selected
+
+Explain the exact design chosen to preserve historical Attendance.
+
+Do not merely say "FK changed."
+
+Explain:
+
+* what happens to `student_id`;
+* where historical identity lives;
+* how historical records are displayed;
+* how Session information remains preserved.
+
+## D. Files changed
+
+List every changed file.
+
+## E. Database changes
+
+List:
+
+* migrations;
+* schema changes;
+* FK changes;
+* indexes;
+* constraints.
+
+If none, explicitly say none.
+
+## F. Existing data
+
+Explain how existing Attendance records are protected.
+
+If a backfill was required, report exactly what was done.
+
+## G. Deletion path
+
+Identify the exact production Student deletion route/function changed or verified.
+
+## H. Read paths
+
+List all historical Attendance read paths checked/changed.
+
+## I. Tenant isolation
+
+Explain how school isolation remains enforced after Student deletion.
+
+## J. Session isolation
+
+Explain how Academic Session isolation remains enforced.
+
+## K. Tests
+
+Report PASS/FAIL for every required test.
+
+## L. Test totals
+
+Provide exact passed/failed counts.
+
+## M. `npm run check`
+
+Report exact result.
+
+## N. Application startup
+
+Report exact result.
+
+## O. Remaining limitations
+
+Clearly identify anything that could not be fully solved without redesigning another module.
+
+---
+
+# 22. CRITICAL SCOPE CONTROL
+
+This is a sensitive data-integrity change.
+
+Do NOT perform a broad refactor.
+
+Do NOT redesign the Student Registry.
+
+Do NOT redesign Enrollment.
+
+Do NOT redesign Attendance.
+
+Do NOT introduce a new Attendance architecture.
+
+Do NOT modify unrelated modules.
+
+Do NOT delete or rewrite existing historical Attendance.
+
+Do NOT "solve" the issue by simply disabling Student deletion.
+
+The target behavior is:
+
+```text
+BEFORE
+
+Student Registry
+      ↓ physical delete
+students row deleted
+      ↓ CASCADE
+historical Attendance deleted ❌
+
+
+AFTER
+
+Student Registry
+      ↓ physical delete
+students row deleted
+      ↓
+historical Attendance preserved ✅
+      ↓
+historical identity preserved ✅
+      ↓
+original Academic Session preserved ✅
+      ↓
+tenant isolation preserved ✅
+```
+
+Most importantly:
+
+> **Historical Attendance is more authoritative than the current existence of the Student Registry row.**
+
+A Student being removed from the current Registry must never destroy historical Attendance that has already been recorded.
+
+Do not implement anything beyond this requirement in Step 2L-4.

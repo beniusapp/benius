@@ -1,0 +1,60 @@
+READ-ONLY INVESTIGATION ONLY. DO NOT MODIFY ANY FILES, DATABASE SCHEMA, UI, API, or tests.
+
+I am reviewing the Admin Portal → Teacher Registry → Edit Teacher form.
+
+The current Edit Teacher UI does not show an Email field. Before making any change, I need you to determine whether an Email field should be added and how it should be wired safely.
+
+Investigate ONLY the existing Teacher Registry and Teacher authentication/recovery implementation.
+
+Please report:
+
+1. The exact frontend file/component for:
+   Admin Portal → Teacher Registry → Edit Teacher
+
+2. The exact fields currently displayed in the Edit Teacher form.
+
+3. Whether the Teacher database/user record already has an email field.
+   - Give the exact table/model/schema field name.
+   - State whether it is nullable/required.
+   - State whether it is unique.
+   - State whether it is school/tenant scoped.
+
+4. Identify where the teacher's login email/username is currently stored and which field Teacher Login actually uses.
+
+5. Trace the existing Admin Teacher Edit API:
+   - frontend request
+   - backend route
+   - validation schema
+   - storage/database update method
+
+6. Determine whether the existing Teacher Edit API already accepts/updates email even though the UI does not display an Email field.
+
+7. Trace the Teacher Forgot Password implementation and identify exactly which teacher email field it uses as the OTP/recovery destination.
+
+8. Check whether changing a teacher's email through Admin Teacher Registry currently has any security implications for:
+   - Teacher Login
+   - Teacher Forgot Password
+   - active teacher sessions
+   - pending password-recovery challenges
+
+9. Check whether email normalization/validation already exists for teachers. Do not invent a new rule if an existing rule is already used.
+
+10. Confirm whether adding an Email field to the Edit Teacher form would require:
+    - frontend-only change,
+    - backend change,
+    - database migration,
+    - or no database change because the field already exists.
+
+11. Identify any existing tests covering Admin Teacher Edit and Teacher email/password recovery that would need to be updated.
+
+IMPORTANT MULTI-TENANT REQUIREMENT:
+Any proposed solution must preserve strict school/tenant isolation. A teacher from one school must never be able to read or modify another school's teacher/email data. Authenticated school/tenant context must remain authoritative; never trust a browser-supplied schoolId as authorization.
+
+IMPORTANT:
+Do not implement anything.
+Do not create a migration.
+Do not modify the UI.
+Do not modify the API.
+Do not modify tests.
+
+Return a concise audit with exact file paths, relevant field names, route names, and your conclusion about whether the Email field can safely be added.

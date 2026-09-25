@@ -1,0 +1,315 @@
+Implement the approved **Teacher Self-Attendance Working Days + Canonical Rate** change.
+
+This is a BUILDING/DEVELOPMENT change only.
+
+Keep the implementation SIMPLE and NARROW. Do NOT redesign the Attendance system.
+
+## 1. APPROVED BUSINESS RULE
+
+Each school has its own configurable working weekdays.
+
+Default:
+
+* Monday = ON
+* Tuesday = ON
+* Wednesday = ON
+* Thursday = ON
+* Friday = ON
+* Saturday = OFF
+* Sunday = OFF
+
+Admin can turn Saturday and/or Sunday ON.
+
+At least ONE weekday must remain ON.
+
+This setting is SCHOOL-WIDE for simplicity and is isolated by authenticated `schoolId`.
+
+## 2. WORKING-DAY BEHAVIOR
+
+If a weekday is OFF:
+
+* Teacher attendance is not expected.
+* The date is excluded from the Teacher Self-Attendance rate.
+* Do not generate an Absent record.
+
+If a weekday is ON:
+
+* Teacher attendance is expected.
+* Existing Teacher Attendance Policy determines the stored status.
+* Do NOT create a new Saturday/Sunday-specific status.
+* Existing statuses remain unchanged.
+
+Therefore, if Saturday is enabled, the existing Attendance Policy applies to Saturday exactly like any other configured working day.
+
+## 3. HOLIDAY RULE
+
+Reuse the existing school holiday calendar.
+
+For Teacher Self-Attendance rate:
+
+* An `All_School` holiday overrides the working-day setting.
+* That date is excluded from the denominator.
+* No attendance entry is required.
+
+Do NOT redesign the existing calendar system.
+
+Targeted/class-specific holidays do NOT affect the general Teacher Self-Attendance rate in this implementation.
+
+## 4. MISSING ATTENDANCE
+
+For an applicable working day:
+
+If there is no Teacher Self-Attendance record for that teacher/date, treat it as:
+
+Absent = 0%
+
+Do NOT create a synthetic database attendance row.
+
+This is calculation-only behavior.
+
+## 5. RATE FORMULA
+
+Use one canonical server-side Teacher Self-Attendance rate calculator.
+
+Status weights:
+
+* Present = 1.0
+* Late = 1.0
+* Half Day = 0.5
+* Absent = 0.0
+* Leave = 0.0
+
+Rate:
+
+earned attendance weight / applicable working days × 100
+
+Round to ONE decimal place.
+
+If there are zero applicable working days, return 0.0%.
+
+## 6. RATE PERIOD
+
+For the selected Academic Session:
+
+Start:
+
+* Session start date
+
+End:
+
+* Earlier of:
+
+  * today's date in IST
+  * Academic Session end date
+
+Future dates must never be counted.
+
+All generated/calculated dates must remain strictly inside the selected Academic Session.
+
+## 7. SESSION AND TENANT SECURITY
+
+This is mandatory.
+
+Every Teacher Self-Attendance rate/read must be scoped by:
+
+* authenticated `schoolId`
+* authenticated Teacher identity
+* validated selected Academic Session ID
+
+Never allow cross-school or cross-session attendance calculation.
+
+Do not trust a client-supplied school ID.
+
+Derive the school from the authenticated session and validate the selected Academic Session belongs to that school.
+
+## 8. STORAGE
+
+Use the existing `school_metadata` table for the school-wide working-day configuration.
+
+Do NOT create a new database table.
+
+Store one validated JSON value for the school's weekday configuration.
+
+Example conceptual shape:
+
+{
+"monday": true,
+"tuesday": true,
+"wednesday": true,
+"thursday": true,
+"friday": true,
+"saturday": false,
+"sunday": false
+}
+
+Requirements:
+
+* exactly the seven valid weekday identifiers
+* boolean values only
+* no duplicates/unknown weekday keys
+* at least one day must be ON
+* malformed configuration must NOT silently become "all days OFF"
+* missing configuration must safely use the default Mon-Fri ON / Sat-Sun OFF
+
+The new read/write path must derive `schoolId` from the authenticated Admin session.
+
+## 9. ADMIN UI
+
+In:
+
+`client/src/pages/admin-modules/attendance-policy.tsx`
+
+Add a simple **Working Days** section above the existing Teacher/Student timing policy sections.
+
+Use simple ON/OFF controls or checkboxes:
+
+Monday
+Tuesday
+Wednesday
+Thursday
+Friday
+Saturday
+Sunday
+
+Show the current configuration.
+
+Default to:
+
+Mon–Fri ON
+Sat/Sun OFF
+
+Prevent saving if all seven days are OFF.
+
+Keep the existing Teacher and Student Attendance Policy UI unchanged.
+
+## 10. ADMIN API
+
+Add a narrow authenticated Admin read/write API for the Working Days setting.
+
+Requirements:
+
+* GET current school's setting
+* PUT/save current school's setting
+* derive school from authenticated Admin session
+* validate payload
+* reject all-seven-OFF
+* never accept another school's ID as an authorization mechanism
+* preserve multi-tenant isolation
+
+Do not weaken or bypass existing authorization.
+
+## 11. CANONICAL RATE CALCULATOR
+
+Create/use one shared server-side calculation path for Teacher Self-Attendance.
+
+It must:
+
+1. Validate authenticated school + teacher + selected Academic Session.
+2. Determine Session start/end.
+3. Determine today's date using IST.
+4. Generate applicable calendar dates only within:
+   Session start → min(today IST, Session end)
+5. Apply school Working Days configuration.
+6. Apply `All_School` holidays.
+7. For each applicable working date:
+
+   * use the teacher's stored attendance status if present
+   * if no record exists, treat it as Absent for calculation
+8. Apply the approved status weights.
+9. Return the canonical rate rounded to one decimal.
+
+Do not create synthetic attendance rows.
+
+Use existing IST/date helpers such as `todayInIST`, `calendarWeekday`, and `addCalendarDays` where already available.
+
+Do not use UTC date conversion for business-date calculations.
+
+## 12. UPDATE TEACHER SELF-ATTENDANCE SURFACES
+
+Make the following use the same canonical server-calculated Teacher Self-Attendance result:
+
+* `client/src/pages/teacher-modules/my-attendance.tsx`
+* `client/src/pages/teacher-modules/attendance-history.tsx`
+* relevant Teacher Self-Attendance history/rate API in `server/teacher-routes.ts`
+
+The displayed rate must no longer be calculated independently in multiple places.
+
+Keep report/calendar date filtering separate from the canonical Session rate where appropriate.
+
+## 13. IMPORTANT: DO NOT CHANGE THESE
+
+Do NOT change:
+
+* `server/attendance-policy-engine.ts`
+* existing Teacher Present/Late/Half Day/Leave status semantics
+* Student Attendance calculation/working-day contract
+* Student class attendance marking behavior
+* existing calendar schema
+* existing Teacher identity/security model
+* existing Academic Session model
+* existing Attendance Policy timing behavior
+
+This task only adds Working Days configuration and establishes one canonical Teacher Self-Attendance rate calculation.
+
+## 14. HISTORICAL STATUS
+
+Do not reinterpret old stored attendance statuses because of later Attendance Policy changes.
+
+Stored historical status remains historical.
+
+Working-day configuration determines whether a date is applicable to the rate calculation.
+
+## 15. TESTS
+
+Add focused tests for:
+
+1. Default Mon-Fri configuration.
+2. Saturday OFF excludes Saturday.
+3. Saturday ON includes Saturday.
+4. Sunday OFF excludes Sunday.
+5. Sunday ON includes Sunday.
+6. All-seven-OFF is rejected.
+7. Missing configuration uses default.
+8. Malformed configuration is rejected safely/defaulted safely according to the implementation contract without becoming all-OFF.
+9. All_School holiday excludes the date.
+10. Missing attendance on a working day counts as Absent.
+11. Present = 1.0.
+12. Late = 1.0.
+13. Half Day = 0.5.
+14. Leave = 0.
+15. Absent = 0.
+16. Future dates are excluded.
+17. Session start boundary is enforced.
+18. Session end boundary is enforced.
+19. Today's date uses IST.
+20. Cross-school access is rejected.
+21. Invalid/non-owned Academic Session is rejected.
+22. My Attendance and Attendance History use the same canonical rate.
+23. Existing Student Attendance behavior remains unchanged.
+
+## 16. VERIFICATION GATE
+
+After implementation:
+
+* run the relevant test suite
+* run TypeScript/check/typecheck if available
+* inspect the final diff
+* verify no unrelated files were changed
+* verify no production deployment/migration work was performed
+* restart/reload the development app if required
+
+Then report:
+
+A. Files changed
+B. API changes
+C. Database changes
+D. Working Days behavior
+E. Rate calculation behavior
+F. Holiday behavior
+G. Session/tenant security verification
+H. Tests passed
+I. Any remaining risks
+
+STOP after this implementation and verification.
+
+Do not proceed to any unrelated Attendance redesign.

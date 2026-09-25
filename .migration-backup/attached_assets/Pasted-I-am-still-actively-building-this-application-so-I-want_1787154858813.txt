@@ -1,0 +1,149 @@
+I am still actively building this application, so I want to simplify the fee/invoice status system permanently.
+
+After inspecting the current implementation, you confirmed that the Ledger currently supports:
+
+- Due
+- Paid
+- Overdue
+- Partial
+- Waived
+
+I DO NOT want Partial or Waived in this application.
+
+Please completely remove Partial and Waived from the system.
+
+Final supported invoice/fee statuses
+
+The invoice/fee status system must contain ONLY these 3 statuses:
+
+1. Due
+   
+   - Invoice is unpaid and has not passed its due date.
+
+2. Overdue
+   
+   - Invoice is unpaid and its due date has passed.
+
+3. Paid
+   
+   - Invoice has been fully paid.
+
+There must be NO Partial or Waived invoice status after this change.
+
+Important: remove them completely
+
+Do not simply hide them from the UI.
+
+Search the entire application and remove "Partial" and "Waived" from:
+
+- Database/schema definitions
+- Backend validation
+- Status enums/types/constants
+- Fee/invoice creation logic
+- Fee/invoice update logic
+- Payment processing logic
+- Offline payment logic
+- Razorpay payment logic
+- Ledger & Transactions
+- Status filters
+- Status chips/badges
+- Admin edit forms
+- API request/response validation
+- Reports
+- Analytics
+- Dunning/late-fee logic
+- Any other fee/invoice-related code
+
+Historical data
+
+Because this application is still under development, I also want existing historical/test data using:
+
+- "Partial"
+- "Waived"
+
+to be removed from the database.
+
+Before modifying the database, identify exactly how many records currently have each status and show me the counts.
+
+Then remove those records/status values safely.
+
+Do NOT convert Partial or Waived records into Due or Paid automatically. I explicitly want those historical/test records removed because this is still a development environment.
+
+Payment attempt statuses must remain separate
+
+Do NOT remove payment-attempt statuses such as:
+
+- Failed
+- Cancelled
+- Authorized
+- Captured
+- Refunded
+- Pending
+
+These are NOT invoice statuses and must remain available for payment history/audit purposes.
+
+For example:
+
+Invoice status:
+
+"Due → Overdue → Paid"
+
+Payment attempts for that invoice can independently be:
+
+"Failed"
+"Cancelled"
+"Captured"
+
+A failed or cancelled payment attempt must NOT change the invoice status to Failed or Cancelled.
+
+Ledger Status column
+
+After the change, the Ledger & Transactions → Status column must support ONLY:
+
+- Due
+- Overdue
+- Paid
+
+The All Status filter must also contain ONLY:
+
+- All Status
+- Due
+- Overdue
+- Paid
+
+Remove Partial and Waived completely from this filter.
+
+Database integrity
+
+Make sure the application cannot create a new invoice with Partial or Waived status after this change.
+
+If the status is stored as a free-text/varchar field, update the application's validation so only these three values are accepted:
+
+"Due"
+"Paid"
+"Overdue"
+
+If there is any database-level constraint appropriate for the existing architecture, update it accordingly.
+
+Important
+
+Do NOT make unrelated changes.
+
+Do NOT redesign the Ledger UI.
+
+Do NOT change payment behavior.
+
+Do NOT change the payment-attempt history system.
+
+Only remove Partial and Waived completely and clean the existing development/test data containing those statuses.
+
+After completing the change, report:
+
+1. Number of Partial records found
+2. Number of Waived records found
+3. Number deleted
+4. Every file/module changed
+5. Final supported invoice statuses
+6. Confirmation that no code path can create Partial or Waived anymore
+7. Confirmation that the Ledger Status filter now contains only Due, Overdue and Paid
+8. Confirmation that payment-attempt statuses such as Failed and Cancelled remain unaffected

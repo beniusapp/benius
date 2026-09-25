@@ -1,0 +1,224 @@
+ATTENDANCE STEP 2B — ADD ONLY A REUSABLE ENROLLMENT RESOLVER
+
+IMPORTANT:
+This is a READ-ONLY-BEHAVIOR / FOUNDATION step.
+
+I do NOT want any existing application logic changed.
+
+The existing Replit application logic, behavior, APIs, UI, workflows, permissions, calculations, and database behavior must remain exactly as they are.
+
+DO NOT refactor existing Attendance logic.
+DO NOT replace existing Attendance logic.
+DO NOT modify existing Attendance behavior.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Add ONE new reusable backend helper for resolving a student's
+session-specific enrollment.
+
+The helper must accept:
+
+    schoolId
+    studentId
+    sessionId
+
+and resolve:
+
+    Enrollment
+    class_name
+    section_name
+
+The purpose is only to create a trusted reusable foundation for
+future Attendance hardening.
+
+==================================================
+CRITICAL — NO EXISTING LOGIC CHANGE
+==================================================
+
+DO NOT change or modify:
+
+- POST /api/attendance
+- storage.upsertAttendance()
+- markAttendanceAsLeave()
+- Teacher Attendance UI
+- Student Attendance APIs
+- Admin Attendance APIs
+- Attendance calculations
+- Leave logic
+- Faculty Mapping logic
+- Teacher assignment logic
+- Enrollment status rules
+- Academic Session behavior
+- Student Registry behavior
+- Teacher self-attendance
+- Session deletion
+- Existing database schema
+- Existing migrations
+- Existing constraints
+- Existing indexes
+- Existing configuration
+- Production environment
+
+DO NOT make the new resolver a caller from any existing code.
+
+It must remain unused for now.
+
+==================================================
+RESOLVER REQUIREMENTS
+==================================================
+
+Create a reusable resolver following the repository's existing
+storage/type conventions.
+
+Conceptually:
+
+    resolveEnrollmentForStudentSession(
+        schoolId,
+        studentId,
+        sessionId
+    )
+
+It must:
+
+1. Verify the Student belongs to the supplied schoolId.
+
+2. Verify the Academic Session belongs to the supplied schoolId.
+
+3. Find the Enrollment using:
+
+       school_id
+       student_id
+       session_id
+
+4. Return the authoritative enrollment record.
+
+5. Expose:
+
+       class_name
+       section_name
+
+6. Do NOT apply any enrollment.status filtering.
+
+Enrollment status rules are intentionally NOT being decided here.
+
+7. Never fall back to:
+
+   - current Student class/section
+   - browser class/section
+   - teacher assigned class/section
+   - Faculty Mapping
+   - active session
+   - another session
+
+8. Cross-school relationships must never return enrollment data.
+
+==================================================
+IMPORTANT SCOPE RULE
+==================================================
+
+This helper is an ADDITION only.
+
+It must NOT replace or alter any existing helper.
+
+It must NOT change the behavior of any existing caller.
+
+It must NOT automatically be wired into Attendance.
+
+==================================================
+TESTS
+==================================================
+
+Add focused tests for the new resolver.
+
+At minimum test:
+
+1. VALID ENROLLMENT
+   School A + Student A + Session A + Enrollment A
+   → returns the correct enrollment/class/section.
+
+2. MISSING ENROLLMENT
+   Student and Session belong to School A,
+   but no enrollment exists
+   → resolver does not return an enrollment.
+
+3. CROSS-SCHOOL STUDENT
+   Student belongs to School B,
+   requested school is School A
+   → must not return Student/enrollment data.
+
+4. CROSS-SCHOOL SESSION
+   Session belongs to School B,
+   requested school is School A
+   → must not return Session/enrollment data.
+
+5. CROSS-TENANT ENROLLMENT
+   If representable by the current schema/test setup,
+   verify that a mismatched tenant relationship cannot resolve.
+
+Do not modify the schema merely to create an invalid test case.
+
+==================================================
+FILES
+==================================================
+
+Only modify the minimum files required for:
+
+- the new resolver
+- its type/interface declaration if the project requires one
+- focused tests
+
+Do NOT modify unrelated files.
+
+==================================================
+VERIFICATION
+==================================================
+
+Run:
+
+- focused resolver tests
+- relevant existing server tests
+- TypeScript/check validation
+- repository diff/status check
+
+If an unrelated existing test fails, report it.
+Do not fix unrelated failures.
+
+==================================================
+MANDATORY FINAL SAFETY CHECK
+==================================================
+
+Before finishing, verify that:
+
+- No existing Attendance function was modified.
+- No existing Attendance route was modified.
+- No existing Attendance frontend was modified.
+- No existing Attendance behavior changed.
+- No Leave behavior changed.
+- No Faculty Mapping behavior changed.
+- No enrollment status behavior changed.
+- No database schema changed.
+- No migration was created.
+- No index/constraint was created.
+- No production environment was touched.
+- The new resolver has NO existing callers yet.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return:
+
+1. Files changed.
+2. New resolver name/signature.
+3. What the resolver does.
+4. Tests added and results.
+5. Type/check results.
+6. Confirmation that existing application logic is unchanged.
+7. Confirmation that the resolver is not yet used by Attendance.
+8. Confirmation that there were no database/schema/migration/configuration/production changes.
+
+STOP HERE.
+
+DO NOT PROCEED TO ATTENDANCE WRITER CHANGES.

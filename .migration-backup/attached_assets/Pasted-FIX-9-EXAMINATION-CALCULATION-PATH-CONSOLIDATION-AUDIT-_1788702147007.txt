@@ -1,0 +1,736 @@
+FIX 9 — EXAMINATION CALCULATION PATH CONSOLIDATION AUDIT
+INVESTIGATION ONLY — DO NOT IMPLEMENT ANYTHING
+
+We are building a TRUE MULTI-TENANT SaaS School MIS intended for 1,000+ independent schools.
+
+NON-NEGOTIABLE TENANT RULE:
+Every school is an independent tenant.
+
+A user from School A must NEVER be able to access, retrieve, calculate with, save, update, modify, or infer School B's:
+- students
+- examination scores
+- academic sessions
+- grading policies
+- pass/fail policies
+- promotion policies
+- cumulative policies
+- attendance
+- faculty
+- reports
+- analytics
+- or any other school-owned data.
+
+The authenticated user's school/tenant context is authoritative.
+Any client-supplied schoolId must NEVER be trusted for authorization.
+
+IMPORTANT:
+This is an INVESTIGATION/AUDIT ONLY.
+
+DO NOT:
+- modify code
+- create files
+- delete files
+- change files
+- change database schema
+- create migrations
+- alter database data
+- alter policies
+- alter calculations
+- change UI behavior
+- change APIs
+- change routes
+- change tests
+- run a migration
+- make any "cleanup" changes
+- make any refactor
+- commit changes
+
+You may inspect the repository, search the codebase, inspect existing tests, and trace execution paths.
+
+At the end, report your findings only.
+
+==================================================
+BACKGROUND — ALREADY COMPLETED FIXES
+==================================================
+
+FIX 1 — Shared Examination Calculation Engine
+COMPLETED.
+
+A shared calculation engine was introduced:
+shared/examination-calculation-engine.ts
+
+Teacher Examination now uses the shared calculation engine for examination calculations.
+
+The engine is intended to be authoritative for Examination result calculations.
+
+FIX 2 — Academic Session + Tenant Isolation
+COMPLETED.
+
+Teacher Examination is session-scoped.
+
+The authenticated teacher's school is authoritative.
+
+Academic Session is validated against the authenticated school.
+
+Affected examination score reads/writes are scoped by:
+- authenticated school
+- exact academic session
+- student
+- subject
+- exam type
+- class
+- section
+
+NULL-session records must not substitute for a selected session.
+
+FIX 3 — Pass/Fail Authority
+COMPLETED.
+
+Pass/fail is determined by the authenticated school's configured grading-tier pass percentage.
+
+Universal/hardcoded pass percentages must not be used as authoritative fallbacks.
+
+FIX 4 — Grading Authority
+COMPLETED.
+
+Grades are determined by the authenticated school's configured grading rules.
+
+Universal A+/A/B+/B/C+/C/D/F fallbacks must not be used as authoritative grading logic.
+
+FIX 5 — Scored / Absent / Missing
+DEFERRED.
+
+Do NOT implement Fix 5 during this audit.
+
+FIX 6 — Promotion Rules
+COMPLETED.
+
+Promotion rules were consolidated into a shared evaluator.
+
+The configured school-owned promotion policy is authoritative.
+
+FIX 7 — Cumulative Calculation
+SKIPPED / DEFERRED.
+
+Do NOT implement cumulative calculation changes during this audit.
+
+FIX 8 — Score Validation
+SKIPPED / NOT REQUIRED AS OF NOW.
+
+Do NOT implement score-validation changes during this audit.
+
+==================================================
+PURPOSE OF FIX 9
+==================================================
+
+We need to determine whether the application still contains MULTIPLE ACTIVE EXAMINATION CALCULATION SYSTEMS.
+
+The goal is NOT to change anything yet.
+
+The goal is to discover whether different parts of the application are calculating examination results independently, for example:
+
+- Teacher Results
+- Teacher Examination
+- Student Results
+- Admin Performance Analytics
+- Reports
+- Report cards
+- Promotion-related calculations
+- Server-side examination calculations
+- Historical result calculations
+- Any other examination-related analytics
+
+We already know that Performance Analytics had a duplicate examination calculator that was intentionally left for later.
+
+We now need to determine the CURRENT state of the repository.
+
+==================================================
+PRIMARY QUESTION
+==================================================
+
+Answer this question:
+
+"After Fixes 1–6, exactly where does examination-related calculation still happen, and which calculation paths are authoritative versus duplicate/legacy/independent?"
+
+Do not assume that a calculator is duplicate merely because it has similar code.
+
+Trace actual usage.
+
+==================================================
+INVESTIGATION REQUIREMENTS
+==================================================
+
+1. FIND ALL EXAMINATION CALCULATION LOGIC
+
+Search the entire repository for examination-related calculations and identify:
+
+- percentage calculations
+- average calculations
+- subject result calculations
+- term result calculations
+- grade calculations
+- pass/fail calculations
+- failed-subject counts
+- cumulative calculations
+- promotion calculations
+- weighted calculations
+- mark aggregation
+- total marks calculations
+- attendance-related examination result calculations
+- examination analytics calculations
+
+Search both client and server code.
+
+Pay particular attention to:
+
+client/src/
+server/
+shared/
+reports/
+analytics/
+admin modules
+student modules
+teacher modules
+storage
+utilities
+tests
+
+Also inspect relevant schema/configuration files when necessary to understand what the calculation is consuming.
+
+==================================================
+2. TRACE THE SHARED ENGINE
+==================================================
+
+Inspect:
+
+shared/examination-calculation-engine.ts
+
+Determine:
+
+- every exported calculation function
+- every major calculation stage
+- every consumer/importer
+- which pages/routes/services actually invoke it
+- whether any important Examination result path bypasses it
+- whether any caller performs additional calculation before or after the engine
+- whether any caller replaces or overrides engine results
+
+Do not change the engine.
+
+==================================================
+3. TEACHER EXAMINATION
+==================================================
+
+Trace the complete Teacher Examination flow.
+
+Inspect relevant files such as:
+
+client/src/pages/teacher-modules/examination.tsx
+server/teacher-routes.ts
+server/storage.ts
+shared/examination-calculation-engine.ts
+
+Determine exactly:
+
+- where raw marks are obtained
+- where existing marks are loaded
+- where calculations occur
+- whether percentage is calculated locally
+- whether grade is calculated locally
+- whether pass/fail is calculated locally
+- whether averages are calculated locally
+- whether promotion information is calculated locally
+- whether the shared engine is used
+- whether any duplicate calculation remains
+
+Report the actual execution path.
+
+==================================================
+4. TEACHER RESULTS
+==================================================
+
+Trace Teacher Results.
+
+Determine:
+
+- whether it uses the shared engine
+- whether it has another percentage calculator
+- another grade calculator
+- another pass/fail calculator
+- another average calculator
+- another promotion calculator
+- another cumulative calculator
+- whether it transforms engine results
+- whether it performs calculations after receiving engine results
+
+Identify every relevant function and file.
+
+==================================================
+5. STUDENT RESULTS
+==================================================
+
+Trace Student Results.
+
+Determine:
+
+- whether it uses the shared engine
+- whether it independently calculates percentages
+- whether it independently calculates grades
+- whether it independently calculates pass/fail
+- whether it independently calculates averages
+- whether it independently calculates promotion
+- whether it independently calculates cumulative results
+- whether any calculations are display-only versus authoritative
+
+Clearly distinguish:
+A. authoritative result calculation
+B. presentation-only arithmetic
+C. legacy/duplicate calculation
+
+==================================================
+6. ADMIN PERFORMANCE ANALYTICS
+==================================================
+
+This is especially important.
+
+Inspect:
+
+client/src/pages/admin-modules/performance-analytics.tsx
+
+Determine whether the previously identified duplicate Examination calculator still exists.
+
+For every examination-related calculation in Performance Analytics, report:
+
+- function name
+- what it calculates
+- inputs
+- policy/configuration used
+- whether it uses the shared examination engine
+- whether it uses school-specific policy
+- whether it uses academic-session-specific data
+- whether it uses authenticated tenant context
+- whether it independently calculates results
+- whether it appears to be a duplicate of the shared engine
+- whether it is merely analytics-specific aggregation
+
+DO NOT REMOVE OR MODIFY IT.
+
+==================================================
+7. REPORTS / REPORT CARDS
+==================================================
+
+Search all report-related code.
+
+Determine whether reports:
+
+- use persisted result values
+- use the shared engine
+- independently calculate results
+- independently calculate grades
+- independently calculate pass/fail
+- independently calculate averages
+- independently calculate cumulative results
+
+Identify whether a report calculation is:
+- authoritative
+- presentation-only
+- legacy
+- duplicate
+
+==================================================
+8. SERVER-SIDE CALCULATION PATHS
+==================================================
+
+Search server code for examination calculation logic.
+
+Pay particular attention to:
+
+- teacher routes
+- admin routes
+- student routes
+- promotion utilities
+- result utilities
+- storage queries
+- analytics endpoints
+- report endpoints
+- examination APIs
+
+Determine whether the server has any calculation logic that disagrees with or bypasses:
+
+shared/examination-calculation-engine.ts
+
+Do not modify anything.
+
+==================================================
+9. TENANT ISOLATION AUDIT
+==================================================
+
+For every ACTIVE examination calculation path you discover, determine:
+
+- Where does schoolId/tenant context come from?
+- Is it derived from authenticated user/session?
+- Is client-provided schoolId used?
+- Are students tenant-scoped?
+- Are scores tenant-scoped?
+- Are policies tenant-scoped?
+- Are Academic Sessions tenant-scoped?
+- Is the selected Academic Session validated against the authenticated school?
+- Can one calculation path accidentally combine data from different schools?
+- Can one calculation path accidentally use a policy belonging to another school?
+
+This is an audit only.
+
+If you discover a tenant-isolation problem:
+DO NOT FIX IT.
+
+Report it clearly as a finding.
+
+==================================================
+10. ACADEMIC SESSION AUDIT
+==================================================
+
+For every examination calculation path, determine whether Academic Session is:
+
+- explicitly passed into the calculation
+- loaded from authenticated context
+- loaded from selected UI context
+- inferred from current/active session
+- omitted
+- nullable
+- retrieved independently
+
+Determine whether any calculation path can accidentally combine:
+
+School A + Session X
+with
+School A + Session Y
+
+or:
+
+School A + Session X
+with
+School B + Session X
+
+Again, do not fix anything.
+
+==================================================
+11. POLICY AUTHORITY AUDIT
+==================================================
+
+For each calculation path determine which policy/configuration it uses.
+
+Specifically inspect:
+
+- pass percentage
+- grading rules
+- promotion rules
+- cumulative settings
+- term weights
+- attendance thresholds
+
+Determine whether the path uses:
+
+A. authenticated school's configured policy
+B. shared examination engine policy
+C. hardcoded/default policy
+D. another calculation/configuration
+E. no policy
+
+Any universal fallback or hardcoded business rule should be reported.
+
+Do not change it.
+
+==================================================
+12. CALCULATION CLASSIFICATION
+==================================================
+
+For every discovered calculation path, classify it as exactly one of:
+
+A. AUTHORITATIVE
+The calculation is an intended source of truth.
+
+B. SHARED AUTHORITATIVE ENGINE
+The calculation is performed by:
+shared/examination-calculation-engine.ts
+
+C. PRESENTATION-ONLY
+The arithmetic is only for display and does not determine stored/authoritative results.
+
+D. ANALYTICS-SPECIFIC
+The calculation is intentionally different because it represents a separate analytics metric.
+
+E. DUPLICATE
+It independently reproduces an existing authoritative calculation and could produce a different result.
+
+F. LEGACY / UNUSED
+The code remains but is not part of an active execution path.
+
+If classification is uncertain, say:
+"UNCERTAIN — requires business decision."
+
+Do not guess.
+
+==================================================
+13. COMPARE CALCULATION SEMANTICS
+==================================================
+
+Where multiple active calculators exist, compare them.
+
+For each difference, identify:
+
+- percentage formula
+- rounding
+- grade selection
+- pass/fail rule
+- averaging method
+- missing-data handling
+- absent handling
+- weighting
+- cumulative behavior
+- promotion behavior
+- attendance behavior
+
+Do NOT resolve differences.
+
+The purpose is to show us exactly where inconsistencies may exist.
+
+Remember:
+Fix 5 (Scored / Absent / Missing) remains deferred.
+
+Do not redesign missing/absent semantics.
+
+==================================================
+14. DO NOT CONFUSE DISPLAY MATH WITH BUSINESS LOGIC
+==================================================
+
+Some components may calculate small values for UI purposes.
+
+Do not automatically classify every arithmetic expression as a duplicate.
+
+For each calculation determine whether it:
+
+- affects displayed values only
+- affects saved data
+- affects API responses
+- affects promotion decisions
+- affects grades
+- affects pass/fail
+- affects reports
+- affects analytics
+
+Explain the distinction.
+
+==================================================
+15. DATABASE / SCHEMA
+==================================================
+
+Inspect schema only as needed to understand calculation data flow.
+
+DO NOT:
+
+- change schema
+- create migration
+- alter columns
+- modify constraints
+- modify data
+
+Report if the current schema creates any calculation ambiguity, but do not solve it.
+
+==================================================
+16. TEST COVERAGE
+==================================================
+
+Inspect existing tests related to:
+
+- examination calculation
+- grading
+- pass/fail
+- promotion
+- tenant isolation
+- academic session
+- teacher examination
+- performance analytics
+
+Determine:
+
+- which calculation paths are covered
+- which duplicate paths are not covered
+- whether tests prove tenant isolation
+- whether tests prove session isolation
+- whether tests prove policy authority
+
+Do not add tests during this audit.
+
+==================================================
+17. IMPORTANT: DO NOT IMPLEMENT FIX 5
+==================================================
+
+Do NOT introduce or redesign:
+
+- Scored
+- Absent
+- Missing
+- incomplete
+
+semantics.
+
+If you find calculation differences related to missing or absent marks, document them only.
+
+==================================================
+18. IMPORTANT: DO NOT IMPLEMENT FIX 7
+==================================================
+
+Do NOT decide or implement:
+
+- cumulative weight normalization
+- missing-term behavior
+- trigger-term semantics
+- cumulative rounding
+- cumulative availability rules
+
+These remain intentionally deferred.
+
+If discovered, document the current behavior and ambiguity only.
+
+==================================================
+19. IMPORTANT: NO SCOPE CREEP
+==================================================
+
+This is an investigation only.
+
+Do not fix unrelated bugs.
+
+Do not refactor.
+
+Do not consolidate code.
+
+Do not remove duplicate code.
+
+Do not rename functions.
+
+Do not "clean up" anything.
+
+Do not modify formatting.
+
+Do not modify tests.
+
+Do not modify documentation.
+
+==================================================
+FINAL REPORT FORMAT
+==================================================
+
+Return a clear audit report with these exact sections:
+
+1. EXECUTIVE SUMMARY
+
+State whether multiple ACTIVE examination calculation paths exist.
+
+2. SHARED ENGINE STATUS
+
+Explain where shared/examination-calculation-engine.ts is used.
+
+3. CALCULATION PATH INVENTORY
+
+Create a table:
+
+| Area | File | Function | Calculation | Classification | Uses Shared Engine? | Tenant Scoped? | Session Scoped? | Policy Scoped? |
+
+Include every important active examination calculation path.
+
+4. TEACHER EXAMINATION
+
+Give the exact current execution path and identify any duplicate calculations.
+
+5. TEACHER RESULTS
+
+Give the exact current execution path and identify any duplicate calculations.
+
+6. STUDENT RESULTS
+
+Give the exact current execution path and identify any duplicate calculations.
+
+7. ADMIN PERFORMANCE ANALYTICS
+
+Give the exact current execution path and specifically state whether the known duplicate calculator still exists.
+
+8. REPORTS / REPORT CARDS
+
+Summarize their calculation paths.
+
+9. SERVER-SIDE CALCULATIONS
+
+List all relevant server-side calculation paths.
+
+10. TENANT ISOLATION FINDINGS
+
+List any tenant-isolation concerns discovered.
+
+For each concern include:
+- severity
+- file/function
+- why it matters
+- whether it is active
+- DO NOT FIX IT
+
+11. ACADEMIC SESSION FINDINGS
+
+List any session-scoping inconsistencies.
+
+12. POLICY AUTHORITY FINDINGS
+
+List any policy inconsistencies, hardcoded defaults, or fallback behavior.
+
+13. CALCULATION DIFFERENCES
+
+Where two active paths calculate the same concept differently, show the differences.
+
+14. TEST COVERAGE
+
+Summarize what is and is not covered.
+
+15. DUPLICATE / LEGACY CODE
+
+Clearly distinguish:
+- active duplicate
+- presentation-only
+- analytics-specific
+- legacy/unused
+
+16. RECOMMENDATION
+
+Do NOT implement anything.
+
+Instead recommend one of:
+
+A. No Fix 9 needed
+B. Fix 9 implementation is needed
+C. Another investigation is needed first
+
+If implementation is needed, explain exactly what must be decided BEFORE implementation.
+
+17. CHANGE SAFETY CONFIRMATION
+
+Explicitly state:
+
+- Code changes made: NONE
+- Schema changes made: NONE
+- Database changes made: NONE
+- Data changes made: NONE
+- Migrations run: NONE
+- Tests added/modified: NONE
+- Git commits made: NONE
+
+==================================================
+FINAL NON-NEGOTIABLE INSTRUCTION
+==================================================
+
+STOP AFTER THE AUDIT.
+
+Do not implement anything.
+
+Do not provide a patch.
+
+Do not modify the repository.
+
+We will review your report first and decide together whether Fix 9 should actually be implemented.

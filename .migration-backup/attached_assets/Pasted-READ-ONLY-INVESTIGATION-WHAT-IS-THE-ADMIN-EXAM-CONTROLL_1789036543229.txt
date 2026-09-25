@@ -1,0 +1,84 @@
+READ-ONLY INVESTIGATION — WHAT IS THE ADMIN EXAM CONTROLLER?
+
+DO NOT MODIFY ANY CODE, DATABASE, SCHEMA, DATA, OR TESTS.
+
+I want you to investigate the current Admin → Exam Controller and explain its actual purpose and responsibility based ONLY on the current codebase.
+
+I have one important question:
+
+IS THE ADMIN EXAM CONTROLLER ACTUALLY DESIGNED TO PROMOTE STUDENTS?
+
+Or is it primarily an Examination administration / review / result-control module, with student promotion being handled somewhere else?
+
+Please trace the complete module from:
+
+Frontend
+→ Admin Dashboard
+→ Exam Controller page
+→ API routes
+→ storage functions
+→ database tables
+→ related workflows
+
+Specifically determine:
+
+1. What is the PRIMARY PURPOSE of Admin Exam Controller?
+
+2. Is it responsible for:
+   - entering marks?
+   - editing marks?
+   - publishing marks?
+   - reviewing examination results?
+   - calculating results?
+   - reviewing Teacher decisions?
+   - approving results?
+   - locking examinations?
+   - generating report cards?
+   - promoting students?
+   - retaining students?
+   - grace passing students?
+   - changing student's class/section?
+   - creating academic history?
+
+3. If it contains promotion-related code, explain:
+   - why that code exists there
+   - whether promotion is the primary purpose or only a connected workflow
+   - whether another module/API is actually responsible for promotion
+
+4. Explain exactly what happens when an Admin clicks the final action buttons in Exam Controller.
+
+5. Identify every API called by Exam Controller and explain what each API actually does.
+
+6. Identify every database table touched by the Exam Controller.
+
+7. Clearly separate:
+
+   A. EXAMINATION RESPONSIBILITIES
+
+   B. PROMOTION RESPONSIBILITIES
+
+   C. GLOBAL SCHOOL CONFIGURATION
+
+   D. ACADEMIC-SESSION-SPECIFIC DATA
+
+8. Most importantly, answer this architectural question:
+
+   "Should Admin Exam Controller itself be Academic Session specific, or is it intentionally a global Admin control module?"
+
+Do NOT recommend changes yet.
+
+Do NOT fix anything.
+
+I only want to understand what the current Admin Exam Controller IS supposed to be based on the actual implementation.
+
+At the end give me a very simple conclusion:
+
+"Admin Exam Controller is primarily ________."
+
+And:
+
+"Student promotion is ________."
+
+And:
+
+"Academic Session should be ________ for the Exam Controller."

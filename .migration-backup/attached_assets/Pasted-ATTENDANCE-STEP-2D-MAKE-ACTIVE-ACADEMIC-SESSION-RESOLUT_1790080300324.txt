@@ -1,0 +1,440 @@
+ATTENDANCE STEP 2D — MAKE ACTIVE ACADEMIC SESSION RESOLUTION EXPLICIT
+
+IMPORTANT PROJECT RULES:
+
+This is ONE small implementation step.
+
+The goal is ONLY to move Active Academic Session resolution from
+inside storage.upsertAttendance() into the POST /api/attendance route.
+
+DO NOT change any other Attendance logic.
+
+The existing Replit application behavior must remain unchanged except
+for the specific Session-resolution behavior described below.
+
+==================================================
+CURRENT BEHAVIOR
+==================================================
+
+Current flow:
+
+POST /api/attendance
+    ↓
+authenticated Teacher
+    ↓
+storage.upsertAttendance()
+    ↓
+getActiveSession(rec.schoolId)
+    ↓
+Attendance write
+
+The problem is that:
+
+- Session resolution happens inside storage.
+- It can happen once per Student.
+- It can return undefined.
+- Attendance can therefore be written with session_id = NULL.
+- The route does not have an explicit Session ID available for the
+  later enrollment resolver.
+
+==================================================
+TARGET BEHAVIOR FOR THIS STEP ONLY
+==================================================
+
+Change the flow to:
+
+POST /api/attendance
+    ↓
+authenticate Teacher
+    ↓
+derive authoritative schoolId from Teacher
+    ↓
+resolve ONE active Academic Session for that school
+    ↓
+if no active Session exists → reject request
+    ↓
+pass explicit sessionId into every formatted Attendance record
+    ↓
+storage.upsertAttendance()
+    ↓
+storage uses the supplied sessionId
+
+The browser MUST NOT choose the Session.
+
+==================================================
+IMPORTANT — NOTHING ELSE CHANGES
+==================================================
+
+DO NOT implement the enrollment resolver in Attendance yet.
+
+DO NOT call:
+
+    resolveEnrollmentForStudentSession()
+
+in this step.
+
+DO NOT change:
+
+- Student validation
+- Student roster validation
+- Enrollment validation
+- Enrollment status rules
+- Class authority
+- Section authority
+- Browser class/section behavior
+- Teacher assignment behavior
+- Faculty Mapping
+- Attendance status rules
+- Leave synchronization
+- Edit-count behavior
+- Duplicate handling
+- Transaction behavior
+- Attendance identity
+- Attendance database schema
+- Attendance readers
+- Student Attendance
+- Admin Attendance
+- Teacher self-attendance
+- Session deletion
+- Frontend Attendance UI
+
+DO NOT add:
+
+- migration
+- index
+- unique constraint
+- foreign key
+- CHECK constraint
+- database data changes
+- new configuration
+
+==================================================
+PART 1 — ROUTE CHANGE
+==================================================
+
+Modify ONLY the POST /api/attendance route as necessary.
+
+After:
+
+    const teacher = await storage.getTeacherById(req.session.teacherId)
+
+and after authoritative schoolId is known:
+
+    const schoolId = teacher.schoolId
+
+resolve the active Session ONCE:
+
+    const activeSession = await storage.getActiveSession(schoolId)
+
+Use the repository's existing types/conventions.
+
+If no active Session exists:
+
+- reject the request explicitly
+- do not call storage.upsertAttendance()
+- do not write any Attendance records
+
+Use the existing project's appropriate HTTP status/error response
+convention.
+
+Do not invent a new response format unless required.
+
+==================================================
+PART 2 — PASS EXPLICIT SESSION ID
+==================================================
+
+When the route builds the formatted Attendance records, add:
+
+    sessionId: activeSession.id
+
+to every record.
+
+The resulting record should retain all existing fields and behavior.
+
+For example, conceptually:
+
+{
+    studentId,
+    teacherId,
+    schoolId,
+    date,
+    status,
+    markedBy,
+    class,
+    section,
+    academicYear,
+    sessionId: activeSession.id
+}
+
+Do NOT remove or change any existing field in this step.
+
+==================================================
+PART 3 — STORAGE COMPATIBILITY
+==================================================
+
+Inspect:
+
+    storage.upsertAttendance()
+
+Current behavior:
+
+    if sessionId exists
+        use it
+    otherwise
+        getActiveSession()
+
+For this step:
+
+- The route must always provide sessionId.
+- Existing storage support for an explicitly supplied sessionId may
+  remain unchanged.
+- DO NOT refactor unrelated storage logic.
+- DO NOT remove the fallback yet unless you can prove that doing so
+  does not affect any other existing caller.
+
+IMPORTANT:
+
+Before changing/removing the fallback, search the repository for ALL
+callers of:
+
+    upsertAttendance()
+
+If other callers depend on the fallback, preserve compatibility.
+
+The only required behavior for the Teacher Attendance route is that
+its records now contain the explicit active Session ID.
+
+==================================================
+PART 4 — SESSION TENANT SAFETY
+==================================================
+
+The Session MUST be resolved using:
+
+    teacher.schoolId
+
+NOT:
+
+- browser schoolId
+- browser sessionId
+- request body sessionId
+- Student schoolId
+- submitted class/section
+
+The browser must not be allowed to select another Session.
+
+If the request body already contains any unexpected sessionId field,
+do not use it as authority.
+
+The authoritative Session is always:
+
+    storage.getActiveSession(teacher.schoolId)
+
+==================================================
+PART 5 — RESOLVE ONLY ONCE
+==================================================
+
+The active Session lookup must happen once per POST /api/attendance
+request.
+
+Do NOT resolve the active Session separately for every Student.
+
+The resulting:
+
+    activeSession.id
+
+must be reused for every record in that batch.
+
+==================================================
+PART 6 — EXISTING VALIDATION MUST REMAIN
+==================================================
+
+Do not remove or alter the current:
+
+- required-date validation
+- YYYY-MM-DD validation
+- IST today restriction
+- seven-calendar-day restriction
+- school-holiday restriction
+- Teacher authentication
+- authenticated-school derivation
+
+These must continue working exactly as before.
+
+The only new validation is:
+
+    active Session must exist
+
+==================================================
+PART 7 — TESTS
+==================================================
+
+Add focused tests for this specific change.
+
+At minimum:
+
+TEST 1 — Active Session exists
+
+Given:
+
+- authenticated Teacher
+- Teacher belongs to School A
+- School A has an active Session
+
+Expected:
+
+- Attendance route resolves the Session.
+- storage receives records containing that Session ID.
+- the same Session ID is used for every submitted Student.
+
+TEST 2 — No active Session
+
+Given:
+
+- authenticated Teacher
+- Teacher belongs to School A
+- School A has no active Session
+
+Expected:
+
+- request is rejected explicitly.
+- storage.upsertAttendance() is NOT called.
+- no Attendance mutation occurs.
+
+TEST 3 — Browser cannot choose Session
+
+If request body contains a sessionId belonging to another Session:
+
+- ignore it as an authority source, or reject it according to
+  existing request-validation conventions.
+- the server-selected active Session remains authoritative.
+
+Do NOT change the public API to allow browser Session selection.
+
+TEST 4 — Session resolved once
+
+Verify that getActiveSession(schoolId) is called once per Attendance
+request, not once per Student.
+
+TEST 5 — Existing date restrictions remain intact
+
+Verify existing behavior remains for:
+
+- future date
+- date older than seven IST calendar days
+- school holiday
+
+Do not rewrite those validations.
+
+TEST 6 — Existing fields remain unchanged
+
+Verify that the route still passes the existing:
+
+- studentId
+- teacherId
+- schoolId
+- date
+- status
+- markedBy
+- class
+- section
+- academicYear
+
+and now additionally passes:
+
+- sessionId
+
+Do not test or change enrollment behavior in this step.
+
+==================================================
+PART 8 — REGRESSION SAFETY
+==================================================
+
+Run:
+
+1. Focused Step 2D tests.
+2. Relevant existing Attendance/Teacher tests, if any.
+3. Existing relevant server tests.
+4. npm run check
+5. git diff --check
+
+Search all callers of:
+
+    upsertAttendance()
+
+and confirm whether preserving its fallback is required.
+
+If unrelated tests fail:
+
+- report them
+- do NOT fix them as part of Step 2D
+
+==================================================
+PART 9 — NO OTHER LOGIC
+==================================================
+
+DO NOT take this opportunity to fix:
+
+- Student ownership
+- Enrollment validation
+- class/section authority
+- duplicate Student IDs
+- edit-count race
+- transaction handling
+- Attendance uniqueness
+- Leave synchronization
+- historical reads
+- session deletion
+- database constraints
+
+Those are separate future steps.
+
+==================================================
+FINAL SAFETY CHECK
+==================================================
+
+Before finishing, verify:
+
+- Only POST /api/attendance Session handling was changed.
+- Active Session is resolved once per request.
+- Session is derived only from authenticated Teacher school.
+- Browser cannot select the Session.
+- No active Session means no Attendance storage call.
+- Explicit sessionId reaches storage for every record.
+- No enrollment resolver was integrated.
+- No existing Attendance logic was otherwise changed.
+- No Leave logic changed.
+- No frontend logic changed.
+- No database schema changed.
+- No database data changed.
+- No migration created.
+- No index/constraint created.
+- No configuration changed.
+- No production environment touched.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return:
+
+1. Exact files changed.
+2. Exact current POST /api/attendance flow after the change.
+3. Where active Session is resolved.
+4. Confirmation it is resolved only once per request.
+5. Confirmation Session comes only from authenticated Teacher's school.
+6. Confirmation browser cannot choose Session.
+7. Behavior when no active Session exists.
+8. Whether upsertAttendance() fallback was retained or removed, and why.
+9. Tests added and results.
+10. npm run check result.
+11. git diff --check result.
+12. Confirmation that enrollment resolver was NOT integrated.
+13. Confirmation that no other Attendance logic was changed.
+14. Confirmation that no database/schema/migration/constraint/index/
+    configuration/production changes were made.
+
+STOP AFTER THIS STEP.
+
+DO NOT PROCEED TO ENROLLMENT INTEGRATION.
+
+NO UNRELATED FIXES OR REFACTORING.

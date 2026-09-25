@@ -1,0 +1,25 @@
+To manage large classes efficiently, the principal/admin needs a robust filtering mechanism on the Academic Advancement Wizard -> Step 2 — Audit & Review screen (referenced in 1000086014.png). We need to implement a filter bar directly above the student data table to let users isolate specific subsets of students instantly.
+​Part 1: Frontend UI Layout Changes
+​Add a horizontal, clean Filter & Search Bar directly above the table headers (underneath the section title "Audit & Discrepancy Review"). It should contain the following input fields:
+​Text Search Input (Dual Field):
+​Placeholder Text: "Search by Name or DSID..."
+​Behavior: Performs an interactive, real-time partial text match against the DSID and NAME columns.
+​Numeric Percentage Filter (Conditional Range):
+​Two input elements grouped together:
+​A dropdown selector with options: Above (>=) and Below (<=).
+​A numeric input field with a placeholder "% Value".
+​Behavior: Filters the rows based on the calculated values inside the % column.
+​Teacher Decision Dropdown Filter:
+​A dropdown menu with selection options: All Decisions, Promote, and Retain.
+​Behavior: Isolates rows matching the historical status badge shown under the TEACHER DECISION column.
+​Part 2: Technical Filtering Rules & Data Logic
+​The client-side or API filter logic must process rows using a combined AND logic sequence. When multiple criteria are active simultaneously, a student record must only display if it passes all active inputs.
+​DSID / Name Logic: Typing MIS or student1 should narrow down the rows immediately.
+​Percentage Operator Evaluation:
+​If Above (>=) is selected and 40 is entered, the view must only show rows where the % column is \geq 40\%.
+​If Below (<=) is selected and 35 is entered, the view must only show rows where the % column is \leq 35\%.
+​Teacher Decision Isolation: Selecting Retain must quickly hide all students whom the teacher originally marked as Promote.
+​Part 3: Selection Integrity with Active Filters
+​Ensure that this filtering system seamlessly integrates with the table's selection checkboxes (shown on the far left of 1000086014.png):
+​Master Checkbox Behavior: If a filter is active (e.g., displaying only students below 35%), checking the top master header checkbox must only select the filtered visible rows on the screen. It must not accidentally select hidden rows that do not match the filter criteria.
+​Clear Filters Button: Add a quick "Reset Filters" button to wipe all inputs and instantly restore the default, complete student list view.

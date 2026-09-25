@@ -1,0 +1,325 @@
+ATTENDANCE STEP 2C — READ-ONLY ATTENDANCE WRITER INTEGRATION AUDIT
+
+IMPORTANT PROJECT RULES:
+
+This is a READ-ONLY investigation step.
+
+DO NOT modify any code.
+DO NOT modify database data.
+DO NOT modify schema.
+DO NOT create migrations.
+DO NOT create indexes.
+DO NOT create constraints.
+DO NOT change APIs.
+DO NOT change frontend behavior.
+DO NOT change Attendance logic.
+DO NOT change Leave logic.
+DO NOT change Faculty Mapping.
+DO NOT change enrollment-status behavior.
+DO NOT change Teacher self-attendance.
+DO NOT change Academic Session behavior.
+DO NOT touch production.
+
+The only purpose of this step is to inspect how the newly created:
+
+    resolveEnrollmentForStudentSession(
+        schoolId,
+        studentId,
+        sessionId
+    )
+
+could later be integrated into Student Attendance safely.
+
+The resolver already exists and has tests.
+
+It MUST NOT be called or wired into runtime code during this step.
+
+==================================================
+STEP 1 — VERIFY CURRENT RESOLVER
+==================================================
+
+Inspect the newly created resolver.
+
+Confirm:
+
+- exact function name
+- exact signature
+- exact return type
+- exact tenant checks
+- exact enrollment lookup
+- whether it returns className and sectionName
+- whether it has any hidden status filtering
+- whether it has any fallback behavior
+
+Do not modify it.
+
+==================================================
+STEP 2 — TRACE CURRENT TEACHER ATTENDANCE WRITE
+==================================================
+
+Trace the complete current flow for:
+
+    POST /api/attendance
+
+starting from:
+
+    client/src/pages/teacher-modules/attendance.tsx
+
+through:
+
+    server/teacher-routes.ts
+
+through:
+
+    storage.upsertAttendance()
+
+and every helper/function involved before the database write.
+
+Document the exact current flow.
+
+Especially identify:
+
+1. Where authenticated teacherId comes from.
+2. Where authenticated schoolId comes from.
+3. Where the submitted Student IDs come from.
+4. Where class comes from.
+5. Where section comes from.
+6. Where status comes from.
+7. Where date is validated.
+8. Where active Academic Session is resolved.
+9. Where Attendance records are looked up.
+10. Where Attendance records are inserted/updated.
+11. Where edit_count is checked.
+12. Whether any transaction currently exists.
+13. Whether any database lock currently exists.
+
+==================================================
+STEP 3 — DETERMINE SAFE INTEGRATION POINT
+==================================================
+
+Without changing anything, identify the safest future location where:
+
+    resolveEnrollmentForStudentSession()
+
+could be called.
+
+The future goal is:
+
+    authenticated school
+          +
+    authenticated/authorized session
+          +
+    submitted student
+          ↓
+    enrollment resolver
+          ↓
+    authoritative class/section
+
+But DO NOT implement this.
+
+Identify whether the resolver should be called:
+
+- inside the route,
+- inside storage.upsertAttendance(),
+- inside a new Attendance-specific service,
+- or another existing layer.
+
+Choose based on the existing architecture.
+
+Do not create a new abstraction unless the current architecture clearly requires it.
+
+Explain why the selected integration point preserves existing separation of concerns.
+
+==================================================
+STEP 4 — SESSION HANDLING
+==================================================
+
+Trace exactly how the current Attendance write obtains its Academic Session.
+
+Confirm:
+
+- current helper/function used
+- whether it can return NULL/undefined
+- whether it verifies school ownership
+- whether the session is resolved before storage mutation
+- whether the resolver can safely receive that session ID
+
+Do NOT change session behavior.
+
+The purpose is only to document what must happen later.
+
+==================================================
+STEP 5 — STUDENT VALIDATION GAP
+==================================================
+
+For each submitted Student ID, document exactly what is currently validated.
+
+Specifically determine whether the current writer verifies:
+
+- Student exists
+- Student belongs to authenticated school
+- Student belongs to submitted class
+- Student belongs to submitted section
+- Student appears in the displayed roster
+- Student has an enrollment for the active session
+- Enrollment class matches
+- Enrollment section matches
+
+Do not fix any of these gaps yet.
+
+==================================================
+STEP 6 — CLASS/SECTION TRANSITION
+==================================================
+
+Determine exactly how future Attendance writing can stop trusting:
+
+    browser class
+    browser section
+
+and instead use:
+
+    enrollment.className
+    enrollment.sectionName
+
+WITHOUT changing behavior in this step.
+
+Document:
+
+- current database columns receiving class/section
+- current readers that depend on these values
+- whether any existing code expects nullable values
+- whether changing the source later would affect any current API response
+
+Again: inspection only.
+
+==================================================
+STEP 7 — BULK WRITE COMPATIBILITY
+==================================================
+
+Inspect the current bulk Attendance save behavior.
+
+Determine:
+
+- whether all Students are submitted
+- whether duplicate Student IDs can occur
+- whether records are processed sequentially
+- whether one Student failure affects later Students
+- whether a transaction exists
+- whether unchanged statuses are written
+- whether edit_count changes on unchanged status
+- whether the current response reports only a total count or per-row results
+
+Do not modify any behavior.
+
+==================================================
+STEP 8 — LEAVE WRITER COMPATIBILITY
+==================================================
+
+Inspect:
+
+    storage.markAttendanceAsLeave()
+
+and its callers.
+
+Determine exactly what would need to change later so Leave synchronization also uses:
+
+    schoolId
+    studentId
+    sessionId
+    enrollment.className
+    enrollment.sectionName
+
+Do NOT modify Leave synchronization.
+
+Explicitly document whether the same resolver can safely be reused there.
+
+==================================================
+STEP 9 — HISTORICAL READ COMPATIBILITY
+==================================================
+
+Inspect existing Attendance readers and identify which ones depend on:
+
+- current Student Registry class/section
+- Attendance.class/section
+- enrollment class/section
+- session_id
+
+Do not change readers.
+
+Identify which readers will eventually need session-aware enrollment data for historical correctness.
+
+==================================================
+STEP 10 — NO LOGIC CHANGE CHECK
+==================================================
+
+Confirm that this investigation makes ZERO runtime changes.
+
+Specifically verify:
+
+- no Attendance route changed
+- no Attendance storage behavior changed
+- no Leave behavior changed
+- no frontend behavior changed
+- no database data changed
+- no schema changed
+- no migration created
+- no index/constraint created
+- no configuration changed
+- no production environment touched
+
+==================================================
+STEP 11 — FUTURE IMPLEMENTATION ORDER
+==================================================
+
+Based ONLY on the actual code discovered, propose the smallest safe sequence for the next implementation steps.
+
+Keep each step small.
+
+The likely direction is:
+
+1. Make Attendance write session resolution explicit.
+2. Integrate the enrollment resolver.
+3. Derive class/section from enrollment.
+4. Validate submitted Students against the authoritative roster/enrollment.
+5. Make the write atomic.
+6. Handle unchanged statuses correctly.
+7. Convert Leave synchronization to session-aware writes.
+8. Then address database invariants.
+
+But DO NOT assume this order blindly.
+
+Adjust it if the actual repository architecture requires something different.
+
+Do NOT implement any of these changes now.
+
+==================================================
+FINAL REPORT FORMAT
+==================================================
+
+Return:
+
+1. Current Attendance write call chain.
+2. Current session-resolution path.
+3. Current Student validation path.
+4. Current class/section authority.
+5. Safest future resolver integration point.
+6. Exact changes that would eventually be required.
+7. Leave synchronization integration requirements.
+8. Historical-read implications.
+9. Recommended next single implementation step.
+10. Tests that should accompany that future step.
+11. Explicit confirmation that NO CODE OR RUNTIME BEHAVIOR WAS MODIFIED.
+
+IMPORTANT:
+
+STOP AFTER THE READ-ONLY AUDIT.
+
+DO NOT IMPLEMENT ANYTHING.
+
+DO NOT "IMPROVE" ANY EXISTING LOGIC.
+
+DO NOT FIX ANY FINDINGS.
+
+DO NOT REFACTOR.
+
+NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT MAY BE MODIFIED.

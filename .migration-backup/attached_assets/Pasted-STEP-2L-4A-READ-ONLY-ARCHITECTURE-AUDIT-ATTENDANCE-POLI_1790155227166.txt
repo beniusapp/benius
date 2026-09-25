@@ -1,0 +1,547 @@
+STEP 2L-4A — READ-ONLY ARCHITECTURE AUDIT: ATTENDANCE POLICY SESSION MODEL
+
+IMPORTANT:
+This is a READ-ONLY ARCHITECTURE / DESIGN AUDIT ONLY.
+
+DO NOT modify production code.
+DO NOT modify test files.
+DO NOT modify database schema.
+DO NOT create or apply migrations.
+DO NOT change database data.
+DO NOT implement any fix.
+DO NOT redesign anything in code.
+DO NOT start Step 2L-5.
+DO NOT change Attendance policy behavior.
+
+The purpose of this step is ONLY to determine the safest intended architecture before we decide whether Attendance policies should remain shared across Academic Sessions or become Session-specific/versioned.
+
+STOP after the audit and report findings.
+
+==================================================
+PROJECT CONTEXT / ALREADY-FINALIZED ATTENDANCE RULES
+==================================================
+
+This is a strict multi-tenant school MIS.
+
+1. Every school is a separate tenant.
+2. Attendance data must never cross school/tenant boundaries.
+3. Attendance is Academic-Session-specific.
+4. Historical Attendance must remain readable when an older Academic Session is selected.
+5. Student Registry is global/current and must never be reset/recreated merely because an Academic Session changes.
+6. Historical Attendance class/section identity must use selected-Session historical identity:
+   - selected-Session Enrollment first;
+   - historical Attendance snapshot fallback.
+7. Enrollment is NOT an Attendance prerequisite.
+8. Faculty Mapping is NOT an Attendance restriction.
+9. Attendance working-day authority is already finalized:
+   A working Attendance day for:
+     SCHOOL + ACADEMIC SESSION + CLASS + SECTION
+   exists when at least one Attendance record exists for that exact
+   class/section/date and the date is within the selected Session start/end.
+10. Attendance status weights are already finalized.
+11. Attendance business dates are IST / Asia-Kolkata date-only values.
+12. Student Attendance now uses the shared selected Academic Session as its Session authority.
+13. Student Monthly approved-leave Session isolation has already been fixed.
+14. Archived Teacher self-attendance GET status-healing persistence has already been fixed:
+   - active Session may persist canonical healing;
+   - archived Session may recalculate only for the response and must not modify DB.
+15. These decisions MUST NOT be changed during this audit.
+
+==================================================
+CURRENT STEP 2L-4 FINDINGS
+==================================================
+
+The previous read-only audit confirmed:
+
+A. Student historical Attendance records, working-day calculations,
+   and percentages are correctly Session-scoped and use historical
+   class/section identity.
+
+B. Student policy endpoint is NOT historically safe:
+
+   GET /api/student/attendance-policy
+
+   currently resolves policy using:
+
+   student.class
+
+   which is the current Student Registry class.
+
+C. attendance_policies has no session_id and is currently modeled as
+   school-wide/shared configuration.
+
+D. Teacher self-attendance historical status recalculation can use
+   the current active policy and current teacher assignedClass.
+
+E. Admin Student Attendance target resolution can omit the viewed
+   class and selected Session.
+
+F. The Attendance policy engine itself receives:
+
+   policies
+   targetRole
+   className
+
+   and does not receive:
+
+   school
+   academicSession
+   section
+   Attendance date
+   policy version/effective date
+
+G. Existing Session creation/copy logic reportedly classifies Attendance
+   policy as:
+
+   "shared across all sessions"
+
+This audit must now determine whether that "shared across all sessions"
+behavior is an intentional product/design rule or merely an implementation
+choice that has not been revisited.
+
+==================================================
+PART 1 — TRACE ACADEMIC SESSION CREATION / COPY BEHAVIOR
+==================================================
+
+Inspect the complete Academic Session lifecycle relevant to configuration.
+
+Trace:
+
+- Academic Session creation
+- Academic Session activation
+- Academic Session archival/deactivation
+- Any session-copy logic
+- Any configuration-copy logic
+- Any initialization logic for a newly created Session
+- Any logic that explicitly classifies configuration as:
+  - shared
+  - copied
+  - session-specific
+  - inherited
+  - reset
+  - retained
+
+Specifically determine how these behave:
+
+- Attendance policies
+- School configuration
+- Classes
+- Sections
+- Subjects
+- Exam configuration
+- Grading configuration
+- Attendance-related configuration
+- Teacher configuration
+- Any other session-sensitive configuration
+
+DO NOT modify anything.
+
+For Attendance policies, identify the exact code and reason currently used
+to treat them as shared across Sessions.
+
+Report exact files/functions/line ranges where possible.
+
+==================================================
+PART 2 — DETERMINE WHETHER "SHARED ACROSS SESSIONS" IS INTENTIONAL
+==================================================
+
+Search the codebase for explicit evidence of product intent.
+
+Look for:
+
+- comments
+- UI wording
+- API behavior
+- session creation screens
+- Admin configuration screens
+- help text
+- schema design
+- tests
+- documentation
+- copy-session code
+- policy-management code
+
+Determine whether the application explicitly tells the administrator that:
+
+"Attendance policy is shared across all Academic Sessions"
+
+or whether this is simply the consequence of the current database model.
+
+Classify the evidence as:
+
+1. EXPLICIT PRODUCT INTENT
+2. STRONG IMPLEMENTATION INTENT
+3. IMPLICIT / ACCIDENTAL CURRENT BEHAVIOR
+4. NO EVIDENCE
+
+Do not make a product decision yourself.
+
+==================================================
+PART 3 — DETERMINE HOW ATTENDANCE POLICY IS ACTUALLY USED
+==================================================
+
+Trace every meaningful caller of Attendance policy.
+
+At minimum inspect:
+
+- Student Attendance policy endpoint
+- Student Attendance monthly/yearly/statistics paths
+- Teacher self-attendance check-in
+- Teacher self-attendance check-out
+- Teacher self-attendance today status
+- Teacher self-attendance history
+- Teacher self-attendance correction
+- Admin Teacher Attendance summary
+- Admin Student Attendance target display
+- Teacher Attendance policy endpoint
+- Attendance policy CRUD
+- Attendance policy engine
+- Any scheduled/background Attendance processing
+- Any leave/Attendance synchronization that uses policy
+- Any report/export that uses policy
+
+For each caller determine:
+
+1. Does it use policy only for DISPLAY?
+2. Does it use policy to CREATE Attendance data?
+3. Does it use policy to RECALCULATE stored Attendance status?
+4. Does it use policy to CHANGE an existing stored status?
+5. Does it use policy to calculate an Attendance percentage?
+6. Does it use current policy or historical policy?
+7. Does it use selected Academic Session?
+8. Does it use current class or historical class?
+9. Can a later policy edit change how an older Session is displayed or interpreted?
+
+Do not change behavior.
+
+==================================================
+PART 4 — CRITICAL QUESTION: WHAT IS THE AUTHORITATIVE MEANING OF POLICY?
+==================================================
+
+Determine from the existing implementation what Attendance policy actually means.
+
+There are two fundamentally different possible meanings:
+
+MODEL A — CURRENT SCHOOL POLICY
+
+The policy is a current school-wide rule.
+
+Example:
+- School changes late threshold from 15 minutes to 10 minutes.
+- The new policy immediately applies to future Attendance processing.
+- Historical Attendance may be recalculated/displayed under the current rule.
+
+MODEL B — HISTORICAL POLICY
+
+The policy is the rule that applied to a particular Academic Session/time period.
+
+Example:
+- Session 2024–25 had one late threshold.
+- Session 2025–26 has another.
+- Historical Session 2024–25 must continue using its historical policy.
+
+Determine which model the CURRENT APPLICATION actually behaves like.
+
+Do not decide which model is better.
+Do not recommend one yet.
+
+Report concrete evidence.
+
+==================================================
+PART 5 — DETERMINE WHETHER HISTORICAL POLICY CAN CURRENTLY BE RECOVERED
+==================================================
+
+For a historical Attendance record, determine whether the database currently stores enough information to reconstruct the policy that applied when that record was created.
+
+Inspect Attendance-related schema and data fields.
+
+Determine whether an Attendance record stores anything equivalent to:
+
+- policy_id
+- policy_version_id
+- policy snapshot
+- policy threshold snapshot
+- expected arrival snapshot
+- grace period snapshot
+- half-day cutoff snapshot
+- school-end snapshot
+- policy effective date
+- policy/session association
+
+Do not change schema.
+
+Answer:
+
+Can the exact historical policy currently be reconstructed from existing stored data?
+
+YES / NO / PARTIALLY
+
+Explain precisely why.
+
+==================================================
+PART 6 — EXAMINE TEACHER SELF-ATTENDANCE CAREFULLY
+==================================================
+
+Teacher self-attendance is particularly important because its status can be
+recalculated from policy.
+
+Trace:
+
+- check-in
+- check-out
+- today status
+- history
+- correction
+- detailed history
+- Admin Teacher Attendance summary
+
+Determine:
+
+1. Which policy is used when a record is CREATED?
+2. Which policy is used when status is RECALCULATED?
+3. Is the policy stored with the record?
+4. Is the teacher's class stored as a historical snapshot?
+5. Is current assignedClass used for historical records?
+6. Can a policy edit change the displayed status of an older record?
+7. Can a policy edit change the stored status of an older record?
+8. Does Step 2L-3 prevent archived GET persistence but still allow
+   response reinterpretation?
+
+Do not change Step 2L-3 behavior.
+
+==================================================
+PART 7 — EXAMINE STUDENT ATTENDANCE CAREFULLY
+==================================================
+
+Determine exactly how Student Attendance policy is used.
+
+Important distinction:
+
+Student Attendance percentage/status aggregation is already finalized and
+must NOT be redesigned in this audit.
+
+Determine whether Student policy is:
+
+- informational only;
+- target display only;
+- used to classify Student Attendance statuses;
+- used to calculate Attendance percentage;
+- used for warnings/eligibility;
+- used for any other decision.
+
+Specifically inspect:
+
+GET /api/student/attendance-policy
+
+and identify what frontend functionality consumes its result.
+
+Determine whether changing policy today can change historical Student
+Attendance results or only the displayed target/policy information.
+
+Do not modify anything.
+
+==================================================
+PART 8 — EXAMINE ADMIN POLICY MANAGEMENT
+==================================================
+
+Trace:
+
+- policy list
+- policy resolve
+- create
+- update
+- delete
+- Admin Attendance overview
+- Admin Attendance policy UI
+
+Determine:
+
+1. Whether Admin is told that policy is shared across Sessions.
+2. Whether Admin can select an Academic Session while editing policy.
+3. Whether policy changes affect all Sessions immediately.
+4. Whether policy CRUD has any Session concept.
+5. Whether Admin Attendance target display is class-specific.
+6. Whether selected Session is currently only UI context or actually affects policy.
+
+Do not modify UI.
+
+==================================================
+PART 9 — EXAMINE SESSION CREATION/COPY SEMANTICS
+==================================================
+
+Find the code that creates a new Academic Session.
+
+Determine exactly what happens to:
+
+- Attendance policies
+- Attendance records
+- Teacher self-attendance
+- Student Registry
+- Enrollment
+- classes
+- sections
+- subjects
+- exam configuration
+- other policy/configuration
+
+Create a matrix:
+
+| Data/Config | New Session gets new copy? | Shared? | Historical link? | Reset? | Evidence |
+|-------------|----------------------------|---------|------------------|--------|----------|
+
+Do not change anything.
+
+==================================================
+PART 10 — EVALUATE ARCHITECTURE OPTIONS WITHOUT CHOOSING
+==================================================
+
+Based ONLY on the codebase evidence, describe the minimum architectural
+changes that would be required for each of these possibilities.
+
+OPTION A:
+Keep Attendance policy intentionally shared across all Sessions.
+
+OPTION B:
+Make Attendance policy Session-specific.
+
+OPTION C:
+Use versioned/effective-dated Attendance policies.
+
+OPTION D:
+Store an immutable policy snapshot/reference with Attendance records while
+retaining current policy configuration.
+
+For each option describe ONLY:
+
+- schema impact
+- backend impact
+- frontend impact
+- historical Attendance impact
+- Teacher self-attendance impact
+- Student Attendance policy impact
+- Admin impact
+- Session creation impact
+- migration/data-history problem
+- major compatibility concern
+
+Do NOT recommend an option.
+Do NOT rank options.
+Do NOT implement any option.
+
+The purpose is to give the project owner enough factual information to make
+the design decision later.
+
+==================================================
+PART 11 — IDENTIFY THE MINIMUM SCOPE OF A FUTURE IMPLEMENTATION
+==================================================
+
+Without implementing anything, identify which files/functions would likely
+need modification for each architecture option.
+
+Separate:
+
+- REQUIRED
+- POSSIBLY REQUIRED
+- MUST NOT CHANGE
+
+Do not write code.
+
+Do not propose unrelated Attendance cleanup.
+
+==================================================
+PART 12 — TEST / VERIFICATION
+==================================================
+
+This remains READ-ONLY.
+
+Run only existing tests that are relevant and safe.
+
+Do not add tests.
+
+At minimum:
+
+- inspect relevant existing Attendance policy tests
+- inspect Academic Session tests
+- run the smallest relevant existing test set if appropriate
+- npm run check
+- git diff --check
+
+Do not create or modify fixtures.
+
+==================================================
+FINAL OUTPUT FORMAT
+==================================================
+
+STEP 2L-4A READ-ONLY ARCHITECTURE AUDIT
+
+1. Overall result:
+   COMPLETE
+
+2. Product-intent evidence:
+   - Attendance policy shared across Sessions:
+     EXPLICIT / STRONG / IMPLICIT / NO EVIDENCE
+   - Evidence and exact locations
+
+3. Current Attendance policy semantic model:
+   - Current-school-policy behavior
+   OR
+   - Historical-policy behavior
+   OR
+   - Mixed behavior
+   Explain with concrete code evidence.
+
+4. Attendance policy usage matrix:
+
+| Caller | Display only | Creates status | Recalculates status | Changes stored status | Session-aware | Historical-safe |
+|--------|--------------|----------------|---------------------|-----------------------|---------------|-----------------|
+
+5. Historical policy recoverability:
+   YES / NO / PARTIALLY
+   Explain.
+
+6. Teacher self-attendance findings.
+
+7. Student Attendance policy findings.
+
+8. Admin policy findings.
+
+9. Academic Session creation/copy matrix:
+
+| Data/Config | New Session copy | Shared | Historical link | Reset | Evidence |
+|-------------|------------------|--------|------------------|-------|----------|
+
+10. Architecture option impact matrix:
+
+| Option | Schema | Backend | Frontend | Historical Attendance | Teacher Self Attendance | Student | Admin | Migration |
+|--------|--------|---------|----------|----------------------|-------------------------|---------|-------|-----------|
+
+11. Required files/functions for each option:
+    - REQUIRED
+    - POSSIBLY REQUIRED
+    - MUST NOT CHANGE
+
+12. Important unresolved design decisions that the project owner must
+    decide BEFORE implementation.
+
+13. Existing test/check results.
+
+14. Exact files inspected.
+
+15. Scope confirmation:
+    - no production changes
+    - no test changes
+    - no schema changes
+    - no migrations
+    - no data changes
+    - no policy behavior changes
+    - Step 2L-5 NOT started
+
+IMPORTANT:
+Do not implement anything.
+Do not add tests.
+Do not modify schema.
+Do not make a product decision.
+Do not recommend Option A/B/C/D.
+Do not rank the options.
+Only provide factual architecture evidence and implementation impact.
+STOP after this report.

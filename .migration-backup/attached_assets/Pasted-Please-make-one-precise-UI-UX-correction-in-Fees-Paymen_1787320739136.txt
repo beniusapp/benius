@@ -1,0 +1,128 @@
+Please make one precise UI/UX correction in Fees & Payments → Ledger & Transactions.
+
+Current problem
+
+For invoice records, clicking Invoice opens the invoice document/page, and from there the user can use the browser's normal Print / Save as PDF functionality.
+
+I want the Receipt to work in exactly the same way.
+
+Currently, there are two separate actions beside paid records:
+
+- "Receipt"
+- "PDF"
+
+The separate PDF action is NOT needed.
+
+Required change
+
+1. Remove the separate PDF button completely
+
+In the Ledger & Transactions table, for paid records, remove the separate:
+
+"PDF"
+
+download/icon/button.
+
+There should NOT be two separate actions such as:
+
+"Receipt   PDF"
+
+Instead, there should only be:
+
+"Receipt"
+
+2. Make the Receipt button behave exactly like Invoice
+
+When the user clicks:
+
+"Receipt"
+
+it should open the existing receipt document/page in the same way that clicking:
+
+"Invoice"
+
+opens the invoice document/page.
+
+The user should then be able to use the browser's native:
+
+Print → Save as PDF
+
+function.
+
+Do NOT create another PDF-generation flow for this UI action.
+
+Important
+
+Please inspect the existing Invoice button implementation and reuse its exact navigation/opening/print behavior for the Receipt button.
+
+Do NOT redesign the receipt.
+
+Do NOT create a separate PDF icon.
+
+Do NOT add another download button.
+
+Do NOT replace the existing receipt renderer.
+
+The existing receipt HTML/document design should remain unchanged.
+
+Expected final behavior
+
+For an unpaid record:
+
+"Invoice"
+
+→ opens the invoice document
+→ user can print/save as PDF.
+
+For a paid record:
+
+"Receipt"
+
+→ opens the receipt document
+→ user can print/save as PDF.
+
+The experience should be symmetrical.
+
+Also remove unnecessary implementation
+
+Since the Receipt button will now use the same document/print flow as Invoice:
+
+- Remove the separate Ledger "PDF" button.
+- Remove any client-side handler/state that was created only for that separate Receipt PDF button.
+- Remove the corresponding receipt-PDF endpoint/generator only if it is no longer used anywhere else.
+- Do not remove the existing normal receipt HTML/document endpoint because the Receipt button will continue using it.
+- Do not affect the existing Invoice PDF/document functionality.
+- Do not affect the existing Ledger PDF export.
+- Do not affect the existing Transaction Report PDF export.
+
+Very important — do not misunderstand the requirement
+
+I am NOT asking for:
+
+"Receipt → directly download a PDF"
+
+I am asking for:
+
+"Receipt → open receipt document/page → browser Print / Save as PDF"
+
+This is exactly how the existing Invoice flow works and I want the Receipt flow to match it.
+
+Final UI
+
+Paid row:
+
+"... Actions: [Receipt]"
+
+Unpaid row:
+
+"... Actions: [Invoice]"
+
+There should be no separate PDF button beside Receipt.
+
+After making the change, test both flows on mobile Chrome:
+
+1. Click an unpaid record's Invoice → verify invoice opens normally.
+2. Click a paid record's Receipt → verify receipt opens normally.
+3. From the receipt page, use Chrome's Print / Save as PDF → verify the receipt is generated correctly.
+4. Verify no separate "PDF" button remains in Ledger & Transactions.
+5. Verify existing Ledger PDF and Tx Report PDF buttons still work.

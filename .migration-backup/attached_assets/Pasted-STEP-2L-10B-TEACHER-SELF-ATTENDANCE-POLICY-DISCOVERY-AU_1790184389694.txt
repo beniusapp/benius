@@ -1,0 +1,374 @@
+STEP 2L-10B — TEACHER SELF-ATTENDANCE POLICY DISCOVERY AUDIT
+READ-ONLY ONLY — NO CODE CHANGES / NO MIGRATIONS / NO REFACTORING
+
+Context:
+This is the next step after STEP 2L-10A.
+
+STEP 2L-10A established that Teacher Self-Attendance currently has no clearly identified authoritative business contract for its attendance-rate calculation.
+
+Three existing implementations were found:
+1. Server Teacher Self-Attendance history rate
+   - server/teacher-routes.ts
+   - approximately the existing history/rate logic around lines 4980–5064
+2. Teacher "My Attendance"
+   - client/src/pages/teacher-modules/my-attendance.tsx
+3. Teacher "Attendance History"
+   - client/src/pages/teacher-modules/attendance-history.tsx
+
+STEP 2L-10A also found that these implementations use different date sets/formulas, and that Detailed Attendance History can generate past weekdays outside the selected Academic Session.
+
+IMPORTANT PROJECT RULES:
+- This is a multi-tenant / multi-school MIS.
+- Never infer or introduce cross-school behavior.
+- Teacher Self-Attendance must remain scoped to authenticated school/tenant and selected Academic Session.
+- Academic Session identity must remain school-owned.
+- Application/business/display date and timestamp behavior must use IST / Asia/Kolkata.
+- Do not change Student Attendance rules.
+- Do not reopen the same-Session class-transfer issue.
+- Do not change Attendance policy behavior merely to make Teacher Self-Attendance consistent.
+- Do not perform production/deployment/migration work.
+- Do not redesign the Attendance module.
+- Do not invent a new Teacher Self-Attendance business rule.
+
+OBJECTIVE:
+
+Determine whether an existing intended Teacher Self-Attendance policy can be found anywhere in the existing project.
+
+Search broadly but carefully through:
+- .agents/memory/
+- attached_assets/
+- existing project documentation/specifications
+- comments describing intended behavior
+- Teacher Attendance UI labels/help text
+- Teacher Self-Attendance routes
+- Attendance policy configuration and engine
+- relevant tests
+- Admin Attendance views related to teachers
+- existing requirements/reference documents
+- any other project-local source that may explicitly define Teacher Self-Attendance semantics
+
+This is a DISCOVERY AUDIT, NOT an implementation task.
+
+DO NOT MODIFY ANY FILE.
+
+DO NOT:
+- edit source code
+- add tests
+- change database schema
+- create migrations
+- change UI
+- change formulas
+- normalize the three existing implementations
+- select one implementation as "correct" merely because it is server-side
+- import Student Attendance rules into Teacher Self-Attendance
+- invent working-day rules
+- invent weekend/holiday rules
+- invent missing/unmarked-day behavior
+
+==================================================
+PART 1 — SEARCH FOR AUTHORITATIVE REQUIREMENTS
+==================================================
+
+Search for explicit requirements/specifications concerning:
+
+A. Teacher Self-Attendance
+B. Teacher Attendance Rate
+C. Teacher Attendance Percentage
+D. Teacher Working Days
+E. Teacher Present/Late/Half Day/Leave/Absent calculation
+F. Teacher Attendance History
+G. Teacher attendance KPI/dashboard
+H. Attendance Policy relationship to Teacher Self-Attendance
+
+For every relevant source found, report:
+- exact file/path
+- relevant section/heading
+- concise summary
+- whether the source is:
+  1. explicit requirement,
+  2. authoritative project memory,
+  3. implementation behavior,
+  4. UI wording,
+  5. test expectation,
+  6. unrelated/insufficient evidence
+
+Do not treat implementation behavior as an intended business rule unless the project explicitly says it is authoritative.
+
+==================================================
+PART 2 — SEARCH FOR EXISTING POLICY DEFINITIONS
+==================================================
+
+Determine whether any existing policy explicitly answers the following:
+
+1. What is a Teacher Self-Attendance "working day"?
+
+2. Are Saturdays working days?
+
+3. Are Sundays working days?
+
+4. If a Teacher Self-Attendance record exists on Saturday/Sunday, should it count?
+
+5. Do school holidays affect Teacher Self-Attendance?
+
+6. If yes, do All_School holidays and targeted holidays behave differently?
+
+7. Does an unmarked weekday count in the denominator?
+
+8. Does an unmarked weekend count?
+
+9. What does:
+   - Present
+   - Late
+   - Half Day
+   - Leave
+   - Absent
+   contribute to the attendance rate?
+
+10. Is there a distinct "Missing"/"Not Marked" concept for Teacher Self-Attendance?
+
+11. Should Missing/Not Marked be included in the denominator?
+
+12. How are future dates treated?
+
+13. What is the denominator?
+
+14. What is the numerator?
+
+15. What precision/rounding is required?
+
+16. What should happen when there are zero applicable days?
+
+17. Is the rate supposed to represent:
+   - the entire selected Academic Session,
+   - the selected report range,
+   - the current month,
+   - or some other period?
+
+18. Should "My Attendance" and "Attendance History" display the same metric?
+
+19. Should exports use the same calculation?
+
+20. Must the calculation be clamped to Academic Session start/end dates?
+
+21. Are Teacher Self-Attendance writes themselves required to be inside Academic Session boundaries?
+
+Again: only report what existing project evidence establishes.
+
+==================================================
+PART 3 — ATTENDANCE POLICY ENGINE AUDIT
+==================================================
+
+Inspect the existing Attendance Policy implementation, including:
+
+- attendance_policies schema
+- School Setup Attendance Policy UI
+- server/attendance-policy-engine.ts
+- policy resolution logic
+- Teacher Self-Attendance write/check-in logic
+
+Determine exactly which Teacher Self-Attendance behaviors are already defined by Attendance Policy.
+
+Separate:
+
+A. Rules that determine the STORED STATUS of a Teacher Self-Attendance event
+
+from:
+
+B. Rules that determine the ATTENDANCE RATE/PERCENTAGE
+
+This distinction is mandatory.
+
+Do not assume that because Attendance Policy determines Present/Late/Half Day/etc. it also defines the rate formula.
+
+Explicitly report whether the existing policy contains:
+- working-day schedule
+- weekend rules
+- holiday rules
+- missing-day rules
+- denominator rules
+- rate weights
+- rate rounding
+- Session-wide rate rules
+
+==================================================
+PART 4 — COMPARE EXISTING IMPLEMENTATIONS
+==================================================
+
+Reconfirm the three existing Teacher Self-Attendance rate implementations, but only as implementation evidence.
+
+For each implementation document:
+
+1. Source file/function
+2. Date range used
+3. Academic Session filtering
+4. Academic Session boundary handling
+5. Today/future-date handling
+6. Saturday handling
+7. Sunday handling
+8. Holiday handling
+9. Missing/unmarked handling
+10. Present contribution
+11. Late contribution
+12. Half Day contribution
+13. Leave contribution
+14. Absent contribution
+15. Numerator
+16. Denominator
+17. Rounding
+18. Zero-denominator behavior
+19. Whether generated/synthetic dates are used
+
+Clearly label these as CURRENT IMPLEMENTATION BEHAVIOR, not policy.
+
+==================================================
+PART 5 — FIND CONFLICTS WITH DOCUMENTED REQUIREMENTS
+==================================================
+
+Create a table:
+
+| Area | Existing documented rule | Current implementation | Match? | Evidence |
+|------|--------------------------|------------------------|--------|----------|
+
+Only identify a mismatch when an actual documented rule exists.
+
+Do NOT call something a mismatch merely because two implementation paths differ when no policy exists.
+
+==================================================
+PART 6 — DETERMINE WHETHER A POLICY ALREADY EXISTS
+==================================================
+
+Give exactly one of these conclusions:
+
+A. "AUTHORITATIVE TEACHER SELF-ATTENDANCE POLICY FOUND"
+
+OR
+
+B. "NO AUTHORITATIVE TEACHER SELF-ATTENDANCE RATE POLICY FOUND"
+
+If A:
+- quote/paraphrase the exact project-local evidence
+- identify the authoritative source
+- list every rule it establishes
+- identify any remaining undefined items
+
+If B:
+- explicitly state that the project does not currently define the missing rate semantics
+- do NOT choose values for the missing semantics
+- do NOT recommend a formula
+- do NOT modify anything
+
+==================================================
+PART 7 — IF POLICY IS NOT FOUND
+==================================================
+
+If no authoritative policy exists, produce a concise "Decision Required" list containing ONLY genuinely unresolved business decisions.
+
+Group them under:
+
+A. Applicable Days
+B. Weekend/Sunday
+C. Holidays
+D. Status Weights
+E. Missing/Unmarked Days
+F. Future Dates
+G. Academic Session Boundary
+H. Rate Period / Display Consistency
+I. Rounding / Zero-Day Behavior
+
+For each decision, state:
+- the question
+- what the current code does
+- whether that behavior is merely implementation behavior
+- why the existing project evidence cannot determine the intended rule
+
+Do NOT answer the questions yourself.
+
+==================================================
+PART 8 — ACADEMIC SESSION + TENANT SAFETY
+==================================================
+
+Verify that the discovery audit did not uncover any requirement that permits:
+
+- cross-school Teacher Self-Attendance access
+- cross-school calculation
+- use of another school's Academic Session
+- mixing Teacher Self-Attendance rows between Sessions
+
+Confirm current tenant/session identity behavior separately from the policy discovery.
+
+Do not modify it.
+
+==================================================
+PART 9 — IST
+==================================================
+
+Verify whether existing Teacher Self-Attendance policy/documentation explicitly defines timezone behavior.
+
+Where implementation behavior is inspected, confirm whether date/business-day decisions use IST / Asia/Kolkata.
+
+Do not introduce timezone changes.
+
+==================================================
+PART 10 — FINAL VERDICT
+==================================================
+
+Return a concise final report with exactly this structure:
+
+STEP 2L-10B — FINAL AUDIT
+
+1. POLICY STATUS
+   - Authoritative policy found / not found
+   - Source(s)
+
+2. ESTABLISHED RULES
+   - Only rules supported by existing project evidence
+
+3. CURRENT IMPLEMENTATION BEHAVIOR
+   - Server rate
+   - My Attendance
+   - Attendance History
+
+4. DOCUMENTED MISMATCHES
+   - Only genuine documented-policy mismatches
+
+5. UNRESOLVED BUSINESS DECISIONS
+   - Only if policy is not found
+
+6. TENANT ISOLATION
+   - PASS/ISSUE
+
+7. ACADEMIC SESSION ISOLATION
+   - PASS/ISSUE
+
+8. IST
+   - PASS/ISSUE
+
+9. FILES CHANGED
+   - MUST SAY: NONE
+
+10. TESTS RUN
+   - MUST SAY: NONE, unless read-only inspection itself requires an existing test command; do not modify tests
+
+11. PRODUCTION
+   - MUST SAY: NOT TOUCHED
+
+12. RECOMMENDED NEXT STEP
+   - If policy found: state that implementation can be planned only after comparing it against the current implementations.
+   - If policy not found: state that explicit product/business decisions are required before implementing a Teacher Self-Attendance rate.
+
+FINAL SAFETY GATE:
+
+Before finishing, verify:
+- no source files changed
+- no tests changed
+- no schema changed
+- no migrations created
+- no UI changed
+- no production work performed
+- no Student Attendance behavior changed
+- no class-transfer work reopened
+- no new Teacher Self-Attendance policy invented
+
+If any change was accidentally made, STOP and report it instead of continuing.
+
+Do not implement anything in STEP 2L-10B.

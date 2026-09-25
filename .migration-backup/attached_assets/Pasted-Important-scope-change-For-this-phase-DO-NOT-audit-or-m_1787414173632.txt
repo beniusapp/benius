@@ -1,0 +1,76 @@
+Important scope change:
+
+For this phase, DO NOT audit or modify the entire application.
+
+Only audit and fix timezone/date handling in these two areas:
+
+1. Admin Portal → Fees & Payments
+
+Include:
+
+- Financial Analytics
+- Ledger & Transactions
+- Fee Structures where date/time is relevant
+- Offline payments
+- Online/Razorpay payments
+- Refunds
+- Invoices
+- Receipts
+- Payment history
+- Fees Audit Log related to payments
+- Today / Week / Month / Academic Year / Custom filters
+- Aging/overdue calculations
+- Late fees
+- Trends/charts
+- PDF/CSV financial reports
+
+2. Student Portal → Fees
+
+Include:
+
+- Student invoices
+- Due/overdue dates
+- Late fees
+- Online payment flow
+- Payment status/history
+- Payment dates
+- Receipts
+- Any date/time displayed or used in the Fees module
+
+For ONLY these two areas, make Asia/Kolkata (IST) the authoritative business timezone.
+
+Do not modify unrelated modules such as attendance, exams, homework, HR, library, etc. We will audit those later as a separate phase.
+
+Critical requirement
+
+Verify that UTC → IST conversion cannot cause a payment, invoice, refund, receipt, due date, or financial event to appear on the wrong calendar day.
+
+Especially test the IST midnight boundaries:
+
+- 21-Aug 23:59:59 IST
+- 22-Aug 00:00:00 IST
+- 22-Aug 00:00:01 IST
+- 22-Aug 23:59:59 IST
+- 23-Aug 00:00:00 IST
+
+Then reconcile:
+
+Database → API → Admin UI → Ledger → Financial Analytics → PDF/CSV → Student Portal
+
+The same financial event must have the same correct IST business date everywhere.
+
+Do not blindly rewrite stored UTC timestamps. Preserve authoritative timestamps and fix the business-date conversion/interpretation.
+
+Final verification
+
+Run a focused regression suite for ONLY:
+
+Admin Fees & Payments + Student Fees
+
+and report:
+
+Module → Issue Found → Fix Applied → Test Added → Verification Result
+
+Also clearly list any timezone/date-time code that exists in these two areas but is intentionally left unchanged because it is a true timestamp/instant rather than a business-date calculation.
+
+Do not touch unrelated modules in this phase.

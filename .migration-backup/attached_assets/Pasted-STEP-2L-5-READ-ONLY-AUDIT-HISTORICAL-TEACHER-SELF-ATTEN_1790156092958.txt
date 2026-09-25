@@ -1,0 +1,476 @@
+STEP 2L-5 — READ-ONLY AUDIT: HISTORICAL TEACHER SELF-ATTENDANCE STATUS PRESERVATION
+
+IMPORTANT: THIS IS A READ-ONLY ARCHITECTURE / CODE AUDIT.
+DO NOT MODIFY ANY PRODUCTION CODE.
+DO NOT MODIFY ANY TEST CODE.
+DO NOT MODIFY ANY DATABASE SCHEMA.
+DO NOT CREATE OR RUN ANY MIGRATION.
+DO NOT MODIFY DATA.
+DO NOT "FIX" ANYTHING.
+DO NOT REFACTOR ANYTHING.
+DO NOT CHANGE UI.
+DO NOT CHANGE APIs.
+
+The purpose of this step is ONLY to inspect the current implementation and report exactly what must change later.
+
+==================================================
+PRODUCT DECISIONS ALREADY CONFIRMED
+==================================================
+
+Attendance policy architecture decisions are now explicitly confirmed:
+
+1. Attendance policy meaning:
+   HISTORICAL POLICY SEMANTICS.
+
+   Attendance records must preserve the historical attendance status that was actually determined at the time the attendance event occurred.
+
+2. Existing historical Teacher Self-Attendance:
+   KEEP THE STORED HISTORICAL STATUS.
+
+   A later change to the school's current Attendance Policy must NOT reinterpret or rewrite an old Teacher Self-Attendance record's status.
+
+3. Academic Session behavior:
+   Attendance Policy remains SHARED ACROSS ACADEMIC SESSIONS.
+
+   A new Academic Session does NOT receive an independent Attendance Policy.
+   Do NOT redesign Attendance Policy into a Session-specific policy.
+
+4. Historical Student Attendance target:
+   Student Attendance target remains the CURRENT SCHOOL TARGET.
+
+   Historical Student Attendance target display may use the current shared school Attendance Policy.
+   Do NOT make Student Attendance target Session-specific as part of this step.
+
+5. Existing global Attendance requirements remain unchanged:
+   - Multi-tenant / school isolation is mandatory.
+   - Every Attendance operation must remain school/tenant scoped.
+   - Attendance records remain Academic-Session scoped.
+   - Historical Attendance must remain readable when an older Session is selected.
+   - Enrollment is NOT an Attendance prerequisite.
+   - Faculty Mapping is NOT an Attendance prerequisite.
+   - Any authenticated Teacher in the school can mark Attendance.
+   - Attendance uses IST / Asia/Kolkata.
+   - Historical Attendance must not be silently changed because current Registry/session configuration changed.
+   - Do not introduce unrelated fixes.
+
+==================================================
+PRIMARY AUDIT QUESTION
+==================================================
+
+Determine exactly whether the current Teacher Self-Attendance implementation can ever reinterpret an old stored Attendance status using the CURRENT Attendance Policy.
+
+We already know from previous audits that current-policy recalculation exists in multiple Teacher Self-Attendance paths.
+
+Now perform a complete READ-ONLY audit to determine the exact historical-status contract required to satisfy decision #2 above.
+
+The key rule we ultimately need is:
+
+    Once a Teacher Self-Attendance record has a stored historical status,
+    later changes to the shared current Attendance Policy must NOT change
+    the historical meaning of that record.
+
+For example:
+
+    Teacher checks in on Session A.
+    Current policy at that time produces PRESENT.
+
+    Later, Admin changes the school's Attendance Policy.
+
+    Reading the old Session A record must still show PRESENT
+    based on the historical stored result.
+
+It must NOT recalculate the old record using the new policy.
+
+==================================================
+AUDIT SCOPE
+==================================================
+
+Inspect ALL relevant Teacher Self-Attendance code paths, including at minimum:
+
+1. Teacher self check-in / check-out creation
+2. Teacher self-attendance correction
+3. Teacher self-attendance history
+4. Teacher self-attendance "today" endpoint
+5. Teacher detailed self-attendance history
+6. Admin teacher attendance summary/history if it consumes self-attendance
+7. Any Teacher Self-Attendance helper/service/calculation function
+8. Any Attendance Policy resolver used by Teacher Self-Attendance
+9. Any scheduled/background/self-healing logic that can recalculate status
+10. Any frontend code that transforms/recalculates status
+11. Any cache/query layer that could cause current-policy recalculation
+12. Any test helpers relevant to these paths
+
+Search the entire repository rather than assuming all logic is in one file.
+
+==================================================
+STEP 1 — TRACE STATUS CREATION
+==================================================
+
+Trace the exact flow when a Teacher Self-Attendance record is first created.
+
+Report:
+
+- route/file
+- service/helper
+- policy resolver
+- policy fields used
+- teacher class/assignment fields used
+- Session identity used
+- IST date/time fields used
+- exact status values that can be stored
+- exact DB columns written
+- whether the calculated status is persisted
+- whether the calculation depends on current mutable configuration
+
+Show the call chain in simple form, for example:
+
+route
+  -> resolver
+  -> calculation
+  -> storage
+  -> database
+
+Do not modify anything.
+
+==================================================
+STEP 2 — FIND EVERY HISTORICAL RECALCULATION
+==================================================
+
+Search the entire codebase for every place where an EXISTING Teacher Self-Attendance record is:
+
+- recalculated
+- normalized
+- healed
+- corrected
+- updated
+- re-evaluated
+- transformed
+- mapped to a new status
+- compared against current policy
+- passed through Attendance Policy resolution
+
+For every occurrence, report:
+
+- exact file
+- route/function
+- whether it reads an old DB record
+- whether it calls the current Attendance Policy resolver
+- whether it uses current teacher class/assignment
+- whether it can modify the database
+- whether it can only modify the response
+- whether it applies to active Sessions
+- whether it applies to archived Sessions
+- whether it applies to today's record
+- whether it applies to historical dates
+
+Create a table:
+
+PATH | FILE/FUNCTION | CURRENT POLICY USED? | DB MUTATION? | ACTIVE SESSION? | ARCHIVED SESSION? | HISTORICAL RISK
+
+==================================================
+STEP 3 — TEST POLICY CHANGE SCENARIOS
+==================================================
+
+Do NOT change data.
+
+Using code inspection and existing tests, determine behavior for these scenarios:
+
+SCENARIO A:
+Teacher records PRESENT under Policy Version/Configuration 1.
+Admin later changes policy.
+Old record is viewed.
+
+Question:
+Does displayed status remain the stored historical status,
+or can current policy reinterpret it?
+
+SCENARIO B:
+Teacher records HALF DAY under Policy 1.
+Admin later changes thresholds/times.
+Old record is viewed.
+
+Question:
+Can HALF DAY become another status?
+
+SCENARIO C:
+Teacher records a status in an older Academic Session.
+Current teacher assignment/class later changes.
+
+Question:
+Can current teacher class/assignment affect the historical status?
+
+SCENARIO D:
+An archived Session is selected.
+Historical Teacher Self-Attendance is read.
+
+Question:
+Is the stored status returned directly,
+or is it recalculated using current policy?
+
+SCENARIO E:
+An old record is corrected.
+
+Question:
+What policy is used to determine the corrected status?
+
+Do NOT implement a correction policy.
+Only document the current behavior and the architectural consequence.
+
+==================================================
+STEP 4 — DISTINGUISH STORED STATUS FROM DERIVED STATUS
+==================================================
+
+For Teacher Self-Attendance, identify which fields are:
+
+A. Historical facts that are already persisted
+B. Values derived dynamically from current configuration
+C. Values derived from current teacher Registry/assignment
+D. Values derived from current Attendance Policy
+E. Values that are not recoverable historically
+
+Pay special attention to:
+
+- status
+- check-in time
+- check-out time
+- attendance date
+- session_id
+- teacher_id
+- school_id
+- assignedClass / current class
+- policy thresholds
+- policy target
+- half-day rules
+- late rules
+- working-hour rules
+- correction information
+
+Explain which fields are safe to trust as historical truth.
+
+==================================================
+STEP 5 — DETERMINE MINIMUM ARCHITECTURAL CHANGE
+==================================================
+
+DO NOT implement anything.
+
+Based strictly on the existing schema and code, determine the MINIMUM architectural change required to satisfy this confirmed rule:
+
+    Historical Teacher Self-Attendance status must remain historically stable
+    even after the shared current Attendance Policy changes.
+
+Consider, but do not choose prematurely between:
+
+A. Stop recalculating historical stored status and always use the persisted status.
+
+B. Store an immutable policy snapshot/reference with each self-attendance record.
+
+C. Store only the specific policy inputs required to reproduce the historical calculation.
+
+D. Another smaller architecture that you can prove is sufficient.
+
+For each option, explain:
+
+- production files affected
+- schema impact
+- migration impact
+- data/backfill impact
+- legacy-record behavior
+- correction behavior
+- active-session behavior
+- archived-session behavior
+- Admin behavior
+- Teacher behavior
+- test impact
+- tenant-isolation impact
+- Session-isolation impact
+- whether it preserves historical truth exactly
+
+DO NOT recommend an option yet unless one is logically forced by the existing architecture.
+If multiple options remain valid, clearly say so.
+
+==================================================
+STEP 6 — LEGACY RECORDS
+==================================================
+
+Determine what can and cannot be reconstructed for existing Teacher Self-Attendance records.
+
+Specifically answer:
+
+- Do old records contain enough information to reconstruct the historical policy?
+- Is the original policy ID/version stored anywhere?
+- Is the historical teacher class/assignment stored?
+- Are original policy thresholds/times stored?
+- Can an old status be trusted as the historical result?
+- Are there legacy NULL-session records?
+- Are there records whose stored status may already have been altered by previous current-policy recalculation?
+
+Do NOT modify or backfill anything.
+
+==================================================
+STEP 7 — TENANT + SESSION SAFETY
+==================================================
+
+Confirm that any future change for historical status preservation MUST continue enforcing:
+
+    school_id / authenticated tenant
+    +
+    teacher_id
+    +
+    session_id
+    +
+    attendance_date
+
+as applicable to the existing contract.
+
+Explicitly identify any place where current-policy lookup or teacher lookup could accidentally cross:
+
+- schools
+- teachers
+- Academic Sessions
+
+Do not fix anything.
+
+==================================================
+STEP 8 — EXISTING TEST COVERAGE
+==================================================
+
+Inspect existing relevant tests.
+
+Identify:
+
+1. Tests that already protect historical stored status.
+2. Tests that protect Session isolation.
+3. Tests that protect tenant isolation.
+4. Tests that protect archived-session reads.
+5. Tests that protect correction behavior.
+6. Tests that would fail if current policy changes were incorrectly allowed to reinterpret historical records.
+7. Missing regression tests that should be added later.
+
+Do NOT add tests in this step.
+
+Report exact test files and test names where possible.
+
+==================================================
+STEP 9 — FINAL AUDIT REPORT
+==================================================
+
+Return ONLY an audit report.
+
+Use this structure:
+
+# STEP 2L-5 AUDIT RESULT
+
+## 1. Overall Result
+PASS / NEEDS CHANGES
+
+Explain precisely why.
+
+## 2. Confirmed Product Contract
+Restate the four decisions:
+
+- Historical Attendance policy semantics
+- Existing historical Teacher Self-Attendance status
+- Shared policy across Sessions
+- Current Student Attendance target
+
+## 3. Current Teacher Self-Attendance Architecture
+Explain the actual implementation.
+
+## 4. Historical Recalculation Inventory
+Include the complete table:
+
+PATH | FILE/FUNCTION | CURRENT POLICY USED? | DB MUTATION? | ACTIVE SESSION? | ARCHIVED SESSION? | HISTORICAL RISK
+
+## 5. Historical Truth Analysis
+Clearly distinguish:
+
+STORED HISTORICAL FACT
+vs
+CURRENTLY DERIVED VALUE
+
+## 6. Scenario Results
+A through E.
+
+## 7. Legacy Records
+Explain exactly what is recoverable and what is not.
+
+## 8. Minimum Required Architecture
+List the viable options and their exact impacts.
+Do not implement anything.
+
+## 9. Tenant + Session Safety
+Report PASS / NEEDS CHANGES with evidence.
+
+## 10. Existing Test Coverage
+List relevant tests and missing regression coverage.
+
+## 11. Exact Files Potentially Requiring Future Changes
+Only list files actually supported by the audit.
+
+## 12. Out of Scope
+Explicitly confirm that this audit did NOT change:
+
+- production code
+- tests
+- schema
+- migrations
+- database data
+- Student Registry
+- Student Attendance calculation
+- Student Attendance target architecture
+- shared Attendance Policy architecture
+- Academic Session creation/copy behavior
+- Faculty Mapping
+- Enrollment requirements
+- Teacher eligibility rules
+- unrelated Attendance functionality
+
+==================================================
+STRICT RULES
+==================================================
+
+READ-ONLY ONLY.
+
+Do not edit files.
+Do not create files.
+Do not modify tests.
+Do not run migrations.
+Do not alter database data.
+Do not change configuration.
+Do not change API behavior.
+Do not make "small fixes".
+Do not refactor.
+Do not start Step 2L-6.
+
+If you discover an issue, REPORT IT ONLY.
+
+Preserve the existing multi-tenant architecture.
+
+Never suggest cross-school access.
+
+Do not treat Enrollment or Faculty Mapping as an Attendance prerequisite.
+
+Do not make Attendance Policy Session-specific.
+
+Do not redesign Student Registry.
+
+Do not change Student Attendance target behavior.
+
+Do not make any implementation decision that has not been explicitly confirmed.
+
+At the end, provide:
+
+AUDIT STATUS:
+PASS or NEEDS CHANGES
+
+FILES MODIFIED:
+NONE
+
+SCHEMA/MIGRATIONS:
+NONE
+
+DATA CHANGED:
+NONE
+
+TESTS ADDED/MODIFIED:
+NONE

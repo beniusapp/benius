@@ -1,0 +1,959 @@
+# STEP 2L-4D — PRODUCTION MIGRATION RUNNER & RELEASE-GATE DESIGN/IMPLEMENTATION
+
+## CONTEXT
+
+This application is currently in the **BUILDING / DEVELOPMENT phase**.
+
+Do NOT perform any production migration, production database write, production deployment, or production schema change as part of this task.
+
+This task is only to inspect, design, implement, and test the migration/release mechanism in the repository and isolated development/test environments so that a later, separately authorized production migration can be performed safely.
+
+This work follows:
+
+* Step 2L-1 — server-authoritative Academic Session for Attendance writes — ACCEPTED
+* Step 2L-2 — Academic Session date boundaries — ACCEPTED
+* Step 2L-3 — marked Sunday Attendance display/count — ACCEPTED
+* Step 2L-4B — historical Attendance survives physical Student deletion — ACCEPTED FOR DEVELOPMENT WITH PRODUCTION ROLLOUT CONDITION
+* Step 2L-4C — Production Migration & Rollout Readiness Audit — NOT SAFE TO ROLLOUT
+
+The 2L-4C audit established that the current production release process cannot guarantee the required migration ordering before incompatible application code serves traffic.
+
+The known required schema chain is currently:
+
+**012 → 014 → 015 → compatible application code**
+
+Important: inspect the actual contents and prerequisites of migration 012 before implementing the runner. Do NOT blindly assume that migration 012 contains only the Attendance prerequisite. If 012 contains additional schema changes, document exactly what it does and verify its compatibility with the current production baseline before including it in the ordered manifest.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Build a controlled, explicit migration runner and release gate that can later execute the required migration chain in a deterministic order:
+
+**012 → 014 → 015**
+
+The mechanism must NOT depend on:
+
+* `drizzle-kit push`
+* `drizzle-kit push --force`
+* an empty/incomplete Drizzle migration journal
+* implicit startup schema synchronization
+* application startup automatically running production migrations
+* migration filename ordering alone
+* undocumented manual assumptions
+
+The future production process must have an explicit migration history, ordering, locking, validation, failure behavior, and application compatibility gate.
+
+For this task, implement and test that mechanism only in DEVELOPMENT/TEST environments.
+
+---
+
+# NON-NEGOTIABLE SAFETY RULES
+
+## 1. NO PRODUCTION EXECUTION
+
+Do NOT connect to or modify production.
+
+Do NOT run:
+
+* migration 012 against production
+* migration 014 against production
+* migration 015 against production
+* `drizzle-kit push` against production
+* `drizzle-kit push --force` against production
+* any production schema-changing SQL
+* any production data-changing SQL
+* any production deployment
+
+If the current environment could resolve to production, STOP and report it rather than guessing.
+
+Do not print, expose, or commit database credentials/secrets.
+
+---
+
+## 2. BUILDING-PHASE ONLY
+
+This task must result in repository/code/test changes that prepare the migration process.
+
+The final report must explicitly state:
+
+* production was not modified
+* production migration was not executed
+* production deployment was not performed
+* which development/test database was used
+* which tests were executed
+
+---
+
+# 3. MULTI-TENANT ISOLATION IS PERMANENT
+
+Preserve the application's existing multi-school / multi-tenant architecture.
+
+Do not introduce any cross-school access.
+
+Do not modify Attendance logic in a way that can bypass:
+
+* authenticated school/tenant isolation
+* Academic Session isolation
+* Student identity isolation
+* Teacher authorization
+* historical Attendance identity protection
+
+Migration infrastructure must be application/database-wide infrastructure, but all Attendance data validation must respect existing school/session relationships.
+
+---
+
+# 4. ACADEMIC SESSION REQUIREMENT
+
+The Attendance architecture remains strongly Academic Session-specific.
+
+Do not weaken:
+
+* `school_id`
+* `academic_session_id` / `session_id`
+* historical Attendance identity
+* Session isolation
+* archived Session protection
+* active Session rules
+
+The migration runner must not change Attendance business logic.
+
+---
+
+# 5. IST REQUIREMENT
+
+Application/business/display timestamps must continue to use **Asia/Kolkata / IST**.
+
+Do not introduce BST or another local timezone into application-facing timestamps.
+
+Migration metadata may use a timezone-aware database timestamp if technically appropriate, but any application-facing display/reporting of migration timestamps must be IST.
+
+Do not change the global database timezone as part of this task.
+
+---
+
+# PHASE A — INSPECT BEFORE MODIFYING
+
+First inspect the repository and report findings before making changes.
+
+Inspect at minimum:
+
+1. `migrations/012*.sql`
+2. `migrations/014*.sql`
+3. `migrations/015*.sql`
+4. `migrations/meta/_journal.json`
+5. `package.json`
+6. `.replit`
+7. `scripts/`
+8. `server/index.ts`
+9. existing database initialization code
+10. existing startup schema validation
+11. existing migration scripts
+12. existing test infrastructure
+13. existing database client/connection implementation
+14. existing deployment/build/start commands
+15. any existing migration/version table
+16. any existing advisory-lock implementation
+17. any existing schema-drift validator
+
+Determine the actual current behavior.
+
+Do NOT infer.
+
+---
+
+# PHASE B — INSPECT MIGRATIONS 012, 014, 015
+
+For each migration, document:
+
+* exact filename
+* exact purpose
+* tables modified
+* columns modified
+* indexes
+* constraints
+* foreign keys
+* triggers
+* data backfills
+* transaction behavior
+* whether it is safe to rerun
+* whether it is safe on a partially migrated database
+* expected preconditions
+* expected postconditions
+* dependencies on previous migrations
+
+Especially inspect migration 012.
+
+The known production audit indicates that production currently has:
+
+`attendance_records.session_id` nullable with `ON DELETE SET NULL`
+
+while the expected schema from migration 012 requires a stronger Session relationship.
+
+Verify the actual 012 SQL and do not rely only on this description.
+
+If migration 012 contains unrelated changes, explicitly identify them.
+
+Do not silently rewrite 012 to make it fit the runner.
+
+---
+
+# PHASE C — DESIGN AN EXPLICIT MIGRATION MANIFEST
+
+Create one authoritative migration manifest for the required Attendance identity rollout.
+
+The manifest must explicitly define:
+
+1. migration version
+2. migration filename
+3. execution order
+4. checksum/hash of the migration contents
+5. expected predecessor
+6. expected postcondition
+7. whether the migration is required before the new application can start
+
+For this rollout the intended order is:
+
+1. 012
+2. 014
+3. 015
+
+Do not determine order by filesystem sorting.
+
+The runner must use the explicit manifest.
+
+If the actual repository uses a different exact filename for 012/014/015, use the actual filenames discovered during inspection.
+
+---
+
+# PHASE D — MIGRATION BOOKKEEPING
+
+Implement a dedicated migration bookkeeping mechanism.
+
+Do NOT rely on the existing empty/incomplete Drizzle migration journal for production rollout ordering.
+
+Create a dedicated migration history table, using an appropriately project-specific name.
+
+It should retain enough information to determine:
+
+* migration version
+* migration filename
+* checksum
+* applied timestamp
+* execution status if needed
+* runner/version metadata if useful
+
+Use a timezone-aware timestamp where appropriate.
+
+The migration history must allow the runner to detect:
+
+### Case 1 — Migration never applied
+
+Execute it if all prerequisites are satisfied.
+
+### Case 2 — Migration already applied with identical checksum
+
+Treat it as already applied and continue safely.
+
+### Case 3 — Migration already applied with different checksum
+
+FAIL CLOSED.
+
+Do not silently execute the modified migration.
+
+Do not overwrite the historical checksum.
+
+### Case 4 — Later migration recorded as applied while an earlier required migration is missing
+
+FAIL CLOSED.
+
+Example:
+
+015 recorded as applied but 014 is absent.
+
+Do not attempt to guess or repair automatically.
+
+### Case 5 — Migration partially failed
+
+The runner must leave the database in a state that can be safely diagnosed and retried according to the migration's transaction behavior.
+
+Do not mark a migration successful unless the complete migration transaction succeeds.
+
+---
+
+# PHASE E — MIGRATION SERIALIZATION / LOCKING
+
+Implement database-level serialization so that two migration runners cannot execute the same migration chain concurrently.
+
+Use an appropriate PostgreSQL advisory lock or equivalent database-level mechanism.
+
+Requirements:
+
+* lock acquisition occurs before migration execution
+* lock is held for the complete migration-runner operation
+* second concurrent runner must wait or fail deterministically
+* only one runner may modify migration bookkeeping at a time
+* lock is released reliably on success
+* lock is released reliably on failure
+* connection errors must not leave a permanent logical lock
+
+Prefer a database-native advisory lock over an application-memory lock.
+
+Do NOT implement this using a JavaScript boolean/global variable because that does not protect multiple application processes or machines.
+
+---
+
+# PHASE F — PRE-FLIGHT VALIDATION
+
+Before executing any migration, validate the target database and expected baseline.
+
+The runner must fail closed if:
+
+* DATABASE_URL is missing
+* the target environment is ambiguous
+* required environment safeguards are missing
+* the database cannot be reached
+* an incompatible migration history is detected
+* a required predecessor is missing
+* a migration checksum does not match recorded history
+* required schema preconditions are not satisfied
+* an unexpected partial migration state is detected
+
+Do not silently repair an unknown production state.
+
+The future production runner must require explicit target confirmation rather than assuming that any available DATABASE_URL is production.
+
+Use safe environment variables/configuration for target confirmation.
+
+Do not hard-code production credentials or production connection strings.
+
+Do not print DATABASE_URL.
+
+Do not print passwords or secrets.
+
+---
+
+# PHASE G — MIGRATION-SPECIFIC PRECONDITIONS
+
+For each of 012, 014, and 015, implement or expose validation for expected prerequisites.
+
+At minimum:
+
+## Before 012
+
+Verify that the database is at the expected pre-012 state.
+
+Do not assume that "migration 012 has never been recorded" means that none of its schema changes exist.
+
+If the schema appears partially migrated, fail closed.
+
+## Before 014
+
+Verify the prerequisite Session schema from 012.
+
+Verify that the Attendance records can be safely processed by migration 014.
+
+Preserve all existing Attendance data.
+
+Do not delete Attendance rows.
+
+Do not deduplicate Attendance rows automatically.
+
+Do not invent Student identity values.
+
+Do not silently repair contradictory legacy data.
+
+## Before 015
+
+Verify that migration 014's required columns/tables/constraints exist.
+
+Verify that 014 completed successfully.
+
+Verify that 015's prerequisites are complete.
+
+Do not allow 015 to execute independently on an unprepared database.
+
+---
+
+# PHASE H — FAIL-CLOSED DATA VALIDATION
+
+The migration runner must preserve the existing Step 2L-4B fail-closed behavior.
+
+Do not allow automatic guessing when legacy Attendance identity is ambiguous.
+
+The runner must refuse to continue if it finds conditions such as:
+
+* partial identity fields
+* empty identity values
+* contradictory Student identity
+* cross-school identity mismatch
+* duplicate canonical Attendance identity
+* unexpected NULL values where migration requires non-NULL
+* unexpected duplicate canonical identities
+* partially installed triggers/constraints
+* schema that does not match the expected predecessor state
+
+No destructive cleanup.
+
+No automatic deduplication.
+
+No deletion.
+
+No "best effort" identity reconstruction.
+
+---
+
+# PHASE I — TRANSACTION BEHAVIOR
+
+Use transactions appropriately.
+
+Each numbered migration should execute atomically if the SQL supports transactional execution.
+
+Do not claim that 012 + 014 + 015 are one single transaction unless the actual implementation can guarantee that.
+
+The preferred model is:
+
+* acquire migration lock
+* validate environment
+* validate migration history
+* execute migration 012 in its own transaction
+* verify 012 postconditions
+* record 012 success
+* execute migration 014 in its own transaction
+* verify 014 postconditions
+* record 014 success
+* execute migration 015 in its own transaction
+* verify 015 postconditions
+* record 015 success
+* release lock
+
+If a migration fails:
+
+* do not record it as successful
+* stop immediately
+* do not continue to later migrations
+* report exactly which migration failed
+* preserve the database for diagnosis/retry
+
+Do not automatically roll back already-successful predecessor migrations unless there is a technically safe and explicitly implemented rollback mechanism. Do not invent down migrations.
+
+---
+
+# PHASE J — POST-CONDITION VALIDATION
+
+After each migration, verify the expected resulting schema.
+
+At minimum verify the known Step 2L-4B requirements.
+
+After 014, verify:
+
+* Attendance Student FK is nullable as intended
+* Student deletion behavior is `ON DELETE SET NULL`
+* Attendance historical identity columns exist
+* historical Student name/code snapshots exist
+* canonical Attendance identity exists
+* existing Attendance rows were preserved
+* no unexpected Attendance rows were deleted
+
+After 015, verify:
+
+* Student Attendance identity key exists
+* Student identity uniqueness is enforced
+* Student identity immutability protection exists
+* permanent identity reservation mechanism exists
+* Attendance reassignment protection exists
+* required indexes exist
+* required triggers exist
+* historical identity protection is active
+
+Use actual schema inspection rather than trusting the migration history table.
+
+---
+
+# PHASE K — APPLICATION RELEASE GATE
+
+Implement a read-only application startup compatibility gate.
+
+IMPORTANT:
+
+The application must NOT automatically run production migrations at startup.
+
+Instead, the new application version should verify that the required migration state is already present before accepting application traffic.
+
+The gate must verify:
+
+* migration 012 is recorded and checksum matches
+* migration 014 is recorded and checksum matches
+* migration 015 is recorded and checksum matches
+* required postconditions/schema objects exist
+* no incompatible migration state is detected
+
+If the required migration state is missing:
+
+**FAIL CLOSED before the application begins serving normal traffic.**
+
+Do not start accepting requests against an incompatible database.
+
+Do not automatically call the migration runner from `server/index.ts`.
+
+The migration runner and application startup gate must remain separate concerns.
+
+If the current Replit deployment platform does not provide a supported pre-deploy migration hook, do NOT invent one.
+
+Instead, document the exact required release sequence for future deployment.
+
+---
+
+# PHASE L — DO NOT BREAK DEVELOPMENT WORKFLOW
+
+The new mechanism must not make ordinary development unnecessarily dependent on production migration infrastructure.
+
+Provide a clear development/test invocation.
+
+For example, use an appropriately named package script such as:
+
+`db:migrate:controlled`
+
+or another project-consistent name.
+
+Use the actual project conventions after inspection.
+
+Do NOT replace ordinary development database workflows unless necessary.
+
+Do NOT remove existing Drizzle tooling.
+
+However:
+
+Clearly document that `drizzle-kit push --force` is NOT the approved production migration mechanism for this Attendance rollout.
+
+---
+
+# PHASE M — ISOLATED TEST DATABASE
+
+Build a comprehensive automated test suite using an isolated/test database.
+
+Do NOT use production for tests.
+
+The test suite must cover at minimum:
+
+### Test 1 — Clean migration chain
+
+Start from a valid pre-012 database.
+
+Run:
+
+012 → 014 → 015
+
+Verify complete success.
+
+### Test 2 — Rerun
+
+Run the controlled runner again.
+
+Verify:
+
+* no duplicate migration history
+* no duplicate schema objects
+* no destructive changes
+* already-applied identical migrations are safely skipped
+
+### Test 3 — Out-of-order history
+
+Create a state where 015 appears recorded but 014 is missing.
+
+Verify runner fails closed.
+
+### Test 4 — Checksum mismatch
+
+Record a migration with one checksum, then modify the migration fixture.
+
+Verify runner refuses execution.
+
+### Test 5 — Concurrent runners
+
+Start two migration runners concurrently.
+
+Verify only one executes the migration chain.
+
+Verify migration bookkeeping remains consistent.
+
+### Test 6 — Migration failure
+
+Force a controlled test migration failure.
+
+Verify:
+
+* failed migration is not marked successful
+* later migrations do not run
+* lock is released
+* retry behavior is deterministic
+
+### Test 7 — Populated Attendance data
+
+Use a realistic fixture containing:
+
+* multiple schools
+* multiple Academic Sessions
+* active Students
+* inactive Students
+* Attendance records
+* multiple Attendance dates
+* historical Attendance
+
+Run the migration chain.
+
+Verify all Attendance data remains intact.
+
+### Test 8 — Deleted Student preservation
+
+Use the Step 2L-4B deletion scenario.
+
+Verify historical Attendance identity remains preserved.
+
+### Test 9 — School isolation
+
+Create identical-looking Student/Attendance identities in two schools.
+
+Verify migration identity handling never crosses school boundaries.
+
+### Test 10 — Session isolation
+
+Use multiple Academic Sessions.
+
+Verify historical Attendance remains associated with the correct Session.
+
+### Test 11 — Partial schema
+
+Create an intentionally partial 014/015 state.
+
+Verify the runner refuses unsafe execution rather than guessing.
+
+### Test 12 — Application release gate
+
+Start the application against a database where required migration versions are missing.
+
+Verify the application refuses to serve normal traffic.
+
+Then mark the required migrations correctly applied and verify the gate passes.
+
+---
+
+# PHASE N — REGRESSION PROTECTION
+
+Do not alter existing Attendance business behavior.
+
+Run the relevant existing tests covering:
+
+* Step 2L-1 server-authoritative active Session
+* Step 2L-2 Session date boundaries
+* Step 2L-3 marked Sunday behavior
+* Step 2L-4B Student identity preservation
+* tenant isolation
+* Academic Session isolation
+* Teacher Attendance authorization
+* archived Session protection
+* 7-day correction behavior
+
+Do not broaden the task into fixing unrelated Attendance defects.
+
+If another issue is discovered, report it separately instead of silently expanding scope.
+
+---
+
+# PHASE O — REPLIT DEPLOYMENT INSPECTION
+
+Inspect the actual Replit deployment/build configuration.
+
+Determine whether Replit currently supports a reliable pre-deployment command/hook that can execute:
+
+1. controlled migration runner
+2. verification
+3. only then application startup
+
+Do not assume such a hook exists.
+
+If the platform does not provide a supported mechanism, do NOT modify `.replit` with an invented or speculative hook.
+
+Instead:
+
+* keep the controlled runner as an explicit command
+* keep the application startup gate separate
+* document the required future release sequence
+
+The final report must clearly distinguish:
+
+**implemented and tested in repository**
+
+from
+
+**not automatically integrated into production deployment because platform support was not verified**
+
+---
+
+# PHASE P — DO NOT AUTO-MIGRATE ON APPLICATION STARTUP
+
+This is especially important.
+
+Do NOT implement:
+
+`application starts → automatically execute 012/014/015 against database`
+
+Do NOT put migration execution inside normal application startup.
+
+Do NOT use startup code as a substitute for a controlled release process.
+
+The application startup gate may VERIFY migration state, but it must not APPLY migrations automatically.
+
+---
+
+# PHASE Q — DO NOT CHANGE ATTENDANCE BUSINESS LOGIC
+
+This task is migration/release infrastructure.
+
+Do not modify:
+
+* Teacher Attendance UI
+* Student Attendance UI
+* Admin Attendance UI
+* Attendance calculation semantics
+* Sunday semantics
+* 7-day correction rules
+* Academic Session date rules
+* Student Registry behavior
+* Student deletion policy
+* promotion logic
+* examination logic
+
+unless a tiny change is strictly required for the release gate and is directly justified.
+
+---
+
+# PHASE R — CODE QUALITY
+
+Keep the implementation narrow.
+
+Prefer:
+
+* small dedicated migration-runner module
+* small dedicated migration manifest
+* small migration-history repository/helper
+* small release-gate helper
+* focused tests
+
+Avoid:
+
+* broad refactoring
+* rewriting database infrastructure
+* changing ORM architecture
+* replacing Drizzle
+* changing unrelated startup code
+* introducing a new migration framework unnecessarily
+
+Follow the existing TypeScript/Node/PostgreSQL project conventions.
+
+---
+
+# PHASE S — DOCUMENTATION
+
+Add concise developer documentation explaining:
+
+## Controlled migration process
+
+Future production sequence must be:
+
+1. Confirm production target.
+2. Confirm recovery/backup point.
+3. Run controlled migration preflight.
+4. Acquire migration lock.
+5. Execute 012.
+6. Verify 012.
+7. Record 012.
+8. Execute 014.
+9. Verify 014.
+10. Record 014.
+11. Execute 015.
+12. Verify 015.
+13. Record 015.
+14. Verify complete required migration state.
+15. Deploy/start compatible application.
+16. Application startup gate verifies migration state before serving traffic.
+
+Clearly state:
+
+**Do not use `drizzle-kit push --force` as the production migration mechanism for this rollout.**
+
+Clearly state:
+
+**The application does not automatically execute production migrations on startup.**
+
+Clearly state:
+
+**Migration 012 must be inspected and validated as a prerequisite before the 014/015 chain is executed.**
+
+---
+
+# PHASE T — ACCEPTANCE CRITERIA
+
+This task is ACCEPTED only if all of the following are true:
+
+### A. Repository inspection
+
+* 012/014/015 were inspected.
+* Actual migration dependencies are documented.
+* Replit deployment configuration was inspected.
+* Existing migration behavior was inspected.
+
+### B. Controlled runner
+
+* Explicit manifest exists.
+* Order is explicitly 012 → 014 → 015.
+* Migration history exists.
+* Checksums are verified.
+* Out-of-order states fail closed.
+* Modified applied migrations fail closed.
+* Concurrent execution is serialized.
+* Failed migrations are not recorded as successful.
+
+### C. Schema verification
+
+* Each migration has meaningful postcondition validation.
+* 014 identity-preservation requirements are verified.
+* 015 identity-enforcement requirements are verified.
+
+### D. Application release gate
+
+* New application verifies required migration state.
+* Missing/incompatible migration state prevents normal startup/traffic.
+* Application startup does NOT automatically execute migrations.
+
+### E. Tests
+
+All controlled migration tests pass, including:
+
+* clean chain
+* rerun
+* checksum mismatch
+* out-of-order
+* concurrent runners
+* failure/retry
+* populated Attendance
+* deleted Student preservation
+* school isolation
+* Session isolation
+* partial schema
+* application release gate
+
+### F. Existing regression tests
+
+Relevant Step 2L-1 through Step 2L-4B tests remain passing.
+
+### G. Production safety
+
+The final report must explicitly confirm:
+
+**NO PRODUCTION MIGRATION WAS EXECUTED.**
+
+**NO PRODUCTION DATABASE WAS MODIFIED.**
+
+**NO PRODUCTION DEPLOYMENT WAS PERFORMED.**
+
+---
+
+# FINAL REPORT FORMAT
+
+At completion, report exactly:
+
+## 1. VERDICT
+
+One of:
+
+**READY FOR SEPARATE PRODUCTION MIGRATION AUTHORIZATION**
+
+or
+
+**NOT READY**
+
+Do not call production rollout complete.
+
+## 2. WHAT WAS INSPECTED
+
+List actual files/configuration inspected.
+
+## 3. MIGRATION CHAIN
+
+Show the actual resolved chain:
+
+`012 → 014 → 015`
+
+and explain any dependency discovered in 012.
+
+## 4. IMPLEMENTED
+
+List exact files changed and what each change does.
+
+## 5. MIGRATION SAFETY
+
+Report:
+
+* migration history
+* checksums
+* lock mechanism
+* preflight
+* postconditions
+* failure behavior
+* application startup gate
+
+## 6. TEST RESULTS
+
+Give exact test counts and commands.
+
+Do not say "tests passed" without the actual result.
+
+## 7. EXISTING REGRESSION RESULTS
+
+Report Step 2L-1 / 2L-2 / 2L-3 / 2L-4B regression results.
+
+## 8. PRODUCTION STATUS
+
+Explicitly state:
+
+* Production DB touched: YES/NO
+* Production migration executed: YES/NO
+* Production schema changed: YES/NO
+* Production deployment performed: YES/NO
+
+For this task these must remain:
+
+**NO / NO / NO / NO**
+
+## 9. REMAINING CONDITIONS
+
+List anything that must still be confirmed before a future production migration.
+
+Do not execute that future production migration in this task.
+
+---
+
+## HARD STOP CONDITIONS
+
+STOP implementation and report the issue if:
+
+* migration 012 cannot safely be determined from the repository
+* 012/014/015 dependencies conflict
+* existing migration history is inconsistent
+* a partial schema state cannot be safely distinguished
+* the test database cannot be isolated
+* production credentials/target are unexpectedly exposed
+* the proposed Replit deployment hook cannot be verified
+* an implementation would require production execution to prove correctness
+* migration safety requires destructive cleanup
+* migration safety requires deleting or deduplicating Attendance
+* tenant/session isolation would be weakened
+
+Do not guess.
+
+Do not silently broaden scope.
+
+Do not modify production.
+
+This is a **BUILDING / DEVELOPMENT phase implementation and verification task only**.

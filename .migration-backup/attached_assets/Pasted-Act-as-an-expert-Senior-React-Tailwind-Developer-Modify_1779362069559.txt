@@ -1,0 +1,38 @@
+Act as an expert Senior React & Tailwind Developer. Modify my /teacher-dashboard/examination route component to implement a highly modernized "Results" tab alongside the existing "Add Marks" and "View Marks" tabs.
+​Here are the complete design requirements, database mappings, and computational logic specs to implement:
+​1. Tab Navigation & UI Layout
+​Locate the tab navigation group at the top (currently housing "Add Marks" and "View Marks").
+​Add a third tab called "Results" (or "Performance & Promotion Results") with an icon (e.g., Lucide-react Award or TrendingUp).
+​Maintain the premium "BENIUS" dark/indigo glassmorphism aesthetic (Deep slate background #020617, border #1e293b, text white/slate-200, highlights in yellow #eab308).
+​2. "Results" Tab Filters (Drop-down Controls)
+​When the user clicks the "Results" tab, display these four inline/grid select menus:
+​Class * (Select): Select class (e.g., Nursery, preparatory, 1, 2, 3, 4, 5, 6, 7, 8).
+​Section * (Select): Select section (e.g., Section A, Section B).
+​Term * (Select - DYNAMIC): - This dropdown must be populated dynamically based on the chosen class.
+​It must pull its options directly from the admin-configured terms in the Exam Aggregation & Promotion Policy (e.g., if Class 1-3 is chosen, pull terms from 'Primary school policy' -> 'Half yearly term', 'Final exam term'. If Class 4-8 is chosen, pull terms from 'Higher school policy' -> 'Half yearly term', 'Finally term').
+​Quick Search (Input): Filter student list by name in real-time.
+​3. State Schema & Dynamic Promotion Rules Engine
+​Use or simulate a data structure representing the Admin Setup policies:
+​Policy Aggregations:
+​Term Components: E.g., "Half yearly term" aggregate = (Unit Test 1 raw score × 20%) + (Half Yearly Exam raw score × 80%).
+​Promotion & Retention Rules:
+​Rule 1 (Max Failed Subjects): Retain student if they fail \ge N subjects in a specified target term (e.g., \ge 3 fails in "Finally term").
+​Rule 2 (Composite Overlap Rule): Retain student if they fail \ge X subjects in Term 1 AND fail \ge Y subjects in Term 2 (e.g., \ge 5 fails in Term 1 AND \ge 3 fails in Term 2).
+​Pass/Fail Boundary: Use a standard score threshold (e.g., < 40\% is a fail) on the aggregated weighted mark of a subject.
+​4. Consolidated Performance Roster Table
+​Once a class, section, and term are selected, render a data table showing:
+​Student Roll & Name: Custom profile card layout.
+​Weighted Aggregate Percentage: Calculated in real-time based on component weights for the selected term.
+​Subject Failures Count: Number of subjects where the weighted score falls below the pass mark.
+​Attendance till Today: Percentage visual indicator bar (e.g., highlight in yellow/red if < 75\%).
+​Promotion Gate Verdict:
+​Show a green pill "Promoted" or a red/coral pill "Detained/Retained" dynamically calculated by processing Rule 1 and Rule 2 policies.
+​Display a brief, micro-text descriptive reason under the status (e.g., "Failed 4 subjects in Finally term" or "Retained by Composite Overlap").
+​"Report Card" Button: Clicking this button must open a modal display.
+​5. Detailed Student Report Card Modal
+​When the "Report Card" button is clicked, open a high-fidelity modal showing:
+​Comprehensive breakdown of all subjects.
+​For each subject, print the exact mathematical aggregation breakdown (e.g., "Unit Test 1 (20% Weight): 80/100 -> Contributed 16.0" and "Half Yearly Exam (80% Weight): 75/100 -> Contributed 60.0", totaling a weighted grade of 76.0/100).
+​Dynamic details of which rules triggered the student's passing or retaining status.
+​Print/Export option buttons.
+​Implement this component cleanly. Ensure all responsive tailwind classes are used so that the layout is mobile-friendly, uses strict type validation (or robust fallbacks), and manages state seamlessly.

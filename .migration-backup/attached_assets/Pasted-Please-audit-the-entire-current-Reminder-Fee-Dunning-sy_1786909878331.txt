@@ -1,0 +1,138 @@
+Please audit the entire current Reminder / Fee Dunning system in the application and explain exactly how it works today.
+
+Do NOT make any code changes.
+
+I want a complete implementation-based answer, not assumptions.
+
+Please inspect the frontend, backend, database/schema, scheduled jobs/cron, notification providers, and all related APIs.
+
+Answer these points:
+
+1. Trigger
+   
+   - What actually triggers the reminder system?
+   - Is it a cron/scheduled job, manual action, or both?
+   - How frequently does the job run?
+   - What happens when the job runs?
+
+2. Invoice eligibility
+   
+   - Which invoices are considered for reminders?
+   - Does it check "Due", "Overdue", "Paid", "Partial", etc.?
+   - How are due dates and overdue days calculated?
+   - Is the calculation based on Indian date/time?
+
+3. Dunning schedule
+   Explain exactly what happens at:
+   
+   - D+0 — Due Today
+   - D+7 — 7 Days Overdue
+   - D+14 — 14 Days Overdue
+   - D+30 — 30 Days Overdue
+   
+   Explain whether these are triggered exactly on those days or within a range.
+
+4. Duplicate protection
+   
+   - Can the same reminder be sent more than once for the same invoice and stage?
+   - How does the system prevent duplicate SMS/WhatsApp/email?
+   - Where is this recorded?
+
+5. Notification providers
+   Explain how each currently works:
+   
+   - SMS via MSG91
+   - WhatsApp via MSG91
+   - Email
+   
+   Also tell me whether these are actually connected and functional or only configured in the UI.
+
+6. Message templates
+   Explain:
+   
+   - How "{student_name}" is replaced
+   - How "{guardian_name}" is replaced
+   - How "{fee_name}" is replaced
+   - How "{amount}" is calculated
+   - How "{due_date}" is formatted
+   - Whether the same template is used for SMS and Email
+   - Where templates are stored
+
+7. D+0 / D+7 / D+14 / D+30 buttons
+   What do these buttons in the UI actually control?
+   Are they only template selectors, or do they enable/disable the reminder stages?
+
+8. "Save Settings"
+   What exactly is saved when the admin clicks Save Settings?
+   Identify the database table/columns/API involved.
+
+9. "Save Templates"
+   What exactly is saved?
+   Identify the database table/columns/API involved.
+
+10. "Run Simulation"
+    This is very important.
+    Explain exactly what happens when the admin clicks Run Simulation:
+
+- Does it send real SMS/WhatsApp/email?
+- Does it only simulate?
+- What data does it process?
+- Does it create database records?
+- Does it affect Recent Deliveries?
+
+11. Recent Deliveries
+    Explain exactly:
+
+- Which table stores these records
+- When a delivery record is created
+- What status values exist
+- What information is stored
+- Whether failed deliveries are also recorded
+
+12. WhatsApp
+    The UI says:
+    ""WhatsApp uses a pre-approved MSG91 template (configured above) — its body text is managed in your MSG91 dashboard and cannot be customised here.""
+
+Explain exactly how the WhatsApp integration works and what template/message is actually sent.
+
+13. Failure handling
+    If SMS, WhatsApp, or email fails:
+
+- Is the failure recorded?
+- Is there a retry?
+- Is the next reminder stage still allowed to run?
+- Is the admin notified?
+
+14. Paid invoice protection
+    If an invoice becomes Paid after a reminder was scheduled:
+
+- Will the system still send the reminder?
+- At what point is the invoice status checked?
+
+15. Multiple invoices
+    If a student has multiple unpaid/overdue invoices:
+
+- Does the system send one reminder per invoice?
+- One combined reminder?
+- How does it handle multiple invoices?
+
+16. Multi-tenant safety
+    Confirm how the system ensures reminders from one school can never be sent using another school's data, templates, settings, or notification credentials.
+
+17. Exact technical flow
+    Finally, give me the complete flow in simple form:
+
+"Invoice → Due Date → Scheduler → Eligibility Check → Dunning Stage → Template → Provider → Delivery Record"
+
+For every step, mention the relevant file, API/route, function, database table, and important conditions.
+
+18. Current status
+    At the end, clearly classify every part as:
+
+- ✅ Fully implemented and functional
+- ⚠️ Implemented but needs configuration/external credentials
+- ❌ UI only / not actually functional
+- ❌ Missing
+
+Again: DO NOT CHANGE ANY CODE.
+Only inspect the current implementation and give me the factual answer based on the actual code.

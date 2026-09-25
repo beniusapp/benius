@@ -1,0 +1,23 @@
+Refactor the /admin-dashboard and its modules into a high-professional 3-Column Grid Command Center. This system must be optimized for 5,000+ students and follow a Strict Multi-Tenant Architecture where data never merges between different schools.
+​1. Hard Multi-Tenancy & Security (Crucial)
+​Data Isolation: Every single database query for the dashboard, registries, and logs MUST be filtered by the Admin's unique school_id.
+​URL Safety: Prevent 'ID guessing' by ensuring an Admin cannot access another school's data simply by changing a URL parameter.
+​2. The 'Live Pulse' Analytics Header
+​Horizontal top bar with: Total Strength (Students/Teachers), Daily Presence %, and Action Required (Pending count).
+​Logic: These stats must pull only from the current school's database records.
+​3. The 15-Tile Professional Grid (Navy & Gold Theme)
+​Group existing and new features into these categories with SVG icons:
+​[Foundation]: School Setup (Classes/Sections), Subject Master, Timetable Master.
+​[Oversight]: Attendance Overview, Exam Controller (Locking & Report Card Gen), Complaint Hub, Noticeboard.
+​[Management]: Approval Center (Unified Hub for Leaves/Gallery/Library), Faculty Mapping, Student Registry.
+​[Enterprise]: Performance Analytics, Audit Logs, Visitor Log, ID Card Gen, Assets/Inventory.
+​4. Big Data Handling (Search & Pagination)
+​Refactor Student Registry and Faculty Mapping to handle 5,000+ records:
+​Search Header: Debounced search bar for Name, DSID, or Subject.
+​Smart Filters: Quick dropdowns for Class and Section.
+​Server-Side Pagination: Use LIMIT 50 OFFSET X logic. The frontend should only load 50 rows at a time to maintain speed.
+​UI: Use condensed tables with 'Loading Skeletons' and 'Profile Modals' to avoid heavy page reloads.
+​5. Advanced Automation
+​Approval Sync: Approving a Leave in the 'Approval Center' must automatically write a 'Leave' entry into the Attendance table for that student's specific dates.
+​Notification Badges: Red counters on tiles for pending items.
+​Global Standards: Use dd/mm/yyyy format and ensure 'Add Teacher' includes mapping them to a specific Class/Subject."

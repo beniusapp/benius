@@ -1,0 +1,51 @@
+Refactor the /admin-dashboard/attendance-overview module into a professional, dual-layered (Student & Teacher) attendance system with a Unified Date Picker and a Master School Summary.
+
+1. TOP-LEVEL GLOBAL CONTROLS:
+
+Top Right Date Picker: Place a clean, interactive Calendar/Date Picker at the top right corner.
+
+Unified Refresh: Selecting a date must instantly update all data on the page (Master Summary, Student Class Grid, and Teacher Staff Grid) for that specific day, strictly scoped to the current school_id.
+
+2. THE MASTER SUMMARY SECTION (The Daily Pulse):
+
+Display high-level Global Summary Cards for the selected date:
+
+Total Students: Total school enrollment.
+
+Total Marked: Number of students whose attendance has been submitted so far.
+
+Present / Absent: Global school-wide numerical breakdown.
+
+On Leave: Total students with approved leave for that date.
+
+Attendance %: Automated calculation: (Present / Total Marked) * 100.
+
+3. SECTION A: STUDENT ATTENDANCE (Class-Specific Deep Dive):
+
+Granular Filters: Dropdowns for Class and Section (populated ONLY from the Admin’s official list via WHERE school_id = ?).
+
+Class Stats: Show 'Class Strength', 'Present', 'Absent', and 'On Leave' specifically for the selected group.
+
+Student Grid: A searchable table showing Roll No, Name, Status, and a 'View Profile' link. Use Emerald Green for Present and Red for Absent.
+
+4. SECTION B: TEACHER ATTENDANCE (Staff-Wide Oversight):
+
+Faculty Summary: Display 'Total Faculty', 'Present', 'Absent', and 'On Leave' for teachers.
+
+Staff Grid: A table showing Teacher Name, Department/Subject, and current Status for the selected date.
+
+Late Alerts: Highlight any teacher who marked 'Present' after the official school start time in Orange/Yellow.
+
+5. BACKEND & SECURITY (The Multi-Tenancy Guard):
+
+Strict Isolation: Every SQL query (SELECT, UPDATE, INSERT) must include WHERE school_id = ?. Ensure School A's data never leaks into School B.
+
+Local Machine Ready: Write the logic using standard relational SQL queries (Postgres/SQLite) to ensure 100% portability for the local machine migration.
+
+6. UI/UX SPECIFICATIONS:
+
+Theme: Benius Emerald Green (#10b981) and Slate Gray.
+
+Navigation: Use a Tabbed Interface ([Students] | [Teachers]) to keep the dashboard clean.
+
+Device Focus: Ensure the 'Master Summary' cards and Date Picker are perfectly readable and touch-friendly on the Motorola 60 Fusion.

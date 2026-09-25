@@ -1,0 +1,593 @@
+ATTENDANCE STEP 2G — READ-ONLY TENANT-ISOLATION AUDIT
+DO NOT IMPLEMENT ANY CHANGES
+
+We have completed Attendance Step 2F.
+
+Step 2D established authoritative Academic Session on Attendance writes.
+Step 2E established canonical Attendance identity:
+  school_id + session_id + student_id + date
+with session_id NOT NULL and Session deletion protection.
+Step 2F made Attendance readers session-specific and added server-side Session validation.
+
+Now perform ONLY a READ-ONLY AUDIT for Attendance Step 2G:
+STRICT TENANT / SCHOOL ISOLATION.
+
+IMPORTANT:
+- DO NOT modify any file.
+- DO NOT modify database schema.
+- DO NOT create migrations.
+- DO NOT modify database data.
+- DO NOT modify production.
+- DO NOT deploy.
+- DO NOT restart the application unless absolutely required for inspection.
+- DO NOT change frontend behavior.
+- DO NOT change calculations.
+- DO NOT change Attendance writers.
+- DO NOT change Attendance readers.
+- DO NOT introduce Enrollment restrictions.
+- DO NOT introduce Faculty Mapping restrictions.
+- DO NOT redesign Student Registry.
+- DO NOT fix anything discovered.
+- This task is investigation only.
+
+==================================================
+1. OBJECTIVE
+==================================================
+
+Determine whether Attendance is now STRICTLY tenant-specific everywhere.
+
+The permanent rule is:
+
+  Authenticated school/tenant
+        +
+  Attendance operation
+        ↓
+  ONLY data belonging to that authenticated school
+
+A browser/client/user must NEVER be able to use:
+- another school's schoolId
+- another school's studentId
+- another school's teacherId
+- another school's sessionId
+- another school's Attendance record
+- another school's class/section
+- another school's leave record
+
+to read, create, update, delete, summarize, calculate, or otherwise access Attendance data.
+
+The authenticated server-side school/tenant context is authoritative.
+
+Any browser-supplied schoolId MUST NOT be trusted as proof of tenant ownership.
+
+==================================================
+2. FIRST: INSPECT THE CURRENT IMPLEMENTATION
+==================================================
+
+Start by inspecting the actual current code after Step 2F.
+
+Pay particular attention to the files/functions changed in Steps 2D–2F:
+
+Server:
+- server/attendance-read-session.ts
+- server/storage.ts
+- server/routes.ts
+- server/teacher-routes.ts
+- any Attendance-related leave/correction routes
+- any Attendance-related helper/service files
+
+Frontend:
+- client/src/pages/admin-dashboard.tsx
+- client/src/pages/admin-modules/attendance-overview.tsx
+- client/src/pages/teacher-modules/attendance.tsx
+- client/src/pages/student-attendance.tsx
+- client/src/pages/student-dashboard.tsx
+- client/src/pages/student-examination.tsx
+- client/src/pages/student-archives.tsx
+
+Also search the entire repository for:
+- attendance_records
+- attendance
+- student_id
+- teacher_id
+- school_id
+- session_id
+- getAttendance
+- upsertAttendance
+- markAttendanceAsLeave
+- attendance history
+- attendance summary
+- attendance stats
+- attendance completion
+- attendance analytics
+- attendance correction
+- student leave
+- leave approval
+
+Do not assume the previously reported Step 2F implementation is correct.
+Verify the actual current code.
+
+==================================================
+3. TENANT SOURCE OF TRUTH
+==================================================
+
+Identify, separately for Admin, Teacher, and Student:
+
+A. How the authenticated user's schoolId is obtained.
+
+B. Whether that schoolId comes from:
+- authenticated session
+- server-side user/teacher/student record
+- request path
+- query parameter
+- request body
+- header
+- browser state
+
+C. Identify every place where browser/client supplied schoolId is accepted.
+
+D. Determine whether the server verifies that supplied schoolId belongs to the authenticated user's school.
+
+The desired behavior is:
+
+  authenticatedSchoolId = server-authoritative tenant
+
+and all Attendance operations must be constrained by it.
+
+A client-provided schoolId may be used only after it is verified against the authenticated tenant, or preferably ignored in favor of the authoritative tenant.
+
+==================================================
+4. ADMIN ATTENDANCE TENANT AUDIT
+==================================================
+
+Audit all Admin Attendance operations, including at minimum:
+
+- Attendance overview
+- Class Attendance detail
+- Teacher Attendance summary
+- Daily Attendance summary
+- Attendance analytics/performance analytics
+- Attendance history
+- Any Admin Attendance export/report
+- Any Admin Attendance correction/approval operation
+- Any Admin Leave → Attendance synchronization
+- Any Attendance-related dashboard data
+
+For each route/query/function determine:
+
+1. How authenticated schoolId is obtained.
+2. Whether school_id is included in the database query.
+3. Whether Student IDs are independently tenant-validated.
+4. Whether Session IDs are independently tenant-validated.
+5. Whether Teacher IDs are independently tenant-validated.
+6. Whether browser-provided schoolId can influence the result.
+7. Whether a cross-school ID can return another school's Attendance.
+8. Whether a cross-school ID can mutate another school's Attendance.
+9. Whether any query relies only on an ID without tenant validation.
+
+Explicitly test/trace cases such as:
+
+Admin from School A attempts:
+- School B session ID
+- School B student ID
+- School B teacher ID
+- School B Attendance query
+
+Expected result:
+- rejected or empty/isolated result
+- NEVER School B data
+
+==================================================
+5. TEACHER ATTENDANCE TENANT AUDIT
+==================================================
+
+Audit all Teacher Attendance operations:
+
+- Daily Attendance
+- Attendance history
+- Attendance completion/status
+- Teacher dashboard Attendance
+- Teacher profile Attendance status
+- Attendance marking
+- Attendance update/upsert
+- Any Attendance-related summary
+- Examination Attendance summary
+- Any leave-related Attendance operation available to Teacher
+
+For each operation determine:
+
+1. How authenticated Teacher identity is obtained.
+2. How authenticated schoolId is obtained.
+3. Whether the Teacher's school is authoritative.
+4. Whether request path schoolId is merely trusted.
+5. Whether request body schoolId is accepted.
+6. Whether studentId is checked against the authenticated school.
+7. Whether sessionId is checked against the authenticated school.
+8. Whether teacherId is checked against the authenticated school.
+9. Whether a Teacher from School A can target a School B student.
+10. Whether a Teacher from School A can target a School B session.
+11. Whether a Teacher from School A can target a School B Attendance record.
+
+IMPORTANT:
+The rule remains:
+
+ANY authenticated Teacher belonging to the school may mark Attendance.
+
+Do NOT introduce:
+- Enrollment requirements
+- Faculty Mapping requirements
+- Class/subject assignment restrictions
+
+This audit is about TENANT isolation only.
+
+==================================================
+6. STUDENT ATTENDANCE TENANT AUDIT
+==================================================
+
+Audit:
+
+- Student monthly Attendance
+- Student yearly Attendance
+- Student Attendance statistics
+- Student dashboard Attendance
+- Student examination Attendance
+- Student archives Attendance
+- Academic-session Attendance reads
+- Any Student Attendance history endpoint
+
+For each operation determine:
+
+1. Student identity source.
+2. Student school source.
+3. Whether authenticated Student identity is authoritative.
+4. Whether browser-provided studentId can influence Attendance access.
+5. Whether browser-provided schoolId can influence Attendance access.
+6. Whether sessionId is validated against the Student's school.
+7. Whether Attendance queries contain school_id.
+8. Whether cross-school Student IDs can expose data.
+
+Expected behavior:
+
+Student from School A must NEVER be able to access School B Attendance.
+
+The Student's own authenticated identity and school must be authoritative.
+
+==================================================
+7. STORAGE-LAYER TENANT AUDIT
+==================================================
+
+Audit all Attendance storage functions, especially:
+
+- getAttendanceByClassDate()
+- getAttendanceForStudentsOnDate()
+- getAttendanceHistory()
+- hasAttendanceToday()
+- getDailyAttendanceSummary()
+- getStudentMonthlyAttendance()
+- getStudentYearlyAttendance()
+- getStudentAttendanceStats()
+- upsertAttendance()
+- markAttendanceAsLeave()
+- any Attendance correction storage
+- any Attendance aggregate/query helper
+- any direct SQL touching attendance_records
+
+For every function determine:
+
+A. Does it require schoolId?
+B. Does it require sessionId where appropriate?
+C. Does its SQL explicitly constrain school_id?
+D. Does its SQL explicitly constrain session_id where appropriate?
+E. If it accepts studentId, is that student tenant-bound?
+F. If it accepts teacherId, is that teacher tenant-bound?
+G. Can a caller pass School A's schoolId together with School B's studentId?
+H. Can that combination return or modify School B data?
+I. Does it rely on upstream validation that is not guaranteed?
+
+Pay special attention to functions that operate by:
+- student_id
+- teacher_id
+- session_id
+- date
+without school_id.
+
+These are high-risk patterns.
+
+==================================================
+8. SESSION TENANT AUDIT
+==================================================
+
+Audit the Step 2F Session resolver:
+
+- server/attendance-read-session.ts
+
+Verify:
+
+1. Session exists check.
+2. Session school_id ownership check.
+3. Authenticated school is the comparison authority.
+4. Browser-supplied session ID cannot select another school's Session.
+5. Missing Session behavior.
+6. Invalid Session behavior.
+7. Cross-school Session behavior.
+8. Active-session fallback behavior.
+
+Also search the entire Attendance codebase for direct session lookups that bypass this resolver.
+
+Examples of suspicious patterns:
+
+- SELECT ... FROM academic_sessions WHERE id = ?
+- storage.getAcademicSession(id)
+- req.body.sessionId
+- req.query.sessionId
+- req.params.sessionId
+
+Determine whether every such lookup is tenant-safe.
+
+==================================================
+9. STUDENT TENANT AUDIT
+==================================================
+
+Search every Attendance-related Student lookup.
+
+Identify patterns such as:
+
+- getStudentById(studentId)
+- SELECT FROM students WHERE id = ?
+- find student by ID
+- student_id only
+- current Student Registry lookups
+
+Determine whether the lookup verifies:
+
+  student.id = requestedStudentId
+  AND
+  student.school_id = authenticatedSchoolId
+
+or whether the code relies only on the numeric/string student ID.
+
+This is especially important because Step 2H (historical Student identity) has NOT been implemented yet.
+
+DO NOT implement Step 2H now.
+
+Only identify whether current tenant isolation is safe.
+
+==================================================
+10. TEACHER TENANT AUDIT
+==================================================
+
+Search all Attendance-related Teacher lookups.
+
+Determine whether:
+
+- teacherId is authenticated
+- teacherId belongs to authenticated school
+- request-supplied teacherId is trusted
+- teacher_id alone is used in Attendance queries
+- teacher self-attendance can cross tenant boundaries
+- Attendance completion/status can cross tenant boundaries
+
+Again, audit only.
+
+==================================================
+11. LEAVE → ATTENDANCE TENANT AUDIT
+==================================================
+
+Audit the Leave → Attendance synchronization path.
+
+Especially:
+
+- student_leave_requests
+- leave approval
+- markAttendanceAsLeave()
+- any attendance_records creation/update caused by Leave
+
+Verify that:
+
+1. Leave belongs to the authenticated school.
+2. Student belongs to the same school.
+3. Session belongs to the same school.
+4. Attendance row is written with the same school_id.
+5. A School A leave request cannot create/update School B Attendance.
+
+Pay special attention to any lookup based only on:
+- student_id
+- session_id
+- leave_request_id
+
+==================================================
+12. CROSS-TENANT ATTACK-TRACE AUDIT
+==================================================
+
+Perform a code-level attack trace for these scenarios.
+
+Do NOT modify data.
+
+Scenario A:
+Authenticated Admin from School A sends:
+  schoolId = School B
+  sessionId = School B Session
+
+Determine whether School B data can be returned.
+
+Scenario B:
+Authenticated Teacher from School A sends:
+  schoolId = School B
+  studentId = School B Student
+  sessionId = School B Session
+
+Determine whether School B Attendance can be read or modified.
+
+Scenario C:
+Authenticated Teacher from School A sends:
+  studentId = School B Student
+  sessionId = School A Session
+
+Determine whether any School B Student information or Attendance can be accessed.
+
+Scenario D:
+Authenticated Student from School A attempts:
+  School B sessionId
+  School B studentId
+
+Determine whether School B Attendance can be accessed.
+
+Scenario E:
+Authenticated user from School A sends a valid School B sessionId through the Session header.
+
+Determine whether the resolver rejects it.
+
+Scenario F:
+Authenticated user from School A sends School B studentId to an Attendance storage/API path that does not include schoolId.
+
+Determine whether tenant isolation still holds.
+
+For each scenario state the exact code path and final result.
+
+==================================================
+13. DIRECT SQL AUDIT
+==================================================
+
+Search specifically for Attendance-related SQL that lacks tenant predicates.
+
+Flag any query against:
+
+- attendance_records
+- student_leave_requests
+- attendance_corrections
+- attendance_correction_requests
+- teacher_self_attendance
+- attendance-related aggregate queries
+
+that does not clearly constrain school_id where required.
+
+Do not automatically classify a query as unsafe merely because school_id is not in the SQL.
+
+If the query operates on a previously authenticated/tenant-bound object, explain why it is safe.
+
+==================================================
+14. DO NOT CHANGE THESE REQUIREMENTS
+==================================================
+
+These are permanent requirements and MUST remain unchanged:
+
+1. Multi-tenant / multi-school architecture is mandatory.
+
+2. Attendance is strictly school/tenant-specific.
+
+3. Student Registry is global/current and MUST NOT reset when Academic Session changes.
+
+4. Historical Attendance must remain associated with its original school and Academic Session.
+
+5. Any authenticated Teacher belonging to the school may mark Attendance.
+
+6. Enrollment is NOT an Attendance prerequisite.
+
+7. Faculty Mapping is NOT an Attendance authorization prerequisite.
+
+8. Do not redesign historical Student Registry in this audit.
+
+9. Do not change Attendance calculation formulas.
+
+10. Do not change Attendance writers.
+
+11. Do not change the canonical identity:
+
+   school_id + session_id + student_id + date
+
+==================================================
+15. REQUIRED AUDIT OUTPUT
+==================================================
+
+DO NOT make any changes.
+
+Return a detailed audit report with exactly these sections:
+
+A. Files inspected
+- list all relevant files inspected
+
+B. Tenant source of truth
+- Admin
+- Teacher
+- Student
+- exact source of schoolId for each
+
+C. Admin Attendance tenant audit
+- PASS / PARTIAL / FAIL
+- exact routes/functions
+- explanation
+
+D. Teacher Attendance tenant audit
+- PASS / PARTIAL / FAIL
+- exact routes/functions
+- explanation
+
+E. Student Attendance tenant audit
+- PASS / PARTIAL / FAIL
+- exact routes/functions
+- explanation
+
+F. Storage-layer tenant audit
+- each Attendance storage function
+- PASS / PARTIAL / FAIL
+- school/session predicates
+- ID validation behavior
+
+G. Session resolver audit
+- server/attendance-read-session.ts
+- PASS / PARTIAL / FAIL
+- cross-school behavior
+
+H. Student ID tenant audit
+- PASS / PARTIAL / FAIL
+- exact unsafe/safe lookup patterns
+
+I. Teacher ID tenant audit
+- PASS / PARTIAL / FAIL
+
+J. Leave → Attendance tenant audit
+- PASS / PARTIAL / FAIL
+
+K. Cross-tenant attack traces
+For Scenarios A–F:
+- exact path
+- whether access is possible
+- PASS / FAIL
+
+L. Direct SQL tenant audit
+- unsafe or potentially unsafe queries
+- why they are unsafe
+- exact file/function/line if available
+
+M. Overall Step 2G assessment
+Give exactly one:
+- PASS
+- PASS WITH FINDINGS
+- FAIL
+
+N. Minimum required changes
+If anything fails, list ONLY the minimum changes required to achieve strict tenant isolation.
+
+Do NOT propose:
+- unrelated cleanup
+- refactoring for style
+- Enrollment changes
+- Faculty Mapping changes
+- Student Registry redesign
+- calculation changes
+- calendar redesign
+- UI redesign
+
+O. Verification
+Confirm explicitly:
+- no files changed
+- no database changes
+- no production changes
+- no migrations
+- no deployment
+- no Attendance behavior changed
+
+IMPORTANT FINAL RULE:
+This is a READ-ONLY AUDIT.
+Do not fix anything you find.
+Do not silently modify anything.
+Report the actual current implementation and stop.

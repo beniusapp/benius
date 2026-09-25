@@ -1,0 +1,53 @@
+Act as a senior full-stack software engineer. I need to build/update the `/admin-dashboard/exam-controller` route inside my school management app named "BENIUS". 
+
+### Project Context
+Teachers use a ledger view (`Term 3 Results`) to "Run Auto-Suggestion", "Save Draft", and finally click "Lock & Save Ledger". 
+Once a teacher locks and saves the ledger, that class/section's data must flow into the `/admin-dashboard/exam-controller` where the Admin has final authority to promote or retain students.
+
+### Objective
+Create a complete, end-to-end implementation for the Admin Exam Controller page. The admin must be able to see which teachers completed their ledgers, detect if a teacher manually changed/overrode any student’s promotion status, and execute the final, permanent promotion/retention database update.
+
+---
+
+### 1. Database Schema Extensions
+Ensure our backend models track the following state data (extend existing MongoDB schemas or SQL tables accordingly):
+- **Teacher Status:** Track if the ledger is a `DRAFT` or `LOCKED_AND_SAVED`.
+- **Teacher Audit Log:** Track who locked the ledger (`teacher_id`) and when (`timestamp`).
+- **Intervention Flags:** In the student promotion breakdown array, save both the system's `auto_suggestion` (e.g., FAIL) and the teacher's final saved choice (e.g., PASS). If they don't match, flag it as `manual_intervention = true`.
+- **Admin Final Status:** Track the admin's actual decision (`PROMOTE`, `RETAIN`, `GRACE_PASS`) and execution state (`PENDING`, `EXECUTED`).
+
+---
+
+### 2. Frontend Component & UI Architecture (`/admin-dashboard/exam-controller`)
+
+Implement a multi-view dashboard using Tailwind CSS matching the dark-blue theme seen in the screenshots:
+
+#### View A: The Global Class Status Table (Initial View)
+Show a card/table listing all active classes and sections:
+- **Columns:** Class & Section, Ledger Status (Badge: "Pending Marks", "Draft", or "Locked & Saved"), Submitted By, Manual Interventions Flagged (Display an alert badge like "⚠️ 2 Overrides" if true), and an Action Button.
+- If status is NOT "Locked & Saved", disable the promotion wizard button. If it is ready, show a **"Review & Execute"** button.
+
+#### View B: The Academic Advancement Wizard (Triggered on selecting a ready class)
+Replicate and expand the screenshots provided using the step-by-step logic:
+- **Header Summary Card:** Show an alert banner detailing who finalized this ledger: *"📝 Verified ledger submitted by [Teacher Name] on [Date]"*.
+- **Step 1 — Cohort Details:** Pre-selected dropdowns (Class, Section, Exam Type) reflecting the selected data.
+- **Step 2 — Audit & Discrepancy Table:** - Render the student rows showing `DSID`, `Name`, and `Total/Max Marks`.
+    - **CRITICAL:** If `manual_intervention === true` for a student, highlight their row in amber/yellow. Show text: *"Teacher changed system suggestion from [Auto-Fail] to [Pass]"*.
+    - Next to each student row, provide three administrative override toggles: `[Promote]` `[Retain]` `[Apply Grace Pass]`.
+- **Step 3 — Execute Promotion Card:** - Display aggregate metrics counters: Total Students, Will Be Promoted, Repeating Year, Grace Passes. These counters must update dynamically based on the Admin's live changes in Step 2.
+    - Include a mandatory confirmation checkbox: `"I confirm this will permanently update the class/section for X students. This action cannot be undone."`
+    - A **"Execute Promotion"** button that remains disabled until the checkbox is ticked.
+
+---
+
+### 3. Backend API Implementation (`/api/admin/execute-promotion`)
+
+Write a robust, safe API endpoint (Express/Node.js or your active framework equivalent) to handle the execution submission:
+1. **Validation Phase:** Verify that the target class/section ledger status is strictly set to `LOCKED_AND_SAVED`. Prevent execution if the teacher is still working in draft mode.
+2. **Database Transaction Block:** Use a secure database transaction layer (e.g., `mongoose.startSession()` or SQL transaction block) so that changes succeed or fail as an indivisible unit:
+    - **For Promoted Students:** Find the student profile by `DSID`, increment their `current_class` (e.g., Class 6 -> Class 7), and update their enrollment status.
+    - **For Retained Students:** Keep their `current_class` the same, but mark their status or record flag as `RETAINED` for the upcoming academic cycle.
+    - **Audit Log Update:** Change the global class promotion status to `EXECUTED` and store the admin user id and timestamp.
+3. **Error Handling:** If any single student update fails mid-loop, roll back the entire transaction completely and return a `500 Server Error` detailing the issue.
+
+Please generate the necessary code changes, frontend UI components, and API route structures to achieve this full setup seamlessly.

@@ -1,0 +1,346 @@
+Update the existing Fees & Payments → Ledger & Transactions module to implement a professional, scalable selection system for schools with thousands of students/fee records.
+
+IMPORTANT
+
+- Do NOT redesign the existing Ledger & Transactions UI.
+- Do NOT remove the existing pagination.
+- Do NOT change existing columns, data, filters, actions, or business logic except where required for this selection enhancement.
+- Do NOT change the screen's visual design unnecessarily.
+- Do NOT load thousands of records into the browser at once.
+- Preserve all existing functionality.
+
+1. KEEP SERVER-SIDE PAGINATION
+
+Keep the existing:
+
+Previous | Page 1 | Page 2 | ... | Next
+
+pagination.
+
+Pagination must remain server-side and scalable.
+
+Example:
+
+«Showing 1–20 of 3,000 records»
+
+The browser should only receive/render the records required for the current page.
+
+Do NOT fetch all 3,000+ records just to implement selection.
+
+---
+
+2. SELECTION MUST PERSIST ACROSS PAGES
+
+Currently, each row has a checkbox.
+
+When an admin selects a record on Page 1 and then moves to Page 2, the selection must NOT disappear.
+
+Example:
+
+Page 1:
+
+- Student A ☑
+- Student B ☑
+
+Selected count:
+
+«2 Selected»
+
+Navigate to Page 2.
+
+Page 2:
+
+- Student C ☑
+
+Now:
+
+«3 Selected»
+
+Go back to Page 1.
+
+Student A and Student B must still be checked.
+
+Selection must persist across:
+
+- pagination
+- search
+- filtering
+- sorting
+- changing page size, if supported
+
+Selection must be based on the record's unique database ID, never on row number, array index, or page number.
+
+---
+
+3. SELECT ALL MUST BE CLEARLY DEFINED
+
+Do NOT make "Select All" mean only the currently visible page without making that clear.
+
+Implement enterprise-style selection behavior:
+
+Step A — Select current page
+
+When the admin clicks the existing Select All control:
+
+Select all records currently displayed on the current page.
+
+Example:
+
+«20 records selected on this page.»
+
+If more matching records exist outside the current page, show a clear option such as:
+
+«Select all 2,847 matching records»
+
+The exact wording can follow the existing UI design.
+
+Step B — Select all matching records
+
+If the admin chooses Select all matching records, selection must represent all records matching the current search/filter criteria, not merely the records loaded on the current page.
+
+Example:
+
+Current filters:
+
+- Class: 6-A
+- Status: Paid
+
+Matching records:
+
+«120»
+
+Page contains:
+
+«20»
+
+After selecting all matching records:
+
+«120 records selected»
+
+Do NOT load all 120 records into the browser.
+
+The backend/query should handle the full matching set efficiently.
+
+---
+
+4. SEARCH MUST WORK ACROSS THE COMPLETE DATASET
+
+Search must search the complete dataset available to the admin, not merely the currently loaded page.
+
+Example:
+
+There are 3,000+ records.
+
+A student exists on what would normally be Page 97.
+
+If the admin searches that student's name/ID, the search must find the student regardless of their original page.
+
+After selecting that student, clearing the search must NOT remove the selection.
+
+---
+
+5. FILTERS MUST WORK WITH SELECTION
+
+Existing filters such as:
+
+- Status
+- Class
+- Fee Name
+- Fee Type
+- Search
+
+must continue working exactly as they do now.
+
+Selection must remain persistent when the admin changes filters.
+
+Example:
+
+1. Search Student A → select Student A.
+2. Search Student B → select Student B.
+3. Clear search.
+4. Both Student A and Student B remain selected.
+
+Do not accidentally clear previous selections simply because the result set changed.
+
+---
+
+6. SELECTED COUNT
+
+Add a clear, compact selected-record indicator near the existing selection controls.
+
+Examples:
+
+«3 Selected»
+
+or:
+
+«3 Records Selected»
+
+When nothing is selected:
+
+«0 Selected»
+
+The selected count must update immediately.
+
+If the user selects all matching records:
+
+«2,847 Records Selected»
+
+The count must represent the actual selection scope.
+
+---
+
+7. CLEAR SELECTION
+
+Keep the existing Clear functionality.
+
+Clear must remove the current selection completely.
+
+After clicking Clear:
+
+«0 Selected»
+
+and all visible row checkboxes must become unchecked.
+
+---
+
+8. CHECKBOX STATES
+
+The header checkbox should correctly support:
+
+- unchecked = nothing selected on the current page
+- checked = all records on the current page selected
+- indeterminate = some records on the current page selected
+
+Do not show an incorrect checked state merely because records are selected on another page.
+
+---
+
+9. BULK ACTIONS
+
+Existing bulk actions such as:
+
+- Ledger PDF
+- Tx Report PDF
+- Export Ledger
+- Record Offline Payment
+
+must continue working.
+
+Do not break their existing functionality.
+
+When a bulk action operates on selected records, it must operate on the actual selected record IDs, including records selected from other pages.
+
+If "select all matching records" is active, the backend should process the matching dataset safely without requiring the browser to hold every record.
+
+---
+
+10. PERFORMANCE REQUIREMENTS
+
+This module may contain:
+
+- 3,000+
+- 10,000+
+- potentially much more
+
+records.
+
+Therefore:
+
+- Keep server-side pagination.
+- Keep server-side search/filtering.
+- Do not render thousands of rows simultaneously.
+- Do not fetch the entire dataset into React state.
+- Do not store thousands of complete record objects in frontend state unnecessarily.
+- Store only the necessary selection state/IDs or an equivalent scalable selection model.
+- Avoid N+1 API/database queries.
+- Preserve existing query performance.
+
+For "Select all matching", use a scalable approach such as a selection scope/query/filter representation rather than downloading every matching record to the browser.
+
+---
+
+11. IMPORTANT EDGE CASES
+
+Handle these correctly:
+
+Case 1
+
+Select 3 students on Page 1 → go to Page 2 → selection remains.
+
+Case 2
+
+Select Student A → search Student B → select Student B → clear search → both remain selected.
+
+Case 3
+
+Select 5 students → change Class filter → selected students remain selected.
+
+Case 4
+
+Select all records on Page 1 → go to Page 2 → Page 1 records remain selected, but Page 2 records are NOT automatically selected unless the user explicitly chooses "Select all matching records."
+
+Case 5
+
+Select all matching records → change the filter/search criteria.
+
+The UI must clearly handle the change of selection scope and must NOT silently apply the old "all matching" selection to a completely different query.
+
+Case 6
+
+Click Clear → every selection is removed.
+
+---
+
+12. DO NOT CHANGE EXISTING UI DESIGN
+
+This is an enhancement to the existing Ledger & Transactions module.
+
+Do NOT:
+
+- remove pagination
+- redesign the table
+- change colors
+- change typography
+- change existing columns
+- change existing filters
+- change existing actions
+- change receipt/invoice logic
+- change fee calculations
+- change payment logic
+- change database business rules unnecessarily
+
+Only make the minimum UI changes necessary to provide:
+
+persistent multi-page selection + select-current-page + select-all-matching + selected count + clear selection.
+
+---
+
+13. VERIFY WITH REALISTIC DATA
+
+After implementation, test with at least:
+
+- 20 records
+- 100 records
+- 3,000+ records if the existing environment supports it
+
+Verify:
+
+1. Select records on Page 1.
+2. Navigate to Page 2.
+3. Confirm previous selections remain.
+4. Select additional records.
+5. Search for another student.
+6. Select that student.
+7. Clear search.
+8. Confirm all previous selections remain.
+9. Test Select All current page.
+10. Test Select All Matching.
+11. Test Clear.
+12. Change filters and verify selection behavior.
+13. Confirm the browser does not load/render thousands of rows simultaneously.
+14. Confirm existing bulk actions still work.
+
+Do not consider the implementation complete until these behaviors work correctly.
+
+Before making changes, inspect the existing selection, pagination, API/query, and bulk-action implementation and reuse the existing architecture wherever possible. Do not create a parallel selection/pagination system if the existing one can be safely extended.

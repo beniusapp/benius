@@ -1,0 +1,351 @@
+Implement Fee Period & Billing Schedule
+
+I approve the following architecture. Please implement it in the existing multi-tenant school ERP.
+
+Goal
+
+Every generated invoice must permanently know what fee period it represents, independently from:
+
+- Invoice generation date
+- Due date
+- Payment date
+
+The fee period must flow consistently:
+
+Fee Structure → Invoice → Student Portal → Payment → Receipt
+
+Do not determine the fee period from the payment date.
+
+1. First inspect the existing system
+
+Before modifying anything, inspect:
+
+- "fee_structures"
+- "fee_records"
+- Academic Session logic
+- Monthly/Quarterly/Annual frequency logic
+- Manual "Generate Invoices"
+- Auto-invoice generation
+- Existing due-date logic
+- Existing invoice uniqueness/idempotency rules
+
+Reuse existing fields and logic wherever possible.
+
+Do NOT create duplicate fields if equivalent data already exists.
+
+Do not modify Razorpay/payment processing, webhook logic, late-fee calculation, or receipt payment calculations as part of this task.
+
+2. Fee Period
+
+Every invoice/fee record must have an immutable billing period.
+
+Prefer storing:
+
+- "fee_period_start"
+- "fee_period_end"
+
+Then display it according to frequency:
+
+Monthly
+
+Example:
+
+"August 2026"
+
+Quarterly
+
+Example:
+
+"April–June 2026"
+
+Annual
+
+Example:
+
+"Academic Session 2026–27"
+
+The invoice must retain this period permanently after generation.
+
+3. Fee Structure Configuration
+
+Extend the existing fee structure configuration only where necessary.
+
+For recurring fees, support:
+
+Frequency
+
+- Monthly
+- Quarterly
+- Annual
+
+Billing Timing
+
+For Monthly and Quarterly:
+
+- In Advance
+- In Arrears
+
+Meaning:
+
+Monthly — In Advance
+
+August invoice:
+
+- Fee Period: August 2026
+- Generated: August 2026
+- Due: e.g. August 10
+
+Monthly — In Arrears
+
+August fee collected in September:
+
+- Fee Period: August 2026
+- Generated: September 2026
+- Due: e.g. September 10
+
+Quarterly — In Advance
+
+Example:
+
+- Fee Period: April–June 2026
+- Generated during the configured advance period
+- Due according to the configured due-day rule
+
+Quarterly — In Arrears
+
+Example:
+
+- Fee Period: April–June 2026
+- Generated in July 2026
+- Due: July 10
+
+For Annual fees, use the existing Academic Session rather than asking the admin to manually type a session.
+
+4. Manual Invoice Generation
+
+When an admin manually generates invoices:
+
+Monthly
+
+Show:
+
+Fee Period: [August 2026 ▼]
+
+Quarterly
+
+Show:
+
+Fee Period: [April–June 2026 ▼]
+
+Annual
+
+Use the existing academic session:
+
+Academic Session: [2026–27 ▼]
+
+The admin may select a permitted billing period, but the system must validate:
+
+- Duplicate invoice prevention
+- Academic-session consistency
+- Valid period
+- Existing invoice for the same student + fee structure + period
+- No accidental duplicate generation
+
+Do not allow duplicate invoices for the same:
+
+School + Student + Fee Structure + Fee Period
+
+Keep the existing audit/idempotency protections.
+
+5. Auto Invoice Generation
+
+Auto-generation must determine the correct fee period from the fee structure's billing configuration.
+
+It must NOT simply use:
+
+"current month = fee month"
+
+Instead:
+
+Monthly + In Advance
+
+Generation in August → August 2026 fee period.
+
+Monthly + In Arrears
+
+Generation in September → August 2026 fee period.
+
+Quarterly + In Advance
+
+Generate the current configured quarter.
+
+Quarterly + In Arrears
+
+Generate the previous completed quarter.
+
+The exact dates must be calculated from the school's configured academic/billing calendar.
+
+The auto-generator must be idempotent.
+
+If it runs multiple times, it must detect that the invoice for that period already exists and must not create another invoice.
+
+6. Due Date
+
+Keep the fee period separate from the due date.
+
+Example:
+
+School A:
+
+- Fee Period: August 2026
+- Generated: September 1, 2026
+- Due Date: September 10, 2026
+
+School B:
+
+- Fee Period: August 2026
+- Generated: August 1, 2026
+- Due Date: August 10, 2026
+
+Both are correctly charging for August, despite having different generation and due dates.
+
+Reuse the existing due-date configuration where possible.
+
+7. Student Portal
+
+On every fee/invoice card, clearly show:
+
+Fee Period: August 2026
+
+or:
+
+Fee Period: April–June 2026
+
+Do not use the payment date as the fee period.
+
+8. Receipt
+
+The receipt must use the immutable fee period stored on the invoice/fee record.
+
+Examples:
+
+"Fee Month: August 2026"
+
+or:
+
+"Fee Period: April–June 2026"
+
+For annual fees:
+
+"Academic Session: 2026–27"
+
+Keep:
+
+Payment Date separate from the fee period.
+
+Example:
+
+Fee Period: August 2026
+Payment Date: 05 September 2026
+
+Do not recalculate the fee period when the receipt is downloaded later.
+
+9. Multi-Tenant Requirement
+
+This is a multi-school SaaS.
+
+Each school's billing configuration must operate independently.
+
+Example:
+
+School A
+
+Monthly + Arrears
+August fee → generated in September → due September 10
+
+School B
+
+Monthly + Advance
+August fee → generated in August → due August 10
+
+The same auto-generation system must correctly handle both schools based on their individual configuration.
+
+Never use one school's billing configuration for another school.
+
+10. Database Safety
+
+Before adding migrations:
+
+- Check whether equivalent fields already exist.
+- Reuse existing fields if possible.
+- If new fields are required, create a proper migration.
+- Do not modify unrelated tables.
+- Do not alter existing payment transaction records.
+- Preserve all existing fee records.
+
+For existing invoices, provide a safe/backward-compatible handling strategy rather than inventing historical fee periods.
+
+11. Payment Safety
+
+This task must NOT modify:
+
+- Razorpay order creation
+- Razorpay amount calculation
+- Razorpay webhooks
+- "/api/payments/verify"
+- Offline payment processing
+- FIFO allocation
+- Late-fee calculation
+- Receipt numbering
+- Payment records
+- Existing payment idempotency/concurrency protections
+
+The fee period is invoice metadata and must not change the amount/payment behavior.
+
+12. Testing
+
+After implementation, test at minimum:
+
+1. Monthly + In Advance
+2. Monthly + In Arrears
+3. Quarterly + In Advance
+4. Quarterly + In Arrears
+5. Annual + Academic Session
+6. Manual invoice generation
+7. Duplicate invoice prevention
+8. Auto-generation repeated twice — no duplicates
+9. Two different schools with different billing timing
+10. Student portal displays correct fee period
+11. Paid invoice receipt displays the same fee period
+12. Existing invoices/payments continue working
+13. Existing payment/Razorpay tests remain passing
+
+Use realistic examples:
+
+School A: August fee collected in September
+School B: August fee collected in August
+
+Verify that both produce:
+
+"Fee Period = August 2026"
+
+while their generation and due dates differ.
+
+Important
+
+This is an implementation task, not a redesign of the payment system.
+
+First inspect the existing architecture and reuse it wherever possible. Make the smallest safe changes necessary.
+
+After implementation, provide:
+
+- Files changed
+- Database changes/migrations
+- Manual invoice flow
+- Auto-generation logic
+- Monthly/Quarterly/Annual behavior
+- School A vs School B verification
+- Student portal verification
+- Receipt verification
+- Test results
+- Confirmation that payment/Razorpay logic was not modified

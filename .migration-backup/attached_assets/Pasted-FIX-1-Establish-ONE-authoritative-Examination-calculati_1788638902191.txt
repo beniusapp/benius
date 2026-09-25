@@ -1,0 +1,362 @@
+FIX 1 — Establish ONE authoritative Examination calculation brain
+
+We are working in BUILDING/DEVELOPMENT mode, not production.
+
+GREEN SIGNAL: Implement FIX 1 only.
+
+IMPORTANT:
+This is a controlled, one-step-at-a-time change.
+Do NOT implement Fix 2 or any later fixes.
+Do NOT redesign the Examination module.
+Do NOT change existing school policy values.
+Do NOT change database schema or migrations.
+Do NOT modify production data.
+Do NOT modify Student Registry, Faculty Mapping, Enrollment, Promotion execution, Attendance, or unrelated modules.
+
+GOAL
+
+Establish ONE authoritative, shared, testable calculation engine/contract for Teacher Portal → Examination results.
+
+The engine must use the policy belonging to the relevant school/session.
+
+Conceptually:
+
+    School's marks/data
+             +
+    School's configured Examination policy
+             +
+    School's grading rules
+             +
+    School's pass percentage/rules
+             ↓
+    ONE authoritative calculation engine
+             ↓
+    Examination result
+
+School A and School B may have different policies.
+
+The engine must NOT contain hardcoded School A/School B rules.
+
+Instead, it must receive the applicable school's configured policy as input.
+
+MULTI-TENANT REQUIREMENT
+
+This is mandatory.
+
+The calculation engine must never mix data or policy between schools.
+
+For a calculation:
+
+    authenticated teacher school
+            ↓
+    selected/validated academic session
+            ↓
+    that school's policy
+            ↓
+    that school's students/scores
+            ↓
+    calculation
+
+Do not allow School A data to be calculated with School B policy.
+
+IMPORTANT SCOPE FOR THIS FIX
+
+The purpose of this step is primarily to establish the single calculation brain and its contract WITHOUT changing the current calculation behavior yet.
+
+Do NOT attempt to fix all existing calculation inconsistencies in this step.
+
+Specifically, DO NOT yet change:
+
+- 33% vs 35% vs configurable pass thresholds
+- absent vs missing behavior
+- promotion fail-count interpretation
+- cumulative weighting behavior
+- rounding differences
+- negative marks
+- fractional mark handling
+- total marks validation
+- attendance calculation
+- Faculty Mapping authorization
+- Enrollment requirements
+- Student Registry roster logic
+- score uniqueness
+- session isolation fixes
+- tenant/security fixes outside what is strictly necessary for the calculation input boundary
+- UI redesign
+- School Setup policy redesign
+
+Those will be separate later fixes.
+
+WHAT TO INSPECT FIRST
+
+Before modifying code, inspect the restored/current Examination implementation and identify:
+
+1. Existing Teacher Examination calculation functions.
+2. Existing Results calculation logic.
+3. Existing grading-rule loading.
+4. Existing exam-policy loading.
+5. Existing promotion calculation logic.
+6. Existing duplicated calculation logic in other screens/modules.
+7. Existing data structures/interfaces that can be reused.
+8. Whether there is already a suitable shared calculation module in the current codebase.
+
+Do not assume a post-rollback file exists.
+
+Use the actual current repository state.
+
+AUTHORITATIVE ENGINE
+
+Create or establish one shared calculation module/service for academic Examination result calculations.
+
+Use a clear name appropriate to the existing architecture, for example:
+
+    ExaminationCalculationEngine
+
+or another equivalent name if the repository conventions indicate a better choice.
+
+The engine should be pure/testable as much as practical.
+
+It should NOT directly fetch arbitrary database data.
+
+Instead, calculation inputs should be supplied to it.
+
+The engine should be responsible for calculation, while route/storage/UI layers remain responsible for retrieving and validating data.
+
+MINIMUM INPUT CONTRACT
+
+Define a clear input contract representing:
+
+- school context / schoolId where appropriate
+- academic session context/sessionId
+- student
+- exam scores for the student
+- applicable Examination policy
+- applicable grading rules
+- applicable pass percentage/rule configuration
+
+Use the repository's existing types/configuration structures where practical.
+
+Do not create duplicate policy formats if an existing policy structure already exists.
+
+MINIMUM OUTPUT CONTRACT
+
+The authoritative calculation result should have a clear structure capable of representing:
+
+- subject result
+- subject percentage
+- subject pass/fail status
+- grade
+- term result / term average
+- cumulative/annual result where configured
+
+It must also be possible to represent states that the existing implementation already distinguishes, such as:
+
+- scored
+- missing
+- absent
+- incomplete
+
+Do NOT change how these states behave yet unless necessary to establish the contract.
+
+PRESERVE CURRENT POLICY CONFIGURATION
+
+The engine must read/use the existing school's configured policy structure.
+
+Example:
+
+School A:
+
+    passPercentage = 35
+    grading rules = School A rules
+    exam weights = School A weights
+
+School B:
+
+    passPercentage = 40
+    grading rules = School B rules
+    exam weights = School B weights
+
+The SAME engine calculates both.
+
+Do NOT hardcode these example values.
+
+Do NOT change the actual values currently configured in the database/application.
+
+TEACHER EXAMINATION INTEGRATION
+
+Integrate the existing Teacher Examination Results calculation with the new authoritative engine.
+
+The goal is that Teacher Examination no longer owns a separate competing implementation of the same academic calculation logic.
+
+Where the current Teacher Examination page contains calculation functions such as:
+
+- computeAllStudentResults
+- computeGrade
+- term calculation
+- cumulative calculation
+
+extract/route those calculations through the authoritative engine rather than maintaining a second implementation.
+
+IMPORTANT:
+
+Do this conservatively.
+
+Preserve the current visible behavior as much as possible.
+
+Do not simultaneously fix the known calculation inconsistencies.
+
+If an existing function contains both calculation and UI presentation logic, separate only what is necessary so the calculation itself is delegated to the shared engine.
+
+OTHER DUPLICATED CALCULATORS
+
+If another module contains duplicated academic calculation logic, such as Performance Analytics, do NOT perform a large migration in this step.
+
+Instead:
+
+- identify the duplication
+- make the new engine compatible with that calculation
+- migrate only the minimum safe consumer(s) necessary to establish Teacher Examination as using the authoritative engine
+
+If migrating another consumer would create a large unrelated change, leave it for a later step and document it.
+
+NO DATABASE CHANGES
+
+Do not:
+
+- create migrations
+- alter tables
+- add columns
+- delete columns
+- change constraints
+- rewrite existing data
+
+This fix is a code-level calculation architecture change.
+
+TESTS
+
+Add focused unit tests for the new calculation engine.
+
+Tests must verify at minimum:
+
+1. The same engine can calculate using two different policy configurations.
+2. Policy values are taken from the supplied configuration rather than hardcoded.
+3. Exam weights supplied by the policy are used.
+4. Grading rules supplied by the policy are used.
+5. The engine can distinguish the existing scored/missing/absent/incomplete states.
+6. A simple scored subject produces the expected result using the EXISTING behavior.
+7. A term result can be calculated from the supplied exam-policy configuration.
+8. A cumulative/annual result can be represented/calculated where the existing policy enables it.
+
+Use realistic examples based on the current implementation.
+
+Do not invent a new academic policy.
+
+IMPORTANT TEST PRINCIPLE
+
+The tests should establish the architecture and preserve existing behavior.
+
+They should NOT be used to silently redefine the school's academic rules.
+
+NO UI REDESIGN
+
+Do not redesign Teacher Examination.
+
+Do not change:
+
+- layout
+- buttons
+- selectors
+- navigation
+- labels
+- styling
+
+unless a tiny change is strictly required to connect the existing Results calculation to the shared engine.
+
+NO UNRELATED CHANGES
+
+Do not modify unrelated files.
+
+Do not clean up unrelated code.
+
+Do not upgrade dependencies.
+
+Do not change authentication.
+
+Do not change database records.
+
+Do not change production.
+
+MULTI-TENANT TEST
+
+Include a test demonstrating policy isolation at the calculation-input boundary.
+
+For example:
+
+    School A policy:
+        pass = 35
+        grading = A/B/etc.
+
+    School B policy:
+        pass = 40
+        different grading rules
+
+Give the same marks to the engine with each policy.
+
+Verify that the result changes according to the supplied policy.
+
+The test must demonstrate that the engine does not contain a global hardcoded policy.
+
+IMPORTANT:
+
+This test is about calculation-policy isolation.
+Do not modify database data just to create this test.
+
+VERIFICATION
+
+After implementation:
+
+1. Run the relevant unit tests.
+2. Run TypeScript/type checking.
+3. Run the relevant existing Examination tests if available.
+4. Verify Teacher Examination still loads.
+5. Verify existing Results calculation still works.
+6. Verify the engine uses supplied school policy/configuration.
+7. Verify no database/schema/migration changes were made.
+8. Verify no production changes were made.
+9. Review git diff carefully for unrelated changes.
+
+STOP CONDITION
+
+STOP after FIX 1 is complete.
+
+Do NOT proceed to Fix 2.
+
+Do NOT fix the known calculation inconsistencies yet.
+
+Do NOT implement session isolation.
+
+Do NOT implement mark validation.
+
+Do NOT implement tenant authorization fixes.
+
+Do NOT modify Faculty Mapping or Enrollment behavior.
+
+FINAL RESPONSE
+
+Report:
+
+A. Exact files changed
+B. New calculation engine/module name and location
+C. Input contract
+D. Output contract
+E. How school-specific policy is supplied
+F. How Teacher Examination now uses the engine
+G. Any duplicated calculation logic intentionally left for later
+H. Tests added and results
+I. TypeScript/build verification
+J. Confirmation that no database/schema/migration/data changes were made
+K. Confirmation that no production changes were made
+L. Git diff/stat summary
+M. Anything that prevented full completion
+
+Do not make additional changes after producing this report.

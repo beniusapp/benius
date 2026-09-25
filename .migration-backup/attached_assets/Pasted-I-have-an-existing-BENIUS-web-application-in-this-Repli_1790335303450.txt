@@ -1,0 +1,495 @@
+I have an existing **BENIUS** web application in this Replit project.
+
+IMPORTANT:
+The product/application name is **BENIUS**.
+Do NOT call it "MIS" in the application architecture, UI, documentation, or proposed mobile project naming.
+
+I am not technically knowledgeable, so for this step I want ONLY a complete READ-ONLY architecture audit.
+
+I eventually want to build a proper native-feeling mobile application for:
+
+* Android
+* iOS
+
+The mobile application must use the existing BENIUS backend and database wherever appropriate, while keeping the existing BENIUS web application fully functional.
+
+==================================================
+STRICT READ-ONLY RULE
+=====================
+
+DO NOT make ANY changes in this step.
+
+Do NOT:
+
+* modify files
+* create files
+* install packages
+* create a mobile application
+* create an Expo project
+* change the database
+* create migrations
+* change APIs
+* change authentication
+* change routing
+* change UI
+* change configuration
+* change environment variables
+* change secrets
+* delete anything
+* rename anything
+* refactor anything
+* run automated fixes
+* upgrade dependencies
+
+You may inspect the entire repository, source code, package configuration, database schema definitions, routes, authentication logic, and existing documentation.
+
+This must remain a READ-ONLY audit.
+
+==================================================
+BENIUS — CURRENT ARCHITECTURE
+=============================
+
+Inspect the complete BENIUS project and report:
+
+1. Frontend technology/framework
+
+2. Backend technology/framework
+
+3. Database technology
+
+4. ORM/database access technology
+
+5. Authentication mechanism
+
+6. Session mechanism
+
+7. User roles currently supported
+
+8. API architecture
+
+9. Current BENIUS project folder structure
+
+10. Whether frontend and backend are in the same Replit project
+
+11. How the web frontend communicates with the backend
+
+12. Whether the frontend depends on browser cookies, sessionStorage, localStorage, EventSource/SSE, DOM APIs, browser downloads, printing, canvas, popups, or other browser-only functionality
+
+13. Current build/start/development commands
+
+14. Existing test/type-check commands
+
+==================================================
+MULTI-TENANT / SCHOOL ISOLATION
+===============================
+
+This is a permanent and NON-NEGOTIABLE requirement of BENIUS.
+
+BENIUS is a multi-tenant / multi-school application.
+
+Every school-scoped operation must be constrained to the authenticated school/tenant.
+
+Inspect the complete codebase and explain:
+
+1. How the authenticated school/tenant is determined.
+
+2. How Admin, Teacher, and Student identities are connected to a school.
+
+3. How school authorization is enforced.
+
+4. Whether any API accepts a school ID from the client.
+
+5. If a client-supplied school ID exists, determine whether the server independently verifies it against the authenticated user's school.
+
+6. Identify any routes where school isolation is missing, inconsistent, or potentially unsafe.
+
+7. Identify any possibility of cross-school:
+
+   * student access
+   * teacher access
+   * attendance access
+   * examination access
+   * timetable access
+   * reports
+   * promotion access
+   * configuration access
+   * file access
+
+DO NOT FIX ANYTHING.
+
+Only report findings.
+
+==================================================
+ACADEMIC SESSION REQUIREMENT
+============================
+
+This is another permanent and NON-NEGOTIABLE BENIUS requirement.
+
+Every examination and promotion operation must be explicitly scoped to:
+
+```
+AUTHENTICATED SCHOOL/TENANT
+                +
+       SELECTED ACADEMIC SESSION ID
+```
+
+Inspect the complete codebase.
+
+Determine:
+
+1. Where Academic Sessions are defined.
+
+2. How Academic Session IDs are stored.
+
+3. How the currently selected Academic Session is stored on the web client.
+
+4. How the selected Academic Session is transmitted to the backend.
+
+5. How the backend validates Session ownership.
+
+6. Which APIs require Academic Session ID.
+
+7. Which APIs currently fall back to an active/current Session.
+
+8. Whether any examination API can accidentally operate without the intended Session.
+
+9. Whether promotion operations are Session-scoped.
+
+10. Whether Exam Controller operations are Session-scoped.
+
+11. Whether promotion overrides contain Academic Session ID.
+
+12. Whether Exam Controller aggregation correctly filters by Academic Session.
+
+13. Whether promotion execution is Session-scoped.
+
+14. Whether history is linked to the correct Academic Session.
+
+15. Whether a new Academic Session gets a completely fresh/isolated Exam Controller operational context.
+
+16. Whether previous-session operational data can leak into a new Academic Session.
+
+17. Identify every potential Session-isolation problem.
+
+DO NOT FIX ANYTHING.
+
+Only report findings.
+
+==================================================
+EXAMINATION ARCHITECTURE
+========================
+
+Pay special attention to the existing BENIUS Examination system.
+
+Inspect:
+
+* Admin School Setup → Examination
+* Admin Exam Controller
+* Teacher Examination
+* Student Examination
+* Examination APIs
+* exam scores
+* publication
+* grading
+* policies
+* promotion
+* academic history
+* overrides
+* session handling
+
+Explain the current lifecycle and identify which parts are reusable by a future mobile client.
+
+Determine whether there is currently a first-class Exam entity, schedule, lifecycle, submission/approval workflow, publication/locking mechanism, or persisted report-card model.
+
+Do not redesign anything.
+
+==================================================
+MOBILE API READINESS
+====================
+
+Determine whether the existing BENIUS APIs can safely support a native Android/iOS client.
+
+For each major role:
+
+ADMIN
+TEACHER
+STUDENT
+
+identify:
+
+* reusable APIs
+* APIs requiring modification
+* APIs requiring security review
+* APIs depending on browser behavior
+* APIs requiring pagination
+* APIs requiring mobile-specific response structures
+* APIs requiring better error handling
+* APIs requiring idempotency/retry handling
+* APIs involving file upload/download
+* APIs involving realtime/SSE
+* APIs involving payments
+
+Do NOT modify any API.
+
+==================================================
+AUTHENTICATION FOR MOBILE
+=========================
+
+Inspect the current authentication system.
+
+Determine:
+
+1. How Admin login works.
+2. How Teacher login works.
+3. How Student login works.
+4. How sessions are created.
+5. How sessions are stored.
+6. How cookies are configured.
+7. Whether the current authentication can safely be used by a native mobile client.
+8. Whether a mobile-specific authentication contract would be required.
+9. How secure credential/token storage should work conceptually.
+10. Whether Admin PIN functionality needs special handling.
+
+Do NOT change authentication.
+
+Do NOT expose any passwords, PINs, tokens, session secrets, or credentials.
+
+Only report architecture and recommendations.
+
+==================================================
+BROWSER-ONLY DEPENDENCIES
+=========================
+
+Identify code that cannot simply be copied into React Native.
+
+Look specifically for:
+
+* window
+* document
+* localStorage
+* sessionStorage
+* cookies
+* EventSource
+* browser downloads
+* Blob
+* URL.createObjectURL
+* window.print
+* DOM/canvas
+* browser file APIs
+* browser payment integrations
+* popup windows
+* browser-specific libraries
+
+For each important dependency explain what a future mobile replacement would likely be.
+
+Do not implement replacements yet.
+
+==================================================
+TIMEZONE
+========
+
+BENIUS application/business/display time must use:
+
+Asia/Kolkata / IST
+
+Inspect the current implementation.
+
+Determine:
+
+1. Which utilities already enforce IST.
+2. Where database UTC is used.
+3. Whether date-only values are handled separately.
+4. Whether any session/examination/date calculations depend on server local timezone.
+5. Whether a mobile client could accidentally display/use the device timezone instead of BENIUS application timezone.
+
+Do NOT change timezone behavior.
+
+Only report findings.
+
+==================================================
+HEAVY LOAD / PERFORMANCE
+========================
+
+The future BENIUS mobile application must support a smooth interface even when the system has heavy concurrent usage.
+
+This audit is NOT a load test.
+
+Inspect the architecture and identify potential bottlenecks involving:
+
+* PostgreSQL connections
+* API response sizes
+* large student rosters
+* examination marks
+* attendance
+* timetable
+* dashboard queries
+* repeated API calls
+* caching
+* pagination
+* database indexes
+* SSE/realtime connections
+* background jobs
+* filesystem uploads
+* report generation
+* concurrent users
+* multiple backend instances
+
+Do not claim a specific number of supported users unless the codebase or an actual load test supports that conclusion.
+
+Clearly distinguish:
+
+* confirmed architectural facts
+* potential risks
+* things that require load testing
+
+==================================================
+SECURITY
+========
+
+Perform a read-only security architecture review relevant to eventually exposing BENIUS to mobile clients.
+
+Look for:
+
+* missing authentication
+* missing authorization
+* tenant isolation problems
+* Academic Session isolation problems
+* insecure cookies
+* weak session handling
+* secrets exposed to clients
+* excessive API response data
+* JSON response logging
+* public file/upload access
+* CSRF considerations
+* CORS considerations
+* IDOR-style risks
+* client-controlled school/session/student identifiers
+* payment security boundaries
+
+Do NOT fix anything.
+
+Only report findings.
+
+==================================================
+REUSABLE BENIUS COMPONENTS
+==========================
+
+Identify what can potentially be shared between web and mobile:
+
+* API contracts
+* TypeScript types
+* validation rules
+* business/domain utilities
+* IST utilities
+* authentication concepts
+* terminology
+* branding
+* design tokens
+* backend business logic
+
+Also identify what should NOT be shared directly.
+
+Do not copy the database schema into a mobile app.
+
+The mobile application must NEVER connect directly to PostgreSQL.
+
+==================================================
+RECOMMENDED FUTURE ARCHITECTURE
+===============================
+
+Based ONLY on the current codebase, recommend the safest architecture for BENIUS Android + iOS.
+
+Evaluate this general concept:
+
+```
+                BENIUS PostgreSQL
+                       ↑
+                       │
+                BENIUS Backend
+                       ↑
+             ┌─────────┴─────────┐
+             │                   │
+         BENIUS Web         BENIUS Mobile
+             │                   │
+          Browser         React Native/Expo
+                                 │
+                          ┌──────┴──────┐
+                          │             │
+                       Android         iOS
+```
+
+Explain whether this architecture is appropriate and what must be prepared before implementing it.
+
+==================================================
+IMPORTANT — DO NOT ASSUME
+=========================
+
+Do not assume that:
+
+* all APIs are mobile-ready
+* all routes are secure
+* all sessions are correctly isolated
+* all files are private
+* all date calculations use IST
+* all database queries are optimized
+* the current system has been load-tested
+* the existing browser authentication can simply be copied to mobile
+
+Verify these from the code.
+
+==================================================
+FINAL REPORT FORMAT
+===================
+
+Return a clear report with these exact sections:
+
+A. BENIUS Current Architecture
+
+B. BENIUS Mobile-Readiness Assessment
+
+C. Reusable APIs and Components
+
+D. APIs/Architecture Requiring Changes Before Mobile
+
+E. Multi-Tenant/Security Findings
+
+F. Academic Session Findings
+
+G. Examination Architecture Findings
+
+H. Browser-Only Dependencies
+
+I. Authentication Findings
+
+J. IST/Timezone Findings
+
+K. Performance/Scalability Findings
+
+L. Recommended BENIUS Mobile Architecture
+
+M. Risks and Blockers
+
+N. Step-by-Step Mobile Development Plan
+
+O. Files/areas inspected
+
+For every important finding, include the relevant file path and line number/range where possible.
+
+Clearly label findings as:
+
+* CONFIRMED
+* POTENTIAL RISK
+* REQUIRES TESTING
+
+At the very beginning and end of your response, explicitly confirm:
+
+"READ-ONLY AUDIT — NO FILES OR CONFIGURATION WERE CHANGED."
+
+Again:
+
+DO NOT modify anything.
+DO NOT create anything.
+DO NOT install anything.
+DO NOT build the mobile app yet.
+
+This step is ONLY to understand the existing BENIUS architecture before we begin development.

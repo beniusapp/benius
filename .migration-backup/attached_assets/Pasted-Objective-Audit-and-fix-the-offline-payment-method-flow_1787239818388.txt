@@ -1,0 +1,333 @@
+Objective
+
+Audit and fix the offline payment method flow across the Admin Portal payment recording, database/payment-attempt record, Student Payment History, and generated Payment Receipt.
+
+Currently, offline payments are displayed only as:
+
+«"Offline"»
+
+This is too generic. The system must preserve and display the exact offline payment method selected by the admin.
+
+Required offline payment methods
+
+Support these exact methods:
+
+- Cash
+- Bank Transfer
+- Cheque
+- Demand Draft
+- UPI/QR
+
+The displayed payment method should be:
+
+- "Offline (Cash)"
+- "Offline (Bank Transfer)"
+- "Offline (Cheque)"
+- "Offline (Demand Draft)"
+- "Offline (UPI/QR)"
+
+---
+
+1. Audit the existing implementation first
+
+Before changing anything, inspect the complete existing flow:
+
+Admin Portal → Record Offline Payment → selected payment method → API → database → payment attempt/history → Student Payment History → Receipt PDF
+
+Identify:
+
+- Where the offline payment method is selected.
+- What values are currently available in the UI.
+- Which API/request payload carries the method.
+- Which database field stores it, if any.
+- How the payment attempt is created.
+- How Student Payment History determines the displayed payment method.
+- How the receipt PDF determines the displayed payment method.
+
+Do not assume the current implementation. Trace the actual data flow.
+
+---
+
+2. Add/persist the exact offline payment method
+
+When an admin records an offline payment, the selected method must be persisted with that payment record/payment attempt.
+
+Example:
+
+Admin selects:
+Cash
+
+Persist:
+paymentMethod = offline
+offlinePaymentMethod = cash
+
+Another example:
+
+Admin selects:
+Bank Transfer
+
+Persist:
+paymentMethod = offline
+offlinePaymentMethod = bank_transfer
+
+Use the project's existing database conventions and naming patterns rather than unnecessarily introducing duplicate fields.
+
+Important
+
+The method must be stored at the time the offline payment is recorded.
+
+Do not derive it later from the description, invoice name, amount, receipt number, or any other unrelated field.
+
+---
+
+3. Admin Record Offline Payment UI
+
+Update the existing Record Offline Payment flow.
+
+The admin must be able to explicitly select one of:
+
+Cash
+Bank Transfer
+Cheque
+Demand Draft
+UPI/QR
+
+If a payment method selector already exists, improve the existing selector instead of creating a duplicate.
+
+The selected method must be required before submitting the offline payment.
+
+Do not introduce optional bulk payment functionality or change the current one-invoice-at-a-time payment architecture.
+
+---
+
+4. Student Payment History
+
+Update the payment history display.
+
+Currently it may show:
+
+«Payment Method: Offline»
+
+Change it to show the exact method:
+
+«Payment Method: Offline (Cash)»
+
+or:
+
+«Payment Method: Offline (Bank Transfer)»
+
+or:
+
+«Payment Method: Offline (Cheque)»
+
+or:
+
+«Payment Method: Offline (Demand Draft)»
+
+or:
+
+«Payment Method: Offline (UPI/QR)»
+
+This must use the persisted value, not a frontend guess.
+
+---
+
+5. Payment Receipt
+
+Update the generated payment receipt as well.
+
+For offline payments, the existing:
+
+«Payment Method: Offline»
+
+must become:
+
+«Payment Method: Offline (Cash)»
+
+or the corresponding selected method.
+
+For example:
+
+PAYMENT DETAILS
+
+Method       Offline (Cash)
+Payment ID   —
+Order ID     —
+Bank RRN     —
+Payer Name   ...
+
+Do not show Razorpay-specific identifiers for an offline payment unless they actually exist.
+
+---
+
+6. Existing historical offline payments
+
+Handle existing offline payment records carefully.
+
+If an older offline payment already contains the exact method in an existing field, safely use that value.
+
+If an existing historical offline payment does not contain enough information to determine the method, DO NOT guess.
+
+For example, do not assume:
+
+Offline → Cash
+
+Instead, preserve the existing generic value:
+
+«"Offline"»
+
+or use:
+
+«"Offline (Method not recorded)"»
+
+according to the existing UI conventions.
+
+Do not fabricate historical payment information.
+
+---
+
+7. Online/Razorpay payments must remain unchanged
+
+This change is specifically for offline payment methods.
+
+Do NOT modify:
+
+- Razorpay payment processing
+- Razorpay checkout
+- Razorpay webhooks
+- Payment verification
+- Payment signature validation
+- Online payment status handling
+- Online payment attempts
+- Razorpay Payment ID
+- Razorpay Order ID
+- Refund logic
+- Online payment receipts
+- Payment gateway calculations
+
+For online payments, preserve the existing behavior.
+
+---
+
+8. Do not change existing numbering/business logic
+
+Do NOT modify:
+
+- Invoice numbering
+- Receipt numbering
+- Fee calculation
+- Fee Period
+- Fee Type
+- Frequency
+- Academic Session
+- Due dates
+- Late fees/penalties
+- Student records
+- Payment allocation logic
+- Payment history lifecycle
+- Razorpay configuration
+
+This task is only about accurately identifying how an offline payment was received.
+
+---
+
+9. Data integrity requirements
+
+The system must maintain this relationship:
+
+Admin selection
+      ↓
+Offline payment request
+      ↓
+Database/payment attempt
+      ↓
+Payment history
+      ↓
+Receipt
+
+The same selected method must remain consistent across every layer.
+
+Example:
+
+Admin selects: Cheque
+
+Database:
+offlinePaymentMethod = cheque
+
+Payment History:
+Offline (Cheque)
+
+Receipt:
+Offline (Cheque)
+
+There must be no situation where the admin selects Cash but the receipt says Bank Transfer, or where history says Offline while the receipt says Cash.
+
+---
+
+10. Validation and testing
+
+After implementation, test every offline method individually:
+
+Test 1 — Cash
+
+Record an offline payment using Cash.
+
+Verify:
+
+- Database stores Cash.
+- Payment history shows "Offline (Cash)".
+- Receipt shows "Offline (Cash)".
+
+Test 2 — Bank Transfer
+
+Verify:
+
+"Offline (Bank Transfer)"
+
+Test 3 — Cheque
+
+Verify:
+
+"Offline (Cheque)"
+
+Test 4 — Demand Draft
+
+Verify:
+
+"Offline (Demand Draft)"
+
+Test 5 — UPI/QR
+
+Verify:
+
+"Offline (UPI/QR)"
+
+Also test:
+
+- Page refresh.
+- Opening payment history again.
+- Opening/downloading the receipt again.
+- Existing historical offline payments.
+- Online Razorpay payment remains unchanged.
+- No duplicate payment attempt is created.
+- No invoice/receipt number changes.
+- No payment amount changes.
+
+Run the existing type checks, tests, and relevant payment/receipt regression tests.
+
+---
+
+Final acceptance criteria
+
+This task is complete only when:
+
+1. Admin can select the exact offline payment method.
+2. The selected method is persisted in the database/payment record.
+3. Payment History displays the exact method.
+4. The generated receipt displays the exact method.
+5. Historical records are never guessed or incorrectly classified.
+6. Online/Razorpay payment behavior remains completely unchanged.
+7. Existing invoice, receipt, fee, academic-session, and payment business logic remains unchanged.
+8. All relevant tests pass.
+
+Important: Do not perform a broad refactor. Make the smallest safe change necessary to add accurate offline payment-method tracking and display.

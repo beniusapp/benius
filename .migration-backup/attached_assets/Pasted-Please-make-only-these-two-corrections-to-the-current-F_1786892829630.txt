@@ -1,0 +1,88 @@
+Please make only these two corrections to the current Fees & Payments implementation.
+
+Do not change any unrelated functionality.
+
+1. Correct Fee Period Defaulting
+
+The Fee Period default must follow this exact rule:
+
+- If the current month is within the active academic session → default to the current month.
+- If the current month is outside the active academic session → default to the FIRST month of the active academic session.
+
+Example:
+
+Active session: April 2027 – March 2028
+
+- Current month = August 2027 → default August 2027
+- Current month = February 2028 → default February 2028
+- Current month = August 2026 → default April 2027
+- Current month = April 2028 → default April 2027
+
+Do NOT default to the last month of the session when the current month is outside the session.
+
+Keep the existing restriction that invoices can only be generated for Fee Periods inside the active academic session.
+
+---
+
+2. Make Duplicate Invoice Protection Strict
+
+When generating invoices, if an invoice already exists for:
+
+same student + same fee type + same fee period
+
+then:
+
+- Do NOT create another invoice.
+- Do NOT modify the existing invoice.
+- Do NOT change its amount.
+- Do NOT change its due date.
+- Do NOT synchronize/update any fields on the existing invoice.
+- Simply skip that student/fee combination as an existing invoice.
+
+Example:
+
+Existing invoice:
+
+Student A — Tuition Fee — August 2027 — ₹2,000
+
+If the admin clicks Generate Invoices for August 2027 again, the existing invoice must remain exactly as it is.
+
+Even if the Fee Structure has subsequently been changed to ₹2,200, the existing August 2027 invoice must NOT automatically change to ₹2,200.
+
+The admin can create a new fee period or a separate fee type when appropriate, but an already-created invoice must remain immutable through the Generate Invoices action.
+
+Important
+
+Do not modify:
+
+- Historical invoices
+- Paid invoices
+- Due/Overdue invoices
+- Payment records
+- Payment attempts
+- Receipts
+- Razorpay data
+
+The Generate Invoices action should only create missing invoices and skip exact duplicates.
+
+Testing
+
+Add/update tests for:
+
+1. Current month inside active session → current month selected.
+2. Current month before active session → first session month selected.
+3. Current month after active session → first session month selected.
+4. Existing same student + same fee type + same period → completely skipped.
+5. Existing invoice amount is not changed after Fee Structure amount changes.
+6. Existing invoice due date is not changed after Fee Structure due date changes.
+7. Different fee type + same period → still creates a separate invoice.
+8. Same fee type + different period → still creates a separate invoice.
+
+Run the complete test suite and report:
+
+- Tests passed
+- Tests failed
+- Tests added/updated
+- Files changed
+
+Do not make any other changes.

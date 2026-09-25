@@ -1,0 +1,879 @@
+This is the FINAL functional and architectural audit of the entire Fee Reminder / Dunning system.
+
+I am NOT asking you to add new features.
+
+I am NOT asking you to change the existing dunning architecture.
+
+I am asking you to verify, from the actual source code, database queries, API routes, frontend data flow, and existing tests, whether the entire Reminder system is working correctly end-to-end.
+
+This is the final check before I move to the next module.
+
+IMPORTANT:
+
+I will NOT be entering real MSG91 SMS credentials, WhatsApp credentials, or SendGrid credentials during this audit.
+
+The principal of the school will enter those credentials later.
+
+Therefore, do NOT tell me that the system is incomplete simply because external provider credentials are missing.
+
+Instead, verify that EVERYTHING INSIDE OUR APPLICATION is correctly implemented and connected so that once valid provider credentials are entered, the complete notification lifecycle works automatically.
+
+Do not make unnecessary code changes.
+
+First inspect and audit the existing implementation.
+
+Only modify code if you find a genuine functional defect.
+
+==================================================
+
+1. COMPLETE REMINDER SYSTEM FLOW
+   ==================================================
+
+Trace the complete lifecycle from beginning to end:
+
+Fee record
+→ due date
+→ fee status
+→ dunning stage calculation
+→ eligible reminder detection
+→ schoolId isolation
+→ notification configuration
+→ template loading
+→ student/guardian data
+→ amount calculation
+→ late fee calculation
+→ Indian amount/date formatting
+→ channel selection
+→ provider call
+→ provider response
+→ dunning_log
+→ Recent Deliveries
+→ student portal Fees
+→ student portal Reminders
+
+Confirm that every connection in this chain is correct.
+
+Do not only inspect individual functions.
+
+Verify that the complete data flow between modules is correct.
+
+==================================================
+2. ADMIN REMINDER PAGE
+
+Inspect the actual Reminder page shown in the screenshots.
+
+Verify every visible element and its backend connection:
+
+- Automatic Reminder System heading
+- Active status
+- Last automatic check
+- "Checks run every hour"
+- SMS via MSG91
+- WhatsApp via MSG91
+- Email
+- Save Settings
+- Test Send
+- Message Templates
+- all five stage tabs
+- SMS template
+- Email subject
+- Email body
+- Automated Dunning Schedule
+- Recent Deliveries
+
+Confirm that every UI control is connected to the correct backend API and database fields.
+
+Do not accept a UI-only implementation.
+
+For every field, identify:
+
+UI field
+→ API
+→ backend handler
+→ database field
+→ value used by dunning engine
+
+==================================================
+3. NOTIFICATION PROVIDER SETTINGS
+
+Verify that each school's settings are completely isolated.
+
+SMS:
+
+- smsEnabled
+- msg91AuthKey
+- msg91SenderId
+
+WhatsApp:
+
+- waEnabled
+- msg91AuthKey
+- msg91WaNumber
+- msg91WaTemplate
+
+Email:
+
+- emailEnabled
+- emailProvider
+- sendgridApiKey
+- sendgridFromEmail
+- sendgridFromName
+
+Verify that Save Settings actually persists the values.
+
+Then verify that the automatic dunning engine reads those exact saved values.
+
+There must be no hardcoded provider credentials.
+
+There must be no hidden developer-only configuration.
+
+There must be no requirement for manual database editing.
+
+==================================================
+4. IMPORTANT: ENABLE/DISABLE BEHAVIOUR
+
+Verify exactly what happens when:
+
+SMS = OFF
+WhatsApp = OFF
+Email = OFF
+
+No provider should be called.
+
+Then verify:
+
+SMS = ON
+WhatsApp = OFF
+Email = OFF
+
+Only SMS is processed.
+
+Then:
+
+SMS = OFF
+WhatsApp = ON
+Email = OFF
+
+Only WhatsApp is processed.
+
+Then:
+
+SMS = OFF
+WhatsApp = OFF
+Email = ON
+
+Only Email is processed.
+
+Then all three ON.
+
+All three should independently process.
+
+One channel's failure must never prevent another enabled channel from processing.
+
+==================================================
+5. MESSAGE TEMPLATE DATA — CRITICAL
+
+This is extremely important.
+
+Verify that message template variables are NOT merely displayed in the UI.
+
+Verify that they are actually populated with the correct student's data when a reminder is generated.
+
+Check:
+
+{guardian_name}
+{student_name}
+{fee_name}
+{amount}
+{due_date}
+
+For every reminder, verify:
+
+guardian_name
+→ correct guardian of that exact student
+
+student_name
+→ correct student belonging to that exact fee record
+
+fee_name
+→ correct fee type belonging to that exact invoice
+
+amount
+→ actual current payable amount
+
+due_date
+→ exact due date of that invoice
+
+There must be NO possibility that:
+
+Student A's guardian name
+gets combined with
+Student B's fee
+
+or:
+
+Student A's fee
+gets combined with
+Student B's amount.
+
+Trace the database joins and object construction.
+
+==================================================
+6. WHATSAPP PARAMETER ORDER
+
+Verify that the WhatsApp template parameters remain EXACTLY:
+
+1. guardian name
+2. student name
+3. fee type
+4. amount
+5. stage label
+
+Do not change this ordering.
+
+Confirm that the values originate from the same fee/student record.
+
+Verify stage labels:
+
+D-2 → due in 2 days
+D+0 → due today
+D+3 → 3 days overdue
+D+7 → 7 days overdue
+D+14 → 14 days overdue
+
+==================================================
+7. AMOUNT — CRITICAL
+
+Verify that the reminder amount is the actual amount currently payable.
+
+Trace:
+
+base fee
++
+applicable late fee
+
+total amount
+
+Confirm that the same calculated amount is used in:
+
+- SMS
+- WhatsApp
+- Email
+- manual reminder
+- automatic reminder
+- dunning_log
+- Recent Deliveries
+- student reminder history
+- any reminder API response
+- any reminder UI
+
+Example:
+
+Base fee = ₹2,000
+Late fee = ₹100
+
+Reminder must show:
+
+₹2,100
+
+NOT:
+
+₹2,000
+
+Do not create a second or duplicate late-fee calculation.
+
+Use the application's authoritative fee/late-fee calculation.
+
+==================================================
+8. DATE FORMATTING
+
+Verify that dates are calculated using IST calendar dates.
+
+Example:
+
+2027-08-17
+
+should display:
+
+17 Aug 2027
+
+Verify that the date shown to the parent/student is not accidentally affected by UTC conversion.
+
+Check midnight boundaries.
+
+==================================================
+9. FIVE STAGE SYSTEM
+
+Verify the complete automatic stage system:
+
+D-2
+D+0
+D+3
+D+7
+D+14
+
+Verify:
+
+- exact-day behaviour
+- non-stage days
+- IST calculation
+- catch-up
+- duplicate protection
+
+Confirm:
+
+D30 is never generated.
+
+Legacy D0/D3/D7/D14 must not be used by active reminder generation.
+
+==================================================
+10. CATCH-UP
+
+Verify:
+
+If D+7 should have been sent yesterday but the server was unavailable:
+
+today → D+7 may be sent as catch-up.
+
+But if D+7 was already successfully sent:
+
+today → no duplicate.
+
+Verify that catch-up cannot create a reminder every day.
+
+==================================================
+11. DEDUPLICATION
+
+Verify the exact deduplication key:
+
+feeRecordId + channel + stage
+
+Confirm that:
+
+Invoice A + SMS + D+7
+
+does NOT block:
+
+Invoice B + SMS + D+7
+
+Also verify:
+
+SMS D+7
+
+does NOT block:
+
+WhatsApp D+7
+
+and:
+
+D+7
+
+does NOT block:
+
+D+14
+
+Only an existing successful "sent" record should block the same invoice/channel/stage.
+
+==================================================
+12. PAYMENT SAFETY
+
+Verify both protection layers.
+
+Layer 1:
+
+Only Due/Overdue invoices enter the reminder queue.
+
+Layer 2:
+
+Immediately before provider sending, the current database status is checked again.
+
+Test/verify:
+
+Due → Paid
+Due → Waived
+Due → Deleted
+
+No reminder should be sent.
+
+Most importantly, verify the race condition:
+
+Invoice is initially Due.
+
+Dunning job creates its work queue.
+
+Student pays immediately afterwards.
+
+Before provider call, the system re-checks the invoice.
+
+Result:
+
+NO reminder should be sent.
+
+==================================================
+13. MULTIPLE INVOICES
+
+Verify this exact scenario:
+
+Student A:
+
+Invoice 1 = ₹2,000 unpaid
+
+Invoice 2 = ₹3,000 unpaid
+
+Pay Invoice 1.
+
+Invoice 2 must remain independently eligible for reminders.
+
+Verify there is no student-level lock that incorrectly prevents Invoice 2 from being reminded.
+
+Deduplication must remain invoice-specific.
+
+==================================================
+14. STUDENT PORTAL REMINDERS — VERY IMPORTANT
+
+Inspect the Student Fees page shown in the screenshot.
+
+Currently it shows:
+
+"No reminders yet"
+
+Verify whether this is correct when no successful reminder has been sent.
+
+Then trace exactly what happens AFTER a successful reminder.
+
+The expected flow should be:
+
+Automatic dunning
+→ successful provider send
+→ dunning_log status = "sent"
+→ correct schoolId
+→ correct feeRecordId
+→ correct student
+→ correct channel
+→ correct stage
+→ correct amount
+→ correct timestamp
+→ student reminder history API
+→ Student Fees → Reminders tab
+
+Verify that the student portal will display the reminder for the CORRECT student.
+
+Verify that Student A cannot see Student B's reminders.
+
+Verify that one invoice's reminder cannot appear under another invoice.
+
+Verify that the student reminder UI is actually connected to the dunning_log/database data.
+
+Do NOT merely check that the page renders.
+
+Trace the API/database flow.
+
+==================================================
+15. ADMIN RECENT DELIVERIES
+
+Verify:
+
+Automatic send
+→ dunning_log
+→ Recent Deliveries
+
+Confirm that the admin can correctly see:
+
+- student
+- invoice
+- channel
+- stage
+- recipient
+- amount
+- timestamp
+- status
+- failure reason
+
+Verify that successful provider calls become:
+
+sent
+
+Failed provider calls become:
+
+failed
+
+Simulation must never appear as a real successful send.
+
+==================================================
+16. FAILURE LOGGING
+
+Verify every actual provider attempt creates the appropriate log.
+
+Check:
+
+- missing credential
+- invalid phone
+- invalid email
+- timeout
+- network error
+- HTTP 400
+- HTTP 401
+- HTTP 403
+- HTTP 429
+- HTTP 500
+- HTTP 502
+- HTTP 503
+- HTTP 504
+- WhatsApp HTTP 200 with provider error body
+
+Verify:
+
+failed ≠ sent
+
+A provider must never be recorded as "sent" unless the application considers the provider response successful.
+
+==================================================
+17. RETRY + TIMEOUT
+
+Verify:
+
+Maximum 3 attempts.
+
+Retry only:
+
+- network errors
+- timeout
+- 429
+- 500
+- 502
+- 503
+- 504
+
+Do not retry:
+
+- 400
+- 401
+- 403
+- invalid configuration
+- invalid credentials
+- invalid recipient
+- missing template
+
+Every provider request must have the 12-second timeout.
+
+==================================================
+18. MULTI-TENANT SECURITY
+
+Create/inspect a two-school scenario.
+
+School A
+School B
+
+Verify School A cannot access:
+
+- School B students
+- School B invoices
+- School B reminder logs
+- School B templates
+- School B credentials
+- School B notification configuration
+- School B reminder history
+
+Verify manual reminder endpoints also enforce schoolId ownership.
+
+This is mandatory.
+
+==================================================
+19. MANUAL "SEND REMINDER"
+
+Verify manual reminder logic separately from automatic cron.
+
+Manual stage selection:
+
+Upcoming → D-2
+Around due date → D+0
+Moderately overdue → D+3
+Later overdue → D+7
+Heavily overdue → D+14
+
+Verify that manual sending does NOT modify automatic cron stage rules.
+
+Verify manual sending creates the correct log.
+
+Verify manual sending uses the correct amount, student, guardian, fee, date and school.
+
+==================================================
+20. TEST SEND
+
+Verify Test Send separately from real invoice dunning.
+
+Test Send must:
+
+- use the logged-in school's provider credentials
+- validate recipient
+- call only the selected provider
+- return provider success/failure correctly
+- never use another school's credentials
+- never modify an invoice
+- never create a false "automatic reminder sent" record
+
+Confirm this feature is safe for the principal to use when configuring providers.
+
+==================================================
+21. SIMULATION
+
+Simulation has been intentionally removed from the normal admin UI.
+
+Verify:
+
+- no Run Simulation button
+- no Simulation Results dialog
+- no simulation action visible to normal admins
+
+Backend simulation code may remain if it is not exposed and does not interfere with production dunning.
+
+==================================================
+22. AUTOMATIC CRON
+
+Verify:
+
+cron = 5 * * * *
+
+and startup execution remains enabled.
+
+Verify that the system automatically processes eligible reminders.
+
+No admin action should be required.
+
+Verify the "Last automatic check" shown in the UI corresponds to the actual job execution/status.
+
+==================================================
+23. DATABASE INTEGRITY
+
+Verify:
+
+dunning_templates unique constraint:
+
+school_id + stage + channel
+
+Verify:
+
+dunning_log contains correct:
+
+schoolId
+feeRecordId
+channel
+stage
+recipient
+status
+timestamp
+error message
+
+Verify historical D30 records are not being generated by the application.
+
+==================================================
+24. UI/UX ACCURACY
+
+Review the supplied screenshots as part of the audit.
+
+Verify the Reminder page is not misleading.
+
+The current page shows:
+
+Automatic Reminder System
+Active
+Last automatic check
+Checks run every hour
+SMS
+WhatsApp
+Email
+Save Settings
+Test Send
+Message Templates
+Automated Dunning Schedule
+Recent Deliveries
+
+Confirm every displayed status corresponds to real backend state.
+
+For example:
+
+"Active"
+
+must not simply mean that the UI switch is ON.
+
+Verify what "Active" actually represents.
+
+If a channel is enabled but credentials are missing, verify that the UI does not misleadingly imply that messages are being successfully delivered.
+
+If necessary, recommend a wording improvement, but do not change UI unless there is a genuine functional problem.
+
+==================================================
+25. NO PROVIDER CREDENTIALS — WHAT MUST STILL BE VERIFIED
+
+Since real provider IDs will not be entered now, verify everything possible internally.
+
+You must prove:
+
+- database configuration works
+- API routes work
+- authentication works
+- schoolId isolation works
+- student mapping works
+- guardian mapping works
+- fee mapping works
+- invoice mapping works
+- stage calculation works
+- late fee calculation works
+- amount formatting works
+- date formatting works
+- template interpolation works
+- channel selection works
+- dunning log creation works
+- Recent Deliveries reads correctly
+- Student Reminder history reads correctly
+- payment race protection works
+- duplicate protection works
+- catch-up works
+- retry logic works
+- timeout logic works
+- manual reminder works
+- Test Send configuration path works
+- cron registration works
+- startup execution works
+
+Use existing tests, integration tests, mocks/stubs where appropriate, database inspection and source-code tracing.
+
+Do NOT claim that actual SMS/WhatsApp/email delivery is verified without provider credentials.
+
+Instead clearly distinguish:
+
+APPLICATION FUNCTIONALITY VERIFIED
+
+from:
+
+EXTERNAL PROVIDER DELIVERY NOT YET VERIFIED
+
+==================================================
+26. FULL REGRESSION
+
+Run:
+
+npx tsc --noEmit
+
+npx vitest run
+
+npx tsx script/build.ts
+
+Report:
+
+- total test files
+- total tests
+- passed
+- failed
+- duration
+- TypeScript errors
+- build errors
+- build warnings
+
+==================================================
+27. FINAL REPOSITORY SEARCH
+
+Search the entire repository for:
+
+D0
+D3
+D7
+D14
+D30
+AbortController
+fetch(
+sendSms
+sendWhatsapp
+sendEmail
+lateFeeAmount
+dunning_log
+dunning-simulate
+Run Simulation
+simulateMut
+guardian_name
+student_name
+fee_name
+amount
+due_date
+
+Confirm that old stage names do not exist in active reminder-generation logic.
+
+==================================================
+28. IMPORTANT: DO NOT GIVE ME A GENERIC "ALL GOOD"
+
+I need an actual final audit.
+
+For every major area, give:
+
+PASS
+FAIL
+or
+NOT VERIFIABLE WITHOUT EXTERNAL PROVIDER
+
+Do not mark external provider delivery as PASS because the code is correct.
+
+==================================================
+29. FINAL REPORT FORMAT
+
+Return a detailed report with exactly these sections:
+
+1. Overall Verdict
+2. Admin Reminder Page
+3. Provider Configuration
+4. Template Data Mapping
+5. Student/Guardian Mapping
+6. Amount and Late Fee
+7. Date and IST Logic
+8. Five Reminder Stages
+9. Catch-Up
+10. Deduplication
+11. Payment Race Protection
+12. Multiple Invoices
+13. Student Portal Reminder Flow
+14. Admin Recent Deliveries
+15. Manual Reminder
+16. Test Send
+17. Automatic Cron
+18. Multi-Tenant Isolation
+19. Database Integrity
+20. Failure/Retry/Timeout
+21. Simulation UI
+22. Full Test Results
+23. TypeScript Result
+24. Production Build Result
+25. Repository Search Result
+26. External Provider Dependencies
+27. Remaining Limitations
+28. Final Recommendation
+
+At the very end, answer these questions explicitly:
+
+A. Is the entire reminder page internally working correctly?
+
+B. Is every reminder stage correctly connected?
+
+C. Are guardian name, student name, fee name, amount and due date correctly fetched from the correct records?
+
+D. Does a successful reminder correctly flow into dunning_log?
+
+E. Does that reminder correctly flow into the student's Fees → Reminders section?
+
+F. Can one student/invoice ever see another student's reminder?
+
+G. Can paying Invoice A incorrectly stop Invoice B reminders?
+
+H. Is the system ready for the principal to enter the real provider credentials?
+
+I. What, if anything, still requires developer intervention?
+
+J. What cannot be verified until real MSG91/WhatsApp/SendGrid credentials are entered?
+
+IMPORTANT FINAL RULE:
+
+If all application-level checks pass, do NOT make additional architectural changes.
+
+This is the final gate before moving to the next module.
+
+If a genuine defect is discovered, fix only that defect, rerun the complete test suite, TypeScript check and production build, and clearly report the exact change.
+
+Do not redesign working parts of the reminder system.

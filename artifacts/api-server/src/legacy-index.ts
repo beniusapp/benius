@@ -1,0 +1,1448 @@
+import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import { registerRoutes } from "./routes/routes";
+import healthRouter from "./routes/health";
+import { createServer } from "http";
+import { pool } from "./db";
+import { storage } from "./storage";
+import cron from "node-cron";
+import { recalculateLateFees } from "./late-fee-engine";
+import { assertNoSchemaDrift } from "./schema-validator";
+import path from "path";
+import { formatTimeIST, SCHOOL_TIME_ZONE } from "@shared/ist-time";
+import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
+import { sql } from "drizzle-orm";
+import { enforceSessionRevocation } from "./session-revocation";
+import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
+
+const app = express();
+const httpServer = createServer(app);
+app.use("/api", healthRouter);
+
+declare module "http" {
+  interface IncomingMessage {
+    rawBody: unknown;
+  }
+}
+
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
+
+app.use(express.urlencoded({ extended: false }));
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
+app.use(
+  session({
+    store: new StudentRecoverySafePgStore(pool),
+    secret: process.env.SESSION_SECRET || "benius-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      secure: false,
+    },
+  }),
+);
+app.use(enforceSessionRevocation);
+
+export function log(message: string, source = "express") {
+  const formattedTime = formatTimeIST(new Date());
+
+  console.log(`${formattedTime} [${source}] ${message}`);
+}
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  const path = req.path;
+  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+
+  const originalResJson = res.json;
+  res.json = function (bodyJson, ...args) {
+    capturedJsonResponse = bodyJson;
+    return originalResJson.apply(res, [bodyJson, ...args]);
+  };
+
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    if (path.startsWith("/api")) {
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      if (capturedJsonResponse) {
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      }
+
+      log(logLine);
+    }
+  });
+
+  next();
+});
+
+(async () => {
+  // ===== DB MIGRATIONS (safe, idempotent) =====
+  // Dunning used to have a single global status row. Keep that legacy row
+  // untouched, add tenant ownership for new rows, and repair the old sequence
+  // so the first tenant insert cannot collide with the singleton primary key.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dunning_job_status (
+      id SERIAL PRIMARY KEY,
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMP,
+      last_completed_at TIMESTAMP,
+      school_id INTEGER REFERENCES schools(id) ON DELETE CASCADE
+    );
+    ALTER TABLE dunning_job_status
+      ADD COLUMN IF NOT EXISTS school_id INTEGER REFERENCES schools(id) ON DELETE CASCADE;
+    CREATE UNIQUE INDEX IF NOT EXISTS dunning_job_status_school_id_unique
+      ON dunning_job_status (school_id);
+    SELECT setval(
+      pg_get_serial_sequence('dunning_job_status', 'id'),
+      COALESCE((SELECT MAX(id) FROM dunning_job_status), 1),
+      true
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS student_profiles (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL UNIQUE REFERENCES students(id) ON DELETE CASCADE,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      status VARCHAR(20) NOT NULL DEFAULT 'draft',
+      full_name TEXT,
+      class VARCHAR(20),
+      section VARCHAR(10),
+      roll_no VARCHAR(20),
+      father_name TEXT,
+      mother_name TEXT,
+      present_address TEXT,
+      photo_url TEXT,
+      photo_status VARCHAR(20) NOT NULL DEFAULT 'none',
+      rejection_note TEXT,
+      submitted_at TIMESTAMP,
+      verified_at TIMESTAMP,
+      verified_by INTEGER,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE students ADD COLUMN IF NOT EXISTS enrollment_date DATE;
+    ALTER TABLE students ADD COLUMN IF NOT EXISTS verified_profile TEXT;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS approved_snapshot TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS denomination_breakdown JSONB;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS cheque_date DATE;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS branch_name VARCHAR(100);
+  `);
+
+  await pool.query(`
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS pass_marks INTEGER NOT NULL DEFAULT 33;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS class TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS section TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS published BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS updated_by TEXT;
+    ALTER TABLE exam_scores ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS promotion_decisions (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      class TEXT NOT NULL,
+      section TEXT NOT NULL,
+      term TEXT NOT NULL,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL DEFAULT 'promoted',
+      target_class TEXT NOT NULL,
+      target_section TEXT NOT NULL,
+      edit_count INTEGER NOT NULL DEFAULT 0,
+      processed_by_teacher_id INTEGER REFERENCES teachers(id),
+      locked BOOLEAN NOT NULL DEFAULT FALSE,
+      locked_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP,
+      UNIQUE(school_id, class, section, term, student_id)
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_student_id INTEGER REFERENCES students(id) ON DELETE CASCADE;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS contact_number TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS suggestions TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS incident_date TIMESTAMP;
+    ALTER TABLE complaints ALTER COLUMN teacher_id DROP NOT NULL;
+  `);
+
+  await pool.query(`
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS profile_image_url TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS designation TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS qualifications TEXT;
+    ALTER TABLE teachers ADD COLUMN IF NOT EXISTS department TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS venue TEXT;
+    ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS description TEXT;
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS start_time TEXT;
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS end_time TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS category TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS attachment_url TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS admin_comment TEXT;
+    ALTER TABLE student_leave_requests ADD COLUMN IF NOT EXISTS teacher_comment TEXT;
+    ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS captured_date TEXT;
+    ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS captured_time TEXT;
+    ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS location TEXT;
+  `);
+
+  await pool.query(`
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
+    ALTER TABLE timetable_entries ADD COLUMN IF NOT EXISTS room TEXT;
+    CREATE TABLE IF NOT EXISTS teacher_allocations (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      class VARCHAR(20) NOT NULL,
+      section VARCHAR(10) NOT NULL,
+      weekly_quota INTEGER NOT NULL DEFAULT 6
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_class VARCHAR(20);
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complainant_section VARCHAR(10);
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS resolution_remarks TEXT;
+    ALTER TABLE complaints ADD COLUMN IF NOT EXISTS escalated_to_principal BOOLEAN NOT NULL DEFAULT FALSE;
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS timetable_class_slot_unique
+      ON timetable_entries (school_id, class, section, day_of_week, period);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS school_assets (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      asset_code VARCHAR(20) NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      condition TEXT NOT NULL DEFAULT 'Good',
+      location TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS asset_logs (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      asset_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      snapshot TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS pin_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_email TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_phone VARCHAR(20);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_initialized BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at TIMESTAMP;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP;
+    CREATE TABLE IF NOT EXISTS security_audit (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      school_id INTEGER,
+      action VARCHAR(50) NOT NULL DEFAULT 'unknown',
+      success BOOLEAN NOT NULL DEFAULT TRUE,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE security_audit ADD COLUMN IF NOT EXISTS success BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE security_audit ADD COLUMN IF NOT EXISTS action VARCHAR(50);
+    ALTER TABLE security_audit ALTER COLUMN user_id DROP NOT NULL;
+    ALTER TABLE security_audit ALTER COLUMN school_id DROP NOT NULL;
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='security_audit' AND column_name='event_type') THEN
+        UPDATE security_audit SET action = event_type WHERE action IS NULL;
+        ALTER TABLE security_audit ALTER COLUMN event_type DROP NOT NULL;
+        ALTER TABLE security_audit DROP COLUMN event_type;
+      END IF;
+    END $$;
+    UPDATE security_audit SET action = 'unknown' WHERE action IS NULL;
+    ALTER TABLE security_audit ALTER COLUMN action SET NOT NULL;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leave_policies (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      annual_limit INTEGER NOT NULL DEFAULT 12,
+      target_roles TEXT NOT NULL DEFAULT 'all',
+      renewal_month INTEGER NOT NULL DEFAULT 1,
+      renewal_day INTEGER NOT NULL DEFAULT 1,
+      expiry_behavior TEXT NOT NULL DEFAULT 'expire',
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO leave_policies (school_id, name, annual_limit, target_roles, renewal_month, renewal_day, expiry_behavior, is_active)
+    SELECT s.id, v.name, v.annual_limit, 'all', 1, 1, 'expire', TRUE
+    FROM schools s
+    CROSS JOIN (VALUES ('Sick Leave', 12), ('Casual Leave', 12), ('Earned Leave', 12)) AS v(name, annual_limit)
+    WHERE NOT EXISTS (SELECT 1 FROM leave_policies lp WHERE lp.school_id = s.id);
+  `);
+
+  await pool.query(`
+    ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS policy_id INTEGER REFERENCES leave_policies(id) ON DELETE SET NULL;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notice_reads (
+      id SERIAL PRIMARY KEY,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      notice_id INTEGER NOT NULL REFERENCES notices(id) ON DELETE CASCADE,
+      read_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE (student_id, notice_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS non_teaching_staff (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      full_name TEXT NOT NULL,
+      email TEXT NOT NULL DEFAULT '',
+      phone VARCHAR(20) NOT NULL DEFAULT '',
+      designation TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS faculty_mappings (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      class_name TEXT NOT NULL,
+      section TEXT NOT NULL,
+      subject TEXT,
+      UNIQUE (school_id, teacher_id, class_name, section)
+    );
+
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE non_teaching_staff ADD COLUMN IF NOT EXISTS allowed_modules TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE faculty_mappings ADD COLUMN IF NOT EXISTS subject TEXT;
+
+    -- Multi-tier leave approval: migrate legacy status values to named statuses
+    UPDATE student_leave_requests SET status = 'pending_teacher'   WHERE status = 'pending';
+    UPDATE student_leave_requests SET status = 'forwarded_to_admin' WHERE status = 'forwarded';
+
+    CREATE TABLE IF NOT EXISTS exam_policy_tiers (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      tier_name TEXT NOT NULL,
+      applicable_classes TEXT[] NOT NULL DEFAULT '{}',
+      exam_weights TEXT NOT NULL DEFAULT '{}',
+      promotion_fail_rules TEXT NOT NULL DEFAULT '{}',
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE exam_policy_tiers ADD COLUMN IF NOT EXISTS results_config TEXT NOT NULL DEFAULT '{}';
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS fee_structures (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      name VARCHAR(100) NOT NULL,
+      fee_type VARCHAR(100) NOT NULL,
+      amount INTEGER NOT NULL,
+      frequency VARCHAR(20) NOT NULL DEFAULT 'annual',
+      applicable_classes TEXT[] NOT NULL DEFAULT '{}',
+      concession_type VARCHAR(20) NOT NULL DEFAULT 'none',
+      concession_percent INTEGER NOT NULL DEFAULT 0,
+      due_day_of_month INTEGER,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS payment_records (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      fee_record_id INTEGER REFERENCES fee_records(id) ON DELETE SET NULL,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      payment_method VARCHAR(30) NOT NULL,
+      reference_number VARCHAR(100),
+      received_date DATE NOT NULL,
+      amount INTEGER NOT NULL,
+      cashier_notes TEXT,
+      idempotency_key VARCHAR(64) UNIQUE,
+      recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS fee_audit_log (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT,
+      ip_address TEXT,
+      action VARCHAR(50) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id INTEGER,
+      student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      description TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS external_payment_settings (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
+      is_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      gateway_url TEXT,
+      banner_message TEXT,
+      last_updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS payment_method VARCHAR(30);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_amount INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS late_fee_config JSONB;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS breakdown JSONB;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_generate BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS auto_gen_due_day INTEGER;
+    ALTER TABLE fee_structures ADD COLUMN IF NOT EXISTS last_invoices_generated_at TIMESTAMP;
+    -- billing_timing removed from fee_structures (Step: Remove Billing Timing)
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_start DATE;
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_period_end DATE;
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS fee_name VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS frequency VARCHAR(20);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS late_fee_config JSONB;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS late_fee_paid INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS session_id INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    CREATE TABLE IF NOT EXISTS offline_payment_details (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_record_id INTEGER NOT NULL REFERENCES payment_records(id) ON DELETE CASCADE,
+      transaction_time VARCHAR(5),
+      instrument_status VARCHAR(30),
+      transfer_mode VARCHAR(40),
+      transaction_reference VARCHAR(100),
+      receiving_bank VARCHAR(100),
+      receiver_upi_id VARCHAR(100),
+      payee_name VARCHAR(200),
+      payable_at VARCHAR(120),
+      collection_location VARCHAR(200),
+      deposit_date DATE,
+      deposit_bank VARCHAR(100),
+      deposit_reference VARCHAR(100),
+      return_date DATE,
+      return_reason TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE(payment_record_id),
+      UNIQUE(school_id, payment_record_id)
+    );
+    CREATE TABLE IF NOT EXISTS offline_payment_detail_revisions (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_record_id INTEGER NOT NULL REFERENCES payment_records(id) ON DELETE CASCADE,
+      changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reason TEXT NOT NULL,
+      previous_values JSONB NOT NULL,
+      new_values JSONB NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_id INTEGER REFERENCES students(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_payment_records_school_session ON payment_records(school_id, session_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_records_school_fee_received
+      ON payment_records(school_id, fee_record_id, received_date);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS receipt_number VARCHAR(20);
+    CREATE TABLE IF NOT EXISTS receipt_sequences (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL,
+      prefix VARCHAR(10) NOT NULL,
+      current_number INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (school_id, prefix)
+    );
+    -- Older deployments used a global prefix-only counter. Keep those legacy
+    -- rows untouched, but provision the school-scoped sequence contract used by
+    -- invoice and payment creation before any current code writes to it.
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS id SERIAL;
+    ALTER TABLE receipt_sequences ADD COLUMN IF NOT EXISTS school_id INTEGER;
+    ALTER TABLE receipt_sequences DROP CONSTRAINT IF EXISTS receipt_sequences_pkey;
+    CREATE UNIQUE INDEX IF NOT EXISTS receipt_sequences_school_prefix_uniq
+      ON receipt_sequences (school_id, prefix);
+    INSERT INTO receipt_sequences (school_id, prefix, current_number)
+      SELECT school_id, 'INV-', MAX((substring(invoice_number FROM '([0-9]+)$'))::integer)
+      FROM fee_records
+      WHERE invoice_number ~ '^INV-[0-9]+$'
+      GROUP BY school_id
+      ON CONFLICT (school_id, prefix) DO UPDATE
+      SET current_number = GREATEST(
+        receipt_sequences.current_number,
+        EXCLUDED.current_number
+      );
+    CREATE TABLE IF NOT EXISTS notification_config (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL UNIQUE REFERENCES schools(id) ON DELETE CASCADE,
+      sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      msg91_auth_key TEXT,
+      msg91_sender_id TEXT,
+      wa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      msg91_wa_number TEXT,
+      msg91_wa_template TEXT,
+      email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      email_provider TEXT NOT NULL DEFAULT 'sendgrid',
+      sendgrid_api_key TEXT,
+      sendgrid_from_email TEXT,
+      sendgrid_from_name TEXT,
+      mailtrap_api_key TEXT,
+      mailtrap_inbox_id TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS email_provider TEXT NOT NULL DEFAULT 'sendgrid';
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS mailtrap_api_key TEXT;
+    ALTER TABLE notification_config ADD COLUMN IF NOT EXISTS mailtrap_inbox_id TEXT;
+    CREATE TABLE IF NOT EXISTS dunning_log (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL,
+      fee_record_id INTEGER NOT NULL REFERENCES fee_records(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      sent_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL,
+      error_message TEXT,
+      recipient TEXT,
+      student_name TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dunning_log_school_fee ON dunning_log(school_id, fee_record_id);
+    CREATE TABLE IF NOT EXISTS dunning_templates (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      stage TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      body_text TEXT NOT NULL,
+      subject_text TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS dunning_templates_school_stage_channel
+      ON dunning_templates(school_id, stage, channel);
+    -- Dunning job status — single global row (id=1) written by runDunningJob()
+    CREATE TABLE IF NOT EXISTS dunning_job_status (
+      id SERIAL PRIMARY KEY,
+      is_running BOOLEAN NOT NULL DEFAULT false,
+      started_at TIMESTAMP,
+      last_completed_at TIMESTAMP
+    );
+    INSERT INTO dunning_job_status (id, is_running)
+      VALUES (1, false)
+      ON CONFLICT (id) DO NOTHING;
+  `);
+
+  // ── Stage name normalisation (idempotent) ────────────────────────────────
+  // Rename old stage keys (D0, D3, D7, D14) to the canonical "+"-prefixed
+  // format (D+0, D+3, D+7, D+14) in both dunning_log and dunning_templates.
+  // Historical D30 rows are intentionally left untouched as audit history.
+  // Safe to run on every startup — only touches rows with the old names.
+  await pool.query(`
+    UPDATE dunning_log       SET stage = 'D+0'  WHERE stage = 'D0';
+    UPDATE dunning_log       SET stage = 'D+3'  WHERE stage = 'D3';
+    UPDATE dunning_log       SET stage = 'D+7'  WHERE stage = 'D7';
+    UPDATE dunning_log       SET stage = 'D+14' WHERE stage = 'D14';
+    UPDATE dunning_templates SET stage = 'D+0'  WHERE stage = 'D0';
+    UPDATE dunning_templates SET stage = 'D+3'  WHERE stage = 'D3';
+    UPDATE dunning_templates SET stage = 'D+7'  WHERE stage = 'D7';
+    UPDATE dunning_templates SET stage = 'D+14' WHERE stage = 'D14';
+  `);
+
+  await pool.query(`
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_id VARCHAR(100);
+    ALTER TABLE fee_records ADD COLUMN IF NOT EXISTS razorpay_order_expires_at TIMESTAMPTZ;
+  `);
+
+  // ── fee_audit_log: structured Razorpay payment-attempt fields ────────────
+  // Each payment.failed / payment_cancelled event now stores every structured
+  // field Razorpay provides — error_code, error_source, error_step,
+  // error_reason, payment ID, order ID, amount, currency, payment_method, and
+  // the full raw Razorpay response for audit.  session_id links the attempt
+  // to the exact academic session.
+  await pool.query(`
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS session_id         INTEGER REFERENCES academic_sessions(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS razorpay_order_id   VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS amount              INTEGER;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS currency            VARCHAR(10) DEFAULT 'INR';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_code          VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_source        VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_step          VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS error_reason        VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS payment_method      VARCHAR(50);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS raw_response        JSONB;
+  `);
+
+  // ── Human-readable Fees operational audit ────────────────────────────────
+  // Snapshot actor/record labels so later profile edits or entity deletion
+  // cannot rewrite history. Ordinary application users cannot mutate rows.
+  await pool.query(`
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_teacher_id INTEGER REFERENCES teachers(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_staff_id INTEGER REFERENCES non_teaching_staff(id) ON DELETE SET NULL;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_type VARCHAR(30) NOT NULL DEFAULT 'legacy';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_role VARCHAR(80) NOT NULL DEFAULT 'Unknown';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS actor_identifier VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN';
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_name TEXT;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS student_identifier VARCHAR(100);
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS record_label TEXT;
+    ALTER TABLE fee_audit_log ADD COLUMN IF NOT EXISTS event_key VARCHAR(200);
+    UPDATE fee_audit_log SET currency = 'INR' WHERE currency IS NULL;
+    ALTER TABLE fee_audit_log ALTER COLUMN currency SET DEFAULT 'INR';
+    ALTER TABLE fee_audit_log ALTER COLUMN currency SET NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS fee_audit_school_timeline_idx
+      ON fee_audit_log(school_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS fee_audit_school_action_idx
+      ON fee_audit_log(school_id, action);
+    CREATE INDEX IF NOT EXISTS fee_audit_school_session_idx
+      ON fee_audit_log(school_id, session_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS fee_audit_school_event_key_uniq
+      ON fee_audit_log(school_id, event_key)
+      WHERE event_key IS NOT NULL;
+
+    CREATE OR REPLACE FUNCTION reject_fee_audit_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE'
+         AND current_setting('app.fee_audit_cleanup', true) = 'on'
+         AND pg_trigger_depth() > 1
+         AND NOT EXISTS (
+           SELECT 1 FROM schools WHERE id = OLD.school_id
+         ) THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'fee_audit_log is append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS fee_audit_log_append_only ON fee_audit_log;
+    CREATE TRIGGER fee_audit_log_append_only
+      BEFORE UPDATE OR DELETE ON fee_audit_log
+      FOR EACH ROW EXECUTE FUNCTION reject_fee_audit_mutation();
+  `);
+
+  // ── payment_records extended columns (Razorpay enrichment + payer info) ──
+  // Production-safe: ADD COLUMN IF NOT EXISTS never touches existing rows/data.
+  await pool.query(`
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_payment_id VARCHAR(100);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_order_id   VARCHAR(100);
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS razorpay_signature  TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payment_mode        TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS bank_name           TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS card_last4          TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS vpa                 TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_name          TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_email         TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS payer_contact       TEXT;
+    ALTER TABLE payment_records ADD COLUMN IF NOT EXISTS gateway_status      TEXT;
+  `);
+
+  // ── Reconcile orphaned Paid fee_records that have no payment_record ───────
+  // Inserts a reconstructed payment_record for any fee_record that is Paid
+  // (has a receipt_number) but has no matching row in payment_records.
+  // Uses ON CONFLICT DO NOTHING on idempotency_key so this is safe to run on
+  // every startup — it only fires once and is a no-op on all subsequent boots.
+  await pool.query(`
+    INSERT INTO payment_records
+      (school_id, fee_record_id, student_id, session_id, payment_method,
+       reference_number, razorpay_order_id, received_date, amount,
+       cashier_notes, idempotency_key, receipt_number)
+    SELECT
+      fr.school_id,
+      fr.id                   AS fee_record_id,
+      fr.student_id,
+      fr.session_id,
+      'Portal Payment'        AS payment_method,
+      COALESCE(fr.razorpay_order_id, 'reconstructed') AS reference_number,
+      fr.razorpay_order_id,
+      COALESCE(fr.paid_date::date, CURRENT_DATE) AS received_date,
+      fr.amount,
+      'Razorpay payment — reconstructed (webhook failed, order: ' || COALESCE(fr.razorpay_order_id,'unknown') || ')' AS cashier_notes,
+      'rzp_reconstructed_' || fr.receipt_number AS idempotency_key,
+      fr.receipt_number
+    FROM fee_records fr
+    JOIN academic_sessions acs
+      ON acs.id = fr.session_id
+     AND acs.school_id = fr.school_id
+     AND acs.is_active = true
+    WHERE fr.status = 'Paid'
+      AND fr.receipt_number LIKE 'ON%'
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_records pr
+        WHERE pr.fee_record_id = fr.id AND pr.school_id = fr.school_id
+      )
+    ON CONFLICT (idempotency_key) DO NOTHING
+  `);
+
+  // Back-fill session_id on existing payment_records that are linked to a fee_record
+  // (safe to run on every startup — only touches rows where session_id IS NULL)
+  await pool.query(`
+    UPDATE payment_records pr
+    SET session_id = fr.session_id
+    FROM fee_records fr
+    WHERE pr.fee_record_id = fr.id
+      AND pr.school_id = fr.school_id
+      AND pr.session_id IS NULL
+      AND fr.session_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM academic_sessions acs
+        WHERE acs.id = fr.session_id
+          AND acs.school_id = fr.school_id
+          AND acs.is_active = true
+      )
+  `);
+
+  // ── payment_attempts: unified payment-attempt ledger ─────────────────────
+  // Every Razorpay interaction (captured, failed, cancelled, authorized) gets
+  // a permanent row here.  This is the authoritative source for the student
+  // History tab.  payment_records stays as the receipt/ledger table;
+  // fee_audit_log stays for general audit events.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_attempts (
+      id                    SERIAL PRIMARY KEY,
+      school_id             INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      student_id            INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      fee_record_id         INTEGER,
+      session_id            INTEGER,
+      outcome               VARCHAR(20) NOT NULL DEFAULT 'pending',
+      razorpay_payment_id   VARCHAR(100),
+      razorpay_order_id     VARCHAR(100),
+      amount_paise          INTEGER,
+      currency              VARCHAR(10)  DEFAULT 'INR',
+      amount_captured_paise INTEGER,
+      amount_refunded_paise INTEGER,
+      razorpay_fee_paise    INTEGER,
+      razorpay_tax_paise    INTEGER,
+      payment_method        VARCHAR(50),
+      card_network          VARCHAR(50),
+      card_last4            VARCHAR(4),
+      card_type             VARCHAR(30),
+      card_issuer           VARCHAR(100),
+      card_name             VARCHAR(200),
+      card_international    BOOLEAN,
+      card_emi              BOOLEAN,
+      bank_name             VARCHAR(100),
+      bank_rrn              VARCHAR(100),
+      bank_auth_code        VARCHAR(100),
+      vpa                   VARCHAR(100),
+      wallet                VARCHAR(50),
+      payer_name            VARCHAR(200),
+      payer_email           VARCHAR(255),
+      payer_contact         VARCHAR(20),
+      error_code            VARCHAR(100),
+      error_description     TEXT,
+      error_source          VARCHAR(100),
+      error_step            VARCHAR(100),
+      error_reason          VARCHAR(100),
+      rzp_created_at        TIMESTAMPTZ,
+      rzp_authorized_at     TIMESTAMPTZ,
+      rzp_captured_at       TIMESTAMPTZ,
+      rzp_failed_at         TIMESTAMPTZ,
+      refund_id             VARCHAR(100),
+      refund_status         VARCHAR(30),
+      refund_amount_paise   INTEGER,
+      refund_initiated_at   TIMESTAMPTZ,
+      refund_processed_at   TIMESTAMPTZ,
+      webhook_event         VARCHAR(50),
+      webhook_received_at   TIMESTAMPTZ,
+      webhook_verified      BOOLEAN DEFAULT FALSE,
+      webhook_payload       JSONB,
+      api_synced_at         TIMESTAMPTZ,
+      razorpay_payment_data JSONB,
+      razorpay_order_data   JSONB,
+      source                VARCHAR(20) DEFAULT 'client',
+      receipt_number        VARCHAR(50),
+      created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // ── Schema evolution: external_id column + index surgery ─────────────────
+  // Must run in the same query BEFORE any statement that references external_id.
+  // ADD COLUMN IF NOT EXISTS is idempotent — no-op on fresh installs where
+  // external_id was already created by the CREATE TABLE above (which won't
+  // reach here on fresh installs since the table didn't exist yet and the
+  // CREATE TABLE already has the column).  On existing deployments that created
+  // the table without this column, ALTER TABLE adds it here.
+  //
+  // pa_school_order_cancelled is dropped because it collapsed all same-order
+  // retry cancellations into one row — that was the cause of the history data
+  // loss bug.  external_id provides idempotent dedup instead.
+  await pool.query(`
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS external_id VARCHAR(50);
+    DROP INDEX IF EXISTS pa_school_order_cancelled;
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_payment_id
+      ON payment_attempts(school_id, razorpay_payment_id)
+      WHERE razorpay_payment_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_external_id
+      ON payment_attempts(school_id, external_id)
+      WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS pa_student_idx    ON payment_attempts(student_id, school_id);
+    CREATE INDEX IF NOT EXISTS pa_fee_record_idx ON payment_attempts(fee_record_id);
+  `);
+
+  // ── Online payment attempt event history (append-only) ────────────────────
+  // `payment_attempts` is the mutable latest-state projection. These tables
+  // preserve the original lifecycle and every relevant webhook delivery so a
+  // later capture/refund can never erase a cancelled or failed retry.
+  await pool.query(`
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS attempt_number INTEGER;
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS api_enrichment_status VARCHAR(20);
+    ALTER TABLE payment_attempts ADD COLUMN IF NOT EXISTS api_enrichment_error TEXT;
+
+    CREATE TABLE IF NOT EXISTS payment_webhook_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER REFERENCES schools(id) ON DELETE SET NULL,
+      provider VARCHAR(30) NOT NULL DEFAULT 'razorpay',
+      provider_event_id VARCHAR(160) NOT NULL,
+      event_type VARCHAR(100) NOT NULL,
+      razorpay_payment_id VARCHAR(100),
+      razorpay_order_id VARCHAR(100),
+      fee_record_id INTEGER,
+      signature_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      payload JSONB NOT NULL,
+      processing_status VARCHAR(30) NOT NULL DEFAULT 'received',
+      processing_error TEXT,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ,
+      delivery_count INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(provider, provider_event_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_attempt_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      payment_attempt_id INTEGER NOT NULL REFERENCES payment_attempts(id) ON DELETE CASCADE,
+      student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      fee_record_id INTEGER,
+      session_id INTEGER,
+      event_type VARCHAR(80) NOT NULL,
+      outcome VARCHAR(30),
+      razorpay_payment_id VARCHAR(100),
+      razorpay_order_id VARCHAR(100),
+      refund_id VARCHAR(100),
+      dispute_id VARCHAR(100),
+      amount_paise INTEGER,
+      currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+      source VARCHAR(20) NOT NULL,
+      webhook_event_id INTEGER REFERENCES payment_webhook_events(id) ON DELETE SET NULL,
+      idempotency_key VARCHAR(200) NOT NULL,
+      payload JSONB,
+      occurred_at TIMESTAMPTZ,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      historical BOOLEAN NOT NULL DEFAULT FALSE,
+      UNIQUE(school_id, idempotency_key)
+    );
+    CREATE TABLE IF NOT EXISTS payment_webhook_processing_events (
+      id SERIAL PRIMARY KEY,
+      webhook_delivery_id INTEGER NOT NULL REFERENCES payment_webhook_events(id) ON DELETE CASCADE,
+      status VARCHAR(30) NOT NULL,
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE OR REPLACE FUNCTION reject_payment_webhook_processing_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' AND current_setting('app.payment_history_cleanup', true) = 'on' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'payment_webhook_processing_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_webhook_processing_events_append_only ON payment_webhook_processing_events;
+    CREATE TRIGGER payment_webhook_processing_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_webhook_processing_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_webhook_processing_mutation();
+
+    ALTER TABLE payment_attempt_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_source VARCHAR(20);
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS fee_resolution_status VARCHAR(20) NOT NULL DEFAULT 'unresolved';
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS provider_occurred_at TIMESTAMPTZ;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS verification_status VARCHAR(40) NOT NULL DEFAULT 'unverified';
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS razorpay_refund_id TEXT;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS razorpay_dispute_id TEXT;
+    ALTER TABLE payment_webhook_events ADD COLUMN IF NOT EXISTS resolution_reason TEXT;
+    DROP INDEX IF EXISTS payment_webhook_events_provider_event_uniq;
+    ALTER TABLE payment_webhook_events DROP CONSTRAINT IF EXISTS payment_webhook_events_provider_provider_event_id_key;
+    CREATE OR REPLACE FUNCTION reject_payment_webhook_delivery_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' AND current_setting('app.payment_history_cleanup', true) = 'on' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'payment_webhook_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_webhook_events_append_only ON payment_webhook_events;
+    CREATE TRIGGER payment_webhook_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_webhook_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_webhook_delivery_mutation();
+
+    CREATE INDEX IF NOT EXISTS payment_attempt_events_fee_timeline_idx
+      ON payment_attempt_events(school_id, fee_record_id, occurred_at DESC, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_attempt_events_attempt_timeline_idx
+      ON payment_attempt_events(payment_attempt_id, occurred_at DESC, recorded_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_webhook_events_school_received_idx
+      ON payment_webhook_events(school_id, received_at DESC);
+    CREATE INDEX IF NOT EXISTS payment_webhook_events_status_idx
+      ON payment_webhook_events(processing_status, received_at DESC);
+
+    CREATE OR REPLACE FUNCTION reject_payment_attempt_event_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      -- Controlled tenant-erasure/migration transactions can opt in with
+      -- SET LOCAL app.payment_history_cleanup = 'on'. This preserves strict
+      -- append-only behaviour for ordinary application queries while allowing
+      -- FK cascades during a deliberate school cleanup.
+      IF TG_OP = 'DELETE'
+         AND current_setting('app.payment_history_cleanup', true) = 'on' THEN
+        RETURN OLD;
+      END IF;
+      RAISE EXCEPTION 'payment_attempt_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS payment_attempt_events_append_only ON payment_attempt_events;
+    CREATE TRIGGER payment_attempt_events_append_only
+      BEFORE UPDATE OR DELETE ON payment_attempt_events
+      FOR EACH ROW EXECUTE FUNCTION reject_payment_attempt_event_mutation();
+  `);
+
+  // ── Immutable refund financial ledger ─────────────────────────────────────
+  // Refunds are not mutations of payment_records.  The original captured
+  // payment/receipt remain historical facts; every refund and provider state
+  // transition receives its own durable financial row and append-only event.
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS can_refund BOOLEAN NOT NULL DEFAULT FALSE;
+    UPDATE users u
+    SET can_refund = TRUE
+    WHERE u.id IN (
+      SELECT DISTINCT ON (school_id) id
+      FROM users
+      WHERE role = 'admin' AND is_active = TRUE
+      ORDER BY school_id, id ASC
+    ) AND u.can_refund = FALSE;
+
+    CREATE TABLE IF NOT EXISTS refunds (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      session_id INTEGER,
+      student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+      fee_record_id INTEGER REFERENCES fee_records(id) ON DELETE SET NULL,
+      payment_record_id INTEGER REFERENCES payment_records(id) ON DELETE RESTRICT,
+      payment_attempt_id INTEGER,
+      razorpay_payment_id VARCHAR(100) NOT NULL,
+      razorpay_order_id VARCHAR(100),
+      razorpay_refund_id VARCHAR(100),
+      requested_amount_paise INTEGER NOT NULL CHECK (requested_amount_paise > 0),
+      processed_amount_paise INTEGER CHECK (processed_amount_paise IS NULL OR processed_amount_paise > 0),
+      currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+      reason_code VARCHAR(60),
+      reason_text TEXT,
+      internal_note TEXT,
+      origin VARCHAR(20) NOT NULL DEFAULT 'admin',
+      local_status VARCHAR(40) NOT NULL DEFAULT 'requested',
+      provider_status VARCHAR(40),
+      idempotency_key VARCHAR(120) NOT NULL,
+      requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      requester_ip TEXT,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      provider_created_at TIMESTAMPTZ,
+      provider_processed_at TIMESTAMPTZ,
+      last_reconciled_at TIMESTAMPTZ,
+      failure_code VARCHAR(100),
+      failure_message TEXT,
+      provider_payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(school_id, idempotency_key)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS refunds_school_provider_refund_uniq
+      ON refunds(school_id, razorpay_refund_id) WHERE razorpay_refund_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS refunds_school_payment_idx ON refunds(school_id, payment_record_id);
+    CREATE INDEX IF NOT EXISTS refunds_school_fee_idx ON refunds(school_id, fee_record_id);
+
+    CREATE TABLE IF NOT EXISTS refund_events (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      refund_id INTEGER NOT NULL REFERENCES refunds(id) ON DELETE CASCADE,
+      fee_record_id INTEGER,
+      payment_record_id INTEGER,
+      payment_attempt_id INTEGER,
+      event_type VARCHAR(80) NOT NULL,
+      local_status VARCHAR(40),
+      provider_status VARCHAR(40),
+      razorpay_payment_id VARCHAR(100),
+      razorpay_order_id VARCHAR(100),
+      razorpay_refund_id VARCHAR(100),
+      amount_paise INTEGER,
+      currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+      source VARCHAR(20) NOT NULL,
+      webhook_delivery_id INTEGER,
+      correlation_key VARCHAR(200) NOT NULL,
+      payload JSONB,
+      provider_occurred_at TIMESTAMPTZ,
+      occurred_at TIMESTAMPTZ,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(school_id, correlation_key)
+    );
+    CREATE OR REPLACE FUNCTION reject_refund_event_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      IF TG_OP = 'DELETE' AND current_setting('app.payment_history_cleanup', true) = 'on' THEN RETURN OLD; END IF;
+      RAISE EXCEPTION 'refund_events are append-only';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS refund_events_append_only ON refund_events;
+    CREATE TRIGGER refund_events_append_only
+      BEFORE UPDATE OR DELETE ON refund_events
+      FOR EACH ROW EXECUTE FUNCTION reject_refund_event_mutation();
+  `);
+
+  // Existing projections remain readable but are marked as historical snapshots
+  // when an exact source event cannot be reconstructed. This is deliberately
+  // idempotent and does not fabricate missing gateway timestamps or payloads.
+  await pool.query(`
+    -- A prior interrupted deployment may have added the unique index before all
+    -- legacy rows were numbered. Rebuild deterministically rather than deleting
+    -- a legitimate historical retry to satisfy the index.
+    DROP INDEX IF EXISTS pa_school_fee_attempt_number_uniq;
+
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY school_id, fee_record_id
+        ORDER BY created_at ASC, id ASC
+      )::integer AS sequence
+      FROM payment_attempts
+      WHERE fee_record_id IS NOT NULL
+        AND (razorpay_payment_id IS NOT NULL OR razorpay_order_id IS NOT NULL
+          OR source IN ('client', 'webhook'))
+    )
+    UPDATE payment_attempts pa
+    SET attempt_number = numbered.sequence
+    FROM numbered
+    WHERE pa.id = numbered.id;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_fee_attempt_number_uniq
+      ON payment_attempts(school_id, fee_record_id, attempt_number)
+      WHERE fee_record_id IS NOT NULL AND attempt_number IS NOT NULL;
+
+    INSERT INTO payment_attempt_events (
+      school_id, payment_attempt_id, student_id, fee_record_id, session_id,
+      event_type, outcome, razorpay_payment_id, razorpay_order_id, refund_id,
+      amount_paise, currency, source, idempotency_key, payload, occurred_at,
+      historical
+    )
+    SELECT
+      pa.school_id, pa.id, pa.student_id, pa.fee_record_id, pa.session_id,
+      CASE pa.outcome
+        WHEN 'captured' THEN 'payment_captured'
+        WHEN 'failed' THEN 'payment_failed'
+        WHEN 'cancelled' THEN 'checkout_cancelled'
+        WHEN 'authorized' THEN 'payment_authorized'
+        WHEN 'refunded' THEN 'refund_processed'
+        ELSE 'historical_projection'
+      END,
+      pa.outcome, pa.razorpay_payment_id, pa.razorpay_order_id, pa.refund_id,
+      pa.amount_paise, COALESCE(pa.currency, 'INR'), 'migrated',
+      'historical-attempt:' || pa.id,
+      jsonb_build_object('availability', 'historical_projection_only'),
+      COALESCE(pa.rzp_captured_at, pa.rzp_failed_at, pa.refund_processed_at,
+               pa.rzp_authorized_at, pa.rzp_created_at, pa.created_at),
+      TRUE
+    FROM payment_attempts pa
+    WHERE (pa.razorpay_payment_id IS NOT NULL OR pa.razorpay_order_id IS NOT NULL
+      OR pa.source IN ('client', 'webhook'))
+    ON CONFLICT (school_id, idempotency_key) DO NOTHING;
+  `);
+
+  // ── Back-fill ALL payment_records (online + offline) ─────────────────────
+  // external_id = 'pr:<id>' guarantees idempotency across server restarts.
+  // Offline payments (OP-series, no razorpay_payment_id) are the majority —
+  // the previous filter that excluded them was the main data-loss bug.
+  await pool.query(`
+    INSERT INTO payment_attempts (
+      school_id, student_id, fee_record_id, session_id,
+      outcome, razorpay_payment_id, razorpay_order_id,
+      amount_paise, currency, payment_method,
+      card_last4, bank_name, vpa, payer_email, payer_contact,
+      receipt_number, external_id, source, created_at, updated_at
+    )
+    SELECT
+      pr.school_id, pr.student_id, pr.fee_record_id, pr.session_id,
+      'captured',
+      pr.razorpay_payment_id,
+      pr.razorpay_order_id,
+      pr.amount::integer * 100,
+      'INR',
+       CASE
+         WHEN LOWER(TRIM(COALESCE(pr.payment_method, ''))) IN
+           ('cash', 'banktransfer', 'cheque', 'demanddraft', 'upiqr')
+           THEN pr.payment_method
+         ELSE COALESCE(pr.payment_mode, 'offline')
+       END,
+      pr.card_last4, pr.bank_name, pr.vpa, pr.payer_email, pr.payer_contact,
+      pr.receipt_number,
+      'pr:' || pr.id,
+      'migrated',
+      pr.created_at,
+      NOW()
+    FROM payment_records pr
+    ON CONFLICT DO NOTHING
+  `);
+
+  // Older backfill rows stored generic "offline" in payment_attempts even
+  // though their linked payment_records retained the selected method. Repair
+  // only those known, persisted values; unknown historical rows stay generic.
+  await pool.query(`
+    UPDATE payment_attempts pa
+    SET payment_method = pr.payment_method,
+        bank_name = COALESCE(pa.bank_name, pr.bank_name),
+        vpa = COALESCE(pa.vpa, pr.vpa),
+        payer_name = COALESCE(pa.payer_name, pr.payer_name),
+        updated_at = NOW()
+    FROM payment_records pr
+    WHERE pa.school_id = pr.school_id
+      AND pa.external_id = 'pr:' || pr.id
+      AND LOWER(TRIM(COALESCE(pr.payment_method, ''))) IN
+        ('cash', 'banktransfer', 'cheque', 'demanddraft', 'upiqr')
+      AND (pa.payment_method IS NULL OR LOWER(TRIM(pa.payment_method)) = 'offline')
+  `);
+
+  // ── Back-fill failed / cancelled attempts from fee_audit_log ─────────────
+  // external_id = 'fal:<id>' lets every distinct audit-log row become its own
+  // payment_attempts row, including multiple retries on the same Razorpay order.
+  // The previous pa_school_order_cancelled unique index collapsed all same-order
+  // cancellations into one — that was the second data-loss bug.
+  await pool.query(`
+    INSERT INTO payment_attempts (
+      school_id, student_id, fee_record_id, session_id,
+      outcome, razorpay_payment_id, razorpay_order_id,
+      amount_paise, currency, payment_method,
+      error_code, error_description, error_source, error_step, error_reason,
+      webhook_payload, external_id, source, created_at, updated_at
+    )
+    SELECT
+      al.school_id,
+      COALESCE(al.student_id, fr.student_id),
+      al.entity_id::integer,
+      COALESCE(al.session_id, fr.session_id),
+      CASE WHEN al.action = 'payment_cancelled' THEN 'cancelled' ELSE 'failed' END,
+      al.razorpay_payment_id,
+      al.razorpay_order_id,
+      COALESCE(fr.amount::integer * 100, al.amount),
+      COALESCE(al.currency, 'INR'),
+      al.payment_method,
+      al.error_code,
+      al.description,
+      al.error_source,
+      al.error_step,
+      al.error_reason,
+      al.raw_response,
+      'fal:' || al.id,
+      'migrated',
+      al.created_at,
+      NOW()
+    FROM fee_audit_log al
+    LEFT JOIN fee_records fr ON fr.id = al.entity_id::integer
+    WHERE al.action IN ('payment_failed', 'payment_cancelled')
+      AND al.entity_type = 'fee_record'
+      AND al.entity_id IS NOT NULL
+    ON CONFLICT DO NOTHING
+  `);
+
+  // Finish the legacy migration only after *all* sources have populated the
+  // projection. Without this final pass, payment_records and fee_audit_log rows
+  // inserted above would have to wait for a second server restart before they
+  // gained an immutable historical event or an attempt number.
+  await pool.query(`
+    DROP INDEX IF EXISTS pa_school_fee_attempt_number_uniq;
+
+    WITH numbered AS (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY school_id, fee_record_id
+        ORDER BY created_at ASC, id ASC
+      )::integer AS sequence
+      FROM payment_attempts
+      WHERE fee_record_id IS NOT NULL
+        AND (razorpay_payment_id IS NOT NULL OR razorpay_order_id IS NOT NULL
+          OR source IN ('client', 'webhook'))
+    )
+    UPDATE payment_attempts pa
+    SET attempt_number = numbered.sequence
+    FROM numbered
+    WHERE pa.id = numbered.id;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS pa_school_fee_attempt_number_uniq
+      ON payment_attempts(school_id, fee_record_id, attempt_number)
+      WHERE fee_record_id IS NOT NULL AND attempt_number IS NOT NULL;
+
+    INSERT INTO payment_attempt_events (
+      school_id, payment_attempt_id, student_id, fee_record_id, session_id,
+      event_type, outcome, razorpay_payment_id, razorpay_order_id, refund_id,
+      amount_paise, currency, source, idempotency_key, payload, occurred_at,
+      historical
+    )
+    SELECT
+      pa.school_id, pa.id, pa.student_id, pa.fee_record_id, pa.session_id,
+      CASE pa.outcome
+        WHEN 'captured' THEN 'payment_captured'
+        WHEN 'failed' THEN 'payment_failed'
+        WHEN 'cancelled' THEN 'checkout_cancelled'
+        WHEN 'authorized' THEN 'payment_authorized'
+        WHEN 'refunded' THEN 'refund_processed'
+        ELSE 'historical_projection'
+      END,
+      pa.outcome, pa.razorpay_payment_id, pa.razorpay_order_id, pa.refund_id,
+      pa.amount_paise, COALESCE(pa.currency, 'INR'), 'migrated',
+      'historical-attempt:' || pa.id,
+      jsonb_build_object('availability', 'historical_projection_only'),
+      COALESCE(pa.rzp_captured_at, pa.rzp_failed_at, pa.refund_processed_at,
+               pa.rzp_authorized_at, pa.rzp_created_at, pa.created_at),
+      TRUE
+    FROM payment_attempts pa
+    WHERE (pa.razorpay_payment_id IS NOT NULL OR pa.razorpay_order_id IS NOT NULL
+      OR pa.source IN ('client', 'webhook'))
+    ON CONFLICT (school_id, idempotency_key) DO NOTHING;
+  `);
+
+  // ── School columns ────────────────────────────────────────────────────────
+  await pool.query(`
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_url TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo_updated_at TIMESTAMPTZ;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address_line1 TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS address_line2 TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS city TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS state TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS pin_code VARCHAR(6);
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'India';
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS email TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS website TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS board TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS school_type TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS affiliation_number TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS udise_code TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS established_year INTEGER;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS registration_number TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS pan TEXT;
+    ALTER TABLE schools ADD COLUMN IF NOT EXISTS gstin TEXT;
+  `);
+
+  // ── Principal signature column ────────────────────────────────────────────
+  await pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS signature_url TEXT;
+  `);
+
+  // ── Permanent invoice number column ──────────────────────────────────────
+  // invoice_number is the immutable invoice identifier (INV-0001 …).
+  // It is assigned at invoice creation and must never be overwritten by payment.
+  // receipt_number continues to hold the ON/OF payment receipt after payment.
+  // Uniqueness is enforced per school via a partial unique index so that the
+  // many un-invoiced NULL rows (bulk-generated records) do not conflict.
+  await pool.query(`
+    ALTER TABLE fee_records
+      ADD COLUMN IF NOT EXISTS invoice_number VARCHAR(50);
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS fee_records_school_invoice_uniq
+      ON fee_records (school_id, invoice_number)
+      WHERE invoice_number IS NOT NULL;
+  `);
+
+  // Order IDs are historical identities, not a uniqueness boundary for every
+  // lifecycle callback. Never delete a prior row to make a uniqueness index fit.
+  await pool.query(`
+    DROP INDEX IF EXISTS pa_school_order_no_payment;
+    CREATE INDEX IF NOT EXISTS pa_school_order_idx
+      ON payment_attempts(school_id, razorpay_order_id)
+      WHERE razorpay_order_id IS NOT NULL;
+  `);
+
+  // ── Retire the legacy Student recovery-contact schema ───────────────────
+  // Migration 011 performs the same transition for migration-managed
+  // databases. Keep startup self-healing for older 010-era databases that
+  // reach this process before that migration has been applied.
+  await pool.query(`
+    ALTER TABLE IF EXISTS student_password_reset_challenges
+      DROP CONSTRAINT IF EXISTS student_password_reset_contact_tenant_fk;
+    ALTER TABLE IF EXISTS student_password_reset_challenges
+      DROP COLUMN IF EXISTS contact_id;
+    DROP TABLE IF EXISTS student_recovery_contact_verification_challenges;
+    DROP TABLE IF EXISTS student_verified_recovery_contacts;
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS students_id_school_uniq
+      ON students (id, school_id);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS student_password_reset_challenges (
+      id SERIAL PRIMARY KEY,
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      student_id INTEGER NOT NULL,
+      purpose VARCHAR(40) NOT NULL DEFAULT 'student_password_recovery',
+      otp_hash TEXT NOT NULL,
+      otp_expires_at TIMESTAMPTZ NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      verified_at TIMESTAMPTZ,
+      reset_token_hash TEXT,
+      reset_token_expires_at TIMESTAMPTZ,
+      consumed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      request_ip TEXT,
+      CONSTRAINT student_password_reset_student_tenant_fk
+        FOREIGN KEY (student_id, school_id) REFERENCES students(id, school_id) ON DELETE CASCADE,
+      CONSTRAINT student_password_reset_purpose_chk
+        CHECK (purpose = 'student_password_recovery'),
+      CONSTRAINT student_password_reset_attempts_chk
+        CHECK (attempt_count >= 0 AND attempt_count <= 5)
+    );
+    CREATE INDEX IF NOT EXISTS student_password_reset_school_student_idx
+      ON student_password_reset_challenges (school_id, student_id);
+    CREATE INDEX IF NOT EXISTS student_password_reset_active_idx
+      ON student_password_reset_challenges (school_id, student_id, consumed_at);
+    CREATE INDEX IF NOT EXISTS student_password_reset_expiry_idx
+      ON student_password_reset_challenges (otp_expires_at, reset_token_expires_at);
+  `);
+
+  // ── Schema drift guard ────────────────────────────────────────────────────
+  // Verifies that every column defined in shared/schema.ts actually exists in
+  // the database AFTER all migration statements above have been applied.
+  // If any column is missing the server exits with code 1 so the deployment
+  // health check fails loudly instead of letting a silent crash reach callers.
+  //
+  // RULE: whenever you add a column to shared/schema.ts you MUST also add a
+  // matching `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to the
+  // migration block above.  This check enforces that rule at every startup.
+  await assertNoSchemaDrift(pool);
+
+  await registerRoutes(httpServer, app);
+
+  // API requests that did not match a registered route must not fall through
+  // to the SPA HTML shell.
+  app.use("/api/{*path}", (_req, res) => {
+    res.status(404).json({ message: "API endpoint not found" });
+  });
+
+  // ===== HOURLY DUNNING JOB (SMS / WhatsApp / Email) =====
+  // Runs at :05 past every hour in the application's business timezone.
+  // Idempotent — skips already-sent (fee, channel, stage) triplets.
+  const { runDunningJob } = await import("./dunning");
+  cron.schedule("5 * * * *", async () => {
+    log("Dunning job starting…", "cron");
+    try { await runDunningJob(); }
+    catch (err) { log(`Dunning job error: ${String(err)}`, "cron"); }
+  }, { timezone: SCHOOL_TIME_ZONE });
+  // Also run once on startup to catch any fees that fell due during downtime
+  runDunningJob().catch(err => log(`Dunning startup run error: ${String(err)}`, "cron"));
+
+  // ===== NIGHTLY OVERDUE-FEE SWEEP =====
+  // Runs at 01:00 Asia/Kolkata every night. Marks all "Due" fee records whose
+  // due_date has passed as "Overdue" and writes an audit log entry for each change.
+  cron.schedule("0 1 * * *", async () => {
+    log("Nightly overdue-fee sweep starting…", "cron");
+    try {
+      const allSchools = await storage.getSchools();
+      let totalUpdated = 0;
+      for (const school of allSchools) {
+        const updated = await storage.bulkUpdateOverdueFeeRecords(school.id, async (tx, records) => {
+          for (const rec of records) {
+            const studentResult = await tx.execute(sql`
+              SELECT name FROM students
+              WHERE id = ${rec.studentId} AND school_id = ${school.id}
+              LIMIT 1
+            `);
+            await appendFeeAudit({
+              schoolId: school.id,
+              actor: SYSTEM_FEE_AUDIT_ACTOR,
+              action: "auto_overdue",
+              entityType: "fee_record",
+              entityId: rec.id,
+              studentId: rec.studentId,
+              studentName: (studentResult.rows[0] as any)?.name ?? null,
+              sessionId: rec.sessionId ?? null,
+              recordLabel: rec.invoiceNumber ?? null,
+              amount: Number(rec.amount),
+              description: `${rec.invoiceNumber ?? "Invoice"} was marked overdue because its due date passed.`,
+            }, tx);
+          }
+        });
+        if (updated.length === 0) continue;
+        totalUpdated += updated.length;
+      }
+      log(`Overdue sweep complete: ${totalUpdated} record(s) updated across ${allSchools.length} school(s)`, "cron");
+
+      // After status sweep, recalculate stored late-fee amounts for every school
+      let lfTotal = 0;
+      for (const school of allSchools) {
+        try {
+          const n = await recalculateLateFees(school.id);
+          lfTotal += n;
+        } catch { /* non-critical per school */ }
+      }
+      if (lfTotal > 0) log(`Late fee recalc: ${lfTotal} invoice(s) updated`, "cron");
+    } catch (err) {
+      log(`Overdue sweep error: ${String(err)}`, "cron");
+    }
+  }, { timezone: SCHOOL_TIME_ZONE });
+
+  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+
+    console.error("Internal Server Error:", err);
+
+    if (res.headersSent) {
+      return next(err);
+    }
+
+    return res.status(status).json({ message });
+  });
+
+  // importantly only setup vite in development and after
+  // setting up all the other routes so the catch-all route
+  // doesn't interfere with the other routes
+  // The website is served by its own web artifact.
+
+  // ALWAYS serve the app on the port specified in the environment variable PORT
+  // Other ports are firewalled. Default to 5000 if not specified.
+  // this serves both the API and the client.
+  // It is the only port that is not firewalled.
+  const port = parseInt(process.env.PORT || "5000", 10);
+  httpServer.listen(
+    {
+      port,
+      host: "0.0.0.0",
+      reusePort: true,
+    },
+    () => {
+      log(`serving on port ${port}`);
+    },
+  );
+
+  // ── Daily overdue fee sweep ────────────────────────────────────────────────
+  // Marks any "Due" fee record whose due_date is in the past as "Overdue".
+  // Runs once on startup (catches records missed during downtime) then every 24 h.
+  async function runOverdueFeeCheck() {
+    try {
+      const flagged = await storage.markOverdueFeeRecords();
+      if (flagged > 0) log(`[fees] overdue sweep: ${flagged} record(s) marked Overdue`);
+    } catch (e) {
+      console.error("[fees] overdue sweep failed:", e);
+    }
+  }
+  runOverdueFeeCheck();
+  setInterval(runOverdueFeeCheck, 24 * 60 * 60 * 1000);
+})();

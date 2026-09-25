@@ -1,0 +1,18 @@
+​Part 1: UI Status Badge Redesign & Logic Splits
+​The top badge tracking panel shown in 1000086099.png needs to evolve from binary states to a tripartite lifecycle state machine to accurately track ongoing data:
+​"Executed" Status Badge:
+​Logic: Tracks classes or specific student counts where the Admin has completely finalized the Academic Advancement Wizard pipeline.
+​"Ready" Status Badge (New/Enhanced State):
+​Logic: This state must immediately activate the moment a teacher uses the "Lock & Save Ledger" command.
+​Partial-Execution Behavior: If a ledger contains a cohort of students, and the Admin opens the wizard to execute actions for only a sub-group of students, the remaining un-promoted, un-detained students must not fall back into a general "Pending" or "Executed" tally. Because their ledger is already verified and locked by the teacher, they must dynamically calculate and display under the "Ready to Advance" counter block (currently showing 0 Ready to Advance in 1000086099.png).
+​"Pending" Status Badge:
+​Logic: Exclusively displays counts where teachers have completely untouched ledgers or have only saved drafts without fully locking down terminal metrics.
+​Part 2: Section-Level Cohort Metrics Breakdowns
+​On the individual Class and Section rows searchable inside the Exam Controller screen (1000086099.png):
+​Dynamic Fractional Badges: Instead of shifting a whole section row status pill directly to a single generic state, the sub-text metrics underneath the class card (e.g., Class 6 • Sec A) must render itemized pill metrics tracking internal states:
+​[ 1 Executed ] — Flagging finalized student updates.
+​[ 1 Ready ] — Explicitly signaling that a locked student profile is awaiting immediate Admin decision/execution.
+​[ 38 Pending ] — Highlighting outstanding student portfolios still restricted by unsubmitted teacher entries.
+​Part 3: Technical Implementation Requirements
+​Row-Level State Calculations: Update the backend query logic for the Exam Controller endpoint to aggregate student states individually rather than treating the section ledger as an indivisible monolithic unit.
+​State-Driven Triggers: Ensure that checking on a section automatically retains a split state machine flag until the final student record within that localized relational array is cleanly processed through the wizard.

@@ -1,0 +1,847 @@
+FIX 10 — ACADEMIC SESSION INTEGRITY & HISTORICAL EXAMINATION DATA ISOLATION
+INVESTIGATION ONLY — DO NOT IMPLEMENT ANYTHING
+
+We are building a TRUE MULTI-TENANT SaaS School MIS intended for 1,000+ independent schools.
+
+NON-NEGOTIABLE TENANT RULE:
+Every school is an independent tenant.
+
+A user from School A must NEVER be able to access, retrieve, calculate with, save, update, modify, or infer School B's:
+- students
+- examination scores
+- academic sessions
+- grading policies
+- pass/fail policies
+- promotion policies
+- cumulative policies
+- attendance
+- faculty
+- reports
+- analytics
+- or any other school-owned data.
+
+The authenticated user's school/tenant context is authoritative.
+
+Any client-supplied schoolId must NEVER be trusted for authorization.
+
+==================================================
+IMPORTANT: THIS IS INVESTIGATION ONLY
+==================================================
+
+DO NOT IMPLEMENT ANYTHING.
+
+DO NOT:
+- modify code
+- create files
+- delete files
+- edit files
+- refactor
+- rename functions
+- change routes
+- change APIs
+- change UI
+- change database schema
+- create migrations
+- modify database data
+- migrate historical records
+- modify policies
+- modify Academic Session behavior
+- modify tests
+- add tests
+- run migrations
+- "fix" discovered issues
+- make cleanup changes
+- commit changes
+
+You may inspect the repository, search code, trace execution paths, inspect existing tests, and inspect schema/configuration.
+
+STOP after the investigation and provide the report requested below.
+
+We will review the report before deciding whether any implementation is needed.
+
+==================================================
+BACKGROUND — FIXES ALREADY COMPLETED
+==================================================
+
+FIX 1 — Shared Examination Calculation Engine
+COMPLETED.
+
+The shared engine is:
+
+shared/examination-calculation-engine.ts
+
+Teacher Examination uses the shared engine for the complete Examination result calculation.
+
+FIX 2 — Academic Session + Tenant Isolation
+COMPLETED.
+
+Teacher Examination now has strict Academic Session handling.
+
+The authenticated teacher's school is authoritative.
+
+Selected Academic Session is transported from the UI.
+
+The server validates the selected session against the authenticated user's school.
+
+Missing, invalid, or foreign sessions are rejected.
+
+Examination score reads/writes are scoped by:
+- authenticated school
+- exact selected Academic Session
+- student
+- subject
+- exam type
+- class
+- section
+
+NULL-session records must not substitute for a selected session.
+
+FIX 3 — Pass/Fail Authority
+COMPLETED.
+
+Pass/fail uses the authenticated school's configured pass percentage.
+
+FIX 4 — Grading Authority
+COMPLETED.
+
+Grades use the authenticated school's configured grading rules.
+
+FIX 5 — Scored / Absent / Missing
+DEFERRED.
+
+DO NOT implement or redesign this during Fix 10.
+
+FIX 6 — Promotion Rules
+COMPLETED.
+
+Promotion rules use the shared school-owned promotion evaluator.
+
+FIX 7 — Cumulative Calculation
+SKIPPED / DEFERRED.
+
+DO NOT implement or redesign cumulative calculation during Fix 10.
+
+FIX 8 — Score Validation
+SKIPPED.
+
+DO NOT implement during Fix 10.
+
+FIX 9 — Examination Calculation Path Consolidation
+INVESTIGATED ONLY.
+
+The Fix 9 audit found multiple active calculation paths, including:
+- Student Results duplicate calculator
+- Admin Performance Analytics duplicate calculator
+- legacy server promotion aggregation
+
+Fix 9 implementation is intentionally NOT being done now.
+
+==================================================
+PURPOSE OF FIX 10
+==================================================
+
+We need to determine whether Academic Session is consistently enforced across ALL ACTIVE Examination-related data and calculation paths.
+
+Fix 2 established strict session isolation for the main Teacher Examination score path.
+
+Now we need to investigate whether secondary/legacy paths can still:
+
+- retrieve scores from multiple Academic Sessions
+- calculate averages using multiple Academic Sessions
+- display historical data from multiple sessions when one session is selected
+- combine current and archived results
+- calculate promotion using the wrong session
+- retrieve reports from the wrong session
+- retrieve analytics from multiple sessions
+- use active/current session when another session was selected
+- omit session filtering
+- silently treat sessionId as optional
+- substitute NULL-session records
+- use current student placement for historical session results
+- use policies without understanding which Academic Session they belong to
+
+The key question is:
+
+> WHEN A USER IS VIEWING OR CALCULATING RESULTS FOR A SPECIFIC ACADEMIC SESSION, DOES EVERY RELEVANT EXAMINATION DATA PATH USE ONLY THAT EXACT SESSION?
+
+Do not assume the answer.
+
+Trace the actual code.
+
+==================================================
+1. INVENTORY ALL ACADEMIC SESSION DATA SOURCES
+==================================================
+
+Search the entire repository for:
+
+- AcademicSession
+- academicSession
+- sessionId
+- selectedSessionId
+- viewSessionId
+- activeSession
+- currentSession
+- current academic session
+- academic session context
+- session transport
+- x-view-session-id
+- session-scoped score queries
+- optional session filters
+
+Inspect at minimum:
+
+client/src/
+server/
+shared/
+reports/
+analytics/
+teacher modules
+student modules
+admin modules
+storage
+routes
+utilities
+tests
+
+Identify every important place where Academic Session enters, leaves, or influences Examination data.
+
+==================================================
+2. TRACE THE AUTHORITATIVE SESSION CONTEXT
+==================================================
+
+Inspect the existing Fix 2 implementation.
+
+Pay particular attention to:
+
+- server/teacher-examination-session.ts
+- server/teacher-routes.ts
+- client/src/pages/teacher-dashboard.tsx
+- client/src/pages/teacher-modules/examination.tsx
+- any session context/provider
+- sessionFetchForViewSession
+- x-view-session-id
+- req.viewSessionId
+- storage.getAcademicSessionForSchool(...)
+
+Determine:
+
+A. How selected session is chosen.
+B. How it is transported.
+C. How it is authenticated/validated.
+D. How it is stored in request context.
+E. How it reaches Examination calculations.
+F. Whether the same authoritative session mechanism is reused outside Teacher Examination.
+G. Where separate/legacy session mechanisms exist.
+
+Do not change anything.
+
+==================================================
+3. EXAMINATION SCORE QUERIES
+==================================================
+
+Search every score retrieval function.
+
+For each relevant function determine:
+
+- Does it accept sessionId?
+- Is sessionId required or optional?
+- If supplied, is it strictly filtered?
+- If omitted, what happens?
+- Can it return scores from multiple sessions?
+- Can it return NULL-session scores?
+- Does it default to the active/current session?
+- Does it derive session from authenticated context?
+- Does it accept client-controlled sessionId?
+- Does it validate the session belongs to the authenticated school?
+
+Pay particular attention to:
+
+server/storage.ts
+server/routes.ts
+server/teacher-routes.ts
+all examination-related endpoints
+
+Do not fix anything.
+
+==================================================
+4. STUDENT RESULTS SESSION FLOW
+==================================================
+
+Trace the complete Student Results flow.
+
+Inspect:
+
+client/src/pages/student-examination.tsx
+
+and all APIs/storage functions it calls.
+
+Determine:
+
+- How the student selects Academic Session.
+- Whether the selected session is sent to the server.
+- Whether the server validates it.
+- Whether all examination scores are filtered to that session.
+- Whether the duplicate Student calculator receives only one session's scores.
+- Whether history/summary data accidentally contains other sessions.
+- Whether any helper ignores the selected session.
+- Whether the student's active/current session is used instead of selected session.
+
+If different parts of the Student Results screen use different session behavior, document each one.
+
+==================================================
+5. ADMIN PERFORMANCE ANALYTICS SESSION FLOW
+==================================================
+
+Trace:
+
+client/src/pages/admin-modules/performance-analytics.tsx
+
+Determine:
+
+- How selected session is obtained.
+- How it is transported to APIs.
+- How the server validates it.
+- Whether all score data is session-scoped.
+- Whether the local duplicate calculator receives only selected-session data.
+- Whether charts/history use the same session.
+- Whether report cards use the same session.
+- Whether single-exam summaries use the same session.
+- Whether any endpoint silently returns all sessions.
+
+Do not modify the duplicate calculator.
+
+==================================================
+6. TEACHER RESULTS SESSION FLOW
+==================================================
+
+Trace Teacher Results carefully.
+
+Determine whether:
+
+- every score query uses selected session
+- every calculation receives selected session
+- report cards use selected session
+- timeline/history uses selected session
+- auto-suggestion uses selected session
+- promotion information uses selected session
+- any secondary query uses active/current session instead
+
+Identify any path where selected session is lost between UI → API → storage → calculation.
+
+==================================================
+7. REPORTS / REPORT CARDS
+==================================================
+
+Search all report/report-card code.
+
+Determine:
+
+- whether report cards are session-specific
+- how they identify the Academic Session
+- whether they use selected session or active session
+- whether they load scores without session filtering
+- whether historical reports can accidentally contain scores from another session
+- whether printed/exported reports preserve the selected session
+
+Do not redesign reports.
+
+==================================================
+8. STUDENT JOURNEY / TIMELINE
+==================================================
+
+This is a known area of concern from Fix 9.
+
+Inspect:
+
+server/storage.ts
+
+especially:
+
+getStudentJourneyData
+
+and every caller.
+
+Determine:
+
+- whether it filters by Academic Session
+- whether sessionId is available to the caller
+- whether it is intended to represent one session or all-time history
+- whether the UI labels distinguish all-time history from selected-session history
+- whether it is used inside a session-specific Examination screen
+- whether its output is fed into calculations
+- whether its output is presentation-only
+
+IMPORTANT:
+
+Do not automatically call this a bug if it is intentionally an all-time student history.
+
+Determine the intended semantics from the actual code/UI.
+
+If it is used in a selected-session context but returns multiple sessions, classify that as a session-integrity concern.
+
+==================================================
+9. ANALYTICS / CHARTS / SUMMARIES
+==================================================
+
+Inspect:
+
+- class averages
+- topper calculations
+- exam summaries
+- student history charts
+- performance charts
+- timelines
+- dashboards
+- trend calculations
+- subject averages
+- term averages
+- single-exam summaries
+
+For each relevant path determine whether it is:
+
+A. Selected-session scoped
+B. All-session historical analytics
+C. Active/current-session scoped
+D. Session-agnostic
+E. Unknown
+
+Do not assume all-session analytics are wrong.
+
+The important question is whether the UI/feature clearly intends to show one Academic Session.
+
+==================================================
+10. PROMOTION SESSION INTEGRITY
+==================================================
+
+Inspect:
+
+- promotion-related routes
+- promotion evaluation
+- promotion ledger
+- server/storage.ts evaluatePromotion
+- teacher promotion endpoints
+- admin promotion endpoints
+- persisted promotion verdicts
+- academic history promotion records
+
+Determine:
+
+- whether promotion is tied to a specific Academic Session
+- whether the selected session is validated
+- whether score aggregation uses only that session
+- whether NULL-session scores can enter promotion calculations
+- whether active/current session can substitute for selected session
+- whether promotion ledger data has session identity
+- whether historical promotion decisions can be confused between sessions
+
+Do not redesign promotion rules.
+
+Do not implement Fix 6 changes again.
+
+==================================================
+11. HISTORICAL CLASS / SECTION INTEGRITY
+==================================================
+
+Investigate whether Examination history queries determine class/section from:
+
+A. The historical exam score's stored class/section
+B. The student's current class/section
+C. Both
+D. Another source
+
+We previously identified that some historical score reads may join against the student's current placement.
+
+Determine whether this can cause a historical session result to appear under the wrong class/section after a student moves.
+
+Example:
+
+2027–2028:
+Student is Class 6/A.
+
+2028–2029:
+Student moves to Class 7/B.
+
+When viewing 2027–2028 results, does the system still correctly identify Class 6/A?
+
+Do not fix this.
+
+Report actual behavior.
+
+==================================================
+12. SESSION + TENANT ISOLATION
+==================================================
+
+For every session-related data path, verify BOTH boundaries:
+
+TENANT:
+authenticated school
+
+AND
+
+SESSION:
+validated Academic Session belonging to that school
+
+A valid session ID from School B must never work for School A.
+
+A valid session ID from School A must not cause retrieval of School B data.
+
+A missing session must not silently cause cross-session aggregation where a specific session is required.
+
+If any path has a potential issue, report:
+
+- severity
+- file
+- function/route
+- exact behavior
+- active or inactive
+- tenant impact
+- session impact
+
+Do not fix it.
+
+==================================================
+13. NULL SESSION RECORDS
+==================================================
+
+Search for all places where:
+
+sessionId === null
+sessionId is nullable
+sessionId is omitted
+sessionId is optional
+
+Determine:
+
+- where NULL-session examination scores can exist
+- whether they are historical
+- whether they are legacy
+- whether they can still be created
+- whether current selected-session views can accidentally include them
+- whether any code intentionally treats NULL as "all sessions"
+
+Do not migrate or modify NULL-session records.
+
+==================================================
+14. ACTIVE SESSION FALLBACKS
+==================================================
+
+Search for code that uses:
+
+- active academic session
+- current academic session
+- getActiveAcademicSession
+- default session
+- currentSessionId
+- session ?? activeSession
+- sessionId || activeSession
+- fallback to active session
+
+For every fallback determine:
+
+- whether it is legitimate
+- whether it is only used when no session was requested
+- whether it can override an explicitly selected session
+- whether it is used in an Examination context
+
+Report any dangerous fallback.
+
+Do not change it.
+
+==================================================
+15. OPTIONAL SESSION PARAMETERS
+==================================================
+
+Inventory storage functions and API functions where sessionId is optional.
+
+For each determine:
+
+- callers that intentionally omit it
+- callers that should probably provide it
+- whether omission means "all sessions"
+- whether omission means "current session"
+- whether omission means "no filter"
+- whether omission is safe
+- whether the function is used in selected-session Examination contexts
+
+Do not change function signatures.
+
+==================================================
+16. POLICY SESSION RELATIONSHIP
+==================================================
+
+We already know from Fix 7 that current Examination policy tiers are school-owned and not directly Academic-Session-versioned.
+
+Do NOT redesign this.
+
+Simply document whether:
+
+- Examination policy is selected by school/class
+- Academic Session independently scopes scores
+- recalculating historical results uses current policy
+- policy changes can therefore change historical calculated results
+
+Do not propose a schema migration unless absolutely necessary.
+
+==================================================
+17. TEST COVERAGE
+==================================================
+
+Inspect existing tests for session isolation.
+
+Determine whether tests cover:
+
+- selected session transport
+- missing session
+- invalid session
+- foreign session
+- school/session mismatch
+- score read session filtering
+- score write session filtering
+- Student Results session filtering
+- Admin Results session filtering
+- report-card session filtering
+- Student Journey session filtering
+- promotion session filtering
+- NULL-session exclusion
+- active-session fallback behavior
+
+Do not add or modify tests.
+
+==================================================
+18. CLASSIFY EVERY FINDING
+==================================================
+
+Use these classifications:
+
+A. CORRECT
+The path properly respects the selected Academic Session.
+
+B. INTENTIONAL ALL-HISTORY
+The path intentionally shows multiple sessions and is clearly designed that way.
+
+C. PRESENTATION-ONLY
+The path displays data but does not feed authoritative Examination calculations.
+
+D. SESSION-INTEGRITY RISK
+The path is supposed to represent a selected session but can combine or retrieve other sessions.
+
+E. LEGACY / UNUSED
+The code exists but is not part of an active path.
+
+F. UNCERTAIN
+Business semantics cannot be established from code/UI.
+
+Do not guess.
+
+==================================================
+19. DO NOT CONFUSE ALL-TIME HISTORY WITH A BUG
+==================================================
+
+Some student timelines or dashboards may intentionally show a student's complete academic history across multiple years.
+
+That is not automatically a violation.
+
+The key distinction is:
+
+If the UI says:
+
+"Academic Session: 2028–2029"
+
+then Examination results associated with that view should be 2028–2029 only.
+
+If the UI explicitly says:
+
+"Student History"
+or
+"All Academic Years"
+
+then multi-session data may be intentional.
+
+Document the distinction.
+
+==================================================
+20. DO NOT IMPLEMENT FIX 5
+==================================================
+
+Do not change:
+
+- Scored
+- Absent
+- Missing
+- incomplete
+- zero-mark semantics
+
+If session differences intersect with these concepts, document them only.
+
+==================================================
+21. DO NOT IMPLEMENT FIX 7
+==================================================
+
+Do not change:
+
+- cumulative weighting
+- missing-term behavior
+- cumulative trigger behavior
+- cumulative rounding
+- cumulative availability
+
+Document only if relevant.
+
+==================================================
+22. DO NOT IMPLEMENT FIX 9
+==================================================
+
+Do not consolidate:
+
+- Student calculator
+- Admin calculator
+- server calculator
+- shared engine
+
+Fix 9 remains deferred.
+
+==================================================
+23. NO SCOPE CREEP
+==================================================
+
+Do not fix:
+
+- Faculty Mapping authorization
+- score validation
+- grading
+- pass/fail
+- promotion rules
+- cumulative rules
+- calculation consolidation
+- historical policy snapshots
+
+unless merely documenting how they interact with Academic Session.
+
+==================================================
+FINAL REPORT FORMAT
+==================================================
+
+Return the report using exactly these sections:
+
+1. EXECUTIVE SUMMARY
+
+State whether active Academic Session integrity problems exist.
+
+2. AUTHORITATIVE SESSION FLOW
+
+Explain the current Fix 2 session flow from UI → request → authentication → validation → storage → calculation.
+
+3. SESSION-SCOPED PATH INVENTORY
+
+Use this table:
+
+| Area | File | Function/Route | Session Source | Session Filter | Tenant Validation | Classification | Risk |
+
+4. TEACHER EXAMINATION
+
+State whether the selected Academic Session is correctly preserved throughout the complete path.
+
+5. TEACHER RESULTS
+
+State whether the selected session is preserved throughout the complete path.
+
+6. STUDENT RESULTS
+
+State whether the selected session is preserved throughout the complete path.
+
+7. ADMIN PERFORMANCE ANALYTICS
+
+State whether the selected session is preserved throughout the complete path.
+
+8. REPORTS / REPORT CARDS
+
+State whether selected-session reports remain session-specific.
+
+9. STUDENT JOURNEY / TIMELINE
+
+Explain whether multi-session history is intentional or creates a selected-session integrity problem.
+
+10. ANALYTICS / CHARTS
+
+Classify session behavior for important analytics.
+
+11. PROMOTION
+
+Explain Academic Session handling in promotion-related paths.
+
+12. HISTORICAL CLASS / SECTION
+
+Explain whether historical results can be affected by current student placement.
+
+13. NULL-SESSION FINDINGS
+
+List where NULL-session data exists and whether it can enter selected-session paths.
+
+14. ACTIVE-SESSION FALLBACK FINDINGS
+
+List all relevant fallbacks and classify them.
+
+15. OPTIONAL SESSION FILTER FINDINGS
+
+List dangerous or ambiguous optional session parameters.
+
+16. POLICY / SESSION RELATIONSHIP
+
+Document current behavior without redesigning it.
+
+17. TENANT + SESSION ISOLATION FINDINGS
+
+List any confirmed or potential issues.
+
+18. TEST COVERAGE
+
+Summarize existing coverage and gaps.
+
+19. OVERALL CLASSIFICATION
+
+Clearly list:
+
+- CORRECT
+- INTENTIONAL ALL-HISTORY
+- PRESENTATION-ONLY
+- SESSION-INTEGRITY RISK
+- LEGACY / UNUSED
+- UNCERTAIN
+
+20. RECOMMENDATION
+
+Choose exactly one:
+
+A. No Fix 10 needed
+B. Fix 10 implementation is needed
+C. Another investigation is needed first
+
+If B or C, explain exactly why.
+
+Do NOT implement anything.
+
+21. CHANGE SAFETY CONFIRMATION
+
+Explicitly state:
+
+Code changes made: NONE
+Schema changes made: NONE
+Database changes made: NONE
+Data changes made: NONE
+Migrations run: NONE
+Tests added/modified: NONE
+Git commits made: NONE
+
+==================================================
+FINAL NON-NEGOTIABLE INSTRUCTION
+==================================================
+
+STOP AFTER THE AUDIT.
+
+Do not implement any fix.
+
+Do not provide a patch.
+
+Do not modify the repository.
+
+We will review the complete report before deciding what to do next.

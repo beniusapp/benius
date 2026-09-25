@@ -1,0 +1,210 @@
+I checked the new receipt visually. The overall design is much better and the premium structure is good. Please do NOT redesign it from scratch.
+
+I want you to make the following final refinements and verify the underlying data.
+
+1. IMPORTANT — investigate date/session consistency
+
+The receipt I tested currently shows:
+
+- Payment Date: 20 Aug 2026
+- Academic Session: 2027-2028
+- Fee Period: 01 Apr 2027 - 31 Mar 2028
+- Due Date: 19 Jan 2028
+
+This may be test data, but please verify the underlying records.
+
+Do NOT modify dates just to make the receipt look correct.
+
+Confirm whether the payment/invoice/session relationship is actually valid. If this is inconsistent test data, report it clearly. If the application is incorrectly associating the payment with a future academic session, fix the underlying relationship rather than masking it in the receipt.
+
+2. Make Payment Details payment-method specific
+
+The current Demand Draft receipt only shows:
+
+- Reference / UTR
+- Recorded By
+
+This is too generic.
+
+For each offline payment method, show the appropriate available fields.
+
+Demand Draft:
+
+- DD Number
+- DD Date
+- Bank Name
+- Branch
+- Reference/UTR where applicable
+- Amount
+
+Cheque:
+
+- Cheque Number
+- Cheque Date
+- Bank Name
+- Branch
+- Amount
+
+Cash:
+
+- Cash denomination
+- Quantity
+- Subtotal
+- Total received
+
+Bank Transfer:
+
+- UTR / Transaction Reference
+- Bank/transaction details where available
+- Transaction Date
+- Amount
+
+UPI:
+
+- UPI transaction/reference ID
+- Transaction Date
+- Amount
+
+Online/Razorpay:
+
+- Razorpay Payment ID
+- Razorpay Order ID
+- Payment Method
+- Provider Captured Time
+- Application Recorded Time
+
+Only display fields that actually apply to that payment method.
+
+3. Recorded By
+
+Currently the receipt shows:
+
+Recorded By: principal@mis.com
+
+If the authenticated user's display name and role are available, prefer:
+
+Recorded By: [Name]
+[Role]
+
+Keep the email available in the Admin audit/transaction details, but don't unnecessarily use the email as the primary human-readable name on the formal receipt.
+
+Do not invent a name.
+
+4. Improve the Payment Summary card
+
+The dark Payment Summary card has too much empty space.
+
+Either:
+
+- reduce its height, or
+- use the space for useful information such as Invoice No., Receipt No., Payment Date, Payment Mode and Academic Session.
+
+Do not leave a large empty area.
+
+5. Add Amount in Words
+
+Add:
+
+Amount in Words:
+Rupees One Thousand Only
+
+Generate this dynamically from the actual received amount.
+
+6. Improve receipt identification
+
+Keep:
+
+- Invoice No.
+- Receipt No.
+- Payment Date & Time
+- Status
+
+Consider also showing Payment Mode clearly in this identity area.
+
+7. Keep the current Fee Details structure
+
+The current Fee Details section is good.
+
+Make sure it dynamically supports:
+
+- Base fee
+- Components
+- Late fee
+- Discount
+- Concession
+- Other charges
+- Total
+
+Never hard-code fee components.
+
+8. Preserve the current IST behavior
+
+All school-facing timestamps must remain Asia/Kolkata / IST.
+
+Keep these as separate facts where available:
+
+- Payment/provider timestamp
+- Application recorded timestamp
+- Receipt generated timestamp
+
+Do not use browser/device timezone.
+Do not manually add +05:30.
+
+9. Receipt security
+
+Never expose:
+
+- API keys
+- webhook secrets
+- passwords
+- CVV
+- full card numbers
+- authentication credentials
+- raw webhook payloads
+- internal reconciliation information
+- tenant-resolution information
+
+10. Verify both receipt types
+
+Test:
+
+- Online Razorpay receipt
+- Offline cash receipt
+- Offline cheque receipt
+- Offline Demand Draft receipt
+- Offline bank/UPI receipt
+
+Verify that each receipt shows the correct method-specific information.
+
+11. Verify financial integrity
+
+Confirm that:
+
+- Invoice Number is permanent.
+- Receipt Number is permanent.
+- Original payment amount is unchanged.
+- Receipt amount matches the actual payment.
+- Fee breakdown totals correctly.
+- Student/invoice/payment data belong to the same transaction.
+- No information from another student or invoice can appear.
+
+12. Final visual check
+
+After making these refinements, generate actual receipts and inspect them as PDFs.
+
+Check:
+
+- no clipping;
+- no overlap;
+- no excessive empty space;
+- readable font size;
+- good alignment;
+- professional spacing;
+- logo quality;
+- signature positioning;
+- footer positioning;
+- preferably one clean page for normal receipts.
+
+Do not make unrelated changes to payment processing, invoice generation, receipt numbering, or financial logic.
+
+First fix/verify the data consistency issue and method-specific payment details, then perform the final visual validation.

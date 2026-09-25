@@ -1,0 +1,548 @@
+STEP 2A — ATTENDANCE BACKEND IST BUSINESS-DATE CORRECTION
+
+IMPORTANT:
+This is an IMPLEMENTATION task, but ONLY for the Attendance BACKEND business-date issues identified in Step 2.
+
+Do NOT modify the Attendance frontend in this step.
+
+Do NOT modify unrelated modules.
+
+Do NOT modify database schema.
+Do NOT create a migration.
+Do NOT change PostgreSQL timezone configuration.
+Do NOT add TZ=Asia/Kolkata to the Node process.
+Do NOT change production.
+Do NOT change production data.
+
+APPLICATION TIMEZONE REQUIREMENT:
+
+The entire MIS uses:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+as the Indian school business timezone.
+
+Step 1 has already established explicit Asia/Kolkata timezone handling for active cron schedules.
+
+The PostgreSQL persistence convention remains:
+
+SET TIME ZONE 'UTC'
+
+This MUST remain unchanged.
+
+==================================================
+1. OBJECTIVE
+==================================================
+
+Fix the Attendance backend paths where calendar/business-date calculations currently depend on the server/process timezone.
+
+The main issues identified in Step 2 are:
+
+A. Student class-attendance academic-year calculation
+
+B. Teacher self-attendance correction-window calculation
+
+Also review the closely related backend Attendance date/weekday calculations identified in the audit, but do NOT expand this task into unrelated Attendance functionality.
+
+The goal is:
+
+Attendance business dates must behave identically regardless of whether the server/container timezone is:
+
+UTC
+BST/GMT
+US timezone
+IST
+or another timezone.
+
+==================================================
+2. FIRST — INSPECT CURRENT CODE
+==================================================
+
+Before changing anything, inspect the exact current implementation.
+
+Relevant files already identified:
+
+server/teacher-routes.ts
+shared/ist-time.ts
+server/attendance-policy-engine.ts
+server/storage.ts
+
+Confirm the actual current code before editing.
+
+Do not rely blindly on the Step 2 report.
+
+==================================================
+3. FIX STUDENT CLASS-ATTENDANCE ACADEMIC-YEAR CALCULATION
+==================================================
+
+Current problematic pattern identified around:
+
+server/teacher-routes.ts:438-442
+
+The current logic approximately does:
+
+const dateObj = new Date(date);
+const yr = dateObj.getFullYear();
+const mo = dateObj.getMonth();
+
+This must no longer depend on the server timezone.
+
+The submitted Attendance date is a calendar date:
+
+YYYY-MM-DD
+
+It must be interpreted as an Indian school calendar date.
+
+Use the existing canonical IST/date-only utilities from:
+
+shared/ist-time.ts
+
+Prefer the existing helper if it directly supports this requirement, such as:
+
+getAcademicYearForISTDate()
+
+Do NOT create a duplicate timezone utility if an existing canonical helper can perform the calculation.
+
+The resulting academic year must be based on the calendar date itself.
+
+Examples:
+
+2026-03-31
+→ academic year 2025-26
+
+2026-04-01
+→ academic year 2026-27
+
+These results must be identical regardless of the server/container timezone.
+
+==================================================
+4. VALIDATE ATTENDANCE DATE BEFORE ACADEMIC-YEAR CALCULATION
+==================================================
+
+The Step 2 audit also identified that the Attendance route does not strictly validate that the supplied date is a valid calendar date before using it.
+
+If the current Attendance route accepts:
+
+date = "YYYY-MM-DD"
+
+then validate it as a real calendar date before performing academic-year logic.
+
+Requirements:
+
+- exactly YYYY-MM-DD format
+- valid month
+- valid day
+- reject impossible dates such as:
+  2026-02-30
+  2026-13-01
+  2026-00-10
+- do not silently normalize invalid dates
+- preserve valid dates exactly as YYYY-MM-DD
+
+IMPORTANT:
+
+Do not convert the validated calendar date into a timezone-bearing JavaScript Date merely to validate it.
+
+Use date-only/calendar-safe validation.
+
+Do not alter the database DATE column.
+
+==================================================
+5. FIX TEACHER SELF-ATTENDANCE CORRECTION WINDOW
+==================================================
+
+Current problematic logic identified around:
+
+server/teacher-routes.ts:4673-4674
+
+The current logic approximately does:
+
+const diffDays = Math.floor(
+  (Date.now() - new Date(date + "T00:00:00").getTime()) / 86400000
+);
+
+This is NOT acceptable because:
+
+new Date(date + "T00:00:00")
+
+means midnight in the server/process timezone.
+
+The Attendance correction window is an Indian school business rule.
+
+It must be based on IST calendar dates.
+
+Do NOT calculate the correction window by subtracting JavaScript timestamps from server-local midnight.
+
+Instead:
+
+1. Determine today's date using the canonical IST helper:
+
+todayInIST()
+
+2. Treat the submitted attendance date as a validated YYYY-MM-DD calendar date.
+
+3. Calculate the calendar-day difference using date-only/calendar-safe arithmetic.
+
+4. Apply the existing seven-day correction rule without changing its intended business meaning.
+
+The calculation must be independent of server timezone.
+
+==================================================
+6. PRESERVE EXISTING CORRECTION-WINDOW BUSINESS RULE
+==================================================
+
+IMPORTANT:
+
+Do NOT change the existing policy from seven days to another number.
+
+Do NOT change authorization.
+
+Do NOT change who is allowed to submit corrections.
+
+Do NOT change correction approval workflow.
+
+Only correct the timezone/date arithmetic.
+
+The intended business interpretation must remain:
+
+Attendance correction eligibility is determined using Indian calendar days.
+
+The exact boundary must be preserved according to the existing application rule.
+
+Document the current rule before changing the calculation and verify that the resulting behavior matches that rule.
+
+==================================================
+7. REQUIRED MIDNIGHT BEHAVIOR
+==================================================
+
+Verify the corrected implementation conceptually and with automated tests around:
+
+23:59:59 IST
+00:00:00 IST
+00:00:01 IST
+
+For example:
+
+At:
+
+2026-09-18 23:59:59 IST
+
+todayInIST() must be:
+
+2026-09-18
+
+Immediately after:
+
+2026-09-19 00:00:00 IST
+
+todayInIST() must be:
+
+2026-09-19
+
+The correction-window calculation must follow the Indian calendar date immediately at IST midnight.
+
+It must NOT wait until UTC midnight or server-local midnight.
+
+==================================================
+8. SERVER TIMEZONE INDEPENDENCE
+==================================================
+
+The corrected Attendance backend logic must not change behavior based on the host timezone.
+
+Where practical, tests should execute the relevant date logic under multiple TZ environments, for example:
+
+TZ=UTC
+TZ=Asia/Kolkata
+TZ=Europe/London
+TZ=America/New_York
+
+The expected Attendance business-date result must remain identical.
+
+IMPORTANT:
+
+Do NOT permanently change the application's runtime TZ.
+
+These are test environments only.
+
+==================================================
+9. WEEKDAY CALCULATION — LIMITED REVIEW
+==================================================
+
+The Step 2 audit identified:
+
+server/teacher-routes.ts:4798-4803
+
+using logic similar to:
+
+new Date(attendanceDate + "T12:00:00").getDay()
+
+Inspect this path.
+
+If the existing shared IST/date-only utility can safely provide the weekday without relying on server timezone, replace the host-dependent calculation with the existing canonical utility.
+
+Do not create another date utility.
+
+Do not change the meaning of the weekday.
+
+If the existing implementation is already behaviorally safe and changing it would unnecessarily expand scope, leave it unchanged and report why.
+
+==================================================
+10. OTHER BACKEND "CURRENT YEAR" / DATE FALLBACKS
+==================================================
+
+Review the Attendance backend paths identified in Step 2 around:
+
+server/teacher-routes.ts:4318-4345
+server/routes.ts Attendance statistics/yearly paths
+
+Look specifically for Attendance business logic using:
+
+new Date().getFullYear()
+new Date().getMonth()
+new Date().getDate()
+
+If a path directly determines an Attendance business date/year/month from the current instant and is clearly part of Attendance, make it use the canonical IST/date-only approach.
+
+Do NOT modify unrelated modules.
+
+Do NOT refactor unrelated date logic.
+
+==================================================
+11. DO NOT CHANGE SAFE UTC INSTANT HANDLING
+==================================================
+
+Do NOT change code merely because it contains:
+
+new Date()
+Date.now()
+toISOString()
+
+if it is handling an absolute instant correctly.
+
+For example:
+
+new Date().toISOString()
+
+is valid for persisting an absolute timestamp under the existing UTC convention.
+
+Do NOT convert all persisted timestamps to IST.
+
+The correct architecture remains:
+
+Calendar date:
+→ YYYY-MM-DD
+→ date-only semantics
+
+Absolute instant:
+→ UTC persistence convention
+
+Business wall-clock calculation:
+→ Asia/Kolkata
+
+User-facing time:
+→ explicit Asia/Kolkata
+
+==================================================
+12. ATTENDANCE POLICY ENGINE
+==================================================
+
+Do NOT redesign:
+
+server/attendance-policy-engine.ts
+
+The Step 2 audit found the policy engine's timestamp-to-IST logic to be functionally safe.
+
+Do not change it unless a direct dependency from the specific backend fixes above requires a minimal compatibility change.
+
+Do not introduce a second timezone architecture.
+
+==================================================
+13. MULTI-TENANT REQUIREMENT
+==================================================
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+Do NOT weaken or change tenant isolation.
+
+All Attendance queries and writes must continue to be scoped to the authenticated school/tenant exactly as they currently are.
+
+Timezone/date fixes must not:
+
+- change schoolId handling
+- trust client schoolId for authorization
+- broaden queries
+- change student ownership checks
+- change teacher ownership checks
+
+No cross-school behavior is permitted.
+
+==================================================
+14. ACADEMIC SESSION REQUIREMENT
+==================================================
+
+Do not redesign Academic Session behavior in this step.
+
+Where Attendance already has session_id handling, preserve it.
+
+Do not make Attendance less session-safe.
+
+Do not change Academic Session creation, activation, switching, or deletion.
+
+The only session-related concern here is ensuring that an Attendance calendar date does not get assigned the wrong academic year because of server timezone.
+
+==================================================
+15. DATABASE REQUIREMENTS
+==================================================
+
+Do NOT:
+
+- change attendance_records.date type
+- change teacher_self_attendance.attendanceDate type
+- change attendance_correction_requests.attendanceDate type
+- create migrations
+- change timestamp types
+- change PostgreSQL timezone
+- change SET TIME ZONE 'UTC'
+- rewrite historical data
+
+Keep existing database persistence semantics.
+
+==================================================
+16. TESTS — REQUIRED
+==================================================
+
+Add or update focused automated tests for the corrected Attendance backend logic.
+
+At minimum test:
+
+A. Valid calendar dates
+
+2026-04-01
+2026-03-31
+
+B. Invalid dates
+
+2026-02-30
+2026-13-01
+2026-00-01
+
+C. Academic-year calculation
+
+2026-03-31 → 2025-26
+2026-04-01 → 2026-27
+
+D. IST midnight boundary
+
+Before IST midnight
+At IST midnight
+After IST midnight
+
+E. Correction-window date difference
+
+Today
+Yesterday
+Seven calendar days ago
+Older than seven calendar days
+
+F. Server timezone independence
+
+Where practical, verify the same calendar input under:
+
+UTC
+Asia/Kolkata
+Europe/London
+America/New_York
+
+G. Weekday behavior if that path is changed.
+
+Tests must verify calendar semantics, not merely that the code executes.
+
+==================================================
+17. REGRESSION SAFETY
+==================================================
+
+Run:
+
+npm run check
+
+Run all relevant Attendance tests.
+
+Run the existing timezone-related tests.
+
+Run:
+
+git diff --check
+
+Verify the application still starts successfully.
+
+Do not modify production.
+
+Do not run production migrations.
+
+Do not modify production data.
+
+==================================================
+18. CHANGE SCOPE
+==================================================
+
+Expected scope should be limited to:
+
+- Attendance backend date validation
+- Attendance academic-year calculation
+- Attendance correction-window calendar calculation
+- Closely related Attendance backend weekday/current-year calculations only where clearly required
+- Focused tests
+
+Do NOT modify:
+
+- Attendance frontend
+- Teacher My Attendance UI
+- Attendance History UI
+- Admin Attendance UI
+- Student Attendance UI
+- Examination
+- Fees
+- Calendars
+- Academic Session module
+- Student Registry
+- Exam Controller
+- unrelated modules
+
+Those will be handled separately.
+
+==================================================
+19. FINAL REPORT
+==================================================
+
+After implementation, return:
+
+1. Exact files changed
+2. Exact functions changed
+3. How academic-year calculation was made timezone-independent
+4. How correction-window calculation was made timezone-independent
+5. Whether weekday calculation was changed
+6. Whether any other Attendance backend current-date paths were changed
+7. Confirmation that PostgreSQL UTC persistence was unchanged
+8. Confirmation that no schema/migration changes were made
+9. Confirmation that no production data was touched
+10. Confirmation that multi-tenant isolation was preserved
+11. Tests added/updated
+12. Test results
+13. npm run check result
+14. git diff --check result
+15. Application startup result
+16. Any remaining Attendance timezone issues that belong to Step 2B/frontend
+
+MOST IMPORTANT:
+
+Do not make frontend changes in this step.
+
+Do not make unrelated changes.
+
+Do not change database timezone.
+
+Do not add process-level TZ=Asia/Kolkata.
+
+Implement ONLY the backend Attendance business-date corrections described above.

@@ -1,0 +1,110 @@
+The codebase is now at the following baseline:
+
+- TypeScript: 0 errors from "npx tsc --noEmit"
+- Tests: 614/614 passing
+- Dunning system has already been independently audited
+- Simulation UI has been intentionally removed
+- Automatic Reminder System UI is the intended production UI
+
+Before making any further changes, perform a FINAL REGRESSION AUDIT ONLY.
+
+Do not modify code unless you discover an actual regression.
+
+Run:
+
+1. "npx tsc --noEmit"
+2. "npx vitest run"
+3. Verify the production build command used by this project
+4. Run the production build
+5. Search the repository for:
+   - D0
+   - D3
+   - D7
+   - D14
+   - D30
+   - AbortController
+   - fetch(
+   - sendSms
+   - sendWhatsapp
+   - sendEmail
+   - lateFeeAmount
+   - dunning_log
+   - simulateMut
+   - Run Simulation
+   - dunning-simulate
+
+Confirm:
+
+Dunning
+
+- Only D-2, D+0, D+3, D+7, D+14 can be generated.
+- D30 is never generated.
+- D0/D3/D7/D14 are not used by active reminder logic.
+- IST date calculation remains intact.
+- 2-day catch-up remains intact.
+- sent-only deduplication remains intact.
+- 3-attempt retry remains intact.
+- 12-second provider timeout remains intact.
+- WhatsApp HTTP-200 provider errors remain detected.
+- late fee remains included.
+- Indian amount/date formatting remains intact.
+- Paid/Waived/deleted protection remains intact.
+- Multiple invoices remain independent.
+- schoolId isolation remains intact.
+- simulation backend may remain, but Simulation must NOT be exposed in the normal admin UI.
+
+Admin UI
+
+Confirm:
+
+- "Automatic Reminder System" is present.
+- Automatic hourly processing is clearly explained.
+- SMS configuration remains.
+- WhatsApp configuration remains.
+- Email configuration remains.
+- Save Settings remains.
+- Test Send remains.
+- Recent Deliveries remains.
+- Message Templates remain.
+- Run Simulation button is absent.
+- Simulation Results dialog is absent.
+- No confusing simulation action is presented to normal admins.
+
+TypeScript cleanup
+
+Confirm that the recent TypeScript fixes did not break existing functionality.
+
+Pay particular attention to:
+
+- tsconfig target change
+- Checkbox changes
+- fees-manager state cleanup
+- schoolId conversions
+- CSV typing
+- route parameter typing
+- calculateLateFee Date conversion
+- student-examination DOM typing
+- Drizzle JSONB changes
+
+For the Drizzle JSONB "any" casts, verify that they are limited to ORM type-compatibility boundaries and did not weaken application-level types.
+
+Final output
+
+Do NOT simply say "everything looks good."
+
+Report:
+
+1. TypeScript result
+2. Test result
+3. Production build result
+4. Exact number of remaining errors/warnings
+5. Files changed during this audit
+6. Any regressions found
+7. Any remaining technical risks
+8. Any remaining external provider dependencies
+
+IMPORTANT:
+
+If everything passes, make NO code changes.
+
+The objective is to establish a clean production baseline before configuring MSG91, WhatsApp and SendGrid credentials.

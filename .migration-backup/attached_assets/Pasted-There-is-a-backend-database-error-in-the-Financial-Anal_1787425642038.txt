@@ -1,0 +1,65 @@
+There is a backend/database error in the Financial Analytics → Monthly Report Schedule.
+
+When I have configured recipients:
+
+- accounts@school.org
+- beniusapp@gmail.com
+
+the UI correctly displays both email addresses as separate recipient chips.
+
+However, when I click Send now, it fails with:
+
+"Send failed — malformed array literal: 'beniusapp@gmail.com...'"
+
+Please investigate and fix the recipient data type/serialization properly.
+
+The database/API appears to expect an email-recipient array, but the backend is sending or parsing the recipient value as an incorrectly formatted string.
+
+Requirements
+
+1. Inspect the database schema for the monthly report recipient field.
+2. Inspect the API request/response for Save Schedule and Send Now.
+3. Inspect the backend code that reads, validates, serializes, and stores recipients.
+4. Ensure multiple recipients are stored and passed as a proper array of email strings.
+5. Ensure a single recipient also works correctly.
+6. Ensure adding/removing recipient chips works correctly.
+7. Ensure Save Schedule works with:
+   - one recipient
+   - multiple recipients
+8. Ensure Send Now works with:
+   - one recipient
+   - multiple recipients
+9. Validate each email address individually.
+10. Do not pass a comma-separated string where an array is expected.
+11. Do not change the PostgreSQL column type unless absolutely necessary. First make the application conform to the existing schema.
+12. Preserve the existing UI and Monthly Report Schedule design.
+13. Do not make any unrelated changes to Financial Analytics.
+
+Also verify the scheduled report
+
+The current configuration is:
+
+- Report: Previous completed calendar month
+- Timezone: Asia/Kolkata (IST)
+- Day: 1st
+- Time: 09:00 AM IST
+- Recipients: configured
+
+After fixing the recipient-array error, verify that:
+
+- Save schedule succeeds.
+- Send now successfully sends the Financial Analytics PDF to all configured recipients.
+- The scheduled monthly delivery uses the same recipient list.
+- The scheduled job runs at 09:00 AM Asia/Kolkata (IST) on the 1st day of each month.
+- The report covers the previous completed calendar month.
+- No UTC/server-local timezone conversion changes the scheduled execution time.
+
+Important change policy
+
+Do not redesign anything.
+
+Do not change the existing Financial Analytics calculations, PDF, IST implementation, or unrelated modules.
+
+Fix only the confirmed recipient-array/notification scheduling issue and add appropriate regression tests.
+
+After fixing it, test both Save Schedule and Send Now with one and multiple recipients and report the exact result.

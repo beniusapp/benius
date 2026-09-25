@@ -1,0 +1,132 @@
+I do NOT want you to make any changes yet.
+
+First, I want you to investigate and explain the exact existing implementation used for generating/downloading the Invoice PDF from the Fees & Payments → Ledger & Transactions page.
+
+This is important because the Invoice currently works correctly: when I click the Invoice action in the Actions column, it opens the invoice document and I can use Chrome's normal Save as PDF functionality.
+
+I want the Receipt to work using the same approach and same flow, not by creating a separate PDF download button.
+
+Please investigate the Invoice implementation thoroughly
+
+Find and explain:
+
+1. Frontend
+   
+   - Where is the "Invoice" action/button defined in the Ledger & Transactions table?
+   - What function is executed when I click "Invoice"?
+   - What route/URL does it open or navigate to?
+   - Is it opening a normal HTML invoice page, a new browser tab, a modal, or something else?
+   - Does the frontend call any PDF-generation API when clicking Invoice?
+
+2. Backend
+   
+   - Find the exact backend route/API used by the Invoice action.
+   - Show me the route path.
+   - Explain what data it loads.
+   - Explain how it identifies the correct fee record/invoice.
+   - Explain how tenant/school isolation and academic-session filtering are handled.
+
+3. Invoice rendering
+   
+   - Find the exact component/template/renderer responsible for displaying the Invoice.
+   - Tell me whether the Invoice is generated as:
+     - HTML
+     - PDF directly
+     - HTML that Chrome can print/save as PDF
+     - or some other mechanism.
+   - Identify the exact file(s) responsible for rendering it.
+   - Explain whether the existing invoice renderer is reused anywhere else.
+
+4. Browser PDF behavior
+   
+   - Explain why clicking "Invoice" results in a document that Chrome can successfully show in its PDF/print interface.
+   - Determine whether the application itself generates a PDF or whether Chrome is simply rendering an HTML document that can be saved as PDF.
+   - If Chrome is generating the PDF, confirm that clearly.
+
+5. Existing PDF-related code
+   
+   - Search the entire project for:
+     - PDFKit
+     - Puppeteer
+     - Playwright
+     - "window.print"
+     - "print"
+     - "application/pdf"
+     - "Content-Disposition"
+     - invoice PDF routes
+     - receipt PDF routes
+   - Determine which of these are actually used by the working Invoice button.
+
+6. Ledger & Transactions
+   Specifically trace this exact flow:
+   
+   "Fees & Payments → Ledger & Transactions → Actions → Invoice"
+   
+   Give me the complete flow:
+   
+   "Click Invoice"
+   → "Frontend function"
+   → "API/route"
+   → "Backend data"
+   → "Invoice renderer"
+   → "Browser"
+   → "Chrome Save as PDF"
+
+7. Compare with Receipt
+   Then inspect the existing Receipt action in the same Ledger & Transactions table.
+   
+   Explain why:
+   
+   "Actions → Receipt"
+   
+   does not currently behave exactly like:
+   
+   "Actions → Invoice"
+   
+   Identify the exact technical difference between the two.
+
+VERY IMPORTANT
+
+Do not modify any code.
+
+Do not create another PDF endpoint.
+
+Do not add a separate purple/blue PDF icon beside Receipt.
+
+Do not add another "Download PDF" button.
+
+Do not use PDFKit/Puppeteer/Playwright to create a second PDF system unless you discover that the existing Invoice flow actually uses it.
+
+I specifically want to understand and reuse the existing Invoice mechanism.
+
+Final response format
+
+After investigating, give me:
+
+A. Working Invoice flow
+
+- Frontend file:
+- Function:
+- Route:
+- Backend file:
+- Renderer:
+- PDF/HTML mechanism:
+- Browser behavior:
+
+B. Current Receipt flow
+
+- Frontend file:
+- Function:
+- Route:
+- Backend file:
+- Renderer:
+- PDF/HTML mechanism:
+- Browser behavior:
+
+C. Exact difference
+Explain precisely why Invoice works but Receipt does not.
+
+D. Recommended fix
+Tell me the smallest possible change required so that clicking Receipt follows the same mechanism as Invoice.
+
+Again: investigation only. Do not modify anything yet.

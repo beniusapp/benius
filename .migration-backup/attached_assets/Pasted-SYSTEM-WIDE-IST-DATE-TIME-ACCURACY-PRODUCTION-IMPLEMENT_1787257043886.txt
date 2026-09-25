@@ -1,0 +1,891 @@
+SYSTEM-WIDE IST DATE & TIME ACCURACY — PRODUCTION IMPLEMENTATION
+
+You are working on a multi-tenant school ERP application deployed for Indian schools.
+
+The attached/read-only IST Date & Time Audit has identified multiple areas where the application currently depends on UTC server time, PostgreSQL session time, browser-local timezone, or unsafe JavaScript "Date" parsing.
+
+PRIMARY OBJECTIVE
+
+Make the entire application deterministic and accurate for India Standard Time (IST / Asia/Kolkata) for all school-facing dates, times, business-day calculations, reports, receipts, dashboards, attendance, fees, payments, Razorpay events, notifications, and administrative history.
+
+The same event must display the same date and time regardless of the administrator's, teacher's, student's, or browser/device timezone.
+
+For this India deployment, the canonical presentation/business timezone is:
+
+"Asia/Kolkata"
+
+Do NOT solve this by changing the server OS timezone or PostgreSQL global timezone.
+
+The application must explicitly handle timezone behavior.
+
+---
+
+VERY IMPORTANT SAFETY RULES
+
+1. DO NOT blindly migrate historical timestamps
+
+Do NOT:
+
+- convert every existing timestamp by adding/subtracting 5:30;
+- rewrite historical timestamps;
+- change existing database values simply because they are "timestamp without time zone";
+- assume every historical timestamp has identical provenance;
+- run a mass "AT TIME ZONE" conversion;
+- backfill historical timestamps without first proving their meaning.
+
+Existing historical data must remain untouched until its provenance is understood.
+
+If a database migration from "timestamp without time zone" to "timestamptz" is eventually recommended, prepare it as a separate migration proposal only after sampling and validating historical records.
+
+---
+
+2. DO NOT use browser timezone for school-facing timestamps
+
+Any user-facing date/time must NOT depend on:
+
+new Date().toLocaleString()
+new Date().toLocaleDateString()
+new Date().toLocaleTimeString()
+
+unless an explicit:
+
+timeZone: "Asia/Kolkata"
+
+is supplied.
+
+The application must behave identically when the browser timezone is:
+
+- Asia/Kolkata
+- America/New_York
+- America/Los_Angeles
+- Europe/London
+- UTC
+- any other timezone.
+
+---
+
+3. DATE-ONLY VALUES ARE NOT TIMESTAMPS
+
+Fields representing calendar dates must remain calendar dates.
+
+Examples:
+
+- Date of Birth
+- Attendance date
+- Academic session start/end
+- Homework due date
+- Fee due date
+- Fee period
+- Leave start/end date
+- Calendar date
+- Holiday date
+- Asset purchase date
+- Warranty date
+- Cheque date
+- Offline deposit date
+- Payment received business date
+
+Do NOT convert these through:
+
+new Date("YYYY-MM-DD")
+
+and then format them.
+
+That can cause calendar-day shifts.
+
+For example:
+
+2026-04-01
+
+must always display as:
+
+01 Apr 2026
+
+regardless of browser timezone.
+
+---
+
+PHASE 1 — READ-ONLY CODEBASE AUDIT
+
+Before modifying application behavior, inspect the entire codebase.
+
+Search for:
+
+new Date(
+Date.parse(
+.toISOString()
+.toLocaleDateString(
+.toLocaleTimeString(
+.toLocaleString(
+getFullYear()
+getMonth()
+getDate()
+setDate(
+setMonth(
+setFullYear(
+defaultNow()
+timestamp(
+CURRENT_DATE
+CURRENT_TIMESTAMP
+NOW()
+
+Also search for:
+
+split("T")[0]
+split('T')[0]
+YYYY-MM-DD
+today
+currentDate
+currentDay
+businessDate
+academicYear
+academicSession
+cron
+schedule
+
+Identify every location where the application calculates:
+
+- today
+- yesterday
+- tomorrow
+- current academic year
+- current academic session
+- attendance date
+- fee due date
+- report date
+- reminder date
+- scheduled-job business date
+- generated-at timestamp.
+
+Do NOT make changes during this audit phase.
+
+Produce a categorized report:
+
+A. Safe
+
+Already explicitly IST-aware.
+
+B. Browser-dependent
+
+Uses browser/device timezone.
+
+C. UTC-dependent
+
+Uses UTC-derived calendar dates.
+
+D. Date-only parsing risk
+
+Uses "new Date("YYYY-MM-DD")" or equivalent.
+
+E. Storage ambiguity
+
+Uses "timestamp without time zone" for a real-world instant.
+
+F. Historical-risk
+
+Existing values whose provenance is unknown.
+
+G. Scheduled-job risk
+
+Cron/business logic whose timezone is not explicit.
+
+---
+
+PHASE 2 — CREATE ONE CENTRAL DATE/TIME POLICY
+
+Create a single canonical date/time utility layer.
+
+Do NOT create multiple competing formatters throughout the application.
+
+The central utility should provide concepts equivalent to:
+
+formatInstantIST()
+formatDateOnly()
+formatDateOnlyLong()
+formatDateTimeIST()
+formatTimeIST()
+todayInIST()
+getCurrentISTCalendarDate()
+getAcademicYearForISTDate()
+
+Use the project's existing date library if one already exists.
+
+Do not introduce a new date library unnecessarily.
+
+---
+
+PHASE 3 — INSTANT FORMATTER
+
+For actual timestamps representing an instant in time, provide a deterministic IST formatter.
+
+Conceptually:
+
+formatInstantIST(timestamp)
+
+It must explicitly use:
+
+Asia/Kolkata
+
+The browser timezone must have zero influence on the result.
+
+Example:
+
+If the stored instant represents:
+
+2026-08-20T18:30:00Z
+
+the application must consistently display:
+
+21 Aug 2026, 12:00 AM IST
+
+where appropriate.
+
+Do NOT manually add:
+
++5:30
+
+to timestamps.
+
+Timezone conversion must be handled by the date/time API.
+
+---
+
+PHASE 4 — DATE-ONLY FORMATTER
+
+Create a completely separate date-only formatter.
+
+For a value:
+
+2026-08-21
+
+the result must always represent:
+
+21 Aug 2026
+
+Do not create a JavaScript UTC Date merely to display a DATE column.
+
+The implementation must operate on the calendar components/string.
+
+---
+
+PHASE 5 — IST "TODAY"
+
+This is critical.
+
+Never calculate school business dates using:
+
+new Date().toISOString().split("T")[0]
+
+because that produces the UTC calendar date.
+
+Instead create:
+
+todayInIST()
+
+which returns the current calendar date in:
+
+Asia/Kolkata
+
+Use this everywhere the application needs the Indian school business date.
+
+Audit and fix:
+
+- attendance "today"
+- dashboard "today"
+- fee generation dates
+- dunning/reminder dates
+- academic-year calculations
+- academic-session calculations
+- scheduled reports
+- daily jobs
+- payment business dates
+- calendar logic
+- leave logic.
+
+---
+
+PHASE 6 — ACADEMIC YEAR / SESSION LOGIC
+
+Academic-year calculations must use the IST calendar date, not the server's local timezone or UTC.
+
+For example, if the school year is:
+
+April 2027 – March 2028
+
+the calculation must be based on the Indian calendar date.
+
+Do not use:
+
+new Date().getMonth()
+new Date().getFullYear()
+
+for business-calendar decisions unless the Date has first been explicitly normalized to Asia/Kolkata.
+
+Create a central function for this logic.
+
+---
+
+PHASE 7 — BACKEND DATE/TIME BEHAVIOR
+
+The Node.js runtime may remain UTC.
+
+PostgreSQL may remain UTC.
+
+That is acceptable.
+
+Do NOT change:
+
+- OS timezone
+- container timezone
+- PostgreSQL global timezone
+
+just to make the application appear correct.
+
+Instead:
+
+Storage
+
+Treat existing persisted instant timestamps according to their currently established convention.
+
+For newly created records, establish and document one explicit storage contract.
+
+If existing "timestamp without time zone" columns are currently storing UTC wall-clock values, document that convention.
+
+Do NOT convert historical rows.
+
+Presentation
+
+Convert the persisted instant to:
+
+Asia/Kolkata
+
+only at the presentation/business-boundary layer.
+
+---
+
+PHASE 8 — RAZORPAY
+
+Preserve the existing correct Razorpay behavior.
+
+Razorpay epoch timestamps must continue to be interpreted as epoch seconds.
+
+Do NOT add 5 hours 30 minutes manually.
+
+Keep separate:
+
+provider_event_time
+application_received_at
+processing_time
+
+where applicable.
+
+Every Razorpay timestamp displayed in:
+
+- Admin Ledger
+- Student payment history
+- payment details
+- refunds
+- disputes
+- webhook history
+- receipts
+- payment attempt history
+
+must use the central IST formatter.
+
+Provider timestamps and application timestamps must remain distinguishable.
+
+---
+
+PHASE 9 — ADMIN LEDGER
+
+Audit the entire Fees & Payments Ledger.
+
+Every displayed event must use deterministic IST formatting:
+
+- payment initiated
+- payment attempt
+- checkout opened
+- payment failed
+- payment authorized
+- payment captured
+- refund initiated
+- refund processed
+- dispute
+- webhook received
+- webhook processing
+- enrichment
+- retry
+- receipt creation
+- invoice creation
+- payment record creation.
+
+The same event must show the same timestamp for:
+
+Admin
+Student
+Teacher
+
+when they are looking at the same underlying event.
+
+Do not allow browser timezone to alter it.
+
+---
+
+PHASE 10 — RECEIPTS / PDF / REPORTS
+
+Audit:
+
+- fee receipts
+- payment receipts
+- invoices
+- PDF documents
+- reports
+- analytics
+- generated-at labels
+- exported files
+- CSV metadata
+- Excel metadata.
+
+All user-facing generated timestamps must be IST.
+
+For example:
+
+Generated on: 21 Aug 2026, 09:42 AM IST
+
+Avoid:
+
+new Date().toLocaleString("en-IN")
+
+without an explicit timezone.
+
+---
+
+PHASE 11 — ATTENDANCE
+
+Attendance has two fundamentally different concepts.
+
+Attendance DATE
+
+Example:
+
+2026-08-21
+
+This is a DATE-only value.
+
+Never timezone-convert it.
+
+Attendance EVENT TIME
+
+Examples:
+
+marked_at
+check_in
+check_out
+correction_submitted_at
+reviewed_at
+
+These are instants.
+
+They must display in:
+
+Asia/Kolkata
+
+Audit both admin and student/teacher views.
+
+---
+
+PHASE 12 — STUDENT PORTAL
+
+Audit every student-facing date/time.
+
+Especially:
+
+- fee due dates
+- paid dates
+- payment attempts
+- refunds
+- reminders
+- dunning history
+- receipts
+- attendance
+- calendar
+- homework
+- leave
+- notifications.
+
+The student's physical device timezone must not change school dates/times.
+
+---
+
+PHASE 13 — DASHBOARD / ACTIVITY / AUDIT LOG
+
+Audit:
+
+- activity feed
+- audit logs
+- admin actions
+- approval history
+- complaint history
+- notice history
+- notification history
+- student profile timestamps
+- teacher profile timestamps
+- performance analytics.
+
+Every real timestamp must be rendered through the centralized IST formatter.
+
+---
+
+PHASE 14 — SCHEDULED JOBS / CRON
+
+This is extremely important.
+
+Inspect every scheduled job.
+
+Determine whether its intended business time is:
+
+Asia/Kolkata
+
+Do not assume a cron expression such as:
+
+08:00
+
+means 08:00 IST when the runtime is UTC.
+
+For every scheduled job, explicitly document:
+
+Runtime timezone
+Business timezone
+Expected execution time
+
+If a job is intended to execute at a particular IST time, implement the scheduling/business-date calculation explicitly.
+
+Do not change production schedules blindly.
+
+For any ambiguous schedule, flag it instead of guessing.
+
+---
+
+PHASE 15 — IMPORT / EXPORT
+
+Audit all import/export date handling.
+
+Especially:
+
+CSV
+Excel
+bulk student import
+fee import
+attendance import
+reports
+file names
+generated-at metadata
+
+Never serialize a date-only value through:
+
+new Date(date).toISOString()
+
+if doing so can shift the calendar day.
+
+---
+
+PHASE 16 — HISTORICAL DATA INVESTIGATION
+
+Before touching historical timestamps, sample real records.
+
+At minimum inspect:
+
+payment_attempts
+payment_attempt_events
+payment_webhook_events
+payment_webhook_processing_events
+payment_records
+fee_audit_log
+attendance_records
+teacher_self_attendance
+fee_records
+notification/dunning history
+
+For each sample compare:
+
+raw stored value
+created/updated source
+known business event time
+provider timestamp if available
+application receipt time
+current display
+expected IST display
+
+Determine whether the stored value represents:
+
+UTC wall-clock
+IST wall-clock
+browser-local time
+unknown provenance
+
+Do not modify these records.
+
+If historical provenance is uncertain, report it.
+
+---
+
+PHASE 17 — DATABASE STORAGE POLICY
+
+After the audit, provide a recommendation for each timestamp category.
+
+Preferred future model:
+
+Instant → timestamptz / UTC-aware instant
+Date-only → PostgreSQL DATE
+Time-only → appropriate time representation
+
+But DO NOT perform a mass schema migration in this task unless the existing data has been proven safe.
+
+If migration is recommended:
+
+1. document the current schema;
+2. sample historical records;
+3. establish provenance;
+4. create a migration proposal;
+5. create a rollback strategy;
+6. test against a copy;
+7. obtain explicit approval before modifying historical values.
+
+---
+
+PHASE 18 — TESTING REQUIREMENTS
+
+Add automated tests proving timezone determinism.
+
+Test 1 — Browser timezone independence
+
+Render the same persisted event under:
+
+Asia/Kolkata
+UTC
+America/New_York
+America/Los_Angeles
+Europe/London
+
+The displayed school-facing IST date/time must be identical.
+
+---
+
+Test 2 — UTC midnight boundary
+
+Test events around:
+
+00:00 UTC
+18:29 UTC
+18:30 UTC
+18:31 UTC
+23:59 UTC
+
+Verify the corresponding IST calendar date/time.
+
+---
+
+Test 3 — IST midnight boundary
+
+Test around:
+
+18:29 UTC
+18:30 UTC
+18:31 UTC
+
+because:
+
+18:30 UTC = 00:00 IST
+
+Verify that "todayInIST()" changes at the correct moment.
+
+---
+
+Test 4 — Date-only safety
+
+For:
+
+2026-04-01
+2026-08-21
+2027-01-01
+
+verify the date remains identical under every browser timezone.
+
+---
+
+Test 5 — Academic year
+
+Test dates immediately before and after:
+
+31 March
+1 April
+
+and verify the correct academic year/session.
+
+---
+
+Test 6 — Razorpay epoch
+
+Verify that Razorpay epoch timestamps convert correctly to IST without manual offset arithmetic.
+
+---
+
+Test 7 — Provider vs application time
+
+Verify that provider event time and application receipt time remain separate and each displays correctly in IST.
+
+---
+
+PHASE 19 — REGRESSION REQUIREMENT
+
+Do not change payment behavior.
+
+Do not change:
+
+- invoice calculation
+- payment processing
+- Razorpay verification
+- webhook security
+- receipt numbering
+- invoice numbering
+- offline payments
+- payment attempts
+- refund logic
+- dispute logic
+- tenant isolation.
+
+This task is about date/time correctness.
+
+If a change could affect financial state or payment state, stop and report it rather than silently changing it.
+
+---
+
+PHASE 20 — IMPLEMENTATION ORDER
+
+Follow this order:
+
+Step 1
+
+Read-only complete codebase audit.
+
+Step 2
+
+Create centralized IST/date-only utility.
+
+Step 3
+
+Fix frontend browser-dependent formatting.
+
+Step 4
+
+Fix unsafe date-only parsing.
+
+Step 5
+
+Fix backend UTC-derived "today" and academic-year calculations.
+
+Step 6
+
+Fix attendance/calendar business-date calculations.
+
+Step 7
+
+Fix payments, Ledger, Razorpay, receipts and reports.
+
+Step 8
+
+Fix notification/reminder/report generated timestamps.
+
+Step 9
+
+Audit and explicitly define scheduled-job timezone behavior.
+
+Step 10
+
+Add comprehensive timezone regression tests.
+
+Step 11
+
+Sample historical data.
+
+Step 12
+
+Only after validation, provide a separate recommendation for any database timestamp-type migration.
+
+---
+
+FINAL ACCEPTANCE CRITERIA
+
+Do NOT claim "100% IST correct" merely because tests pass.
+
+The task can only be considered complete when:
+
+- No school-facing timestamp depends on browser timezone.
+- No school business "today" calculation depends on UTC.
+- Date-only values are never accidentally converted into UTC instants.
+- Academic-year/session calculations use the IST calendar.
+- Attendance calendar dates are timezone-safe.
+- Admin Ledger timestamps are IST deterministic.
+- Student payment history timestamps are IST deterministic.
+- Razorpay timestamps remain correctly converted.
+- Provider and application timestamps remain separate.
+- Receipts/PDF/report generated timestamps are IST.
+- Reminder/dunning timestamps are IST.
+- Dashboard activity timestamps are IST.
+- Scheduled jobs have explicit timezone semantics.
+- Imports/exports do not shift date-only values.
+- Historical records are NOT modified without provenance analysis.
+- Browser timezone regression tests pass.
+- UTC/IST boundary tests pass.
+- Full existing test suite passes.
+- No payment/offline-payment behavior regresses.
+
+FINAL REPORT REQUIRED
+
+At the end, provide:
+
+1. Changed
+
+Exact files/modules changed.
+
+2. Fixed
+
+Every concrete IST/date-time issue fixed.
+
+3. Intentionally unchanged
+
+Historical data and any ambiguous storage fields that were deliberately left untouched.
+
+4. Remaining risks
+
+Anything that cannot safely be fixed without historical-data analysis or architectural approval.
+
+5. Test results
+
+Exact test count and results.
+
+6. Scheduled jobs
+
+A table showing every scheduled job and its effective business timezone.
+
+7. Database timestamp policy
+
+Clearly state whether existing timezone-less timestamps are being treated as UTC by documented convention or whether a future "timestamptz" migration is recommended.
+
+8. Historical-data recommendation
+
+List the tables requiring provenance sampling before any conversion.
+
+MOST IMPORTANT
+
+Do not simply replace every date formatter with:
+
+Asia/Kolkata
+
+and declare victory.
+
+The real requirement is:
+
+The application must distinguish DATE-only calendar values from real-world instants, calculate school business dates using IST, store/interpret instants consistently, and present all school-facing times deterministically in Asia/Kolkata regardless of server, database, browser, or device timezone.
+
+Do the implementation carefully in phases, run the complete regression suite, and report any ambiguity instead of guessing.

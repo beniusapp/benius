@@ -1,0 +1,518 @@
+Task: Reset Add Invoice Modal to Match Fee Structure Exactly
+
+I want you to make a very careful, minimal change to the Add Invoice modal.
+
+IMPORTANT
+
+Do not redesign the modal.
+
+Do not create a new UI pattern.
+
+Do not change the Fee Structure modal.
+
+Do not change Generate Invoices logic.
+
+Do not change payment logic, Ledger logic, invoice numbering, duplicate protection, academic-session logic, or any unrelated functionality.
+
+The goal is very simple:
+
+«Make the Add Invoice form visually and structurally the same as the existing Fee Structure form, with only the Applicable Classes section removed because Add Invoice is for one specific student.»
+
+---
+
+1. Use the Existing Fee Structure Modal as the Exact UI Reference
+
+The existing New Fee Structure / Edit Fee Structure modal is the source of truth.
+
+The Add Invoice modal should follow the same:
+
+- Modal width
+- Modal height
+- Padding
+- Spacing
+- Field layout
+- Two-column layout
+- Field labels
+- Input styling
+- Dropdown styling
+- Section headings
+- Toggle styling
+- Late Fee & Penalty card
+- Fee Breakdown / Components section
+- Add Component button
+- Components table
+- Button styling
+- Typography
+- Borders
+- Radius
+- Colors
+- Icons
+- Responsive behavior
+- Vertical scrolling behavior
+
+Do not invent a new design.
+
+---
+
+2. Add Invoice Must Start With Student Selection
+
+Because this is Add Invoice for one particular student, keep the student-selection functionality at the top.
+
+The student selector should allow:
+
+- Search by Student Name
+- Search by Student DSID
+
+There must be no "All Classes" selector.
+
+There must be no class filter.
+
+There must be no Applicable Classes section anywhere in Add Invoice.
+
+Once a student is selected, show the selected student's:
+
+- Name
+- DSID
+- Class/section
+
+using the existing student-selection UI.
+
+---
+
+3. After Student Selection, Match Fee Structure Exactly
+
+After the student is selected, the rest of the Add Invoice form should follow the existing Fee Structure form.
+
+The order should be:
+
+Fee Name
+
+Use the same Fee Name field as Fee Structure.
+
+Do not use the old "Name" label.
+
+It must say:
+
+Fee Name
+
+---
+
+Fee Type
+
+Use the same Fee Type field as Fee Structure.
+
+---
+
+Amount (₹)
+
+Use the same Amount field and formatting as Fee Structure.
+
+---
+
+Frequency
+
+Use the same Frequency dropdown as Fee Structure.
+
+For example:
+
+- Monthly
+- Quarterly
+- Annual
+- One-time
+
+Use the application's existing supported frequency values.
+
+---
+
+4. REMOVE ONLY APPLICABLE CLASSES
+
+The Fee Structure modal currently has:
+
+Applicable Classes
+
+with:
+
+- Preparatory
+- Nursery
+- 1
+- 2
+- 3
+- etc.
+
+For Add Invoice:
+
+REMOVE THIS ENTIRE SECTION.
+
+Do not display:
+
+- Applicable Classes label
+- Class checkboxes
+- Select-all class behavior
+- Class eligibility selector
+
+This is the only major Fee Structure section that should be removed.
+
+The selected student already determines the target student.
+
+---
+
+5. Due Date
+
+After Frequency, use the same Due Date field from Fee Structure.
+
+Keep the exact same:
+
+- Label
+- Dropdown/input
+- Available options
+- Date calculation
+- Validation
+- Styling
+
+Do not create a second due-date implementation.
+
+The Add Invoice due-date behavior must remain consistent with Generate Invoices.
+
+---
+
+6. Late Fee & Penalty
+
+Add the same Late Fee & Penalty section that exists in Fee Structure.
+
+It must contain exactly the same functionality:
+
+Late Fee & Penalty
+
+- Enable/disable toggle
+- ACTIVE indicator
+- Rule Type
+- Penalty Amount (₹)
+- Same descriptions/help text
+- Same styling
+
+Use the existing Fee Structure implementation.
+
+Do not create a separate late-fee calculation system.
+
+The purpose is to make the Add Invoice configuration consistent with the existing Fee Structure configuration.
+
+---
+
+7. Fee Breakdown / Components
+
+Add the same Fee Breakdown / Components section from Fee Structure.
+
+It must contain:
+
+Fee Breakdown / Components
+
+Optional — shown to students
+
++ Add Component
+
+Each component should have the same fields as Fee Structure:
+
+- Component
+- Purpose / Description
+- Amount (₹)
+- Delete/remove action
+
+And it must show:
+
+Components Total
+
+using the same calculation and validation as Fee Structure.
+
+Example:
+
+- Lab fee — Laboratory — ₹10,000
+- Sports fee — Sports — ₹10,000
+- Extra — Extra — ₹15,000
+
+Components Total = ₹35,000
+
+Do not implement a different component system.
+
+Reuse the existing Fee Structure component logic wherever possible.
+
+---
+
+8. REMOVE THE OLD ADD INVOICE FIELDS THAT ARE NOT PART OF THE FEE STRUCTURE FORM
+
+The current Add Invoice modal contains fields such as:
+
+- Fee Period Start
+- Fee Period End
+- Status
+- Academic Year
+- Notes
+
+Do not keep these as a separate custom Add Invoice form structure.
+
+The Add Invoice UI should instead follow the Fee Structure form.
+
+However, this does NOT mean the backend should stop storing or deriving required invoice information.
+
+The backend must continue deriving/storing whatever is required by the existing invoice-generation architecture.
+
+The important distinction is:
+
+«UI should match Fee Structure, while backend invoice creation must continue using the existing shared Generate Invoices architecture.»
+
+Do not remove required database fields simply because they are not directly displayed in this modal.
+
+---
+
+9. Very Important: Preserve the Existing Invoice Architecture
+
+The previous implementation work established that Add Invoice and Generate Invoices should use the same invoice-creation rules.
+
+KEEP THAT.
+
+When Add Invoice creates an invoice for one student, it must still use the same canonical rules as Generate Invoices for:
+
+- Invoice number generation
+- Academic session
+- Fee structure information
+- Fee type
+- Amount
+- Frequency
+- Due date
+- Fee breakdown/component snapshot
+- Late-fee configuration where applicable
+- Duplicate prevention
+- Student eligibility/validation
+- Tenant isolation
+- Database transaction handling
+- Invoice creation
+- Existing fee_records behavior
+
+Do NOT create a second independent invoice-generation implementation.
+
+---
+
+10. Student-Specific Behavior
+
+Generate Invoices works for multiple students based on the applicable classes.
+
+Add Invoice is different only in this respect:
+
+«It creates the invoice for exactly ONE selected student.»
+
+Therefore:
+
+Generate Invoices
+
+Existing behavior remains unchanged.
+
+Add Invoice
+
+1. Select one student by Name or DSID.
+2. Select/use the applicable Fee Structure.
+3. Use the same fee-generation rules.
+4. Create one invoice for that student.
+5. Do not require Applicable Classes.
+
+Everything else should follow the same architecture.
+
+---
+
+11. Do Not Break Fee Structure
+
+The existing Fee Structure page/modal must remain exactly as it is.
+
+Do not modify:
+
+- Fee Structure creation
+- Fee Structure editing
+- Applicable Classes
+- Late Fee & Penalty
+- Components
+- Frequency
+- Due Date
+- Fee Structure calculations
+- Existing structures
+
+Only reuse its existing components/logic where appropriate.
+
+---
+
+12. Do Not Change Ledger & Transactions
+
+Do not change the Ledger & Transactions table as part of this task.
+
+The invoice created through Add Invoice must simply appear in the Ledger exactly like an invoice created through Generate Invoices.
+
+It must have the same:
+
+- Invoice Number
+- Fee Name
+- Fee Type
+- Amount
+- Due Date
+- Academic Year
+- Status
+- Component snapshot
+- Other existing invoice data
+
+---
+
+13. Final Add Invoice Layout
+
+The final Add Invoice modal should conceptually be:
+
+Add Invoice
+
+Student
+
+- Search by Name / DSID
+- Selected student card
+
+Then the same form structure as Fee Structure:
+
+Fee Name
+
+Fee Type
+
+Amount (₹)
+
+Frequency
+
+/Applicable Classes/
+REMOVE COMPLETELY
+
+Due Date
+
+Late Fee & Penalty
+
+- Toggle
+- Rule Type
+- Penalty Amount
+
+Fee Breakdown / Components
+
+- Add Component
+- Component
+- Purpose / Description
+- Amount
+- Components Total
+
+Bottom:
+
+Cancel
+
+Create Invoice
+
+---
+
+14. Most Important UI Rule
+
+Compare the Add Invoice modal side-by-side with the existing Fee Structure modal.
+
+The user should immediately feel:
+
+«"This is the exact same fee form."»
+
+The only intentional differences should be:
+
+1. Student selection exists in Add Invoice
+2. Applicable Classes does not exist in Add Invoice
+3. The final action is Create Invoice instead of Create Structure
+
+Everything else should follow the Fee Structure design and behavior as closely as technically possible.
+
+---
+
+15. Do Not Make Unrequested Changes
+
+This is extremely important.
+
+Do not modify:
+
+- Ledger
+- Transactions
+- Payment methods
+- Payment history
+- Razorpay
+- Offline payments
+- Receipt generation
+- Invoice numbering
+- Generate Invoices UI
+- Fee Structure UI
+- Academic session system
+- Late-fee cron
+- Database schema
+- Existing student search
+- Existing permissions
+- Existing filters
+- Existing APIs
+
+unless a change is absolutely required to make this Add Invoice implementation work.
+
+Prefer reusing existing components and logic over duplicating code.
+
+---
+
+16. Verification
+
+After implementation, verify all of the following:
+
+UI
+
+- Add Invoice visually matches Fee Structure.
+- Fee Name is present.
+- Fee Type is present.
+- Amount is present.
+- Frequency is present.
+- Applicable Classes is completely removed.
+- Due Date is present.
+- Late Fee & Penalty matches Fee Structure.
+- Fee Breakdown / Components matches Fee Structure.
+- Student selection remains at the top.
+- Search works by Name.
+- Search works by DSID.
+- Only one student can be selected.
+- No "All Classes" appears anywhere.
+
+Functional
+
+Create an invoice for one test student.
+
+Verify:
+
+- Correct student
+- Correct fee name
+- Correct fee type
+- Correct amount
+- Correct frequency
+- Correct due date
+- Correct fee components
+- Correct invoice number
+- Correct academic session
+- Correct status
+- Correct duplicate protection
+
+Then compare the resulting invoice with one generated through Generate Invoices.
+
+The resulting invoice data should follow the same invoice-generation architecture and rules.
+
+Regression
+
+Run:
+
+- TypeScript check
+- Existing invoice tests
+- Existing fee tests
+- Existing payment tests
+- Existing Ledger tests
+- Full test suite if available
+
+Do not consider the task complete if unrelated existing functionality has been broken.
+
+Final Rule
+
+Do not redesign. Do not simplify. Do not invent.
+
+Use the existing Fee Structure modal as the exact source of truth.
+
+Make Add Invoice = Fee Structure form + one selected student − Applicable Classes, while keeping the existing shared invoice-generation backend architecture intact.

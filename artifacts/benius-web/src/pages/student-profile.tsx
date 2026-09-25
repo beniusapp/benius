@@ -1,0 +1,1397 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import {
+  ArrowLeft, Camera, CheckCircle, Clock, XCircle, AlertCircle, Loader2,
+  User, Lock, Eye, EyeOff, GraduationCap, FileText, Shield,
+  ChevronRight, AlertTriangle, MoreVertical, X, ZoomIn, CropIcon,
+} from "lucide-react";
+
+const CROP_SIZE = 260; // diameter of crop circle in px
+import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { motion, AnimatePresence } from "framer-motion";
+
+interface StudentMeResponse {
+  id: number;
+  name: string;
+  digitalStudentId: string;
+  class: string;
+  section: string;
+  phone: string;
+  dob: string;
+  photoUrl: string | null;
+  enrollmentDate: string | null;
+  gender: string | null;
+  rollNumber: number | null;
+  guardianName: string | null;
+  bloodGroup: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  address: string | null;
+  aadharNumber: string | null;
+  email: string | null;
+  schoolName: string;
+  schoolCode: string;
+  schoolId?: number;
+}
+
+interface StudentProfileRecord {
+  id: number;
+  studentId: number;
+  schoolId: number;
+  status: "draft" | "pending" | "approved" | "rejected";
+  fullName: string | null;
+  class: string | null;
+  section: string | null;
+  rollNo: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  presentAddress: string | null;
+  aadharNumber: string | null;
+  gender: string | null;
+  phone: string | null;
+  dob: string | null;
+  enrollmentDate: string | null;
+  guardianName: string | null;
+  bloodGroup: string | null;
+  email: string | null;
+  photoUrl: string | null;
+  photoStatus: "none" | "pending" | "approved";
+  rejectionNote: string | null;
+  submittedAt: string | null;
+  verifiedAt: string | null;
+}
+
+interface VerifiedProfileData {
+  fullName: string | null;
+  class: string | null;
+  section: string | null;
+  rollNo: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  presentAddress: string | null;
+  photoUrl: string | null;
+  verifiedAt: string | null;
+}
+
+interface LiveStudentData {
+  name: string;
+  class: string;
+  section: string;
+  digitalStudentId: string;
+  photoUrl: string | null;
+  enrollmentDate: string | null;
+  verifiedProfile: VerifiedProfileData | null;
+}
+
+interface ApprovedSnapshot {
+  fullName: string | null;
+  class: string | null;
+  section: string | null;
+  rollNo: string | null;
+  fatherName: string | null;
+  motherName: string | null;
+  presentAddress: string | null;
+  photoUrl: string | null;
+  approvedAt: string | null;
+}
+
+interface StudentProfileResponse {
+  profile: StudentProfileRecord | null;
+  approvedSnapshot: ApprovedSnapshot | null;
+  liveData: LiveStudentData;
+}
+
+interface VerificationLimit {
+  used: number;
+  remaining: number;
+  allowed: number;
+}
+
+const menuVariants = {
+  hidden: { opacity: 0, y: -8, scale: 0.95 },
+  show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 400, damping: 30 } },
+  exit: { opacity: 0, y: -6, scale: 0.96, transition: { duration: 0.15 } },
+};
+
+function StatusBadge({ status, profile }: { status: string; profile: StudentProfileRecord | null }) {
+  if (status === "pending") {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-yellow-200 bg-yellow-50 text-yellow-700 text-xs font-medium" data-testid="status-banner">
+        <Clock className="w-3.5 h-3.5 flex-shrink-0 text-yellow-500" />
+        <span data-testid="status-label">Awaiting Teacher Verification</span>
+        {profile?.submittedAt && (
+          <span className="ml-auto text-yellow-500 text-[10px]">
+            {new Date(profile.submittedAt).toLocaleDateString("en-GB")}
+          </span>
+        )}
+      </div>
+    );
+  }
+  if (status === "approved") {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-semibold" data-testid="status-banner">
+        <CheckCircle className="w-4 h-4 flex-shrink-0 text-[#10b981]" />
+        <span data-testid="status-label">Profile Verified</span>
+        {profile?.verifiedAt && (
+          <span className="ml-auto text-emerald-500 text-[10px] font-normal">
+            {new Date(profile.verifiedAt).toLocaleDateString("en-GB")}
+          </span>
+        )}
+      </div>
+    );
+  }
+  if (status === "rejected") {
+    return (
+      <div className="flex items-start gap-2 px-4 py-3 rounded-xl border border-red-200 bg-red-50 text-red-600" data-testid="status-banner">
+        <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500" />
+        <div>
+          <p className="font-semibold text-sm" data-testid="status-label">Rejected — Please resubmit</p>
+          {profile?.rejectionNote && (
+            <p className="text-xs mt-1 text-red-500" data-testid="rejection-note">
+              {profile.rejectionNote}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-100 bg-slate-50 text-slate-400 text-xs" data-testid="status-banner">
+      <AlertCircle className="w-3.5 h-3.5 text-slate-300" />
+      <span data-testid="status-label">Draft — Submit for verification to get approved</span>
+    </div>
+  );
+}
+
+function InfoField({ label, value, mono, full }: { label: string; value: string; mono?: boolean; full?: boolean }) {
+  return (
+    <div className={`flex flex-col gap-0.5 ${full ? "col-span-2" : ""}`}>
+      <span className="text-[10px] text-slate-400 uppercase tracking-widest font-medium">{label}</span>
+      <span className={`text-sm font-semibold text-slate-800 break-words ${mono ? "font-mono tracking-wider" : ""}`}>
+        {value || "—"}
+      </span>
+    </div>
+  );
+}
+
+function ReadOnlyField({ label, value, testId }: { label: string; value: string; testId?: string }) {
+  return (
+    <div>
+      <label className="text-xs font-medium text-slate-500 mb-1.5 block">{label}</label>
+      <div
+        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-sm flex items-center gap-2"
+        data-testid={testId}
+      >
+        <Lock className="w-3 h-3 text-slate-300 flex-shrink-0" />
+        <span>{value || "—"}</span>
+      </div>
+    </div>
+  );
+}
+
+export default function StudentProfile() {
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const fileInputRef  = useRef<HTMLInputElement>(null);
+  const menuRef       = useRef<HTMLDivElement>(null);
+  const fullNameRef   = useRef<HTMLInputElement>(null);
+  const currentPasswordRef = useRef<HTMLInputElement>(null);
+  const cropImgRef    = useRef<HTMLImageElement>(null);
+  const dragStartRef  = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
+  const cropCircleSizeRef = useRef<number>(CROP_SIZE);
+
+  // ── Crop modal state ───────────────────────────────────────────────────────
+  const [cropSrc,  setCropSrc]  = useState<string | null>(null);
+  const [cropPos,  setCropPos]  = useState({ x: 0, y: 0 });
+  const [cropZoom, setCropZoom] = useState(1);
+  const [imgNatural, setImgNatural] = useState({ w: 1, h: 1 });
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const [form, setForm] = useState({
+    fullName: "",
+    rollNo: "",
+    fatherName: "",
+    motherName: "",
+    presentAddress: "",
+    aadharNumber: "",
+    gender: "" as "" | "Boy" | "Girl",
+    phone: "",
+    email: "",
+    dob: "",
+    enrollmentDate: "",
+    guardianName: "",
+    bloodGroup: "" as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
+  });
+
+  const originalFormRef = useRef(form);
+
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
+
+  const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
+    queryKey: ["/api/student-me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  const { data: profileData, isLoading: profileLoading } = useQuery<StudentProfileResponse | null>({
+    queryKey: ["/api/student/profile"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  const { data: limitData } = useQuery<VerificationLimit>({
+    queryKey: ["/api/student/verification-limit"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!student,
+    staleTime: 30000,
+  });
+
+  const profile = profileData?.profile ?? null;
+  const approvedSnapshot = profileData?.approvedSnapshot ?? null;
+
+  useEffect(() => {
+    if (!student) return;
+    // Build pre-filled values: prefer saved profile fields, fall back to live student record
+    const vals = {
+      fullName:       profile?.fullName       || student.name            || "",
+      rollNo:         profile?.rollNo         || (student.rollNumber != null ? String(student.rollNumber) : ""),
+      fatherName:     profile?.fatherName     || student.fatherName      || "",
+      motherName:     profile?.motherName     || student.motherName      || "",
+      presentAddress: profile?.presentAddress || student.address         || "",
+      aadharNumber:   profile?.aadharNumber   || student.aadharNumber    || "",
+      gender:        (profile?.gender         || student.gender          || "") as "" | "Boy" | "Girl",
+      phone:          profile?.phone          || student.phone           || "",
+      dob:            profile?.dob            || student.dob             || "",
+      enrollmentDate: profile?.enrollmentDate || student.enrollmentDate  || "",
+      guardianName:   profile?.guardianName   || student.guardianName    || "",
+      bloodGroup:    (profile?.bloodGroup     || student.bloodGroup      || "") as "" | "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-",
+      email:          student.email           || "",
+    };
+    setForm(vals);
+    originalFormRef.current = vals;
+  }, [profile?.id, student?.id]);
+
+  useEffect(() => {
+    if (!securityOpen) {
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setShowCurrentPw(false);
+      setShowNewPw(false);
+      setShowConfirmPw(false);
+    }
+  }, [securityOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleOutside(e: PointerEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handleOutside);
+    return () => document.removeEventListener("pointerdown", handleOutside);
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (isEditing) {
+      const timer = setTimeout(() => {
+        fullNameRef.current?.focus();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isEditing]);
+
+  useEffect(() => {
+    if (securityOpen) {
+      const timer = setTimeout(() => {
+        currentPasswordRef.current?.focus();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [securityOpen]);
+
+  const submitMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/student/profile", form);
+      return await apiRequest("POST", "/api/student/profile/submit");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/student/profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/verification-limit"] });
+      toast({ title: "Submitted for verification!" });
+      setIsEditing(false);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Submission failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const photoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const res = await fetch("/api/student/profile/photo", {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Photo upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/student/profile"] });
+      toast({ title: "Photo uploaded", description: "Awaiting teacher approval." });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const passwordMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/student/change-password", {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
+    },
+    onSuccess: () => {
+      setSecurityOpen(false);
+      toast({ title: "Password changed successfully." });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  if (studentLoading || profileLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
+        <Loader2 className="w-9 h-9 animate-spin text-[#10b981]" />
+      </div>
+    );
+  }
+
+  if (!student) {
+    setLocation("/student-login");
+    return null;
+  }
+
+  const status = profile?.status || "draft";
+  const canSubmit = status !== "pending";
+  const isVerificationLocked = !!(limitData && limitData.remaining <= 0);
+
+  const dob = student.dob
+    ? new Date(student.dob).toLocaleDateString("en-GB")
+    : "—";
+
+  const enrollmentDateDisplay = student.enrollmentDate
+    ? new Date(student.enrollmentDate).toLocaleDateString("en-GB")
+    : "—";
+
+  const photoToShow = profile?.photoUrl || student.photoUrl;
+  const photoIsApproved = profile?.photoStatus === "approved";
+
+  const initials = student.name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1 * 1024 * 1024) {
+      toast({
+        title: "Image too large",
+        description: "Please upload an image smaller than 1 MB.",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      cropCircleSizeRef.current = Math.min(CROP_SIZE, Math.round(window.innerWidth * 0.65));
+      setCropSrc(ev.target?.result as string);
+      setCropPos({ x: 0, y: 0 });
+      setCropZoom(1);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  function handleCropDragStart(e: React.PointerEvent<HTMLDivElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStartRef.current = { px: e.clientX, py: e.clientY, ox: cropPos.x, oy: cropPos.y };
+  }
+
+  function handleCropDragMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!dragStartRef.current) return;
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * cropZoom;
+    const displayH  = imgNatural.h * baseScale * cropZoom;
+    const maxX = Math.max(0, (displayW - cs) / 2);
+    const maxY = Math.max(0, (displayH - cs) / 2);
+    const dx = e.clientX - dragStartRef.current.px;
+    const dy = e.clientY - dragStartRef.current.py;
+    setCropPos({
+      x: Math.max(-maxX, Math.min(maxX, dragStartRef.current.ox + dx)),
+      y: Math.max(-maxY, Math.min(maxY, dragStartRef.current.oy + dy)),
+    });
+  }
+
+  function handleCropDragEnd() { dragStartRef.current = null; }
+
+  function handleCropZoomChange(newZoom: number) {
+    // When zoom changes, re-clamp the existing offset
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * newZoom;
+    const displayH  = imgNatural.h * baseScale * newZoom;
+    const maxX = Math.max(0, (displayW - cs) / 2);
+    const maxY = Math.max(0, (displayH - cs) / 2);
+    setCropZoom(newZoom);
+    setCropPos(p => ({
+      x: Math.max(-maxX, Math.min(maxX, p.x)),
+      y: Math.max(-maxY, Math.min(maxY, p.y)),
+    }));
+  }
+
+  function handleCropConfirm() {
+    const img = cropImgRef.current;
+    if (!img || !cropSrc) return;
+    const cs = cropCircleSizeRef.current;
+    const baseScale = cs / Math.min(imgNatural.w, imgNatural.h);
+    const displayW  = imgNatural.w * baseScale * cropZoom;
+    const displayH  = imgNatural.h * baseScale * cropZoom;
+    const imgX = cs / 2 - displayW / 2 + cropPos.x;
+    const imgY = cs / 2 - displayH / 2 + cropPos.y;
+    const sx = (-imgX) / displayW * imgNatural.w;
+    const sy = (-imgY) / displayH * imgNatural.h;
+    const sw = cs / displayW * imgNatural.w;
+    const sh = cs / displayH * imgNatural.h;
+    const canvas = document.createElement("canvas");
+    canvas.width  = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 400, 400);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], "profile.jpg", { type: "image/jpeg" });
+      setCropSrc(null);
+      photoMutation.mutate(file);
+    }, "image/jpeg", 0.92);
+  }
+
+  function handleStartEditing() {
+    originalFormRef.current = { ...form };
+    setIsEditing(true);
+    setSecurityOpen(false);
+    setMenuOpen(false);
+  }
+
+  function handleCancel() {
+    setForm({ ...originalFormRef.current });
+    setIsEditing(false);
+  }
+
+  function handleSubmit() {
+    if (!form.fullName || !form.fatherName || !form.motherName || !form.presentAddress) {
+      toast({
+        title: "Missing fields",
+        description: "Please fill in Full Name, Father's Name, Mother's Name, and Address.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (form.aadharNumber && form.aadharNumber.length !== 12) {
+      toast({ title: "Invalid Aadhaar", description: "Aadhaar number must be exactly 12 digits.", variant: "destructive" });
+      return;
+    }
+    submitMutation.mutate();
+  }
+
+  function handleChangePassword() {
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast({ title: "Passwords do not match", variant: "destructive" });
+      return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+      toast({ title: "Too short", description: "At least 6 characters.", variant: "destructive" });
+      return;
+    }
+    passwordMutation.mutate();
+  }
+
+  function handleOpenSecurity() {
+    setSecurityOpen(true);
+    setIsEditing(false);
+    setMenuOpen(false);
+  }
+
+  const inputBase = "w-full px-3 py-2.5 rounded-xl bg-white border text-[#1a1a1a] placeholder:text-gray-400 text-base focus:outline-none focus:ring-2 focus:ring-offset-0 transition-colors";
+  const editingBorder = "border-gray-300 focus:ring-[#10b981] focus:border-[#10b981]";
+  const defaultBorder = "border-gray-300 focus:ring-[#10b981] focus:border-[#10b981]";
+  const inputStyle: React.CSSProperties = {
+    pointerEvents: 'auto',
+    touchAction: 'manipulation',
+    WebkitUserSelect: 'text',
+    position: 'relative',
+    zIndex: 10000,
+    caretColor: '#10b981',
+  };
+
+  const isAnyFormOpen = isEditing || securityOpen;
+
+  return (
+    <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
+
+      {/* ── Decorative blobs ── */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%", width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
+
+      {/* ── Sticky Header ── */}
+      <header
+        className="sticky top-0 z-40"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+
+          {/* Left: Back / Cancel */}
+          {isEditing ? (
+            <button
+              onClick={handleCancel}
+              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl transition-colors flex-shrink-0 text-sm font-medium text-slate-600"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
+              data-testid="button-back"
+            >
+              <X className="w-4 h-4" />
+              Cancel
+            </button>
+          ) : securityOpen ? (
+            <button
+              onClick={() => setSecurityOpen(false)}
+              className="flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl transition-colors flex-shrink-0 text-sm font-medium text-slate-600"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
+              data-testid="button-back"
+            >
+              <X className="w-4 h-4" />
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={() => setLocation("/student-dashboard")}
+              className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0"
+              style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
+              data-testid="button-back"
+            >
+              <ArrowLeft className="w-5 h-5 text-slate-600" />
+            </button>
+          )}
+
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-center w-8 h-8 rounded-xl flex-shrink-0" style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)" }}>
+              <GraduationCap className="w-4 h-4 text-white" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-bold text-sm text-slate-800 leading-tight truncate">
+                {isEditing ? "Verification Details" : securityOpen ? "Security" : "My Profile"}
+              </p>
+              <p className="text-[11px] text-slate-400 truncate">{student.schoolName}</p>
+            </div>
+          </div>
+
+          {/* Right: ⋮ menu (read-only mode only) */}
+          {!isAnyFormOpen ? (
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                className="flex items-center justify-center w-10 h-10 rounded-xl transition-colors"
+                style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.08)" }}
+                data-testid="button-menu"
+              >
+                <MoreVertical className="w-5 h-5 text-slate-600" />
+              </button>
+
+              <AnimatePresence>
+                {menuOpen && (
+                  <motion.div
+                    variants={menuVariants}
+                    initial="hidden"
+                    animate="show"
+                    exit="exit"
+                    className="absolute right-0 top-12 z-50 w-60 rounded-2xl overflow-hidden"
+                    style={{ background: "rgba(255,255,255,0.95)", backdropFilter: "blur(20px)", border: "1px solid rgba(0,0,0,0.08)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
+                    data-testid="menu-options"
+                  >
+                    {/* Submit for Verification */}
+                    <button
+                      onClick={() => {
+                        if (isVerificationLocked) {
+                          toast({
+                            title: "Monthly limit reached",
+                            description: "You have used all 3 submissions for this month.",
+                            variant: "destructive",
+                          });
+                          setMenuOpen(false);
+                          return;
+                        }
+                        handleStartEditing();
+                      }}
+                      className={`w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors ${
+                        isVerificationLocked
+                          ? "opacity-50 cursor-not-allowed"
+                          : "hover:bg-slate-50"
+                      }`}
+                      data-testid="menu-submit-verification"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                        <FileText className="w-4 h-4 text-[#10b981]" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800">Submit for Verification</p>
+                        {limitData && (
+                          <p className={`text-[10px] mt-0.5 ${isVerificationLocked ? "text-red-500" : "text-emerald-600"}`}>
+                            {isVerificationLocked
+                              ? "Limit reached this month"
+                              : `${limitData.remaining} of ${limitData.allowed} attempts left`}
+                          </p>
+                        )}
+                      </div>
+                      {!isVerificationLocked && <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
+                      {isVerificationLocked && <Lock className="w-4 h-4 text-red-400 flex-shrink-0" />}
+                    </button>
+
+                    <div className="h-px bg-slate-100 mx-3" />
+
+                    {/* Security */}
+                    <button
+                      onClick={handleOpenSecurity}
+                      className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-slate-50 transition-colors"
+                      data-testid="menu-security"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <Shield className="w-4 h-4 text-blue-500" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-slate-800">Security</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">Change password</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ) : null}
+        </div>
+      </header>
+
+      {/* ── Main Content ── */}
+      <motion.main
+        className="flex-1 overflow-y-auto"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: "easeOut" }}
+      >
+        <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+
+          {/* ══ READ-ONLY VIEW ══ */}
+          {!isEditing && !securityOpen && (
+            <>
+              <StatusBadge status={status} profile={profile} />
+
+              {/* Identity Card */}
+              <div className="rounded-2xl border border-slate-100 bg-white overflow-hidden shadow-sm">
+                <div className="px-5 py-6 flex items-center gap-5">
+                  <div className="relative flex-shrink-0">
+                    {photoToShow ? (
+                      <img
+                        src={photoToShow}
+                        alt="Profile"
+                        className={`w-20 h-20 rounded-full object-cover border-3 shadow-lg ${
+                          photoIsApproved
+                            ? "border-[#10b981]"
+                            : profile?.photoStatus === "pending"
+                            ? "border-yellow-400"
+                            : "border-slate-200"
+                        }`}
+                        data-testid="img-profile-photo"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-100 to-blue-100 border-2 border-emerald-200 flex items-center justify-center shadow-lg">
+                        <span className="text-xl font-bold text-[#10b981]">{initials}</span>
+                      </div>
+                    )}
+                    {photoIsApproved && (
+                      <span
+                        className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-[#10b981] border-2 border-white flex items-center justify-center shadow-lg"
+                        title="Photo Verified"
+                        data-testid="badge-verified"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 text-white" />
+                      </span>
+                    )}
+                    {profile?.photoStatus === "pending" && (
+                      <span className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full bg-yellow-400 border-2 border-white flex items-center justify-center shadow-lg" title="Photo Pending">
+                        <Clock className="w-3 h-3 text-white" />
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-lg font-bold text-slate-800 truncate" data-testid="text-student-name">
+                      {profile?.fullName || student.name}
+                    </h2>
+                    <p className="text-sm text-emerald-600 mt-0.5">
+                      Class {student.class} – {student.section}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1 font-mono">{student.digitalStudentId}</p>
+                  </div>
+                </div>
+
+                <div className="px-5 pb-5">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-4 pt-1">
+                    <InfoField label="Full Name" value={profile?.fullName || student.name} full />
+                    <InfoField label="Class" value={student.class} />
+                    <InfoField label="Section" value={student.section} />
+                    <InfoField label="Gender" value={student.gender || "—"} />
+                    <InfoField label="Roll Number" value={student.rollNumber != null ? String(student.rollNumber) : "—"} />
+                    <InfoField label="Guardian Name" value={student.guardianName || "—"} />
+                    <InfoField label="Phone" value={student.phone} mono />
+                    <InfoField label="Email" value={student.email || "—"} />
+                    <InfoField label="Date of Birth" value={dob} />
+                    <InfoField label="Date of Admission" value={enrollmentDateDisplay} />
+                    <InfoField label="Blood Group" value={student.bloodGroup || "—"} />
+                    <InfoField label="Father's Name" value={profile?.fatherName || student.fatherName || "—"} />
+                    <InfoField label="Mother's Name" value={profile?.motherName || student.motherName || "—"} />
+                    <InfoField label="Aadhaar Number" value={profile?.aadharNumber || student.aadharNumber || "—"} mono />
+                    <InfoField label="Address" value={profile?.presentAddress || student.address || "—"} full />
+                    <InfoField label="DSID" value={student.digitalStudentId} mono />
+                    <InfoField label="School" value={student.schoolCode} mono />
+                  </div>
+                </div>
+              </div>
+
+              {/* Photo pending sub-card */}
+              {profile?.photoStatus === "pending" && (
+                <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-yellow-200 bg-yellow-50">
+                  <Camera className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+                  <p className="text-xs text-yellow-700 font-medium">
+                    Your photo is pending teacher review and not yet visible on ID cards.
+                  </p>
+                </div>
+              )}
+
+              {/* Last verified snapshot */}
+              {approvedSnapshot && status !== "approved" && (
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 overflow-hidden">
+                  <div className="px-4 py-3 border-b border-emerald-100 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-[#10b981]" />
+                    <h3 className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Last Verified Data</h3>
+                    {approvedSnapshot.approvedAt && (
+                      <span className="ml-auto text-[10px] text-emerald-500">
+                        {new Date(approvedSnapshot.approvedAt).toLocaleDateString("en-GB")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-2 text-xs">
+                    {approvedSnapshot.fullName && (
+                      <div>
+                        <span className="text-emerald-600">Full Name: </span>
+                        <span className="text-emerald-800 font-semibold">{approvedSnapshot.fullName}</span>
+                      </div>
+                    )}
+                    {approvedSnapshot.fatherName && (
+                      <div>
+                        <span className="text-emerald-600">Father: </span>
+                        <span className="text-emerald-800 font-semibold">{approvedSnapshot.fatherName}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Hint */}
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl border border-slate-100 bg-slate-50">
+                <MoreVertical className="w-4 h-4 text-slate-300" />
+                <p className="text-xs text-slate-400">
+                  Tap the ⋮ menu above to submit for verification or change your password.
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ══ EDIT / INLINE MODE — VERIFICATION DETAILS ══ */}
+          {isEditing && (
+            <>
+              {/* Verification limit banner */}
+              {limitData && (
+                <div
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-sm font-medium ${
+                    isVerificationLocked
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : limitData.remaining === 1
+                      ? "border-yellow-200 bg-yellow-50 text-yellow-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  }`}
+                  data-testid="verification-limit-banner"
+                >
+                  {isVerificationLocked
+                    ? <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-500" />
+                    : <FileText className="w-4 h-4 flex-shrink-0" />}
+                  <span>
+                    {isVerificationLocked
+                      ? "Monthly limit (3) reached. Please contact Admin."
+                      : `${limitData.remaining} of ${limitData.allowed} submission attempts remaining this month.`}
+                  </span>
+                </div>
+              )}
+
+              {/* Photo upload section */}
+              <div className="rounded-2xl border border-slate-100 bg-white px-5 py-5 flex flex-col items-center gap-3 shadow-sm">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  data-testid="input-photo-file"
+                />
+                <div className="relative group">
+                  {photoToShow ? (
+                    <img
+                      src={photoToShow}
+                      alt="Profile"
+                      className="w-24 h-24 rounded-full object-cover border-4 border-[#10b981]/50 shadow-lg"
+                      data-testid="img-profile-photo-edit"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#10b981]/20 to-emerald-700/15 border-4 border-[#10b981]/30 flex items-center justify-center shadow-lg">
+                      <span className="text-2xl font-bold text-[#10b981]/70">{initials}</span>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Upload photo"
+                    data-testid="button-upload-photo"
+                  >
+                    {photoMutation.isPending
+                      ? <Loader2 className="w-6 h-6 text-white animate-spin" />
+                      : <Camera className="w-6 h-6 text-white" />}
+                  </button>
+                  {photoIsApproved && (
+                    <span className="absolute -bottom-1 -right-1 bg-[#10b981] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-white">
+                      ✓ VERIFIED
+                    </span>
+                  )}
+                </div>
+
+                {profile?.photoStatus === "pending" && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-yellow-200 bg-yellow-50 text-yellow-700 text-xs w-full">
+                    <Camera className="w-3.5 h-3.5 flex-shrink-0" />
+                    Photo pending teacher review
+                  </div>
+                )}
+
+                <div className="flex flex-col items-center gap-1">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoMutation.isPending}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-emerald-200 text-[#10b981] text-xs font-medium hover:bg-emerald-50 transition-colors"
+                    data-testid="button-upload-photo-alt"
+                  >
+                    {photoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                    {profile?.photoStatus === "pending" ? "Replace Photo" : "Upload Photo"}
+                  </button>
+                  <p className="text-[10px] text-slate-400">Max size: 1 MB</p>
+                </div>
+              </div>
+
+              {/* Form fields card — no overflow-hidden to prevent Android keyboard clipping */}
+              <div
+                className="rounded-2xl border border-slate-100 bg-white shadow-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+                  <User className="w-4 h-4 text-[#10b981]" />
+                  <h2 className="text-sm font-bold text-slate-800">Verification Details</h2>
+                  {status === "pending" && (
+                    <span className="ml-auto text-[10px] text-yellow-700 bg-yellow-100 border border-yellow-200 px-2 py-0.5 rounded-full">
+                      Under Review
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                    {/* Full Name */}
+                    <div className="sm:col-span-2">
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Full Name</label>
+                      <input ref={fullNameRef} type="text" value={form.fullName}
+                        onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))}
+                        placeholder="Full name as in certificate"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-full-name" />
+                    </div>
+
+                    {/* Class — read-only */}
+                    <ReadOnlyField label="Class (System-assigned)" value={`Class ${student.class}`} testId="select-class" />
+
+                    {/* Section — read-only */}
+                    <ReadOnlyField label="Section (System-assigned)" value={`Section ${student.section}`} testId="select-section" />
+
+                    {/* Gender */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Gender</label>
+                      <select value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as "Boy" | "Girl" | "" }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-gender">
+                        <option value="">Select gender</option>
+                        <option value="Boy">Boy</option>
+                        <option value="Girl">Girl</option>
+                      </select>
+                    </div>
+
+                    {/* Roll Number */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Roll Number</label>
+                      <input type="text" value={form.rollNo}
+                        onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
+                        placeholder="e.g. 01" className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-roll-no" />
+                    </div>
+
+                    {/* Guardian Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Guardian Name</label>
+                      <input type="text" value={form.guardianName}
+                        onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))}
+                        placeholder="Guardian's full name"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-guardian-name" />
+                    </div>
+
+                    {/* Phone */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Phone</label>
+                      <input type="tel" inputMode="numeric" maxLength={10} value={form.phone}
+                        onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 10); setForm((f) => ({ ...f, phone: v })); }}
+                        placeholder="10-digit mobile number"
+                        className={`${inputBase} ${editingBorder} font-mono`} style={inputStyle} data-testid="input-phone" />
+                    </div>
+
+                    {/* Email */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Email</label>
+                      <input type="email" inputMode="email" value={form.email}
+                        onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-email" />
+                    </div>
+
+                    {/* Date of Birth */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Date of Birth</label>
+                      <input type="date" value={form.dob}
+                        onChange={(e) => setForm((f) => ({ ...f, dob: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-dob" />
+                    </div>
+
+                    {/* Date of Admission */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Date of Admission</label>
+                      <input type="date" value={form.enrollmentDate}
+                        onChange={(e) => setForm((f) => ({ ...f, enrollmentDate: e.target.value }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-enrollment-date" />
+                    </div>
+
+                    {/* Blood Group */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Blood Group</label>
+                      <select value={form.bloodGroup} onChange={(e) => setForm((f) => ({ ...f, bloodGroup: e.target.value as typeof form.bloodGroup }))}
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-blood-group">
+                        <option value="">Select blood group</option>
+                        {["A+","A-","B+","B-","AB+","AB-","O+","O-"].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                      </select>
+                    </div>
+
+                    {/* Father's Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Father's Name</label>
+                      <input type="text" value={form.fatherName}
+                        onChange={(e) => setForm((f) => ({ ...f, fatherName: e.target.value }))}
+                        placeholder="Father's full name"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-father-name" />
+                    </div>
+
+                    {/* Mother's Name */}
+                    <div>
+                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Mother's Name</label>
+                      <input type="text" value={form.motherName}
+                        onChange={(e) => setForm((f) => ({ ...f, motherName: e.target.value }))}
+                        placeholder="Mother's full name"
+                        className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-mother-name" />
+                    </div>
+                  </div>
+
+                  {/* Aadhaar Number */}
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Aadhaar Number</label>
+                    <input type="text" inputMode="numeric" maxLength={12} value={form.aadharNumber}
+                      onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 12); setForm((f) => ({ ...f, aadharNumber: v })); }}
+                      placeholder="12-digit Aadhaar number"
+                      className={`${inputBase} ${editingBorder} font-mono tracking-widest`} style={inputStyle} data-testid="input-aadhar-number" />
+                    {form.aadharNumber && form.aadharNumber.length !== 12 && (
+                      <p className="text-[11px] text-red-400 mt-1">Must be exactly 12 digits</p>
+                    )}
+                  </div>
+
+                  {/* Address */}
+                  <div>
+                    <label className="text-xs font-medium text-slate-500 mb-1.5 block">Present Address</label>
+                    <textarea value={form.presentAddress}
+                      onChange={(e) => setForm((f) => ({ ...f, presentAddress: e.target.value }))}
+                      placeholder="Full residential address" rows={3}
+                      className={`${inputBase} ${editingBorder} resize-none`} style={inputStyle} data-testid="input-address" />
+                  </div>
+                </div>
+              </div>
+
+              {/* System-assigned read-only strip */}
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest">System-assigned (read-only)</span>
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs">
+                  <div><span className="text-slate-400">DSID: </span><span className="text-slate-600 font-mono">{student.digitalStudentId}</span></div>
+                  <div><span className="text-slate-400">School: </span><span className="text-slate-600 font-mono">{student.schoolCode}</span></div>
+                  <div><span className="text-slate-400">Enrolled: </span><span className="text-slate-600">{enrollmentDateDisplay}</span></div>
+                </div>
+              </div>
+
+              {/* Action buttons — full-width on mobile */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleCancel}
+                  className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl border border-slate-200 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors"
+                  data-testid="button-cancel-bottom"
+                >
+                  <X className="w-4 h-4" />
+                  Cancel
+                </button>
+
+                <div className="flex-1 flex flex-col gap-1">
+                  <button
+                    onClick={handleSubmit}
+                    disabled={!canSubmit || isVerificationLocked || submitMutation.isPending}
+                    className={`w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:cursor-not-allowed ${
+                      !canSubmit
+                        ? "bg-yellow-50 border border-yellow-200 text-yellow-700 opacity-80"
+                        : isVerificationLocked
+                        ? "bg-red-50 border border-red-200 text-red-600 opacity-80"
+                        : "bg-[#10b981] hover:bg-emerald-600 text-white shadow-sm"
+                    }`}
+                    data-testid="button-submit"
+                  >
+                    {submitMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : !canSubmit ? (
+                      <Clock className="w-4 h-4" />
+                    ) : isVerificationLocked ? (
+                      <Lock className="w-4 h-4" />
+                    ) : (
+                      <FileText className="w-4 h-4" />
+                    )}
+                    {!canSubmit
+                      ? "Awaiting Review"
+                      : isVerificationLocked
+                      ? "Monthly limit (3) reached"
+                      : submitMutation.isPending
+                      ? "Submitting…"
+                      : "Submit for Approval"}
+                  </button>
+                  {isVerificationLocked && canSubmit && (
+                    <p className="text-[10px] text-red-500 text-center">
+                      Monthly limit (3) reached. Please contact Admin.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ══ SECURITY / CHANGE PASSWORD — INLINE FULL-PAGE VIEW ══ */}
+          {securityOpen && (
+            <div
+              className="rounded-2xl border border-slate-100 bg-white shadow-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header row */}
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                <Shield className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                <h2 className="text-sm font-bold text-slate-800">Change Password</h2>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {/* Current Password */}
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Current Password</label>
+                  <div className="relative">
+                    <input
+                      ref={currentPasswordRef}
+                      type={showCurrentPw ? "text" : "password"}
+                      value={passwordForm.currentPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, currentPassword: e.target.value }))}
+                      placeholder="Enter current password"
+                      autoComplete="current-password"
+                      className={`${inputBase} ${defaultBorder} pr-10`}
+                      style={inputStyle}
+                      data-testid="input-current-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* New Password */}
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showNewPw ? "text" : "password"}
+                      value={passwordForm.newPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, newPassword: e.target.value }))}
+                      placeholder="At least 6 characters"
+                      autoComplete="new-password"
+                      className={`${inputBase} pr-10 ${
+                        passwordForm.newPassword && passwordForm.newPassword.length < 6
+                          ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
+                          : defaultBorder
+                      }`}
+                      style={inputStyle}
+                      data-testid="input-new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {passwordForm.newPassword && passwordForm.newPassword.length < 6 && (
+                    <p className="text-xs text-red-600 mt-1 font-medium">Minimum 6 characters</p>
+                  )}
+                </div>
+
+                {/* Confirm Password */}
+                <div>
+                  <label className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5 block">Confirm New Password</label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPw ? "text" : "password"}
+                      value={passwordForm.confirmPassword}
+                      onChange={(e) => setPasswordForm((f) => ({ ...f, confirmPassword: e.target.value }))}
+                      placeholder="Repeat new password"
+                      autoComplete="new-password"
+                      className={`${inputBase} pr-10 ${
+                        passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword
+                          ? "border-red-400/40 focus:ring-red-400 focus:border-red-400"
+                          : passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword
+                          ? "border-[#10b981] focus:ring-[#10b981] focus:border-[#10b981]"
+                          : defaultBorder
+                      }`}
+                      style={inputStyle}
+                      data-testid="input-confirm-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPw((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 min-w-[44px] min-h-[44px] flex items-center justify-center"
+                      style={{ zIndex: 10001 }}
+                    >
+                      {showConfirmPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {passwordForm.confirmPassword && passwordForm.confirmPassword !== passwordForm.newPassword && (
+                    <p className="text-xs text-red-600 mt-1 font-medium">Passwords do not match</p>
+                  )}
+                  {passwordForm.confirmPassword && passwordForm.confirmPassword === passwordForm.newPassword && passwordForm.newPassword.length >= 6 && (
+                    <p className="text-xs text-[#10b981] mt-1 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Passwords match
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    onClick={() => setSecurityOpen(false)}
+                    className="flex-1 flex items-center justify-center py-3 px-4 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors"
+                    data-testid="button-close-security-modal"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleChangePassword}
+                    disabled={passwordMutation.isPending}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-[#10b981] hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-50 shadow-sm"
+                    data-testid="button-change-password"
+                  >
+                    {passwordMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    Update Password
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </motion.main>
+
+      {/* ── Crop Modal ──────────────────────────────────────────────────────── */}
+      {cropSrc && createPortal((() => {
+        const circlePx = cropCircleSizeRef.current;
+        const baseScale = circlePx / Math.min(imgNatural.w, imgNatural.h);
+        const displayW  = imgNatural.w * baseScale * cropZoom;
+        const displayH  = imgNatural.h * baseScale * cropZoom;
+        return (
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end",
+              padding: 0 }}
+          >
+            {/* Tap-outside to cancel */}
+            <div style={{ position: "absolute", inset: 0 }} onClick={() => setCropSrc(null)} />
+
+            {/* Sheet */}
+            <div style={{ position: "relative", width: "100%", maxWidth: 420, background: "#fff",
+              borderRadius: "20px 20px 0 0", boxShadow: "0 -8px 40px rgba(0,0,0,0.2)",
+              display: "flex", flexDirection: "column", maxHeight: "92vh" }}>
+
+              {/* Drag handle */}
+              <div style={{ width: 40, height: 4, borderRadius: 2, background: "#e2e8f0",
+                margin: "12px auto 0" }} />
+
+              {/* Header */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "10px 20px 10px", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <CropIcon style={{ width: 16, height: 16, color: "#10b981" }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: "#1e293b" }}>Crop Photo</span>
+                </div>
+                <button onClick={() => setCropSrc(null)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 6,
+                    borderRadius: "50%", display: "flex", alignItems: "center" }}>
+                  <X style={{ width: 18, height: 18, color: "#64748b" }} />
+                </button>
+              </div>
+
+              {/* Crop circle */}
+              <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column",
+                alignItems: "center", gap: 12, padding: "16px 20px 0" }}>
+                <p style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", margin: 0 }}>
+                  Drag to reposition · Use slider to zoom
+                </p>
+                <div
+                  style={{ width: circlePx, height: circlePx, borderRadius: "50%", overflow: "hidden",
+                    border: "3px solid #10b981", cursor: "grab", touchAction: "none", position: "relative",
+                    boxShadow: "0 0 0 4px rgba(16,185,129,0.15)", flexShrink: 0 }}
+                  onPointerDown={handleCropDragStart}
+                  onPointerMove={handleCropDragMove}
+                  onPointerUp={handleCropDragEnd}
+                  onPointerLeave={handleCropDragEnd}
+                >
+                  <img
+                    ref={cropImgRef}
+                    src={cropSrc}
+                    alt="Crop preview"
+                    draggable={false}
+                    onLoad={(e) => {
+                      const img = e.currentTarget;
+                      setImgNatural({ w: img.naturalWidth, h: img.naturalHeight });
+                    }}
+                    style={{ position: "absolute",
+                      left: circlePx / 2 - displayW / 2 + cropPos.x,
+                      top: circlePx / 2 - displayH / 2 + cropPos.y,
+                      width: displayW, height: displayH,
+                      userSelect: "none", pointerEvents: "none" }}
+                  />
+                </div>
+
+                {/* Zoom slider */}
+                <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 10 }}>
+                  <ZoomIn style={{ width: 16, height: 16, color: "#94a3b8", flexShrink: 0 }} />
+                  <input
+                    type="range" min={1} max={3} step={0.01}
+                    value={cropZoom}
+                    onChange={(e) => handleCropZoomChange(parseFloat(e.target.value))}
+                    style={{ flex: 1, accentColor: "#10b981", height: 6 }}
+                  />
+                  <span style={{ fontSize: 11, color: "#94a3b8", width: 36, textAlign: "right" }}>
+                    {cropZoom.toFixed(1)}×
+                  </span>
+                </div>
+              </div>
+
+              {/* Action buttons — always pinned at bottom */}
+              <div style={{ display: "flex", gap: 12, padding: "14px 20px 28px", flexShrink: 0 }}>
+                <button
+                  onClick={() => setCropSrc(null)}
+                  style={{ flex: 1, padding: "13px 0", borderRadius: 14, border: "1.5px solid #e2e8f0",
+                    background: "#fff", color: "#475569", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCropConfirm}
+                  disabled={photoMutation.isPending}
+                  style={{ flex: 1, padding: "13px 0", borderRadius: 14, border: "none",
+                    background: photoMutation.isPending ? "#86efac" : "#10b981",
+                    color: "#fff", fontSize: 14, fontWeight: 700, cursor: photoMutation.isPending ? "not-allowed" : "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+                >
+                  {photoMutation.isPending
+                    ? <Loader2 style={{ width: 16, height: 16, animation: "spin 1s linear infinite" }} />
+                    : <CropIcon style={{ width: 16, height: 16 }} />}
+                  {photoMutation.isPending ? "Uploading…" : "Crop & Upload"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
+
+    </div>
+  );
+}

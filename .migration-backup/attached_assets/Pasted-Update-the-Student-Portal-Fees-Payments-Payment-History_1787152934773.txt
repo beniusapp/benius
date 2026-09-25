@@ -1,0 +1,101 @@
+Update the Student Portal → Fees & Payments → Payment History UI.
+
+Problem
+
+Currently, the Paid payment card correctly displays the Invoice Number, for example:
+
+"INV-0073"
+
+However, the Payment Failed and Payment Cancelled cards do not show the Invoice Number.
+
+This is confusing because a student can have multiple invoices, sometimes even for the same fee type. The student must be able to clearly identify exactly which invoice the failed or cancelled payment attempt belongs to.
+
+Required Change
+
+Show the Invoice Number on every payment history record, regardless of payment status.
+
+The Invoice Number must be displayed for:
+
+- ✅ Paid
+- ❌ Payment Failed
+- ⚠️ Payment Cancelled
+- Any other payment-attempt status where an invoice is associated
+
+For example:
+
+Paid
+
+- Equipment fee
+- Paid date/time
+- "INV-0073"
+- Receipt number
+- Payment ID/details
+
+Payment Failed
+
+- Equipment fee
+- Failed date/time
+- "INV-0073"
+- Failure reason
+- Payment Details
+
+Payment Cancelled
+
+- Monthly fee
+- Cancelled date/time
+- "INV-0079"
+- Cancellation reason
+- Payment Details
+
+Important Data Requirement
+
+Do NOT generate a new invoice number for failed or cancelled payments.
+
+Use the original invoice number associated with that payment attempt.
+
+The relationship should remain:
+
+"Payment Attempt → Invoice → Invoice Number"
+
+If the payment attempt already has an invoice/order/fee-record relationship, retrieve the existing "invoice_number" from that associated invoice/fee record.
+
+UI Consistency
+
+Use the same Invoice Number badge/style already used on the Paid payment card so the student sees a consistent layout.
+
+For example:
+
+"INV-0073"
+
+Place it prominently in the same area where the Paid card currently displays the invoice number.
+
+Important
+
+Do NOT change:
+
+- Payment processing
+- Razorpay logic
+- Payment status logic
+- Invoice generation
+- Invoice numbering
+- Receipt numbering
+- Database schema
+- Payment retry behavior
+- Payment failure/cancellation handling
+
+This should be a display/data-association fix only.
+
+Verification
+
+Test with:
+
+1. A successful payment → invoice number is visible.
+2. A failed payment → the exact related invoice number is visible.
+3. A cancelled payment → the exact related invoice number is visible.
+4. Multiple invoices for the same student → each payment attempt shows the correct invoice number.
+5. Refresh the page → invoice number remains correct.
+6. Open Payment Details → invoice number and payment attempt remain correctly associated.
+
+The most important requirement is:
+
+Every payment attempt must clearly identify the exact invoice it belongs to, whether the payment was Paid, Failed, or Cancelled.

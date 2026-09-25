@@ -1,0 +1,518 @@
+We are now fixing ONLY the Ledger PDF.
+
+Do NOT modify:
+
+- Tx Report PDF
+- Export Ledger
+- Payment records
+- Selection UI behavior
+- Existing invoice generation
+- Existing payment logic
+- Database schema unless absolutely necessary
+
+The current Ledger PDF implementation is technically working, including:
+
+- Server-side filtering
+- Academic session filtering
+- Invoice number
+- Receipt number
+- Student / DSID / class
+- Fee name / fee type
+- Fee period
+- Frequency
+- Amount / due date / status
+- Paid / outstanding
+- Payment method
+- Reference
+- Multiple payment methods shown as "Multiple"
+- All matching records across pagination
+
+However, there is one important functional problem:
+
+CURRENT PROBLEM
+
+The Ledger PDF completely ignores the selection state.
+
+The frontend currently has this selection model:
+
+selectedIds      — Set<number>
+selectAllMatching — boolean
+excludedIds      — Set<number>
+
+The meaning is:
+
+Mode 1 — Individual selection
+
+selectAllMatching = false
+selectedIds = {A, B, C}
+
+Only A, B and C are selected, even if they are spread across different pages.
+
+Mode 2 — Select All Matching
+
+selectAllMatching = true
+excludedIds = {}
+
+This means:
+
+«ALL records matching the current search/filter/session scope are selected.»
+
+No thousands of IDs should be materialized into "selectedIds".
+
+Mode 3 — Select All Matching with exclusions
+
+selectAllMatching = true
+excludedIds = {99, 145}
+
+This means:
+
+«All matching records EXCEPT invoice IDs 99 and 145.»
+
+The Ledger PDF must respect this exact model.
+
+---
+
+REQUIRED LEDGER PDF BEHAVIOR
+
+Implement the following behavior.
+
+CASE 1 — Nothing selected
+
+If:
+
+selectedIds.size === 0
+selectAllMatching === false
+
+then Ledger PDF should behave exactly as it currently does.
+
+It should export:
+
+«ALL records matching the current Ledger toolbar filters and academic session.»
+
+Existing filters must continue working:
+
+- Search
+- Status
+- Class
+- Fee Name
+- Fee Type
+- Academic Session
+
+Pagination must have NO effect.
+
+---
+
+CASE 2 — Individual invoices selected
+
+Example:
+
+selectedIds = {101, 205, 310}
+selectAllMatching = false
+
+When the admin clicks Ledger PDF, export ONLY:
+
+101
+205
+310
+
+Do not export all matching invoices.
+
+The selected invoices may exist across different pages.
+
+Example:
+
+Page 1 → invoice 101 selected
+Page 2 → invoice 205 selected
+Page 5 → invoice 310 selected
+
+Ledger PDF must contain all three.
+
+Do NOT depend on the currently visible page.
+
+---
+
+CASE 3 — Select All Matching
+
+Example:
+
+selectAllMatching = true
+excludedIds = {}
+
+The Ledger PDF must export:
+
+«Every invoice matching the current search/filter/session scope.»
+
+Do NOT download all records into the browser.
+
+Do NOT populate "selectedIds" with thousands of IDs.
+
+The backend should query the matching records directly.
+
+---
+
+CASE 4 — Select All Matching + exclusions
+
+Example:
+
+selectAllMatching = true
+excludedIds = {99, 145}
+
+The Ledger PDF must export:
+
+«Every matching invoice EXCEPT invoice IDs 99 and 145.»
+
+This is extremely important.
+
+Do NOT convert the selection into a list of thousands of IDs.
+
+The SQL should continue using exclusion semantics, for example:
+
+fr.id NOT IN (...)
+
+only for the relatively small "excludedIds" set.
+
+---
+
+CASE 5 — Filters + selection
+
+Selection must work together with the current filters.
+
+For example:
+
+Search = "student3mis"
+Class = "6A"
+Status = "Overdue"
+selectedIds = {12, 25, 81}
+
+The final result must be:
+
+«Selected IDs that also satisfy the active Ledger filters.»
+
+Do not allow an invoice outside the current session/school/security scope to be exported merely because its ID was supplied.
+
+The backend must always enforce:
+
+school_id
+academic session
+search
+status
+class
+fee name
+fee type
+
+and then apply the selection scope.
+
+---
+
+IMPORTANT SECURITY REQUIREMENT
+
+Never trust IDs coming from the browser.
+
+If selected IDs are sent to the backend, the SQL query must still verify that every record:
+
+- belongs to the current school/tenant
+- belongs to the requested academic session
+- satisfies the active filters
+- is actually a valid fee_record
+
+A user must never be able to manipulate an invoice ID and export another school's data.
+
+---
+
+IMPORTANT PERFORMANCE REQUIREMENT
+
+This application uses server-side pagination.
+
+The Ledger PDF must remain scalable.
+
+Do NOT do this:
+
+fetch page 1
+fetch page 2
+fetch page 3
+...
+fetch every page
+combine everything in browser
+generate PDF
+
+Do NOT materialize thousands of records into React state.
+
+Instead:
+
+Browser
+   ↓
+selection scope + filters
+   ↓
+Ledger PDF API
+   ↓
+single server-side SQL query
+   ↓
+PDF generation
+   ↓
+PDF download
+
+For "selectAllMatching", use database-side filtering and exclusions.
+
+For individual selection, send only the selected IDs.
+
+---
+
+API DESIGN
+
+Review the existing:
+
+GET /api/admin/fees/ledger/pdf
+
+and decide whether the cleanest implementation is:
+
+Option A
+
+Extend the existing endpoint safely with selection parameters.
+
+OR
+
+Option B
+
+Add a dedicated POST endpoint for selected Ledger PDF generation if sending many IDs through a GET query string would create URL-length problems.
+
+Prefer the approach that is safest and most scalable.
+
+If using POST, do NOT break the existing GET behavior.
+
+Existing GET behavior should remain:
+
+No active selection → export all matching records.
+
+---
+
+FRONTEND
+
+Update "downloadLedgerPdf" so it passes the current selection state:
+
+selectedIds
+selectAllMatching
+excludedIds
+
+along with the existing filters.
+
+The callback must use the current state correctly.
+
+Do not create a second selection system.
+
+Do not duplicate selection state.
+
+Use the existing source-of-truth state:
+
+selectedIds
+selectAllMatching
+excludedIds
+
+---
+
+CLEAR SELECTION
+
+After clicking Clear:
+
+selectedIds = {}
+selectAllMatching = false
+excludedIds = {}
+
+Ledger PDF must immediately return to normal behavior:
+
+«Export all records matching the active filters.»
+
+---
+
+FILTER CHANGE
+
+The existing behavior is:
+
+filter change
+→ selectAllMatching = false
+→ excludedIds = empty
+→ selectedIds remains unchanged
+
+Do not change this behavior.
+
+Ledger PDF should simply use whatever selection state currently exists.
+
+---
+
+DO NOT CHANGE THE CURRENT PDF CONTENT
+
+Keep all of the improvements already implemented.
+
+The Ledger PDF must continue to contain:
+
+1. Invoice No.
+2. Receipt No.
+3. Student
+4. DSID
+5. Class
+6. Fee Name
+7. Fee Type
+8. Fee Period
+9. Frequency
+10. Amount
+11. Due Date
+12. Status
+13. Paid On
+14. Paid
+15. Outstanding
+16. Payment Method
+17. Reference
+
+Keep:
+
+- School logo
+- School name
+- Address
+- Phone
+- Email
+- Academic session
+- Generation timestamp
+- Active filter annotations
+- Totals row
+
+Keep the existing ""Multiple"" payment-method logic.
+
+---
+
+VERY IMPORTANT: DO NOT TOUCH THESE
+
+Do NOT modify:
+
+Tx Report PDF
+Export Ledger
+payment_records schema
+fee_records schema
+Razorpay integration
+payment webhook
+payment status logic
+invoice generation
+receipt generation
+selection checkbox behavior
+pagination behavior
+search/filter behavior
+
+Only modify the Ledger PDF flow required to make it respect the existing selection model.
+
+---
+
+TEST PLAN
+
+After implementation, do a real code-level verification for all of these:
+
+Test 1
+
+No selection + no filters
+
+Expected:
+
+All session invoices
+
+Test 2
+
+No selection + Status = Overdue
+
+Expected:
+
+All overdue invoices in the session
+
+Test 3
+
+Select 3 invoices on different pages
+
+Expected:
+
+Exactly those 3 invoices
+
+Test 4
+
+Select all current page only
+
+Expected:
+
+Only invoices selected on that page
+
+Test 5
+
+Select all matching
+
+Example:
+
+3,000 matching invoices
+
+Expected:
+
+3,000 invoices
+
+without downloading/materializing 3,000 IDs in React.
+
+Test 6
+
+Select all matching + exclude 2
+
+Expected:
+
+2,998 invoices
+
+Test 7
+
+Exclude invoices from different pages
+
+Expected:
+
+All matching except those excluded IDs
+
+Test 8
+
+Apply search/filter + individual selection
+
+Expected:
+
+Only selected invoices that also satisfy the active filters
+
+Test 9
+
+Clear selection
+
+Expected:
+
+All matching records according to filters
+
+Test 10
+
+Go to Page 2 before clicking Ledger PDF
+
+Expected:
+
+Selection/export scope must NOT depend on current pagination page.
+
+---
+
+FINAL VERIFICATION REPORT
+
+After implementing, do NOT just say "server is clean."
+
+Provide a detailed report showing:
+
+1. Files changed
+2. Functions changed
+3. API changes
+4. Exact selection parameters sent to backend
+5. Exact SQL selection logic
+6. How individual selection works
+7. How Select All Matching works
+8. How excludedIds works
+9. How school/session security is enforced
+10. How filters combine with selection
+11. Confirmation that pagination does not affect export
+12. Confirmation that no thousands of records are materialized in React
+13. Confirmation that Tx Report PDF was NOT modified
+14. Confirmation that Export Ledger was NOT modified
+15. Results of all 10 tests above
+
+Do not move on to Tx Report PDF or Export Ledger yet.
+
+First make the Ledger PDF completely correct and selection-aware, then stop and report the verification results.

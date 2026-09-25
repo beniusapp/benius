@@ -1,0 +1,59 @@
+Please analyze the current Fees & Payments → External Portal / Settings module and explain the exact purpose and current implementation of these two features:
+
+1. Max Over-collection Cap
+
+There is a setting called “Max Over-collection Cap”, currently showing a percentage value such as 150%.
+
+Please explain:
+
+- What exactly does this setting do?
+- What is the business logic behind it?
+- When is this percentage checked?
+- Is it applied to online Razorpay payments, offline payments, or both?
+- Give a simple example:
+  - Invoice amount = ₹2,000
+  - Cap = 150%
+  - What is the maximum amount that can be collected?
+- What happens when someone tries to pay more than the allowed amount?
+- Does it prevent duplicate payments as well, or does it serve a different purpose?
+- Where in the code is this validation implemented?
+- Which database fields/tables are used for the calculation?
+- Is the setting school/tenant-specific?
+- Is it academic-session-specific?
+- What happens if the setting is changed from 150% to another value?
+- Is this feature currently actually enforced in production, or is it only a configuration/UI setting?
+
+Do not modify any code. I only want the current implementation and business logic explained clearly.
+
+2. Assign Missing Receipt Numbers
+
+There is a section called “Assign Missing Receipt Numbers” with a button “Run Receipt Backfill.”
+
+Please explain:
+
+- Why does this feature exist?
+- What exactly is a “missing receipt number”?
+- Which records does it search for?
+- Which database table and field does it modify?
+- What format of receipt number does it generate (for example AF/OF/ON)?
+- How does it determine the next sequential number?
+- Does it only assign numbers to records that are missing a receipt number?
+- Can it overwrite an existing invoice number or receipt number?
+- Can running it multiple times create duplicate receipt numbers?
+- Is it safe to run multiple times?
+- Does it affect paid invoices, unpaid invoices, or both?
+- Does it affect historical records from previous academic sessions?
+- Is it school/tenant-specific?
+- Does it create an Audit Log entry?
+- Is the operation transactional and safe if something fails halfway through?
+- Where exactly is the implementation located in the code?
+
+Important
+
+Do not make any changes yet.
+
+Give me a clear report for both features in this format:
+
+Feature → Purpose → When it runs → What it changes → Example → Database tables/fields → Code location → Safety/risks → Whether we actually need it.
+
+Also tell me whether either of these features is unnecessary, outdated, redundant, or potentially confusing for a modern school Fees & Payments system.

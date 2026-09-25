@@ -1,0 +1,62 @@
+Please investigate and fix the invoice PDF/print paper-size inconsistency.
+
+I noticed the following:
+
+- In the browser, the invoice is clearly rendered in an A4-style page proportion.
+- However, when I tap Save as PDF on Android/Chrome, the print dialog shows Paper size: Letter.
+- When I go back to the browser, the invoice preview itself still appears as the intended A4 document.
+
+This looks like a print/PDF configuration issue rather than an invoice-content issue.
+
+Required behavior
+
+The invoice PDF must explicitly use:
+
+Paper size: A4 — 210mm × 297mm
+
+Do NOT allow the PDF generation/print stylesheet to fall back to Letter as the default.
+
+Important requirements
+
+1. Inspect the existing invoice print/PDF renderer and CSS.
+2. Explicitly configure the print layout for A4.
+3. Use the appropriate "@page" configuration for A4.
+4. Ensure the invoice container/page dimensions and print margins are consistent with A4.
+5. Make sure saving as PDF from Chrome/Android produces an A4 document.
+6. The browser invoice preview and generated PDF must use the same A4 layout and proportions.
+7. Do not change any invoice business logic, fee calculations, payment logic, Razorpay integration, invoice numbering, receipt numbering, or database structure.
+8. Do not change the existing invoice information or visual design unnecessarily.
+9. Preserve the current one-page behavior for normal invoices.
+10. Preserve the existing signature, footer, amount-in-words section, student phone number, invoice details, fee breakdown, late-fee/penalty information, and all other existing fields.
+11. For unusually long invoices, allow proper multi-page A4 overflow rather than shrinking the entire document excessively.
+12. Ensure table headers/rows and the protected signature/footer behavior continue working correctly.
+
+Very important
+
+Do not simply make the browser page look like A4 while leaving the actual print/PDF paper size as Letter.
+
+I want the actual generated/printed document format to be A4.
+
+Please check whether the current implementation is using something like:
+
+"@page { size: Letter; }"
+
+or whether the print/PDF engine is inheriting Letter from the browser/device.
+
+If so, change it to an explicit A4 configuration.
+
+Validation
+
+After making the change:
+
+- Run the existing tests.
+- Check TypeScript/build compilation.
+- Open an invoice in Chrome on mobile.
+- Select Save as PDF.
+- Verify whether the print dialog now recognizes/uses A4 where the browser allows the page size to be specified.
+- Verify the resulting document dimensions are A4 (210 × 297 mm).
+- Verify the invoice remains one page for a normal invoice.
+- Verify the signature and footer remain correctly positioned.
+- Verify a longer invoice still paginates correctly.
+
+Please make only the necessary print/PDF paper-size correction and do not modify unrelated modules.

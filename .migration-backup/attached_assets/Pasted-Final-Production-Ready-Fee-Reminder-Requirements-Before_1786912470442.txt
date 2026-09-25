@@ -1,0 +1,585 @@
+Final Production-Ready Fee Reminder Requirements
+
+Before making any further changes, use the existing Technical Assessment as the baseline and implement the following requirements completely.
+
+1. Final Reminder Stages
+
+The system must use exactly these five stages everywhere:
+
+- "D-2" — 2 days before the due date
+- "D+0" — due today
+- "D+3" — 3 days overdue
+- "D+7" — 7 days overdue
+- "D+14" — 14 days overdue
+
+There must be NO new use of:
+
+- "D0"
+- "D3"
+- "D7"
+- "D14"
+- "D30"
+
+Historical "D30" records may remain untouched for audit/history, but the reminder engine must never generate a new D30 reminder.
+
+Rename the stages consistently across:
+
+- "server/dunning.ts"
+- "server/fees-routes.ts"
+- "client/src/pages/admin-modules/fees-manager.tsx"
+- "client/src/pages/student-fees.tsx"
+- tests
+- database migration/data normalization
+- logs
+- templates
+- simulation
+- manual reminder
+- WhatsApp stage labels
+
+2. Exact Automatic Cron Logic
+
+The automatic reminder engine must normally fire only on the exact intended day:
+
+Days from due date| Stage
+-2| D-2
+0| D+0
++3| D+3
++7| D+7
++14| D+14
+
+No reminder should be generated on unrelated days.
+
+The calculation must remain explicitly IST calendar-date based, regardless of the Replit/server timezone.
+
+3. Missed-Reminder Catch-Up
+
+Add a safe catch-up mechanism for reminders missed because the server was temporarily unavailable.
+
+The catch-up window may look back up to 2 previous IST calendar days.
+
+However:
+
+Never send a duplicate reminder.
+
+Before sending, check the existing successful dunning log using:
+
+"feeRecordId + channel + stage"
+
+If that exact stage/channel has already been successfully sent, do not send it again.
+
+Catch-up must therefore work like this:
+
+Example:
+
+- D+7 was supposed to fire Monday.
+- Server was down Monday.
+- Server comes back Tuesday.
+- If D+7 has not already been successfully sent, it may be sent Tuesday as a catch-up.
+- If D+7 was already sent, it must NOT be sent again.
+
+Do not allow catch-up to turn into repeated reminders every day.
+
+4. Provider Timeout
+
+Every external provider request must have a hard timeout.
+
+Use approximately:
+
+"AbortSignal.timeout(12000)"
+
+for:
+
+- MSG91 SMS
+- MSG91 WhatsApp
+- SendGrid
+- Mailtrap
+
+A provider hanging must NEVER freeze the entire dunning engine indefinitely.
+
+A timeout must result in:
+
+"status = failed"
+
+with a clear error message.
+
+5. Retry System
+
+Implement a controlled retry mechanism for transient failures.
+
+Maximum attempts:
+
+3 attempts
+
+Retry only for:
+
+- network errors
+- timeout
+- HTTP 429
+- HTTP 500
+- HTTP 502
+- HTTP 503
+- HTTP 504
+
+Use exponential backoff:
+
+- attempt 1 → initial request
+- attempt 2 → approximately 1 second delay
+- attempt 3 → approximately 2 seconds delay
+
+Do NOT retry permanent configuration errors such as:
+
+- HTTP 400
+- HTTP 401
+- HTTP 403
+- invalid API key
+- missing template
+- invalid sender
+- invalid recipient/configuration
+
+The final failure must be recorded in "dunning_log".
+
+Do not create a "sent" record unless the provider call is actually considered successful.
+
+6. WhatsApp Response Validation
+
+Do not rely only on HTTP status.
+
+For WhatsApp:
+
+1. Check HTTP status.
+2. Parse the response body when applicable.
+3. Detect provider error responses even when HTTP status is 200.
+4. Treat provider-reported errors as "failed", never "sent".
+
+This is critical because an HTTP 200 response must not automatically mean the WhatsApp message was successfully accepted.
+
+7. Correct Amount
+
+Reminder amounts must represent the actual amount currently payable, including applicable accrued late fees.
+
+Fetch the required late-fee amount and calculate:
+
+"totalDue = baseFeeAmount + applicableLateFee"
+
+Use this same amount consistently in:
+
+- SMS
+- WhatsApp
+- Email
+- simulation
+- manual reminder
+- reminder logs/UI where the amount is displayed
+
+Do not show ₹2,000 when the actual amount due is ₹2,100.
+
+Do not modify the accounting/fee calculation logic incorrectly just for display. Use the application's existing authoritative late-fee calculation/data.
+
+8. Human-Friendly Indian Formatting
+
+Create shared formatting utilities.
+
+Amount:
+
+"5000" → "₹5,000"
+
+"25000" → "₹25,000"
+
+Date:
+
+"2027-08-17" → "17 Aug 2027"
+
+Use these consistently across:
+
+- SMS
+- WhatsApp
+- Email
+- simulation
+- UI where applicable
+
+Do not duplicate formatting logic separately in each channel.
+
+9. SMS
+
+Before calling MSG91:
+
+- validate auth key
+- validate sender ID
+- normalize phone number
+- trim whitespace
+- verify that the resulting Indian mobile number is valid
+- reject empty/whitespace-only phone numbers
+- do not make an API call for an obviously invalid number
+
+All failures must be logged.
+
+DLT/MSG91 external configuration must remain outside the code where appropriate.
+
+10. WhatsApp
+
+Validate:
+
+- MSG91 auth key
+- integrated WhatsApp number
+- approved template name
+- recipient number
+
+The application already uses five parameters:
+
+1. guardian name
+2. student name
+3. fee type
+4. amount
+5. stage label
+
+Keep this ordering exactly.
+
+Stage labels must correspond to:
+
+- D-2 → "due in 2 days"
+- D+0 → "due today"
+- D+3 → "3 days overdue"
+- D+7 → "7 days overdue"
+- D+14 → "14 days overdue"
+
+Do not change the Meta-approved parameter ordering.
+
+11. Email
+
+Before sending through SendGrid:
+
+- API key must exist
+- student email must exist
+- From Email must exist
+- From Email must be valid
+- sender must be configured/verified externally
+
+If "sendgridFromEmail" is missing, do not make an API request. Record a clear configuration failure.
+
+12. Paid/Waived Protection
+
+This must remain extremely strict.
+
+Never send a reminder if the invoice is:
+
+- Paid
+- Waived
+- deleted/non-existent
+
+Keep both:
+
+1. query-level filtering
+2. final status re-check immediately before sending
+
+The final re-check is important because the student may pay between the initial query and the actual provider call.
+
+13. Multiple Invoices
+
+Each invoice must remain independent.
+
+Example:
+
+Student has:
+
+- Invoice A — ₹2,000 — unpaid
+- Invoice B — ₹3,000 — unpaid
+
+The system must track them separately.
+
+Paying Invoice A must NOT prevent reminders for Invoice B.
+
+The deduplication key must remain invoice-specific:
+
+"feeRecordId + channel + stage"
+
+14. Multi-Tenant Isolation
+
+Every operation must remain scoped by "schoolId".
+
+Verify:
+
+- fee query
+- notification configuration
+- templates
+- dunning logs
+- active academic session
+- manual trigger
+- student reminder history
+- provider credentials
+
+School A must never use School B's credentials, templates, invoices, students, or logs.
+
+15. Manual "Send Reminder"
+
+Manual sending should use the nearest appropriate stage:
+
+- upcoming → D-2
+- around due date → D+0
+- moderately overdue → D+3
+- later overdue → D+7
+- heavily overdue → D+14
+
+But manual sending must NOT alter the automatic cron's exact-day rules.
+
+Also keep a clear distinction between:
+
+- automatic reminder
+- manual reminder
+- simulation
+
+16. Simulation
+
+Simulation must NEVER call:
+
+- MSG91 SMS
+- MSG91 WhatsApp
+- SendGrid
+- Mailtrap
+
+It may create "simulated" logs, but these must never count as successfully sent reminders.
+
+Simulation must use the same stage/amount/date calculation as the real system so that what the admin sees is representative of what would actually happen.
+
+17. Database Integrity
+
+Keep the existing unique template constraint:
+
+"school_id + stage + channel"
+
+Normalize/migrate existing stage names where appropriate:
+
+- "D0" → "D+0"
+- "D3" → "D+3"
+- "D7" → "D+7"
+- "D14" → "D+14"
+
+Do not destroy historical D30 logs.
+
+After migration, the application must never generate D30.
+
+18. Logging
+
+Every actual provider attempt must have an appropriate dunning log.
+
+Possible statuses may include:
+
+- "sent"
+- "failed"
+- "simulated"
+
+A failed provider request must never be recorded as "sent".
+
+For failures, store a useful error message.
+
+The admin must be able to determine:
+
+- student
+- invoice
+- channel
+- stage
+- recipient
+- timestamp
+- status
+- failure reason where applicable
+
+19. Cron Reliability
+
+The hourly cron may remain:
+
+"5 * * * *"
+
+The exact cron execution time is not the important part.
+
+The important requirements are:
+
+- IST-correct stage calculation
+- catch-up protection
+- deduplication
+- provider timeout
+- retry
+- paid-status race protection
+- multi-tenant isolation
+
+The system must also retain the startup execution so a server restart can process eligible reminders.
+
+20. Final "Credentials Are the Only Missing Dependency" Requirement
+
+After these code changes are completed and tests pass, the application should be architecturally ready such that:
+
+SMS
+
+Once the school provides valid:
+
+- MSG91 Auth Key
+- Sender ID
+- SMS enabled
+
+the application handles the rest automatically.
+
+WhatsApp
+
+Once the school provides valid:
+
+- MSG91 Auth Key
+- Integrated WhatsApp number
+- Approved WhatsApp template name
+- WhatsApp enabled
+
+the application handles the rest automatically.
+
+Email
+
+Once the school provides valid:
+
+- SendGrid API key
+- verified From Email
+- From Name if desired
+- Email enabled
+
+the application handles the rest automatically.
+
+Do NOT leave hidden code dependencies, hardcoded IDs, manual database edits, or developer-only configuration requirements.
+
+The only remaining requirements should be legitimate external provider setup/approval, such as:
+
+- MSG91 account/credits
+- DLT registration where required
+- Meta/WhatsApp approval
+- approved WhatsApp template
+- SendGrid sender/domain verification
+
+Those are external provider requirements, not application-code dependencies.
+
+21. Testing Requirements
+
+After implementation, do not simply say "tests pass."
+
+Add and run tests covering at minimum:
+
+Stage tests
+
+- D-2
+- D+0
+- D+3
+- D+7
+- D+14
+- non-stage dates
+- old D30 never generated
+
+IST tests
+
+- UTC/IST midnight boundaries
+- correct calendar-day calculation
+
+Catch-up tests
+
+- one-day missed reminder
+- two-day missed reminder
+- already-sent reminder is not duplicated
+- catch-up does not repeatedly fire
+
+Provider tests
+
+- success
+- timeout
+- network failure
+- 429
+- 500
+- 502
+- 503
+- 504
+- 400
+- 401
+- WhatsApp HTTP 200 with provider error body
+
+Amount tests
+
+- base amount only
+- base + late fee
+- INR formatting
+
+Date tests
+
+- Indian date formatting
+
+Validation tests
+
+- empty phone
+- whitespace phone
+- invalid phone
+- missing SendGrid From Email
+- missing API credentials
+- missing WhatsApp template
+
+Payment race tests
+
+- invoice paid immediately before send
+- waived immediately before send
+- deleted invoice immediately before send
+
+Multi-tenant tests
+
+- school A cannot access school B data/configuration
+
+Multiple invoice tests
+
+- paying invoice A does not affect invoice B
+
+Full regression
+
+Run the complete existing test suite and report:
+
+- total test files
+- total tests
+- passed
+- failed
+- duration
+
+22. Final Audit Before Saying "Complete"
+
+After implementation, inspect the actual code again.
+
+Search the entire repository for:
+
+- "D0"
+- "D3"
+- "D7"
+- "D14"
+- "D30"
+- "AbortSignal"
+- "fetch("
+- "sendSms"
+- "sendWhatsapp"
+- "sendEmail"
+- "lateFeeAmount"
+- "dunning_log"
+
+Confirm there are no old stage references accidentally remaining in active logic.
+
+Then provide a final production-readiness report with:
+
+1. Files changed
+2. Database changes
+3. Exact reminder logic
+4. Catch-up behavior
+5. Retry behavior
+6. Timeout behavior
+7. SMS behavior
+8. WhatsApp behavior
+9. Email behavior
+10. Amount/date formatting
+11. Deduplication
+12. Payment race protection
+13. Multi-tenant isolation
+14. External provider requirements
+15. Test results
+16. Any remaining limitation
+
+Most importantly:
+
+Do not claim "100% production ready" merely because the tests pass.
+
+Explicitly identify anything that still depends on external provider configuration or approval.
+
+The desired final state is:
+
+Once the required provider IDs/credentials are entered correctly, the application should automatically execute the complete reminder lifecycle without requiring developer intervention or manual database changes.

@@ -1,0 +1,393 @@
+# STEP 2L-7A — ATTENDANCE IST TIMESTAMP CONSISTENCY
+
+## PHASE
+
+The application is in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **NARROW IMPLEMENTATION STEP**.
+
+Implement ONLY the confirmed Attendance IST timestamp inconsistency described below.
+
+Do not expand scope.
+
+Do not modify unrelated Attendance behavior.
+
+Do not touch production.
+
+---
+
+# CONFIRMED AUDIT FINDING
+
+The Attendance audit identified this issue:
+
+* `markedAt` is separately formatted/displayed using IST.
+* `markedBy` contains a raw ISO timestamp generated using `toISOString()`.
+* That raw ISO value represents UTC and is visible to Teachers/Admins.
+* This conflicts with the project requirement that application/business/display timestamps use **IST / Asia/Kolkata**.
+
+Known areas include:
+
+* `server/teacher-routes.ts`
+* `client/src/pages/teacher-modules/attendance.tsx`
+* `client/src/pages/admin-modules/attendance-overview.tsx`
+
+Inspect the current implementation before changing anything.
+
+---
+
+# REQUIRED PROJECT RULE
+
+All application-facing Attendance timestamps must use:
+
+**Asia/Kolkata / IST**
+
+Do not display BST, UTC, browser-local timezone, or another timezone for application/business timestamps.
+
+---
+
+# OBJECTIVE
+
+Remove the raw UTC timestamp from the user-visible `markedBy` Attendance information.
+
+The Teacher and Admin Attendance interfaces must display the relevant timestamp consistently in IST.
+
+---
+
+# PHASE A — INSPECT FIRST
+
+Trace:
+
+1. Where `markedBy` is created.
+2. Where `markedAt` is created.
+3. Where `markedBy` is returned by the server.
+4. Where `markedBy` is displayed in Teacher Attendance.
+5. Where `markedBy` is displayed in Admin Attendance.
+6. Whether any other Attendance UI exposes the same raw timestamp.
+7. Whether `markedBy` is actually a person identity field, a combined person+timestamp field, or another structure.
+
+Do not assume.
+
+---
+
+# PHASE B — PRESERVE SEMANTICS
+
+Do NOT change:
+
+* who marked Attendance
+* Teacher identity
+* Admin identity
+* authorization
+* school/tenant
+* Academic Session
+* Attendance status
+* Attendance date
+* Attendance calculations
+* historical Attendance
+* Student identity
+* deletion preservation
+* leave behavior
+
+The only change is timestamp representation/formatting.
+
+---
+
+# PHASE C — IST HANDLING
+
+Use the application's existing authoritative IST/Asia-Kolkata date/time utility if one already exists.
+
+Do NOT create a second competing timezone utility.
+
+Search for and reuse the existing project convention.
+
+Do NOT use browser-local timezone as the application source of truth.
+
+Do NOT hard-code an offset such as `+05:30` if the application already has a proper timezone utility.
+
+Use:
+
+**Asia/Kolkata**
+
+as the application timezone.
+
+---
+
+# PHASE D — MARKED-BY DATA
+
+Determine whether the best narrow fix is:
+
+### Option 1
+
+Store `markedBy` as a clean identity/person value and display `markedAt` separately.
+
+OR
+
+### Option 2
+
+If the existing contract requires `markedBy` to contain combined information, format its timestamp using the existing IST utility.
+
+Choose the smallest change that preserves the current API/UI contract.
+
+Do NOT redesign the Attendance data model.
+
+Do NOT create a migration unless the existing schema absolutely requires it.
+
+Prefer a server-side authoritative formatting change if that is sufficient.
+
+---
+
+# PHASE E — TEACHER UI
+
+Inspect:
+
+`client/src/pages/teacher-modules/attendance.tsx`
+
+Ensure any Attendance information shown to the Teacher does not expose a raw UTC timestamp.
+
+If the Teacher UI displays:
+
+* marked by
+* marked at
+* correction information
+* Attendance history timestamp
+
+ensure application-facing timestamps use IST.
+
+Do not redesign the page.
+
+Do not change unrelated UI.
+
+---
+
+# PHASE F — ADMIN UI
+
+Inspect:
+
+`client/src/pages/admin-modules/attendance-overview.tsx`
+
+Ensure any Attendance information shown to Admin does not expose a raw UTC timestamp.
+
+Use the same application-wide IST convention.
+
+Do not redesign the Admin Attendance page.
+
+---
+
+# PHASE G — DO NOT CHANGE STORED HISTORICAL MEANING
+
+Be careful with existing historical Attendance.
+
+Do not rewrite historical Attendance records merely to change their display timezone.
+
+A stored timestamp representing an instant is not itself wrong merely because its serialized representation is UTC.
+
+The requirement is:
+
+> Application-facing display must use IST.
+
+Therefore prefer correcting the presentation/serialization boundary rather than destructive historical rewriting.
+
+---
+
+# PHASE H — TESTS
+
+Add or update focused tests for this exact requirement.
+
+At minimum verify:
+
+## Test 1 — IST formatting
+
+Given a known timestamp:
+
+Verify the displayed Attendance timestamp is Asia/Kolkata.
+
+## Test 2 — No raw UTC display
+
+Verify Teacher-facing Attendance information does not expose the raw `...Z` UTC timestamp where an application-facing timestamp is expected.
+
+## Test 3 — Admin IST
+
+Verify Admin Attendance information uses the same IST representation.
+
+## Test 4 — Existing identity preserved
+
+Verify the Teacher/Admin identity of the person who marked Attendance is unchanged.
+
+## Test 5 — Attendance data unchanged
+
+Verify status, Student, school, Session, class, section, and Attendance date remain unchanged.
+
+---
+
+# PHASE I — REGRESSION TESTS
+
+Run the relevant Attendance IST tests and previously accepted Attendance regression tests.
+
+At minimum consider:
+
+* `shared/__tests__/ist-time.test.ts`
+* `server/__tests__/attendance-ist-consistency.test.ts`
+* relevant Teacher Attendance tests
+* relevant Admin Attendance tests
+* Student Attendance tests where affected
+
+Also run:
+
+`npm run check`
+
+And:
+
+`git diff --check`
+
+Report exact results.
+
+---
+
+# PHASE J — MULTI-TENANT SAFETY
+
+Do not weaken or bypass:
+
+* authenticated school/tenant isolation
+* Student school ownership
+* Academic Session school ownership
+
+This step must not alter authorization or data scope.
+
+---
+
+# PHASE K — OUT OF SCOPE
+
+Do NOT modify:
+
+* class-transfer calculations
+* yearly Attendance calculation
+* statistics calculation
+* monthly Attendance calculation
+* working-day semantics
+* Sunday semantics
+* holiday behavior
+* leave approval
+* archived Session protection
+* 7-day correction
+* Student deletion preservation
+* Attendance identity model
+* Teacher Self-Attendance
+* legacy NULL Session records
+* Faculty Mapping
+* Student Registry
+* enrollment model
+* examination
+* promotion
+* migrations
+* production deployment
+
+The same-Session class-transfer calculation issue discovered in Step 2L-6A is intentionally **SKIPPED FOR NOW**.
+
+Do not implement it.
+
+---
+
+# PHASE L — FILE CONTROL
+
+Before implementation, identify the exact files that need modification.
+
+Prefer the smallest possible change.
+
+Expected areas may include:
+
+* `server/teacher-routes.ts`
+* `client/src/pages/teacher-modules/attendance.tsx`
+* `client/src/pages/admin-modules/attendance-overview.tsx`
+* focused IST tests
+
+Do not modify unrelated files.
+
+---
+
+# FINAL REPORT
+
+Return exactly:
+
+## 1. VERDICT
+
+Use:
+
+**STEP 2L-7A ACCEPTED**
+
+only if the focused tests and regression tests pass.
+
+Otherwise:
+
+**STEP 2L-7A NOT ACCEPTED**
+
+---
+
+## 2. ROOT CAUSE
+
+Explain exactly why the raw UTC timestamp was visible.
+
+---
+
+## 3. FIX IMPLEMENTED
+
+Explain:
+
+* old behavior
+* new behavior
+* files changed
+* exact timestamp utility used
+
+---
+
+## 4. USER-VISIBLE RESULT
+
+Explicitly confirm:
+
+* Teacher Attendance timestamps use IST: YES/NO
+* Admin Attendance timestamps use IST: YES/NO
+* Raw UTC `...Z` application-facing timestamp remains visible: YES/NO
+* Person/Teacher/Admin identity remains unchanged: YES/NO
+
+---
+
+## 5. TEST RESULTS
+
+Provide exact commands and exact results.
+
+Do not claim tests passed unless actually run.
+
+---
+
+## 6. FILES CHANGED
+
+List every changed file and why.
+
+---
+
+## 7. OUT OF SCOPE
+
+Explicitly confirm the class-transfer calculation issue was **NOT modified**.
+
+Also confirm no other unrelated Attendance behavior was changed.
+
+---
+
+## 8. PRODUCTION STATUS
+
+Explicitly state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# FINAL HARD STOP
+
+Implement ONLY Step 2L-7A.
+
+After completion, STOP.
+
+Do not proceed to another Attendance fix automatically.
+
+Wait for the next instruction.

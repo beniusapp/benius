@@ -1,0 +1,149 @@
+STRICT FINAL FIX — DO NOT MOVE TO NEXT MODULE
+
+Fix ONLY the remaining Admin Portal → Fees & Payments session-switching issue identified in the latest verification.
+
+1. FIX THE AUDIT LOG RAPID-SWITCH ISSUE
+
+Current confirmed issue:
+
+When rapidly switching:
+
+2027–2028 → 2028–2029 → 2027–2028 → 2028–2029 → 2027–2028
+
+the Fees & Payments → Audit Log can briefly show a session-mismatch error.
+
+Fix this properly at the root cause.
+
+Requirements:
+
+- Audit Log requests must always be bound to the currently selected Academic Session ID.
+- Cache/query keys must include the Academic Session ID.
+- Stale/in-flight requests from the previous session must be cancelled or ignored.
+- A response belonging to Session A must never be rendered while Session B is selected.
+- A stale error from Session A must never be displayed while Session B is selected.
+- Rapid switching must not produce session-mismatch errors.
+- Do not solve this by hiding errors or suppressing legitimate errors.
+- Preserve the existing tenant/school isolation.
+- Do not weaken any existing server-side session validation.
+
+2. RE-TEST ALL FIVE FEES & PAYMENTS SECTIONS
+
+After fixing Audit Log, perform a real browser test with:
+
+2027–2028 → 2028–2029 → 2027–2028 → 2028–2029 → 2027–2028
+
+Test all five:
+
+1. Financial Analytics
+2. Fee Structures
+3. Ledger & Transactions
+4. Reminders
+5. Audit Log
+
+Verify during normal switching AND rapid switching:
+
+- Correct session data only.
+- No stale data.
+- No session-mismatch errors.
+- No cross-session data collision.
+- No cross-tenant data.
+- Previous session remains fully recoverable.
+- Archived session remains read-only.
+
+3. VERIFY NEW SESSION BEHAVIOR
+
+Use a temporary isolated test school.
+
+Put identifiable financial data into 2027–2028.
+
+Create 2028–2029 with no financial data and activate it.
+
+Confirm that all five Fees & Payments sections show the correct empty/zero state for 2028–2029.
+
+Then switch back to 2027–2028 and confirm the original data returns exactly.
+
+Do not copy, migrate, overwrite, or delete the previous session's data.
+
+4. EXTERNAL PORTAL — VERY IMPORTANT
+
+DO NOT CHANGE THE EXTERNAL PORTAL'S DATA MODEL OR SESSION BEHAVIOR.
+
+External Portal is GLOBAL TENANT/SCHOOL DATA, NOT Academic Session data.
+
+Its identity must remain:
+
+School/Tenant ID only
+
+It must NOT use:
+
+School/Tenant ID + Academic Session ID
+
+Verify explicitly:
+
+1. Open External Portal while 2027–2028 is selected.
+2. Authenticate through the existing admin password gate.
+3. Record its configuration/state.
+4. Switch to 2028–2029.
+5. Open External Portal again.
+6. Authenticate again if required.
+7. Confirm the configuration/state is exactly the same.
+8. Switch back to 2027–2028 and verify again.
+
+Activating or switching an academic session must NEVER:
+
+- Reset External Portal.
+- Empty External Portal.
+- Create a new External Portal configuration.
+- Copy External Portal configuration per session.
+- Delete or modify existing External Portal configuration.
+
+External Portal must remain unchanged across all academic sessions.
+
+If the disposable test admin cannot authenticate to External Portal, do NOT claim 100% verification. Fix the test fixture/authentication issue or use a valid controlled test account so the actual configuration can be inspected.
+
+5. MULTI-TENANT SECURITY
+
+Also verify:
+
+- School A cannot access School B's session data.
+- Foreign session IDs are rejected or safely return no unauthorized data.
+- Foreign invoice/payment/receipt IDs cannot be accessed.
+- Tenant isolation remains intact during rapid session switching.
+
+6. DATABASE VERIFICATION
+
+Independently verify after activation/switching:
+
+- 2027–2028 financial records still exist unchanged.
+- 2028–2029 remains empty until data is intentionally created.
+- No records were moved between sessions.
+- No records were deleted.
+- School B's data remains untouched.
+- External Portal data remains unchanged across session activation.
+
+7. CLEANUP
+
+Use temporary test fixtures only.
+
+After verification:
+
+- Delete all temporary schools.
+- Delete all temporary sessions/users/students/financial records.
+- Confirm zero temporary verification records remain.
+- Do not modify production/business data.
+
+FINAL ACCEPTANCE
+
+Return:
+
+YES — 100% VERIFIED
+
+ONLY if every requirement passes with actual browser + API + database evidence.
+
+Otherwise return:
+
+NO — NOT 100% VERIFIED
+
+and provide the exact remaining failure and evidence.
+
+Do not make unrelated changes. Do not modify External Portal behavior except to verify that it remains global. Do not proceed to the next module until this verification returns YES — 100% VERIFIED.

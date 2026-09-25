@@ -1,0 +1,64 @@
+Please fix the local database issue completely.
+
+When I run the application on my local machine and try to add a student, I get:
+
+"Failed — relation "id_sequences" does not exist"
+
+The same code works correctly in Replit.
+
+I want you to investigate and fix the underlying project/database setup, not just manually create the table in the current database.
+
+Requirements
+
+1. Find exactly where "id_sequences" is currently created/defined.
+2. Confirm its required schema from the existing application:
+   - "school_id INTEGER NOT NULL"
+   - "type TEXT NOT NULL"
+   - "last_issued INTEGER NOT NULL DEFAULT 0"
+   - PRIMARY KEY "(school_id, type)"
+3. Make "id_sequences" part of the project's proper, tracked database schema/migration system so it is automatically created on local/fresh database setup.
+4. Ensure "npm run db:push" / the project's normal database setup can create it.
+5. Preserve the existing DSID/DTID generation logic. Do NOT replace it with "MAX(id)" or another approach.
+6. Do NOT reset existing counters or cause duplicate/reused student or teacher IDs.
+7. If existing students/teachers already have IDs, safely initialize/backfill the counters from the highest existing IDs.
+8. Make the migration/setup idempotent — running it again must not destroy or reset existing "id_sequences" data.
+9. Verify that Replit's existing working database is not negatively affected.
+10. Check whether any other code depends on "id_sequences" and make sure those paths remain compatible.
+11. Do not modify unrelated modules or business logic.
+
+Important
+
+Do not simply run:
+
+"CREATE TABLE id_sequences ..."
+
+as a one-time manual fix and stop.
+
+The goal is to fix the root cause so that a fresh/local database will never fail with:
+
+"relation "id_sequences" does not exist"
+
+again.
+
+Validation
+
+After implementing the fix:
+
+- Run the project's typecheck/build.
+- Run the relevant database/migration checks.
+- Verify "id_sequences" exists.
+- Verify existing DSID/DTID counters are preserved.
+- Test creating a new student and confirm DSID generation works.
+- Test teacher ID generation if it uses the same table.
+- Confirm no duplicate/reused IDs are possible.
+- Confirm the migration is safe to run multiple times.
+
+Before finishing, give me:
+
+1. Root cause.
+2. Files/migrations changed.
+3. Exact database change made.
+4. How existing counters were preserved.
+5. Tests performed and their results.
+
+Keep the fix strictly focused on this "id_sequences" database/setup issue.

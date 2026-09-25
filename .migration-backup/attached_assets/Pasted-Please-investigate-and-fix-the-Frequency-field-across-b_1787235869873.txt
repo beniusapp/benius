@@ -1,0 +1,255 @@
+Please investigate and fix the Frequency field across both places where an invoice is displayed:
+
+1. Student Portal → Fees & Payments → Outstanding invoice cards
+2. Invoice PDF / Invoice document
+
+There is currently an inconsistency where Frequency is available for some invoices but missing for others.
+
+Current Student Portal issue
+
+In the Outstanding section, some invoices show Frequency correctly:
+
+- INV-0091 → Frequency: One-Time
+- INV-0090 → Frequency: One-Time
+
+But other invoices do not show Frequency:
+
+- INV-0078 → Monthly fee → Frequency missing
+- INV-0072 → Equipment onetime → Frequency missing
+- INV-0084 → Quarterly fee → Frequency missing
+
+Current Invoice PDF issue
+
+The same problem exists in the invoice itself.
+
+For example, INV-0084 is a Quarterly fee, but in the Invoice Details table the Frequency column currently displays "—" instead of "Quarterly".
+
+The invoice PDF clearly has a dedicated FREQUENCY column, so the correct frequency should be displayed there whenever the invoice has a frequency value.
+
+---
+
+IMPORTANT: AUDIT THE ROOT CAUSE FIRST
+
+Before making changes, trace the complete data flow.
+
+Check:
+
+1. Fee structure/configuration
+2. Invoice generation
+3. "fee_records"
+4. "/api/student/fees"
+5. Student Portal Outstanding card
+6. Invoice PDF renderer/data mapping
+
+For the affected invoices, determine:
+
+- What is stored in "fee_records.frequency"?
+- What frequency is configured in the original fee structure?
+- Is frequency being copied into the invoice when the invoice is generated?
+- Does "/api/student/fees" return the frequency?
+- Does the invoice API/data source return the frequency?
+- Is the frontend receiving the value but failing to render it?
+- Is the PDF renderer receiving the value but displaying "—"?
+- At exactly which stage is the frequency being lost?
+
+Do not simply add a UI fallback or derive Frequency from the Fee Name.
+
+For example:
+
+- Monthly fee → Monthly
+- Quarterly fee → Quarterly
+- Annual/yearly fee → Annual/Yearly
+- One-time fee → One-Time
+
+The value must come from the actual configured/invoice data, not from guessing based on the name.
+
+---
+
+REQUIRED FIX
+
+Once the root cause is identified, fix the underlying data flow so that the invoice's actual Frequency is consistently available wherever the invoice is displayed.
+
+1. Student Portal Outstanding card
+
+Display:
+
+- Fee Name
+- Fee Type
+- Frequency
+- Invoice Number
+- Fee Period, when applicable
+- Due Date
+- Amount
+- Existing late-fee information
+- Existing “What’s Included” information
+- Existing payment-attempt information
+- Existing actions
+
+Example:
+
+Quarterly fee
+Fee Type: Quarterly
+Frequency: Quarterly
+INV-0084
+Fee Period: April–June 2027
+Due: 21 Apr 2027
+₹12,000
+
+Keep the current card design, spacing, typography, colors, and responsive behavior.
+
+Do not redesign the card.
+
+2. Invoice PDF
+
+The existing Invoice Details table already contains:
+
+DESCRIPTION | FEE TYPE | FREQUENCY | FEE PERIOD | AMOUNT
+
+Make sure the FREQUENCY column displays the actual invoice frequency.
+
+For example, INV-0084 should show:
+
+Description| Fee Type| Frequency| Fee Period| Amount
+Quarterly fee| Quarterly| Quarterly| Apr 2027 – Jun 2027| ₹12,000
+
+Do not display "—" when a valid frequency exists in the underlying invoice data.
+
+---
+
+DATA INTEGRITY
+
+The invoice must preserve its own fee configuration.
+
+Frequency should be associated with the invoice at invoice creation/generation time so that existing invoices are not incorrectly changed when a future fee configuration changes.
+
+Do not create a duplicate field if a suitable existing field already exists.
+
+If "fee_records.frequency" is already the authoritative invoice-level field, use it consistently.
+
+If the field is missing during invoice generation, fix the invoice-generation mapping rather than creating a frontend-only workaround.
+
+---
+
+INVOICE NUMBER PROTECTION
+
+Keep the existing Invoice Number behavior exactly as it is.
+
+The displayed invoice number must continue to come from:
+
+"fee_records.invoice_number"
+
+It must NOT use:
+
+- Receipt number
+- Razorpay Order ID
+- Razorpay Payment ID
+- Payment attempt ID
+- Any temporary/generated payment identifier
+
+Payment must never overwrite the permanent invoice number.
+
+---
+
+DO NOT CHANGE
+
+This task is specifically about Fee Type + Frequency presentation and the underlying Frequency data flow.
+
+Do NOT modify:
+
+- Payment logic
+- Pay Now
+- Try Again
+- Pay at School
+- Razorpay integration
+- Payment attempts
+- Duplicate-payment protection
+- Invoice payment status
+- Fee calculations
+- Late-fee calculations
+- Outstanding balance calculations
+- Invoice numbering
+- Receipt numbering
+- Receipt generation
+- Academic-session logic
+- Invoice A4/PDF layout
+- Signature
+- Invoice branding
+- Existing invoice fields
+- Existing card design
+
+Do not refactor unrelated parts of the Fees & Payments module.
+
+---
+
+MISSING/NULL VALUES
+
+If an invoice genuinely has no frequency configured, do not invent a value.
+
+Instead:
+
+1. Identify why the frequency is missing.
+2. Determine whether the invoice was created before the frequency field existed or whether the generation process failed to save it.
+3. Report the affected records.
+4. Do not silently guess a frequency from the invoice name.
+
+For newly generated invoices, make sure the configured frequency is correctly persisted and displayed.
+
+---
+
+BACKWARD COMPATIBILITY
+
+Check existing invoices as well as newly generated invoices.
+
+I specifically want you to test invoices such as:
+
+- INV-0091 — One-Time
+- INV-0090 — One-Time
+- INV-0078 — Monthly
+- INV-0072 — One-Time/Equipment
+- INV-0084 — Quarterly
+
+Do not assume that fixing newly generated invoices automatically fixes existing invoices.
+
+If existing records have genuinely missing frequency data, clearly report that separately before making any destructive/backfill change.
+
+Do not perform a bulk database backfill unless you can determine the correct frequency from authoritative existing data and it is safe to do so.
+
+---
+
+VALIDATION
+
+After the root cause is fixed:
+
+1. Verify multiple Outstanding invoices.
+2. Verify Fee Type is displayed correctly.
+3. Verify Frequency is displayed correctly.
+4. Verify Invoice Number remains correct and permanent.
+5. Verify Fee Period remains correct.
+6. Verify Due Date remains correct.
+7. Verify Amount remains correct.
+8. Verify the Invoice PDF Frequency column displays the correct value.
+9. Verify monthly, quarterly, annual/yearly, and one-time invoices.
+10. Verify invoices with and without fee breakdowns.
+11. Verify invoices with and without late-fee policies.
+12. Verify mobile Student Portal layout.
+13. Verify desktop layout.
+14. Verify the existing A4 one-page invoice behavior is unchanged.
+15. Verify Pay Now/Try Again/payment behavior is completely unchanged.
+16. Run the existing TypeScript/build checks.
+17. Run the relevant regression tests.
+
+Final requirement
+
+First identify and report the root cause. Then implement the minimum necessary fix.
+
+Do not solve this by simply hardcoding or inferring Frequency from the Fee Name.
+
+The goal is that the same authoritative invoice frequency is consistently available and displayed in both:
+
+Student Portal Outstanding card → Frequency
+
+and
+
+Invoice PDF → FREQUENCY column
+
+while preserving all existing invoice, fee, payment, Razorpay, receipt, and A4 PDF functionality.

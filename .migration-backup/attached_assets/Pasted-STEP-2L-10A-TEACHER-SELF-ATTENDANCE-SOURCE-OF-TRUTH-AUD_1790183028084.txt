@@ -1,0 +1,351 @@
+STEP 2L-10A — TEACHER SELF-ATTENDANCE SOURCE-OF-TRUTH AUDIT
+
+MODE: READ-ONLY AUDIT ONLY.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE SCHEMA.
+DO NOT MODIFY TESTS.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE CONFIGURATION.
+DO NOT TOUCH PRODUCTION.
+DO NOT DEPLOY.
+DO NOT FIX ANYTHING IN THIS STEP.
+
+IMPORTANT PROJECT RULES:
+
+1. MULTI-TENANT / MULTI-SCHOOL ISOLATION IS PERMANENT.
+   Every Teacher Self-Attendance read, calculation, lookup, and mutation must remain scoped to the authenticated School/Tenant.
+
+2. ACADEMIC SESSION ISOLATION IS MANDATORY.
+   Teacher Self-Attendance must not mix Attendance data between Academic Sessions.
+
+3. APPLICATION DATE/TIME LOGIC MUST USE IST / ASIA-KOLKATA.
+   Do not introduce UTC/BST/another local timezone for application-facing dates or business-day decisions.
+
+4. DO NOT IMPORT THE STUDENT ATTENDANCE CALCULATION CONTRACT INTO TEACHER SELF-ATTENDANCE.
+   Teacher Self-Attendance is a separate domain.
+   Its authoritative rules must be discovered from the existing application.
+
+5. DO NOT REOPEN THE SAME-SESSION STUDENT CLASS-TRANSFER ISSUE.
+   It remains intentionally skipped.
+
+6. DO NOT CHANGE STUDENT ATTENDANCE.
+   Student Attendance calculations are already accepted and must remain untouched.
+
+KNOWN FINDINGS FROM STEP 2L-9A:
+
+Teacher Self-Attendance currently has potentially different rate calculations:
+
+A. Server-side rate:
+`server/teacher-routes.ts:5013–5028`
+
+B. My Attendance:
+`client/src/pages/teacher-modules/my-attendance.tsx:247–255`
+
+C. Attendance History:
+`client/src/pages/teacher-modules/attendance-history.tsx:107–129`
+and
+`:420–440`
+
+The detailed Attendance History also appears to generate past weekday Absent entries for dates where no stored row exists and does not clearly clamp its generated calendar range to the selected Academic Session.
+
+These are findings only.
+
+DO NOT ASSUME THEY ARE BUGS.
+
+TASK:
+
+Perform a complete READ-ONLY source-of-truth audit of Teacher Self-Attendance.
+
+SEARCH THE ENTIRE CODEBASE.
+
+Inspect:
+
+* Teacher Self-Attendance routes
+* Teacher Self-Attendance storage functions
+* Attendance Policy configuration
+* School Setup Attendance configuration
+* Attendance policy engine
+* Teacher Attendance UI
+* My Attendance UI
+* Attendance History UI
+* Teacher dashboard Attendance widgets
+* Teacher reports
+* Teacher Attendance APIs
+* database/schema definitions
+* tests
+* project memory
+* documentation
+* existing requirements/specifications
+* any other Teacher Self-Attendance calculation or display path
+
+PRIMARY OBJECTIVE:
+
+Determine the existing authoritative business rule for Teacher Self-Attendance.
+
+Specifically determine whether the existing application defines:
+
+1. What constitutes a Teacher Self-Attendance working/applicable day.
+2. Whether Saturday is included.
+3. Whether Sunday is included.
+4. Whether weekends are automatically excluded.
+5. Whether holidays are excluded.
+6. Whether All_School holidays and targeted holidays behave differently.
+7. Whether an Attendance row is required to establish an applicable day.
+8. Whether an unmarked weekday becomes Absent.
+9. Whether an unmarked weekend becomes Absent.
+10. Whether Leave receives attendance credit.
+11. Whether Late receives full attendance credit.
+12. Whether Half Day receives partial attendance credit.
+13. Whether Absent receives zero credit.
+14. Whether Missing/unmarked receives zero credit.
+15. What the denominator is.
+16. Whether the denominator is calendar-based, record-based, schedule-based, or policy-based.
+17. How percentage/rate is calculated.
+18. What rounding precision is used.
+19. What happens when there are zero applicable days.
+20. Whether the rate is Session-specific.
+21. Whether the rate is school/tenant-specific.
+22. Whether the selected Academic Session boundaries apply.
+23. Whether future dates are excluded.
+24. Whether the existing 7-day correction rule has any relevance to rate calculation.
+25. Whether Teacher Self-Attendance uses the configurable Attendance Policy target or timing thresholds.
+26. Whether there is any existing distinction between:
+
+* check-in/check-out timing
+* attendance status
+* attendance rate
+* attendance percentage
+* working day
+
+27. Whether any historical Attendance data is intentionally interpreted differently from current Attendance.
+
+IMPORTANT:
+
+Do NOT use the Student Attendance contract as the answer.
+
+Instead, identify whether Teacher Self-Attendance has its own established contract.
+
+SOURCE-OF-TRUTH PRIORITY:
+
+Look for evidence in this order:
+
+1. Existing explicit project requirements/specifications.
+2. Existing project memory/documentation that predates this audit.
+3. Existing School Setup / Attendance Policy configuration and its documented purpose.
+4. Existing server-side calculation/business logic.
+5. Existing focused tests.
+6. Existing UI behavior.
+
+Clearly distinguish:
+
+AUTHORITATIVE RULE
+from
+IMPLEMENTATION BEHAVIOR
+from
+DISPLAY BEHAVIOR
+from
+UNDEFINED / PRODUCT DECISION.
+
+CRITICAL CHECK — THREE EXISTING RATE PATHS:
+
+Compare:
+
+A. Server Teacher Self-Attendance rate
+B. Teacher My Attendance rate
+C. Teacher Attendance History rate
+
+For each one identify:
+
+* exact file
+* function/component
+* route/API if applicable
+* date range
+* denominator
+* numerator
+* status weights
+* weekend handling
+* holiday handling
+* missing/unmarked handling
+* Session handling
+* tenant handling
+* rounding
+* zero-day handling
+
+Then determine:
+
+1. Are they actually intended to represent the same metric?
+2. If yes, which source is authoritative?
+3. If no, what distinct metrics do they represent?
+4. If the intended distinction is not documented, classify it as UNDEFINED / PRODUCT DECISION.
+
+DO NOT select a "winner" merely because one implementation looks cleaner.
+
+SESSION ISOLATION AUDIT:
+
+Verify whether Teacher Self-Attendance calculations:
+
+* identify the selected Academic Session,
+* filter Attendance records by Session,
+* respect Session start/end boundaries,
+* prevent overlapping dates from another Session from affecting the selected Session.
+
+Pay special attention to Attendance History's generated missing weekdays.
+
+If generated dates can exist outside the selected Session, report exactly how that affects the displayed rate.
+
+TENANT ISOLATION AUDIT:
+
+Verify every Teacher Self-Attendance calculation is scoped by:
+
+* authenticated school/tenant
+* Teacher identity
+* Academic Session where applicable
+
+Confirm whether another school's Teacher Attendance could affect the rate.
+
+IST AUDIT:
+
+Check:
+
+* today
+* date ranges
+* weekday calculations
+* future-date exclusion
+* holiday dates
+* Session boundaries
+* displayed timestamps
+
+Verify application-facing business/date decisions use IST/date-only semantics.
+
+DO NOT CHANGE TIMEZONE LOGIC.
+
+ATTENDANCE POLICY AUDIT:
+
+Inspect:
+
+`attendance_policies`
+
+and:
+
+`server/attendance-policy-engine.ts`
+
+Determine precisely what those policies govern for Teacher Self-Attendance.
+
+Do NOT assume that the configurable Attendance target percentage is the rate formula.
+
+Clearly separate:
+
+* policy target
+* check-in timing
+* status determination
+* rate calculation
+
+TEST AUDIT:
+
+Inspect existing Teacher Self-Attendance tests.
+
+Do not run or modify tests.
+
+Identify whether tests establish:
+
+* weekend behavior
+* holiday behavior
+* missing weekday behavior
+* Leave
+* Late
+* Half Day
+* Absent
+* denominator
+* Session boundaries
+* tenant isolation
+* zero-day behavior
+* rate precision
+
+DOCUMENTATION AUDIT:
+
+Inspect all relevant project memory and documentation.
+
+Identify whether any existing document explicitly defines Teacher Self-Attendance calculation.
+
+Do not treat this Step 2L-10A prompt itself as an existing project requirement.
+
+CLASSIFICATION RULE:
+
+For every finding classify it as exactly one of:
+
+PASS
+MISMATCH
+DISPLAY-ONLY DIFFERENCE
+UNDEFINED / PRODUCT DECISION
+
+Do not call something a MISMATCH unless there is evidence that two surfaces are supposed to represent the same metric or an explicit rule is being violated.
+
+FINAL REPORT MUST CONTAIN EXACTLY THESE SECTIONS:
+
+1. VERDICT
+2. TEACHER SELF-ATTENDANCE SOURCE OF TRUTH
+3. APPLICABLE / WORKING-DAY RULE
+4. WEEKEND RULE
+5. SUNDAY RULE
+6. HOLIDAY RULE
+7. STATUS RULE
+8. MISSING / UNMARKED RULE
+9. LEAVE RULE
+10. LATE RULE
+11. HALF-DAY RULE
+12. ABSENT RULE
+13. DENOMINATOR
+14. PERCENTAGE / RATE FORMULA
+15. ROUNDING
+16. ZERO-DAY BEHAVIOR
+17. SERVER RATE
+18. MY ATTENDANCE RATE
+19. ATTENDANCE HISTORY RATE
+20. THREE-RATE COMPARISON
+21. ATTENDANCE POLICY RELATIONSHIP
+22. SESSION ISOLATION
+23. TENANT ISOLATION
+24. IST / DATE SEMANTICS
+25. TEST EVIDENCE
+26. DOCUMENTATION EVIDENCE
+27. MISMATCHES
+28. DISPLAY-ONLY DIFFERENCES
+29. UNDEFINED / PRODUCT DECISIONS
+30. STUDENT ATTENDANCE
+31. CLASS-TRANSFER ISSUE
+32. FILES CHANGED
+33. TESTS
+34. PRODUCTION STATUS
+35. RECOMMENDED NEXT STEP
+
+IMPORTANT FINAL REPORT RULES:
+
+* Give exact file paths and function/component/route names.
+* Do not invent a Teacher Self-Attendance rule.
+* Do not choose a preferred formula unless an existing authoritative source establishes it.
+* Do not import Student Attendance rules.
+* Do not modify anything.
+* Do not run production commands.
+* Do not touch production.
+* Do not fix the identified differences in this step.
+
+FILES CHANGED:
+
+Must report:
+
+NONE
+
+unless an accidental project change occurred.
+
+TESTS:
+
+Tests may be inspected but must NOT be modified or run.
+
+PRODUCTION:
+
+Must report:
+
+NOT TOUCHED.
+
+STOP after producing the audit report.

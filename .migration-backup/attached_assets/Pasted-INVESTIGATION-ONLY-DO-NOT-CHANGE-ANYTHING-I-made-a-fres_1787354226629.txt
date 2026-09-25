@@ -1,0 +1,100 @@
+INVESTIGATION ONLY — DO NOT CHANGE ANYTHING
+
+I made a fresh Razorpay payment through the Student Portal, and the payment was successfully captured.
+
+Student Portal shows:
+
+- Paid
+- Portal Payment
+- Card ••••1007
+- Payment ID ✓
+- Order ID ✓
+- Fee Record ✓
+- Attempt: ATTEMPT-0001
+- Status: Captured
+- Amount: ₹5,000
+- Timestamp: —
+
+The official receipt for the same payment also shows:
+
+Payment Date & Time: —
+
+This is a fresh payment, so do not assume this is an old/orphan-payment issue.
+
+Trace the exact payment end-to-end
+
+Student Portal
+→ Razorpay Order
+→ Razorpay Checkout
+→ Razorpay Captured
+→ Client Verify/Webhook
+→ payment_attempts
+→ payment_records
+→ fee_records
+→ Student Portal History
+→ Receipt API
+→ Receipt Renderer
+
+Investigate these points
+
+1. Database
+   Check the latest payment's actual values and types for:
+   
+   - "payment_attempts": "created_at", "rzp_created_at", "rzp_captured_at", "payment_id", "order_id", "fee_record_id", "outcome/status", "source"
+   - "payment_records": "created_at", "payment_id", "order_id", "fee_record_id", "status"
+   - "fee_records": "paid_date", "status", "receipt_number", "invoice_number"
+   
+   Confirm whether timestamps are returned as "Date", string, number, "null", or "undefined".
+
+2. Razorpay
+   Check the actual Razorpay payment response:
+   "id", "order_id", "status", "created_at", "captured", "amount", "method".
+   
+   Determine whether "created_at" is received and where it is persisted.
+
+3. Student Portal
+   Find the API and frontend code responsible for:
+   
+   Timestamp: —
+   
+   Trace:
+   
+   "DB → API response → frontend → formatter → UI"
+
+4. Receipt
+   Trace:
+   
+   "DB → receipt API → paymentDateTimeIST → formatter → receipt"
+   
+   Explain exactly why Payment Date & Time becomes "—".
+
+5. Timezone
+   Verify the complete conversion:
+   
+   "Razorpay UNIX timestamp → JS Date → IST → displayed date/time"
+   
+   Check for wrong field, null/undefined, seconds-vs-milliseconds, invalid Date, or incorrect fallback.
+
+6. Important comparison
+   Both Student Portal and Receipt show "—", while Payment ID, Order ID, captured status and amount are present.
+   
+   Determine whether this is a shared backend/data-layer timestamp problem.
+
+Final report — NO FIXES
+
+Return only an investigation report containing:
+
+1. Exact payment identifiers (mask sensitive values)
+2. Razorpay timestamp received
+3. Database timestamp values
+4. Student Portal API timestamp
+5. Why Student Portal displays "—"
+6. Receipt API timestamp
+7. Why Receipt displays "—"
+8. Exact root cause
+9. Recommended fix
+10. All affected files/routes/fields
+
+DO NOT modify code, database data, migrations, UI, or configuration.
+
+Do not expose Razorpay secrets, webhook secrets, full card numbers, CVV, or sensitive customer data.

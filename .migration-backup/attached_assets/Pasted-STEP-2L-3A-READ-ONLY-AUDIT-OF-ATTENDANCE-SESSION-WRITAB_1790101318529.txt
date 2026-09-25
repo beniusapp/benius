@@ -1,0 +1,297 @@
+STEP 2L-3A — READ-ONLY AUDIT OF ATTENDANCE SESSION WRITABILITY
+
+We are continuing Attendance hardening.
+
+Current status:
+- Step 2I — Unified Student Attendance calculation: PASS
+- Step 2J — Canonical working-day rule: PASS
+- Step 2K — IST / Academic Session consistency: PASS
+- Step 2K-Test — Session isolation regression hardening: PASS
+- Step 2L-1 — Student Attendance shared Session authority: PASS
+- Step 2L-2 — Student monthly approved-leave Session isolation: PASS
+
+The Step 2L audit identified this remaining issue:
+
+Historical/archived Attendance mutation is blocked by the frontend but is not consistently enforced by backend mutation routes.
+
+Before implementing anything, perform this READ-ONLY AUDIT ONLY.
+
+==================================================
+ABSOLUTE RULE
+==================================================
+
+DO NOT MODIFY ANYTHING.
+
+Do NOT:
+- modify production code
+- modify frontend code
+- modify tests
+- modify database schema
+- create migrations
+- apply migrations
+- change routes
+- change authorization
+- change Session behavior
+- refactor anything
+
+This step is investigation only.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Determine the existing, intended definition of a WRITABLE Academic Session in this application.
+
+Do NOT invent a new definition.
+
+Trace the actual Academic Session model, session-view behavior, archive behavior, and Attendance mutation routes.
+
+We specifically need to establish:
+
+1. What field/state identifies the currently writable Academic Session?
+2. How does the application distinguish:
+   - active/current Session
+   - archived/previous Session
+   - future Session, if supported
+3. Whether Session start/end dates affect writability.
+4. Whether Attendance mutation currently has a seven-day edit rule.
+5. Whether that seven-day rule is intended to remain for the current Session.
+6. Whether an archived Session should ALWAYS be read-only even when its end date is within seven days.
+7. Whether a current/writable Session can legitimately contain dates outside its nominal start/end range.
+8. Whether Student Attendance and Teacher self-attendance should use exactly the same Session writability rule.
+9. Whether there is already a shared helper that should be reused.
+10. Whether any existing route has a different legitimate rule that must be preserved.
+
+==================================================
+ROUTES TO TRACE
+==================================================
+
+At minimum inspect:
+
+Student/Teacher Student Attendance:
+
+- POST /api/attendance
+- any route/helper used by Teacher Student Attendance marking
+- any Attendance correction/update mutation relevant to Student Attendance
+
+Teacher self-attendance:
+
+- POST /api/teacher/self-attendance/check-in
+- POST /api/teacher/self-attendance/check-out
+- POST /api/teacher/self-attendance/correction
+
+Also inspect any related:
+- status-healing mutation
+- immediate correction
+- leave-to-Attendance synchronization
+- Attendance mutation helper
+- Session validation helper
+
+IMPORTANT:
+Do not automatically include leave approval or leave synchronization in the implementation scope.
+
+First determine whether those workflows already have an intentionally different Session rule.
+
+==================================================
+ACADEMIC SESSION SOURCES TO TRACE
+==================================================
+
+Inspect:
+
+- Academic Session schema/model
+- Session creation/update routes
+- Session view/context
+- archive mode
+- selected Session resolver
+- active/current Session resolver
+- any Session status fields
+- Session startDate/endDate
+- any `isActive`, `active`, `status`, `isArchived`, or equivalent fields
+- any existing "current session" helper
+- any existing "archive session" helper
+- any existing "can edit" or "writable" helper
+
+Search the entire repository for relevant Session writability logic.
+
+Do not assume the frontend's archive mode is sufficient.
+
+==================================================
+DATE RULE AUDIT
+==================================================
+
+Trace the existing Attendance date validation.
+
+Determine exactly:
+
+- Is Attendance marking limited to today?
+- Is past Attendance allowed?
+- Is the existing seven-day rule applied?
+- Is it seven calendar days or seven 24-hour periods?
+- Is it based on IST?
+- Is it applied to Student Attendance?
+- Is it applied to Teacher self-attendance?
+- Is it applied consistently across correction routes?
+
+Do not change this behavior.
+
+We need to know how the existing date rule should interact with Session writability.
+
+==================================================
+BOUNDARY SCENARIOS
+==================================================
+
+Explicitly analyze these scenarios using the current code:
+
+Scenario A:
+Current writable Session + today's date.
+
+Expected:
+Determine whether mutation is currently allowed.
+
+Scenario B:
+Current writable Session + valid recent past date inside existing edit window.
+
+Expected:
+Determine whether mutation is currently allowed.
+
+Scenario C:
+Archived previous Session + date that is still inside the existing seven-day window.
+
+Expected:
+Determine whether current code allows it and whether the application's existing archive design indicates it should be read-only.
+
+Scenario D:
+Archived previous Session + old date.
+
+Expected:
+Determine behavior.
+
+Scenario E:
+Current writable Session + date before Session startDate.
+
+Expected:
+Determine behavior.
+
+Scenario F:
+Current writable Session + date after Session endDate.
+
+Expected:
+Determine behavior.
+
+Scenario G:
+Future/non-current Session, if such a state exists.
+
+Expected:
+Determine whether Attendance mutation is currently possible and what the existing application design says.
+
+Scenario H:
+Teacher self-attendance check-in/check-out for archived Session.
+
+Scenario I:
+Teacher self-attendance correction for archived Session.
+
+==================================================
+MULTI-TENANT REQUIREMENT
+==================================================
+
+While tracing the routes, verify that any Session writability check is performed AFTER confirming that the Session belongs to the authenticated school.
+
+A Session from another school must never be usable to establish writability.
+
+Do not propose changing existing tenant logic unless an actual defect is found.
+
+==================================================
+HISTORICAL READ REQUIREMENT
+==================================================
+
+This audit must preserve the distinction:
+
+READ:
+Historical/archived Attendance must remain accessible.
+
+WRITE:
+Historical/archived Attendance must not become editable merely because the API is called directly.
+
+Do not recommend blocking historical reads.
+
+==================================================
+DO NOT INVENT POLICY
+==================================================
+
+If the repository does not currently have an explicit Session status/writability field, report that fact.
+
+Do not automatically decide that:
+- `endDate < today` means archived
+- `isActive = false` means archived
+- selected Session means writable
+- active Session means writable
+- seven-day rule overrides archive state
+
+Instead, trace how the existing application actually defines these concepts.
+
+==================================================
+OUTPUT FORMAT
+==================================================
+
+Return:
+
+1. OVERALL AUDIT RESULT:
+   - READY FOR IMPLEMENTATION
+   OR
+   - NEEDS DESIGN DECISION
+
+2. EXISTING SESSION STATE MODEL
+   Explain exactly how the application represents:
+   - active/current
+   - archived
+   - future
+   - selected
+   - writable, if explicitly represented
+
+3. AUTHORITATIVE WRITABILITY RULE
+   State whether an existing authoritative rule/helper already exists.
+
+4. ATTENDANCE MUTATION MATRIX
+
+   | Route | Current Session | Archived Session | Future Session | Date Rule | Tenant Check |
+
+   Include:
+   - Student Attendance marking
+   - Teacher self check-in
+   - Teacher self check-out
+   - Teacher self correction
+   - other relevant Attendance mutations
+
+5. DATE BOUNDARY MATRIX
+
+   For scenarios A–I above, report:
+   - current behavior
+   - relevant code
+   - whether it appears intentional
+   - whether it needs implementation change
+
+6. DESIGN CONSTRAINTS
+   Identify exactly what the next implementation MUST preserve.
+
+7. SMALLEST IMPLEMENTATION SCOPE
+   If the existing application semantics are clear, describe the smallest implementation step.
+   Do NOT implement it.
+
+8. OPEN DESIGN DECISIONS
+   If the codebase does not provide enough information to determine the intended writable Session rule, explicitly list the decision that requires clarification rather than guessing.
+
+9. VERIFICATION
+   Run only read-only/static checks and existing tests as appropriate.
+
+   Report:
+   - tests run/results
+   - npm run check
+   - git diff --check
+   - confirmation that no files were modified
+   - confirmation that no schema/migrations/database changes occurred
+
+STOP after this audit.
+
+Do NOT implement Step 2L-3.
+Do NOT modify any file.
+Do NOT automatically continue to Step 2L-4.

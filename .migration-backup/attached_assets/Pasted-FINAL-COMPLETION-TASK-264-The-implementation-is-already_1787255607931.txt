@@ -1,0 +1,279 @@
+FINAL COMPLETION — TASK #264
+
+The implementation is already substantially complete.
+
+DO NOT redesign the payment architecture.
+DO NOT restart the entire implementation.
+DO NOT introduce new unrelated requirements.
+DO NOT keep the task open for hypothetical future improvements.
+
+Your own latest validation has identified exactly four remaining deliverables. Complete ONLY these items and then perform final validation.
+
+---
+
+1. Resolve refund/dispute invoice linkage BEFORE immutable delivery insertion
+
+For every signed Razorpay:
+
+- "refund.*"
+- "payment.dispute.*"
+
+webhook:
+
+Resolve the tenant/invoice/attempt using the already-established safe identity rules.
+
+Resolution priority must be deterministic and tenant-safe:
+
+1. Stored Razorpay "payment_id" identity.
+2. Stored Razorpay "order_id" identity.
+3. Only then use valid Razorpay notes where appropriate.
+4. If payment and order identities conflict across tenants, treat the webhook as ambiguous.
+5. Never select a tenant using an arbitrary "first match".
+6. If no safe tenant/invoice can be established, retain the webhook as:
+   - tenant = NULL
+   - invoice = NULL
+   - attempt = NULL where appropriate
+   - "verification_status = unverifiable_unattributed"
+   - no financial processing.
+
+The final resolution result must be determined before inserting the immutable delivery receipt, so the immutable row contains the final safe resolution facts from the moment it is created.
+
+---
+
+2. Persist the final resolution facts in the immutable delivery record
+
+The immutable webhook-delivery row must permanently contain, where applicable:
+
+- webhook event
+- provider payment ID
+- provider order ID
+- refund ID
+- dispute ID
+- tenant ID
+- fee/invoice ID
+- payment attempt ID
+- verification status
+- resolution status
+- resolution source
+- resolution reason
+- provider event timestamp
+- application receipt timestamp
+- sanitized retained payload where permitted
+- delivery identity / receipt identity
+
+The row must be inserted once and then protected by the existing database-level append-only mechanism.
+
+Do not update the immutable delivery row later to fill these fields.
+
+If something cannot safely be resolved, record that fact explicitly rather than fabricating a relationship.
+
+---
+
+3. Expose the final resolution information in Admin Ledger / Transaction Detail
+
+Update the existing Admin Ledger transaction-detail response and UI only as necessary.
+
+For each webhook delivery shown under an invoice, administrators must be able to see:
+
+Delivery
+
+- Event
+- Delivery/receipt ID
+- Provider payment ID
+- Provider order ID
+- Refund ID
+- Dispute ID
+
+Verification
+
+- Verified / unverifiable / rejected
+- Verification status
+- Provider event time
+- Application received time
+
+Resolution
+
+- Resolved / unresolved / ambiguous
+- Resolution source
+- Resolution reason
+- Tenant linkage
+- Invoice linkage
+- Payment-attempt linkage
+
+Processing history
+
+- Every processing record associated with that delivery
+- Processing status
+- Processing timestamp
+- Processing reason/result
+
+Do not expose sensitive data such as full card PAN, CVV, or other prohibited payment credentials.
+
+The Admin Ledger must make it obvious whether a refund/dispute webhook was:
+
+"verified + resolved"
+
+or
+
+"verified + unresolved"
+
+or
+
+"unverifiable + unattributed"
+
+or
+
+"ambiguous and safely rejected from financial processing".
+
+---
+
+4. Add the required end-to-end regression tests
+
+Do not rely only on database/unit tests.
+
+Add focused HTTP-level webhook tests covering at minimum:
+
+A. Refund with notes
+
+Signed refund webhook containing valid tenant/invoice identity.
+
+Expected:
+
+- verified
+- correctly tenant-attributed
+- correctly invoice/attempt linked
+- refund ID retained
+- immutable delivery created with final resolution facts
+- Admin Ledger can retrieve it.
+
+B. Refund without notes
+
+Signed refund webhook with no tenant notes but a known stored payment/order identity.
+
+Expected:
+
+- provider identity resolves the tenant
+- correct invoice/attempt linkage
+- immutable delivery contains the resolution
+- no arbitrary tenant selection.
+
+C. Dispute without notes
+
+Same requirement for "payment.dispute.*".
+
+D. Unknown provider identity
+
+Signed webhook with no notes and unknown payment/order/refund/dispute identity.
+
+Expected:
+
+- delivery is retained
+- tenant = NULL
+- invoice = NULL
+- verification status explicitly indicates "unverifiable_unattributed" if the secret cannot be safely selected
+- no financial processing
+- processing-history explanation retained.
+
+E. Conflicting tenant identities
+
+Create a scenario where payment/order identities resolve to different tenants.
+
+Expected:
+
+- NEVER choose the first match
+- NEVER attribute to an arbitrary tenant
+- delivery is retained safely
+- marked ambiguous/unresolved
+- no financial processing.
+
+F. Duplicate webhook deliveries
+
+Send the same signed webhook multiple times.
+
+Expected:
+
+- every actual delivery remains a separate immutable delivery receipt
+- processing history remains append-only
+- business idempotency still prevents duplicate financial capture/refund effects.
+
+G. Mutation protection
+
+Attempt:
+
+- UPDATE immutable delivery
+- DELETE immutable delivery
+- UPDATE processing history
+- DELETE processing history
+
+Expected:
+
+- database-level protection rejects the mutation.
+
+---
+
+VERY IMPORTANT ACCEPTANCE RULE
+
+The goal is NOT to guarantee that every webhook can always be linked to an invoice.
+
+The correct forensic behavior is:
+
+«If it can be safely resolved, resolve and permanently record the relationship.
+If it cannot be safely resolved, permanently retain the event as unresolved/unattributed without guessing and without performing financial processing.»
+
+That distinction is critical.
+
+---
+
+Do NOT change existing financial behavior
+
+Do not break or redesign:
+
+- "payment_records"
+- existing successful Razorpay capture flow
+- receipt generation
+- invoice status
+- offline payments
+- offline payment details
+- existing student payment history
+- tenant isolation
+- payment idempotency
+- existing refund/dispute financial processing.
+
+The new forensic tables/history are an audit layer and must not replace the existing payment/receipt authority.
+
+---
+
+Final validation
+
+After implementation:
+
+1. Run TypeScript/typecheck.
+2. Run the focused webhook-forensics tests.
+3. Run the complete test suite.
+4. Restart the application.
+5. Confirm migrations succeed on the running database.
+6. Verify Admin Ledger transaction detail.
+7. Confirm immutable delivery and processing-history protections.
+8. Confirm no regression to online capture/payment receipt flow.
+9. Confirm no regression to offline payments.
+10. Report the exact final test count.
+
+Completion requirement
+
+Do NOT respond with another "remaining blocker" unless there is an actual security, data-integrity, or correctness defect preventing the requirements above.
+
+If all requirements pass, explicitly report:
+
+TASK #264 COMPLETE
+
+and provide:
+
+- what was implemented
+- migration status
+- test count
+- focused webhook test results
+- full suite result
+- Admin Ledger verification result
+- confirmation that existing payment/receipt/offline flows remain intact.
+
+Do not expand the scope after these acceptance criteria are satisfied.

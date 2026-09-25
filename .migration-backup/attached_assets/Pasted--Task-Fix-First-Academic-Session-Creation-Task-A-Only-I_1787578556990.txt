@@ -1,0 +1,167 @@
+### Task: Fix First Academic Session Creation — Task A Only
+
+**IMPORTANT: DO NOT MODIFY ANY CODE YET.**
+First inspect the existing implementation and confirm the current behavior described below. Only after confirming it, implement this **single scoped fix**.
+
+### Current problem
+
+For a brand-new school:
+
+* The school has **zero academic sessions**.
+* Principal creates the first session, e.g. **2026–2027**.
+* The current UI sends `status: "draft"` and `setAsActive: false`.
+* The session is therefore created as inactive/draft.
+* The Admin Portal treats every inactive session as Archive/read-only.
+* This can leave the administrator stuck because the normal Activate action is unavailable.
+
+This is incorrect for a school's **first-ever academic session**.
+
+### Required behavior
+
+If the school currently has **ZERO academic sessions**:
+
+1. Admin creates the first academic session, e.g. `2026–2027`.
+2. That session must automatically be created as:
+
+   * `isActive = true`
+   * `status = "active"`
+3. The Admin Portal must immediately recognize it as the **current active academic session**.
+4. The top session indicator should show:
+   **2026–2027 (Active)**
+5. The admin must NOT see the newly created first session as:
+
+   * Draft
+   * Archived
+   * Read-only
+6. The admin must be able to immediately use the normal Admin Portal with that session active.
+
+### Important distinction
+
+This rule applies **ONLY when the school has no previous academic session**.
+
+For schools that already have one or more sessions:
+
+* Do NOT change the existing multi-session creation behavior.
+* Do NOT change existing archive/active switching rules.
+* Do NOT automatically alter historical sessions.
+* Do NOT change session-copy behavior.
+* Do NOT change financial/session isolation logic.
+
+### Scope restriction — VERY IMPORTANT
+
+This task is **ONLY** about the first academic session of a brand-new school.
+
+**DO NOT modify:**
+
+* Fees & Payments logic
+* Student Portal Fees
+* Financial Analytics
+* Fees Structure
+* Ledger & Transactions
+* Reminders
+* Audit Log
+* Payment processing
+* Razorpay
+* External Portal
+* External Portal authentication/re-authentication
+* Existing archived-session protection
+* Existing multi-session switching logic
+* Session-based data isolation
+* Any unrelated UI or database behavior
+
+Do not refactor unrelated code.
+
+### Implementation requirement
+
+Use the existing architecture and session creation API.
+
+Prefer the smallest safe change:
+
+* Detect whether the authenticated school has **zero existing academic sessions**.
+* If yes, create the first session as active.
+* Preserve the existing behavior for schools that already have sessions.
+* Ensure the database state and UI state agree immediately after creation.
+
+Do not simply change the global default from draft/inactive to active, because that could alter existing-school behavior.
+
+### Testing requirements
+
+Before declaring completion, test at minimum:
+
+#### Test 1 — Brand-new school
+
+Create/use a temporary school with **zero academic sessions**.
+
+Create `2026–2027`.
+
+Verify in the database:
+
+* exactly one session exists
+* `is_active = true`
+* `status = active`
+
+Verify in the Admin Portal:
+
+* top bar shows `2026–2027`
+* it is marked **Active**
+* it is not shown as Archived
+* archive/read-only mode is NOT enabled
+* normal admin actions are available
+
+#### Test 2 — Existing school
+
+Use a school that already has an academic session.
+
+Create another session, e.g. `2027–2028`.
+
+Verify that the existing session-creation behavior remains unchanged.
+
+Do NOT accidentally auto-activate every newly created session.
+
+#### Test 3 — First-session no-previous-session case
+
+Verify that the first session does not require:
+
+* a previous session
+* copy-from-previous-session data
+* an existing active session
+
+It must work as a completely clean first session.
+
+#### Test 4 — Existing archive behavior
+
+Verify that existing archived sessions remain archived/read-only and that this fix does not weaken archive protection.
+
+### Regression requirements
+
+Add or update regression coverage proving:
+
+**zero sessions → create first session → first session becomes active**
+
+Also prove:
+
+**existing sessions → create another session → existing behavior remains unchanged**
+
+Run:
+
+* TypeScript/type check
+* relevant unit/integration tests
+* relevant session/academic-session tests
+* application startup/smoke test
+
+If browser testing is available, perform the actual Admin Portal flow as well.
+
+### Final response required
+
+Do NOT just say "fixed."
+
+Report:
+
+1. What caused the first-session problem.
+2. Exactly what was changed.
+3. How first-session creation now behaves.
+4. How existing-school session creation remains unchanged.
+5. Tests performed and results.
+6. Confirm that **no Fees & Payments, Student Portal Fees, or External Portal code/behavior was changed**.
+
+If you discover anything outside this scope, **STOP and report it instead of fixing it as part of this task.**

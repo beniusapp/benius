@@ -1,0 +1,257 @@
+## ATTENDANCE FIX #1 — LEGACY DAILY SUMMARY TENANT ISOLATION
+
+We have completed a read-only Attendance audit.
+
+Fix **ONLY this confirmed defect**:
+
+### Defect
+
+Route:
+
+`GET /api/attendance/daily-summary/:schoolId/:date`
+
+Current problem:
+
+* It checks that the user is logged in.
+* It accepts `schoolId` from the URL.
+* It does NOT verify that:
+
+`req.session.schoolId === req.params.schoolId`
+
+* It also does not enforce the appropriate Admin authorization.
+* Therefore a user from School A could potentially request a daily summary for School B.
+
+This is a **multi-tenant isolation defect**.
+
+---
+
+## REQUIRED FIX
+
+Before executing the daily-summary query:
+
+### 1. Require authenticated school context
+
+Use the authenticated session school:
+
+`req.session.schoolId`
+
+Do NOT trust the URL `schoolId` by itself.
+
+### 2. Require same-school access
+
+The requested URL school ID must equal the authenticated session school ID.
+
+Conceptually:
+
+```text
+requestedSchoolId === authenticatedSchoolId
+```
+
+If not, reject the request.
+
+Use the project's existing authorization/error-response convention. Do not invent a new authentication system.
+
+### 3. Preserve existing role/security behavior
+
+Inspect the current route and determine the intended authorized role(s).
+
+The route is an Admin Attendance summary endpoint, so ensure unauthorized roles cannot use it.
+
+Do not weaken any existing authentication or authorization.
+
+### 4. Preserve existing data filtering
+
+The database query must continue to use:
+
+```text
+school_id = authenticated school
+AND
+session_id = validated session
+```
+
+Do not remove any existing school/session filters.
+
+---
+
+## SESSION DATE VALIDATION
+
+Also fix the second confirmed issue in this SAME route:
+
+The requested `date` must belong to the selected Academic Session.
+
+If the date is:
+
+* before Session start date, OR
+* after Session end date
+
+reject the request using the project's existing validation/error convention.
+
+Do NOT simply return an empty result.
+
+Do not change Attendance calculation logic.
+
+---
+
+## IMPORTANT SCOPE LIMIT
+
+Change ONLY what is necessary for:
+
+1. Same-school tenant authorization.
+2. Appropriate Admin authorization for this endpoint.
+3. Selected Academic Session date-boundary validation.
+4. Tests required to prove these changes.
+
+DO NOT change:
+
+* Attendance database schema
+* Attendance calculation logic
+* Student Attendance
+* Teacher Attendance
+* Teacher self-attendance
+* Leave logic
+* Examination
+* Timetable
+* Academic Session implementation
+* UI
+* unrelated routes
+* unrelated refactoring
+
+Do not change any existing correct behavior.
+
+---
+
+## REQUIRED TESTS
+
+Add/update focused tests for this route.
+
+At minimum verify:
+
+### Test 1 — Same school
+
+Authenticated School A requests School A:
+
+```text
+PASS
+```
+
+### Test 2 — Cross-school
+
+Authenticated School A requests School B:
+
+```text
+REJECT
+```
+
+Confirm no School B data is returned.
+
+### Test 3 — Unauthorized role
+
+A user without the intended Admin authorization:
+
+```text
+REJECT
+```
+
+### Test 4 — Date before session
+
+Requested date < selected session start:
+
+```text
+REJECT
+```
+
+### Test 5 — Date after session
+
+Requested date > selected session end:
+
+```text
+REJECT
+```
+
+### Test 6 — Valid date
+
+Date inside selected session:
+
+```text
+PASS
+```
+
+### Test 7 — Session belongs to another school
+
+If the request can specify/select a Session ID, verify a Session belonging to another school is rejected.
+
+---
+
+## VERIFICATION
+
+After implementation:
+
+1. Run the focused Attendance tests.
+2. Run:
+
+`npm run check`
+
+3. Run:
+
+`git diff --check`
+
+4. Inspect the final diff.
+
+Confirm:
+
+* only intended files changed;
+* no schema/migration changes;
+* no unrelated changes;
+* no Attendance calculation changes.
+
+Restart the application if required by the project workflow.
+
+---
+
+## FINAL RESPONSE FORMAT
+
+Return only:
+
+### 1. Files changed
+
+List exact files.
+
+### 2. What changed
+
+Very short explanation.
+
+### 3. Security result
+
+Explain whether cross-school access is now blocked.
+
+### 4. Session date result
+
+Explain whether dates outside the selected session are now rejected.
+
+### 5. Tests
+
+Show exact test count/result.
+
+### 6. `npm run check`
+
+PASS/FAIL
+
+### 7. `git diff --check`
+
+PASS/FAIL
+
+### 8. Final diff scope
+
+Confirm whether unrelated files/modules were changed.
+
+### 9. Final verdict
+
+State:
+
+**ATTENDANCE FIX #1 — PASS**
+
+only if every required verification passes.
+
+Otherwise state exactly what remains.
+
+STOP after this fix and verification.

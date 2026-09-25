@@ -1,0 +1,406 @@
+ATTENDANCE — REQUIREMENTS AUDIT ONLY
+DO NOT MODIFY ANYTHING
+
+IMPORTANT:
+
+This is a READ-ONLY AUDIT.
+
+The Attendance module is already built.
+
+I do NOT want unnecessary changes, redesigns, refactoring, new
+architecture, or improvements that are not required.
+
+Your job is ONLY to compare the CURRENT implementation against the
+EXACT requirements below.
+
+DO NOT modify:
+
+- code
+- database
+- schema
+- migrations
+- data
+- APIs
+- frontend
+- configuration
+- workflows
+
+DO NOT implement any fix.
+
+==================================================
+MY EXACT ATTENDANCE REQUIREMENTS
+==================================================
+
+1. SESSION-SPECIFIC ATTENDANCE
+
+The entire Attendance module must be Academic Session-specific:
+
+- Teacher Attendance
+- Student Attendance
+- Admin Attendance
+
+Every Attendance record must be linked to an Academic Session ID.
+
+Attendance data must belong to exactly one Academic Session.
+
+If I switch to another Academic Session:
+
+- I must see only Attendance belonging to that Session.
+- I must not see Attendance from another Session.
+
+Example:
+
+Session 2021–2022
+    Attendance A
+
+Session 2025–2026
+    Attendance B
+
+When 2021–2022 is selected:
+
+    show Attendance A only.
+
+When 2025–2026 is selected:
+
+    show Attendance B only.
+
+==================================================
+2. STUDENT REGISTRY IS GLOBAL
+==================================================
+
+The Admin Student Registry is GLOBAL/PERMANENT.
+
+Student Registry data must NOT be recreated or reset when:
+
+- a new Academic Session is created
+- an Academic Session ends
+- the active Academic Session changes
+- an old Academic Session is selected
+
+The Student Registry is the permanent Student Master.
+
+Teacher Attendance should simply:
+
+    fetch students from Student Registry
+            ↓
+    mark Attendance for those students
+
+DO NOT make session Enrollment a new prerequisite merely because an
+Enrollment table exists.
+
+DO NOT assume students must be recreated for every Academic Session.
+
+==================================================
+3. TENANT-SPECIFIC
+==================================================
+
+Attendance must be strictly tenant/school-specific.
+
+A Teacher from School A must never:
+
+- see School B Attendance
+- create School B Attendance
+- modify School B Attendance
+
+A Student from School A must never see School B Attendance.
+
+An Admin from School A must never see School B Attendance.
+
+Authenticated school/tenant context must be authoritative.
+
+Browser-supplied school IDs must never be trusted as ownership authority.
+
+==================================================
+4. ANY TEACHER CAN MARK ATTENDANCE
+==================================================
+
+Any authenticated Teacher belonging to the same school can mark
+Attendance.
+
+Do NOT introduce Faculty Mapping restrictions.
+
+Do NOT introduce class-assignment restrictions.
+
+Do NOT introduce subject-assignment restrictions.
+
+Do NOT add additional Teacher eligibility rules unless they already
+exist as a required security check.
+
+==================================================
+5. HISTORICAL ATTENDANCE MUST REMAIN VISIBLE
+==================================================
+
+Historical Attendance must remain available when its Academic Session
+is selected.
+
+Example:
+
+Academic Session: 2021–2022
+
+Class 6A:
+    8 students
+
+Class 7A:
+    90 students
+
+Attendance is recorded.
+
+Later:
+
+Academic Session: 2025–2026
+
+The Student Registry may now be different.
+
+For example:
+
+RAM JAISWAL existed in the school during 2021–2022.
+
+Later, Ram Jaiswal is no longer present in the current Student Registry.
+
+When I select:
+
+    Academic Session 2021–2022
+
+the system MUST still display Ram Jaiswal's historical Attendance.
+
+The historical Attendance record must not disappear simply because the
+Student is no longer present in the CURRENT Student Registry.
+
+Therefore, audit whether historical Attendance currently depends on
+the current Student Registry for display.
+
+DO NOT fix this yet.
+
+Only report the current behavior.
+
+==================================================
+6. ADMIN AND STUDENT MUST SHOW THE SAME ATTENDANCE
+==================================================
+
+There must be one authoritative Attendance data source.
+
+Admin Attendance and Student Attendance must not independently
+generate different Attendance data.
+
+Audit:
+
+- Which database records Admin uses
+- Which database records Student uses
+- How each calculates Attendance
+- How each filters Academic Session
+- Whether both use the same Attendance records
+- Whether their calculations can currently produce different results
+
+DO NOT change anything.
+
+==================================================
+7. WORKING-DAY CALENDAR
+==================================================
+
+Audit the CURRENT Working-Day/School Calendar implementation.
+
+Determine:
+
+- How working days are defined.
+- How holidays are defined.
+- Whether Sundays/non-working days are handled.
+- Whether school-specific holidays are handled.
+- Whether Attendance percentage uses the calendar.
+- Whether Admin/Student/Teacher use the same calendar logic.
+- Whether calendar data is session-specific.
+- Whether switching Academic Session changes the calendar appropriately.
+
+IMPORTANT:
+
+Do NOT redesign the calendar.
+
+If the existing calendar already satisfies the requirement, report:
+
+    ALREADY SATISFIES REQUIREMENT
+
+Only identify an actual Attendance problem if one exists.
+
+==================================================
+8. IST TIMEZONE
+==================================================
+
+Attendance must use:
+
+    Asia/Kolkata / IST
+
+Audit:
+
+- Attendance date handling
+- "Today" calculation
+- Date validation
+- Attendance timestamps
+- Monthly calculations
+- Daily calculations
+- Historical date filtering
+
+Determine whether any Attendance behavior can be affected by server
+timezone instead of IST.
+
+DO NOT modify timezone configuration.
+
+==================================================
+9. HISTORICAL ATTENDANCE MUST NOT BE EDITABLE
+==================================================
+
+Attendance history must be read-only.
+
+Audit the current behavior when:
+
+- viewing the current session
+- viewing an old session
+- switching sessions
+- attempting to submit Attendance for an old session
+
+Determine whether an old Session's Attendance can currently be
+modified.
+
+DO NOT implement the restriction yet.
+
+==================================================
+10. CURRENT SESSION MARKING
+==================================================
+
+Audit the current Teacher Attendance write flow.
+
+Determine:
+
+- How the active Academic Session is selected.
+- Whether the server determines the Session.
+- Whether the browser can choose a Session.
+- Whether Attendance records receive session_id.
+- Whether session_id can currently be NULL.
+- Whether the same Session is used for all Students in one request.
+
+Note:
+
+Step 2D has already been implemented.
+
+The current POST /api/attendance flow now explicitly resolves the active
+Academic Session once from the authenticated Teacher's school and
+passes that sessionId into the Attendance records.
+
+Do not undo or redesign Step 2D.
+
+==================================================
+11. STUDENT IDENTITY VS SESSION DATA
+==================================================
+
+IMPORTANT ARCHITECTURAL DISTINCTION:
+
+Student Registry = GLOBAL student identity/master data.
+
+Academic Session = session-specific Attendance context.
+
+Do NOT propose recreating Student Registry data per Session.
+
+Do NOT automatically make Enrollment a prerequisite for Attendance.
+
+Instead determine:
+
+- Which Student fields are global?
+- Which fields are currently session-specific?
+- What information is stored directly in Attendance?
+- Whether Attendance can preserve historical student identity even when
+  the current Student Registry changes.
+
+==================================================
+12. CURRENT DATABASE STRUCTURE
+==================================================
+
+Read-only inspect:
+
+- attendance_records
+- students
+- teachers
+- academic_sessions
+- enrollments
+- calendar/working-day tables
+- relevant Attendance-related tables
+
+Report only what is currently implemented.
+
+Do not create or alter schema.
+
+==================================================
+13. REQUIRED OUTPUT
+==================================================
+
+Return a simple table:
+
+| Requirement | Current Status | Evidence | Required Change? |
+|-------------|----------------|----------|------------------|
+
+Use ONLY these status values:
+
+- PASS
+- PARTIAL
+- FAIL
+
+For "Required Change?":
+
+- NO
+- YES
+- NEEDS DECISION
+
+IMPORTANT:
+
+Do NOT recommend a change merely because the code could be improved.
+
+Only mark YES if the current implementation actually fails one of my
+requirements.
+
+==================================================
+14. FINAL RESULT
+==================================================
+
+After the table, provide:
+
+A. WHAT ALREADY WORKS
+
+List only the requirements that already work.
+
+B. WHAT ACTUALLY NEEDS TO CHANGE
+
+List only the minimum changes required to satisfy my requirements.
+
+C. WHAT MUST NOT BE CHANGED
+
+Explicitly list existing components/behavior that should remain as-is.
+
+D. OPEN QUESTIONS
+
+Only list questions that are genuinely necessary to implement the
+requirements.
+
+Do NOT invent additional requirements.
+
+==================================================
+STRICT RULE
+==================================================
+
+THIS IS AN AUDIT ONLY.
+
+NO CODE CHANGES.
+
+NO DATABASE CHANGES.
+
+NO MIGRATION.
+
+NO REFACTORING.
+
+NO "WHILE WE ARE HERE" FIXES.
+
+NO ENROLLMENT IMPLEMENTATION.
+
+NO FACULTY MAPPING IMPLEMENTATION.
+
+NO NEW ATTENDANCE ARCHITECTURE.
+
+NO PRODUCTION CHANGES.
+
+STOP AFTER PROVIDING THE AUDIT REPORT.

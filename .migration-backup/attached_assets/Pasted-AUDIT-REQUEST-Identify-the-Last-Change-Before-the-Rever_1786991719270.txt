@@ -1,0 +1,113 @@
+AUDIT REQUEST — Identify the Last Change Before the Revert
+
+Before making any changes, I want you to inspect the Git history and working-tree history and tell me exactly what the last change was immediately before the Fees & Payments UI redesign/revert operation.
+
+IMPORTANT — DO NOT MODIFY ANYTHING
+
+This is an investigation only.
+
+Do NOT:
+
+- edit any files
+- restore any files
+- revert anything
+- create commits
+- run migrations
+- change routes
+- change database logic
+- change UI
+- modify configuration
+- modify tests
+
+What I want you to determine
+
+1. Identify the exact last commit/change made immediately before the recent Fees & Payments UI redesign work was reverted.
+
+2. Show:
+   
+   - Commit hash
+   - Commit message
+   - Date/time
+   - Author, if available
+   - Files changed
+   - Short summary of what was changed
+
+3. Determine whether that last change was:
+   
+   - a feature change
+   - a bug fix
+   - a UI change
+   - a routing change
+   - a payment/Razorpay change
+   - a reminder/dunning change
+   - a database/schema change
+   - or something else
+
+4. Compare the current restored state with the commit immediately before the UI redesign/revert and clearly identify what changed in that commit.
+
+5. Pay special attention to the Fees & Payments module and determine whether the last change affected:
+   
+   - Fee Structures
+   - Ledger & Transactions
+   - Reminders
+   - Student Fees
+   - Payment processing
+   - Invoice generation
+   - Notification/dunning system
+   - External Portal
+   - Audit Log
+
+6. If there were multiple commits immediately before the revert, show them in chronological order and identify which one was the last actual functional change.
+
+Git investigation
+
+Use Git history/diff commands as necessary, such as:
+
+- "git log --oneline --decorate -20"
+- "git log --stat"
+- "git show <commit>"
+- "git diff <previous_commit> <commit>"
+- "git reflog"
+
+Also inspect the current Git status.
+
+VERY IMPORTANT
+
+Do not assume that the UI redesign was the last meaningful change.
+
+I specifically want to know:
+
+«"What was the last change made immediately BEFORE the UI redesign/revert, and what exactly did that change do?"»
+
+Give me the answer based on actual Git history/diffs, not assumptions.
+
+Final response format
+
+Provide:
+
+Last Change Before Revert:
+[exact commit/change]
+
+Commit:
+[hash]
+
+Message:
+[message]
+
+Date:
+[date/time]
+
+Files Changed:
+[list]
+
+What Changed:
+[clear explanation]
+
+Impact on Fees & Payments:
+[explain whether it affected any fee/payment/reminder functionality]
+
+Functional Risk:
+[Low / Medium / High + explanation]
+
+Current State:
+Confirm that you did not modify anything during this investigation.

@@ -1,0 +1,481 @@
+There is now a concrete production error in the Ledger PDF selection flow.
+
+I selected 3 invoice records in the Ledger & Transactions screen and clicked Ledger PDF.
+
+The UI shows:
+
+PDF download failed
+
+"error: op ANY/ALL (array) requires array on right side"
+
+The normal Ledger PDF without selection works correctly.
+
+Therefore, DO NOT rewrite the PDF renderer and DO NOT touch the existing PDF layout.
+
+This is specifically a backend PostgreSQL parameterization/type problem in the new POST selection endpoint.
+
+1. Root problem
+
+The new POST endpoint currently uses selection SQL equivalent to:
+
+AND fr.id = ANY($parameter)
+
+and:
+
+AND fr.id != ALL($parameter)
+
+The JavaScript value is an array, but PostgreSQL is receiving/binding the parameter in a way that is NOT being recognized as a PostgreSQL array.
+
+PostgreSQL therefore throws:
+
+op ANY/ALL (array) requires array on right side
+
+Fix the parameterization so PostgreSQL receives a properly typed integer array.
+
+---
+
+2. Fix individual selection
+
+The current logic is conceptually:
+
+AND fr.id = ANY(${selectedIds})
+
+Do NOT simply keep interpolating a JavaScript array as a normal query parameter.
+
+Make the parameter explicitly a PostgreSQL integer array.
+
+The final SQL must effectively behave like:
+
+AND fr.id = ANY($1::integer[])
+
+or use the correct array-parameter mechanism supported by the project's existing PostgreSQL/SQL library.
+
+Use the project's existing SQL helper/query-builder conventions.
+
+Do NOT invent a new database library.
+
+---
+
+3. Fix excludedIds as well
+
+The same issue can occur with:
+
+AND fr.id != ALL(${excludedIds})
+
+Make sure "excludedIds" is also bound as a properly typed PostgreSQL integer array.
+
+The final SQL must effectively behave like:
+
+AND fr.id != ALL($1::integer[])
+
+or an equivalent correctly typed PostgreSQL array expression.
+
+Fix BOTH "ANY()" and "ALL()".
+
+Do not fix only the "selectedIds" branch.
+
+---
+
+4. Preserve the four selection scenarios
+
+The existing intended behavior must remain exactly:
+
+Case 1 — No selection
+
+selectedIds = []
+selectAllMatching = false
+excludedIds = []
+
+Use the existing GET Ledger PDF behavior.
+
+No selection SQL should be added.
+
+---
+
+Case 2 — Individual records selected
+
+Example:
+
+{
+  "selectAllMatching": false,
+  "selectedIds": [101, 205, 310],
+  "excludedIds": []
+}
+
+The backend must return exactly those fee records, subject to the existing:
+
+- school_id
+- session_id
+- search
+- status
+- class
+- feeName
+- feeType
+
+filters.
+
+Conceptually:
+
+AND fr.id = ANY($1::integer[])
+
+The important requirement is that "$1" MUST be a real PostgreSQL integer array.
+
+---
+
+Case 3 — Select All Matching
+
+Example:
+
+{
+  "selectAllMatching": true,
+  "selectedIds": [],
+  "excludedIds": []
+}
+
+This means:
+
+«Export every record matching the active filters.»
+
+Do NOT create a huge ID list.
+
+No "ANY()" clause is necessary in this case.
+
+---
+
+Case 4 — Select All Matching + exclusions
+
+Example:
+
+{
+  "selectAllMatching": true,
+  "selectedIds": [],
+  "excludedIds": [99, 145]
+}
+
+The backend must return:
+
+«Every record matching the active filters EXCEPT fee_records 99 and 145.»
+
+Conceptually:
+
+AND fr.id != ALL($1::integer[])
+
+Again, "$1" must be a real PostgreSQL integer array.
+
+---
+
+5. Validate and sanitize IDs
+
+Keep the existing security validation.
+
+Before constructing the SQL:
+
+selectedIds.filter(x => Number.isInteger(x) && x > 0)
+excludedIds.filter(x => Number.isInteger(x) && x > 0)
+
+Do not accept:
+
+- strings
+- negative IDs
+- zero
+- null
+- undefined
+- objects
+- arbitrary SQL fragments
+
+The IDs must remain numeric integers.
+
+---
+
+6. IMPORTANT — preserve tenant/session security
+
+Do NOT weaken any security condition while fixing this.
+
+The query must continue enforcing:
+
+fr.school_id = serverAuthenticatedSchoolId
+AND fr.session_id = resolvedSessionId
+
+These values MUST continue to come from the authenticated server/session context.
+
+Never accept school_id or session_id from the browser request body.
+
+A selected ID from another school must never be able to return another school's record.
+
+---
+
+7. Filters must still intersect with selection
+
+For example, if the request contains:
+
+Class = 6A
+Status = Overdue
+selectedIds = [12, 25, 81]
+
+the result must effectively be:
+
+WHERE
+    fr.school_id = authenticatedSchoolId
+AND fr.session_id = sessionId
+AND s.class = '6A'
+AND fr.status = 'Overdue'
+AND fr.id = ANY($1::integer[])
+
+Therefore a selected invoice is exported ONLY if it satisfies BOTH:
+
+1. the active filters
+2. the selection
+
+Do not allow selection to bypass filters.
+
+---
+
+8. Do not change the PDF renderer
+
+This is extremely important.
+
+DO NOT modify:
+
+server/ledger-pdf.ts
+
+unless absolutely required for compilation.
+
+The current Ledger PDF rendering/layout has already been corrected.
+
+Do NOT change:
+
+- column widths
+- row heights
+- wrapping
+- dynamic row calculation
+- status pills
+- header
+- footer
+- totals
+- amount formatting
+- amount-in-words
+- pagination
+- table design
+
+The current problem happens BEFORE PDF rendering, when the database query is executed.
+
+---
+
+9. Do not change the frontend selection logic
+
+Do not change:
+
+- selectedIds state
+- selectAllMatching
+- excludedIds
+- checkbox behavior
+- selection UI
+- pagination
+- toolbar filters
+
+The frontend is already successfully sending the selection because the backend is reaching the SQL query.
+
+The failure is the PostgreSQL "ANY/ALL" array parameter.
+
+Only fix the backend SQL parameterization.
+
+---
+
+10. Prefer the project's existing SQL helper
+
+First inspect how this project already handles PostgreSQL arrays elsewhere.
+
+Search the codebase for examples of:
+
+ANY(
+ALL(
+::integer[]
+::int[]
+array[
+sql.array
+
+If the project already has a standard helper for typed PostgreSQL arrays, use that existing pattern.
+
+Do not introduce a new dependency.
+
+Do not switch database libraries.
+
+Do not rewrite unrelated SQL.
+
+---
+
+11. Test every scenario after the fix
+
+Do not stop after TypeScript compilation.
+
+Actually test the Ledger PDF endpoint.
+
+Test 1 — No selection
+
+Select nothing.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ PDF downloads successfully
+✓ All records matching current filters included
+
+---
+
+Test 2 — Select one record
+
+Select exactly one invoice.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ PDF downloads
+✓ Exactly one selected invoice appears
+
+---
+
+Test 3 — Select three records
+
+This is the exact scenario currently failing.
+
+Select three invoices.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ PDF downloads successfully
+✓ Exactly those three invoices appear
+✓ No "ANY/ALL" error
+
+---
+
+Test 4 — Select records across different pages
+
+Select records from Page 1 and Page 2.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ All selected records included
+✓ Current browser page does not matter
+
+---
+
+Test 5 — Select All Matching
+
+Use:
+
+Select All Matching
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ PDF downloads
+✓ Every record matching the active filters appears
+✓ No thousands of IDs are materialized unnecessarily
+
+---
+
+Test 6 — Select All Matching + exclude records
+
+Select all matching and exclude two invoices.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ PDF downloads
+✓ All matching invoices except the two excluded IDs appear
+
+---
+
+Test 7 — Selection + filters
+
+Apply:
+
+Class = 6A
+Status = Overdue
+
+Then select several records.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ Only selected records satisfying the filters are exported
+
+---
+
+Test 8 — Clear selection
+
+Select records.
+
+Then clear the selection.
+
+Click:
+
+Ledger PDF
+
+Expected:
+
+✓ It returns to normal no-selection behavior
+✓ No selection clause is applied
+
+---
+
+12. Verify the actual generated PDF
+
+For the 3-record selection test, do not only verify the HTTP response.
+
+Open the generated PDF and verify:
+
+- exactly 3 invoice rows
+- correct Invoice No.
+- correct Student
+- correct DSID
+- correct amount
+- correct status
+- correct payment information
+- no unrelated invoice records
+
+---
+
+13. Final response required
+
+After fixing and testing, report:
+
+1. Exact root cause of the PostgreSQL error
+2. Exact file(s) modified
+3. Exact SQL/parameterization approach used
+4. Confirmation that "ANY()" receives a PostgreSQL integer array
+5. Confirmation that "ALL()" receives a PostgreSQL integer array
+6. Confirmation that school/session security remains unchanged
+7. Confirmation that filters remain unchanged
+8. Confirmation that PDF rendering was NOT rewritten
+9. Result of all 8 tests
+10. Confirmation that the actual 3-selected-record PDF was generated successfully
+
+Do NOT make unrelated improvements.
+
+This is a targeted bug fix for:
+
+"op ANY/ALL (array) requires array on right side"

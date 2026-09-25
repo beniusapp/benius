@@ -1,0 +1,376 @@
+CONTINUE FROM THE EXACT STOPPING POINT
+
+The previous report stopped in:
+
+## 19. ACADEMIC SESSION INTEGRITY
+
+under:
+
+## Selected-session trace for read operations
+
+Continue from exactly where the output stopped.
+
+DO NOT repeat Sections 1–19 that have already been completed.
+
+This remains a STRICTLY READ-ONLY investigation.
+
+DO NOT:
+- modify code
+- modify database
+- modify schema
+- create migrations
+- modify data
+- modify tests
+- refactor anything
+- fix anything
+
+If you discover a defect, REPORT it only.
+
+==================================================
+19. ACADEMIC SESSION INTEGRITY — CONTINUE
+==================================================
+
+Continue the Academic Session analysis.
+
+Complete these two lists:
+
+### CORRECTLY SESSION-SCOPED
+
+List every Admin Exam Controller operation that is confirmed to use the selected Academic Session.
+
+For each explain:
+
+- frontend source of session ID
+- HTTP transport
+- backend extraction
+- session ownership validation
+- storage query
+- exact database session filter
+
+### NOT SESSION-SCOPED / POTENTIAL RISK
+
+Identify every Admin Exam Controller operation where:
+
+- session is omitted
+- sessionId becomes NULL
+- NULL means all sessions
+- active-session fallback occurs
+- client-provided session is trusted without validation
+- multiple sessions can be read
+- multiple sessions can be modified
+- historical data can mix sessions
+
+Pay special attention to:
+
+- ledger terms
+- ledger status
+- exam aggregation
+- teacher decisions
+- promotion overrides
+- final promotion execution
+- academic history
+- promotion history
+- audit logs
+
+For every finding state:
+
+SEVERITY:
+- NONE
+- LOW
+- MEDIUM
+- HIGH
+- CRITICAL
+
+Do not fix anything.
+
+==================================================
+20. MULTI-TENANT ISOLATION
+==================================================
+
+Focus ONLY on Admin Exam Controller.
+
+For every operation determine:
+
+1. Where authenticated schoolId comes from
+2. Whether client schoolId exists
+3. Whether client schoolId is trusted
+4. Whether backend derives schoolId
+5. Whether database query filters school_id
+6. Whether ownership is validated before mutation
+
+Inspect:
+
+- ledger terms
+- ledger status
+- exam aggregation
+- grading policy
+- teacher decisions
+- overrides
+- promotion execution
+- academic history
+- audit logs
+- student lookup
+- raw exam-score lookup
+
+Explicitly test/read the code path for this threat:
+
+School A Admin
+→ submits School B studentId
+→ submits School B class/section
+→ submits School B session
+→ submits School B examType
+→ submits School B target class/section
+
+Determine exactly what happens.
+
+Also check whether any client-provided `schoolId` can influence authorization.
+
+DO NOT make changes.
+
+==================================================
+21. DATABASE TABLE FLOW
+==================================================
+
+Create this exact table:
+
+| TABLE | PURPOSE | READ/WRITE | SESSION FILTER | SCHOOL FILTER | IMPORTANT FIELDS |
+
+Include only tables actually used by Admin Exam Controller.
+
+Inspect these where applicable:
+
+- school_metadata
+- exam_scores
+- students
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- promotion_decisions
+- promotion_overrides
+- academic_sessions
+- enrollments
+- academic_history
+- audit_logs
+- teachers
+- faculty_mappings
+
+For each table, distinguish:
+
+- query-level school filtering
+- query-level session filtering
+- application-level validation
+- no filtering
+
+==================================================
+22. API FLOW
+==================================================
+
+List EVERY API endpoint called by Admin Exam Controller.
+
+For each provide:
+
+METHOD
+ENDPOINT
+PURPOSE
+AUTHORIZATION
+AUTHENTICATED SCHOOL SOURCE
+SESSION SOURCE
+SESSION VALIDATION
+DATABASE READ/WRITE
+
+Also explicitly identify whether frontend uses:
+
+- sessionFetch()
+- apiRequest()
+- raw fetch()
+- any other request wrapper
+
+For every endpoint determine whether Academic Session is:
+
+- required
+- optional
+- automatically supplied
+- ignored
+- unavailable
+
+==================================================
+23. ERROR / FAILURE PATHS
+==================================================
+
+Explain actual code behavior for:
+
+- No term
+- Invalid term
+- No cohort
+- No score rows
+- Missing subjects
+- Missing teacher decision
+- Teacher decision conflicts with result
+- No grading policy
+- Invalid grading policy
+- Invalid Academic Session
+- Foreign-school Academic Session
+- Existing override
+- Conflicting override
+- Invalid target class
+- Invalid target section
+- Archived session
+- Promotion execution failure
+- Duplicate student
+- Duplicate promotion record
+
+For every case say:
+
+ACTUAL BEHAVIOR:
+...
+
+If the source code does not establish the behavior, write:
+
+UNKNOWN — not established by the inspected code.
+
+Do not infer.
+
+==================================================
+24. COMPLETE ADMIN EXAM CONTROLLER DECISION TREE
+==================================================
+
+Create the ACTUAL decision tree for ONE student.
+
+Use this structure:
+
+Admin opens Exam Controller
+↓
+Selected Academic Session
+↓
+Selected term/exam type
+↓
+Cohort discovery
+↓
+Score retrieval
+↓
+Student roster
+↓
+Aggregate calculation
+↓
+Grade selection
+↓
+Teacher promotion decision
+↓
+Admin override
+↓
+Final decision
+↓
+Target class/section
+↓
+Final execution
+↓
+Academic history
+↓
+Student class/section update
+↓
+Ledger update
+↓
+Audit / override cleanup
+
+Replace or rearrange any step where the actual code behaves differently.
+
+For every arrow explain the exact code path.
+
+==================================================
+25. FINAL SIMPLE EXPLANATION
+==================================================
+
+Finish with:
+
+"If I am an Admin and I open Exam Controller for one class, what exactly happens from start to finish?"
+
+Give a numbered explanation.
+
+Then answer these questions explicitly:
+
+1. Does Admin Exam Controller calculate the complete examination result?
+
+2. Does it use:
+   `computeAllStudentResults()`?
+
+3. Does it use:
+   `evaluatePromotionRules()`?
+
+4. Does it use the shared examination calculation engine?
+
+5. Does it independently calculate failed subjects?
+
+6. Does it independently calculate attendance eligibility?
+
+7. Does it independently calculate cumulative eligibility?
+
+8. Does it trust Teacher promotion decisions?
+
+9. Can Admin override Teacher decisions?
+
+10. Does Grace Pass modify marks?
+
+11. Does Grace Pass modify percentage?
+
+12. Does Grace Pass modify grade?
+
+13. Is Grace Pass preserved as a distinct final academic-history status?
+
+14. What exactly happens when Promote is executed?
+
+15. What exactly happens to the student's class/section?
+
+16. What exactly is stored in academic_history?
+
+17. Does academic_history receive the selected Academic Session ID?
+
+18. Is the entire Admin Exam Controller flow strictly Academic-Session scoped?
+
+19. Is the entire Admin Exam Controller flow strictly school/tenant scoped?
+
+20. Can one school's Admin access or modify another school's data?
+
+For questions 18–20, be especially precise.
+
+==================================================
+26. FINAL FINDINGS — NO FIXES
+==================================================
+
+Create three lists:
+
+### A. CONFIRMED CORRECT
+
+Only things proven by the code.
+
+### B. CONFIRMED RISKS / DEFECTS
+
+Only things proven by the code.
+
+For each:
+
+- Risk
+- Exact code/path
+- Why it matters
+- Severity
+
+### C. UNKNOWN / NEEDS FURTHER INVESTIGATION
+
+Only unresolved questions.
+
+Do NOT propose implementation.
+
+==================================================
+FINAL RULE
+==================================================
+
+This is still a READ-ONLY CODE AUDIT.
+
+NO CODE CHANGES.
+NO DATABASE CHANGES.
+NO MIGRATIONS.
+NO DATA CHANGES.
+NO TEST CHANGES.
+
+Do not fix anything.
+
+Complete the investigation and report only what the actual code proves.

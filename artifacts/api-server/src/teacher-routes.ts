@@ -1,0 +1,5186 @@
+import type { Express, Request, Response } from "express";
+import { storage, evaluatePromotion, AttendanceLeaveMutationError } from "./storage";
+import bcrypt from "bcryptjs";
+import { z } from "zod/v4";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import ExcelJS from "exceljs";
+import { db } from "./db";
+import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@workspace/db";
+import { eq, and, gte, lte, desc } from "drizzle-orm";
+import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
+import {
+  addCalendarDays,
+  calendarDayDifference,
+  calendarWeekday,
+  formatDateTimeIST,
+  getAcademicYearForISTDate,
+  isValidDateOnly,
+  todayInIST,
+} from "./shared/ist-time";
+import { resolveTeacherExaminationSession } from "./teacher-examination-session";
+import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
+import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
+import { WEEKDAYS } from "./teacher-working-days";
+import { validateGradingRules } from "@shared/examination-calculation-engine";
+import { percentageToHundredths } from "@shared/grading-percentage";
+import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
+import { authenticationAttemptIsRevoked } from "./session-revocation";
+
+/** Select one school-owned Timetable session for the entire request. */
+export async function resolveTimetableSessionId(
+  req: Request,
+  res: Response,
+  schoolId: number,
+  writable = false,
+): Promise<number | null> {
+  if (!Number.isInteger(schoolId) || schoolId <= 0) {
+    res.status(401).json({ message: "Authenticated school is required" });
+    return null;
+  }
+  const raw = req.headers["x-view-session-id"];
+  if (raw !== undefined) {
+    if (typeof raw !== "string" || !/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      res.status(400).json({ message: "Invalid selected academic session" });
+      return null;
+    }
+    const selected = await storage.getAcademicSessionForSchool(Number(raw), schoolId);
+    if (!selected) {
+      res.status(403).json({ message: "Academic session does not belong to this school" });
+      return null;
+    }
+    if (writable && !selected.isActive) {
+      res.status(403).json({ message: "Archived academic sessions are read-only" });
+      return null;
+    }
+    return selected.id;
+  }
+  const active = await storage.getActiveSession(schoolId);
+  if (!active) {
+    res.status(409).json({ message: "No active academic session is available for Timetable" });
+    return null;
+  }
+  return active.id;
+}
+
+const diskUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+// Dedicated uploader for teacher profile pictures — hard 1 MB cap
+const teacherProfilePhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 1 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
+  },
+});
+
+const studentPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads", "student-photos");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const mimeToExt: Record<string, string> = {
+        "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
+        "image/webp": ".webp", "image/gif": ".gif", "image/avif": ".avif",
+      };
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + (mimeToExt[file.mimetype] || ".jpg"));
+    },
+  }),
+  limits: { fileSize: 1 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
+const createTeacherSchema = z.object({
+  fullName: z.string().min(2),
+  email: z.string().trim().min(1, "Teacher email is required").email("Enter a valid teacher email"),
+  password: z.string().min(6),
+  phone: z.string().min(7),
+  subject: z.string().optional().default(""),
+  assignedClass: z.string().optional().default(""),
+  assignedSection: z.string().optional().default(""),
+  designation: z.string().optional(),
+  gender: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  govtIdType: z.string().optional(),
+  govtIdNumber: z.string().optional(),
+  address: z.string().optional(),
+  joiningDate: z.string().optional(),
+  qualifications: z.string().optional(),
+});
+
+const teacherLoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+
+export function registerTeacherRoutes(app: Express) {
+  registerTeacherPasswordRecoveryRoutes(app);
+  /**
+   * Teacher Examination's authoritative data boundary. The selected session is
+   * required and is resolved together with the authenticated teacher's school,
+   * so an invalid or foreign session has the same non-enumerating response.
+   */
+  const resolveTeacherExaminationContext = async (req: any, res: any) => {
+    const context = await resolveTeacherExaminationSession(
+      req.session.teacherId,
+      req.viewSessionId,
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return null;
+    }
+    return context;
+  };
+
+  // ===== TEACHER CRUD (Principal) =====
+  app.post("/api/schools/:schoolId/teachers", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
+
+      const userData = await storage.getUserWithSchool(req.session.userId);
+      if (!userData || userData.school.id !== schoolId || userData.user.role !== "admin")
+        return res.status(403).json({ message: "Access denied" });
+
+      const parsed = createTeacherSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+      const existing = await storage.getUserByEmail(parsed.data.email);
+      if (existing) return res.status(409).json({ message: "A user with this email already exists" });
+
+      const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      const teacher = await storage.createTeacher({
+        schoolId,
+        fullName: parsed.data.fullName,
+        phone: parsed.data.phone,
+        subject: parsed.data.subject,
+        assignedClass: parsed.data.assignedClass,
+        assignedSection: parsed.data.assignedSection,
+        mustChangePassword: true,
+      }, parsed.data.email, passwordHash);
+
+      res.status(201).json(teacher);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to create teacher" });
+    }
+  });
+
+  app.get("/api/schools/:schoolId/teachers", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
+    const userData = await storage.getUserWithSchool(req.session.userId);
+    if (!userData || userData.school.id !== schoolId || userData.user.role !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const teacherList = await storage.getTeachersBySchool(schoolId);
+    res.json(teacherList);
+  });
+
+  app.delete("/api/teachers/:id", async (_req, res) => {
+    res.status(410).json({ message: "Hard deletion is disabled. Use the deactivation endpoint instead." });
+  });
+
+  // ===== TEACHER AUTH =====
+  app.post("/api/teacher-login", async (req, res) => {
+    const authenticationStartedAt = Date.now();
+    const parsed = teacherLoginSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Email and password are required" });
+
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user || user.role !== "teacher") return res.status(401).json({ message: "Invalid Credentials" });
+
+    if (!user.isActive) {
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
+    }
+
+    const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
+    if (!valid) return res.status(401).json({ message: "Invalid Credentials" });
+    const teacher = await storage.getTeacherByUserId(user.id);
+    if (!teacher) return res.status(401).json({ message: "Teacher record not found" });
+    try {
+      if (await authenticationAttemptIsRevoked(user.id, authenticationStartedAt)) {
+        return res.status(401).json({ message: "Invalid Credentials" });
+      }
+    } catch {
+      return res.status(503).json({ message: "Unable to verify session security. Please try again." });
+    }
+
+    req.session.teacherId = teacher.id;
+    req.session.userId = user.id;
+    req.session.schoolId = teacher.schoolId;
+    req.session.userRole = "teacher";
+    req.session.authIssuedAt = authenticationStartedAt;
+    res.json({ message: "Login successful", mustChangePassword: teacher.mustChangePassword });
+  });
+
+  app.get("/api/teacher-me", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+
+    const data = await storage.getTeacherWithSchool(req.session.teacherId);
+    if (!data) return res.status(401).json({ message: "Teacher not found" });
+
+    let attendanceSession;
+    try {
+      attendanceSession = await resolveAttendanceReadSession(
+        data.teacher.schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+
+    const [todayDone, mappings] = await Promise.all([
+      storage.hasAttendanceToday(
+        data.teacher.id, data.teacher.assignedClass, data.teacher.assignedSection,
+        data.teacher.schoolId, attendanceSession.id,
+      ),
+      storage.getFacultyMappingsByTeacher(data.teacher.id),
+    ]);
+
+    res.json({
+      id: data.teacher.id,
+      userId: data.user.id,
+      fullName: data.teacher.fullName,
+      email: data.user.email,
+      phone: data.teacher.phone,
+      subject: data.teacher.subject,
+      assignedClass: data.teacher.assignedClass,
+      assignedSection: data.teacher.assignedSection,
+      designation: data.teacher.designation || null,
+      gender: data.teacher.gender || null,
+      dateOfBirth: data.teacher.dateOfBirth || null,
+      govtIdType: data.teacher.govtIdType || null,
+      govtIdNumber: data.teacher.govtIdNumber || null,
+      address: data.teacher.address || null,
+      joiningDate: data.teacher.joiningDate || null,
+      qualifications: data.teacher.qualifications || null,
+      mustChangePassword: data.teacher.mustChangePassword,
+      schoolId: data.school.id,
+      schoolName: data.school.name,
+      schoolCode: data.school.code,
+      attendanceDoneToday: todayDone,
+      profileImageUrl: data.teacher.profileImageUrl || null,
+      digitalTeacherId: data.teacher.digitalTeacherId || null,
+      mappings,
+    });
+  });
+
+  // ── ACADEMIC SESSIONS (read-only for teachers) ────────────────────────────
+  // Returns all sessions for the teacher's school, newest first.
+  // Lets the frontend populate the "View Past Records" session picker.
+  app.get("/api/teacher/academic-sessions", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const sessions = await storage.getAcademicSessions(teacher.schoolId);
+    res.json(sessions);
+  });
+
+  app.post("/api/teacher/change-password", async (req, res) => {
+    const { teacherId, userId, schoolId, authIssuedAt } = req.session;
+    if (
+      !teacherId
+      || !userId
+      || !schoolId
+      || typeof authIssuedAt !== "number"
+      || !Number.isFinite(authIssuedAt)
+    ) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const parsed = changePasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    try {
+      if (await authenticationAttemptIsRevoked(userId, authIssuedAt)) {
+        await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+        return res.status(401).json({ message: "Session expired. Please log in again." });
+      }
+    } catch {
+      return res.status(503).json({ message: "Unable to verify session security. Please try again." });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    let changed: boolean;
+    try {
+      changed = await storage.changeTeacherPasswordAtomically(
+        userId,
+        teacherId,
+        schoolId,
+        parsed.data.currentPassword,
+        passwordHash,
+      );
+    } catch {
+      return res.status(500).json({ message: "Unable to change password securely. Please try again." });
+    }
+    if (!changed) {
+      return res.status(400).json({ message: "Incorrect Current Password" });
+    }
+
+    try {
+      await storage.invalidateUserSessionsStrict(userId);
+    } catch {
+      await new Promise<void>(resolve => req.session.destroy(() => resolve()));
+      console.error("Teacher password change session invalidation failed");
+      return res.status(500).json({
+        message: "Unable to complete password change securely. Please contact support.",
+      });
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        req.session.destroy(error => error ? reject(error) : resolve());
+      });
+    } catch {
+      console.error("Teacher password change current-session destruction failed");
+      return res.status(500).json({
+        message: "Unable to complete password change securely. Please contact support.",
+      });
+    }
+    return res.json({
+      message: "Password changed successfully. Please log in again.",
+    });
+  });
+
+  // ── TEACHER PROFILE — GLOBAL MODULE ──────────────────────────────────────────
+  // Teacher profile data lives in the teachers table (no session_id).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Table: teachers (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.post("/api/teacher/profile-picture",
+    (req: any, res: any, next: any) => {
+      teacherProfilePhotoUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({ message: "File too large. Maximum size is 1 MB." });
+        }
+        if (err) return res.status(400).json({ message: err.message || "Upload error" });
+        next();
+      });
+    },
+    async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp"];
+    const ALLOWED_EXT = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ message: "Only JPG, PNG, or WebP images are allowed" });
+    }
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const schoolDir = path.join(process.cwd(), "uploads", "schools", String(teacher.schoolId), "teachers", String(teacher.id));
+    if (!fs.existsSync(schoolDir)) fs.mkdirSync(schoolDir, { recursive: true });
+    const destFilename = `profile-${Date.now()}${fileExt}`;
+    const destPath = path.join(schoolDir, destFilename);
+    fs.renameSync(req.file.path, destPath);
+    const profileImageUrl = `/uploads/schools/${teacher.schoolId}/teachers/${teacher.id}/${destFilename}`;
+    await storage.updateTeacherProfilePicture(teacher.id, profileImageUrl);
+    res.json({ message: "Profile picture updated", profileImageUrl });
+  });
+
+  app.post("/api/teacher-logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ message: "Failed to logout" });
+      res.json({ message: "Logged out" });
+    });
+  });
+
+  // ===== ATTENDANCE =====
+  app.get("/api/attendance/:schoolId/:class/:section/:date", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { schoolId, class: cls, section, date } = req.params;
+    const sid = parseInt(schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    let attendanceSession;
+    try {
+      attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+      );
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+    try {
+      requireAttendanceDateInSession(date, attendanceSession);
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+
+    // The date view is a live marking roster only inside the active correction
+    // window. Older/archived dates are historical reads and must include rows
+    // whose live Student FK was nulled by physical deletion.
+    const historicalView = !attendanceSession.isActive || date < addCalendarDays(todayInIST(), -7);
+    const studentList = historicalView
+      ? await storage.getAttendanceReportRosterForSessionClass(sid, attendanceSession.id, cls, section)
+      : await storage.getAttendanceRosterForSessionClass(sid, attendanceSession.id, cls, section);
+    const records = historicalView
+      ? await storage.getAttendanceByClassDate(sid, attendanceSession.id, cls, section, date)
+      : await storage.getAttendanceForStudentsOnDate(
+          sid, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
+        );
+
+    const result = studentList.map(student => {
+      const record = historicalView
+        ? records.find(r => r.identityKey === ("identityKey" in student ? student.identityKey : student.attendanceIdentityKey))
+        : records.find(r => r.studentId === student.id);
+      return {
+        studentId: student.id,
+        name: student.name,
+        dsid: student.digitalStudentId,
+        photoUrl: student.photoUrl ?? null,
+        // Never default to "present" — an unmarked student is "not-marked"
+        status: (record && record.status) ? record.status : "not-marked",
+        editCount: record?.editCount ?? 0,
+        markedBy: record?.markedBy ?? null,
+        markedAt: record?.markedAt ?? null,
+        hasRecord: !!record,
+      };
+    });
+    res.json(result);
+  });
+
+  app.post("/api/attendance", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+
+    const { date, records, class: cls, section } = req.body;
+    if (!date || !Array.isArray(records)) return res.status(400).json({ message: "Invalid data" });
+    if (!isValidDateOnly(date)) {
+      return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
+    }
+
+    const today = todayInIST();
+    if (date > today) return res.status(400).json({ message: "Cannot mark attendance for future dates" });
+
+    const minDate = addCalendarDays(today, -7);
+    if (date < minDate) return res.status(400).json({ message: "Can only edit attendance for the past 7 days" });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId || teacher.schoolId !== schoolId) {
+      return res.status(403).json({ message: "Teacher does not belong to this school" });
+    }
+
+    // The selected view Session is validated by the global archive guard, but
+    // only the authenticated school's active Session determines the write ID.
+    const attendanceSession = await storage.getActiveSession(schoolId);
+    if (!attendanceSession || !attendanceSession.isActive || !Number.isInteger(attendanceSession.id)) {
+      return res.status(409).json({
+        message: "No active academic session is available for Attendance marking.",
+        code: "ATTENDANCE_SESSION_UNAVAILABLE",
+      });
+    }
+    if (attendanceSession.schoolId !== schoolId) {
+      return res.status(403).json({ message: "Active academic session does not belong to this school" });
+    }
+    if (
+      !isValidDateOnly(attendanceSession.startDate) ||
+      !isValidDateOnly(attendanceSession.endDate) ||
+      attendanceSession.startDate > attendanceSession.endDate
+    ) {
+      return res.status(409).json({ message: "Active academic session has invalid date boundaries" });
+    }
+    // All three values are YYYY-MM-DD business dates; lexical comparison is inclusive
+    // and does not convert a school calendar date into a UTC instant.
+    if (date < attendanceSession.startDate || date > attendanceSession.endDate) {
+      return res.status(400).json({ message: "Attendance date is outside the active academic session period" });
+    }
+
+    const submittedStudentIds = [...new Set(records.map((record: any) => Number(record.studentId)))];
+    if (
+      submittedStudentIds.some(studentId => !Number.isInteger(studentId) || studentId <= 0)
+    ) {
+      return res.status(400).json({ message: "One or more students are not valid for this school" });
+    }
+    const ownedStudents = await storage.getStudentsByIdsForSchool(
+      submittedStudentIds,
+      schoolId,
+    );
+    if (ownedStudents.length !== submittedStudentIds.length) {
+      return res.status(403).json({ message: "One or more students are not valid for this school" });
+    }
+    const targetClass = cls || teacher.assignedClass;
+    const targetSection = section || teacher.assignedSection;
+    if (!targetClass || !targetSection) {
+      return res.status(400).json({ message: "Attendance class and section are required" });
+    }
+    // This checks Student placement, not the Teacher's Faculty Mapping. Every
+    // same-school Teacher retains permission to mark any valid class roster.
+    const roster = await storage.getAttendanceRosterForSessionClass(
+      schoolId, attendanceSession.id, targetClass, targetSection,
+    );
+    const rosterIds = new Set(roster.map(student => student.id));
+    if (submittedStudentIds.some(studentId => !rosterIds.has(studentId))) {
+      return res.status(400).json({ message: "One or more students do not belong to this class and section in the active session" });
+    }
+
+    // Rule A — Holiday Lockdown: reject attendance if the date is a school-wide holiday.
+    // This is the single source of truth enforced at the API layer so no attendance
+    // record (and therefore no working-day count) can ever be created on a holiday.
+    const holiday = await storage.getHolidayOnDate(schoolId, date);
+    if (holiday) {
+      return res.status(423).json({
+        message: `Attendance is locked. "${holiday.title}" is a school-wide holiday.`,
+        holidayName: holiday.title,
+      });
+    }
+
+    // Compute the April–March academic year directly from the school calendar date.
+    const [academicStartYear, academicEndYear] = getAcademicYearForISTDate(date).split("-");
+    const academicYear = `${academicStartYear}-${academicEndYear.slice(-2)}`;
+
+    const markedBy = `${teacher.fullName} at ${formatDateTimeIST(new Date())}`;
+    const formattedRecords = records.map((r: any) => ({
+      studentId: r.studentId,
+      teacherId: teacher.id,
+      schoolId,
+      date,
+      status: r.status,
+      markedBy,
+      class: targetClass,
+      section: targetSection,
+      academicYear,
+      sessionId: attendanceSession.id,
+    }));
+
+    const saved = await storage.upsertAttendance(formattedRecords);
+    res.json({ message: `Attendance saved for ${saved.length} students`, count: saved.length });
+  });
+
+  app.get("/api/attendance/history/:schoolId/:class/:section/:startDate/:endDate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { schoolId, class: cls, section, startDate, endDate } = req.params;
+    const sid = parseInt(schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
+      return res.status(400).json({ message: "Invalid Attendance date range" });
+    }
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+      );
+      const records = await storage.getAttendanceHistory(
+        sid, attendanceSession.id, cls, section, startDate, endDate,
+      );
+      res.json(records);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to fetch attendance history" });
+    }
+  });
+
+  app.get("/api/attendance/status/:teacherId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+      const done = await storage.hasAttendanceToday(
+        teacher.id, teacher.assignedClass, teacher.assignedSection,
+        teacher.schoolId, attendanceSession.id,
+      );
+      res.json({ done });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+  });
+
+  // ===== HOMEWORK =====
+  app.post("/api/homework", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const { content, subject, class: cls, section, dueDate } = req.body;
+    if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
+
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const activeSession = await storage.getActiveSession(teacher.schoolId);
+    const hw = await storage.createHomework({
+      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl, dueDate: dueDate || null,
+      sessionId: activeSession?.id ?? null,
+    });
+    res.status(201).json(hw);
+  });
+
+  app.get("/api/homework/:schoolId/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+    if (isNaN(sid)) return res.status(400).json({ message: "Invalid school ID" });
+
+    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
+    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+
+    const cls = req.params.class;
+    const section = req.params.section;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getHomeworkByClass(sid, cls, section, viewSessionId ?? undefined);
+    const totalStudents = await storage.getStudentCountByClassSection(sid, cls, section);
+
+    const teacherCache = new Map<number, string>();
+    const enriched = await Promise.all(list.map(async (hw) => {
+      const viewCount = await storage.getHomeworkViewCount(hw.id);
+      if (!teacherCache.has(hw.teacherId)) {
+        const t = await storage.getTeacherById(hw.teacherId);
+        teacherCache.set(hw.teacherId, t?.fullName || "Unknown");
+      }
+      return { ...hw, viewCount, totalStudents, teacherName: teacherCache.get(hw.teacherId)! };
+    }));
+    res.json(enriched);
+  });
+
+  app.patch("/api/homework/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id as string);
+    const hw = await storage.getHomeworkById(id);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+
+    const { content, subject, dueDate } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? hw.fileUrl : null);
+    const updated = await storage.updateHomework(id, req.session.schoolId!, { content: content || hw.content, subject: subject || hw.subject, fileUrl, dueDate: dueDate !== undefined ? (dueDate || null) : hw.dueDate });
+    res.json(updated);
+  });
+
+  app.delete("/api/homework/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const hw = await storage.getHomeworkById(id);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteHomework(id, req.session.schoolId!);
+    res.json({ message: "Homework deleted" });
+  });
+
+  // ===== CLASSWORK =====
+  app.post("/api/classwork", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const { content, class: cls, section, subject } = req.body;
+    if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
+
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const activeSession = await storage.getActiveSession(teacher.schoolId);
+    const cw = await storage.createClasswork({
+      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section,
+      subject: subject || "General", content, fileUrl,
+      sessionId: activeSession?.id ?? null,
+    });
+    res.status(201).json(cw);
+  });
+
+  app.get("/api/classwork/:schoolId/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+
+    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
+    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+
+    const cls = req.params.class;
+    const section = req.params.section;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getClassworkByClass(sid, cls, section, viewSessionId ?? undefined);
+
+    const teacherCache = new Map<number, string>();
+    const enriched = await Promise.all(list.map(async (cw) => {
+      if (!teacherCache.has(cw.teacherId)) {
+        const t = await storage.getTeacherById(cw.teacherId);
+        teacherCache.set(cw.teacherId, t?.fullName || "Unknown");
+      }
+      return { ...cw, teacherName: teacherCache.get(cw.teacherId)! };
+    }));
+    res.json(enriched);
+  });
+
+  app.patch("/api/classwork/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id as string);
+    const cw = await storage.getClassworkById(id);
+    if (!cw) return res.status(404).json({ message: "Classwork not found" });
+    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+
+    const { content, subject } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? cw.fileUrl : null);
+    const updated = await storage.updateClasswork(id, req.session.schoolId!, { content: content || cw.content, subject: subject || cw.subject, fileUrl });
+    res.json(updated);
+  });
+
+  app.delete("/api/classwork/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    const cw = await storage.getClassworkById(id);
+    if (!cw) return res.status(404).json({ message: "Classwork not found" });
+    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteClasswork(id, req.session.schoolId!);
+    res.json({ message: "Classwork deleted" });
+  });
+
+  // ===== NOTICES (Noticeboard) — SESSION-SCOPED MODULE =====
+  // Notices carry a session_id and are filtered by viewSessionId when fetched.
+  // Note: notices differ from the global modules below — they ARE session-scoped.
+  app.post("/api/notices", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { content, targetType, targetClass, targetSection, schoolId, noticeType } = req.body;
+    if (!content || !targetType || !schoolId) return res.status(400).json({ message: "Content, targetType, and schoolId required" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== parseInt(schoolId)) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const creatorRole = req.session.teacherId ? "teacher" : "admin";
+    const createdById = req.session.teacherId || req.session.userId;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+    // Normalise section: empty string and the sentinel "all" both mean no section restriction
+    const resolvedSection = (targetSection && targetSection !== "all") ? targetSection : null;
+
+    // Tag with the school's current active session so notices are session-scoped
+    const activeSession = await storage.getActiveSession(parseInt(schoolId));
+
+    const notice = await storage.createNotice({
+      schoolId: parseInt(schoolId), createdById: createdById!, creatorRole, targetType,
+      targetClass: targetClass || null, targetSection: resolvedSection,
+      noticeType: noticeType || "Routine", content, fileUrl,
+      sessionId: activeSession?.id ?? null,
+    });
+    res.status(201).json(notice);
+  });
+
+  app.get("/api/notices/:schoolId", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const targetType = (req.query.target as string) || "teacher";
+
+    const noticeSessionId: number | null = (req as any).viewSessionId ?? null;
+
+    // When a teacher requests their own notices, scope strictly to their
+    // class-section assignments so they only see notices relevant to them.
+    if (targetType === "teacher" && req.session.teacherId) {
+      const list = await storage.getTeacherScopedNotices(sid, req.session.teacherId, noticeSessionId);
+      return res.json(list);
+    }
+
+    const cls = req.query.class as string | undefined;
+    const section = req.query.section as string | undefined;
+    const list = await storage.getNoticesByTarget(sid, targetType, cls, section, noticeSessionId);
+    res.json(list);
+  });
+
+  app.get("/api/notices/:schoolId/all", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const sid = parseInt(req.params.schoolId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(sid))?.id ?? null;
+    const list = await storage.getAllSchoolNotices(sid, 500, sessionFilter);
+    res.json(list);
+  });
+
+  app.delete("/api/admin/notices/bulk", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { olderThanDays } = req.body;
+    if (typeof olderThanDays !== "number" || olderThanDays < 0) return res.status(400).json({ message: "Invalid olderThanDays (0 = delete all)" });
+    const deleted = await storage.bulkDeleteNotices(schoolId, olderThanDays);
+    res.json({ deleted });
+  });
+
+  app.get("/api/notices/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const list = await storage.getNoticesByTeacher(req.session.teacherId, 50);
+    res.json(list);
+  });
+
+  app.delete("/api/notices/:id", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.teacherId) {
+      const notice = await storage.getNoticeById(id);
+      if (!notice) return res.status(404).json({ message: "Notice not found" });
+      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+        return res.status(403).json({ message: "Not authorized to delete this notice" });
+      }
+    }
+    await storage.deleteNotice(id, req.session.schoolId!);
+    res.json({ message: "Notice deleted" });
+  });
+
+  app.put("/api/notices/:id", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const { content } = req.body;
+    if (!content || !content.trim()) return res.status(400).json({ message: "Content is required" });
+    if (req.session.teacherId) {
+      const notice = await storage.getNoticeById(id);
+      if (!notice) return res.status(404).json({ message: "Notice not found" });
+      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+        return res.status(403).json({ message: "Not authorized to edit this notice" });
+      }
+    }
+    const updated = await storage.updateNotice(id, req.session.schoolId!, content.trim());
+    if (!updated) return res.status(404).json({ message: "Notice not found" });
+    res.json(updated);
+  });
+
+  // ===== COMPLAINTS =====
+  app.post("/api/complaints", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const { content, complaintType, reportedStudentName, notifyAdmin } = req.body;
+    if (!content) return res.status(400).json({ message: "Content required" });
+
+    // Parse student IDs for teacher-to-student complaints (one complaint for all students)
+    let studentIds: number[] = [];
+    if ((complaintType || "teacher-to-student") !== "teacher-to-admin") {
+      try {
+        const raw = req.body.studentIds;
+        studentIds = raw ? JSON.parse(raw) : [];
+      } catch { studentIds = []; }
+      if (studentIds.length === 0) return res.status(400).json({ message: "At least one student required" });
+    }
+
+    const ticketId = await storage.getNextTicketId(teacher.schoolId);
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    const isTeacherToStudent = (complaintType || "teacher-to-student") === "teacher-to-student";
+    const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
+
+    // Tag complaint with the school's current active session
+    const activeSessionForComplaint = await storage.getActiveSession(teacher.schoolId);
+
+    const complaint = await storage.createComplaintWithStudents({
+      ticketId,
+      teacherId: teacher.id,
+      studentId: null,
+      schoolId: teacher.schoolId,
+      complaintType: complaintType || "teacher-to-student",
+      content,
+      reportedStudentName: reportedStudentName || null,
+      fileUrl,
+      escalatedToPrincipal: shouldNotifyAdmin,
+      notifyAdmin: shouldNotifyAdmin,
+      status: shouldNotifyAdmin ? "Escalated" : "Pending",
+      batchId: null,
+      sessionId: activeSessionForComplaint?.id ?? null,
+    }, studentIds);
+
+    res.status(201).json(complaint);
+  });
+
+  app.get("/api/complaints/teacher/:teacherId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const tid = parseInt(req.params.teacherId);
+    if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    const teacher = await storage.getTeacherById(tid);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection, teacher?.schoolId, viewSessionId);
+    res.json(list);
+  });
+
+  const STUDENT_ONLY_TYPES = ["student-to-staff", "student-peer-report"] as const;
+
+  app.patch("/api/complaints/:id", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id as string);
+    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot edit — complaint is no longer pending" });
+
+    const { content } = req.body;
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? c.fileUrl : null);
+    const updated = await storage.updateComplaint(id, teacher.schoolId, { content: content || c.content, fileUrl });
+    res.json(updated);
+  });
+
+  app.delete("/api/complaints/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot delete — complaint is no longer pending" });
+    await storage.softDeleteComplaint(id, teacher.schoolId);
+    res.json({ message: "Complaint deleted" });
+  });
+
+  app.patch("/api/complaints/:id/status", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+      if (!c) return res.status(404).json({ message: "Complaint not found" });
+      // Verify ownership — teachers can only update their own complaints
+      if (c.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const { status } = req.body;
+      if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+      const updated = await storage.updateComplaintStatus(id, teacher.schoolId, status);
+      return res.json(updated);
+    }
+
+    const adminSchoolId = req.session.schoolId;
+    if (!adminSchoolId) return res.status(403).json({ message: "Admin school context missing" });
+    const c = await storage.getComplaintByIdForSchool(id, adminSchoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const { status, resolutionRemarks } = req.body;
+    if (!["Pending", "Investigating", "Resolved", "Escalated"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const updated = await storage.updateComplaintStatus(id, adminSchoolId, status, resolutionRemarks?.trim() || undefined);
+    res.json(updated);
+  });
+
+  app.post("/api/complaints/:id/notes", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const complaintId = parseInt(req.params.id);
+
+    let actorSchoolId: number | undefined;
+    let teacher = null;
+    if (req.session.teacherId) {
+      teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      actorSchoolId = teacher.schoolId;
+    } else if (req.session.userId && req.session.schoolId) {
+      actorSchoolId = req.session.schoolId;
+    }
+
+    if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+
+    if (teacher) {
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      // Private teacher-to-admin complaints: only the filing teacher may access notes
+      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
+        return res.status(403).json({ message: "Access denied: not your private complaint" });
+      }
+    }
+
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ message: "Content required" });
+
+    let authorName = "Admin";
+    let authorRole = "admin";
+    let authorId = req.session.userId || 0;
+    if (teacher) {
+      authorName = teacher.fullName || "Teacher";
+      authorRole = "teacher";
+      authorId = req.session.teacherId!;
+    }
+
+    const note = await storage.addComplaintNote({ complaintId, authorId, authorRole, authorName, content });
+    res.status(201).json(note);
+  });
+
+  app.get("/api/complaints/:id/notes", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const complaintId = parseInt(req.params.id);
+
+    let actorSchoolId: number | undefined;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      actorSchoolId = teacher.schoolId;
+    } else if (req.session.userId && req.session.schoolId) {
+      actorSchoolId = req.session.schoolId;
+    }
+
+    if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      // Private teacher-to-admin complaints: only the filing teacher may read notes
+      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
+        return res.status(403).json({ message: "Access denied: not your private complaint" });
+      }
+    }
+
+    const notes = await storage.getComplaintNotes(complaintId);
+    res.json(notes);
+  });
+
+  // ===== CLASS FEED (Peer Reports for Class Teacher) =====
+  app.get("/api/complaints/class-feed", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const fmMappings = await storage.getFacultyMappingsByTeacher(req.session.teacherId);
+
+    // Merge faculty_mappings with the legacy assignedClass/assignedSection field so
+    // teachers whose assignments were saved only in the teachers table are not excluded.
+    const allMappings = [...fmMappings];
+    if (teacher.assignedClass && teacher.assignedSection) {
+      const alreadyPresent = allMappings.some(
+        m => m.className === teacher.assignedClass && m.section === teacher.assignedSection
+      );
+      if (!alreadyPresent) {
+        allMappings.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+      }
+    }
+
+    console.log(
+      `[ClassFeed] Teacher ${teacher.id} (${teacher.fullName}) — effective class assignments:`,
+      allMappings.map(m => `${m.className}-${m.section}`)
+    );
+
+    const filterClass = (req.query.cls as string) || undefined;
+    const filterSection = (req.query.section as string) || undefined;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getClassFeedComplaints(teacher.schoolId, allMappings, filterClass, filterSection, viewSessionId);
+    res.json(list);
+  });
+
+  app.patch("/api/complaints/:id/resolve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const { resolutionRemarks } = req.body;
+    if (!resolutionRemarks?.trim()) return res.status(400).json({ message: "Resolution remarks are required" });
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    // Hard-fail if no target studentId — peer reports must always have one
+    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
+    const targetStudent = await storage.getStudentById(complaint.studentId);
+    const fmForResolve = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const effectiveForResolve = [...fmForResolve];
+    if (teacher.assignedClass && teacher.assignedSection &&
+        !effectiveForResolve.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
+      effectiveForResolve.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    }
+    const isAuthorizedToResolve = effectiveForResolve.some(
+      m => m.className === targetStudent?.class && m.section === targetStudent?.section
+    );
+    if (!targetStudent || !isAuthorizedToResolve) {
+      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
+    }
+    const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
+  });
+
+  // Teacher self-resolves their own teacher-to-student complaint
+  app.patch("/api/teacher/complaints/:id/self-resolve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "teacher-to-student") return res.status(403).json({ message: "Only teacher-to-student complaints can be self-resolved" });
+    if (complaint.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
+    if (complaint.status === "Resolved") return res.status(409).json({ message: "Already resolved" });
+    const updated = await storage.resolveComplaint(id, teacher.schoolId, null);
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
+  });
+
+  app.patch("/api/complaints/:id/escalate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const id = parseInt(req.params.id);
+    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
+    // Hard-fail if no target studentId — peer reports must always have one
+    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
+    const targetStudent = await storage.getStudentById(complaint.studentId);
+    const fmForEscalate = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const effectiveForEscalate = [...fmForEscalate];
+    if (teacher.assignedClass && teacher.assignedSection &&
+        !effectiveForEscalate.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
+      effectiveForEscalate.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    }
+    const isAuthorizedToEscalate = effectiveForEscalate.some(
+      m => m.className === targetStudent?.class && m.section === targetStudent?.section
+    );
+    if (!targetStudent || !isAuthorizedToEscalate) {
+      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
+    }
+    const updated = await storage.escalateComplaint(id, teacher.schoolId);
+    if (!updated) return res.status(404).json({ message: "Complaint not found" });
+    res.json(updated);
+  });
+
+  // ===== COMPLAINT BULK DELETE (Admin only) =====
+  app.delete("/api/admin/complaints/bulk", async (req, res) => {
+    if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { olderThanDays, complaintTypes } = req.body;
+    if (typeof olderThanDays !== "number" || olderThanDays < 0) return res.status(400).json({ message: "Invalid olderThanDays (0 = no age restriction)" });
+    const user = await storage.getUserById(req.session.userId);
+    const types = Array.isArray(complaintTypes) ? complaintTypes : undefined;
+    const deleted = await storage.bulkDeleteComplaints(schoolId, olderThanDays, req.session.userId, "admin", user?.email ?? "Admin", types);
+    res.json({ deleted });
+  });
+
+  // ===== EXAMINATION =====
+  app.post("/api/exam-scores", async (req, res) => {
+    try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { teacher } = context;
+
+      const { scores, subject, examType, totalMarks, class: cls, section } = req.body;
+      if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
+      const submittedStudentIds = scores.map((s: any) => parseInt(s.studentId));
+      if (submittedStudentIds.some((id: number) => !Number.isInteger(id))) {
+        return res.status(400).json({ message: "Invalid student ID" });
+      }
+      const submittedStudents = await Promise.all(submittedStudentIds.map(id => storage.getStudentById(id)));
+      if (submittedStudents.some(student => !student || student.schoolId !== context.schoolId)) {
+        return res.status(403).json({ message: "Not authorized for submitted students" });
+      }
+
+      const resolvedClass = cls || teacher.assignedClass || null;
+      const resolvedSection = section || teacher.assignedSection || null;
+      if (!resolvedClass) return res.status(400).json({ message: "Class is required to resolve the examination pass policy" });
+      const passPolicy = await storage.resolveClassPassPolicy(context.schoolId, resolvedClass);
+      if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${resolvedClass}` });
+      const maxMarks = parseInt(totalMarks) || 100;
+      // passMarks is retained only for legacy display/storage compatibility.
+      // Its value is always derived from the server-resolved class policy.
+      const pMarks = Math.ceil(maxMarks * passPolicy.passPercentage / 100);
+      const formattedScores = scores.map((s: any) => ({
+        studentId: parseInt(s.studentId),
+        teacherId: teacher.id,
+        schoolId: context.schoolId,
+        subject,
+        examType,
+        marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
+        totalMarks: maxMarks,
+        passMarks: pMarks,
+        isAbsent: !!s.isAbsent,
+        class: resolvedClass || null,
+        section: resolvedSection || null,
+        updatedBy: teacher.fullName,
+        sessionId: context.sessionId,
+      }));
+
+      const saved = await storage.upsertExamScores(formattedScores);
+      res.json({ message: `Saved ${saved.length} scores`, count: saved.length });
+    } catch (err: any) {
+      console.error("POST /api/exam-scores error:", err);
+      res.status(500).json({ message: err?.message || "Failed to save exam scores" });
+    }
+  });
+
+  app.post("/api/exam-scores/publish", async (req, res) => {
+    if (!req.session.teacherId && (!req.session.userId || req.session.userRole !== "admin")) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    try {
+      const { class: cls, section, examType, schoolId } = req.body;
+      if (!cls || !section || !examType) {
+        return res.status(400).json({ message: "class, section, examType, schoolId required" });
+      }
+      if (req.session.teacherId) {
+        const context = await resolveTeacherExaminationContext(req, res);
+        if (!context) return;
+        const count = await storage.publishExamScores(context.schoolId, cls, section, examType, context.sessionId);
+        return res.json({ message: `Published ${count} scores`, count });
+      }
+      if (!schoolId) {
+        return res.status(400).json({ message: "class, section, examType, schoolId required" });
+      }
+      const sid = parseInt(schoolId);
+      if (req.session.schoolId !== sid) {
+        return res.status(403).json({ message: "Not authorized for this school" });
+      }
+      const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
+      res.json({ message: `Published ${count} scores`, count });
+    } catch (err: any) {
+      console.error("POST /api/exam-scores/publish error:", err);
+      res.status(500).json({ message: err?.message || "Failed to publish scores" });
+    }
+  });
+
+  // IMPORTANT: specific routes must be registered before the parameterized wildcard route
+  app.get("/api/exam-scores/class-average/:schoolId/:class/:section/:subject", async (req, res) => {
+    try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { class: cls, section, subject } = req.params;
+      const averages = await storage.getClassAverages(context.schoolId, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), context.sessionId);
+      res.json(averages);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores/class-average error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch class averages" });
+    }
+  });
+
+  app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
+    try {
+      const studentId = parseInt(req.params.studentId);
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const list = await storage.getExamScoresByStudent(studentId, context.schoolId, context.sessionId);
+      res.json(list);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores/student error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch student scores" });
+    }
+  });
+
+  app.get("/api/exam-scores/:schoolId/:subject/:examType/:class/:section", async (req, res) => {
+    try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const { subject, examType, class: cls, section } = req.params;
+      const list = await storage.getExamScores(context.schoolId, decodeURIComponent(subject), decodeURIComponent(examType), cls, section, context.sessionId);
+      res.json(list);
+    } catch (err: any) {
+      console.error("GET /api/exam-scores error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch exam scores" });
+    }
+  });
+
+  // ===== SCHOOL CONFIG (Teacher Read-Only) =====
+  app.get("/api/school-config/:schoolId", async (req, res) => {
+    const isTeacher = !!req.session.teacherId;
+    const isAdmin = !!req.session.userId && req.session.userRole !== "teacher";
+    if (!isTeacher && !isAdmin) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isTeacher) {
+      const teacher = await storage.getTeacherById(req.session.teacherId!);
+      if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    }
+    const [meta, classSections, classSubjects, classExamTypes] = await Promise.all([
+      storage.getAllSchoolMetadata(schoolId),
+      storage.getClassSectionsMap(schoolId),
+      storage.getClassSubjectsMap(schoolId),
+      storage.getClassExamTypesMap(schoolId),
+    ]);
+
+    // Derive classes: prefer the explicit flat list saved by the admin;
+    // fall back to the keys of the class-sections map (set in School Setup).
+    const rawClasses: string[] = meta.classes?.length
+      ? meta.classes
+      : Object.keys(classSections);
+
+    // Sort numerically where possible (e.g. "6","7","8") then alphabetically for non-numeric (LKG, UKG).
+    const classes = [...rawClasses].sort((a, b) => {
+      const na = parseInt(a, 10), nb = parseInt(b, 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      if (!isNaN(na)) return 1;   // numeric after alpha
+      if (!isNaN(nb)) return -1;
+      return a.localeCompare(b);
+    });
+
+    // Derive sections: prefer explicit flat list; fall back to union of all classSections values.
+    const rawSections: string[] = meta.sections?.length
+      ? meta.sections
+      : [...new Set(Object.values(classSections).flat())].sort();
+
+    res.json({
+      classes,
+      sections: rawSections,
+      subjects: meta.subjects || [],
+      examTypes: meta.exam_types || [],
+      classSections,
+      classSubjects,
+      classExamTypes,
+    });
+  });
+
+  // ===== STUDENT SEARCH =====
+  app.get("/api/students/search/:schoolId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const q = (req.query.q as string) || "";
+    if (q.length < 2) return res.json([]);
+    const results = await storage.searchStudents(schoolId, q);
+    res.json(results);
+  });
+
+  // ===== GALLERY — GLOBAL MODULE =====
+  // Gallery data is permanent school-wide content (photos, events, memories).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Table: gallery_items (no session_id column — listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.post("/api/gallery", diskUpload.single("image"), async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "Image file required" });
+
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
+    if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
+
+    const sid = parseInt(schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    } else if (req.session.schoolId !== sid) {
+      return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const item = await storage.createGalleryItem({
+      schoolId: sid,
+      uploadedById: req.session.teacherId || req.session.userId!,
+      uploaderRole: req.session.teacherId ? "teacher" : "admin",
+      title,
+      description: description || null,
+      eventTag: eventTag || null,
+      capturedDate: capturedDate || null,
+      capturedTime: capturedTime || null,
+      location: location || null,
+      imageUrl: `/uploads/${req.file.filename}`,
+      approved: !!req.session.userId && !req.session.teacherId,
+    });
+    await storage.createAuditLog({
+      schoolId: sid, actionType: "upload", entityType: "gallery", entityId: item.id,
+      actionBy: req.session.teacherId || req.session.userId!, actionByRole: req.session.teacherId ? "teacher" : "admin",
+      details: `Uploaded gallery image: ${title}`,
+    });
+    res.status(201).json(item);
+  });
+
+  app.post("/api/gallery/batch", diskUpload.array("images", 10), async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
+
+    const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
+    if (!title || !schoolId) return res.status(400).json({ message: "Title and schoolId required" });
+
+    const sid = parseInt(schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    } else if (req.session.schoolId !== sid) {
+      return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const uploaderId = req.session.teacherId || req.session.userId!;
+    const isAdmin = !!req.session.userId && !req.session.teacherId;
+    const uploaderRole = req.session.teacherId ? "teacher" : "admin";
+    const items = [];
+    for (const file of files) {
+      const item = await storage.createGalleryItem({
+        schoolId: sid, uploadedById: uploaderId, uploaderRole, title,
+        description: description || null, eventTag: eventTag || null,
+        capturedDate: capturedDate || null, capturedTime: capturedTime || null,
+        location: location || null,
+        imageUrl: `/uploads/${file.filename}`, approved: isAdmin,
+      });
+      await storage.createAuditLog({
+        schoolId: sid, actionType: "batch_upload", entityType: "gallery", entityId: item.id,
+        actionBy: uploaderId, actionByRole: req.session.teacherId ? "teacher" : "admin",
+        details: `Batch uploaded gallery image: ${title}`,
+      });
+      items.push(item);
+    }
+    res.status(201).json(items);
+  });
+
+  app.get("/api/gallery/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const all = await storage.getGalleryItems(teacher.schoolId, false);
+    const mine = all.filter(i => i.uploadedById === req.session.teacherId && i.uploaderRole === "teacher");
+    res.json(mine);
+  });
+
+  app.get("/api/gallery/:schoolId", async (req, res) => {
+    const sid = parseInt(req.params.schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else if (req.session.userId) {
+      if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const approvedOnly = req.query.all !== "true";
+    const list = await storage.getGalleryItems(sid, approvedOnly);
+    res.json(list);
+  });
+
+  app.patch("/api/gallery/:id/approve", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const existing = await storage.getGalleryItemById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const item = await storage.approveGalleryItem(existing.id);
+    await storage.createAuditLog({
+      schoolId: item.schoolId, actionType: "approve", entityType: "gallery", entityId: item.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Approved gallery image: ${item.title}`,
+    });
+    res.json(item);
+  });
+
+  app.get("/api/admin/gallery/:schoolId", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+      const items = await storage.getAdminGalleryItems(schoolId);
+      res.json(items);
+    } catch (e: any) {
+      console.error("[admin/gallery] Error:", e.message);
+      res.status(500).json({ message: e.message });
+    }
+  });
+
+  app.delete("/api/gallery/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const existing = await storage.getGalleryItemById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteGalleryItem(existing.id, existing.schoolId);
+    await storage.createAuditLog({
+      schoolId: existing.schoolId, actionType: "delete", entityType: "gallery", entityId: existing.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Deleted gallery image: ${existing.title}`,
+    });
+    res.json({ success: true });
+  });
+
+  app.post("/api/gallery/batch-delete", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { ids, reason } = req.body as { ids: number[]; reason?: string };
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "No IDs provided" });
+    await storage.deleteGalleryItems(ids, req.session.schoolId!);
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: reason === "rejected" ? "reject" : "delete",
+      entityType: "gallery", entityId: 0,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `${reason === "rejected" ? "Rejected" : "Deleted"} ${ids.length} gallery image(s)`,
+    });
+    res.json({ success: true, deleted: ids.length });
+  });
+
+  // ===== CALENDAR =====
+  app.post("/api/calendar", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { title, date, eventType, schoolId } = req.body;
+    if (!title || !date || !eventType || !schoolId) return res.status(400).json({ message: "All fields required" });
+    const requestedSchoolId = Number(schoolId);
+    if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId !== req.session.schoolId) {
+      return res.status(403).json({ message: "School access denied" });
+    }
+    const event = await storage.createCalendarEvent({ schoolId: requestedSchoolId, title, date, eventType });
+    res.status(201).json(event);
+  });
+
+  app.get("/api/calendar/:schoolId", async (req, res) => {
+    if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = Number(req.params.schoolId);
+    if (!Number.isSafeInteger(schoolId) || schoolId !== req.session.schoolId) {
+      return res.status(403).json({ message: "School access denied" });
+    }
+    // Calendar is a global module — show all events; no session-date filtering
+    const list = await storage.getCalendarEvents(schoolId);
+    res.json(list);
+  });
+
+  app.delete("/api/calendar/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const deleted = await storage.deleteCalendarEventBySchool(parseInt(req.params.id), req.session.schoolId!);
+    if (!deleted) return res.status(404).json({ message: "Event not found" });
+    res.json({ message: "Event deleted" });
+  });
+
+  // ===== LIBRARY — GLOBAL MODULE =====
+  // Library catalog and borrowing records are permanent school-wide data.
+  // They are intentionally NOT filtered by viewSessionId and MUST NOT be deleted
+  // or wiped during any session creation, activation, or rollover operation.
+  // Tables: library_books, book_borrows (no session_id columns — listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.post("/api/library/books", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { title, author, isbn, totalCopies } = req.body;
+    if (!title || !author) return res.status(400).json({ message: "Title and author required" });
+    const copies = parseInt(totalCopies) || 1;
+    const book = await storage.createLibraryBook({ schoolId: req.session.schoolId!, title, author, isbn: isbn || null, totalCopies: copies, availableCopies: copies });
+    res.status(201).json(book);
+  });
+
+  app.get("/api/library/books/:schoolId", async (req, res) => {
+    const sid = parseInt(req.params.schoolId);
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else if (req.session.userId) {
+      if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const q = req.query.q as string;
+    const list = q ? await storage.searchLibraryBooksAdvanced(sid, q) : await storage.getLibraryBooksWithUploaderNames(sid);
+    res.json(list);
+  });
+
+  app.post("/api/library/ebooks", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "File required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const { title, author, targetClass, category } = req.body;
+    if (!title || !author) return res.status(400).json({ message: "Title and author required" });
+
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase();
+    const book = await storage.createLibraryBook({
+      schoolId: teacher.schoolId, title, author, isbn: null,
+      targetClass: targetClass || null, category: category || null,
+      fileUrl: `/uploads/${req.file.filename}`, fileType: ext || "pdf",
+      uploadedById: teacher.id, verificationStatus: "pending",
+      totalCopies: 0, availableCopies: 0,
+    });
+    await storage.createAuditLog({
+      schoolId: teacher.schoolId, actionType: "upload", entityType: "ebook", entityId: book.id,
+      actionBy: teacher.id, actionByRole: "teacher",
+      details: `Uploaded e-book: ${title} by ${author}`,
+    });
+    res.status(201).json(book);
+  });
+
+  app.patch("/api/library/books/:id/verify", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { status } = req.body;
+    if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const existing = await storage.getLibraryBookById(parseInt(req.params.id));
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const book = await storage.updateBookVerificationStatus(existing.id, status);
+    await storage.createAuditLog({
+      schoolId: book.schoolId, actionType: "verify", entityType: "ebook", entityId: book.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `${status === "approved" ? "Approved" : "Rejected"} e-book: ${book.title}`,
+    });
+    res.json(book);
+  });
+
+  app.post("/api/library/borrow", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const { bookId } = req.body;
+    if (!bookId) return res.status(400).json({ message: "bookId required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const book = await storage.getLibraryBookById(parseInt(bookId));
+    if (!book || book.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const borrow = await storage.borrowBook(parseInt(bookId), teacher.id, "teacher", teacher.schoolId);
+    if (!borrow) return res.status(400).json({ message: "Book not available" });
+    res.status(201).json(borrow);
+  });
+
+  app.post("/api/library/return/:borrowId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const borrows = await storage.getMyBorrowedBooks(teacher.id, "teacher");
+    const owns = borrows.some(b => b.id === parseInt(req.params.borrowId));
+    if (!owns) return res.status(403).json({ message: "Not authorized" });
+    await storage.returnBook(parseInt(req.params.borrowId));
+    res.json({ message: "Book returned" });
+  });
+
+  app.get("/api/library/my-books", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const list = await storage.getMyBorrowedBooks(req.session.teacherId, "teacher");
+    res.json(list);
+  });
+
+  app.get("/api/library/my-ebooks", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const mine = await storage.getMyUploadedEbooks(teacher.id, teacher.schoolId);
+    res.json(mine);
+  });
+
+  app.post("/api/library/ebooks/admin", diskUpload.single("file"), async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.file) return res.status(400).json({ message: "File required" });
+    const { title, author, targetClass, category } = req.body;
+    if (!title || !author) return res.status(400).json({ message: "Title and author required" });
+    const ext = req.file.originalname.split(".").pop()?.toLowerCase();
+    const book = await storage.createLibraryBook({
+      schoolId: req.session.schoolId!, title, author, isbn: null,
+      targetClass: targetClass || null, category: category || null,
+      fileUrl: `/uploads/${req.file.filename}`, fileType: ext || "pdf",
+      uploadedById: null, verificationStatus: "approved",
+      totalCopies: 0, availableCopies: 0,
+    });
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: "upload", entityType: "ebook", entityId: book.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Admin uploaded e-book: ${title} by ${author}`,
+    });
+    res.status(201).json(book);
+  });
+
+  app.delete("/api/library/books/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const book = await storage.getLibraryBookById(parseInt(req.params.id));
+    if (!book) return res.status(404).json({ message: "Book not found" });
+    if (book.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteLibraryBook(parseInt(req.params.id));
+    res.json({ message: "Book deleted" });
+  });
+
+  // ===== LEAVE =====
+  app.post("/api/leave", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const { leaveType, startDate, endDate, reason } = req.body;
+    if (!leaveType || !startDate || !endDate || !reason) return res.status(400).json({ message: "All fields required" });
+
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
+      return res.status(400).json({ message: "Invalid date range" });
+    }
+    const daysRequested = calendarDayDifference(startDate, endDate)! + 1;
+
+    const eligiblePolicies = await storage.getActiveLeavePoliciesBySchool(teacher.schoolId, "teacher");
+    const matchedPolicy = eligiblePolicies.find(p => p.name.toLowerCase() === leaveType.toLowerCase());
+    if (!matchedPolicy) {
+      return res.status(400).json({ message: `"${leaveType}" is not an active leave type for your school.` });
+    }
+
+    const balances = await storage.getTeacherLeaveBalanceByPolicies(teacher.id, teacher.schoolId);
+    const matchedBalance = balances.find(b => b.policyId === matchedPolicy.id);
+    if (matchedBalance !== undefined && matchedBalance.remaining < daysRequested) {
+      return res.status(400).json({
+        message: `Insufficient ${leaveType} balance. ${matchedBalance.remaining} day(s) remaining, ${daysRequested} day(s) requested.`,
+      });
+    }
+
+    // Tag leave request with the school's current active session
+    const activeSessionForLeave = await storage.getActiveSession(teacher.schoolId);
+
+    const leave = await storage.createLeaveRequest({
+      teacherId: teacher.id, schoolId: teacher.schoolId, policyId: matchedPolicy.id,
+      leaveType, startDate, endDate, reason, status: "pending",
+      sessionId: activeSessionForLeave?.id ?? null,
+    });
+    res.status(201).json(leave);
+  });
+
+  app.get("/api/leave/teacher/:teacherId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getLeaveRequestsByTeacher(req.session.teacherId, viewSessionId);
+    res.json(list);
+  });
+
+  app.get("/api/leave/school/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getLeaveRequestsBySchool(schoolId, sessionFilter);
+    res.json(list);
+  });
+
+  app.patch("/api/leave/:id/status", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { status } = req.body;
+    if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
+    const leave = await storage.getLeaveRequestById(parseInt(req.params.id));
+    if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    if (status === "approved" && leave.teacherId) {
+      const leaveTeacher = await storage.getTeacherById(leave.teacherId);
+      if (!leaveTeacher || leaveTeacher.schoolId !== leave.schoolId) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+    }
+    let leaveSession: Awaited<ReturnType<typeof storage.getAcademicSessionById>> | null = null;
+    if (status === "approved") {
+      if (!leave.sessionId) {
+        return res.status(409).json({ message: "Leave request has no academic Session" });
+      }
+      leaveSession = await storage.getAcademicSessionById(leave.sessionId);
+      if (!leaveSession || leaveSession.schoolId !== leave.schoolId) {
+        return res.status(403).json({ message: "Leave request Session is not valid for this school" });
+      }
+      const activeSession = await storage.getActiveSession(leave.schoolId);
+      if (!leaveSession.isActive || activeSession?.id !== leaveSession.id) {
+        return res.status(403).json({
+          error: "Security Restriction: Write operations are strictly blocked for archived school years.",
+          code: "ARCHIVE_READ_ONLY",
+        });
+      }
+    }
+    const updated = await storage.updateLeaveStatusWithApprover(
+      leave.id,
+      req.session.schoolId!,
+      status,
+      req.session.userId!,
+    );
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
+    await storage.createAuditLog({
+      schoolId: updated.schoolId, actionType: status, entityType: "teacher_leave", entityId: updated.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `${status === "approved" ? "Approved" : "Rejected"} teacher leave request`,
+    });
+
+    // When approved: sync attendance records as "Leave" for all leave dates
+    if (status === "approved" && leave.teacherId) {
+      const now = new Date();
+      const boundedStart = leave.startDate > leaveSession!.startDate ? leave.startDate : leaveSession!.startDate;
+      const boundedEnd = leave.endDate < leaveSession!.endDate ? leave.endDate : leaveSession!.endDate;
+      for (
+        let dateStr = boundedStart;
+        dateStr <= boundedEnd;
+        dateStr = addCalendarDays(dateStr, 1)
+      ) {
+        const [existing] = await db.select().from(teacherSelfAttendance)
+          .where(and(
+            eq(teacherSelfAttendance.teacherId, leave.teacherId),
+            eq(teacherSelfAttendance.schoolId, leave.schoolId),
+            eq(teacherSelfAttendance.sessionId, leaveSession!.id),
+            eq(teacherSelfAttendance.attendanceDate, dateStr),
+          ));
+        if (!existing) {
+          await db.insert(teacherSelfAttendance).values({
+            teacherId: leave.teacherId, schoolId: leave.schoolId,
+            sessionId: leaveSession!.id,
+            attendanceDate: dateStr, status: "Leave",
+            totalWorkingMinutes: 0,
+          });
+        } else if (!["Present", "Late", "Half Day"].includes(existing.status ?? "")) {
+          await db.update(teacherSelfAttendance)
+            .set({ status: "Leave", updatedAt: now })
+            .where(and(
+              eq(teacherSelfAttendance.id, existing.id),
+              eq(teacherSelfAttendance.teacherId, leave.teacherId),
+              eq(teacherSelfAttendance.schoolId, leave.schoolId),
+              eq(teacherSelfAttendance.sessionId, leaveSession!.id),
+            ));
+        }
+      }
+    }
+
+    res.json(updated);
+  });
+
+  app.get("/api/leave/balance/:teacherId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const tid = parseInt(req.params.teacherId);
+    if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const balance = await storage.getTeacherLeaveBalanceByPolicies(tid, teacher.schoolId);
+    res.json(balance);
+  });
+
+  app.delete("/api/leave/:id", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const result = await storage.deleteLeaveRequest(id, req.session.teacherId);
+    if (!result.success) {
+      if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
+      if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
+      if (result.reason === "not_pending") return res.status(400).json({ message: "Only pending leave requests can be deleted" });
+    }
+    res.json({ message: "Leave request deleted" });
+  });
+
+  app.get("/api/leave/policies/:schoolId", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const isAdmin = !!req.session.userId && req.session.userRole !== "teacher";
+    const policies = await storage.getActiveLeavePoliciesBySchool(schoolId, isAdmin ? undefined : "teacher");
+    res.json(policies);
+  });
+
+  app.get("/api/admin/leave-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const policies = await storage.getLeavePoliciesBySchool(schoolId);
+    res.json(policies);
+  });
+
+  app.post("/api/admin/leave-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "No school context" });
+    const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
+    if (!name || !annualLimit) return res.status(400).json({ message: "Name and annual limit are required" });
+    const parsedLimit = parseInt(annualLimit);
+    if (isNaN(parsedLimit) || parsedLimit < 1) return res.status(400).json({ message: "Annual limit must be a positive number" });
+    const validRoles = ["all", "teacher", "non_teaching"];
+    if (targetRoles && !validRoles.includes(targetRoles)) return res.status(400).json({ message: "Invalid target roles" });
+    const validExpiry = ["expire", "carry_forward"];
+    if (expiryBehavior && !validExpiry.includes(expiryBehavior)) return res.status(400).json({ message: "Invalid expiry behavior" });
+    const parsedMonth = parseInt(renewalMonth) || 1;
+    const parsedDay = parseInt(renewalDay) || 1;
+    if (parsedMonth < 1 || parsedMonth > 12) return res.status(400).json({ message: "Renewal month must be 1–12" });
+    if (parsedDay < 1 || parsedDay > 31) return res.status(400).json({ message: "Renewal day must be 1–31" });
+    const existing = await storage.getLeavePoliciesBySchool(schoolId);
+    if (existing.some(p => p.name.toLowerCase() === name.trim().toLowerCase())) {
+      return res.status(409).json({ message: `A leave policy named "${name.trim()}" already exists for this school.` });
+    }
+    const policy = await storage.createLeavePolicy({
+      schoolId, name: name.trim(),
+      annualLimit: parseInt(annualLimit) || 12,
+      targetRoles: targetRoles || "all",
+      renewalMonth: parseInt(renewalMonth) || 1,
+      renewalDay: parseInt(renewalDay) || 1,
+      expiryBehavior: expiryBehavior || "expire",
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+    });
+    res.status(201).json(policy);
+  });
+
+  app.patch("/api/admin/leave-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const existing = await storage.getLeavePolicyById(id);
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
+    if (name !== undefined) {
+      const validRoles = ["all", "teacher", "non_teaching"];
+      const validExpiry = ["expire", "carry_forward"];
+      if (targetRoles && !validRoles.includes(targetRoles)) return res.status(400).json({ message: "Invalid target roles" });
+      if (expiryBehavior && !validExpiry.includes(expiryBehavior)) return res.status(400).json({ message: "Invalid expiry behavior" });
+      if (renewalMonth && (parseInt(renewalMonth) < 1 || parseInt(renewalMonth) > 12)) return res.status(400).json({ message: "Renewal month must be 1–12" });
+      if (renewalDay && (parseInt(renewalDay) < 1 || parseInt(renewalDay) > 31)) return res.status(400).json({ message: "Renewal day must be 1–31" });
+      const allPolicies = await storage.getLeavePoliciesBySchool(req.session.schoolId!);
+      if (allPolicies.some(p => p.id !== id && p.name.toLowerCase() === name.trim().toLowerCase())) {
+        return res.status(409).json({ message: `A leave policy named "${name.trim()}" already exists for this school.` });
+      }
+    }
+    const updated = await storage.updateLeavePolicy(id, req.session.schoolId!, {
+      ...(name !== undefined && { name: name.trim() }),
+      ...(annualLimit !== undefined && { annualLimit: parseInt(annualLimit) }),
+      ...(targetRoles !== undefined && { targetRoles }),
+      ...(renewalMonth !== undefined && { renewalMonth: parseInt(renewalMonth) }),
+      ...(renewalDay !== undefined && { renewalDay: parseInt(renewalDay) }),
+      ...(expiryBehavior !== undefined && { expiryBehavior }),
+      ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+    });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/leave-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const existing = await storage.getLeavePolicyById(id);
+    if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteLeavePolicy(id, req.session.schoolId!);
+    res.json({ message: "Policy deleted" });
+  });
+
+  // ===== STUDENT LEAVE REQUESTS =====
+  // Returns all pending_teacher student leave requests for all classes the teacher is mapped to.
+  app.get("/api/student-leaves/teacher/mine", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentLeavesByTeacher(teacher.id, teacher.schoolId, viewSessionId);
+    res.json(list);
+  });
+
+  app.get("/api/student-leaves/teacher/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const list = await storage.getStudentLeaveHistoryForTeacher(teacher.id, teacher.schoolId);
+    res.json(list);
+  });
+
+  // Legacy per-class route — kept for backwards-compat but new UI uses /teacher/mine
+  app.get("/api/student-leaves/:schoolId/:class/:section", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    const sid = parseInt(req.params.schoolId);
+    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+    const list = await storage.getStudentLeavesByClassSection(sid, req.params.class, req.params.section);
+    res.json(list);
+  });
+
+  app.patch("/api/student-leaves/:id/approve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
+    const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorized = student && (
+      mappings.some(m => m.className === student.class && m.section === student.section) ||
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+    );
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Not authorized for this student's class/section" });
+    }
+    if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be approved here" });
+    if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
+    const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
+    if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
+    const { teacherComment: approveComment } = req.body;
+    let updated;
+    try {
+      updated = await storage.approveStudentLeaveWithAttendance({
+        leaveId: leave.id, studentId: leave.studentId, teacherId: teacher.id,
+        schoolId: teacher.schoolId, sessionId: leave.sessionId,
+        expectedStatus: "pending_teacher", reviewedBy: teacher.id, reviewerRole: "teacher",
+        teacherComment: approveComment || undefined,
+      });
+    } catch (error) {
+      if (error instanceof AttendanceLeaveMutationError) return res.status(error.status).json({ message: error.message });
+      throw error;
+    }
+    if (!updated) return res.status(409).json({ message: "Leave request is no longer pending teacher approval" });
+    await storage.createAuditLog({
+      schoolId: teacher.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
+      actionBy: teacher.id, actionByRole: "teacher",
+      details: `Approved student leave and synced attendance for dates ${leave.startDate} to ${leave.endDate}`,
+    });
+    res.json(updated);
+  });
+
+  app.patch("/api/student-leaves/:id/forward", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
+    const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const mappingsFwd = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const isAuthorizedFwd = student && (
+      mappingsFwd.some(m => m.className === student.class && m.section === student.section) ||
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+    );
+    if (!isAuthorizedFwd) {
+      return res.status(403).json({ message: "Not authorized for this student's class/section" });
+    }
+    if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be forwarded" });
+    const { teacherComment: fwdComment } = req.body;
+    const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "forwarded_to_admin", teacher.id, "teacher", undefined, undefined, fwdComment || undefined);
+    if (!updated) return res.status(404).json({ message: "Leave request not found" });
+    await storage.createAuditLog({
+      schoolId: teacher.schoolId, actionType: "forward", entityType: "student_leave", entityId: leave.id,
+      actionBy: teacher.id, actionByRole: "teacher",
+      details: `Forwarded student leave to principal for final approval`,
+    });
+    res.json(updated);
+  });
+
+
+  // ===== TIMETABLE =====
+  app.post("/api/timetable", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { teacherId, dayOfWeek, period, class: cls, section, subject } = req.body;
+    if (teacherId === undefined || dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
+      return res.status(400).json({ message: "All fields required" });
+    // Always use session schoolId — never trust body schoolId
+    const sessionSchoolId = req.session.schoolId!;
+    // Verify teacher belongs to admin's school
+    const tid = parseInt(teacherId);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== sessionSchoolId) return res.status(403).json({ message: "Teacher does not belong to your school" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, sessionSchoolId, true);
+    if (timetableSessionId === null) return;
+    const entry = await storage.createTimetableEntry({
+      teacherId: tid, schoolId: sessionSchoolId, sessionId: timetableSessionId,
+      dayOfWeek: parseInt(dayOfWeek), period: parseInt(period), class: cls, section, subject,
+    });
+    res.status(201).json(entry);
+  });
+
+  app.get("/api/timetable/teacher/:teacherId", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const tid = parseInt(req.params.teacherId);
+    // Teachers can only view their own timetable
+    if (req.session.teacherId && req.session.teacherId !== tid)
+      return res.status(403).json({ message: "Not authorized" });
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== req.session.schoolId)
+      return res.status(403).json({ message: "Not authorized" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableByTeacher(teacher.schoolId, timetableSessionId, tid);
+    res.json(list);
+  });
+
+  app.get("/api/timetable/school/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const requestedSchoolId = parseInt(req.params.schoolId);
+    if (requestedSchoolId !== req.session.schoolId)
+      return res.status(403).json({ message: "Not authorized" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableBySchool(req.session.schoolId!, timetableSessionId);
+    res.json(list);
+  });
+
+  app.delete("/api/timetable/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
+    if (timetableSessionId === null) return;
+    // Pass schoolId to enforce tenant isolation at storage query level
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), req.session.schoolId!, timetableSessionId);
+    if (!entry) return res.status(404).json({ message: "Entry not found" });
+    await storage.deleteTimetableEntry(entry.id, req.session.schoolId!, timetableSessionId);
+    res.json({ message: "Entry deleted" });
+  });
+
+  // ===== TEACHER ALLOCATION ROUTES (Admin only) =====
+
+  app.post("/api/teacher-allocations", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { teacherId, subject, class: cls, section, weeklyQuota } = req.body;
+    if (!teacherId || !subject || !cls || !section) return res.status(400).json({ message: "teacherId, subject, class, section required" });
+    // Verify teacher belongs to admin's school
+    const tid = parseInt(teacherId);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Teacher does not belong to your school" });
+    const alloc = await storage.createTeacherAllocation({
+      schoolId: req.session.schoolId!,
+      teacherId: tid,
+      subject,
+      class: cls,
+      section,
+      weeklyQuota: weeklyQuota ? parseInt(weeklyQuota) : 6,
+    });
+    res.status(201).json(alloc);
+  });
+
+  app.get("/api/teacher-allocations", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const list = await storage.getTeacherAllocationsBySchool(req.session.schoolId!);
+    res.json(list);
+  });
+
+  app.get("/api/teacher-allocations/teacher/:teacherId", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const tid = parseInt(req.params.teacherId);
+    if (req.session.teacherId) {
+      // Teachers can only access their own allocations
+      if (req.session.teacherId !== tid) return res.status(403).json({ message: "Not authorized" });
+    }
+    const schoolId = req.session.teacherId
+      ? (await storage.getTeacherById(req.session.teacherId))?.schoolId
+      : req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getTeacherAllocationsByTeacher(tid, schoolId);
+    res.json(list);
+  });
+
+  app.delete("/api/teacher-allocations/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const ok = await storage.deleteTeacherAllocation(parseInt(req.params.id), req.session.schoolId!);
+    if (!ok) return res.status(404).json({ message: "Allocation not found" });
+    res.json({ message: "Allocation deleted" });
+  });
+
+  // ===== TEACHER SELF-MANAGEMENT TIMETABLE ROUTES =====
+
+  app.post("/api/timetable/teacher-slot", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
+    if (dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
+      return res.status(400).json({ message: "dayOfWeek, period, class, section, subject required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
+    const validation = await storage.validateTimetableEntry({
+      schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
+      teacherId: teacher.id,
+      dayOfWeek: parseInt(dayOfWeek),
+      period: parseInt(period),
+      class: cls,
+      section,
+      subject,
+      room: room || null,
+      requireAllocation: true,
+    });
+    if (!validation.valid) return res.status(409).json({ message: validation.error });
+    const entry = await storage.createTimetableEntry({
+      schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
+      teacherId: teacher.id,
+      dayOfWeek: parseInt(dayOfWeek),
+      period: parseInt(period),
+      class: cls,
+      section,
+      subject,
+      room: room || null,
+      startTime: startTime || null,
+      endTime: endTime || null,
+      status: "draft",
+    });
+    res.status(201).json(entry);
+  });
+
+  app.patch("/api/timetable/:id/teacher", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
+    // Pass teacher.schoolId and teacher.id for school+ownership isolation at query level
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
+    if (!entry || entry.teacherId !== teacher.id)
+      return res.status(403).json({ message: "Not authorized" });
+    const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
+    const newDay = dayOfWeek !== undefined ? parseInt(dayOfWeek) : entry.dayOfWeek;
+    const newPeriod = period !== undefined ? parseInt(period) : entry.period;
+    const newClass = cls || entry.class;
+    const newSection = section || entry.section;
+    const newSubject = subject || entry.subject;
+    const validation = await storage.validateTimetableEntry({
+      schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
+      teacherId: teacher.id,
+      dayOfWeek: newDay,
+      period: newPeriod,
+      class: newClass,
+      section: newSection,
+      subject: newSubject,
+      room: room !== undefined ? (room || null) : entry.room,
+      excludeId: entry.id,
+      requireAllocation: true,
+    });
+    if (!validation.valid) return res.status(409).json({ message: validation.error });
+    const updated = await storage.updateTimetableEntry(entry.id, teacher.schoolId, timetableSessionId, {
+      dayOfWeek: newDay,
+      period: newPeriod,
+      class: newClass,
+      section: newSection,
+      subject: newSubject,
+      room: room !== undefined ? (room || null) : entry.room,
+      startTime: startTime !== undefined ? (startTime || null) : entry.startTime,
+      endTime: endTime !== undefined ? (endTime || null) : entry.endTime,
+      status: entry.status === "published" ? "draft" : entry.status,
+    });
+    if (!updated) return res.status(404).json({ message: "Entry not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/timetable/:id/teacher", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
+    // School-scoped query at storage level: null returned if ID belongs to another school
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
+    if (!entry || entry.teacherId !== teacher.id)
+      return res.status(403).json({ message: "Not authorized" });
+    await storage.deleteTimetableEntry(entry.id, teacher.schoolId, timetableSessionId);
+    res.json({ message: "Entry deleted" });
+  });
+
+  // ===== ADMIN PUBLISH ROUTE =====
+
+  app.patch("/api/timetable/publish", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section } = req.body;
+    if (!cls || !section) return res.status(400).json({ message: "class and section required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
+    if (timetableSessionId === null) return;
+    const count = await storage.updateTimetableEntryStatus(req.session.schoolId!, timetableSessionId, cls, section, "published");
+    res.json({ message: `Published ${count} entries for Class ${cls}-${section}`, count });
+  });
+
+  app.get("/api/timetable/class-status", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!);
+    if (timetableSessionId === null) return;
+    const statuses = await storage.getClassSectionStatus(req.session.schoolId!, timetableSessionId);
+    res.json(statuses);
+  });
+
+  // ===== CLASS-VIEW: full grid for a class (admin + teacher) =====
+  app.get("/api/timetable/class-view", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { class: cls, section } = req.query as { class?: string; section?: string };
+    if (!cls || !section) return res.status(400).json({ message: "class and section query params required" });
+    let schoolId: number;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+    } else {
+      schoolId = req.session.schoolId!;
+    }
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableByClassSection(schoolId, timetableSessionId, cls, section);
+    const structure = await storage.getTimetableStructure(schoolId, timetableSessionId, cls);
+    res.json({ entries: list, structure });
+  });
+
+  // ===== SLOT CHECK: real-time collision check for teacher popover =====
+  app.get("/api/timetable/slot-check", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { class: cls, section, dayOfWeek, period } = req.query as { class?: string; section?: string; dayOfWeek?: string; period?: string };
+    if (!cls || !section || dayOfWeek === undefined || period === undefined) {
+      return res.status(400).json({ message: "class, section, dayOfWeek, period required" });
+    }
+    let schoolId: number;
+    let excludeTeacherId: number | undefined;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+      excludeTeacherId = teacher.id;
+    } else {
+      schoolId = req.session.schoolId!;
+    }
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const occupancy = await storage.checkSlotOccupancy(schoolId, timetableSessionId, cls, section, parseInt(dayOfWeek), parseInt(period), excludeTeacherId);
+    if (!occupancy) {
+      return res.json({ taken: false });
+    }
+    return res.json({ taken: true, teacherName: occupancy.teacherName, subject: occupancy.subject });
+  });
+
+  // ===== ADMIN BATCH SAVE =====
+  app.post("/api/timetable/admin/save-batch", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
+    const { changes } = req.body as {
+      changes: Array<{
+        dayOfWeek: number;
+        period: number;
+        class: string;
+        section: string;
+        teacherId: number | null;
+        subject: string | null;
+        _delete?: boolean;
+      }>;
+    };
+    if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
+    const saved: unknown[] = [];
+    const errors: string[] = [];
+    for (const change of changes) {
+      const { dayOfWeek, period, class: cls, section, teacherId, subject } = change;
+      try {
+        if (change._delete) {
+          await storage.deleteTimetableSlot(schoolId, timetableSessionId, cls, section, dayOfWeek, period);
+          continue;
+        }
+        // Guard: teacherId must be a valid integer
+        if (teacherId === null || teacherId === undefined || !Number.isInteger(teacherId)) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: a valid teacher must be selected`);
+          continue;
+        }
+        if (!subject) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: subject is required`);
+          continue;
+        }
+        const teacher = await storage.getTeacherById(teacherId);
+        if (!teacher || teacher.schoolId !== schoolId) {
+          errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
+          continue;
+        }
+        const entry = await storage.upsertTimetableSlot(schoolId, timetableSessionId, { dayOfWeek, period, class: cls, section, teacherId, subject });
+        saved.push(entry);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[save-batch] slot Day${dayOfWeek} P${period} error:`, msg);
+        if (msg.includes("unique") || msg.includes("duplicate") || msg.includes("conflict")) {
+          errors.push(`Slot Day${dayOfWeek} P${period} (${cls}-${section}): conflict — slot already assigned`);
+        } else {
+          errors.push(`Slot Day${dayOfWeek} P${period}: ${msg}`);
+        }
+      }
+    }
+    res.json({ saved, errors });
+  });
+
+  // ===== TEACHER BATCH SAVE with collision detection =====
+  app.post("/api/timetable/teacher/save-batch", async (req, res) => {
+    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const { changes } = req.body as {
+      changes: Array<{
+        dayOfWeek: number;
+        period: number;
+        class: string;
+        section: string;
+        subject: string;
+        room?: string;
+        _delete?: boolean;
+      }>;
+    };
+    if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
+
+    const saved: unknown[] = [];
+    const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
+    for (const change of changes) {
+      const { dayOfWeek, period, class: cls, section, subject, room } = change;
+      if (change._delete) {
+        await storage.deleteTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, dayOfWeek, period);
+        continue;
+      }
+      const occupancy = await storage.checkSlotOccupancy(teacher.schoolId, timetableSessionId, cls, section, dayOfWeek, period, teacher.id);
+      if (occupancy) {
+        conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
+        continue;
+      }
+      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
+      saved.push(entry);
+    }
+    res.json({ saved, conflicts });
+  });
+
+  // ===== TIMETABLE STRUCTURE (Period Bell Schedule) =====
+  app.get("/api/timetable/structure", async (req, res) => {
+    // Allow admin, teacher, and student sessions
+    let schoolId: number | undefined;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
+    } else if (req.session.studentId) {
+      const student = await storage.getStudentById(req.session.studentId);
+      if (!student) return res.status(401).json({ message: "Student not found" });
+      schoolId = student.schoolId;
+    } else if (req.session.userId && req.session.userRole !== "teacher") {
+      schoolId = req.session.schoolId;
+    } else {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (!schoolId) return res.status(401).json({ message: "School not found" });
+    const cls = req.query.class as string;
+    if (!cls) return res.status(400).json({ message: "class query param required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const rows = await storage.getTimetableStructure(schoolId, timetableSessionId, cls);
+    res.json(rows);
+  });
+
+  app.post("/api/timetable/structure", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
+    const { class: cls, rows } = req.body as {
+      class: string;
+      rows: Array<{
+        periodNumber: number;
+        label: string;
+        startTime: string;
+        endTime: string;
+        isBreak: boolean;
+        sortOrder?: number;
+      }>;
+    };
+    if (!cls || !Array.isArray(rows)) return res.status(400).json({ message: "class and rows required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
+    try {
+      const saved = await storage.saveTimetableStructure(schoolId, timetableSessionId, cls, rows);
+      res.json({ saved });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[timetable/structure POST] error:", msg);
+      res.status(500).json({ message: `Failed to save structure: ${msg}` });
+    }
+  });
+
+  app.delete("/api/timetable/structure/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
+    const deleted = await storage.deleteTimetableStructureById(id, schoolId, timetableSessionId);
+    if (!deleted) return res.status(404).json({ message: "Structure row not found" });
+    res.json({ deleted: true });
+  });
+
+  // ===== FACULTY INFO — GLOBAL MODULE =====
+  // Faculty directory data comes from teachers + faculty_mappings (school-wide tables).
+  // It is intentionally NOT filtered by viewSessionId and MUST NOT be touched
+  // during any session creation, activation, or rollover operation.
+  // Tables: teachers, faculty_mappings (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/faculty/:schoolId", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const list = await storage.getFacultyBySchoolWithMappings(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  // ===== PAGINATED STUDENTS (Big Data) =====
+  // ── GLOBAL MODULE — Student Registry is permanent school-wide data ──────────
+  // The student list is NOT filtered by viewSessionId.  Students exist across
+  // all academic sessions; filtering by session would hide valid enrollments
+  // when an admin views an archived year.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const { q, cls, section, page, pendingReissue } = req.query;
+    const schoolId = parseInt(req.params.schoolId);
+    // Session-scoped lookup:
+    //   Active session  → direct students table (current class/section, sessionId = null)
+    //   Archived session → enrollments table   (historical class/section, sessionId = viewedId)
+    // This mirrors the same pattern used in Performance Analytics class-scores.
+    const viewedId: number | null = (req as any).viewSessionId ?? null;
+    let sessionId: number | null = null;
+    if (viewedId !== null) {
+      const activeSession = await storage.getActiveSession(schoolId);
+      if (activeSession && activeSession.id !== viewedId) {
+        // Admin is viewing an archived session — look up students via enrollment rows
+        // so Class 8-A in 2059-2060 shows students who were actually in 8-A that year.
+        sessionId = viewedId;
+      }
+    }
+    const result = await storage.getStudentsPaginated(schoolId, {
+      q: q as string, cls: cls as string, section: section as string,
+      page: page ? parseInt(page as string) : 1,
+      pendingReissue: pendingReissue === "true",
+      sessionId,
+    });
+    res.json(result);
+  });
+
+  app.get("/api/schools/:schoolId/students/export", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+
+      const { q, cls, section } = req.query;
+      const rows = await storage.getStudentsForExport(schoolId, {
+        q: q as string | undefined,
+        cls: cls as string | undefined,
+        section: section as string | undefined,
+      });
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "BENIUS";
+      workbook.created = new Date();
+
+      const sheet = workbook.addWorksheet("Student Registry", {
+        views: [{ state: "frozen", ySplit: 1 }],
+      });
+
+      sheet.columns = [
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Status",            key: "status",           width: 14 },
+      ];
+
+      const headerRow = sheet.getRow(1);
+      headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: "FF1A1A1A" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD4AF37" } };
+        cell.alignment = { vertical: "middle", horizontal: "left" };
+        cell.border = {
+          bottom: { style: "thin", color: { argb: "FFB8962E" } },
+        };
+      });
+      headerRow.height = 20;
+
+      for (const r of rows) {
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNumber:       r.rollNumber ?? r.rollNo ?? "",
+          gender:           r.gender ?? "",
+          guardianName:     r.guardianName ?? "",
+          phone:            r.phone,
+          email:            (r as any).email ?? "",
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
+          status:           r.isActivated ? "Active" : "Pending",
+        });
+      }
+
+      const filterParts: string[] = [];
+      if (cls)     filterParts.push(`Class ${cls}`);
+      if (section) filterParts.push(`Section ${section}`);
+      if (q)       filterParts.push(`Search "${q}"`);
+      const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
+      const filename = `students${filterLabel}_${todayInIST()}.xlsx`
+        .replace(/[^\w\s()._-]/g, "_");
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
+  });
+
+  // ===== STUDENT EDIT (Admin only) =====
+  const updateStudentSchema = z.object({
+    name: z.string().min(2, "Name must be at least 2 characters"),
+    class: z.string().min(1, "Class is required"),
+    section: z.string().min(1, "Section is required"),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
+    gender: z.enum(["Boy", "Girl"]).optional().nullable(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional().nullable(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
+    fatherName: z.string().optional().nullable(),
+    motherName: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
+    email: z.string().email("Invalid email format").optional().nullable().or(z.literal("")),
+  });
+
+  app.patch("/api/admin/students/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const parsed = updateStudentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const { rollNumber, ...rest } = parsed.data;
+
+    const student = await storage.getStudentById(id);
+    if (!student || student.schoolId !== schoolId)
+      return res.status(404).json({ message: "Student not found" });
+
+    const updated = await storage.updateStudent(id, schoolId, {
+      ...rest,
+      rollNumber:   rollNumber   ?? null,
+      fatherName:   rest.fatherName   ?? null,
+      motherName:   rest.motherName   ?? null,
+      address:      rest.address      ?? null,
+      aadharNumber: rest.aadharNumber ?? null,
+      email:        rest.email        || null,
+    });
+    if (!updated) return res.status(404).json({ message: "Update failed" });
+
+    res.json(updated);
+  });
+
+  // ===== GRADING TIERS & RULES =====
+
+  app.get("/api/admin/grading-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const [tiers, rules] = await Promise.all([
+      storage.getGradingTiers(schoolId),
+      storage.getGradingRules(schoolId),
+    ]);
+    res.json({ tiers, rules });
+  });
+
+  app.post("/api/admin/grading-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      id: z.number().int().positive().optional(),
+      name: z.string().min(1),
+      classes: z.array(z.string()).min(1, "At least one class must be selected"),
+      passPercentage: z.number().int().min(0).max(100),
+      gradingSystem: z.enum(["percentage", "grade", "both"]).default("percentage"),
+      passingGrades: z.array(z.string()).default([]),
+      sortOrder: z.number().int().default(0),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const tier = await storage.upsertGradingTier({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json(tier);
+  });
+
+  app.delete("/api/admin/grading-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    await storage.deleteGradingTier(id, req.session.schoolId!);
+    res.json({ message: "Deleted" });
+  });
+
+  app.get("/api/admin/grading-rules/:tierId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const tierId = parseInt(req.params.tierId as string);
+    if (isNaN(tierId)) return res.status(400).json({ message: "Invalid tierId" });
+    const rules = await storage.getGradingRules(req.session.schoolId!, tierId);
+    res.json(rules);
+  });
+
+  app.post("/api/admin/grading-rules/:tierId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const tierId = parseInt(req.params.tierId as string);
+    if (isNaN(tierId)) return res.status(400).json({ message: "Invalid tierId" });
+    const gradingBoundarySchema = z.number().superRefine((value, context) => {
+      try {
+        percentageToHundredths(value, "Grading boundary");
+      } catch (error) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: error instanceof Error ? error.message : "Invalid grading boundary",
+        });
+      }
+    });
+    const ruleSchema = z.array(z.object({
+      gradeLabel: z.string().min(1),
+      minPercent: gradingBoundarySchema,
+      maxPercent: gradingBoundarySchema,
+      gradePoint: z.string().default(""),
+      remarks: z.string().default(""),
+      sortOrder: z.number().int().default(0),
+    })).min(1, "At least one grading rule is required");
+    const parsed = ruleSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    const tierCheck = await storage.getGradingTiers(schoolId);
+    const validTier = tierCheck.find(t => t.id === tierId);
+    if (!validTier) return res.status(403).json({ message: "Tier not found for this school" });
+    try {
+      validateGradingRules(parsed.data.map((rule, index) => ({
+        ...rule, id: index, tierId, remarks: rule.remarks || null,
+      })));
+    } catch (error: any) {
+      return res.status(400).json({ message: error.message });
+    }
+    const rules = await storage.replaceGradingRules(tierId, schoolId, parsed.data);
+    res.json(rules);
+  });
+
+  // ===== EXAM POLICY TIERS =====
+
+  app.get("/api/admin/exam-policy-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const tiers = await storage.getExamPolicyTiers(req.session.schoolId!);
+      res.json(tiers);
+    } catch { res.status(500).json({ message: "Failed to fetch exam policy tiers" }); }
+  });
+
+  app.post("/api/admin/exam-policy-tiers", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      tierName: z.string().min(1, "Tier name is required"),
+      applicableClasses: z.array(z.string()).min(1, "At least one class must be selected"),
+      examWeights: z.string().default("{}"),
+      promotionFailRules: z.string().default("{}"),
+      resultsConfig: z.string().default("{}"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const tier = await storage.createExamPolicyTier({ ...parsed.data, schoolId: req.session.schoolId! });
+      res.status(201).json(tier);
+    } catch { res.status(500).json({ message: "Failed to create exam policy tier" }); }
+  });
+
+  app.patch("/api/admin/exam-policy-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const schema = z.object({
+      tierName: z.string().min(1).optional(),
+      applicableClasses: z.array(z.string()).optional(),
+      examWeights: z.string().optional(),
+      promotionFailRules: z.string().optional(),
+      resultsConfig: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const updated = await storage.updateExamPolicyTier(id, req.session.schoolId!, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Tier not found" });
+      res.json(updated);
+    } catch { res.status(500).json({ message: "Failed to update exam policy tier" }); }
+  });
+
+  app.delete("/api/admin/exam-policy-tiers/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    try {
+      await storage.deleteExamPolicyTier(id, req.session.schoolId!);
+      res.json({ message: "Deleted" });
+    } catch { res.status(500).json({ message: "Failed to delete exam policy tier" }); }
+  });
+
+  app.post("/api/admin/exam-policy-tiers/evaluate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      studentId: z.number().int().positive(),
+      studentClass: z.string().min(1),
+      currentTerm: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    const selectedSessionId = (req as any).viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
+    if (!selectedSessionId || !await storage.getAcademicSessionForSchool(selectedSessionId, schoolId)) {
+      return res.status(403).json({ message: "Invalid academic session" });
+    }
+    const student = await storage.getStudentById(parsed.data.studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+    const tiers = await storage.getExamPolicyTiers(schoolId);
+    const matchingTier = tiers.find(t => (t.applicableClasses || []).includes(parsed.data.studentClass));
+    if (!matchingTier) return res.status(404).json({ message: `No exam policy tier found for class "${parsed.data.studentClass}"` });
+    const passPolicy = await storage.resolveClassPassPolicy(schoolId, parsed.data.studentClass);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class "${parsed.data.studentClass}"` });
+    const passPercentage = passPolicy.passPercentage;
+    const scores = (await storage.getExamScoresByStudent(student.id, schoolId, selectedSessionId)).map(score => ({
+      subject: score.subject,
+      examType: score.examType,
+      marks: score.marks ?? 0,
+      totalMarks: score.totalMarks ?? 100,
+      isAbsent: score.isAbsent ?? false,
+    }));
+    const result = evaluatePromotion(scores, matchingTier, passPercentage, undefined, schoolId, parsed.data.currentTerm);
+    res.json({ tier: matchingTier.tierName, passPercentage, ...result });
+  });
+
+  // ===== ACADEMIC ADVANCEMENT WIZARD =====
+
+  // ── Ledger Status Overview (admin) ──────────────────────────────────────────
+  app.get("/api/admin/ledger-status", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { term } = req.query as Record<string, string>;
+    if (!term) return res.status(400).json({ message: "term is required" });
+    try {
+      // Forward the view session so getLedgerStatus scopes promotion decisions
+      // to the correct academic year when the admin is browsing an archived session.
+      const data = await storage.getLedgerStatus(req.session.schoolId!, term, (req as any).viewSessionId ?? undefined);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
+    }
+  });
+
+  // ── Available terms — all exam types configured in school setup ─────────────
+  app.get("/api/admin/ledger-terms", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const terms = await storage.getSchoolMetadata(req.session.schoolId!, "exam_types");
+      res.json(terms);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch terms" });
+    }
+  });
+
+  // ── Delete all promotion decisions for a term (purge old/stale ledger) ────────
+  app.delete("/api/admin/ledger-term/:term", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const term = decodeURIComponent(req.params.term);
+    if (!term) return res.status(400).json({ message: "term is required" });
+    try {
+      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, term);
+      res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
+    }
+  });
+
+  // ── Professional reminder notice copy ─────────────────────────────────────
+  function buildReminderNotice(className: string, section: string, term: string): string {
+    return `⚠️ URGENT: Marks Ledger Submission Pending — ${term}
+
+Dear Faculty Member,
+
+This is an official administrative reminder that the academic marks ledger for Class ${className} — Section ${section} for ${term} is currently incomplete or awaiting your final lock.
+
+Please review your grading data, complete any missing entries, and lock the ledger inside your workspace as soon as possible to prevent delays in final academic advancement processing.
+
+Thank you for your prompt attention to this matter.
+— School Administration`;
+  }
+
+  // ── Send ledger reminder to a specific teacher's noticeboard ──────────────
+  // Looks up the teacher assigned to className/section via faculty_mappings or
+  // teacher.assignedClass/Section, then pins the notice to that teacher's ID.
+  // targetType:"teacher" + targetTeacherId guarantee ZERO student leakage.
+  app.post("/api/admin/send-ledger-reminder", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { className, section, term } = req.body as Record<string, string>;
+    if (!className || !section || !term)
+      return res.status(400).json({ message: "className, section, and term are required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      // Look up the specific teacher assigned to this class-section
+      const assignedTeacher = await storage.getTeacherByClassSection(schoolId, className, section);
+
+      await storage.createNotice({
+        schoolId,
+        createdById: req.session.userId!,
+        creatorRole: "admin",
+        targetType: "teacher",            // hard-blocks student notice feeds
+        targetClass: className,           // retained for display / fallback context
+        targetSection: section,
+        targetTeacherId: assignedTeacher?.id ?? null,  // strict pin — only this teacher sees it
+        noticeType: "Urgent",
+        content: buildReminderNotice(className, section, term),
+      });
+
+      const recipient = assignedTeacher
+        ? `${assignedTeacher.fullName} (Class ${className}-${section})`
+        : `Class ${className}-${section} teacher (unassigned — notice stored for when teacher is mapped)`;
+
+      res.json({ message: `Reminder dispatched to ${recipient}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to send reminder" });
+    }
+  });
+
+  // ── Bulk: send tailored notices to every pending teacher's noticeboard ────
+  // For each pending class-section, resolves the assigned teacher and pins the
+  // notice directly to their ID.  Teachers with multiple pending ledgers each
+  // receive a separate notice per class-section they manage.
+  app.post("/api/admin/send-ledger-reminder-all", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { term } = req.body as Record<string, string>;
+    if (!term) return res.status(400).json({ message: "term is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const statuses = await storage.getLedgerStatus(schoolId, term);
+      const pending = statuses.filter(s => s.status !== "locked" && !s.adminExecuted);
+
+      // Resolve teachers in parallel, then create one notice per pending ledger
+      const teacherLookups = await Promise.all(
+        pending.map(row => storage.getTeacherByClassSection(schoolId, row.class, row.section))
+      );
+
+      await Promise.all(pending.map((row, i) =>
+        storage.createNotice({
+          schoolId,
+          createdById: req.session.userId!,
+          creatorRole: "admin",
+          targetType: "teacher",              // hard-blocks student notice feeds
+          targetClass: row.class,
+          targetSection: row.section,
+          targetTeacherId: teacherLookups[i]?.id ?? null,  // strict per-teacher pin
+          noticeType: "Urgent",
+          content: buildReminderNotice(row.class, row.section, term),
+        })
+      ));
+
+      const assignedCount = teacherLookups.filter(Boolean).length;
+      const unassignedCount = pending.length - assignedCount;
+
+      res.json({
+        count: pending.length,
+        message: pending.length > 0
+          ? `Reminders dispatched to ${assignedCount} assigned teacher(s)${unassignedCount > 0 ? `; ${unassignedCount} section(s) have no teacher mapped yet` : ""}`
+          : "All ledgers are already locked — no reminders needed",
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to send reminders" });
+    }
+  });
+
+  app.get("/api/admin/exam/aggregated", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section, examType, term } = req.query as Record<string, string>;
+    if (!cls || !section || !examType)
+      return res.status(400).json({ message: "class, section, and examType are required" });
+    const schoolId = req.session.schoolId!;
+    // Extract the view session so both score aggregation and ledger decisions
+    // are scoped to the same academic year when the admin is in archive mode.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
+    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
+      storage.getExamAggregated(schoolId, cls, section, examType, viewSessionId),
+      storage.getPromotionOverrides(schoolId, cls, section, examType),
+      storage.getAllSchoolMetadata(schoolId),
+      storage.getClassSubjectsMap(schoolId),
+    ]);
+
+    // Resolve the subjects that are actually mapped to this class.
+    // Keys in classSubjectsMap may be "Class 6" or "6" — normalise before comparing.
+    const clsNoPrefix = cls.trim().toLowerCase().replace(/^class\s+/, "");
+    let mappedSubjectsForClass: string[] | null = null;
+    for (const [key, subjects] of Object.entries(classSubjectsMap)) {
+      if (key.trim().toLowerCase().replace(/^class\s+/, "") === clsNoPrefix) {
+        mappedSubjectsForClass = subjects;
+        break;
+      }
+    }
+    // Audit only the subjects that are mapped to this class.
+    // Fall back to the school-wide list if no per-class mapping has been configured.
+    const configuredSubjects: string[] =
+      mappedSubjectsForClass !== null && mappedSubjectsForClass.length > 0
+        ? mappedSubjectsForClass
+        : (meta.subjects || []);
+
+    const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
+    const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
+    const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${cls}` });
+    const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
+      const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
+      return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
+    }));
+    const passThreshold = passPolicy.passPercentage;
+
+    // If a term is provided, enrich each student with their ledger row
+    let ledgerDecisions: import("@workspace/db/schema").PromotionDecision[] = [];
+    if (term) {
+      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
+    }
+    const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
+    const studentsEnriched = studentsWithGrades.map(s => ({
+      ...s,
+      ledger: ledgerMap.get(s.studentId) ?? null,
+    }));
+
+    res.json({ students: studentsEnriched, overrides, missingSubjects, passThreshold });
+  });
+
+  app.post("/api/admin/exam/override", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const overrideSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      nextClass: z.string().min(1),
+      nextSection: z.string().min(1),
+    });
+    const parsed = overrideSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "Override saved" });
+  });
+
+  app.post("/api/admin/exam/override/bulk", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const itemSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+      overrideStatus: z.string().min(1),
+      nextClass: z.string().min(1),
+      nextSection: z.string().min(1),
+    });
+    const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId })));
+    res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
+  });
+
+  app.delete("/api/admin/exam/override/cohort", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schema = z.object({
+      class: z.string().min(1),
+      section: z.string().min(1),
+      examType: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "All overrides cleared" });
+  });
+
+  app.delete("/api/admin/exam/override", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const clearSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+    });
+    const parsed = clearSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
+    res.json({ message: "Override cleared" });
+  });
+
+  app.post("/api/admin/promote", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const promoteSchema = z.object({
+      term: z.string().optional(),
+      items: z.array(z.object({
+        studentId: z.number().int().positive(),
+        nextClass: z.string().min(1),
+        nextSection: z.string().min(1),
+        fromClass: z.string().min(1),
+        fromSection: z.string().min(1),
+        examType: z.string().min(1),
+        totalObtained: z.number().int().min(0),
+        totalMax: z.number().int().min(0),
+        percentage: z.number().int().min(0),
+        gradeLabel: z.string().nullable().optional(),
+        gradePoint: z.string().nullable().optional(),
+        gradeRemarks: z.string().nullable().optional(),
+      })).min(1),
+    });
+    const parsed = promoteSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const schoolId  = req.session.schoolId!;
+    const adminId   = req.session.userId!;
+    const items     = parsed.data.items;
+    const studentIds = items.map(i => i.studentId);
+    const term      = parsed.data.term;
+
+    // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
+    //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
+    const [dsidMap, rawScores] = await Promise.all([
+      storage.getStudentDsidMap(schoolId, studentIds),
+      storage.getExamScoresForStudents(schoolId, studentIds),
+    ]);
+
+    // ── 2. Build enriched academic history records with cold-storage snapshot ──
+    //       snapshotJson packs student metadata + per-subject score breakdown    ─
+    const historyRecords = items.map(item => {
+      const info = dsidMap[item.studentId];
+      const scoreBreakdown = rawScores
+        .filter(s => s.studentId === item.studentId)
+        .map(s => ({
+          subject: s.subject, examType: s.examType,
+          marks: s.marks, totalMarks: s.totalMarks, isAbsent: s.isAbsent,
+        }));
+      return {
+        schoolId,
+        studentId:     item.studentId,
+        fromClass:     item.fromClass,
+        fromSection:   item.fromSection,
+        toClass:       item.nextClass,
+        toSection:     item.nextSection,
+        examType:      item.examType,
+        totalObtained: item.totalObtained,
+        totalMax:      item.totalMax,
+        percentage:    item.percentage,
+        gradeLabel:    item.gradeLabel ?? null,
+        gradePoint:    item.gradePoint ?? null,
+        remarks:       item.gradeRemarks ?? null,
+        snapshotJson: {
+          archivedAt:    new Date().toISOString(),
+          adminId,
+          schoolId,
+          studentDsid:   info?.dsid ?? `ID:${item.studentId}`,
+          studentName:   info?.name ?? "Unknown",
+          fromClass:     item.fromClass,
+          fromSection:   item.fromSection,
+          toClass:       item.nextClass,
+          toSection:     item.nextSection,
+          examType:      item.examType,
+          term:          term ?? null,
+          totalObtained: item.totalObtained,
+          totalMax:      item.totalMax,
+          percentage:    item.percentage,
+          gradeLabel:    item.gradeLabel ?? null,
+          gradePoint:    item.gradePoint ?? null,
+          gradeRemarks:  item.gradeRemarks ?? null,
+          examBreakdown: scoreBreakdown,
+        },
+      };
+    });
+
+    // ── 3. Execute atomic transaction: history + student update + ledger mark ──
+    //       Full automatic rollback on any failure — student records revert.     ─
+    const promoted = await storage.executePromotionTransaction(
+      schoolId, items, historyRecords, term,
+    );
+
+    // ── 4. Respond immediately — post-pipeline runs without blocking client ───
+    res.json({ promoted, pipelineQueued: true });
+
+    // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
+    // All mutations below are tenant-isolated via schoolId guard.
+    (async () => {
+      try {
+        const now = new Date();
+        const ts  = now.toISOString().replace("T", " ").slice(0, 19);
+        const examType = items[0]?.examType ?? parsed.data.term ?? "—";
+
+        // 6a. Structured audit log per student
+        // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
+        for (const item of items) {
+          const info = dsidMap[item.studentId];
+          const dsid = info?.dsid ?? `ID:${item.studentId}`;
+          const name = info?.name ?? "Unknown";
+          await storage.createAuditLog({
+            schoolId,
+            actionType:    "PROMOTION_EXECUTED",
+            entityType:    "student",
+            entityId:      item.studentId,
+            actionBy:      adminId,
+            actionByRole:  "admin",
+            details: `[${ts}] - Admin ${adminId} successfully updated Student ${dsid} (${name}) from Class ${item.fromClass}-${item.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+          });
+        }
+
+        // 6b. Clean up executed promotion override records (stale data prevention)
+        await storage.deletePromotionOverridesByStudentIds(schoolId, studentIds, examType);
+
+      } catch (pipelineErr) {
+        // Pipeline errors are non-fatal — core promotion already succeeded
+        console.error("[promote pipeline]", pipelineErr);
+      }
+    })();
+  });
+
+  // ===== CLEAR ID CARD REISSUE FLAG =====
+  app.post("/api/admin/students/clear-reissue-flag", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { studentIds } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0)
+      return res.status(400).json({ message: "studentIds array required" });
+    await storage.clearIdCardReissueFlag(req.session.schoolId!, studentIds);
+    res.json({ cleared: studentIds.length });
+  });
+
+  // ===== PAGINATED TEACHERS (Big Data) =====
+  app.get("/api/schools/:schoolId/teachers/paginated", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const { q, page } = req.query;
+    const result = await storage.getTeachersPaginated(parseInt(req.params.schoolId), {
+      q: q as string, page: page ? parseInt(page as string) : 1,
+    });
+    res.json(result);
+  });
+
+  // ===== DAILY ATTENDANCE SUMMARY =====
+  app.get("/api/attendance/daily-summary/:schoolId/:date", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    if (!Number.isInteger(schoolId) || schoolId <= 0) {
+      return res.status(400).json({ message: "Invalid school ID" });
+    }
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+      );
+      requireAttendanceDateInSession(req.params.date, attendanceSession);
+      const summary = await storage.getDailyAttendanceSummary(
+        schoolId, attendanceSession.id, req.params.date,
+      );
+      res.json(summary);
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+  });
+
+  // ===== COMPLAINTS BY SCHOOL (Admin only — teachers excluded) =====
+  app.get("/api/complaints/school/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getComplaintsBySchool(schoolId, sessionFilter);
+    res.json(list);
+  });
+
+  // ===== AUDIT LOGS (Admin) =====
+  app.get("/api/audit-logs/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getAuditLogsBySchool(schoolId, 100, sessionFilter);
+    res.json(list);
+  });
+
+  // ===== STUDENT LEAVES FOR ADMIN =====
+  app.get("/api/student-leaves/school/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getStudentLeavesForAdmin(schoolId, sessionFilter);
+    res.json(list);
+  });
+
+  app.get("/api/approval-history/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
+    const history = await storage.getApprovalHistory(parseInt(req.params.schoolId), sessionFilter);
+    res.json(history);
+  });
+
+  app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("approval-center:student-leave"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
+    if (!leave) return res.status(403).json({ message: "Not authorized" });
+    if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
+    if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
+    const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
+    if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
+    const student = await storage.getStudentById(leave.studentId);
+    if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
+    const { adminComment } = req.body;
+    // Look up student's class teacher to use as the FK-valid teacherId for attendance records.
+    // If no teacher found for that class/section, pass null — existing records are updated, new ones skipped.
+    const classTeacher = student
+      ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
+      : null;
+    let updated;
+    try {
+      updated = await storage.approveStudentLeaveWithAttendance({
+        leaveId: leave.id, studentId: leave.studentId, teacherId: classTeacher?.id ?? null,
+        schoolId, sessionId: leave.sessionId,
+        expectedStatus: "forwarded_to_admin", reviewedBy: req.session.userId!, reviewerRole: "admin",
+        adminComment: adminComment || undefined,
+      });
+    } catch (error) {
+      if (error instanceof AttendanceLeaveMutationError) return res.status(error.status).json({ message: error.message });
+      throw error;
+    }
+    if (!updated) return res.status(409).json({ message: "Leave request is no longer awaiting admin approval" });
+    await storage.createAuditLog({
+      schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Admin approved student leave for dates ${leave.startDate} to ${leave.endDate}`,
+    });
+    res.json(updated);
+  });
+
+  app.patch("/api/student-leaves/:id/reject", async (req, res) => {
+    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const { rejectionReason } = req.body;
+
+    // Teacher path: class/section scoped rejection
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
+      const student = await storage.getStudentById(leave.studentId);
+      if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const mappingsRej = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const isAuthorizedRej = student && (
+        mappingsRej.some(m => m.className === student.class && m.section === student.section) ||
+        (teacher.assignedClass === student.class && teacher.assignedSection === student.section)
+      );
+      if (!isAuthorizedRej) {
+        return res.status(403).json({ message: "Not authorized for this student's class/section" });
+      }
+      if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be rejected here" });
+      const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+      if (!updated) return res.status(404).json({ message: "Leave request not found" });
+      await storage.createAuditLog({
+        schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+        actionBy: teacher.id, actionByRole: "teacher",
+        details: `Teacher rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+      });
+      return res.json(updated);
+    }
+
+    // Admin path: school-scoped rejection (only forwarded_to_admin leaves)
+    if (req.session.userId) {
+      const schoolId = req.session.schoolId!;
+      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
+      if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Admin can only reject leaves that were forwarded by a teacher" });
+      const { adminComment } = req.body;
+      const updated = await storage.updateStudentLeaveStatus(leave.id, schoolId, "rejected", req.session.userId!, "admin", rejectionReason || undefined, adminComment || undefined);
+      if (!updated) return res.status(404).json({ message: "Leave request not found" });
+      await storage.createAuditLog({
+        schoolId: req.session.schoolId!, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+        actionBy: req.session.userId!, actionByRole: "admin",
+        details: `Admin rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+      });
+      return res.json(updated);
+    }
+
+    return res.status(401).json({ message: "Not authenticated" });
+  });
+
+  // ===== PENDING EBOOKS (Admin) =====
+  app.get("/api/library/books/:schoolId/pending", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getPendingEbooks(parseInt(req.params.schoolId));
+    res.json(list);
+  });
+
+  // ===== VISITOR LOGS =====
+  app.post("/api/visitor-logs", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const { visitorName, purpose, hostName, phone, email, visitorIdNumber, address } = req.body;
+    if (!visitorName || !purpose || !hostName) return res.status(400).json({ message: "Name, purpose, and host are required" });
+    const activeSession = await storage.getActiveSession(req.session.schoolId!);
+    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, sessionId: activeSession?.id ?? null, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!, actionType: "checkin", entityType: "visitor", entityId: v.id,
+      actionBy: req.session.userId!, actionByRole: "admin",
+      details: `Visitor checked in: ${visitorName}`,
+    });
+    res.status(201).json(v);
+  });
+
+  app.get("/api/visitor-logs/:schoolId", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    // Filter by viewed session so archive mode shows only that session's data
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId
+      ? viewSessionId
+      : (await storage.getActiveSession(schoolId))?.id ?? null;
+    const list = await storage.getVisitorLogsBySchool(schoolId, sessionFilter);
+    res.json(list);
+  });
+
+  app.patch("/api/visitor-logs/:id/checkout", async (req, res) => {
+    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    const logs = await storage.getVisitorLogsBySchool(req.session.schoolId!);
+    const entry = logs.find(l => l.id === id);
+    if (!entry) return res.status(403).json({ message: "Not authorized" });
+    const v = await storage.checkoutVisitor(id);
+    res.json(v);
+  });
+
+  // ===== STUDENT PROFILE VERIFICATION (Teacher) =====
+  app.post("/api/teacher/profiles/bulk-approve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const parsed = z.object({ studentIds: z.array(z.number()).min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid student IDs" });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const uniqueIds = Array.from(new Set(parsed.data.studentIds));
+    const [mappings] = await Promise.all([
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
+    const validIds: number[] = [];
+    for (const sid of uniqueIds) {
+      const student = await storage.getStudentById(sid);
+      if (!student || student.schoolId !== teacher.schoolId) continue;
+      const covers =
+        (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+        mappings.some(m => m.className === student.class && m.section === student.section);
+      if (!covers) continue;
+      validIds.push(sid);
+    }
+
+    const result = await storage.bulkApproveStudentProfiles(validIds, req.session.teacherId);
+    res.json(result);
+  });
+
+  app.get("/api/teacher/pending-profiles", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    // Pass teacherId so storage resolves all class-sections via faculty_mappings too
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
+    res.json(profiles);
+  });
+
+  app.get("/api/teacher/pending-profiles/count", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
+    res.json({ count: profiles.length });
+  });
+
+  app.post("/api/teacher/profiles/:studentId/approve", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const [student, mappings] = await Promise.all([
+      storage.getStudentById(studentId),
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
+    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
+    const coversClass =
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+      mappings.some(m => m.className === student.class && m.section === student.section);
+    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
+
+    const existing = await storage.getStudentProfile(studentId);
+    if (!existing) return res.status(404).json({ message: "Student profile not found" });
+    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
+
+    // Optional teacher corrections applied before finalising approval
+    const { corrections } = req.body as { corrections?: Record<string, string> };
+    if (corrections && Object.keys(corrections).length > 0) {
+      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "gender", "phone", "email", "dob", "enrollmentDate", "guardianName", "bloodGroup", "class", "section"];
+      const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
+      if (Object.keys(safe).length > 0) {
+        await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));
+      }
+    }
+
+    const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
+    if (!profile) return res.status(500).json({ message: "Failed to approve profile" });
+
+    // Propagate photo to live student record
+    if (profile.photoUrl) {
+      await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
+    }
+
+    // Build verified profile JSON — fall back to live student data for class/section
+    const verifiedProfileJson = JSON.stringify({
+      fullName:       profile.fullName,
+      class:          profile.class    || student.class,
+      section:        profile.section  || student.section,
+      rollNo:         profile.rollNo,
+      fatherName:     profile.fatherName,
+      motherName:     profile.motherName,
+      presentAddress: profile.presentAddress,
+      aadharNumber:   profile.aadharNumber,
+      gender:         profile.gender,
+      phone:          profile.phone,
+      email:          profile.email,
+      dob:            profile.dob,
+      enrollmentDate: profile.enrollmentDate,
+      guardianName:   profile.guardianName,
+      bloodGroup:     profile.bloodGroup,
+      photoUrl:       profile.photoUrl,
+      verifiedAt:     profile.verifiedAt instanceof Date
+                        ? profile.verifiedAt.toISOString()
+                        : profile.verifiedAt,
+      approvedByName: teacher.fullName ?? null,
+    });
+    await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
+
+    // Propagate all profile fields to the live student record
+    const liveUpdates: Record<string, unknown> = {};
+    if (profile.fullName)     liveUpdates.name          = profile.fullName;
+    if (profile.aadharNumber) liveUpdates.aadharNumber  = profile.aadharNumber;
+    if (profile.gender)       liveUpdates.gender        = profile.gender;
+    if (profile.phone)        liveUpdates.phone         = profile.phone;
+    if (profile.dob)          liveUpdates.dob           = profile.dob;
+    if (profile.enrollmentDate) liveUpdates.enrollmentDate = profile.enrollmentDate;
+    if (profile.guardianName) liveUpdates.guardianName  = profile.guardianName;
+    if (profile.bloodGroup)   liveUpdates.bloodGroup    = profile.bloodGroup;
+    if (profile.fatherName)   liveUpdates.fatherName    = profile.fatherName;
+    if (profile.motherName)   liveUpdates.motherName    = profile.motherName;
+    if (profile.presentAddress) liveUpdates.address     = profile.presentAddress;
+    if (profile.email)        liveUpdates.email         = profile.email;
+    if (Object.keys(liveUpdates).length > 0) {
+      await storage.updateStudentLiveFieldsForTeacherApproval(
+        studentId,
+        teacher.schoolId,
+        liveUpdates,
+      );
+    }
+
+    res.json(profile);
+  });
+
+  // Teacher overrides a student's live photo directly (no approval needed, unlimited times, ≤1 MB)
+  app.post(
+    "/api/teacher/students/:studentId/photo",
+    async (req, res, next) => {
+      if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+      next();
+    },
+    studentPhotoUpload.single("photo"),
+    async (req: any, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const studentId = parseInt(req.params.studentId);
+      if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+      const teacher = await storage.getTeacherById(req.session.teacherId!);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+      const student = await storage.getStudentById(studentId);
+      if (!student || student.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Access denied" });
+
+      const photoUrl = `/uploads/student-photos/${req.file.filename}`;
+      await storage.updateStudentLivePhoto(studentId, photoUrl);
+
+      // Also update the student_profiles photo if a profile exists
+      const profile = await storage.getStudentProfile(studentId);
+      if (profile) {
+        await db.update(studentProfiles)
+          .set({ photoUrl, photoStatus: "approved", updatedAt: new Date() })
+          .where(eq(studentProfiles.studentId, studentId));
+      }
+
+      res.json({ photoUrl });
+    },
+  );
+
+  const rejectProfileSchema = z.object({
+    note: z.string().optional().default(""),
+  });
+
+  app.post("/api/teacher/profiles/:studentId/reject", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const parsed = rejectProfileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+
+    const [student, mappings] = await Promise.all([
+      storage.getStudentById(studentId),
+      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+    ]);
+    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
+    const coversClass =
+      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
+      mappings.some(m => m.className === student.class && m.section === student.section);
+    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
+
+    const existing = await storage.getStudentProfile(studentId);
+    if (!existing) return res.status(404).json({ message: "Student profile not found" });
+    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
+
+    const profile = await storage.rejectStudentProfile(studentId, req.session.teacherId, parsed.data.note ?? "");
+    if (!profile) return res.status(500).json({ message: "Failed to reject profile" });
+    res.json(profile);
+  });
+
+  // ===== TEACHER APPROVAL HISTORY =====
+
+  app.get("/api/teacher/profiles/approval-history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const history = await storage.getTeacherApprovalHistory(req.session.teacherId, teacher.schoolId, viewSessionId);
+    res.json(history);
+  });
+
+  // ===== ASSET LIFECYCLE MANAGER =====
+
+  const createAssetSchema = z.object({
+    name: z.string().min(1),
+    category: z.string().min(1),
+    quantity: z.number().int().min(0),
+    assetCode: z.string().max(50).optional(),
+    purchasedDate: z.string().optional().nullable(),
+    warrantyExpiry: z.string().optional().nullable(),
+    condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]),
+    location: z.string().min(1),
+  });
+
+  const updateAssetSchema = z.object({
+    quantity: z.number().int().min(0).optional(),
+    condition: z.enum(["New", "Good", "Fair", "Poor", "Broken"]).optional(),
+    location: z.string().min(1).optional(),
+    purchasedDate: z.string().optional().nullable(),
+    warrantyExpiry: z.string().optional().nullable(),
+  });
+
+  // ── GLOBAL MODULE — Assets & Inventory is permanent school-wide data ────────
+  // Asset records are NOT filtered by viewSessionId.  Physical assets persist
+  // across academic sessions.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: school_assets (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/admin/assets", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const assets = await storage.getAssets(schoolId);
+      res.json(assets);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch assets" });
+    }
+  });
+
+  app.post("/api/admin/assets", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const parsed = createAssetSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      console.log("[asset-create] parsed:", JSON.stringify(parsed.data));
+      const asset = await storage.createAsset({ ...parsed.data, schoolId });
+      console.log("[asset-create] saved:", JSON.stringify({ id: asset.id, purchasedDate: asset.purchasedDate, warrantyExpiry: asset.warrantyExpiry }));
+      res.status(201).json(asset);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to create asset" });
+    }
+  });
+
+  app.patch("/api/admin/assets/:id", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
+
+      const parsed = updateAssetSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+      const before = await storage.getAssetById(id, schoolId);
+      if (!before) return res.status(404).json({ message: "Asset not found" });
+
+      console.log("[asset-update] id:", id, "data:", JSON.stringify(parsed.data));
+      const updated = await storage.updateAsset(id, schoolId, parsed.data);
+      console.log("[asset-update] result:", JSON.stringify({ id: updated?.id, purchasedDate: updated?.purchasedDate, warrantyExpiry: updated?.warrantyExpiry }));
+      if (!updated) return res.status(404).json({ message: "Asset not found" });
+
+      await storage.logAssetActivity({
+        schoolId,
+        assetId: id,
+        userId: req.session.userId!,
+        action: "edit",
+        snapshot: JSON.stringify({ before, after: updated }),
+      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log edit for asset ${id}:`, logErr.message));
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to update asset" });
+    }
+  });
+
+  app.delete("/api/admin/assets/:id", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = req.session.schoolId!;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
+
+      const before = await storage.getAssetById(id, schoolId);
+      if (!before) return res.status(404).json({ message: "Asset not found" });
+
+      const deleted = await storage.deleteAsset(id, schoolId);
+      if (!deleted) return res.status(404).json({ message: "Asset not found" });
+
+      await storage.logAssetActivity({
+        schoolId,
+        assetId: id,
+        userId: req.session.userId!,
+        action: "delete",
+        snapshot: JSON.stringify({ before }),
+      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log delete for asset ${id}:`, logErr.message));
+
+      res.json({ message: "Asset deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to delete asset" });
+    }
+  });
+
+  // ===== ACADEMIC INTELLIGENCE ANALYTICS =====
+
+  app.get("/api/admin/analytics/sections", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const sections = await storage.getDistinctSectionsByClass(schoolId, cls);
+      res.json(sections);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch sections" });
+    }
+  });
+
+  app.get("/api/admin/analytics/exam-types", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const examTypes = await storage.getDistinctExamTypesByClass(schoolId, cls, section || undefined);
+      res.json(examTypes);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch exam types" });
+    }
+  });
+
+  app.get("/api/admin/analytics/performance", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const { class: cls, section, examType, subject, search } = req.query as Record<string, string>;
+    if (!cls) return res.status(400).json({ message: "class is required" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
+      if (!passPolicy) return res.status(404).json({ message: "No grading tier configured for this class" });
+      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+      const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? undefined;
+      const data = await storage.getAnalyticsData(schoolId, cls, {
+        section: section || undefined,
+        examType: examType || undefined,
+        subject: subject || undefined,
+        search: search || undefined,
+        sessionId: sessionFilter,
+      });
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch analytics data" });
+    }
+  });
+
+  app.get("/api/admin/analytics/student-journey/:studentId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const schoolId = req.session.schoolId!;
+    try {
+      const data = await storage.getStudentJourneyData(studentId, schoolId);
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Failed to fetch student journey" });
+    }
+  });
+
+  // ── Admin analytics: weighted data endpoints (mirrors teacher module) ─────
+  app.get("/api/admin/analytics/class-scores/:class/:section", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    // Scope student list and scores to the viewed session when in archive mode.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
+    try {
+      const studentList = viewSessionId
+        ? await storage.getStudentsByClassSectionInSession(schoolId, cls, section, viewSessionId)
+        : await storage.getStudentsByClassSection(schoolId, cls, section);
+      const results = await Promise.all(studentList.map(async (s) => {
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, viewSessionId ?? null);
+        return {
+          studentId: s.id,
+          name: s.name,
+          digitalStudentId: s.digitalStudentId,
+          rollNumber: s.rollNumber,
+          scores: scores.map(sc => ({
+            subject: sc.subject,
+            examType: sc.examType,
+            marks: sc.marks ?? 0,
+            totalMarks: sc.totalMarks ?? 100,
+            isAbsent: sc.isAbsent ?? false,
+          })),
+        };
+      }));
+      res.json(results);
+    } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
+  });
+
+  app.get("/api/admin/analytics/exam-policy/:class", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getExamPolicyTiers(schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
+      if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
+      res.json(tier);
+    } catch { res.status(500).json({ message: "Failed to fetch exam policy" }); }
+  });
+
+  app.get("/api/admin/analytics/grading-rules/:class", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tier = await storage.resolveClassPassPolicy(schoolId, cls);
+      if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
+      const rules = await storage.getGradingRules(schoolId, tier.id);
+      validateGradingRules(rules);
+      res.json({ rules, passPercentage: tier.passPercentage, gradingPolicy: { schoolId, tierId: tier.id } });
+    } catch (err: any) { res.status(409).json({ message: err?.message || "Grading policy is not configured correctly." }); }
+  });
+
+  app.get("/api/admin/analytics/promotion-decisions/:class/:section/:term", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    // Pass viewSessionId so archived sessions' decisions are isolated.
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
+    try {
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const term = decodeURIComponent(req.params.term);
+      const decisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
+      res.json(decisions);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
+    }
+  });
+
+  app.get("/api/admin/analytics/view-marks/:class/:section/:subject/:examType", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const subject = decodeURIComponent(req.params.subject);
+    const examType = decodeURIComponent(req.params.examType);
+    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
+    try {
+      const list = await storage.getExamScores(schoolId, subject, examType, cls, section, viewSessionId);
+      res.json(list);
+    } catch { res.status(500).json({ message: "Failed to fetch exam scores" }); }
+  });
+
+  app.get("/api/admin/analytics/student-scores/:studentId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const studentId = parseInt(req.params.studentId);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    try {
+      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
+      res.json(list);
+    } catch { res.status(500).json({ message: "Failed to fetch student scores" }); }
+  });
+
+  app.get("/api/admin/analytics/class-average/:class/:section/:subject", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    const subject = decodeURIComponent(req.params.subject);
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    try {
+      const averages = await storage.getClassAverages(schoolId, cls, section, subject, viewSessionId);
+      res.json(averages);
+    } catch { res.status(500).json({ message: "Failed to fetch class averages" }); }
+  });
+
+  app.get("/api/admin/analytics/attendance-summary/:class/:section", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const cls = decodeURIComponent(req.params.class);
+    const section = decodeURIComponent(req.params.section);
+    // When in archive mode, use the session's own date range instead of a
+    // calendar-year guess — otherwise archived years return wrong (or zero) data.
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+      );
+      let yearStart: string, yearEnd: string;
+      if (attendanceSession.startDate && attendanceSession.endDate) {
+        yearStart = attendanceSession.startDate;
+        yearEnd = attendanceSession.endDate;
+      } else {
+        const today = todayInIST();
+        const year = Number(today.slice(0, 4));
+        const aprThisYear = `${year}-04-01`;
+        yearStart = today >= aprThisYear ? aprThisYear : `${year - 1}-04-01`;
+        yearEnd = today;
+      }
+      const aggregates = await storage.getStudentAttendanceAggregatesForSessionClass(
+        schoolId, attendanceSession.id, cls, section, yearStart, yearEnd,
+      );
+      const summary = aggregates.map(({ student, aggregation }) => ({
+        studentId: student.id,
+        attendancePct: aggregation.applicableWorkingDays > 0 ? aggregation.percentage : null,
+        presentDays: aggregation.weightedAttendance,
+        totalDays: aggregation.applicableWorkingDays,
+      }));
+      res.json(summary);
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      res.status(500).json({ message: "Failed to fetch attendance summary" });
+    }
+  });
+
+  // ===== TEACHER REGISTRY — /api/admin/teachers CRUD (session-scoped) =====
+  // ── GLOBAL MODULE — Teacher Registry is permanent school-wide data ──────────
+  // Teacher records are NOT filtered by viewSessionId.  The teacher list spans
+  // all academic sessions; filtering by session would hide current faculty when
+  // an admin views an archived year.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: teachers, users (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/admin/teachers", async (req, res) => {
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).some((m: string) => m === "teacher-registry" || m.startsWith("teacher-registry:")));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const q = (req.query.q as string) || "";
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const pageSize = 20;
+    const filterClass = (req.query.filterClass as string) || undefined;
+    const filterSection = (req.query.filterSection as string) || undefined;
+    try {
+      const result = await storage.getTeachersBySchoolPaginated(schoolId, q, page, pageSize, filterClass, filterSection);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch teachers" });
+    }
+  });
+
+  app.post("/api/admin/teachers", async (req, res) => {
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:add"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const parsed = createTeacherSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const existing = await storage.getUserByEmail(parsed.data.email);
+      if (existing) return res.status(409).json({ message: "A user with this email already exists" });
+      const userData = await storage.getUserWithSchool(req.session.userId!);
+      if (!userData) return res.status(403).json({ message: "School not found" });
+      const schoolCode = userData.school.code;
+      const serial = await storage.issueNextIdSerial(schoolId, "dtid");
+      const dtid = `${schoolCode}-T${String(serial).padStart(3, "0")}`;
+      const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      const teacher = await storage.createTeacher({
+        schoolId,
+        fullName: parsed.data.fullName,
+        phone: parsed.data.phone,
+        subject: parsed.data.subject,
+        assignedClass: parsed.data.assignedClass,
+        assignedSection: parsed.data.assignedSection,
+        designation: parsed.data.designation,
+        gender: parsed.data.gender,
+        dateOfBirth: parsed.data.dateOfBirth,
+        govtIdType: parsed.data.govtIdType,
+        govtIdNumber: parsed.data.govtIdNumber,
+        address: parsed.data.address,
+        joiningDate: parsed.data.joiningDate,
+        qualifications: parsed.data.qualifications,
+        mustChangePassword: true,
+        digitalTeacherId: dtid,
+      }, parsed.data.email, passwordHash);
+      res.status(201).json(teacher);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create teacher" });
+    }
+  });
+
+  app.patch("/api/admin/teachers/:id", async (req, res) => {
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:edit"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const editSchema = z.object({
+      fullName: z.string().min(2).optional(),
+      phone: z.string().length(10).regex(/^\d{10}$/).optional(),
+      email: z.string().trim().email("Enter a valid teacher email").optional(),
+      designation: z.string().optional(),
+      gender: z.string().optional(),
+      dateOfBirth: z.string().optional(),
+      govtIdType: z.string().optional(),
+      govtIdNumber: z.string().optional(),
+      address: z.string().optional(),
+      joiningDate: z.string().optional(),
+      qualifications: z.string().optional(),
+    });
+    const parsed = editSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+      // Use || to treat empty string the same as "not provided" — preserves existing values
+      // when optional selects/inputs are left blank, only overwrites when user provides a real value
+      const str = (v: string | undefined | null, fallback: string | null | undefined) =>
+        v || fallback || undefined;
+      const updated = await storage.updateTeacherAssignment(teacherId, schoolId, {
+        fullName: parsed.data.fullName || teacher.fullName,
+        subject: teacher.subject,
+        assignedClass: teacher.assignedClass,
+        assignedSection: teacher.assignedSection,
+        phone: parsed.data.phone || teacher.phone,
+        designation: parsed.data.designation ?? teacher.designation ?? "",
+        gender: str(parsed.data.gender, teacher.gender),
+        dateOfBirth: str(parsed.data.dateOfBirth, teacher.dateOfBirth),
+        govtIdType: str(parsed.data.govtIdType, teacher.govtIdType),
+        govtIdNumber: str(parsed.data.govtIdNumber, teacher.govtIdNumber),
+        address: str(parsed.data.address, teacher.address),
+        joiningDate: str(parsed.data.joiningDate, teacher.joiningDate),
+        qualifications: str(parsed.data.qualifications, teacher.qualifications),
+        email: parsed.data.email,
+      });
+      res.json(updated);
+    } catch (err: any) {
+      if (err?.status === 409 || err?.code === "23505") {
+        return res.status(409).json({ message: "Unable to update teacher" });
+      }
+      res.status(500).json({ message: err.message || "Failed to update teacher" });
+    }
+  });
+
+  app.delete("/api/admin/teachers/:id", async (req, res) => {
+    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
+    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
+      (req.session.allowedModules ?? []).includes("teacher-registry:deactivate"));
+    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+
+    // Validate reason + admin password
+    const parsed = z.object({
+      reason: z.string().min(5, "Please provide a reason (min 5 characters)"),
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    try {
+      // Verify admin password
+      const adminUserId = req.session.userId ?? req.session.staffId;
+      const adminUser = await storage.getUserById(adminUserId!);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+
+      // Fetch teacher's email from users table before deletion
+      const [teacherUser] = await db.select({ email: users.email }).from(users).where(eq(users.id, teacher.userId));
+
+      // Snapshot faculty_mappings — real class/section/subject data lives here, not on the teachers row
+      const mappings = await db
+        .select({ className: facultyMappings.className, section: facultyMappings.section, subject: facultyMappings.subject })
+        .from(facultyMappings)
+        .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)));
+
+      // Build compound strings: "3-A, 5-B" and "Physics, Math"
+      const snapshotClass = mappings.length
+        ? mappings.map(m => `${m.className}-${m.section}`).join(", ")
+        : (teacher.assignedClass && teacher.assignedSection
+            ? `${teacher.assignedClass}-${teacher.assignedSection}`
+            : (teacher.assignedClass || null));
+      const snapshotSubject = mappings.length
+        ? [...new Set(mappings.map(m => m.subject).filter(Boolean))].join(", ") || null
+        : (teacher.subject || null);
+
+      // Log the removal before deleting
+      await storage.logRemovedTeacher({
+        schoolId,
+        digitalTeacherId: teacher.digitalTeacherId ?? null,
+        fullName: teacher.fullName,
+        email: teacherUser?.email ?? null,
+        phone: teacher.phone ?? null,
+        subject: snapshotSubject,
+        assignedClass: snapshotClass,
+        assignedSection: null,
+        designation: teacher.designation ?? null,
+        gender: teacher.gender ?? null,
+        dateOfBirth: teacher.dateOfBirth ?? null,
+        govtIdType: teacher.govtIdType ?? null,
+        govtIdNumber: teacher.govtIdNumber ?? null,
+        address: teacher.address ?? null,
+        joiningDate: teacher.joiningDate ?? null,
+        qualifications: teacher.qualifications ?? null,
+        removalReason: parsed.data.reason,
+        removedByEmail: adminUser.email,
+      });
+
+      await storage.deleteTeacher(teacherId, schoolId);
+      res.json({ message: "Teacher removed from registry" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete teacher" });
+    }
+  });
+
+  // ===== REMOVED TEACHER HISTORY =====
+  app.get("/api/admin/teachers/removed-history", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1")));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"))));
+    const q = String(req.query.q ?? "").trim();
+    try {
+      const result = await storage.getRemovedTeachersLog(schoolId, { page, limit, q: q || undefined });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch history" });
+    }
+  });
+
+  // ===== DEACTIVATE / REACTIVATE TEACHER ID =====
+  app.post("/api/admin/teachers/:id/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const parsed = z.object({
+      reason: z.string().min(5, "Please provide a reason (min 5 characters)"),
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      // Verify admin password
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const updated = await storage.deactivateTeacher(teacherId, schoolId, parsed.data.reason);
+      if (!updated) return res.status(404).json({ message: "Teacher not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to deactivate teacher" });
+    }
+  });
+
+  app.post("/api/admin/teachers/:id/reactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const teacherId = parseInt(req.params.id);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const parsed = z.object({
+      adminPassword: z.string().min(1, "Admin password is required"),
+    }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
+      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const updated = await storage.reactivateTeacher(teacherId, schoolId);
+      if (!updated) return res.status(404).json({ message: "Teacher not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to reactivate teacher" });
+    }
+  });
+
+  // ===== NON-TEACHING STAFF (admin CRUD) =====
+  const ntsCreateSchema = z.object({
+    fullName: z.string().min(2),
+    email: z.string().email("Valid email required"),
+    phone: z.string().optional().or(z.literal("")),
+    designation: z.string().min(1),
+    password: z.string().min(6, "Password must be at least 6 characters").optional(),
+    allowedModules: z.array(z.string()).optional(),
+  });
+
+  // ── GLOBAL MODULE — Support Staff registry is permanent school-wide data ────
+  // Non-teaching staff records are NOT filtered by viewSessionId.  Staff exist
+  // independently of any academic session.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: non_teaching_staff (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/admin/non-teaching-staff", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const data = await storage.getNonTeachingStaffBySchool(req.session.schoolId!);
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch staff" });
+    }
+  });
+
+  app.post("/api/admin/non-teaching-staff", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const parsed = ntsCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      let passwordHash: string | undefined;
+      if (parsed.data.password) {
+        passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      }
+      const record = await storage.createNonTeachingStaff({
+        schoolId: req.session.schoolId!,
+        fullName: parsed.data.fullName,
+        email: parsed.data.email,
+        phone: parsed.data.phone || "",
+        designation: parsed.data.designation,
+        allowedModules: parsed.data.allowedModules || [],
+        isActive: true,
+        ...(passwordHash ? { passwordHash } : {}),
+      });
+      res.status(201).json(record);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to create staff" });
+    }
+  });
+
+  app.patch("/api/admin/non-teaching-staff/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const patchSchema = z.object({
+      fullName: z.string().min(2).optional(),
+      email: z.string().email().optional(),
+      phone: z.string().optional().or(z.literal("")),
+      designation: z.string().min(1).optional(),
+      password: z.string().min(6).optional(),
+      allowedModules: z.array(z.string()).optional(),
+    });
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    try {
+      const updateData: Record<string, unknown> = {};
+      if (parsed.data.fullName !== undefined) updateData.fullName = parsed.data.fullName;
+      if (parsed.data.email !== undefined) updateData.email = parsed.data.email;
+      if (parsed.data.phone !== undefined) updateData.phone = parsed.data.phone;
+      if (parsed.data.designation !== undefined) updateData.designation = parsed.data.designation;
+      if (parsed.data.allowedModules !== undefined) updateData.allowedModules = parsed.data.allowedModules;
+      if (parsed.data.password) {
+        updateData.passwordHash = await bcrypt.hash(parsed.data.password, 10);
+      }
+      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, updateData as any);
+      if (!updated) return res.status(404).json({ message: "Staff not found" });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update staff" });
+    }
+  });
+
+  // ── Support Staff Photo Upload ────────────────────────────────────────────
+  const staffPhotoDiskUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = path.join(process.cwd(), "uploads", "staff-photos");
+        fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${path.extname(file.originalname)}`);
+      },
+    }),
+    limits: { fileSize: 1 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  app.post(
+    "/api/admin/non-teaching-staff/:id/photo",
+    async (req, res, next) => {
+      if (!req.session.userId || req.session.userRole !== "admin")
+        return res.status(403).json({ message: "Admin access required" });
+      next();
+    },
+    staffPhotoDiskUpload.single("photo"),
+    async (req: any, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const photoUrl = `/uploads/staff-photos/${req.file.filename}`;
+      const updated = await storage.updateNonTeachingStaff(id, req.session.schoolId!, { photoUrl } as any);
+      if (!updated) return res.status(404).json({ message: "Staff not found" });
+      res.json({ photoUrl });
+    },
+  );
+
+  app.delete("/api/admin/non-teaching-staff/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const deleted = await storage.deleteNonTeachingStaff(id, req.session.schoolId!);
+      if (!deleted) return res.status(404).json({ message: "Staff not found" });
+      res.json({ message: "Staff removed" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete staff" });
+    }
+  });
+
+  // ===== FACULTY MAPPINGS (admin) =====
+  app.get("/api/admin/faculty-mappings", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      const mappings = await storage.getFacultyMappingsBySchool(req.session.schoolId!);
+      res.json(mappings);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to fetch mappings" });
+    }
+  });
+
+  const facultyMappingSchema = z.object({
+    teacherId: z.number().int().positive(),
+    mappings: z.array(z.object({ className: z.string().min(1), section: z.string().min(1), subject: z.string().optional().nullable() })),
+  });
+
+  app.post("/api/admin/faculty-mappings", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const parsed = facultyMappingSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const schoolId = req.session.schoolId!;
+    try {
+      const teacher = await storage.getTeacherById(parsed.data.teacherId);
+      if (!teacher || teacher.schoolId !== schoolId)
+        return res.status(404).json({ message: "Teacher not found" });
+      const rows = await storage.replaceFacultyMappings(parsed.data.teacherId, schoolId, parsed.data.mappings);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to save mappings" });
+    }
+  });
+
+  app.delete("/api/admin/faculty-mappings/:teacherId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const teacherId = parseInt(req.params.teacherId);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    try {
+      await storage.deleteFacultyMappingsByTeacher(teacherId, req.session.schoolId!);
+      res.json({ message: "Mappings cleared" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to delete mappings" });
+    }
+  });
+
+  // ===== TEACHER CALENDAR ROUTE =====
+  app.get("/api/teacher/calendar", async (req, res) => {
+    const teacherId = req.session.teacherId;
+    if (!teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(teacherId);
+    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+    const mappings = await storage.getFacultyMappingsByTeacher(teacherId);
+    const seen = new Set<string>();
+    const assignments: Array<{ cls: string; sec?: string }> = [];
+    if (teacher.assignedClass) {
+      const key = `${teacher.assignedClass}|${teacher.assignedSection}`;
+      seen.add(key);
+      assignments.push({ cls: teacher.assignedClass, sec: teacher.assignedSection || undefined });
+    }
+    for (const m of mappings) {
+      const key = `${m.className}|${m.section}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        assignments.push({ cls: m.className, sec: m.section });
+      }
+    }
+    const teacherFilter = assignments.length > 0 ? assignments : undefined;
+    const { month, year } = req.query;
+    if (year && !month) {
+      const y = parseInt(year as string);
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, `${y}-01-01`, `${y}-12-31`, teacherFilter);
+      return res.json(events);
+    }
+    if (month && year) {
+      const m = parseInt(month as string);
+      const y = parseInt(year as string);
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(teacher.schoolId, startDate, endDate, teacherFilter);
+      return res.json(events);
+    }
+    const events = await storage.getCalendarEvents(teacher.schoolId, teacherFilter);
+    res.json(events);
+  });
+
+  // ===== RESULTS ENGINE — TEACHER READ-ONLY =====
+
+  app.get("/api/teacher/grading-rules/:class", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tier = await storage.resolveClassPassPolicy(teacher.schoolId, cls);
+      if (!tier) return res.status(404).json({ message: "No grading tier configured for this class" });
+      const rules = await storage.getGradingRules(teacher.schoolId, tier.id);
+      validateGradingRules(rules);
+      res.json({ rules, passPercentage: tier.passPercentage, gradingPolicy: { schoolId: teacher.schoolId, tierId: tier.id } });
+    } catch (err: any) {
+      console.error("[grading-rules] error:", err);
+      res.status(409).json({ message: err?.message || "Grading policy is not configured correctly." });
+    }
+  });
+
+  app.get("/api/teacher/exam-policy/:class", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const cls = decodeURIComponent(req.params.class);
+    try {
+      const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
+      if (!tier) return res.status(404).json({ message: "No exam policy configured for this class" });
+      res.json(tier);
+    } catch {
+      res.status(500).json({ message: "Failed to fetch exam policy" });
+    }
+  });
+
+  app.get("/api/teacher/class-scores/:class/:section", async (req, res) => {
+    try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const schoolId = context.schoolId;
+      const studentList = await storage.getStudentsByClassSectionForExamSession(
+        schoolId, context.sessionId, cls, section,
+      );
+      const results = await Promise.all(studentList.map(async (s) => {
+        const scores = await storage.getExamScoresByStudent(s.id, schoolId, context.sessionId);
+        return {
+          studentId: s.id,
+          name: s.name,
+          digitalStudentId: s.digitalStudentId,
+          rollNumber: s.rollNumber,
+          photoUrl: s.photoUrl ?? null,
+          scores: scores.map(sc => ({
+            subject: sc.subject,
+            examType: sc.examType,
+            marks: sc.marks ?? 0,
+            totalMarks: sc.totalMarks ?? 100,
+            isAbsent: sc.isAbsent ?? false,
+          })),
+        };
+      }));
+      res.json(results);
+    } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
+  });
+
+  app.get("/api/teacher/attendance-summary/:class/:section", async (req, res) => {
+    try {
+      const context = await resolveTeacherExaminationContext(req, res);
+      if (!context) return;
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const schoolId = context.schoolId;
+      const attendanceSession = await storage.getAcademicSessionForSchool(
+        context.sessionId, schoolId,
+      );
+      if (!attendanceSession) return res.status(403).json({ message: "Invalid academic session" });
+      const today = todayInIST();
+      const yearStart = attendanceSession.startDate;
+      const yearEnd = attendanceSession.endDate < today ? attendanceSession.endDate : today;
+      const aggregates = await storage.getStudentAttendanceAggregatesForSessionClass(
+        schoolId, context.sessionId, cls, section, yearStart, yearEnd,
+      );
+      const summary = aggregates.map(({ student, aggregation }) => ({
+        studentId: student.id,
+        attendancePct: aggregation.applicableWorkingDays > 0 ? aggregation.percentage : null,
+        presentDays: aggregation.weightedAttendance,
+        totalDays: aggregation.applicableWorkingDays,
+      }));
+      res.json(summary);
+    } catch { res.status(500).json({ message: "Failed to fetch attendance summary" }); }
+  });
+
+  // ── Promotion Ledger ─────────────────────────────────────────────────────
+
+  /** GET /api/teacher/promotion-decisions/:class/:section/:term
+   *  Returns all stored promotion decisions for the given class/section/term.
+   *  Any authenticated teacher can view (read-only unless they are the assigned teacher). */
+  app.get("/api/teacher/promotion-decisions/:class/:section/:term", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const cls = decodeURIComponent(req.params.class);
+      const section = decodeURIComponent(req.params.section);
+      const term = decodeURIComponent(req.params.term);
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, (req as any).viewSessionId ?? undefined);
+      res.json(decisions);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
+    }
+  });
+
+  /** POST /api/teacher/promotion-decisions
+   *  Bulk upserts promotion decisions for a class/section/term.
+   *  Body: { class, section, term, lock: boolean, entries: [...] }
+   *  Authorization: caller must have a faculty mapping for the given class-section. */
+  app.post("/api/teacher/promotion-decisions", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const { class: cls, section, term, lock, entries } = req.body;
+      if (!cls || !section || !term || !Array.isArray(entries)) {
+        return res.status(400).json({ message: "class, section, term, and entries are required" });
+      }
+      // Verify teacher is assigned to this class-section
+      const allMappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+      const isAssigned = allMappings.some(m => m.className === cls && m.section === section)
+        || (teacher.assignedClass === cls && teacher.assignedSection === section);
+      if (!isAssigned) {
+        return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
+      }
+      // Tag the ledger with the academic session. Prefer the header value
+      // (admin previewing a session); otherwise resolve the active session
+      // so teacher-submitted decisions are always year-tagged correctly.
+      const activeSessForTag = (req as any).viewSessionId
+        ? null
+        : await storage.getActiveSession(teacher.schoolId);
+      const ledgerSessionId: number | null =
+        (req as any).viewSessionId ?? activeSessForTag?.id ?? null;
+
+      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries, ledgerSessionId ?? undefined);
+      res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
+    }
+  });
+
+  /** GET /api/teacher/promotion-verdict/:studentId?term=...&class=...&section=...
+   *  Backend utility: evaluates whether promotionGateVerdict is active for the term
+   *  (checks the policy config) then returns the verdict from the Promotion Ledger.
+   *  Returns { omit: true } when the term has promotionGateVerdict disabled. */
+  app.get("/api/teacher/promotion-verdict/:studentId", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const teacher = await storage.getTeacherById(req.session.teacherId);
+    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    try {
+      const studentId = parseInt(req.params.studentId, 10);
+      const term = decodeURIComponent((req.query.term as string) ?? "");
+      const cls  = decodeURIComponent((req.query.class as string) ?? "");
+      const section = decodeURIComponent((req.query.section as string) ?? "");
+
+      if (!term || !cls || !section) {
+        return res.status(400).json({ message: "term, class and section query params are required" });
+      }
+
+      // ── Step 1: check policy config to see if promotionGateVerdict is enabled ──
+      const tiers = await storage.getExamPolicyTiers(teacher.schoolId);
+      const tier = tiers.find(t =>
+        (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+      );
+      if (!tier) return res.status(404).json({ message: "No exam policy for this class" });
+
+      let resultsConfig: Record<string, any> = {};
+      try { resultsConfig = JSON.parse(tier.resultsConfig ?? "{}"); } catch {}
+      const termConfig = resultsConfig[term] ?? {};
+      const promotionGateVerdict: boolean = !!(termConfig.promotionGate ?? false);
+
+      // If the term has promotionGateVerdict disabled, instruct the client to omit the block
+      if (!promotionGateVerdict) {
+        return res.json({ omit: true, reason: "Promotion gate is not active for this term." });
+      }
+
+      // ── Step 2: fetch the verdict from the Promotion Ledger ──
+      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      const verdict = decisions.find(d => d.studentId === studentId);
+
+      if (!verdict) {
+        return res.json({
+          omit: false,
+          promotionGateVerdict: true,
+          pending: true,
+          message: "Ledger entry not yet set for this student.",
+        });
+      }
+
+      res.json({
+        omit: false,
+        promotionGateVerdict: true,
+        pending: false,
+        studentId: verdict.studentId,
+        decision: verdict.decision,          // "promoted" | "retained"
+        targetClass: verdict.targetClass,
+        targetSection: verdict.targetSection,
+        destination: `${verdict.targetClass}-${verdict.targetSection}`,
+        locked: verdict.locked,
+        processedAt: verdict.updatedAt ?? verdict.createdAt,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message ?? "Failed to fetch promotion verdict" });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TEACHER SELF ATTENDANCE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // GET today's self-attendance record
+  /** The canonical business date; no manual offset arithmetic. */
+  const istToday = () => todayInIST();
+
+  app.get("/api/teacher/self-attendance/today", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const today = istToday();
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+
+      const [record] = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
+      );
+      res.json(record ?? null);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to fetch today's record" });
+    }
+  });
+
+  // GET resolved attendance policy for the current teacher
+  app.get("/api/teacher/attendance-policy", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const resolved = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      res.json(resolved);
+    } catch {
+      res.json(DEFAULT_POLICY);
+    }
+  });
+
+  // POST check-in
+  app.post("/api/teacher/self-attendance/check-in", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+      const today = istToday();
+      requireAttendanceDateInSession(today, attendanceSession);
+      const { latitude, longitude, locationVerified } = req.body;
+
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
+      );
+      if (existing?.checkInTime) return res.status(400).json({ message: "Already checked in for today" });
+
+      const now = new Date();
+
+      // Resolve policy and evaluate check-in status
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
+      const status = evalResult.displayStatus; // "Present", "Late", "Half Day", or "Leave"
+
+      let record;
+      if (existing) {
+        [record] = await db.update(teacherSelfAttendance)
+          .set({ checkInTime: now, status, locationVerified: !!locationVerified, latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null, updatedAt: now })
+          .where(and(
+            eq(teacherSelfAttendance.id, existing.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          )).returning();
+      } else {
+        [record] = await db.insert(teacherSelfAttendance).values({
+          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
+          sessionId: attendanceSession.id,
+          checkInTime: now, status, locationVerified: !!locationVerified,
+          latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null,
+        }).returning();
+      }
+      res.json(record);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Check-in failed" });
+    }
+  });
+
+  // POST check-out
+  app.post("/api/teacher/self-attendance/check-out", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const today = istToday();
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+      requireAttendanceDateInSession(today, attendanceSession);
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.attendanceDate, today),
+        )
+      );
+      if (!existing?.checkInTime) return res.status(400).json({ message: "Not checked in yet" });
+      if (existing.checkOutTime)  return res.status(400).json({ message: "Already checked out" });
+
+      const now = new Date();
+      const workingMinutes = Math.floor((now.getTime() - new Date(existing.checkInTime).getTime()) / 60000);
+      let [record] = await db.update(teacherSelfAttendance)
+        .set({ checkOutTime: now, totalWorkingMinutes: workingMinutes, updatedAt: now })
+        .where(and(
+          eq(teacherSelfAttendance.id, existing.id),
+          eq(teacherSelfAttendance.teacherId, teacher.id),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+        )).returning();
+
+      // Early check-out: if checkout time (IST) < halfDayCutoffTime → mark as Half Day
+      if (teacher) {
+        const policyRowsCO = await db.select().from(attendancePolicies).where(
+          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        );
+        const coPolicy = resolvePolicy(policyRowsCO, "TEACHER", teacher.assignedClass ?? "");
+        const coIST = utcToISTHHMM(now);
+        const [coh, com] = coIST.split(":").map(Number);
+        const coMin = coh * 60 + com;
+        const [hch, hcm] = (coPolicy.halfDayCutoffTime || "12:00").split(":").map(Number);
+        const halfMin = hch * 60 + hcm;
+        if (coMin < halfMin) {
+          [record] = await db.update(teacherSelfAttendance)
+            .set({ status: "Half Day", updatedAt: now })
+            .where(and(
+              eq(teacherSelfAttendance.id, record.id),
+              eq(teacherSelfAttendance.teacherId, teacher.id),
+              eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+              eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+            )).returning();
+        }
+      }
+
+      res.json(record);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Check-out failed" });
+    }
+  });
+
+  // Full selected-Session rate; never trusts Teacher or school IDs from the request.
+  app.get("/api/teacher/self-attendance/rate", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || !req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
+      const session = await resolveAttendanceReadSession(teacher.schoolId, (req as any).viewSessionId);
+      res.json(await getTeacherSelfRate(teacher.schoolId, teacher.id, session));
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      console.error("[self-attendance/rate]", err);
+      res.status(500).json({ message: "Failed to calculate attendance rate" });
+    }
+  });
+
+  // GET history — accepts startDate/endDate (session bounds) or falls back to last N days
+  app.get("/api/teacher/self-attendance/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      let start: string;
+      let end: string;
+      if (req.query.startDate && req.query.endDate) {
+        // Session-scoped: use the session's actual boundaries
+        start = req.query.startDate as string;
+        end   = req.query.endDate   as string;
+        if (!isValidDateOnly(start) || !isValidDateOnly(end) || start > end) {
+          return res.status(400).json({ message: "Invalid Attendance date range" });
+        }
+      } else {
+        // Legacy: last N days (max 90)
+        const days = Math.min(parseInt(req.query.days as string) || 30, 90);
+        end   = todayInIST();
+        start = addCalendarDays(end, -(days - 1));
+      }
+
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+
+      const records = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          gte(teacherSelfAttendance.attendanceDate, start > attendanceSession.startDate ? start : attendanceSession.startDate),
+          lte(teacherSelfAttendance.attendanceDate, end < attendanceSession.endDate ? end : attendanceSession.endDate),
+        )
+      ).orderBy(desc(teacherSelfAttendance.attendanceDate));
+      res.json(records);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to fetch history" });
+    }
+  });
+
+  // POST self-correction — applies immediately, no admin approval needed
+  app.post("/api/teacher/self-attendance/correction", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const { date, requestedCheckIn, requestedCheckOut, reason } = req.body;
+      if (!date || !requestedCheckIn || !requestedCheckOut || !reason?.trim())
+        return res.status(400).json({ message: "All fields are required" });
+      if (!isValidDateOnly(date))
+        return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
+      const diffDays = calendarDayDifference(date, todayInIST());
+      if (diffDays === null)
+        return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
+      if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+      requireAttendanceDateInSession(date, attendanceSession);
+
+      // Parse times as IST (teachers enter local Indian time)
+      const checkInIST  = new Date(`${date}T${requestedCheckIn}:00+05:30`);
+      const checkOutIST = new Date(`${date}T${requestedCheckOut}:00+05:30`);
+      if (checkOutIST <= checkInIST) return res.status(400).json({ message: "Check-out must be after check-in" });
+
+      const workingMinutes = Math.floor((checkOutIST.getTime() - checkInIST.getTime()) / 60000);
+
+      // Evaluate status from corrected times using current policy
+      const corrPolicyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const corrPolicy = resolvePolicy(corrPolicyRows, "TEACHER", teacher.assignedClass ?? "");
+      const status = recomputeStatus({ checkInTime: checkInIST, checkOutTime: checkOutIST }, corrPolicy);
+      const now = new Date();
+
+      // Upsert the attendance record — select first then insert or update
+      const [existing] = await db.select().from(teacherSelfAttendance).where(
+        and(
+          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.attendanceDate, date),
+        )
+      );
+      let attendanceRecord;
+      if (existing) {
+        [attendanceRecord] = await db.update(teacherSelfAttendance)
+          .set({ checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes, status, locationVerified: existing.locationVerified, updatedAt: now })
+          .where(and(
+            eq(teacherSelfAttendance.id, existing.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          )).returning();
+      } else {
+        [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
+          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+          sessionId: attendanceSession.id,
+          checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes,
+          status, locationVerified: false,
+        }).returning();
+      }
+
+      // Log the correction as auto-approved for audit history
+      const [correction] = await db.insert(attendanceCorrectionRequests).values({
+        teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+        sessionId: attendanceSession.id,
+        requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Approved",
+      }).returning();
+
+      res.json({ correction, attendanceRecord });
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to apply correction" });
+    }
+  });
+
+  // GET correction requests
+  app.get("/api/teacher/self-attendance/corrections", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+      const corrections = await db.select().from(attendanceCorrectionRequests)
+        .where(and(
+          eq(attendanceCorrectionRequests.teacherId, req.session.teacherId),
+          eq(attendanceCorrectionRequests.schoolId, teacher.schoolId),
+          eq(attendanceCorrectionRequests.sessionId, attendanceSession.id),
+        ))
+        .orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
+      res.json(corrections);
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to fetch corrections" });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /api/teacher/attendance/history — paginated stored-status history
+  // Security: teacherId is ALWAYS taken from the authenticated session.
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/teacher/attendance/history", async (req, res) => {
+    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
+        return res.status(403).json({ message: "Teacher school mismatch" });
+      const attendanceSession = await resolveAttendanceReadSession(
+        teacher.schoolId, (req as any).viewSessionId,
+      );
+
+      const {
+        fromDate, toDate,
+        status,
+        page     = "1",
+        pageSize = "200",
+      } = req.query as Record<string, string>;
+
+      // Build conditions — teacherId always comes from session, never from query params
+      const conditions: ReturnType<typeof eq>[] = [
+        eq(teacherSelfAttendance.teacherId, req.session.teacherId),
+        eq(teacherSelfAttendance.schoolId,  teacher.schoolId),
+        eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+      ];
+      if ((fromDate && !isValidDateOnly(fromDate)) || (toDate && !isValidDateOnly(toDate)) || (fromDate && toDate && fromDate > toDate)) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
+      conditions.push(gte(teacherSelfAttendance.attendanceDate,
+        fromDate && fromDate > attendanceSession.startDate ? fromDate : attendanceSession.startDate) as any);
+      conditions.push(lte(teacherSelfAttendance.attendanceDate,
+        toDate && toDate < attendanceSession.endDate ? toDate : attendanceSession.endDate) as any);
+      if (status && status !== "all") conditions.push(eq(teacherSelfAttendance.status, status) as any);
+
+      const records = await db.select().from(teacherSelfAttendance)
+        .where(and(...(conditions as any[])))
+        .orderBy(desc(teacherSelfAttendance.attendanceDate));
+
+      // ── Summary (only over DB records — absent days are generated client-side) ──
+      const present  = records.filter(r => r.status === "Present").length;
+      const late     = records.filter(r => r.status === "Late").length;
+      const halfDay  = records.filter(r => r.status === "Half Day").length;
+      const absent   = records.filter(r => r.status === "Absent").length;
+      const leave    = records.filter(r => r.status === "Leave").length;
+      const totalWorkingMinutes = records.reduce((s, r) => s + (r.totalWorkingMinutes ?? 0), 0);
+      const workedCount         = records.filter(r => (r.totalWorkingMinutes ?? 0) > 0).length;
+      const avgWorkingMinutes   = workedCount > 0 ? Math.round(totalWorkingMinutes / workedCount) : 0;
+
+      const summary = { present, late, halfDay, absent, leave, totalWorkingMinutes, avgWorkingMinutes };
+
+      // ── Statistics ────────────────────────────────────────────────────────
+      const rate = await getTeacherSelfRate(teacher.schoolId, teacher.id, attendanceSession);
+
+      // Streak: consecutive Present/Late/Half Day working days (most-recent first)
+      const sorted = [...records].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+      let streak = 0, longestStreak = 0, cur = 0;
+      for (const r of sorted) {
+        const dow = calendarWeekday(r.attendanceDate);
+        if (dow === null) continue;
+        if (!rate.workingDays[WEEKDAYS[dow]] || rate.holidayDates.includes(r.attendanceDate)) continue;
+        const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
+        if (ok) { cur++; if (cur > longestStreak) longestStreak = cur; }
+        else    { if (streak === 0) streak = cur; cur = 0; }
+      }
+      if (streak === 0) streak = cur;
+
+      const statistics = {
+        ...rate,
+        streak,
+        longestStreak,
+        totalWorkingHours: +(totalWorkingMinutes / 60).toFixed(1),
+        avgDailyHours:     +(avgWorkingMinutes   / 60).toFixed(1),
+      };
+
+      // ── Pagination ────────────────────────────────────────────────────────
+      const pageNum     = Math.max(1, parseInt(page));
+      const pageSizeNum = Math.min(500, Math.max(1, parseInt(pageSize)));
+      const totalRecords = records.length;
+      const totalPages   = Math.ceil(totalRecords / pageSizeNum);
+      const paginatedRecords = records.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
+
+      console.log(`[attendance/history] teacherId=${req.session.teacherId} from=${fromDate} to=${toDate} records=${paginatedRecords.length} dates=${paginatedRecords.map((r: any) => r.attendanceDate).join(",")}`);
+      res.json({
+        records: paginatedRecords,
+        summary,
+        statistics,
+        pagination: { page: pageNum, pageSize: pageSizeNum, totalRecords, totalPages },
+      });
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      console.error("[attendance/history]", err);
+      res.status(500).json({ message: "Failed to fetch attendance history" });
+    }
+  });
+}

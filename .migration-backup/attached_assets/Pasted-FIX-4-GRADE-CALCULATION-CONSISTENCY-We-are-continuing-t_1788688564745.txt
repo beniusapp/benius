@@ -1,0 +1,571 @@
+FIX 4 — GRADE CALCULATION CONSISTENCY
+
+We are continuing the School MIS Examination calculation stabilization work.
+
+IMPORTANT PERMANENT ARCHITECTURE RULE:
+
+This is a TRUE MULTI-TENANT School MIS.
+
+Tenant isolation is mandatory in every change.
+
+A teacher/user from School A must never access, retrieve, calculate with, save, update, or infer School B's students, examination scores, academic sessions, policies, grading rules, results, attendance, faculty data, or other school-owned data.
+
+The authenticated user's server-derived school context is authoritative.
+
+NEVER trust a client-supplied schoolId as authorization.
+
+Do not regress Fix 1, Fix 2, or Fix 3.
+
+==================================================
+CURRENT STATUS
+==================================================
+
+FIX 1 — COMPLETE:
+A shared Examination calculation engine exists at:
+
+shared/examination-calculation-engine.ts
+
+Teacher Examination uses the shared engine.
+
+FIX 2 — COMPLETE:
+Academic Session is a validated Examination data boundary.
+
+Examination score reads/saves are scoped by:
+
+authenticated teacher school
++
+validated Academic Session
+
+Client-supplied schoolId is not authoritative.
+
+FIX 3 — COMPLETE:
+Pass/fail percentage is now authoritative.
+
+The current authority is:
+
+authenticated identity
+→ server-derived schoolId
+→ matching class grading tier
+→ configured gradingTiers.passPercentage
+→ calculation/report
+
+Historical passMarks remains compatibility/storage data only.
+
+Pass/fail must not silently fall back to universal 33% or 35%.
+
+==================================================
+FIX 4 GOAL
+==================================================
+
+Fix GRADE CALCULATION consistency.
+
+The application currently has multiple places that may calculate or display grades independently.
+
+The goal is:
+
+ONE AUTHORITATIVE GRADE CALCULATION based on the authenticated school's configured grading policy.
+
+The relationship must be:
+
+student percentage
+→ authenticated school's grading policy
+→ authoritative grade
+
+Pass/fail remains a SEPARATE calculation governed by Fix 3's authoritative passPercentage.
+
+Do NOT merge grade calculation and pass/fail calculation.
+
+==================================================
+FIRST: AUDIT BEFORE CHANGING SEMANTICS
+==================================================
+
+Before modifying code, inspect the current repository state after Fix 3.
+
+Do NOT assume how grading tiers are intended to work.
+
+Inspect:
+
+- shared/examination-calculation-engine.ts
+- shared/__tests__/examination-calculation-engine.test.ts
+- shared/schema definitions related to grading
+- grading tier storage/query functions
+- grading policy endpoints
+- Teacher Examination
+- Teacher Results
+- Teacher printable progress reports
+- Student Examination/results
+- Student result details
+- Admin Performance Analytics
+- Admin examination analysis
+- Admin printable reports
+- server-side promotion/result calculations
+- any other Examination-related grade calculation
+- existing tests
+
+Search for:
+
+- computeGrade
+- grade
+- minPercent
+- maxPercent
+- gradingTiers
+- grading tier
+- grade rules
+- A+
+- A
+- B+
+- B
+- C
+- D
+- F
+
+Also search for hardcoded runtime grade thresholds.
+
+IMPORTANT:
+
+Do NOT blindly replace every occurrence of numbers such as:
+
+33
+40
+50
+60
+70
+80
+90
+
+Some may be legitimate configured values, examples, tests, promotion rules, or unrelated business logic.
+
+Determine which occurrences are actual runtime grade calculation rules.
+
+==================================================
+GRADING POLICY CONTRACT
+==================================================
+
+Before changing the calculation, determine from the existing schema, storage, policy UI, and current code:
+
+1. What fields define a grading tier?
+2. Is minPercent authoritative?
+3. Is maxPercent authoritative?
+4. Are ranges inclusive?
+5. Are ranges exclusive?
+6. Are gaps allowed?
+7. Are overlapping ranges allowed?
+8. What happens at an exact boundary?
+9. Can multiple grading tiers exist for different classes?
+10. Is grading policy school-scoped?
+11. Is grading policy class-scoped?
+12. Does the current architecture already establish an intended ordering?
+
+Do NOT invent a new grading-policy model if the existing application already has one.
+
+Preserve the existing intended contract unless it is clearly contradictory or unsafe.
+
+If the repository does not provide enough evidence to determine a grading semantic, do not silently invent one.
+
+Document the uncertainty in the final report.
+
+==================================================
+AUTHORITATIVE POLICY
+==================================================
+
+The grading policy must come from the authenticated user's school.
+
+Use the same tenant authority established by Fix 3:
+
+authenticated identity
+→ server-derived schoolId
+→ applicable class grading policy
+→ grading tiers
+→ grade calculation
+
+Never:
+
+client schoolId
+→ grading policy
+→ grade
+
+Never allow a teacher from School A to calculate using School B's grading policy.
+
+The shared calculation engine must continue enforcing its policy-school/context relationship.
+
+If a grading policy belongs to another school, reject it.
+
+Do not fall back to another school's policy.
+
+Do not expose another school's policy details.
+
+==================================================
+GRADE CALCULATION
+==================================================
+
+The shared Examination calculation engine should remain the authoritative calculation layer wherever practical.
+
+The engine must calculate the grade from the student's calculated percentage and the applicable configured grading tiers.
+
+The grade calculation must NOT silently use a universal hardcoded grade table.
+
+For example, if the school has configured:
+
+90 → A+
+80 → A
+70 → B+
+60 → B
+50 → C
+40 → D
+0 → F
+
+then the configured policy determines the grade.
+
+If another school has different boundaries, those boundaries must be respected.
+
+Do not assume 90/80/70/etc. are universal.
+
+==================================================
+MIN/MAX SEMANTICS
+==================================================
+
+If the existing grading policy explicitly defines both minPercent and maxPercent, inspect and respect that existing contract.
+
+Be especially careful with boundaries.
+
+Test:
+
+- exact lower boundary
+- just below lower boundary
+- just above lower boundary
+- exact upper boundary where applicable
+- highest grade
+- lowest grade
+
+Do not introduce arbitrary floating-point behavior.
+
+Use the application's existing percentage precision/rounding semantics unless there is a demonstrated bug directly related to grade selection.
+
+Do NOT redesign percentage rounding in this fix.
+
+==================================================
+MISSING OR INVALID GRADING POLICY
+==================================================
+
+Do not silently fall back to:
+
+A+ = 90
+A = 80
+B+ = 70
+etc.
+
+Do not silently fall back to a universal grading table.
+
+If the required grading policy is missing or invalid, handle it as a configuration error according to the application's existing error-handling conventions.
+
+The system must not invent a school's grading policy.
+
+==================================================
+PASS/FAIL SEPARATION
+==================================================
+
+Fix 3 established:
+
+configured gradingTiers.passPercentage
+→ authoritative Pass/Fail threshold
+
+Fix 4 must preserve this.
+
+Grade and Pass/Fail are separate.
+
+Example:
+
+passPercentage = 40%
+
+Student percentage = 45%
+
+The student may have:
+
+grade = D
+passed = true
+
+if the school's configured grading policy produces that result.
+
+Do not make grade boundaries determine Pass/Fail.
+
+Do not make passPercentage determine grade.
+
+==================================================
+ALL EXAMINATION PATHS
+==================================================
+
+Audit all places where a grade is calculated independently.
+
+At minimum inspect:
+
+- Teacher Examination Results
+- Teacher printable progress reports
+- Student Examination/results
+- Student result details
+- Admin Performance Analytics
+- Admin examination analysis
+- Admin printable reports
+- server-side result/promotion calculations
+- shared Examination calculation engine
+
+Where a path is an Examination result calculation, make it consume the same authoritative grade calculation rather than maintaining a competing grade algorithm.
+
+Do not perform a broad unrelated refactor.
+
+If a path is intentionally deferred because it belongs to the later full calculation-consolidation task, document that explicitly.
+
+However, do not leave a known contradictory runtime grade calculation in a core Examination result path merely because it is inconvenient.
+
+==================================================
+PROMOTION
+==================================================
+
+Inspect promotion logic only to determine whether it consumes a grade or percentage.
+
+Do NOT redesign promotion rules in Fix 4.
+
+Do NOT change:
+
+- promotion thresholds
+- failed-subject rules
+- attendance rules
+- cumulative requirements
+- current-term requirements
+
+If promotion uses an Examination grade, ensure it receives the authoritative grade.
+
+If promotion uses percentage/pass-fail instead, leave that logic according to its existing policy and do not convert it into a grade-based rule.
+
+==================================================
+MULTI-TENANT TESTING
+==================================================
+
+Add/update tests proving:
+
+1. School A grading policy is used for School A.
+
+2. School B grading policy is used for School B.
+
+3. A School A user cannot use School B's grading policy.
+
+4. Shared engine rejects a grading policy whose schoolId differs from calculation context.
+
+5. Missing grading policy does not silently produce a universal grade.
+
+6. Invalid grading policy does not silently produce a universal grade.
+
+7. Configured boundaries are respected.
+
+8. Exact grade boundaries behave according to the existing grading-policy contract.
+
+9. Different schools may legitimately have different grade boundaries.
+
+10. Grade calculation does not change the Fix 3 passPercentage behavior.
+
+==================================================
+EXAMPLE TEST SCENARIOS
+==================================================
+
+Use tests based on the actual configured policy contract discovered in the repository.
+
+For example, if the existing contract is minimum-percentage based:
+
+School A:
+
+90 → A+
+80 → A
+70 → B+
+60 → B
+50 → C
+40 → D
+0 → F
+
+Test values around boundaries.
+
+Then create a different School B policy, for example:
+
+95 → A+
+85 → A
+75 → B+
+65 → B
+55 → C
+45 → D
+0 → F
+
+Verify the same percentage can receive different grades depending on the authenticated school's configured policy.
+
+Do not assume these example policies must be written into production data.
+
+They are test examples only.
+
+==================================================
+STORED DATA
+==================================================
+
+Do NOT rewrite historical grades.
+
+Do NOT backfill grades.
+
+Do NOT recalculate and update historical scores in the database.
+
+Do NOT migrate existing records merely because the new calculation is authoritative.
+
+This fix is about runtime calculation consistency.
+
+If grades are not currently stored and are calculated dynamically, keep them dynamically calculated unless the existing architecture explicitly requires storage.
+
+Do NOT add a database column simply to solve this fix.
+
+==================================================
+DATABASE / SCHEMA SAFETY
+==================================================
+
+Do NOT:
+
+- change database schema
+- create migrations
+- alter academic sessions
+- alter students
+- alter enrollments
+- alter faculty mappings
+- alter historical scores
+- delete data
+- backfill data
+
+unless inspection proves an existing code change is strictly required for this fix.
+
+Prefer code/tests only.
+
+==================================================
+ROSTER / FACULTY / ENROLLMENT
+==================================================
+
+Do NOT change Examination roster behavior.
+
+The Teacher Examination roster remains:
+
+students.school_id = authenticated teacher school
+students.is_active = true
+students.class = selected class
+students.section = selected section
+
+Enrollment is NOT an Examination roster prerequisite.
+
+Faculty Mapping is NOT an Examination permission prerequisite.
+
+Subject is Examination context, not roster authorization.
+
+Exam Type is Examination context, not roster authorization.
+
+==================================================
+ACADEMIC SESSION
+==================================================
+
+Preserve Fix 2 exactly.
+
+Grade calculations must continue to operate on scores from the validated selected Academic Session.
+
+Do not reintroduce:
+
+- cross-session score mixing
+- NULL-session fallback
+- unscoped score retrieval
+- client-controlled session authorization
+
+The calculation context must continue to include the actual selected sessionId.
+
+==================================================
+CLIENT AUTHORITY
+==================================================
+
+Do not allow the client to supply a grading percentage, grade table, or school policy and have the server trust it.
+
+The client may request/display policy data according to existing architecture, but authorization and policy authority must remain server-side.
+
+Authenticated school context is authoritative.
+
+==================================================
+NO UI REDESIGN
+==================================================
+
+Do not redesign grading UI.
+
+Do not add unrelated controls.
+
+Only change UI logic where required to ensure displayed grades come from the authoritative calculation.
+
+==================================================
+VALIDATION
+==================================================
+
+After implementation:
+
+1. Run:
+
+npm run check
+
+2. Run all relevant Examination/grading tests.
+
+3. Run the existing test suite if practical.
+
+4. Run:
+
+git diff --check
+
+5. Inspect the final diff.
+
+Verify:
+
+- one authoritative grade calculation
+- configured school grading policy is used
+- no universal hardcoded grade fallback remains in runtime Examination calculations
+- min/max semantics were preserved according to the existing contract
+- grade boundaries are consistent across Examination screens
+- pass/fail remains governed by Fix 3
+- tenant isolation remains intact
+- Academic Session isolation remains intact
+- roster remains unchanged
+- Faculty Mapping remains unchanged
+- Enrollment remains non-required
+- no historical data was modified
+- no schema/migration changes were made
+
+==================================================
+FINAL REPORT
+==================================================
+
+Report:
+
+1. Files changed.
+
+2. The existing grading-policy contract discovered.
+
+3. How minPercent/maxPercent are interpreted.
+
+4. Every runtime grade-calculation location found.
+
+5. Which grade-calculation paths were consolidated or changed.
+
+6. Which hardcoded grade fallbacks were removed/replaced.
+
+7. Any intentionally retained grade values and why.
+
+8. How authenticated school/tenant isolation is enforced.
+
+9. How Academic Session isolation remains enforced.
+
+10. Tests added/updated and exact results.
+
+11. npm run check result.
+
+12. git diff --check result.
+
+13. Explicit confirmation that no database/schema/data changes were made.
+
+14. Any intentionally deferred grade-calculation paths.
+
+Do NOT proceed to Fix 5.
+
+Fix 5 will be handled separately.
+
+Stop after Fix 4 and report the results.

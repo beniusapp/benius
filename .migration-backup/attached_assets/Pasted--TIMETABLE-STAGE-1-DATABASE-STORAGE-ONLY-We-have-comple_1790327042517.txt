@@ -1,0 +1,475 @@
+## TIMETABLE — STAGE 1
+
+## DATABASE + STORAGE ONLY
+
+We have completed the final read-only audit.
+
+The final architecture is:
+
+> **The entire Timetable must be 100% Academic Session-based.**
+
+This stage must implement ONLY the **Database + Storage layer**.
+
+Do NOT modify Admin, Teacher, or Student UI yet.
+
+---
+
+# 1. DATABASE — `timetable_entries`
+
+Change `timetable_entries` so Academic Session is mandatory.
+
+### Required
+
+`session_id` must become:
+
+* NOT NULL
+* FK → `academic_sessions(id)`
+* no `ON DELETE SET NULL`
+
+A timetable entry must always belong to one Academic Session.
+
+### Unique constraint
+
+Current:
+
+```text
+school_id + class + section + day_of_week + period
+```
+
+Replace it with:
+
+```text
+school_id
++ session_id
++ class
++ section
++ day_of_week
++ period
+```
+
+This is important because:
+
+```text
+2025–26 + Class 5A + Monday + Period 1
+```
+
+and
+
+```text
+2026–27 + Class 5A + Monday + Period 1
+```
+
+must both be allowed.
+
+---
+
+# 2. DATABASE — `timetable_structure`
+
+Add:
+
+```text
+session_id
+```
+
+It must be:
+
+* NOT NULL
+* FK → `academic_sessions(id)`
+* no `ON DELETE SET NULL`
+
+The structure is now Session-owned.
+
+This includes:
+
+* periods
+* bell timings
+* labels
+* breaks
+* ordering
+
+### Structure identity
+
+Ensure the database can store the same:
+
+```text
+School + Class + Period
+```
+
+in different Academic Sessions.
+
+The exact unique constraint must include `session_id`.
+
+For example:
+
+```text
+school_id
++ session_id
++ class
++ period_number
+```
+
+If the existing break representation requires a different safe uniqueness design, inspect the current data model and choose the smallest correct constraint. Do not invent unnecessary schema.
+
+---
+
+# 3. SCHOOL + SESSION OWNERSHIP
+
+A timetable must never connect:
+
+```text
+School A
++
+School B's Academic Session
+```
+
+Therefore, inspect the existing database relationships and add the smallest practical database-level protection available in this project.
+
+The final invariant must be:
+
+```text
+timetable.school_id
+=
+academic_session.school_id
+```
+
+Do not weaken multi-tenant isolation.
+
+If the current schema cannot enforce this through a simple foreign key/constraint without a large redesign, document that limitation and enforce it at the Storage layer instead.
+
+---
+
+# 4. EXISTING DEVELOPMENT DATA
+
+The audit confirmed:
+
+```text
+timetable_entries = 0 rows
+timetable_structure = 22 rows
+```
+
+The 22 structure rows are old Global timetable data.
+
+The project is still in BUILDING phase.
+
+Data loss is explicitly acceptable.
+
+Therefore:
+
+### DO NOT build a complicated migration.
+
+The old 22 global structure rows may be discarded.
+
+Before destructive action:
+
+* confirm the development database counts;
+* then remove/reset the old global timetable structure as part of this controlled development change.
+
+Do NOT touch unrelated tables or data.
+
+There are currently no timetable entry rows to preserve.
+
+---
+
+# 5. STORAGE LAYER
+
+Update all timetable storage methods so Session ID is **required**, not optional.
+
+Audit every timetable storage function.
+
+Any method currently accepting:
+
+```text
+schoolId
+```
+
+must be reviewed and changed to require:
+
+```text
+schoolId + sessionId
+```
+
+where the operation is session-specific.
+
+This includes at minimum:
+
+* timetable entry reads
+* timetable entry creation
+* timetable entry update
+* timetable entry deletion
+* batch save
+* batch delete
+* class timetable
+* teacher timetable
+* student timetable
+* slot lookup
+* collision checking
+* publish/status
+* structure reads
+* structure save/replacement
+
+Do NOT change API/UI in this stage.
+
+Only make the Storage contract correct.
+
+---
+
+# 6. NO OPTIONAL SESSION FILTER
+
+Remove the old pattern where:
+
+```text
+sessionId = null
+```
+
+means:
+
+> return all Sessions.
+
+That behavior must no longer exist for Timetable.
+
+Timetable storage operations must require an explicit Session.
+
+If Session is missing:
+
+```text
+REJECT
+```
+
+Do not silently return school-wide timetable data.
+
+---
+
+# 7. SESSION OWNERSHIP VALIDATION
+
+At the Storage boundary, verify:
+
+```text
+sessionId belongs to schoolId
+```
+
+If not:
+
+```text
+REJECT
+```
+
+Do not allow a caller to use another school's Academic Session.
+
+Do not trust client-supplied school/session combinations.
+
+---
+
+# 8. ARCHIVED SESSION
+
+For mutation methods, Storage must not allow writes to an archived/inactive Session.
+
+At minimum apply this to:
+
+* create
+* update
+* delete
+* batch save
+* batch delete
+* structure save/replacement
+* publish/status mutation
+
+Use the project's existing Academic Session active/writable convention.
+
+Do not create a second competing Session-state system.
+
+---
+
+# 9. IMPORTANT — DO NOT OVER-REFACTOR
+
+This is a controlled architectural change.
+
+Do NOT:
+
+* rewrite the timetable module;
+* redesign unrelated storage;
+* modify Attendance;
+* modify Leave;
+* modify Examination;
+* modify Student Registry;
+* modify Academic Session architecture;
+* modify Admin UI;
+* modify Teacher UI;
+* modify Student UI;
+* add unnecessary tables;
+* add unnecessary abstractions.
+
+Only change the Timetable database schema and Timetable Storage layer required for 100% Session ownership.
+
+---
+
+# 10. TESTS
+
+Add focused tests for the new Storage contract.
+
+At minimum verify:
+
+### Test A — Session required
+
+No Session:
+
+```text
+REJECT
+```
+
+### Test B — Correct school/session
+
+Same school + valid session:
+
+```text
+PASS
+```
+
+### Test C — Wrong-school session
+
+School A + School B Session:
+
+```text
+REJECT
+```
+
+### Test D — Archived session mutation
+
+Archived Session:
+
+```text
+REJECT
+```
+
+### Test E — Same slot across Sessions
+
+Same school/class/section/day/period:
+
+```text
+Session A → PASS
+Session B → PASS
+```
+
+Both must coexist.
+
+### Test F — Session-specific reads
+
+Session A read:
+
+```text
+returns Session A only
+```
+
+Session B read:
+
+```text
+returns Session B only
+```
+
+### Test G — Structure isolation
+
+Same class/period in Session A and Session B can have different timings.
+
+Both must coexist.
+
+### Test H — No NULL session rows
+
+After the schema change:
+
+```text
+timetable_entries.session_id IS NOT NULL
+timetable_structure.session_id IS NOT NULL
+```
+
+---
+
+# 11. VERIFICATION
+
+After implementation:
+
+Run the focused Timetable Storage/database tests.
+
+Then run:
+
+```text
+npm run check
+```
+
+Then:
+
+```text
+git diff --check
+```
+
+Inspect the final diff.
+
+Confirm:
+
+* schema changed only for Timetable;
+* Storage changed only for Timetable;
+* no Admin/Teacher/Student UI changes;
+* no unrelated modules changed;
+* no Attendance changes;
+* no Leave changes;
+* no Examination changes.
+
+Restart the application if required.
+
+---
+
+# 12. FINAL RESPONSE
+
+Return:
+
+### 1. Files changed
+
+Exact files.
+
+### 2. Database changes
+
+Explain simply.
+
+### 3. Storage changes
+
+Explain simply.
+
+### 4. Development data
+
+Confirm what happened to the old 22 global structure rows.
+
+### 5. Session isolation
+
+PASS/FAIL.
+
+### 6. Multi-tenant isolation
+
+PASS/FAIL.
+
+### 7. Archived Session protection
+
+PASS/FAIL.
+
+### 8. Tests
+
+Exact count/result.
+
+### 9. `npm run check`
+
+PASS/FAIL.
+
+### 10. `git diff --check`
+
+PASS/FAIL.
+
+### 11. Final diff scope
+
+Confirm only Database/Schema + Storage + focused tests changed.
+
+### 12. Final verdict
+
+If everything passes:
+
+**TIMETABLE STAGE 1 — DATABASE + STORAGE — PASS**
+
+Otherwise clearly state what remains.
+
+STOP after Stage 1.

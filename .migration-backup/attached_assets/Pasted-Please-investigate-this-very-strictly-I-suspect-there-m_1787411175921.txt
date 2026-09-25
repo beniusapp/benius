@@ -1,0 +1,69 @@
+Please investigate this very strictly. I suspect there may be a data mismatch between Financial Analytics and Ledger & Transactions.
+
+Example from the screenshots:
+
+- Financial Analytics → Today (22-Aug-2026)
+  - Gross Collected: ₹58,388
+  - Online/Portal: ₹54,700
+  - Offline/Cash: ₹3,688
+  - Total: ₹58,388
+
+But Ledger & Transactions → Paid On: 22-Aug-2026 appears to show:
+
+- Portal Payment: ₹35,000
+- Cash: ₹3,688
+- Total visible: ₹38,688
+
+So where is the remaining ₹19,700 in the Financial Analytics Online/Portal figure coming from?
+
+Do NOT assume that either screen is correct. Reconcile the actual database payment records and identify exactly why the numbers differ.
+
+I want a complete accuracy audit of Financial Analytics against the authoritative payment/transaction data.
+
+Verify this for EVERY range:
+
+- Today
+- This Week
+- This Month
+- Academic Year
+- Custom date range
+
+And verify EVERY relevant metric/column, including:
+
+- Gross/Billed
+- Gross Collected
+- Net Collected
+- Refunds
+- Outstanding
+- Efficiency
+- Online/Portal collection
+- Offline collection
+- Payment channels/methods
+- Transaction counts
+- Average transaction
+- Class-wise totals
+- Fee-category totals
+- Aging/overdue amounts
+- Trends
+- Any other displayed financial figure
+
+For every number, prove that it is calculated from the same authoritative records used by Ledger & Transactions.
+
+Also verify:
+
+1. Exact Paid On timestamp/date and IST timezone boundaries.
+2. Academic-session filtering.
+3. Online vs offline classification.
+4. Payment status/lifecycle rules.
+5. Refund handling.
+6. Failed/cancelled/authorized payment attempts are not incorrectly counted as collected revenue.
+7. Duplicate/idempotent payment records are not double-counted.
+8. Tenant/school isolation.
+9. Pagination does not hide records from the reconciliation.
+10. Financial Analytics API, UI, Ledger, and exported PDFs all produce the same numbers.
+
+For the specific ₹54,700 vs ₹35,000 discrepancy, give me the exact payment records/IDs and calculation showing where the additional ₹19,700 comes from.
+
+If Financial Analytics is wrong, fix the calculation. If Ledger is wrong, fix Ledger. If both are technically correct because they use different definitions, clearly explain the difference and make the labels/definitions explicit.
+
+I want 100% reconciliation, not just a UI check. Do not mark this complete until every displayed financial amount and count has been independently reconciled against the underlying database records across all date ranges.

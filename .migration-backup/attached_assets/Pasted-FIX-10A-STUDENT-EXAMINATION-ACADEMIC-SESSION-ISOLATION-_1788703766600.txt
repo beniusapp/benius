@@ -1,0 +1,765 @@
+FIX 10A — STUDENT EXAMINATION ACADEMIC SESSION ISOLATION
+IMPLEMENTATION — NARROW SCOPE ONLY
+
+We are building a TRUE MULTI-TENANT SaaS School MIS intended for 1,000+ independent schools.
+
+Each school is an independent tenant.
+
+NON-NEGOTIABLE TENANT RULE:
+A user/student from School A must NEVER be able to access, retrieve, calculate with, save, update, modify, or infer School B's:
+- students
+- examination scores
+- academic sessions
+- policies
+- results
+- attendance
+- faculty
+- reports
+- analytics
+- or any other school-owned data.
+
+The authenticated user's school/tenant context is authoritative.
+
+Any client-supplied schoolId must NEVER be trusted for authorization.
+
+==================================================
+FIX 10A PURPOSE
+==================================================
+
+Implement ONLY the Student Examination Academic Session isolation fixes identified by the Fix 10 investigation.
+
+The confirmed primary defect is:
+
+Student Results has a selected Academic Session in the UI, but the main Student Examination "all scores" request does not transport the selected session to the server.
+
+As a result, the server can receive no session context and the score query can return scores from multiple Academic Sessions, including legacy NULL-session records.
+
+The Student result calculator then operates on that mixed-session data.
+
+There is also a confirmed Student rank issue:
+
+Student class rank does not consistently receive/apply the selected Academic Session.
+
+Fix these problems now.
+
+==================================================
+STRICT SCOPE
+==================================================
+
+THIS FIX IS ONLY FOR:
+
+1. Student Examination selected-session transport.
+2. Student Examination server-side session validation.
+3. Student Examination exact-session score retrieval.
+4. Student Examination result calculation receiving only selected-session scores.
+5. Student rank session scoping.
+6. Student Examination print/result output inheriting correctly scoped data.
+7. Tests proving the above behavior.
+
+DO NOT IMPLEMENT ANYTHING ELSE.
+
+==================================================
+DO NOT TOUCH THESE ITEMS
+==================================================
+
+DO NOT implement or change:
+
+- Fix 5 — Scored / Absent / Missing semantics
+- Fix 7 — Cumulative Calculation
+- Fix 9 — Calculation Path Consolidation
+- Promotion rules
+- Promotion Ledger
+- Promotion overrides
+- Promotion verdict
+- Promotion history
+- Faculty Mapping authorization
+- Teacher Examination authorization
+- Score validation
+- Grading rules
+- Pass/fail rules
+- Historical policy snapshots
+- Historical class/section redesign
+- Academic Session schema redesign
+- Database migration
+- NULL-session data migration
+- General analytics
+- Admin analytics
+- Teacher analytics
+- Student Journey unless it is directly required to prevent the Student Examination selected-session defect
+
+Do NOT refactor unrelated code.
+
+==================================================
+CURRENT ARCHITECTURE TO PRESERVE
+==================================================
+
+Fix 2 already established the authoritative Teacher Examination session model.
+
+The important existing concepts include:
+
+- authenticated user's school is authoritative
+- selected Academic Session is transported using:
+  x-view-session-id
+- server request context can contain:
+  req.viewSessionId
+- strict session validation exists for Teacher Examination
+- selected session must belong to authenticated user's school
+- NULL-session records must NOT substitute for an explicitly selected session
+
+Reuse the existing safe session mechanism where appropriate.
+
+Do NOT invent a second session-validation architecture if an existing reusable mechanism can safely be used.
+
+However:
+
+Do not assume the Teacher-specific resolver can be directly reused for Student routes.
+
+The Student route must derive the authenticated student's school/tenant from the authenticated student identity and validate the selected Academic Session against that school.
+
+==================================================
+STEP 1 — INSPECT BEFORE MODIFYING
+==================================================
+
+Before making changes, inspect the current implementation.
+
+At minimum inspect:
+
+- client/src/pages/student-examination.tsx
+- server/routes.ts
+- server/storage.ts
+- shared/examination-calculation-engine.ts
+- existing Student authentication/session context
+- existing session transport utilities
+- existing tests related to Student Examination
+- existing Academic Session helpers
+
+Trace:
+
+Student UI session selection
+→ React state/context
+→ query key
+→ actual HTTP request
+→ request headers
+→ server route
+→ authenticated student
+→ authenticated school
+→ Academic Session validation
+→ storage score query
+→ Student result calculator
+→ displayed result
+→ print/output
+
+Do not assume the React Query key provides server isolation.
+
+The actual HTTP request must carry the selected session.
+
+==================================================
+STEP 2 — STUDENT SESSION TRANSPORT
+==================================================
+
+Inspect the Student Examination page.
+
+Determine exactly how the selected Academic Session is currently stored.
+
+If the UI already has selectedSessionId, preserve that state.
+
+The actual Student Examination score request must transport the selected session to the server using the established session transport mechanism.
+
+Prefer the existing:
+
+x-view-session-id
+
+transport mechanism if compatible with the Student route.
+
+Do not create a new header.
+
+Do not trust a client-provided schoolId.
+
+The client may provide a session ID as a requested view context, but the server must validate it.
+
+IMPORTANT:
+
+The React Query cache key is NOT authorization.
+
+The server must receive and validate the session independently.
+
+==================================================
+STEP 3 — SERVER-SIDE STUDENT SESSION VALIDATION
+==================================================
+
+Inspect the Student Examination score route(s).
+
+Identify the authenticated student from the server-side authenticated session.
+
+Derive:
+
+authenticatedStudentId
+authenticatedSchoolId
+
+Do NOT derive schoolId from the request URL or request body for authorization.
+
+If the selected Academic Session is supplied:
+
+1. Parse/validate the session ID.
+2. Verify that the Academic Session exists.
+3. Verify that the Academic Session belongs to authenticatedSchoolId.
+4. Use the validated session ID for all Student Examination score retrieval in this path.
+5. Reject a foreign-school session.
+
+Use a safe generic error response.
+
+Do not reveal whether another school's session exists.
+
+Do NOT fall back to the active session if the user explicitly supplied a different selected session.
+
+==================================================
+STEP 4 — MISSING SESSION BEHAVIOR
+==================================================
+
+We need to preserve existing application behavior where appropriate, but Student Examination must not silently become cross-session when a selected session is required.
+
+Determine from the current Student Examination UI whether a selected Academic Session is always expected.
+
+If Student Examination always has a selected session:
+
+- missing session must fail closed with a generic client-safe error.
+
+If there is a legitimate current-session-only mode:
+
+- use the existing application convention,
+- but it must resolve the session against the authenticated student's school,
+- and it must NEVER become an unscoped "all sessions" query.
+
+IMPORTANT:
+
+Do not silently interpret:
+
+missing session = all sessions
+
+inside a selected-session Student Examination result request.
+
+If the existing contract is ambiguous, inspect the UI flow and current session context before deciding.
+
+Do not invent business behavior.
+
+==================================================
+STEP 5 — EXACT SCORE FILTER
+==================================================
+
+Once the session is validated, the Student Examination score query must use an exact session predicate.
+
+Conceptually:
+
+school_id = authenticatedStudentSchoolId
+AND student_id = authenticatedStudentId
+AND session_id = validatedSelectedSessionId
+
+Do NOT use:
+
+- no session filter
+- active session fallback when an explicit session exists
+- NULL-session fallback
+- all-session query
+- client schoolId as authorization
+- current academic year string as a substitute if an exact session ID is available
+
+If the existing storage function accepts optional sessionId, pass the validated session explicitly.
+
+Do not change global storage semantics unless required for this Student Examination path.
+
+==================================================
+STEP 6 — NULL-SESSION RECORDS
+==================================================
+
+When a specific Academic Session is selected:
+
+NULL-session Examination scores must NOT be included.
+
+Use strict session equality.
+
+Do NOT:
+
+- migrate NULL-session records
+- delete NULL-session records
+- assign NULL-session records to a session
+- reinterpret NULL-session records
+- change historical data
+
+This fix is about preventing NULL-session records from entering a selected-session Student Examination result.
+
+==================================================
+STEP 7 — STUDENT RESULT CALCULATOR
+==================================================
+
+The Student Examination result calculator currently includes an independent calculation path.
+
+DO NOT consolidate it with the shared engine during Fix 10A.
+
+Do NOT modify its business formulas except where necessary to ensure it receives ONLY the selected-session score data.
+
+The important requirement is:
+
+selected Academic Session
+→ exact-session scores
+→ Student result calculator
+
+NOT:
+
+selected Academic Session
+→ all-session scores
+→ calculator
+
+Do not change:
+
+- weighting rules
+- absent behavior
+- missing behavior
+- incomplete behavior
+- cumulative behavior
+- grade rules
+- pass/fail rules
+- promotion rules
+
+==================================================
+STEP 8 — STUDENT RANK
+==================================================
+
+The Fix 10 investigation found that Student class rank can omit Academic Session.
+
+Inspect the Student rank flow.
+
+At minimum inspect:
+
+- Student Examination rank request
+- relevant server route
+- storage getClassRank or equivalent
+- all callers of the rank helper
+
+The selected Academic Session must be passed into the rank calculation when the rank is displayed in a selected-session Examination context.
+
+The rank query/calculation must be scoped to:
+
+- authenticated school
+- selected Academic Session
+- appropriate class/section context
+- appropriate students/scores
+
+Do not allow scores from other Academic Sessions to influence the rank.
+
+If the rank helper is shared by multiple features and changing its signature would affect unrelated paths, do not perform a broad refactor.
+
+Make the smallest safe change needed for the Student Examination path.
+
+If the helper is intentionally all-history in another caller, preserve that caller's behavior.
+
+==================================================
+STEP 9 — STUDENT PRINT / RESULT OUTPUT
+==================================================
+
+Inspect Student Examination print/result output.
+
+Do not add another score query unless necessary.
+
+The printed Student result must inherit the same correctly session-scoped data that the Student Examination screen uses.
+
+Because the underlying score dataset will now be exact-session scoped, verify that print/export does not independently fetch an unscoped dataset.
+
+If print/export performs another API request:
+
+- ensure the selected session is transported and validated.
+
+Do not redesign the print layout.
+
+==================================================
+STEP 10 — STUDENT QUERY CACHE
+==================================================
+
+Preserve selectedSessionId in relevant React Query keys.
+
+The query key is useful for preventing cache collisions, but it is NOT sufficient for security.
+
+Verify both:
+
+A. selectedSessionId is part of the cache identity
+
+AND
+
+B. selectedSessionId reaches the actual HTTP request.
+
+Both are required.
+
+==================================================
+STEP 11 — TENANT ISOLATION
+==================================================
+
+For every modified Student Examination endpoint:
+
+The authenticated student's school must be the tenant boundary.
+
+A client must NOT be able to do:
+
+schoolId = School B
+sessionId = School B session
+
+and retrieve School B data while authenticated as School A.
+
+The server must derive School A from the authenticated student.
+
+The selected session must then be validated:
+
+session.schoolId === authenticatedStudentSchoolId
+
+Only after that validation may it be used.
+
+Test at least:
+
+- School A student + School A session = allowed
+- School A student + School B session = rejected
+- School A student + invalid session = rejected
+- School A student + missing session where session is required = rejected/fail-closed
+- School A student + selected session A = only Session A scores returned
+- Session A + legacy NULL-session scores = NULL-session scores excluded
+
+==================================================
+STEP 12 — ACADEMIC SESSION ISOLATION TEST DATA
+==================================================
+
+Do not modify production/database data.
+
+Use mocked fixtures or unit/contract tests.
+
+Create test scenarios conceptually like:
+
+School A:
+Student 101
+Session 2027–2028
+Physics = 70
+
+Session 2028–2029
+Physics = 90
+
+Legacy NULL-session score:
+Physics = 50
+
+Expected when viewing 2028–2029:
+
+Only 90 is available to Student Examination.
+
+Expected:
+
+70 must not be included.
+50 must not be included.
+
+Then test:
+
+School B:
+Student 202
+
+School B Session:
+Physics = 95
+
+School A student requesting School B session:
+
+Must be rejected.
+
+Do not insert these records into the actual application database.
+
+==================================================
+STEP 13 — TEST STUDENT RESULT ISOLATION
+==================================================
+
+Add focused tests where appropriate.
+
+Tests should prove:
+
+1. selected session is transported in the actual Student Examination request.
+2. server validates session ownership against authenticated student school.
+3. score retrieval uses exact session.
+4. NULL-session records are excluded from selected-session results.
+5. scores from another Academic Session are excluded.
+6. Student result calculation receives only selected-session scores.
+7. Student rank uses selected Academic Session.
+8. foreign-school session is rejected.
+9. missing session cannot silently return all sessions in a selected-session result context.
+10. changing selected session changes the server-side result dataset.
+
+Use the smallest focused test set necessary.
+
+==================================================
+STEP 14 — DO NOT BREAK EXISTING TEACHER SESSION ISOLATION
+==================================================
+
+After implementation, verify that the existing Teacher Examination session behavior remains unchanged.
+
+Do not modify the existing Teacher session architecture unless absolutely required for safe shared reuse.
+
+Teacher behavior must continue to support:
+
+- authenticated teacher school
+- selected session
+- strict school/session validation
+- exact score session filtering
+- no NULL-session substitution
+
+==================================================
+STEP 15 — DO NOT CHANGE FIX 5
+==================================================
+
+This is critical.
+
+Do NOT redesign or change:
+
+- Missing
+- Absent
+- Scored
+- zero marks
+- incomplete
+
+If tests need fixture states, preserve existing semantics.
+
+==================================================
+STEP 16 — DO NOT CHANGE FIX 7
+==================================================
+
+Do NOT change:
+
+- cumulative formula
+- term weights
+- normalization
+- trigger term
+- cumulative rounding
+- missing-term behavior
+
+==================================================
+STEP 17 — DO NOT CHANGE FIX 9
+==================================================
+
+Do NOT consolidate the Student calculator with:
+
+shared/examination-calculation-engine.ts
+
+Do not modify Admin Performance Analytics.
+
+Do not modify Teacher Results calculation architecture.
+
+Do not modify server calculation consolidation.
+
+This fix is only about the data boundary entering Student Examination.
+
+==================================================
+STEP 18 — DATABASE / SCHEMA SAFETY
+==================================================
+
+Prefer a code-only implementation.
+
+Do NOT modify schema.
+
+Do NOT create a migration.
+
+Do NOT modify database data.
+
+Do NOT add database constraints.
+
+If you discover that a schema change is absolutely required to safely complete Fix 10A:
+
+STOP.
+
+Do not make the schema change.
+
+Report:
+
+- why it is required
+- what table/column is involved
+- what the proposed change would be
+- why code-only implementation is insufficient
+
+We will approve separately.
+
+==================================================
+STEP 19 — ERROR HANDLING
+==================================================
+
+Do not reveal cross-tenant information.
+
+For:
+
+- invalid session
+- foreign-school session
+- malformed session
+- unauthorized session
+
+return the application's existing generic authorization/session error pattern where possible.
+
+Do not say:
+
+"Session X belongs to School B."
+
+Use a generic error such as:
+
+"Invalid academic session."
+
+Preserve existing error conventions where possible.
+
+==================================================
+STEP 20 — CHECK FOR UNINTENDED ALL-SESSION FALLBACK
+==================================================
+
+After implementing, search the Student Examination path again.
+
+Verify there is no remaining flow like:
+
+selectedSessionId exists
+BUT
+actual score request has no session header
+
+or:
+
+req.viewSessionId is missing
+AND
+storage query removes session predicate
+
+or:
+
+sessionId ?? activeSession
+
+when an explicitly selected session exists.
+
+Also verify no Student Examination result path calls a broad all-session score helper without an explicit reason.
+
+==================================================
+STEP 21 — RUN VALIDATION
+==================================================
+
+Run the project's appropriate validation commands.
+
+At minimum, if available:
+
+npm run check
+
+Run the focused tests related to this fix.
+
+Run:
+
+git diff --check
+
+Inspect the final diff carefully.
+
+Confirm that changes are limited to Fix 10A.
+
+==================================================
+FINAL REPORT
+==================================================
+
+After implementation, return a report with exactly these sections:
+
+1. IMPLEMENTATION SUMMARY
+
+Explain what was changed.
+
+2. FILES CHANGED
+
+List every changed file.
+
+For each file explain why it changed.
+
+3. STUDENT SESSION FLOW
+
+Show:
+
+Selected Session
+→ Client Transport
+→ Server Authentication
+→ Tenant Resolution
+→ Session Validation
+→ Exact Score Query
+→ Student Calculation
+→ Result Display/Print
+
+4. TENANT ISOLATION
+
+Explain how authenticated student school remains authoritative.
+
+5. SESSION ISOLATION
+
+Explain how selected Academic Session is now enforced.
+
+6. NULL-SESSION HANDLING
+
+Confirm whether NULL-session scores are excluded from selected-session Student Examination results.
+
+7. STUDENT RANK
+
+Explain how rank is now session-scoped.
+
+8. TESTS
+
+List:
+- tests run
+- tests added
+- tests passed/failed
+
+9. VALIDATION
+
+Report:
+
+npm run check:
+PASS/FAIL
+
+git diff --check:
+PASS/FAIL
+
+10. DATABASE SAFETY
+
+Explicitly state:
+
+Schema changes: NONE
+Migrations: NONE
+Database data changes: NONE
+
+If this is not true, STOP and explain before proceeding.
+
+11. SCOPE SAFETY
+
+Explicitly confirm:
+
+Fix 5 changed: NO
+Fix 7 changed: NO
+Fix 9 changed: NO
+Promotion logic changed: NO
+Grading logic changed: NO
+Pass/fail logic changed: NO
+Teacher Examination session architecture changed: NO, unless a shared safe utility was required and behavior remained identical
+
+12. FINAL RESULT
+
+State whether Fix 10A is complete and whether any unresolved issue remains.
+
+==================================================
+NON-NEGOTIABLE FINAL RULE
+==================================================
+
+Implement ONLY Fix 10A.
+
+Do not expand scope.
+
+Do not fix unrelated findings from the Fix 10 audit.
+
+Do not implement Promotion Session Integrity.
+
+Do not implement Promotion Overrides.
+
+Do not implement Promotion Ledger changes.
+
+Do not implement Student Journey changes unless directly required for the Student Examination selected-session defect.
+
+Do not implement Fix 5.
+
+Do not implement Fix 7.
+
+Do not implement Fix 9.
+
+Do not make schema/database changes without explicit approval.
+
+If an unexpected dependency requires one of those changes, STOP and report it instead of proceeding.
+
+After implementation, stop and provide the complete report.

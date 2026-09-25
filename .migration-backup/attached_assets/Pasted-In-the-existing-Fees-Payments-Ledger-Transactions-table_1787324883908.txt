@@ -1,0 +1,101 @@
+In the existing Fees & Payments → Ledger & Transactions table, make only this change:
+
+Add two columns
+
+Add these two columns immediately after the existing Fee Type column:
+
+Fee Type → Fee Period → Frequency → Amount
+
+The relevant portion of the table must therefore be:
+
+Fee Name | Fee Type | Fee Period | Frequency | Amount
+
+Fee Period
+
+Use the existing fee/invoice period data already available in the current database/API.
+
+Display the actual period for that specific invoice, for example:
+
+- "01 Apr 2027 – 31 Mar 2028"
+- "01 Apr 2027 – 30 Jun 2027"
+- "01 Aug 2027 – 31 Aug 2027"
+
+Do not guess or generate a period from the fee name.
+
+Frequency
+
+Use the existing frequency value associated with that fee/invoice.
+
+Examples:
+
+- Monthly
+- Quarterly
+- Half-Yearly
+- Annual
+- One-Time
+
+Do not hard-code or infer the value from the fee name if an existing database/API field is available.
+
+If the existing record has no value, display "—".
+
+Important
+
+The Notes column has already been removed. Do NOT make any changes related to Notes.
+
+Do not:
+
+- Re-add Notes.
+- Modify the Notes database field.
+- Create new database columns.
+- Change invoice generation.
+- Change payment processing.
+- Change receipts.
+- Change Razorpay.
+- Change filters/search/sorting.
+- Change the existing table design.
+- Change any other module.
+
+UI
+
+Keep the exact existing Ledger & Transactions design.
+
+Use the same:
+
+- Font
+- Font sizes
+- Colors
+- Spacing
+- Alignment
+- Dark theme
+- Responsive behavior
+- Row styling
+
+Do not make existing text smaller to accommodate these columns. If the table becomes wider, use the existing horizontal scrolling behavior.
+
+First inspect, then implement
+
+Before editing, inspect the existing ledger record/API structure and identify the actual existing fields for:
+
+- Fee Period
+- Frequency
+
+Use those existing fields. Do not create duplicate fields or invent new data.
+
+Verification
+
+After implementation, check several existing records:
+
+- Monthly
+- Quarterly
+- Annual
+- One-Time
+- Paid
+- Due
+
+Confirm that the table displays:
+
+Fee Name | Fee Type | Fee Period | Frequency | Amount
+
+with the correct values for each invoice.
+
+This is a small targeted change only. Do not modify anything else.

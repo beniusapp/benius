@@ -1,0 +1,741 @@
+ATTENDANCE REMEDIATION — STEP 0
+READ-ONLY DATABASE + DATA INTEGRITY INVESTIGATION
+
+We are beginning remediation of the Attendance subsystem.
+
+IMPORTANT PROJECT REQUIREMENTS — DO NOT VIOLATE:
+
+1. This is a strict multi-tenant / multi-school MIS.
+2. schoolId / tenant is the permanent ownership boundary.
+3. No cross-school data access, calculations, joins, writes, or assumptions are allowed.
+4. Academic Session is mandatory context for session-specific academic data.
+5. Attendance must ultimately be strictly isolated by:
+   authenticated school/tenant + Academic Session + Student + attendance date.
+6. Application-facing business/date logic uses IST / Asia/Kolkata.
+7. Student Registry is the global/current Student master.
+8. Session-specific historical behavior must use the appropriate session-scoped enrollment/history rather than blindly using current Student class/section.
+9. Do not redesign unrelated modules.
+10. Do not change Exam Controller architecture.
+11. Do not change Student Registry architecture.
+12. Do not change Teacher Examination architecture.
+13. Do not make assumptions based only on schema.ts. Inspect the actual database and actual code paths.
+
+==================================================
+ABSOLUTE RULE: READ-ONLY
+==================================================
+
+THIS STEP MUST MAKE ZERO CHANGES.
+
+Do NOT:
+
+- modify any source file
+- modify shared/schema.ts
+- create or modify migrations
+- run db:push
+- run db:migrate
+- run ALTER TABLE
+- run CREATE INDEX
+- run CREATE TABLE
+- run DROP
+- run DELETE
+- run UPDATE
+- run INSERT
+- run TRUNCATE
+- run VACUUM FULL
+- modify constraints
+- modify indexes
+- modify database data
+- modify configuration
+- modify environment variables
+- modify production
+- modify development data
+- "clean up" duplicate records
+- backfill session IDs
+- repair records
+- automatically fix anything
+
+Read-only SELECT / schema inspection / metadata inspection is allowed.
+
+If any diagnostic command could modify data or schema, DO NOT run it.
+
+Do not deploy anything.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Before we implement any Attendance remediation, determine the ACTUAL current database state and the ACTUAL relationships between:
+
+- schools
+- students
+- teachers
+- academic sessions
+- session-scoped student enrollment/history
+- attendance_records
+- teacher_self_attendance
+- attendance_correction_requests
+- attendance_policies
+- school calendar / holidays
+- leave records that influence attendance
+
+We need to know whether the existing Attendance data can safely support the future canonical identity:
+
+school_id + session_id + student_id + attendance_date
+
+Do NOT implement that identity yet.
+
+==================================================
+PART 1 — ACTUAL DATABASE STRUCTURE
+==================================================
+
+Inspect the actual connected database.
+
+For each Attendance-related table, report:
+
+1. Exact table name.
+2. Exact columns.
+3. Exact PostgreSQL data types.
+4. NULL / NOT NULL.
+5. Default values.
+6. Primary keys.
+7. Foreign keys.
+8. Foreign-key ON DELETE behavior.
+9. Unique constraints.
+10. Unique indexes.
+11. Non-unique indexes.
+12. Check constraints.
+13. Any triggers.
+14. Any generated columns.
+15. Any sequences/identity behavior.
+16. Approximate row count.
+
+At minimum inspect:
+
+- attendance_records
+- teacher_self_attendance
+- attendance_correction_requests
+- attendance_policies
+
+Also identify the actual tables used for:
+
+- schools
+- students
+- teachers
+- users
+- academic sessions
+- session-scoped Student enrollment/history
+- school calendar / holidays
+- Student leave
+- Teacher leave
+
+Do not assume their names. Determine the actual names from the database.
+
+==================================================
+PART 2 — ATTENDANCE TABLE ORIGIN
+==================================================
+
+Determine how the Attendance tables actually exist in the current environment.
+
+Specifically investigate:
+
+- Are they created by migrations?
+- Are they created by db:push?
+- Are they created by bootstrap/setup code?
+- Are they created by some previous schema synchronization?
+- Are they present in the current database but absent from tracked migrations?
+
+Report:
+
+A. What creates each Attendance table.
+B. Whether that creation is reproducible from the repository.
+C. Whether schema.ts matches the actual database.
+D. Any differences between schema.ts and the real database.
+
+Do not modify anything.
+
+==================================================
+PART 3 — ACTUAL ROW COUNTS
+==================================================
+
+For each Attendance table, report actual row counts.
+
+At minimum:
+
+- attendance_records total
+- teacher_self_attendance total
+- attendance_correction_requests total
+- attendance_policies total
+
+Also report counts grouped by school_id where safe and useful.
+
+IMPORTANT:
+
+Do not expose unnecessary student PII.
+
+Use IDs/counts only.
+
+Do NOT print:
+
+- student names
+- emails
+- phone numbers
+- addresses
+- passwords
+- tokens
+- sensitive personal information
+
+The purpose is structural/data-integrity analysis only.
+
+==================================================
+PART 4 — ATTENDANCE SESSION COVERAGE
+==================================================
+
+For attendance_records, determine:
+
+1. Total rows.
+2. Rows with session_id IS NULL.
+3. Rows with session_id NOT NULL.
+4. Distinct session IDs represented.
+5. Distinct schools represented.
+6. Rows where session_id points to an existing Academic Session.
+7. Rows where session_id references a missing/deleted session, if detectable.
+8. Date range of attendance records.
+9. Records per Academic Session.
+10. Records per school + session.
+
+Report results using counts, not PII.
+
+Example format:
+
+School A:
+- Session X: N rows
+- Session Y: N rows
+- NULL session: N rows
+
+But use actual IDs or safe labels only; do not reveal school names unless necessary.
+
+==================================================
+PART 5 — DUPLICATE IDENTITY INVESTIGATION
+==================================================
+
+THIS IS CRITICAL.
+
+Determine whether the current database already contains duplicate attendance records for the intended future identity:
+
+school_id + session_id + student_id + date
+
+Run READ-ONLY aggregate queries to identify:
+
+A. duplicates by:
+   student_id + date
+
+B. duplicates by:
+   school_id + student_id + date
+
+C. duplicates by:
+   school_id + session_id + student_id + date
+
+For each grouping, report:
+
+- number of duplicate groups
+- number of affected rows
+- maximum duplicate count in a group
+
+Do NOT delete or modify anything.
+
+Also determine whether duplicate records can exist because of NULL session_id.
+
+==================================================
+PART 6 — CROSS-SCHOOL DATA INTEGRITY
+==================================================
+
+Investigate whether attendance_records can contain mismatched tenant ownership.
+
+For each attendance record, logically compare:
+
+attendance_records.school_id
+against
+students.school_id
+
+Report:
+
+- number of rows where they match
+- number where they do not match
+- number that cannot be validated because the Student no longer exists
+
+Then compare:
+
+attendance_records.school_id
+against
+teacher.school_id
+
+Report the same categories.
+
+Do NOT modify any mismatched records.
+
+If mismatches exist, report only aggregate counts and safe IDs needed for diagnosis.
+
+==================================================
+PART 7 — CROSS-SESSION DATA INTEGRITY
+==================================================
+
+Determine whether attendance records are associated with a Student's valid enrollment for that Academic Session.
+
+Inspect the actual session enrollment/history model used by this application.
+
+For attendance_records with non-null session_id, determine:
+
+1. Does the Student have an enrollment/history record for that school + session?
+2. Does the attendance class snapshot agree with the session enrollment class?
+3. Does the attendance section snapshot agree with the session enrollment section?
+4. Does the current Student class/section differ from the historical/session enrollment class/section?
+
+Report aggregate counts for:
+
+- valid session enrollment
+- missing session enrollment
+- class mismatch
+- section mismatch
+- current-vs-historical class difference
+- current-vs-historical section difference
+
+Do not change anything.
+
+IMPORTANT:
+
+Do not assume that current students.class/students.section is authoritative for historical sessions.
+
+==================================================
+PART 8 — NULL SESSION INVESTIGATION
+==================================================
+
+For attendance_records where session_id IS NULL:
+
+Determine whether the row can be safely associated with a specific Academic Session using existing data.
+
+Investigate available evidence such as:
+
+- attendance date
+- school
+- Student enrollment history
+- Academic Session date ranges
+- class/section snapshots
+- current Student data
+
+DO NOT automatically assign a session.
+
+Instead classify NULL-session records as:
+
+1. Clearly attributable to exactly one session
+2. Potentially attributable to multiple sessions
+3. Cannot safely determine
+4. Outside known session ranges
+5. Other ambiguity
+
+Return counts for each category.
+
+This is investigation only.
+
+==================================================
+PART 9 — SESSION DELETION BEHAVIOR
+==================================================
+
+Inspect the actual Academic Session foreign-key relationship.
+
+Determine:
+
+- What happens to attendance_records when an Academic Session is deleted?
+- Is session_id SET NULL?
+- CASCADE?
+- RESTRICT?
+- Something else?
+
+Do not delete a session.
+
+Do not simulate destructive behavior.
+
+Use schema metadata and existing foreign-key definitions only.
+
+Explain the consequence for historical Attendance.
+
+==================================================
+PART 10 — TEACHER SELF-ATTENDANCE
+==================================================
+
+Inspect actual teacher_self_attendance data and constraints.
+
+Determine:
+
+- whether duplicates can exist for teacher + date
+- whether school is part of uniqueness
+- whether session is part of uniqueness
+- whether session_id is nullable
+- whether teacher_id and school_id can mismatch
+- date storage type
+- timestamp storage type
+- current status values actually present
+
+Report aggregate counts.
+
+Do not modify anything.
+
+==================================================
+PART 11 — CORRECTION REQUEST DATA
+==================================================
+
+Inspect attendance_correction_requests.
+
+Determine actual values present for:
+
+- status
+- school
+- teacher
+- session
+- dates
+
+Determine whether there are:
+
+- duplicate requests
+- NULL session records
+- teacher/school mismatches
+- correction records whose corresponding attendance row no longer exists
+
+Do not modify.
+
+Also verify from code whether these correction records represent a genuine approval lifecycle or are automatically approved.
+
+==================================================
+PART 12 — ATTENDANCE STATUS VALUES
+==================================================
+
+Inspect actual attendance_records.status values.
+
+Return:
+
+- every distinct status
+- count for each status
+
+Do not assume the allowed statuses.
+
+Compare actual database values against the statuses expected by the current application.
+
+Specifically investigate:
+
+- present
+- absent
+- late
+- halfday
+- leave
+- not-marked
+- holiday
+- any unexpected/custom values
+
+Do not modify invalid values.
+
+==================================================
+PART 13 — EDIT COUNT INTEGRITY
+==================================================
+
+Inspect attendance_records.edit_count.
+
+Report:
+
+- minimum
+- maximum
+- average
+- count = 0
+- count > 0
+- count above the application's configured edit cap, if a cap exists
+
+Check whether any negative values exist.
+
+Do not modify them.
+
+==================================================
+PART 14 — DATE RANGE / DATE VALIDITY
+==================================================
+
+Inspect attendance_records.date.
+
+Report:
+
+- minimum date
+- maximum date
+- NULL count
+- malformed/impossible values if applicable
+- rows in the future relative to current IST date
+- rows older than the application's intended retention/edit window
+
+Do not delete or alter anything.
+
+Use IST / Asia/Kolkata when interpreting "today".
+
+==================================================
+PART 15 — POLICY DATA INTEGRITY
+==================================================
+
+Inspect attendance_policies.
+
+Determine:
+
+- number of policies
+- active policies
+- inactive policies
+- multiple active policies with overlapping school/role/class scope
+- invalid grace minutes
+- invalid attendance target percentages
+- invalid time values
+- NULL values in important fields
+
+Do not modify policy records.
+
+Determine whether policy scope is currently:
+
+- school-global
+- class-specific
+- role-specific
+- session-specific
+- some combination
+
+==================================================
+PART 16 — CALENDAR / HOLIDAY RELATIONSHIP
+==================================================
+
+Identify the actual school-calendar/holiday data source used by Attendance.
+
+Determine:
+
+- whether holidays are persisted
+- how school-specific they are
+- whether session-specific
+- whether date values are SQL DATE or timestamp/text
+- whether Attendance calculations actually consume the calendar
+- whether Teacher marking restrictions and Student calculations use the same source
+
+Do not modify calendar data.
+
+==================================================
+PART 17 — LEAVE RELATIONSHIP
+==================================================
+
+Identify the actual Student leave tables/routes/storage used by Attendance.
+
+Determine:
+
+- how approved leave is represented
+- whether leave creates attendance_records
+- whether leave is only an overlay
+- whether leave is session-scoped
+- whether leave is school-scoped
+- whether Student attendance percentage includes leave
+- whether Admin and Student use the same leave interpretation
+
+Do not modify anything.
+
+==================================================
+PART 18 — CODE-TO-DATABASE CONSISTENCY
+==================================================
+
+Compare:
+
+shared/schema.ts
+
+against
+
+the actual PostgreSQL database.
+
+Report every Attendance-related mismatch.
+
+Examples:
+
+- schema says unique but DB doesn't have it
+- schema says nullable but DB doesn't
+- DB has index missing from schema
+- DB has constraint missing from schema
+- column type differs
+- FK behavior differs
+- table exists in DB but not migration/schema
+- migration exists but table doesn't
+
+Do not fix anything.
+
+==================================================
+PART 19 — CURRENT DATABASE SAFETY ASSESSMENT
+==================================================
+
+Based ONLY on evidence from the actual database, classify whether the database is currently ready for:
+
+A. Adding a unique constraint on:
+   school_id + session_id + student_id + date
+
+B. Making session_id NOT NULL
+
+C. Adding tenant composite constraints
+
+D. Adding atomic upsert logic
+
+For each, answer:
+
+READY
+NOT READY
+READY ONLY AFTER DATA CLEANUP
+UNKNOWN
+
+Explain exactly why.
+
+Do not make any of these changes.
+
+==================================================
+PART 20 — EXISTING DATA CLEANUP REQUIREMENTS
+==================================================
+
+Without changing anything, determine what cleanup would be REQUIRED before we could safely enforce:
+
+school_id + session_id + student_id + date
+
+Classify required work into:
+
+1. Duplicate records
+2. NULL session records
+3. Cross-school mismatches
+4. Invalid Student relationships
+5. Invalid Teacher relationships
+6. Invalid session enrollment
+7. Invalid status values
+8. Invalid dates
+9. Other integrity problems
+
+For each category provide:
+
+- affected row count
+- affected group count
+- whether automatic cleanup would be safe
+- whether human/business-rule review would be required
+- what evidence would be needed before cleanup
+
+Do NOT perform cleanup.
+
+==================================================
+PART 21 — PRODUCTION SAFETY
+==================================================
+
+Determine which database/environment you are connected to.
+
+Do NOT assume it is development.
+
+Report:
+
+- environment/database identity if safely available
+- whether this appears to be development, staging, or production
+- whether any command executed during this audit could modify data
+
+If the environment cannot be confidently identified, explicitly say:
+
+"Environment could not be safely verified."
+
+DO NOT switch environments.
+
+DO NOT deploy.
+
+==================================================
+PART 22 — FINAL REPORT FORMAT
+==================================================
+
+Return the final report in exactly this structure:
+
+# STEP 0 — ATTENDANCE DATABASE & DATA INTEGRITY AUDIT
+
+## 1. Environment
+- Environment:
+- Database:
+- Read-only verification:
+
+## 2. Actual Attendance Tables
+Table-by-table structure and row counts.
+
+## 3. Attendance Table Origin
+How each table actually exists and whether it is reproducible.
+
+## 4. Session Coverage
+Counts of session-scoped and NULL-session records.
+
+## 5. Duplicate Analysis
+Show:
+- student + date
+- school + student + date
+- school + session + student + date
+
+## 6. Tenant Integrity
+Student-school and Teacher-school mismatch counts.
+
+## 7. Session/Enrollment Integrity
+Enrollment/class/section mismatch counts.
+
+## 8. NULL Session Classification
+Exactly how many can/cannot be safely attributed to a session.
+
+## 9. Teacher Self-Attendance Integrity
+
+## 10. Correction Request Integrity
+
+## 11. Status Integrity
+
+## 12. Edit Count Integrity
+
+## 13. Date/IST Integrity
+
+## 14. Policy Integrity
+
+## 15. Calendar/Holiday Relationship
+
+## 16. Leave Relationship
+
+## 17. Schema vs Actual DB Differences
+
+## 18. Readiness for Future Constraints
+
+For each:
+- Unique attendance identity
+- session_id NOT NULL
+- tenant integrity constraints
+- atomic upsert
+
+## 19. Required Data Cleanup Before Remediation
+
+Give exact categories and counts.
+
+## 20. Risks Discovered
+
+Rank only by technical severity:
+- Critical
+- High
+- Medium
+- Low
+
+Do NOT propose implementation yet.
+
+## 21. Recommended NEXT STEP
+
+Recommend ONLY the next investigation/remediation step.
+
+Do not implement it.
+
+==================================================
+FINAL HARD RULE
+==================================================
+
+THIS IS A READ-ONLY INVESTIGATION.
+
+At the end explicitly state:
+
+"NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED."
+
+Do not provide a remediation patch in this step.
+
+Do not create a migration in this step.
+
+Do not fix duplicate data in this step.
+
+Do not add constraints in this step.
+
+Do not change Attendance behavior in this step.

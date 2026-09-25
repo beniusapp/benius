@@ -1,0 +1,1337 @@
+MASTER IMPLEMENTATION PROMPT
+
+Fees & Payments Module — Modern Dark Dashboard UI + Lucide Icons + Full-Name Nested Routes
+
+You are working on an existing production multi-tenant school management application.
+
+Your task has two parts:
+
+1. Modernize the complete Fees & Payments module UI to match the dark, premium, elevated box-card aesthetic of the main Admin Dashboard shown in "1000104027.png".
+2. Implement explicit full-name nested sub-routes under "/dashboard/fees-and-payments".
+
+These changes must be implemented carefully without breaking any existing functionality.
+
+---
+
+🚨 CRITICAL ARCHITECTURAL RULE
+
+PART 1 — UI REDESIGN
+
+The UI redesign is a visual-only change.
+
+DO NOT MODIFY:
+
+- Backend logic
+- API endpoints
+- Database queries
+- Database schema
+- Drizzle models
+- Server routes
+- Authentication
+- Authorization
+- Permissions
+- React Query queries
+- React Query mutations
+- Query keys
+- Data-fetching functions
+- State variables
+- State setters
+- Event handlers
+- Business logic
+- Calculations
+- Validation logic
+- Invoice generation logic
+- Payment processing logic
+- PDF generation logic
+- Fee calculations
+- Late-fee calculations
+- Reminder/dunning logic
+- Notification logic
+- Provider logic
+- Cron logic
+- Existing functional capabilities
+
+Do not rewrite working logic simply to make the code cleaner.
+
+If a component already works, keep its existing logic intact and modify only its visual presentation.
+
+---
+
+PART 2 — ROUTING
+
+The routing change is explicitly allowed because full-name nested routes are required.
+
+However, do NOT change the business logic, API logic, database logic, state management, payment logic, invoice logic, or reminder logic while implementing the routes.
+
+Only modify the minimum routing/navigation/layout code required to support the new nested URLs.
+
+---
+
+1. FIRST: INSPECT THE EXISTING IMPLEMENTATION
+
+Before changing anything, inspect the existing codebase.
+
+Identify:
+
+Fees & Payments module
+
+- Main Fees & Payments page
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- External Portal
+- Audit Log
+
+Existing UI
+
+Identify:
+
+- Reusable card components
+- Tables
+- Charts
+- Filters
+- Buttons
+- Dropdowns
+- Badges
+- Tabs
+- Dialogs/modals
+- Forms
+- Loading states
+- Empty states
+- Error states
+- Responsive layouts
+- Existing icons
+- Existing navigation components
+
+Existing functionality
+
+Identify all:
+
+- Button handlers
+- React Query queries
+- React Query mutations
+- State variables
+- API calls
+- Route definitions
+- Navigation handlers
+- Invoice generation
+- Payment recording
+- PDF generation
+- Reminder configuration
+- Dunning functionality
+- External portal functionality
+- Audit log functionality
+
+Do not modify anything until the existing architecture is understood.
+
+---
+
+2. GLOBAL DESIGN LANGUAGE
+
+The entire Fees & Payments module should look like one unified modern SaaS dashboard.
+
+Use:
+
+- Deep slate/navy backgrounds
+- Elevated dark cards
+- Subtle borders
+- Soft shadows
+- Cyan/blue accents
+- Emerald for success/paid
+- Amber for warnings/pending
+- Rose/red for overdue/error
+- Indigo/violet for secondary information
+- Rounded 2xl cards
+- Rounded 3xl modals
+- Subtle gradients
+- Controlled glassmorphism
+- Clear visual hierarchy
+- Dense but readable layouts
+
+Avoid:
+
+- White content boxes
+- Large blank areas
+- Flat rectangular containers
+- Excessive borders
+- Excessive glowing effects
+- Excessive gradients
+- Random colors
+- Oversized empty containers
+- Inconsistent border radii
+- Gaming/neon styling
+
+The result should feel like a premium professional school SaaS dashboard.
+
+---
+
+3. LUCIDE REACT ICON REQUIREMENT
+
+Use existing "lucide-react" icons where available.
+
+If Lucide React is already installed, use it.
+
+Do NOT install unnecessary icon libraries.
+
+Do NOT replace functional components with new components merely to add icons.
+
+Icons must be visual-only.
+
+Do not attach new business logic to icons.
+
+---
+
+4. TOP NAVIGATION / SUB-TABS
+
+Transform:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- External Portal
+- Audit Log
+
+into elevated glassmorphism pill tabs.
+
+Container
+
+bg-slate-900/60
+backdrop-blur-md
+p-1.5
+rounded-2xl
+border border-slate-800/80
+
+Use:
+
+flex flex-wrap gap-2
+
+On mobile, prefer:
+
+overflow-x-auto
+flex-nowrap
+
+where necessary so tabs remain usable without breaking the page.
+
+---
+
+Active tab
+
+bg-gradient-to-r from-cyan-500 to-blue-600
+text-white
+shadow-lg
+shadow-cyan-500/25
+font-bold
+rounded-xl
+px-4
+py-2.5
+transition-all
+flex
+items-center
+gap-2.5
+
+Inactive tab
+
+text-slate-400
+hover:text-slate-100
+hover:bg-slate-800/60
+rounded-xl
+px-4
+py-2.5
+transition-all
+flex
+items-center
+gap-2.5
+font-medium
+
+---
+
+5. UNIQUE LUCIDE ICONS FOR EACH TAB
+
+Use these icons:
+
+Financial Analytics
+
+<TrendingUp className="w-4 h-4 text-cyan-400" />
+
+Fee Structures
+
+<Layers className="w-4 h-4 text-indigo-400" />
+
+Ledger & Transactions
+
+<Receipt className="w-4 h-4 text-emerald-400" />
+
+Reminders
+
+<BellRing className="w-4 h-4 text-amber-400" />
+
+If animation is visually appropriate:
+
+animate-pulse
+
+Use it subtly. Do not make the UI distracting.
+
+External Portal
+
+<Globe className="w-4 h-4 text-violet-400" />
+
+Audit Log
+
+<History className="w-4 h-4 text-rose-400" />
+
+---
+
+6. FINANCIAL ANALYTICS — METRIC CARDS
+
+Replace plain metric boxes with elevated dashboard cards.
+
+Use:
+
+bg-slate-900/80
+backdrop-blur-xl
+rounded-2xl
+p-5
+border border-slate-800
+hover:border-slate-700/80
+transition-all
+duration-300
+shadow-xl
+relative
+overflow-hidden
+group
+hover:-translate-y-1
+
+Add a subtle decorative radial glow.
+
+The glow is purely visual.
+
+---
+
+Gross Billed Demand
+
+Glow:
+
+from-cyan-500/20
+to-transparent
+
+Icon:
+
+<DollarSign className="w-5 h-5 text-cyan-400 p-1 bg-cyan-500/10 rounded-lg" />
+
+---
+
+Net Collected Revenue
+
+Glow:
+
+from-emerald-500/20
+to-transparent
+
+Icon:
+
+<CheckCircle2 className="w-5 h-5 text-emerald-400 p-1 bg-emerald-500/10 rounded-lg" />
+
+---
+
+Outstanding Deficit
+
+Glow:
+
+from-rose-500/20
+to-transparent
+
+Icon:
+
+<AlertTriangle className="w-5 h-5 text-rose-400 p-1 bg-rose-500/10 rounded-lg" />
+
+---
+
+Collection Efficiency
+
+Glow:
+
+from-blue-500/20
+to-transparent
+
+Icon:
+
+<Zap className="w-5 h-5 text-blue-400 p-1 bg-blue-500/10 rounded-lg" />
+
+---
+
+Discounts & Concessions
+
+Glow:
+
+from-purple-500/20
+to-transparent
+
+Icon:
+
+<Tag className="w-5 h-5 text-purple-400 p-1 bg-purple-500/10 rounded-lg" />
+
+---
+
+Late Penalties Collected
+
+Glow:
+
+from-amber-500/20
+to-transparent
+
+Icon:
+
+<Clock className="w-5 h-5 text-amber-400 p-1 bg-amber-500/10 rounded-lg" />
+
+---
+
+Metric typography
+
+Labels:
+
+text-xs
+font-semibold
+text-slate-400
+uppercase
+tracking-wider
+
+Values:
+
+text-2xl
+font-extrabold
+text-white
+tracking-tight
+
+Do NOT modify any existing metric calculations.
+
+---
+
+7. ANALYTICS SECTION CARDS
+
+Wrap each major analytics section inside an elevated dashboard card.
+
+Sections include:
+
+- Revenue Collection Trend
+- Class-Wise Breakdown
+- Payment Channel Split
+- Accounts Receivable Aging
+- Any other existing analytics sections
+
+Use:
+
+bg-slate-900/90
+backdrop-blur-xl
+rounded-2xl
+border border-slate-800/90
+p-6
+shadow-2xl
+space-y-4
+
+---
+
+Section icons
+
+Revenue Collection Trend
+
+<BarChart3 className="w-5 h-5 text-cyan-400" />
+
+Class-Wise Breakdown
+
+<Users className="w-5 h-5 text-indigo-400" />
+
+Payment Channel Split
+
+<CreditCard className="w-5 h-5 text-emerald-400" />
+
+Accounts Receivable Aging
+
+<Hourglass className="w-5 h-5 text-amber-400" />
+
+Header structure:
+
+flex items-center gap-2
+
+Use clear hierarchy between title and supporting description.
+
+Do NOT modify:
+
+- Chart library
+- Chart data
+- Calculations
+- Queries
+- Filters
+- Date logic
+
+---
+
+8. FEE STRUCTURES
+
+Transform each fee structure into a premium feature card.
+
+Use:
+
+bg-slate-900/90
+border border-slate-800
+rounded-2xl
+p-5
+shadow-xl
+transition-all
+duration-300
+hover:-translate-y-1
+hover:shadow-cyan-500/10
+hover:border-cyan-500/30
+
+Use:
+
+- Strong structure name
+- Description
+- Large pricing
+- Fee categories
+- Status
+- Existing actions
+
+Pricing:
+
+text-3xl
+font-black
+text-cyan-400
+hover:text-cyan-300
+transition-colors
+
+Card icon:
+
+<Sparkles className="w-5 h-5 text-amber-400" />
+
+Status badges:
+
+Active
+
+Use emerald styling.
+
+Auto
+
+Use cyan/blue styling.
+
+Do not change status values.
+
+All existing actions must remain functional:
+
+- Create
+- Edit
+- Delete
+- Generate invoices
+- Any other existing actions
+
+---
+
+9. LEDGER & TRANSACTIONS
+
+Wrap the ledger table inside:
+
+rounded-2xl
+border border-slate-800
+overflow-hidden
+shadow-2xl
+bg-slate-900/90
+
+Table header:
+
+bg-slate-950/80
+text-slate-400
+text-xs
+uppercase
+tracking-wider
+p-3
+font-bold
+border-b border-slate-800
+
+Rows:
+
+hover:bg-slate-800/50
+transition-colors
+
+Use subtle row separation.
+
+Do NOT modify:
+
+- Sorting
+- Filtering
+- Pagination
+- Search
+- API calls
+- Data
+- Actions
+
+---
+
+Receipt / Invoice chips
+
+Paid receipts:
+
+bg-emerald-500/10
+text-emerald-400
+border border-emerald-500/20
+px-2.5
+py-1
+rounded-lg
+text-xs
+font-semibold
+
+Pending invoices:
+
+bg-amber-500/10
+text-amber-400
+border border-amber-500/20
+px-2.5
+py-1
+rounded-lg
+text-xs
+font-semibold
+
+Do not change the actual identifiers.
+
+---
+
+10. PRIMARY ACTION BUTTONS
+
+Modernize primary actions.
+
+Add Invoice
+
+Use:
+
+<PlusCircle className="w-4 h-4 mr-2" />
+
+Style:
+
+bg-gradient-to-r
+from-blue-600
+to-indigo-600
+hover:from-blue-500
+hover:to-indigo-500
+text-white
+font-bold
+rounded-xl
+px-4
+py-2.5
+shadow-lg
+shadow-indigo-500/25
+transition-all
+active:scale-95
+
+---
+
+Record Offline Payment
+
+Use:
+
+<Banknote className="w-4 h-4 mr-2" />
+
+Style:
+
+bg-slate-800
+hover:bg-slate-700
+border border-slate-700
+text-slate-200
+font-semibold
+rounded-xl
+px-4
+py-2.5
+transition-all
+
+Do not modify their handlers.
+
+---
+
+11. MODALS / DIALOGS
+
+Apply the modern dark modal design consistently to all Fees & Payments dialogs.
+
+Examples:
+
+- Add Invoice
+- Record Payment
+- Fee Structure dialogs
+- Generate Invoice dialogs
+- Any existing Fees & Payments dialogs
+
+Overlay:
+
+bg-slate-950/80
+backdrop-blur-xl
+
+Modal:
+
+bg-slate-900
+border border-slate-800
+rounded-3xl
+p-6
+shadow-2xl
+max-w-lg
+w-full
+space-y-4
+
+Keep exactly unchanged:
+
+- Fields
+- Validation
+- Submit handlers
+- Mutations
+- Error handling
+- Success handling
+- Close behaviour
+
+---
+
+12. REMINDERS VIEW
+
+The Reminders system has already undergone a functional audit.
+
+DO NOT modify its functionality.
+
+Only redesign the presentation.
+
+Keep all existing functionality:
+
+- Automatic Reminder System
+- Active status
+- Last automatic check
+- SMS configuration
+- WhatsApp configuration
+- Email configuration
+- Save Settings
+- Test Send
+- Message Templates
+- D-2
+- D+0
+- D+3
+- D+7
+- D+14
+- Recent Deliveries
+- Automated Dunning Schedule
+
+Do NOT modify:
+
+- Dunning stages
+- Dunning calculations
+- Cron
+- Provider calls
+- Notification configuration
+- Templates
+- Database queries
+- Student reminder flow
+- Deduplication
+- Retry logic
+- Timeout logic
+
+Only change:
+
+- Cards
+- Layout
+- Typography
+- Icons
+- Spacing
+- Colors
+- Borders
+- Visual hierarchy
+
+---
+
+13. EXTERNAL PORTAL
+
+Redesign using the same dashboard language.
+
+Use:
+
+- Dark elevated cards
+- Consistent section headers
+- Compact status badges
+- Modern buttons
+- Consistent spacing
+- Responsive layout
+- Lucide icons where appropriate
+
+Do not modify external portal functionality.
+
+---
+
+14. AUDIT LOG
+
+Transform the Audit Log into a premium activity/data table.
+
+Use:
+
+bg-slate-900/90
+border border-slate-800
+rounded-2xl
+shadow-2xl
+overflow-hidden
+
+Make these easy to scan:
+
+- Event type
+- User
+- Timestamp
+- Action
+- Status
+- Details
+
+Use appropriate visual status badges.
+
+Do NOT modify audit queries or logging.
+
+---
+
+15. EMPTY / LOADING / ERROR STATES
+
+All existing states must remain functionally identical.
+
+Only redesign their visual presentation.
+
+Empty
+
+bg-slate-900/70
+border border-slate-800
+rounded-2xl
+
+Include:
+
+- Subtle Lucide icon
+- Existing heading
+- Existing explanation
+- Existing action if present
+
+Loading
+
+Use dark skeleton styling.
+
+Error
+
+Use subtle rose/red styling.
+
+Do not change the state logic.
+
+---
+
+16. RESPONSIVE DESIGN
+
+Mobile responsiveness is mandatory.
+
+Verify:
+
+- No horizontal page overflow
+- Navigation remains usable
+- Tabs scroll horizontally when necessary
+- Cards stack correctly
+- Tables remain usable
+- Buttons fit
+- Modals fit viewport
+- Forms remain readable
+- Charts remain usable
+- Text does not clip
+- No content is hidden accidentally
+
+Use responsive Tailwind classes.
+
+Do NOT introduce JavaScript viewport logic.
+
+---
+
+17. DESIGN CONSISTENCY
+
+Use consistent:
+
+Cards
+
+rounded-2xl
+border-slate-800
+bg-slate-900/90
+shadow-xl
+
+Small cards
+
+rounded-xl
+
+Major modals
+
+rounded-3xl
+
+Spacing
+
+Prefer:
+
+gap-4
+gap-5
+gap-6
+
+Typography
+
+Primary:
+
+text-white
+
+Secondary:
+
+text-slate-400
+
+Muted:
+
+text-slate-500
+
+Accent:
+
+text-cyan-400
+
+Positive:
+
+text-emerald-400
+
+Warning:
+
+text-amber-400
+
+Danger:
+
+text-rose-400
+
+---
+
+18. DO NOT OVER-DESIGN
+
+The goal is:
+
+Modern + Premium + Professional + Readable
+
+NOT:
+
+Neon gaming dashboard
+
+Use gradients and glows sparingly.
+
+Information readability is more important than decoration.
+
+---
+
+19. FULL-NAME NESTED ROUTES
+
+Now implement the explicit Fees & Payments sub-routes.
+
+Base path:
+
+/dashboard/fees-and-payments
+
+Routes:
+
+/dashboard/fees-and-payments/financial-analytics
+/dashboard/fees-and-payments/fee-structures
+/dashboard/fees-and-payments/ledger-and-transactions
+/dashboard/fees-and-payments/reminders
+/dashboard/fees-and-payments/external-portal
+/dashboard/fees-and-payments/audit-log
+
+---
+
+20. SHARED FEES & PAYMENTS LAYOUT
+
+Use the existing routing architecture.
+
+If React Router is being used, create/use the existing:
+
+<FeesAndPaymentsLayout />
+
+with nested child routes and:
+
+<Outlet />
+
+Do not introduce a second routing architecture.
+
+The shared layout should contain the persistent Fees & Payments:
+
+- Header
+- Sub-navigation
+- Shared visual scaffolding
+
+The selected child view renders inside the outlet.
+
+---
+
+21. ROUTE MAPPING
+
+Map:
+
+/dashboard/fees-and-payments/financial-analytics
+→ Financial Analytics
+
+/dashboard/fees-and-payments/fee-structures
+→ Fee Structures
+
+/dashboard/fees-and-payments/ledger-and-transactions
+→ Ledger & Transactions
+
+/dashboard/fees-and-payments/reminders
+→ Reminders
+
+/dashboard/fees-and-payments/external-portal
+→ External Portal
+
+/dashboard/fees-and-payments/audit-log
+→ Audit Log
+
+---
+
+22. DEFAULT REDIRECT
+
+When the user visits:
+
+/dashboard/fees-and-payments
+
+redirect to:
+
+/dashboard/fees-and-payments/financial-analytics
+
+Use the routing library's existing redirect mechanism.
+
+Do not create custom JavaScript navigation logic if the router already provides redirects.
+
+---
+
+23. ACTIVE TAB FROM URL
+
+The active tab must be determined from the current pathname.
+
+For example:
+
+/dashboard/fees-and-payments/reminders
+
+must highlight:
+
+Reminders
+
+The active state must use the existing URL/router state.
+
+Do not introduce a separate React state variable for active tabs.
+
+The URL should be the source of truth.
+
+---
+
+24. PRESERVE LEGACY LINKS
+
+Find existing links pointing to:
+
+/dashboard/fees
+
+or:
+
+/dashboard/fees-and-payments
+
+Ensure they ultimately resolve to:
+
+/dashboard/fees-and-payments/financial-analytics
+
+Do not break existing navigation.
+
+If there are existing legacy routes, preserve compatibility with redirects rather than deleting them blindly.
+
+---
+
+25. IMPORTANT ROUTING SAFETY RULE
+
+Do NOT modify:
+
+- API routes
+- Backend routes
+- Database routes
+- Payment routes
+- Invoice APIs
+- Reminder APIs
+- Notification APIs
+- Authentication
+- Authorization
+- React Query queries
+- Mutations
+- Business logic
+
+Only modify the frontend page routing required for the Fees & Payments nested URLs.
+
+---
+
+26. FUNCTIONAL PRESERVATION CHECK
+
+After implementation, verify that these continue to work.
+
+Financial Analytics
+
+- Metrics
+- Charts
+- Filters
+- Date/session selection
+- Existing analytics interactions
+
+Fee Structures
+
+- Add
+- Edit
+- Delete
+- Generate invoices
+- Existing fee actions
+
+Ledger
+
+- Search
+- Filters
+- Sorting
+- Pagination
+- View details
+- Transaction actions
+
+Reminders
+
+- Save Settings
+- Test Send
+- Template editing
+- Stage tabs
+- Recent Deliveries
+- Automatic reminder functionality
+
+External Portal
+
+- All existing functionality
+
+Audit Log
+
+- Search
+- Filtering
+- Existing log display
+
+Modals
+
+- Open
+- Close
+- Submit
+- Validation
+- Error handling
+- Success handling
+
+---
+
+27. ARCHITECTURAL SAFETY AUDIT
+
+Before finishing, compare the modified implementation against the original.
+
+Confirm that the following have NOT been changed:
+
+- API request payloads
+- API response handling
+- Database calls
+- React Query queries
+- React Query mutations
+- Query keys
+- State variables
+- State setters
+- Event handlers
+- Business calculations
+- Validation
+- Permissions
+- Authentication
+- Invoice generation
+- Payment recording
+- PDF generation
+- Reminder/dunning processing
+- Notification processing
+
+If a visual improvement appears to require changing business logic:
+
+STOP.
+
+Find a CSS/layout-only solution instead.
+
+---
+
+28. CODE-CHANGE DISCIPLINE
+
+Keep the changes minimal and focused.
+
+Do not:
+
+- Refactor unrelated code
+- Rename business variables
+- Rewrite components unnecessarily
+- Move backend code
+- Change API contracts
+- Change database models
+- Remove existing functionality
+- Add new functionality
+- Modify tests simply to make them pass
+
+Only change what is necessary for:
+
+1. UI modernization
+2. Lucide icons
+3. Responsive visual layout
+4. Required frontend nested routing
+
+---
+
+29. VERIFICATION
+
+After implementation run:
+
+TypeScript
+
+npx tsc --noEmit
+
+Expected:
+
+0 errors
+
+Tests
+
+Run the complete existing test suite.
+
+Expected:
+
+614/614 passing
+
+Do NOT modify tests merely to make them pass.
+
+Production build
+
+Run:
+
+npx tsx script/build.ts
+
+Expected:
+
+Build succeeds
+
+Existing non-blocking warnings are acceptable only if they are unchanged/pre-existing.
+
+---
+
+30. FINAL VISUAL REGRESSION CHECK
+
+Open and verify all six views:
+
+1. Financial Analytics
+2. Fee Structures
+3. Ledger & Transactions
+4. Reminders
+5. External Portal
+6. Audit Log
+
+Verify on:
+
+Desktop
+
+- Cards aligned
+- Consistent spacing
+- No broken layouts
+- No clipped content
+- Proper hierarchy
+- Consistent icons
+- Consistent colors
+
+Mobile
+
+- Tabs usable/scrollable
+- Cards stack correctly
+- Tables remain usable
+- Buttons fit
+- Modals fit viewport
+- No horizontal page overflow
+- No clipped text
+- No broken navigation
+
+---
+
+31. FINAL REPORT
+
+When everything is complete, provide a concise final report containing:
+
+Files changed
+
+List ONLY files actually modified.
+
+UI changes
+
+Summarize:
+
+- Dashboard-style card system
+- Dark visual language
+- Lucide icons
+- Analytics cards
+- Fee structure cards
+- Ledger redesign
+- Reminder redesign
+- External Portal redesign
+- Audit Log redesign
+- Modal redesign
+- Responsive improvements
+
+Routing changes
+
+List the six new full-name routes and confirm the default redirect.
+
+Functional preservation
+
+Explicitly confirm:
+
+- Backend unchanged
+- Database unchanged
+- API routes unchanged
+- React Query logic unchanged
+- State management unchanged
+- Business logic unchanged
+- Invoice logic unchanged
+- Payment logic unchanged
+- PDF generation unchanged
+- Reminder/dunning logic unchanged
+- Notification logic unchanged
+
+Verification
+
+Report exactly:
+
+TypeScript: PASS / FAIL
+Tests: PASS / FAIL
+Production Build: PASS / FAIL
+
+Also explicitly state:
+
+Functional code modified: YES / NO
+
+If YES, clearly explain exactly what was changed and why.
+
+---
+
+FINAL RULE
+
+This is primarily a UI modernization + frontend routing task.
+
+Do not turn it into a feature-development task.
+
+Do not add new functionality.
+
+Do not remove functionality.
+
+Do not refactor backend code.
+
+Do not alter database logic.
+
+Do not alter payment logic.
+
+Do not alter invoice logic.
+
+Do not alter PDF generation.
+
+Do not alter reminder/dunning logic.
+
+Do not alter notification logic.
+
+Use Lucide icons only as visual enhancements.
+
+The final result must look like a single cohesive, premium, modern dark SaaS dashboard, while the existing Fees & Payments application behaviour remains exactly intact.

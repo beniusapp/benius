@@ -1,0 +1,412 @@
+READ-ONLY AUDIT ONLY — DO NOT MODIFY ANYTHING.
+
+I need to verify a CRITICAL MULTI-TENANT SECURITY requirement for our school MIS application's SendGrid email configuration and Forgot Password flow.
+
+DO NOT:
+- modify code
+- create files
+- delete files
+- change database schema
+- run migrations
+- change data
+- change configuration
+- rotate or expose API keys
+- send real emails
+- install packages
+- refactor anything
+
+This is an INVESTIGATION ONLY.
+
+BUSINESS REQUIREMENT
+====================
+
+This application is a TRUE MULTI-TENANT SaaS application.
+
+Each school is an independent tenant.
+
+Example:
+
+Tenant A:
+- School: Mary Immaculate School
+- School Code: MIS
+- Principal/recovery email: ijazskk166@gmail.com
+- SendGrid API key: Mary Immaculate's own API key
+- From Email: Mary's configured sender
+
+Tenant B:
+- School: Prabha Public School
+- School Code: PPS
+- Principal/recovery email: another school's email
+- SendGrid API key: Prabha Public's own API key
+- From Email: Prabha's configured sender
+
+CRITICAL REQUIREMENT:
+
+Mary Immaculate MUST NEVER use Prabha Public's SendGrid configuration.
+
+Prabha Public MUST NEVER use Mary Immaculate's SendGrid configuration.
+
+A user's email address alone must NEVER determine which school's SendGrid credentials are used.
+
+The application must establish/validate the tenant first and then load ONLY that tenant's notification/email configuration.
+
+The intended flow is conceptually:
+
+Forgot Password request
+→ validate school code / tenant context
+→ identify user/recovery account INSIDE THAT TENANT
+→ load notification configuration belonging to THAT SAME TENANT
+→ load that tenant's SendGrid API key
+→ load that tenant's From Email / From Name
+→ send email through that tenant's SendGrid account
+
+NEVER:
+
+email
+→ search globally
+→ guess school
+→ use whichever SendGrid configuration is found
+
+AUDIT THESE EXACT AREAS
+=======================
+
+1. FORGOT PASSWORD REQUEST
+
+Trace the complete Forgot Password backend flow.
+
+Identify:
+- route
+- controller/handler
+- request fields
+- school code handling
+- tenant/school lookup
+- recovery email lookup
+- principal/user lookup
+- notification configuration lookup
+- SendGrid configuration lookup
+- actual SendGrid send function
+
+Give exact file paths and function names.
+
+2. TENANT SELECTION
+
+Verify exactly how the application determines the school/tenant during Forgot Password.
+
+Answer:
+
+- Is school code required?
+- Is school code validated against an actual school?
+- Is the recovery email searched globally or scoped by school_id/tenant_id?
+- Can one school's email accidentally resolve to another school?
+- Can a client-provided schoolId override the validated tenant?
+- Is tenant identity derived from trusted server-side data?
+- Is there any fallback/default school?
+
+3. RECOVERY EMAIL LOOKUP
+
+Find the exact database query used to identify the principal/recovery account.
+
+Verify that the query is effectively constrained like:
+
+WHERE school_id = validatedSchoolId
+AND normalized_email = normalizedRecoveryEmail
+
+or the equivalent tenant-safe implementation.
+
+Flag any query that does:
+
+WHERE email = ...
+
+without tenant/school restriction.
+
+Also check whether duplicate emails across different schools are supported safely.
+
+IMPORTANT TEST CASE:
+
+If the same email address existed in both MIS and PPS, verify that:
+
+MIS + email
+can only resolve the MIS account.
+
+PPS + email
+can only resolve the PPS account.
+
+4. SENDGRID CONFIGURATION LOOKUP
+
+Trace exactly how the SendGrid configuration is loaded.
+
+Verify that the application does NOT use:
+
+- one global SENDGRID_API_KEY
+- one global From Email
+- first matching school
+- email address to select SendGrid account
+- client-provided schoolId without server-side validation
+- fallback to another school's configuration
+- fallback to a default school's configuration
+
+Verify that it effectively does:
+
+validatedTenantId
+→ notification config belonging to validatedTenantId
+→ that tenant's SendGrid API key
+→ that tenant's From Email
+→ that tenant's From Name
+
+5. SENDGRID API KEY ISOLATION
+
+Do NOT print, reveal, expose, or log any real API key.
+
+Only report:
+- where the key is stored
+- which database/config record owns it
+- what school/tenant identifier is used to retrieve it
+- whether retrieval is tenant-scoped
+- whether any global fallback exists
+
+Verify whether different schools can have different API keys.
+
+6. FROM EMAIL / FROM NAME
+
+Verify that From Email and From Name are loaded from the SAME tenant's notification configuration as the API key.
+
+Example:
+
+MIS API key
++
+MIS From Email
++
+MIS From Name
+
+must never be mixed with PPS configuration.
+
+7. OTP / PASSWORD RESET CHALLENGE TENANCY
+
+Trace the password reset challenge storage.
+
+Verify that OTP challenges/reset tokens contain enough server-side identity to prevent cross-tenant use.
+
+Check:
+- school_id / tenant_id
+- user/principal identity
+- challenge ID
+- OTP hash
+- expiry
+- attempts
+- reset token hash
+- single-use state
+
+Verify that:
+
+MIS OTP cannot be used to reset a PPS account.
+
+PPS OTP cannot be used to reset a MIS account.
+
+8. VERIFY OTP
+
+Trace the Verify OTP endpoint.
+
+Verify that it does NOT identify the account only by:
+- email
+- OTP
+- reset token
+
+without tenant/user binding.
+
+Verify the challenge is tied to the originally validated tenant and account.
+
+9. RESET PASSWORD
+
+Trace the final password reset endpoint.
+
+Verify:
+- reset token is tenant-bound
+- reset token is user-bound
+- reset token is single-use
+- expired token rejected
+- token cannot be reused
+- password update affects only the intended tenant/user
+- active sessions are invalidated as intended
+
+10. FEES & PAYMENTS → REMINDERS → EMAIL CONFIGURATION
+
+Trace the existing Email configuration used by:
+
+Admin → Fees & Payments → Reminders → Email
+
+Specifically inspect:
+- Save Settings
+- Test Send
+- SendGrid API key storage
+- From Email
+- From Name
+- configuration retrieval
+- tenant authorization
+
+Verify that Test Send also uses the authenticated/authorized school's own notification configuration.
+
+A school administrator must never be able to test/send using another school's SendGrid configuration.
+
+11. FORGOT PASSWORD VS TEST SEND
+
+Compare the configuration lookup used by:
+
+A. Forgot Password OTP email
+
+B. Fees → Reminders → Test Send
+
+Determine whether both correctly resolve configuration by tenant.
+
+If they use different code paths, document both.
+
+12. CROSS-TENANT NEGATIVE TESTS — READ-ONLY ANALYSIS
+
+Do not execute destructive changes.
+
+Determine whether the current automated tests cover these scenarios:
+
+TEST A:
+MIS school code + MIS principal email
+→ MIS account only
+→ MIS SendGrid config only
+
+TEST B:
+PPS school code + PPS principal email
+→ PPS account only
+→ PPS SendGrid config only
+
+TEST C:
+MIS school code + PPS principal email
+→ generic failure
+→ no PPS account access
+→ no PPS SendGrid configuration used
+
+TEST D:
+PPS school code + MIS principal email
+→ generic failure
+→ no MIS account access
+→ no MIS SendGrid configuration used
+
+TEST E:
+Same email exists in both schools
+→ school code determines tenant
+→ no cross-tenant ambiguity
+
+TEST F:
+Attempt to manipulate client-provided schoolId/tenantId
+→ cannot switch SendGrid configuration to another school
+
+TEST G:
+No valid tenant
+→ no SendGrid email sent
+
+TEST H:
+Tenant exists but email account does not belong to that tenant
+→ no SendGrid email sent
+
+13. SEARCH FOR GLOBAL/FALLBACK SENDGRID CONFIGURATION
+
+Search the entire codebase for:
+
+SENDGRID_API_KEY
+sendgridApiKey
+sendgrid
+fromEmail
+from_email
+notification configuration
+emailProvider
+emailEnabled
+schoolId
+tenantId
+
+Identify any global SendGrid configuration that could bypass tenant-specific configuration.
+
+Do NOT expose secrets in the report.
+
+14. SECRET EXPOSURE
+
+Verify that API keys are not:
+- returned by API responses
+- exposed in frontend JavaScript
+- stored in client-side localStorage
+- printed in logs
+- returned in admin configuration responses
+- included in error messages
+- committed to source code
+
+Only report whether each condition is safe/unsafe.
+
+15. FINAL SECURITY FLOW
+
+Produce a clear diagram showing the actual current implementation:
+
+Forgot Password
+→ ?
+→ ?
+→ ?
+→ SendGrid configuration
+→ SendGrid
+→ recipient
+
+Annotate every step with:
+- tenant/school ID
+- user/principal ID
+- email
+- configuration ownership
+
+16. FINAL RESULT
+
+Return a structured report:
+
+A. OVERALL STATUS
+PASS / PARTIAL / BLOCKED
+
+B. TENANT ISOLATION
+PASS / FAIL
+
+C. RECOVERY EMAIL LOOKUP
+PASS / FAIL
+
+D. SENDGRID API KEY TENANT BINDING
+PASS / FAIL
+
+E. FROM EMAIL TENANT BINDING
+PASS / FAIL
+
+F. OTP TENANT BINDING
+PASS / FAIL
+
+G. RESET TOKEN TENANT BINDING
+PASS / FAIL
+
+H. TEST SEND TENANT BINDING
+PASS / FAIL
+
+I. GLOBAL SENDGRID FALLBACK
+FOUND / NOT FOUND
+
+J. SECRET EXPOSURE
+PASS / FAIL
+
+K. CROSS-TENANT TEST COVERAGE
+List exactly which tests exist and which are missing.
+
+For EVERY finding provide:
+- exact file path
+- function/route name
+- relevant logic description
+- severity
+- why it matters
+
+IMPORTANT:
+Do not fix anything.
+
+Do not change database/schema/data.
+
+Do not send any real email.
+
+Do not reveal any secret/API key value.
+
+This is strictly a READ-ONLY SECURITY AUDIT.
+
+STOP after the report.

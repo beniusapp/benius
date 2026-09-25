@@ -1,0 +1,101 @@
+INVESTIGATION ONLY — DO NOT MODIFY CODE, DATABASE, UI, SCHEMA, OR DATA.
+
+I want to understand exactly what the Audit Log under Fees & Payments → Audit Log is currently designed to do.
+
+The screenshot shows entries such as:
+
+- Online payment via Razorpay
+- Razorpay checkout cancelled
+- Razorpay payment failed
+- Cash payment
+- UPI/QR payment
+- Bank Transfer
+- Demand Draft
+- Different actors such as System, Razorpay (client), and admin users
+- Timestamp, Actor, Action, Description, and IP
+
+Do NOT change anything yet. Investigate and explain the current implementation.
+
+Please trace the complete logic:
+
+Audit Log UI
+→ API endpoint
+→ backend/service
+→ database table(s)
+→ event creation logic
+→ actor/source detection
+→ timestamp generation
+→ action classification
+→ description generation
+→ IP handling
+→ tenant/school scoping
+→ pagination/filtering
+
+Specifically answer:
+
+1. What is the exact purpose of this Audit Log in Fees & Payments?
+2. What database table(s) store these audit records?
+3. What exact events create an Audit Log entry?
+4. List EVERY current action/event type that can appear.
+5. Which payment events are recorded?
+   - Payment created
+   - Payment captured
+   - Payment failed
+   - Payment cancelled
+   - Refund
+   - Payment correction
+   - Offline payment
+   - Invoice creation
+   - Invoice modification
+   - Other
+6. Are Razorpay webhook events recorded here?
+7. Are client-side Razorpay events recorded here?
+8. Are payment_attempts/payment_records automatically reflected here, or are these separate systems?
+9. What is the difference between:
+   - Audit Log
+   - Payment History
+   - Transaction Details
+   - Payment Attempt Timeline
+10. For each Audit Log row, where do these values come from?
+
+- Timestamp
+- Actor
+- Action
+- Description
+- IP
+
+11. How is the actor determined?
+
+- Admin user
+- System
+- Razorpay/client
+- Webhook
+- Other
+
+12. Are timestamps stored in UTC and displayed in IST? Show the exact conversion path.
+13. Is the IP address stored? If yes, from which request/source?
+14. Is the Audit Log immutable? Can existing entries be edited or deleted?
+15. Is every important financial/payment event guaranteed to create an audit entry, or are there gaps?
+16. Is the audit log tenant/school scoped at every database query?
+17. What filters and pagination are currently implemented?
+18. What is the current retention/history limit, if any?
+19. Identify any duplicate events or events that may be misleading.
+20. Identify any security/privacy problems with the current Audit Log, especially IP addresses, payer information, payment IDs, or sensitive gateway data.
+
+IMPORTANT:
+Do not propose or implement fixes yet.
+
+I only want a clear technical investigation report showing the CURRENT Audit Log architecture and logic.
+
+At the end provide:
+
+A. Current Audit Log purpose
+B. Current event/action list
+C. Database tables and fields used
+D. Complete data flow
+E. Difference between Audit Log vs Payment History vs Transaction Details
+F. What is currently missing from the audit trail
+G. Security/privacy concerns
+H. Exact files, API routes, database tables, and functions involved
+
+No code changes. No migrations. No database changes. No UI changes.

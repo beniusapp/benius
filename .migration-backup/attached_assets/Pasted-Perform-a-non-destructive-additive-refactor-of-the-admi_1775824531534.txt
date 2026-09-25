@@ -1,0 +1,51 @@
+Perform a non-destructive, additive refactor of the /admin-dashboard/school-setup and /admin-dashboard/exam-controller modules to implement a school-specific Academic Policy and an Automated-Manual Promotion System.
+
+PART 1: THE ACADEMIC DNA (Setup Configuration)
+
+Module Path: /admin-dashboard/school-setup/academic-policy.
+
+Global Passing Threshold: Add a persistent input field for 'Minimum Pass Percentage' (e.g., 35). Save this to the school_settings table.
+
+Dynamic Grade Builder: Build an editable table to define grade brackets.
+
+Columns: Grade (A+, B, F), Min %, Max %, Grade Point, and Remarks.
+
+Features: Add/Delete row functionality with frontend validation to prevent range overlaps.
+
+Database: Create/Update a grading_rules table scoped by school_id.
+
+PART 2: THE INTELLIGENT EXAM CONTROLLER (Processing)
+
+Data Linkage: Update the controller to fetch marks from the Teacher's exam_scores table.
+
+Auto-Evaluation Logic: For each student, the backend must:
+
+Sum all subject marks to find the Aggregate Percentage.
+
+Compare percentage against the 'Global Passing Threshold' to assign a 'PASS/FAIL' status.
+
+Map the percentage to the grading_rules table to assign the correct Grade Label and Remarks.
+
+Results Preview: Display these results in a professional, searchable grid with sticky headers.
+
+PART 3: DUAL-MODE PROMOTION (The Execution everywhere)
+
+Bulk Action: Provide buttons to 'Select All Passed' or 'Select All Failed'.
+
+Manual Override: Allow the Admin to manually change any student's status (e.g., Grace Pass) or their 'Target Class/Section' (e.g., 5A to 6B).
+
+The 'Global Sync' Update: When 'Execute Promotion' is clicked, perform a SQL Transaction that:
+
+Updates current_class and current_section in the students table.
+
+Automatically reflects this change in the Attendance Roster, Teacher Marks Entry lists, and the Student’s Dashboard.
+
+Archives the old marks into academic_history for that school_id.
+
+PART 4: UI/UX & TECHNICAL STANDARDS
+
+Theme: Benius Emerald Green (#10b981) for primary actions, Slate Gray for borders, and high-contrast Red for 'Fail' status.
+
+Device Focus: Optimized for Motorola 60 Fusion with touch-friendly toggles and horizontal scrolling for deep data tables.
+
+Security: Strictly enforce WHERE school_id = ? on every SELECT, INSERT, and UPDATE to ensure total data isolation for local machine hosting.

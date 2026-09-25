@@ -1,0 +1,6063 @@
+import type { Express } from "express";
+import { type Server } from "http";
+import { AcademicSessionFinancialHistoryError, storage } from "../storage";
+import { aggregateStudentAttendance } from "../student-attendance-calculation";
+import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
+import { getWorkingDays, parseWorkingDays, saveWorkingDays } from "../teacher-working-days";
+import { feePeriodLabel } from "../fee-period";
+import {
+  insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
+  teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings,
+  attendancePolicies, insertAttendancePolicySchema,
+  schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
+  teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
+  auditLogs, academicSessions, gradingTiers, promotionDecisions,
+  leaveRequests, studentLeaveRequests,
+  examScores, promotionOverrides, complaints, notices, visitorLogs,
+  feeRecords, academicHistory, homework, classwork, users,
+} from "@workspace/db";
+import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "../attendance-policy-engine";
+import bcrypt from "bcryptjs";
+import { z } from "zod/v4";
+import multer from "multer";
+import { parse } from "csv-parse/sync";
+import * as XLSX from "xlsx";
+import { registerTeacherRoutes, resolveTimetableSessionId } from "../teacher-routes";
+import { registerStudentPasswordRecoveryRoutes } from "../student-password-recovery-routes";
+import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
+import { registerFeesRoutes } from "../fees-routes";
+import { requireStudentFeeSession } from "../student-fee-session-context";
+import { resolveStudentExaminationSession } from "../student-examination-session";
+import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
+import { calculateLateFee } from "../late-fee-engine";
+import { buildLateFeeInfo } from "../late-fee-display";
+import { ledgerPaymentMethodLabel } from "../payment-method-label";
+import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
+import { formatPersistedDateTimeIST } from "../persisted-date-time";
+import {
+  InvoiceGenerationError,
+  createManualInvoice,
+  prepareManualInvoiceContext,
+} from "../structure-invoice-service";
+import { renderInvoiceDocument } from "../invoice-document";
+import {
+  manualInvoiceBodySchema,
+  manualInvoiceStudentValidationMessage,
+} from "../manual-invoice-validation";
+import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "../sse";
+import { db } from "../db";
+import { eq, and, sql, inArray, not } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
+import {
+  generatePasswordRecoveryOtp,
+  generatePasswordRecoveryToken,
+  hashPasswordRecoverySecret,
+  passwordRecoverySecretsEqual,
+  PASSWORD_RECOVERY_GENERIC_MESSAGE,
+  buildForgotPasswordResponse,
+  PASSWORD_RECOVERY_INVALID_MESSAGE,
+  PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE,
+  PasswordRecoveryRateLimiter,
+  passwordRecoveryRateLimiter,
+} from "../password-recovery";
+import {
+  sendPasswordRecoveryEmail,
+} from "../password-recovery-email";
+import path from "node:path";
+import fs from "node:fs";
+import { dateOnlyParts, getAcademicYearForISTDate, isValidDateOnly, replaceCalendarYear, todayInIST } from "@shared/ist-time";
+import { normalizeLedgerFiltersFromQuery, encodeFeePeriod } from "@shared/ledger-filters";
+import {
+  buildLedgerFilterPredicates,
+  buildLedgerPaymentDatePredicate,
+  filtersRequirePaymentJoin,
+  type LedgerFilterFields,
+} from "../ledger-filter-sql";
+import {
+  appendFeeAudit,
+  describeFeeAuditChanges,
+  requestIpAddress,
+  resolveFeeAuditActor,
+} from "../fee-audit";
+
+declare module "express-session" {
+  interface SessionData {
+    userId?: number;
+    schoolId?: number;
+    userRole?: string;
+    studentId?: number;
+    teacherId?: number;
+    pendingInitUserId?: number;
+    pendingPinUserId?: number;
+    pendingPinToken?: string;
+    pendingForgotUserId?: number;
+    pendingForgotChallengeId?: number;
+    pendingResetUserId?: number;
+    pendingResetChallengeId?: number;
+    pendingResetToken?: string;
+    staffId?: number;
+    staffName?: string;
+    staffEmail?: string;
+    staffDesignation?: string;
+    allowedModules?: string[];
+    schoolName?: string;
+    schoolCode?: string;
+  }
+}
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+// School logo uploader — 5 MB cap, images only, temp staging in uploads/
+const schoolLogoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only JPG, PNG, or WebP images are allowed"));
+  },
+});
+
+// Principal signature uploader — 2 MB cap, images only, staged to temp then moved
+const signatureUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      const dir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+      cb(null, unique + path.extname(file.originalname));
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPG, or WebP images are allowed for signatures"));
+  },
+});
+
+const createSchoolBodySchema = z.object({
+  name: z.string().min(2),
+  code: z.string().min(2).max(20),
+  principalEmail: z.string().email(),
+  principalPassword: z.string().min(6),
+});
+
+const loginBodySchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+function normalizeHeader(header: string): string {
+  return header.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function parseUploadedFile(buffer: Buffer, filename: string): Record<string, string>[] {
+  const ext = filename.toLowerCase().split(".").pop();
+
+  if (ext === "csv") {
+    const content = buffer.toString("utf-8");
+    const records = parse(content, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+    });
+    return (records as Record<string, string>[]).map((row) => {
+      const normalized: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) {
+        normalized[normalizeHeader(key)] = value;
+      }
+      return normalized;
+    });
+  }
+
+  if (ext === "xlsx" || ext === "xls") {
+    const workbook = XLSX.read(buffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+    return jsonData.map((row) => {
+      const normalized: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) {
+        normalized[normalizeHeader(key)] = String(value).trim();
+      }
+      return normalized;
+    });
+  }
+
+  throw new Error("Unsupported file format. Please upload a .csv, .xlsx, or .xls file.");
+}
+
+function isValidPhone(phone: string): boolean {
+  const cleaned = phone.replace(/[\s\-\(\)\+]/g, "");
+  return cleaned.length === 10 && /^\d{10}$/.test(cleaned);
+}
+
+function parseDate(value: string): string | null {
+  if (!value) return null;
+
+  const num = Number(value);
+  if (!isNaN(num) && num > 10000 && num < 100000) {
+    const date = new Date(Date.UTC(1899, 11, 30) + num * 86400000);
+    if (!isNaN(date.getTime())) {
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+    }
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    if (dateOnlyParts(value)) return value;
+  }
+
+  const slashMatch = value.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (slashMatch) {
+    const [, p1, p2, p3] = slashMatch;
+    let year = parseInt(p3, 10);
+    if (year < 100) year += 2000;
+    const month = parseInt(p1, 10);
+    const day = parseInt(p2, 10);
+    const normalized = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (dateOnlyParts(normalized)) return normalized;
+  }
+
+  const dashMatch = value.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
+  if (dashMatch) {
+    const [, p1, p2, p3] = dashMatch;
+    let year = parseInt(p3, 10);
+    if (year < 100) year += 2000;
+    const normalized = `${year}-${String(parseInt(p1, 10)).padStart(2, "0")}-${String(parseInt(p2, 10)).padStart(2, "0")}`;
+    if (dateOnlyParts(normalized)) return normalized;
+  }
+
+  return null;
+}
+
+const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * requireSchoolId — middleware for authenticated admin/teacher route groups.
+ *
+ * Only enforces school context for FULLY AUTHENTICATED sessions — those where
+ * req.session.userId, req.session.teacherId, or req.session.staffId is set.
+ *
+ * Pre-auth flows (admin login/init/PIN/forgot-password, teacher forgot-password
+ * / OTP / reset-password) run before a school-bound session is established.
+ * These requests have no userId/teacherId in session yet, so the middleware
+ * passes them through unchanged and lets each route's own auth check handle them.
+ *
+ * For authenticated sessions, rejects with 401 if req.session.schoolId is
+ * missing or not a valid positive integer. This prevents a fully-logged-in
+ * user from operating without a school context.
+ *
+ * Apply this to all /api/admin and /api/teacher route groups.
+ */
+function requireSchoolId(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction
+) {
+  // Pre-auth flows have no userId/teacherId/staffId yet — pass them through.
+  const isAuthenticated =
+    req.session?.userId ||
+    req.session?.teacherId ||
+    req.session?.staffId;
+  if (!isAuthenticated) return next();
+
+  const sid = req.session?.schoolId;
+  if (!sid || !Number.isInteger(sid) || sid <= 0) {
+    return res.status(401).json({ error: "No school context in session" });
+  }
+  next();
+}
+
+/**
+ * assertSchoolOwnership — throws a 403-typed error if the entity's schoolId
+ * does not match the session's schoolId.
+ *
+ * Usage: assertSchoolOwnership(entity.schoolId, req.session.schoolId!);
+ * Place this call immediately after any getXxxById fetch, before acting on
+ * the result. Never trust a schoolId from the URL or request body.
+ */
+function assertSchoolOwnership(entitySchoolId: number, sessionSchoolId: number): void {
+  if (entitySchoolId !== sessionSchoolId) {
+    const err: any = new Error("Access denied: entity belongs to a different school");
+    err.status = 403;
+    throw err;
+  }
+}
+
+/**
+ * Financial records must keep the academic session that created them.  This
+ * check is intentionally record-owned rather than header-owned: a forged or
+ * omitted view-session header must never turn an archived invoice writable.
+ */
+async function feeRecordWriteBlock(
+  sessionId: number | null,
+  schoolId: number,
+): Promise<{ status: number; message: string } | null> {
+  if (sessionId == null) {
+    return {
+      status: 409,
+      message: "This legacy fee record has no academic-session ownership and cannot be changed.",
+    };
+  }
+  try {
+    const session = await storage.getAcademicSessionById(sessionId);
+    if (!session || session.schoolId !== schoolId) {
+      return { status: 403, message: "Fee record session does not belong to this school." };
+    }
+    if (!session.isActive) {
+      return { status: 403, message: "Archived academic-session fee records are read-only." };
+    }
+    return null;
+  } catch {
+    return {
+      status: 503,
+      message: "Unable to verify the fee record's academic session. Please retry before making changes.",
+    };
+  }
+}
+
+/**
+ * checkSessionContext — global middleware that runs on EVERY incoming request.
+ *
+ * For ALL request methods (GET included):
+ *   Reads x-view-session-id from the request headers and attaches its parsed
+ *   integer value to (req as any).viewSessionId.  Route handlers can then
+ *   optionally scope their database queries:
+ *     WHERE session_id = req.viewSessionId
+ *
+ * For mutation methods (POST / PUT / PATCH / DELETE) only:
+ *   Validates the session against the database.  If the referenced session is
+ *   archived (is_active = false for that school), the request is aborted with
+ *   403 so historical data can never be accidentally overwritten through the UI.
+ *   Read-only export transports and the explicitly school-global External
+ *   Portal configuration routes are exempt. The latter have their own
+ *   admin/password/tenant authorization in fees-routes and never operate on
+ *   academic-session financial data.
+ *
+ * Fails closed on database errors for a selected-session mutation. Financial
+ * history must never be changed when archive status cannot be verified.
+ */
+export async function checkSessionContext(
+  req: import("express").Request,
+  res: import("express").Response,
+  next: import("express").NextFunction
+) {
+  const rawHeader = req.headers["x-view-session-id"];
+  const isReadOnlyTransactionExport =
+    req.method === "POST" && (
+      req.path === "/api/admin/fees/payments/report/pdf" ||
+      req.path === "/api/admin/fees/export-ledger"
+    );
+  const isExternalPortalGlobalMutation = MUTATION_METHODS.has(req.method) && (
+    req.path === "/api/admin/fees/external-settings/verify-access" ||
+    req.path === "/api/admin/fees/external-settings" ||
+    req.path === "/api/admin/fees/external-settings/razorpay" ||
+    req.path === "/api/admin/fees/external-settings/razorpay/credentials" ||
+    req.path === "/api/admin/fees/external-settings/portal" ||
+    req.path === "/api/admin/fees/external-portal/signature"
+  );
+
+  // ── Step 1: Attach viewSessionId to the request for every HTTP method ────
+  // This allows any downstream route handler — GET or mutation — to read
+  // req.viewSessionId and append a session-scoped WHERE clause to its query.
+  if (rawHeader) {
+    const sid = parseInt(Array.isArray(rawHeader) ? rawHeader[0] : rawHeader, 10);
+    if (!isNaN(sid)) {
+      (req as any).viewSessionId = sid;
+    }
+  }
+
+  // ── Step 2: Archive write guard (mutations only) ──────────────────────────
+  // If the admin is viewing an archived session and attempts any write, reject
+  // it immediately before it reaches any route handler.
+  if (
+    MUTATION_METHODS.has(req.method) &&
+    !isReadOnlyTransactionExport &&
+    !isExternalPortalGlobalMutation &&
+    (req as any).viewSessionId &&
+    req.session?.schoolId
+  ) {
+    try {
+      const selectedSession = await storage.getAcademicSessionById(
+        (req as any).viewSessionId,
+      );
+      if (
+        !selectedSession
+        || selectedSession.schoolId !== req.session.schoolId
+        || !selectedSession.isActive
+      ) {
+        // Give teachers a role-specific message; admins get the general archive message.
+        return res.status(403).json({
+          error: "Security Restriction: Write operations are strictly blocked for archived school years.",
+          code: "ARCHIVE_READ_ONLY",
+        });
+      }
+    } catch {
+      return res.status(503).json({
+        error: "Unable to verify the selected academic session. Please retry before making changes.",
+        code: "SESSION_STATUS_UNAVAILABLE",
+      });
+    }
+  }
+
+  next();
+}
+
+export async function registerRoutes(
+  httpServer: Server,
+  app: Express
+): Promise<Server> {
+  /* ── Session context middleware: applied globally to ALL routes ── */
+  app.use(checkSessionContext);
+
+  /* ── School-ID guard: every authenticated admin/teacher route must have a
+     schoolId in session. Rejects 401 when schoolId is missing or invalid. ── */
+  app.use("/api/admin", requireSchoolId);
+  app.use("/api/teacher", requireSchoolId);
+
+  app.get("/api/schools", async (_req, res) => {
+    const schools = await storage.getSchools();
+    const counts = await storage.getActiveStudentCountsBySchools();
+    const enriched = schools.map(s => ({ ...s, activeStudentCount: counts[s.id] ?? 0 }));
+    res.json(enriched);
+  });
+
+  app.post("/api/schools", async (req, res) => {
+    const parsed = createSchoolBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    }
+
+    const { name, code, principalEmail, principalPassword } = parsed.data;
+
+    const existingSchool = await storage.getSchoolByCode(code);
+    if (existingSchool) {
+      return res.status(409).json({ message: "A school with this code already exists" });
+    }
+
+    const existingUser = await storage.getUserByEmail(principalEmail);
+    if (existingUser) {
+      return res.status(409).json({ message: "A user with this email already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(principalPassword, 10);
+    const school = await storage.createSchoolWithPrincipal({ name, code }, principalEmail, passwordHash);
+    res.status(201).json(school);
+  });
+
+  app.delete("/api/schools/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ message: "Invalid school ID" });
+    }
+    const deleted = await storage.deleteSchool(id);
+    if (!deleted) {
+      return res.status(404).json({ message: "School not found" });
+    }
+    res.json({ message: "School deleted" });
+  });
+
+  app.post("/api/login", async (req, res) => {
+    const parsed = loginBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid email or password format" });
+    }
+
+    const user = await storage.getUserByEmail(parsed.data.email);
+    if (!user) {
+      // Fallback: check support staff table
+      const staff = await storage.getNonTeachingStaffByEmail(parsed.data.email);
+      if (staff && staff.passwordHash) {
+        const valid = await bcrypt.compare(parsed.data.password, staff.passwordHash);
+        if (!valid) return res.status(401).json({ message: "Invalid email or password" });
+        const [school] = await db.select().from(schools).where(eq(schools.id, staff.schoolId));
+        if (!school) return res.status(401).json({ message: "School not found" });
+        req.session.staffId = staff.id;
+        req.session.userId = -(staff.id);
+        req.session.userRole = "support_staff";
+        req.session.schoolId = staff.schoolId;
+        req.session.allowedModules = staff.allowedModules;
+        req.session.staffName = staff.fullName;
+        req.session.staffEmail = staff.email;
+        req.session.staffDesignation = staff.designation;
+        req.session.schoolName = school.name;
+        req.session.schoolCode = school.code;
+        return res.json({ role: "support_staff", allowedModules: staff.allowedModules });
+      }
+      await storage.logSecurityEvent(null, null, "login_unknown_email", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    if (!user.isActive) {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_deactivated", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
+    }
+
+    const valid = await bcrypt.compare(parsed.data.password, user.passwordHash);
+    if (!valid) {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    if (user.role !== "admin") {
+      await storage.logSecurityEvent(user.id, user.schoolId, "login_wrong_role", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(403).json({ message: "This login is for school administrators only." });
+    }
+
+    if (!user.isInitialized) {
+      req.session.pendingInitUserId = user.id;
+      req.session.pendingPinUserId = undefined;
+      req.session.userId = undefined;
+      req.session.teacherId = undefined;
+      await storage.logSecurityEvent(user.id, user.schoolId, "init_required", true, req.ip || null, req.headers["user-agent"] || null);
+      return res.json({ requiresInit: true });
+    }
+
+    const tempToken = randomBytes(32).toString("hex");
+    req.session.pendingPinUserId = user.id;
+    req.session.pendingPinToken = tempToken;
+    req.session.pendingInitUserId = undefined;
+    req.session.userId = undefined;
+    req.session.teacherId = undefined;
+    await storage.logSecurityEvent(user.id, user.schoolId, "pin_required", true, req.ip || null, req.headers["user-agent"] || null);
+    return res.json({ requiresPin: true, tempToken });
+  });
+
+  app.post("/api/admin/initialize", async (req, res) => {
+    const pendingInitUserId = req.session.pendingInitUserId;
+    if (!pendingInitUserId) return res.status(401).json({ message: "No pending init session" });
+
+    const userCheck = await storage.getUserById(pendingInitUserId);
+    if (!userCheck || userCheck.role !== "admin") return res.status(403).json({ message: "Not authorized" });
+    if (userCheck.isInitialized) return res.status(403).json({ message: "Account already initialized" });
+
+    const schema = z.object({
+      newPassword: z.string().min(6, "New password must be at least 6 characters"),
+      confirmPassword: z.string().min(6),
+      pin: z.string().length(6).regex(/^\d{6}$/, "PIN must be 6 digits"),
+      confirmPin: z.string().length(6),
+      recoveryEmail: z.string().email("Enter a valid recovery email"),
+      recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Phone must contain only digits"),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.newPassword !== parsed.data.confirmPassword) return res.status(400).json({ message: "Passwords do not match" });
+    if (parsed.data.pin !== parsed.data.confirmPin) return res.status(400).json({ message: "PINs do not match" });
+
+    const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    const pinHash = await bcrypt.hash(parsed.data.pin, 12);
+    await storage.updateAdminPassword(pendingInitUserId, newPasswordHash);
+    await storage.initializeAdmin(
+      pendingInitUserId,
+      pinHash,
+      parsed.data.recoveryEmail,
+      parsed.data.recoveryPhone || null,
+    );
+
+    const userData = await storage.getUserWithSchool(pendingInitUserId);
+    req.session.pendingInitUserId = undefined;
+    req.session.userId = pendingInitUserId;
+    req.session.teacherId = undefined;
+    if (userData) {
+      req.session.schoolId = userData.school.id;
+      req.session.userRole = userData.user.role;
+    }
+    await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "init_complete", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.logSecurityEvent(pendingInitUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+    res.json({ message: "Account initialized" });
+  });
+
+  app.post("/api/admin/verify-pin", async (req, res) => {
+    const pendingPinUserId = req.session.pendingPinUserId;
+    if (!pendingPinUserId) return res.status(401).json({ message: "No pending PIN session" });
+
+    const schema = z.object({ pin: z.string().length(6), tempToken: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+
+    if (!req.session.pendingPinToken || parsed.data.tempToken !== req.session.pendingPinToken) {
+      await storage.logSecurityEvent(pendingPinUserId, null, "invalid_challenge_token", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Invalid or expired challenge token" });
+    }
+
+    const user = await storage.getUserById(pendingPinUserId);
+    if (!user || user.role !== "admin") return res.status(403).json({ message: "Not authorized" });
+    const schoolId = user.schoolId ?? null;
+
+    const valid = await storage.verifyAdminPin(pendingPinUserId, parsed.data.pin);
+    if (!valid) {
+      await storage.logSecurityEvent(pendingPinUserId, schoolId, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Incorrect PIN" });
+    }
+
+    const userData = await storage.getUserWithSchool(pendingPinUserId);
+    req.session.pendingPinUserId = undefined;
+    req.session.pendingPinToken = undefined;
+    req.session.userId = pendingPinUserId;
+    req.session.teacherId = undefined;
+    if (userData) {
+      req.session.schoolId = userData.school.id;
+      req.session.userRole = userData.user.role;
+    }
+    await storage.logSecurityEvent(pendingPinUserId, req.session.schoolId ?? null, "login_success", true, req.ip || null, req.headers["user-agent"] || null);
+    await new Promise<void>((resolve, reject) => req.session.save(err => err ? reject(err) : resolve()));
+    res.json({ message: "Login successful" });
+  });
+
+  app.post("/api/admin/forgot-password", async (req, res) => {
+    const schema = z.object({ recoveryEmail: z.string().email(), schoolCode: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid request" });
+    if (!passwordRecoveryRateLimiter.consume(`forgot:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+
+    const school = await storage.getSchoolByCode(parsed.data.schoolCode.toUpperCase());
+    const user = school
+      ? await storage.getUserByRecoveryEmail(parsed.data.recoveryEmail, school.id)
+      : undefined;
+    const eligible = user && user.role === "admin" && user.isActive && user.recoveryEmail;
+    if (school && eligible) {
+      const otp = generatePasswordRecoveryOtp();
+      const challenge = await storage.createPasswordResetChallenge(
+        user.id,
+        school.id,
+        hashPasswordRecoverySecret(otp),
+        new Date(Date.now() + 10 * 60 * 1000),
+        req.ip || null,
+      );
+      req.session.pendingForgotChallengeId = challenge.id;
+      req.session.pendingForgotUserId = undefined;
+      req.session.pendingResetChallengeId = undefined;
+      req.session.pendingResetUserId = undefined;
+      req.session.pendingResetToken = undefined;
+      void storage.getNotificationConfig(school.id)
+        .then(config => {
+          if (!config) throw new Error("Missing notification configuration");
+          return sendPasswordRecoveryEmail(config, user.recoveryEmail!, otp);
+        })
+        .catch(() => storage.invalidatePasswordResetChallenges(user.id, school.id));
+    }
+    return res.json(buildForgotPasswordResponse());
+  });
+
+  app.get("/api/admin/pending-session", (req, res) => {
+    res.json({ pending: !!req.session.pendingInitUserId });
+  });
+
+  app.post("/api/admin/verify-otp", async (req, res) => {
+    if (!passwordRecoveryRateLimiter.consume(`verify-otp:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+    const pendingForgotChallengeId = req.session.pendingForgotChallengeId;
+    if (!pendingForgotChallengeId) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+
+    const schema = z.object({ otp: z.string().length(6) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+
+    const challenge = await storage.getPasswordResetChallenge(pendingForgotChallengeId);
+    const user = challenge ? await storage.getUserById(challenge.userId) : undefined;
+    const validIdentity = !!challenge && !!user
+      && user.role === "admin" && user.isActive
+      && user.schoolId === challenge.schoolId;
+    const otpHash = hashPasswordRecoverySecret(parsed.data.otp);
+    if (!validIdentity || !passwordRecoverySecretsEqual(challenge!.otpHash, otpHash)) {
+      if (challenge) {
+        await storage.recordPasswordResetOtpFailure(challenge.id);
+        if (user) await storage.logSecurityEvent(user.id, user.schoolId, "otp_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      }
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+
+    const resetToken = generatePasswordRecoveryToken();
+    const verified = await storage.verifyPasswordResetOtp(
+      challenge!.id,
+      otpHash,
+      hashPasswordRecoverySecret(resetToken),
+      new Date(Date.now() + 15 * 60 * 1000),
+    );
+    if (!verified || !user) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    await storage.logSecurityEvent(user.id, user.schoolId, "otp_verified", true, req.ip || null, req.headers["user-agent"] || null);
+    req.session.pendingForgotUserId = undefined;
+    req.session.pendingForgotChallengeId = undefined;
+    req.session.pendingResetUserId = user.id;
+    req.session.pendingResetChallengeId = challenge!.id;
+    req.session.pendingResetToken = resetToken;
+    const hasPinSetup = !!user.pinHash;
+
+    const response = hasPinSetup
+      ? { message: "OTP verified", requiresPin: true }
+      : { message: "OTP verified", requiresPin: false, resetToken };
+    // The request logger records res.json bodies. Do not put the one-time token in it.
+    return res.type("application/json").send(JSON.stringify(response));
+  });
+
+  app.post("/api/admin/verify-reset-pin", async (req, res) => {
+    if (!passwordRecoveryRateLimiter.consume(`verify-pin:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+    const pendingResetUserId = req.session.pendingResetUserId;
+    const pendingResetChallengeId = req.session.pendingResetChallengeId;
+    if (!pendingResetUserId || !pendingResetChallengeId) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+
+    const schema = z.object({ pin: z.string().length(6) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+
+    const user = await storage.getUserById(pendingResetUserId);
+    const challenge = await storage.getPasswordResetChallenge(pendingResetChallengeId);
+    if (!user || !challenge || challenge.userId !== user.id || challenge.schoolId !== user.schoolId || !challenge.verifiedAt || challenge.consumedAt || (challenge.resetTokenExpiresAt && challenge.resetTokenExpiresAt <= new Date())) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+    const valid = await storage.verifyAdminPin(pendingResetUserId, parsed.data.pin);
+    if (!valid) {
+      await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "pin_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+
+    await storage.logSecurityEvent(pendingResetUserId, user?.schoolId ?? null, "reset_pin_verified", true, req.ip || null, req.headers["user-agent"] || null);
+    // The request logger records res.json bodies. Do not put the one-time token in it.
+    return res.type("application/json").send(JSON.stringify({
+      message: "PIN verified",
+      resetToken: req.session.pendingResetToken,
+    }));
+  });
+
+  app.post("/api/admin/reset-password", async (req, res) => {
+    if (!passwordRecoveryRateLimiter.consume(`reset:${req.ip || "unknown"}`)) {
+      return res.status(429).json({ message: PASSWORD_RECOVERY_RATE_LIMIT_MESSAGE });
+    }
+    const pendingResetUserId = req.session.pendingResetUserId;
+    const pendingResetChallengeId = req.session.pendingResetChallengeId;
+    if (!pendingResetUserId || !pendingResetChallengeId || typeof req.session.pendingResetToken !== "string") {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+
+    const schema = z.object({
+      resetToken: z.string().min(1),
+      newPassword: z.string().min(6),
+      confirmPassword: z.string().min(6),
+      newPin: z.string().length(6).regex(/^\d{6}$/).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.newPassword !== parsed.data.confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+    const user = await storage.getUserById(pendingResetUserId);
+    const challenge = await storage.getPasswordResetChallenge(pendingResetChallengeId);
+    if (!user || !challenge || challenge.userId !== user.id || challenge.schoolId !== user.schoolId) {
+      return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    }
+
+    const newPasswordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    const newPinHash = parsed.data.newPin ? await bcrypt.hash(parsed.data.newPin, 12) : undefined;
+    const ok = await storage.resetPasswordForChallenge(
+      challenge.id,
+      user.id,
+      user.schoolId,
+      hashPasswordRecoverySecret(parsed.data.resetToken),
+      newPasswordHash,
+      newPinHash,
+    );
+    if (!ok) return res.status(400).json({ message: PASSWORD_RECOVERY_INVALID_MESSAGE });
+    await storage.logSecurityEvent(user.id, user.schoolId, "password_reset", true, req.ip || null, req.headers["user-agent"] || null);
+    await storage.invalidateUserSessions(user.id);
+    await new Promise<void>((resolve) => req.session.destroy(() => resolve()));
+    return res.json({ message: "Password reset successful" });
+  });
+
+  app.get("/api/admin/profile", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const user = await storage.getUserById(req.session.userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const school = req.session.schoolId ? await storage.getSchool(req.session.schoolId) : undefined;
+    res.json({
+      id: user.id,
+      email: user.email,
+      recoveryEmail: user.recoveryEmail,
+      recoveryPhone: user.recoveryPhone,
+      isInitialized: user.isInitialized,
+      hasPin: !!user.pinHash,
+      logoUrl: school?.logoUrl ?? null,
+      // School Information — Contact & Location
+      addressLine1:       school?.addressLine1       ?? null,
+      addressLine2:       school?.addressLine2       ?? null,
+      city:               school?.city               ?? null,
+      state:              school?.state              ?? null,
+      pinCode:            school?.pinCode            ?? null,
+      country:            school?.country            ?? "India",
+      schoolPhone:        school?.phone              ?? null,
+      schoolEmail:        school?.email              ?? null,
+      schoolWebsite:      school?.website            ?? null,
+      // School Information — Academic Identity
+      schoolBoard:        school?.board              ?? null,
+      schoolType:         school?.schoolType         ?? null,
+      affiliationNumber:  school?.affiliationNumber  ?? null,
+      udiseCode:          school?.udiseCode          ?? null,
+      establishedYear:    school?.establishedYear    ?? null,
+      // School Information — Legal & Tax
+      registrationNumber: school?.registrationNumber ?? null,
+      pan:                school?.pan                ?? null,
+      gstin:              school?.gstin              ?? null,
+      signatureUrl:       (user as any).signatureUrl  ?? null,
+    });
+  });
+
+  // ── School information update ─────────────────────────────────────────────
+  app.patch("/api/admin/school/info", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const {
+      addressLine1, addressLine2, city, state, pinCode, country,
+      phone, email, website,
+      board, schoolType, affiliationNumber, udiseCode, establishedYear,
+      registrationNumber, pan, gstin,
+    } = req.body;
+
+    // ── Server-side validation ─────────────────────────────────────────────
+    if (pinCode && !/^[1-9][0-9]{5}$/.test(pinCode))
+      return res.status(400).json({ message: "Invalid PIN code — must be 6 digits, not starting with 0" });
+    if (udiseCode && !/^\d{11}$/.test(udiseCode))
+      return res.status(400).json({ message: "UDISE code must be exactly 11 digits" });
+    if (establishedYear !== undefined && establishedYear !== null && establishedYear !== "") {
+      const yr = Number(establishedYear);
+      if (!Number.isInteger(yr) || yr < 1800 || yr > new Date().getFullYear())
+        return res.status(400).json({ message: "Established year must be between 1800 and the current year" });
+    }
+
+    await storage.updateSchoolInfo(req.session.schoolId, {
+      addressLine1:       addressLine1       || null,
+      addressLine2:       addressLine2       || null,
+      city:               city               || null,
+      state:              state              || null,
+      pinCode:            pinCode            || null,
+      country:            country            || "India",
+      phone:              phone              || null,
+      email:              email              || null,
+      website:            website            || null,
+      board:              board              || null,
+      schoolType:         schoolType         || null,
+      affiliationNumber:  affiliationNumber  || null,
+      udiseCode:          udiseCode          || null,
+      establishedYear:    establishedYear ? Number(establishedYear) : null,
+      registrationNumber: registrationNumber || null,
+      pan:                pan                || null,
+      gstin:              gstin              || null,
+    });
+    res.json({ message: "School information updated" });
+  });
+
+  // ── School logo upload ────────────────────────────────────────────────────
+  // Auth runs FIRST (before multer writes anything to disk) to prevent
+  // anonymous clients from staging files in the public uploads/ directory.
+  app.post("/api/admin/school/logo", async (req: any, res: any) => {
+    // 1. Authenticate before touching the filesystem
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    // 2. Run multer only for verified admins
+    await new Promise<void>((resolve, reject) => {
+      schoolLogoUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({ message: "File too large. Maximum size is 5 MB." });
+          return reject(null);
+        }
+        if (err) {
+          res.status(400).json({ message: err.message || "Upload error" });
+          return reject(null);
+        }
+        resolve();
+      });
+    }).catch(() => null);
+
+    // Early-exit if multer already sent a response
+    if (res.headersSent) return;
+
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // 3. Double-check MIME + extension server-side; clean up temp file on rejection
+    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt  = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(400).json({ message: "Only JPG, PNG, or WebP images are allowed" });
+    }
+
+    const schoolId = req.session.schoolId as number;
+
+    // 4. Remove previous logo file from disk if one existed
+    const existing = await storage.getSchool(schoolId);
+    if (existing?.logoUrl) {
+      const oldPath = path.join(process.cwd(), existing.logoUrl);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
+      }
+    }
+
+    // 5. Move temp file to permanent school-scoped directory
+    const schoolDir = path.join(process.cwd(), "uploads", "schools", String(schoolId));
+    if (!fs.existsSync(schoolDir)) fs.mkdirSync(schoolDir, { recursive: true });
+    const destFilename = `logo-${Date.now()}${fileExt}`;
+    const destPath = path.join(schoolDir, destFilename);
+    try {
+      fs.renameSync(req.file.path, destPath);
+    } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(500).json({ message: "Failed to save logo" });
+    }
+
+    const logoUrl = `/uploads/schools/${schoolId}/${destFilename}`;
+    await storage.updateSchoolLogo(schoolId, logoUrl);
+    res.json({ message: "Logo updated", logoUrl });
+  });
+
+  // ── Principal signature upload ────────────────────────────────────────────
+  // Auth runs FIRST. schoolId is always taken from the session — never from client.
+  app.post("/api/admin/profile/signature", async (req: any, res: any) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    // Run multer only for verified admins
+    await new Promise<void>((resolve, reject) => {
+      signatureUpload.single("file")(req, res, (err: any) => {
+        if (err && err.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({ message: "File too large. Maximum size is 2 MB." });
+          return reject(null);
+        }
+        if (err) {
+          res.status(400).json({ message: err.message || "Upload error" });
+          return reject(null);
+        }
+        resolve();
+      });
+    }).catch(() => null);
+    if (res.headersSent) return;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    // Double-check MIME + extension server-side
+    const ALLOWED_MIME = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+    const ALLOWED_EXT  = [".jpg", ".jpeg", ".png", ".webp"];
+    const fileMime = req.file.mimetype?.toLowerCase() ?? "";
+    const fileExt  = path.extname(req.file.originalname).toLowerCase();
+    if (!ALLOWED_MIME.includes(fileMime) || !ALLOWED_EXT.includes(fileExt)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(400).json({ message: "Only PNG, JPG, or WebP images are allowed" });
+    }
+
+    const userId   = req.session.userId   as number;
+    const schoolId = req.session.schoolId as number;
+
+    // Remove previous signature file if one exists
+    const existingUser = await storage.getUserById(userId);
+    if ((existingUser as any)?.signatureUrl) {
+      const oldPath = path.join(process.cwd(), (existingUser as any).signatureUrl);
+      if (fs.existsSync(oldPath)) {
+        try { fs.unlinkSync(oldPath); } catch { /* best-effort */ }
+      }
+    }
+
+    // Move temp file to tenant + user-scoped directory
+    const sigDir = path.join(process.cwd(), "uploads", "schools", String(schoolId), "signatures", String(userId));
+    if (!fs.existsSync(sigDir)) fs.mkdirSync(sigDir, { recursive: true });
+    const destFilename = `sig-${Date.now()}${fileExt}`;
+    const destPath = path.join(sigDir, destFilename);
+    try {
+      fs.renameSync(req.file.path, destPath);
+    } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* best-effort */ }
+      return res.status(500).json({ message: "Failed to save signature" });
+    }
+
+    const signatureUrl = `/uploads/schools/${schoolId}/signatures/${userId}/${destFilename}`;
+    await storage.updateAdminSignature(userId, schoolId, signatureUrl);
+    res.json({ message: "Signature saved", signatureUrl });
+  });
+
+  // ── Principal signature removal ────────────────────────────────────────────
+  app.delete("/api/admin/profile/signature", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const userId   = req.session.userId   as number;
+    const schoolId = req.session.schoolId as number;
+
+    const user = await storage.getUserById(userId);
+    // Verify this user belongs to this school before touching anything
+    if (!user || (user as any).schoolId !== schoolId)
+      return res.status(403).json({ message: "Access denied" });
+
+    if ((user as any).signatureUrl) {
+      const filePath = path.join(process.cwd(), (user as any).signatureUrl);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+      }
+    }
+    await storage.clearAdminSignature(userId, schoolId);
+    res.json({ message: "Signature removed" });
+  });
+
+  // ── School logo removal ────────────────────────────────────────────────────
+  app.delete("/api/admin/school/logo", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.schoolId)
+      return res.status(403).json({ message: "No school context" });
+
+    const schoolId = req.session.schoolId;
+    const school = await storage.getSchool(schoolId);
+    if (!school?.logoUrl) return res.json({ message: "No logo to remove" });
+
+    const filePath = path.join(process.cwd(), school.logoUrl);
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch { /* best-effort */ }
+    }
+    await storage.clearSchoolLogo(schoolId);
+    res.json({ message: "Logo removed" });
+  });
+
+  app.patch("/api/admin/profile", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      recoveryEmail: z.string().trim().min(1, "Recovery email is required").email("Enter a valid recovery email"),
+      recoveryPhone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Phone must contain only digits").optional().or(z.literal("")),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(issue => issue.message).join(", ") });
+    await storage.updateAdminProfile(req.session.userId, {
+      recoveryEmail: parsed.data.recoveryEmail,
+      recoveryPhone: parsed.data.recoveryPhone || null,
+    });
+    res.json({ message: "Profile updated" });
+  });
+
+  app.post("/api/admin/change-password", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      currentPassword: z.string().min(1),
+      newPassword: z.string().min(6),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    const ok = await storage.verifyAdminPassword(req.session.userId, parsed.data.currentPassword);
+    if (!ok) {
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "password_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+    const hash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await storage.updateAdminPassword(req.session.userId, hash);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "password_changed", true, req.ip || null, req.headers["user-agent"] || null);
+    res.json({ message: "Password changed successfully" });
+  });
+
+  app.post("/api/admin/change-pin", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      currentPin: z.string().length(6),
+      newPin: z.string().length(6).regex(/^\d{6}$/, "New PIN must be 6 digits"),
+      confirmPin: z.string().length(6),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid data" });
+    if (parsed.data.newPin !== parsed.data.confirmPin) return res.status(400).json({ message: "New PINs do not match" });
+    const ok = await storage.verifyAdminPin(req.session.userId, parsed.data.currentPin);
+    if (!ok) {
+      await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "pin_change_failed", false, req.ip || null, req.headers["user-agent"] || null);
+      return res.status(401).json({ message: "Current PIN is incorrect" });
+    }
+    const hash = await bcrypt.hash(parsed.data.newPin, 12);
+    await storage.updateAdminPin(req.session.userId, hash);
+    await storage.logSecurityEvent(req.session.userId, req.session.schoolId ?? null, "pin_changed", true, req.ip || null, req.headers["user-agent"] || null);
+    res.json({ message: "PIN changed successfully" });
+  });
+
+  app.get("/api/admin/security-log", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const logs = await storage.getSecurityAuditLog(req.session.userId, 20);
+    res.json(logs);
+  });
+
+  app.get("/api/me", async (req, res) => {
+    if (req.session.staffId) {
+      return res.json({
+        id: req.session.staffId,
+        email: req.session.staffEmail || "",
+        role: "support_staff",
+        displayName: req.session.staffName || "",
+        designation: req.session.staffDesignation || "",
+        schoolId: req.session.schoolId!,
+        schoolName: req.session.schoolName || "",
+        schoolCode: req.session.schoolCode || "",
+        studentCount: 0,
+        allowedModules: req.session.allowedModules || [],
+      });
+    }
+
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const data = await storage.getUserWithSchool(req.session.userId);
+    if (!data) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    const studentCount = await storage.getStudentCountBySchoolActive(data.school.id);
+
+    res.json({
+      id: data.user.id,
+      email: data.user.email,
+      role: data.user.role,
+      schoolId: data.school.id,
+      schoolName: data.school.name,
+      schoolCode: data.school.code,
+      studentCount,
+    });
+  });
+
+  app.post("/api/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to logout" });
+      }
+      res.json({ message: "Logged out" });
+    });
+  });
+
+  // ── GLOBAL MODULE — Student Registry is permanent school-wide data ──────────
+  // The full student list is NOT filtered by viewSessionId.  Students exist
+  // independently of any academic session.  This route intentionally ignores
+  // x-view-session-id and MUST NOT be changed to do session filtering.
+  // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/schools/:schoolId/students", async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId)) {
+      return res.status(400).json({ message: "Invalid school ID" });
+    }
+
+    const userData = await storage.getUserWithSchool(req.session.userId);
+    if (!userData || userData.school.id !== schoolId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const studentList = await storage.getStudentsBySchool(schoolId);
+    res.json(studentList);
+  });
+
+  app.post("/api/schools/:schoolId/students/upload", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const schoolId = parseInt(req.params.schoolId as string);
+      if (isNaN(schoolId)) {
+        return res.status(400).json({ message: "Invalid school ID" });
+      }
+
+      const userData = await storage.getUserWithSchool(req.session.userId);
+      if (!userData || userData.school.id !== schoolId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      const rows = parseUploadedFile(req.file.buffer, req.file.originalname);
+      if (rows.length === 0) {
+        return res.status(400).json({ message: "The uploaded file contains no data rows" });
+      }
+
+      const schoolCode = userData.school.code;
+
+      const warnings: string[] = [];
+      const validStudents: {
+        schoolId: number;
+        digitalStudentId: string;
+        name: string;
+        class: string;
+        section: string;
+        phone: string;
+        dob: string;
+        passwordHash: string;
+        isActivated: boolean;
+        email: string;
+      }[] = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+
+        const name = row["name"] || "";
+        const cls = row["class"] || "";
+        const section = row["section"] || "";
+        const phone = row["phone"] || row["phonenumber"] || row["mobile"] || row["contact"] || "";
+        const dobRaw = row["dob"] || row["dateofbirth"] || row["birthdate"] || "";
+        const emailRaw = (row["email"] || row["studentemail"] || row["emailaddress"] || "").trim();
+
+        if (!name) {
+          warnings.push(`Row ${rowNum}: Skipped — missing Name`);
+          continue;
+        }
+
+        if (!phone || !isValidPhone(phone)) {
+          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid phone number`);
+          continue;
+        }
+
+        if (!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid student email`);
+          continue;
+        }
+
+        if (!dobRaw) {
+          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing Date of Birth`);
+          continue;
+        }
+
+        const dob = parseDate(dobRaw);
+        if (!dob) {
+          warnings.push(`Row ${rowNum}: Skipped "${name}" — invalid date format "${dobRaw}"`);
+          continue;
+        }
+
+        const serial = await storage.issueNextIdSerial(schoolId, "dsid");
+        const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
+        const passwordHash = await bcrypt.hash(dsid, 10);
+
+        validStudents.push({
+          schoolId,
+          digitalStudentId: dsid,
+          name,
+          class: cls,
+          section,
+          phone,
+          dob,
+          passwordHash,
+          isActivated: false,
+          email: emailRaw,
+        });
+      }
+
+      if (validStudents.length > 0) {
+        await storage.bulkCreateStudents(validStudents);
+      }
+
+      res.json({
+        count: validStudents.length,
+        skipped: rows.length - validStudents.length,
+        warnings,
+        message: `Successfully generated ${validStudents.length} student IDs`,
+      });
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      res.status(500).json({ message: error.message || "Failed to process the uploaded file" });
+    }
+  });
+
+  const manualStudentSchema = z.object({
+    fatherName: z.string().optional(),
+    motherName: z.string().optional(),
+    address: z.string().optional(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional(),
+    email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
+    // existing fields below — do not move
+    name: z.string().min(1),
+    class: z.string().min(1),
+    section: z.string().min(1),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    dob: z.string().min(1),
+    enrollmentDate: z.string().optional(),
+    gender: z.enum(["Boy", "Girl"]).optional(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
+  });
+
+  app.post("/api/schools/:schoolId/students", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId)) {
+        return res.status(400).json({ message: "Invalid school ID" });
+      }
+
+      const userData = await storage.getUserWithSchool(req.session.userId);
+      if (!userData || userData.school.id !== schoolId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const parsed = manualStudentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      }
+
+      const { name, class: cls, section, phone, dob: dobRaw, enrollmentDate, gender, rollNumber, guardianName, bloodGroup, fatherName, motherName, address, aadharNumber, email } = parsed.data;
+
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({ message: "Invalid phone number" });
+      }
+
+      const dob = parseDate(dobRaw);
+      if (!dob) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      if (rollNumber) {
+        const existing = await db.select({ id: students.id }).from(students)
+          .where(and(eq(students.schoolId, schoolId), eq(students.class, cls), eq(students.section, section), eq(students.rollNumber, rollNumber), eq(students.isActive, true)));
+        if (existing.length > 0) {
+          return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${cls}-${section}` });
+        }
+      }
+
+      const schoolCode = userData.school.code;
+      const serial = await storage.issueNextIdSerial(schoolId, "dsid");
+      const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
+      const passwordHash = await bcrypt.hash(dsid, 10);
+
+      const student = await storage.createStudent({
+        schoolId,
+        digitalStudentId: dsid,
+        name,
+        class: cls,
+        section,
+        phone,
+        dob,
+        passwordHash,
+        isActivated: false,
+        ...(enrollmentDate ? { enrollmentDate } : {}),
+        ...(gender ? { gender } : {}),
+        ...(rollNumber ? { rollNumber } : {}),
+        ...(guardianName    ? { guardianName }    : {}),
+        ...(bloodGroup     ? { bloodGroup }     : {}),
+        ...(fatherName     ? { fatherName }     : {}),
+        ...(motherName     ? { motherName }     : {}),
+        ...(address        ? { address }        : {}),
+        ...(aadharNumber   ? { aadharNumber }   : {}),
+        email,
+      });
+
+      // Auto-enrollment: silently attach the student to the currently active
+      // academic session for this school. If no session is active yet, skip
+      // gracefully — enrollment can be assigned later when a session is created.
+      try {
+        const activeSession = await storage.getActiveSession(schoolId);
+        if (activeSession) {
+          await storage.createEnrollment({
+            schoolId,
+            studentId: student.id,
+            sessionId: activeSession.id,
+            className: cls,
+            sectionName: section,
+            ...(rollNumber ? { rollNo: rollNumber } : {}),
+            status: "Active",
+          });
+        }
+      } catch (enrollErr) {
+        // Non-fatal: student row was created successfully; log and continue.
+        console.warn("Auto-enrollment skipped:", enrollErr);
+      }
+
+      res.status(201).json(student);
+    } catch (error: any) {
+      console.error("Manual student add error:", error);
+      res.status(500).json({ message: error.message || "Failed to add student" });
+    }
+  });
+
+  const verifyStudentSchema = z.object({
+    dsid: z.string().min(1),
+    phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
+    dob: z.string().min(1),
+  });
+
+  app.post("/api/students/verify", async (req, res) => {
+    const parsed = verifyStudentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const { dsid, phone, dob: dobRaw } = parsed.data;
+    const dob = parseDate(dobRaw);
+    if (!dob) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+
+    const student = await storage.getStudentByDsidPhoneDob(dsid, phone, dob);
+    if (!student) {
+      return res.status(404).json({ message: "No matching student record found. Please check your DSID, phone number, and date of birth." });
+    }
+
+    if (student.isActivated) {
+      return res.status(409).json({ message: "This account has already been activated. Please log in instead." });
+    }
+
+    res.json({ message: "Student verified", studentName: student.name });
+  });
+
+  const activateStudentSchema = z.object({
+    dsid: z.string().min(1),
+    phone: z.string().length(10, "Phone must be exactly 10 digits").regex(/^\d{10}$/, "Only digits allowed"),
+    dob: z.string().min(1),
+    password: z.string().min(6, "Password must be at least 6 characters"),
+  });
+
+  app.post("/api/students/activate", async (req, res) => {
+    const parsed = activateStudentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    }
+
+    const { dsid, phone, dob: dobRaw, password } = parsed.data;
+    const dob = parseDate(dobRaw);
+    if (!dob) {
+      return res.status(400).json({ message: "Invalid date format" });
+    }
+
+    const student = await storage.getStudentByDsidPhoneDob(dsid, phone, dob);
+    if (!student) {
+      return res.status(404).json({ message: "No matching student record found" });
+    }
+
+    if (student.isActivated) {
+      return res.status(409).json({ message: "This account has already been activated" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const enrollmentDate = todayInIST();
+    await storage.activateStudent(student.id, passwordHash, enrollmentDate);
+
+    res.json({ message: "Account activated successfully. You can now log in." });
+  });
+
+  const studentLoginSchema = z.object({
+    dsid: z.string().min(1),
+    password: z.string().min(1),
+  });
+
+  app.post("/api/student-login", async (req, res) => {
+    const parsed = studentLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "DSID and password are required" });
+    }
+
+    const { dsid, password } = parsed.data;
+    const authentication = await storage.authenticateStudentByDsidForLogin(
+      dsid,
+      password,
+    );
+    if (authentication.status === "not_found") {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
+
+    if (authentication.status === "inactive") {
+      return res.status(403).json({ message: "This account has been deactivated. Please contact your administrator." });
+    }
+
+    if (authentication.status === "not_activated") {
+      return res.status(403).json({ message: "Account not activated. Please register first at /register." });
+    }
+
+    if (authentication.status !== "success") {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
+
+    const student = authentication.student;
+    if (await studentAuthenticationAttemptIsRevoked(student.id, authentication.authIssuedAt)) {
+      return res.status(401).json({ message: "Invalid DSID or password" });
+    }
+    req.session.studentId = student.id;
+    req.session.studentAuthIssuedAt = authentication.authIssuedAt;
+    req.session.authIssuedAt = authentication.authIssuedAt;
+    res.json({ message: "Login successful" });
+  });
+
+  app.get("/api/student-me", async (req, res) => {
+    if (!req.session.studentId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    const data = await storage.getStudentWithSchool(req.session.studentId);
+    if (!data) {
+      return res.status(401).json({ message: "Student not found" });
+    }
+
+    res.json({
+      id: data.student.id,
+      name: data.student.name,
+      digitalStudentId: data.student.digitalStudentId,
+      class: data.student.class,
+      section: data.student.section,
+      phone: data.student.phone,
+      dob: data.student.dob,
+      photoUrl: data.student.photoUrl,
+      enrollmentDate: data.student.enrollmentDate,
+      gender: data.student.gender,
+      rollNumber: data.student.rollNumber,
+      guardianName: data.student.guardianName,
+      bloodGroup: data.student.bloodGroup,
+      fatherName: data.student.fatherName,
+      motherName: data.student.motherName,
+      address: data.student.address,
+      aadharNumber: data.student.aadharNumber,
+      email: data.student.email ?? null,
+      verifiedProfile: data.student.verifiedProfile
+        ? (() => { try { return JSON.parse(data.student.verifiedProfile); } catch { return null; } })()
+        : null,
+      schoolName: data.school.name,
+      schoolCode: data.school.code,
+      schoolId: data.student.schoolId,
+    });
+  });
+
+  app.post("/api/student-logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Failed to logout" });
+      }
+      res.json({ message: "Logged out" });
+    });
+  });
+
+  // ===== SCHOOL METADATA (Admin) =====
+  app.get("/api/school-metadata/:schoolId", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const meta = await storage.getAllSchoolMetadata(schoolId);
+    res.json(meta);
+  });
+
+  app.put("/api/school-metadata/:schoolId/class-sections-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classSections } = req.body;
+    if (!classSections || typeof classSections !== "object" || Array.isArray(classSections)) {
+      return res.status(400).json({ message: "classSections must be an object" });
+    }
+    await storage.setClassSectionsMetadata(schoolId, classSections);
+    res.json({ message: "Class-section mapping saved" });
+  });
+
+  app.put("/api/school-metadata/:schoolId/class-subjects-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classSubjects } = req.body;
+    if (!classSubjects || typeof classSubjects !== "object" || Array.isArray(classSubjects)) {
+      return res.status(400).json({ message: "classSubjects must be an object" });
+    }
+    await storage.setClassSubjectsMetadata(schoolId, classSubjects);
+    res.json({ message: "Class-subject mapping saved" });
+  });
+
+  app.put("/api/school-metadata/:schoolId/class-exam-types-map", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { classExamTypes } = req.body;
+    if (!classExamTypes || typeof classExamTypes !== "object" || Array.isArray(classExamTypes)) {
+      return res.status(400).json({ message: "classExamTypes must be an object" });
+    }
+    await storage.setClassExamTypesMetadata(schoolId, classExamTypes);
+    res.json({ message: "Class-exam-type mapping saved" });
+  });
+
+  // Teacher self-attendance weekdays are school-wide, never selected by URL or view Session.
+  app.get("/api/admin/teacher-working-days", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin" || !req.session.schoolId)
+      return res.status(403).json({ message: "Admin access required" });
+    try {
+      res.json(await getWorkingDays(req.session.schoolId));
+    } catch (error) {
+      console.error("Failed to read Teacher working days", error);
+      res.status(500).json({ message: "Invalid school working-day configuration" });
+    }
+  });
+
+  app.put("/api/admin/teacher-working-days", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin" || !req.session.schoolId)
+      return res.status(403).json({ message: "Admin access required" });
+    let days;
+    try {
+      days = parseWorkingDays(req.body);
+    } catch {
+      return res.status(400).json({ message: "Select at least one day and provide all seven boolean weekdays" });
+    }
+    try {
+      res.json(await saveWorkingDays(req.session.schoolId, days));
+    } catch (error) {
+      console.error("Failed to save Teacher working days", error);
+      res.status(500).json({ message: "Failed to save working days" });
+    }
+  });
+
+  app.put("/api/school-metadata/:schoolId/:metaKey", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { metaKey } = req.params;
+    const validKeys = ["classes", "sections", "subjects", "exam_types"];
+    if (!validKeys.includes(metaKey)) return res.status(400).json({ message: "Invalid meta key" });
+    const { values } = req.body;
+    if (!Array.isArray(values)) return res.status(400).json({ message: "Values must be an array" });
+    const result = await storage.setSchoolMetadata(schoolId, metaKey, values);
+    res.json(result);
+  });
+
+  // ===== ADMIN PASSWORD VERIFICATION (for Double-Lock Modal) =====
+  app.post("/api/admin/verify-password", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ message: "Password is required" });
+    const ok = await storage.verifyAdminPassword(req.session.userId, password);
+    res.json({ valid: ok });
+  });
+
+  // ===== STUDENT DEACTIVATION =====
+  app.post("/api/schools/:schoolId/students/:studentId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(schoolId) || isNaN(studentId)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+
+    const { reason, batchYear, comments, password } = req.body;
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+
+    const student = await storage.getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) return res.status(404).json({ message: "Student not found" });
+    if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
+
+    await storage.deactivateStudent(studentId, schoolId);
+    const detailParts1 = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
+    if (batchYear) detailParts1.push(`Batch: ${batchYear}`);
+    if (comments) detailParts1.push(`Comments: ${comments}`);
+    await storage.createAuditLog({
+      schoolId,
+      actionType: "deactivate",
+      entityType: "student",
+      entityId: studentId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: detailParts1.join(". "),
+    });
+    res.json({ message: "Student deactivated successfully" });
+  });
+
+  // ===== TEACHER DEACTIVATION =====
+  app.post("/api/schools/:schoolId/teachers/:teacherId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const schoolId = parseInt(req.params.schoolId);
+    const teacherId = parseInt(req.params.teacherId);
+    if (isNaN(schoolId) || isNaN(teacherId)) return res.status(400).json({ message: "Invalid ID" });
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+
+    const { reason, password } = req.body;
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+
+    const teacher = await storage.getTeacherById(teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
+
+    await storage.deactivateTeacher(teacherId, schoolId, reason);
+    await storage.createAuditLog({
+      schoolId,
+      actionType: "deactivate",
+      entityType: "teacher",
+      entityId: teacherId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: `Teacher ${teacher.fullName} deactivated. Reason: ${reason}`,
+    });
+    res.json({ message: "Teacher deactivated successfully" });
+  });
+
+  // ===== PATCH ALIASES (canonical contract) =====
+  app.patch("/api/students/:studentId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+
+    const { reason, batchYear, comments, password } = req.body;
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+
+    const student = await storage.getStudentById(studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    if (student.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Access denied" });
+    if (!student.isActive) return res.status(409).json({ message: "Student is already deactivated" });
+
+    await storage.deactivateStudent(studentId, req.session.schoolId!);
+    const detailParts = [`Student ${student.name} (${student.digitalStudentId}) deactivated. Reason: ${reason}`];
+    if (batchYear) detailParts.push(`Batch: ${batchYear}`);
+    if (comments) detailParts.push(`Comments: ${comments}`);
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!,
+      actionType: "deactivate",
+      entityType: "student",
+      entityId: studentId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: detailParts.join(". "),
+    });
+    res.json({ message: "Student deactivated successfully" });
+  });
+
+  // ===== ADMIN: STUDENT PROFILE SUMMARY (for Quick Action in attendance) =====
+  app.get("/api/admin/students/:studentId/summary", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const studentId = parseInt(req.params.studentId);
+    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const { students: studentsTable } = await import("@shared/schema");
+    const [row] = await db
+      .select({
+        id: studentsTable.id,
+        name: studentsTable.name,
+        class: studentsTable.class,
+        section: studentsTable.section,
+        digitalStudentId: studentsTable.digitalStudentId,
+        phone: studentsTable.phone,
+        isActive: studentsTable.isActive,
+        photoUrl: studentsTable.photoUrl,
+        rollNo: sql<string>`COALESCE(${studentProfiles.rollNo}, '')`.as("roll_no"),
+        fatherName: sql<string>`COALESCE(${studentProfiles.fatherName}, '')`.as("father_name"),
+        presentAddress: sql<string>`COALESCE(${studentProfiles.presentAddress}, '')`.as("present_address"),
+      })
+      .from(studentsTable)
+      .leftJoin(studentProfiles, eq(studentProfiles.studentId, studentsTable.id))
+      .where(and(eq(studentsTable.id, studentId), eq(studentsTable.schoolId, schoolId)));
+    if (!row) return res.status(404).json({ message: "Student not found" });
+    res.json(row);
+  });
+
+  app.patch("/api/teachers/:teacherId/deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const teacherId = parseInt(req.params.teacherId);
+    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+
+    const { reason, password } = req.body;
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+
+    const teacher = await storage.getTeacherById(teacherId);
+    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+    if (teacher.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Access denied" });
+
+    await storage.deactivateTeacher(teacherId, req.session.schoolId!, reason);
+    await storage.createAuditLog({
+      schoolId: req.session.schoolId!,
+      actionType: "deactivate",
+      entityType: "teacher",
+      entityId: teacherId,
+      actionBy: req.session.userId!,
+      actionByRole: "admin",
+      details: `Teacher ${teacher.fullName} deactivated. Reason: ${reason}`,
+    });
+    res.json({ message: "Teacher deactivated successfully" });
+  });
+
+  // ===== STUDENT PROFILE (Self-Service) =====
+  const profileDiskUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => {
+        const dir = path.join(process.cwd(), "uploads", "student-photos");
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const mimeToExt: Record<string, string> = {
+          "image/jpeg": ".jpg",
+          "image/jpg": ".jpg",
+          "image/png": ".png",
+          "image/gif": ".gif",
+          "image/webp": ".webp",
+          "image/avif": ".avif",
+        };
+        const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+        const ext = mimeToExt[file.mimetype] || ".jpg";
+        cb(null, unique + ext);
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  // GLOBAL MODULE — Student Profile is permanent identity data.
+  // NEVER add session filtering here. Profile, photo, and verification records
+  // must survive session changes and resets intact.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (students, student_profiles tables).
+  app.get("/api/student/profile", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — student profile is session-agnostic
+    const profile = await storage.getStudentProfile(req.session.studentId);
+    const approvedSnapshot = profile?.approvedSnapshot
+      ? (() => { try { return JSON.parse(profile.approvedSnapshot); } catch { return null; } })()
+      : null;
+    res.json({
+      profile: profile || null,
+      approvedSnapshot,
+      liveData: {
+        name: student.name,
+        class: student.class,
+        section: student.section,
+        digitalStudentId: student.digitalStudentId,
+        photoUrl: student.photoUrl,
+        enrollmentDate: student.enrollmentDate,
+        verifiedProfile: student.verifiedProfile
+          ? (() => { try { return JSON.parse(student.verifiedProfile); } catch { return null; } })()
+          : null,
+      },
+    });
+  });
+
+  const saveProfileSchema = z.object({
+    fullName: z.string().optional(),
+    class: z.string().optional(),
+    section: z.string().optional(),
+    rollNo: z.string().optional(),
+    fatherName: z.string().optional(),
+    motherName: z.string().optional(),
+    presentAddress: z.string().optional(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits or empty").optional(),
+    gender: z.enum(["Boy", "Girl"]).optional(),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be 10 digits").optional().or(z.literal("")),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
+    guardianName: z.string().optional(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
+    email: z.string().email("Invalid email format").optional().or(z.literal("")),
+  });
+
+  app.post("/api/student/profile", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const existing = await storage.getStudentProfile(req.session.studentId);
+
+    const parsed = saveProfileSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const resetStatus = existing?.status === "approved" ? "draft" : undefined;
+
+    const profile = await storage.upsertStudentProfile(
+      {
+        studentId: req.session.studentId,
+        schoolId: student.schoolId,
+        // Always mirror the live class/section so the teacher review always shows them
+        class:   student.class,
+        section: student.section,
+        ...parsed.data,
+      },
+      resetStatus,
+    );
+    res.json(profile);
+  });
+
+  app.get("/api/student/verification-limit", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const allowed = 3;
+    const used = await storage.countMonthlyVerifications(student.schoolId, req.session.studentId);
+    const remaining = Math.max(0, allowed - used);
+    res.json({ used, remaining, allowed });
+  });
+
+  app.post("/api/student/profile/submit", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const allowed = 3;
+    const used = await storage.countMonthlyVerifications(student.schoolId, req.session.studentId);
+    if (used >= allowed) {
+      return res.status(429).json({ message: `You have used all ${allowed} verification submissions for this month. Please try again next month.` });
+    }
+
+    const existing = await storage.getStudentProfile(req.session.studentId);
+    if (!existing) return res.status(400).json({ message: "Please save a draft before submitting" });
+    if (existing.status === "pending") return res.status(409).json({ message: "Profile is already pending review" });
+    if (existing.status === "approved") return res.status(409).json({ message: "Profile is already approved" });
+
+    if (!existing.fullName || !existing.fatherName || !existing.motherName || !existing.presentAddress) {
+      return res.status(400).json({ message: "Please fill in all required fields: Full Name, Father's Name, Mother's Name, and Present Address" });
+    }
+
+    await storage.logVerificationRequest(student.schoolId, req.session.studentId);
+    const profile = await storage.submitStudentProfile(req.session.studentId);
+    res.json(profile);
+  });
+
+  app.post(
+    "/api/student/profile/photo",
+    (req, res, next) => {
+      if (!req.session.studentId) {
+        res.status(401).json({ message: "Not authenticated" });
+        return;
+      }
+      next();
+    },
+    profileDiskUpload.single("photo"),
+    async (req, res) => {
+      if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+      const photoUrl = `/uploads/student-photos/${req.file.filename}`;
+      const profile = await storage.updateStudentProfilePhoto(req.session.studentId!, photoUrl);
+      res.json(profile);
+    },
+  );
+
+  const changeStudentPasswordSchema = z.object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(6, "New password must be at least 6 characters"),
+  });
+
+  app.post("/api/student/change-password", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const parsed = changeStudentPasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    const valid = await bcrypt.compare(parsed.data.currentPassword, student.passwordHash);
+    if (!valid) return res.status(401).json({ message: "Current password is incorrect" });
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+    await storage.updateStudentPassword(req.session.studentId, passwordHash);
+    res.json({ message: "Password changed successfully" });
+  });
+
+  // ===== STUDENT ATTENDANCE (Student-Facing Analytics) =====
+
+  function getAcademicYearDates(academicYear: string): { startDate: string; endDate: string } | null {
+    const match = academicYear.match(/^(\d{4})-(\d{2,4})$/);
+    if (!match) return null;
+    const startYear = parseInt(match[1], 10);
+    const endYear = startYear + 1;
+    const endSuffix = match[2];
+    const expectedSuffix2 = String(endYear).slice(-2);
+    const expectedSuffix4 = String(endYear);
+    if (endSuffix !== expectedSuffix2 && endSuffix !== expectedSuffix4) return null;
+    return {
+      startDate: `${startYear}-04-01`,
+      endDate: `${endYear}-03-31`,
+    };
+  }
+
+  app.get("/api/student/attendance/monthly", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    const year = parseInt(req.query.year as string);
+    const month = parseInt(req.query.month as string);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+      return res.status(400).json({ message: "Invalid year or month" });
+    }
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const data = await storage.getStudentMonthlyAttendance(student.id, student.schoolId, session.id, year, month);
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, year, month, days: data });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+  });
+
+  app.get("/api/student/attendance/yearly", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    // Prefer explicit startDate/endDate (from a real session), fall back to legacy year string
+    let startDate: string;
+    let endDate: string;
+    let label: string;
+
+    const directStart = (req.query.startDate as string) || "";
+    const directEnd   = (req.query.endDate   as string) || "";
+    if (directStart && directEnd) {
+      if (!isValidDateOnly(directStart) || !isValidDateOnly(directEnd) || directStart > directEnd) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
+      startDate = directStart;
+      endDate   = directEnd;
+      label     = (req.query.sessionName as string) || directStart.slice(0, 4);
+    } else {
+      const academicYear = (req.query.academicYear as string) || "";
+      const dates = getAcademicYearDates(academicYear);
+      if (!dates) return res.status(400).json({ message: "Invalid academicYear format. Use YYYY-YY (e.g. 2025-26)" });
+      startDate = dates.startDate;
+      endDate   = dates.endDate;
+      label     = academicYear;
+    }
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const historicalContext = await storage.resolveAttendanceClassSectionForStudent(
+        student.schoolId, session.id, student.id,
+      );
+      const data = await storage.getStudentYearlyAttendance(
+        student.id, student.schoolId, session.id,
+        historicalContext?.class ?? null, historicalContext?.section ?? null,
+        startDate, endDate,
+      );
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, sessionName: label, months: data });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+  });
+
+  app.get("/api/student/attendance/stats", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+
+    // Prefer explicit startDate/endDate (from a real session), fall back to legacy year string
+    let startDate: string;
+    let endDate: string | undefined;
+
+    const directStart = (req.query.startDate as string) || "";
+    const directEnd   = (req.query.endDate   as string) || "";
+    if (directStart) {
+      if (!isValidDateOnly(directStart) || (directEnd && !isValidDateOnly(directEnd)) || (directEnd && directStart > directEnd)) {
+        return res.status(400).json({ message: "Invalid Attendance date range" });
+      }
+      startDate = directStart;
+      endDate   = directEnd || undefined;
+    } else {
+      const academicYear = (req.query.academicYear as string) || "";
+      const dates = academicYear ? getAcademicYearDates(academicYear) : null;
+      const academicStartYear = Number(getAcademicYearForISTDate(todayInIST()).split("-")[0]);
+      startDate = dates ? dates.startDate : `${academicStartYear}-04-01`;
+      endDate   = dates ? dates.endDate : undefined;
+    }
+
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    try {
+      const session = await resolveAttendanceReadSession(
+        student.schoolId,
+        (req as any).viewSessionId,
+      );
+      const historicalContext = await storage.resolveAttendanceClassSectionForStudent(
+        student.schoolId, session.id, student.id,
+      );
+      const stats = await storage.getStudentAttendanceStats(
+        student.id, student.schoolId, session.id,
+        historicalContext?.class ?? null, historicalContext?.section ?? null,
+        startDate, endDate,
+      );
+      res.json({ schoolId: student.schoolId, studentId: student.id, sessionId: session.id, startDate, ...stats });
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
+      throw error;
+    }
+  });
+
+  // GET resolved attendance policy for the current student
+  app.get("/api/student/attendance-policy", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const student = await storage.getStudentById(req.session.studentId);
+      if (!student) return res.status(401).json({ message: "Student not found" });
+      const policyRows = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, student.schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const resolved = resolvePolicy(policyRows, "STUDENT", student.class ?? "");
+      res.json(resolved);
+    } catch {
+      res.json(DEFAULT_POLICY);
+    }
+  });
+
+  // ===== STUDENT HOMEWORK ROUTES =====
+  app.get("/api/student/homework", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const date = (req.query.date as string) || undefined;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const items = await storage.getStudentHomework(student.schoolId, student.class, student.section, student.id, date, viewSessionId);
+    res.json(items);
+  });
+
+  app.get("/api/student/homework/pending-dates", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const month = (req.query.month as string) || "";
+    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ message: "month must be YYYY-MM" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const dates = await storage.getStudentHomeworkPendingDates(student.schoolId, student.class, student.section, student.id, month, viewSessionId);
+    res.json(dates);
+  });
+
+  app.get("/api/student/homework/:id", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const hwId = parseInt(req.params.id);
+    if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const hw = await storage.getHomeworkById(hwId);
+    if (!hw) return res.status(404).json({ message: "Homework not found" });
+    if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+    const submission = await storage.getHomeworkSubmission(hwId, student.id);
+    res.json({ ...hw, submission: submission || null });
+  });
+
+  {
+    const ALLOWED_SUBMISSION_MIMES = new Set([
+      "image/jpeg", "image/png", "image/webp",
+      "application/pdf",
+    ]);
+    const ALLOWED_SUBMISSION_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
+
+    const homeworkSubmissionUpload = multer({
+      storage: multer.diskStorage({
+        destination: (_req, _file, cb) => {
+          const dir = path.join(process.cwd(), "uploads", "homework-submissions");
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        },
+        filename: (_req, file, cb) => {
+          const unique = Date.now() + "-" + Math.round(Math.random() * 1e6);
+          cb(null, unique + path.extname(file.originalname).toLowerCase());
+        },
+      }),
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (ALLOWED_SUBMISSION_MIMES.has(file.mimetype) && ALLOWED_SUBMISSION_EXTS.has(ext)) {
+          cb(null, true);
+        } else {
+          cb(new Error("Only JPG, PNG, WebP, and PDF files are allowed for homework submissions"));
+        }
+      },
+    });
+
+    app.post("/api/student/homework/:id/submit", async (req, res, next) => {
+      if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+      next();
+    }, (req, res, next) => {
+      homeworkSubmissionUpload.single("file")(req, res, (err) => {
+        if (err) return res.status(400).json({ message: err.message || "File upload failed" });
+        next();
+      });
+    }, async (req, res) => {
+      const hwId = parseInt(req.params.id);
+      if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
+      const student = await storage.getStudentById(req.session.studentId!);
+      if (!student) return res.status(404).json({ message: "Student not found" });
+      const hw = await storage.getHomeworkById(hwId);
+      if (!hw) return res.status(404).json({ message: "Homework not found" });
+      if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      const existing = await storage.getHomeworkSubmission(hwId, student.id);
+      if (existing?.status === "approved") {
+        return res.status(400).json({ message: "This homework has already been approved and cannot be re-submitted" });
+      }
+      const fileUrl = req.file ? `/uploads/homework-submissions/${req.file.filename}` : undefined;
+      const textAnswer = typeof req.body?.textAnswer === "string" && req.body.textAnswer.trim()
+        ? req.body.textAnswer.trim()
+        : undefined;
+      if (!fileUrl && !textAnswer && !existing) {
+        return res.status(400).json({ message: "Please write an answer or upload a file before submitting." });
+      }
+      const today = todayInIST();
+      const isLate = hw.dueDate ? hw.dueDate < today : false;
+      const submission = await storage.upsertHomeworkSubmission({
+        homeworkId: hwId,
+        studentId: student.id,
+        schoolId: student.schoolId,
+        fileUrl,
+        textAnswer,
+      });
+      res.json({ submission, isLate });
+    });
+  }
+
+  // ===== STUDENT EXAM ROUTES =====
+  app.get("/api/student/exam/classes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
+    res.json({ classes });
+  });
+
+  app.get("/api/student/exam/types", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    // Security: studentId scopes data — no need for published-gate class restriction
+    const cls = (req.query.class as string) || student.class;
+    const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
+    res.json({ examTypes });
+  });
+
+  app.get("/api/student/exam/scores", async (req, res) => {
+    const context = await resolveStudentExaminationSession(
+      req.session.studentId,
+      (req as any).viewSessionId,
+      storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { student, schoolId, sessionId } = context;
+    const cls = (req.query.class as string) || student.class;
+    const examType = req.query.examType as string;
+    if (!examType) return res.status(400).json({ message: "examType is required" });
+    // Real-time: no published filter — studentId isolation guarantees tenant security
+    const scores = await storage.getStudentExamScores(schoolId, student.id, cls, examType, sessionId);
+    let rank: { rank: number; total: number } | null = null;
+    if (scores.length > 0) {
+      rank = await storage.getClassRank(schoolId, cls, student.section, examType, student.id, sessionId);
+    }
+    const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
+    const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
+    const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
+    try {
+      const grade = await storage.resolveGrade(schoolId, cls, percentage);
+      res.json({ scores, summary: { totalObtained, totalMax, percentage, grade: grade.gradeLabel, rank } });
+    } catch (error: any) {
+      return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
+    }
+  });
+
+  app.get("/api/student/exam/journey", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
+    const allClasses = classes.length > 0 ? classes : [student.class];
+    const journey: { cls: string; examType: string; percentage: number }[] = [];
+    for (const cls of allClasses) {
+      const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
+      if (examTypes.length === 0) continue;
+      const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
+      const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType, viewSessionId);
+      if (scores.length === 0) continue;
+      const obtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
+      const total = scores.reduce((sum, s) => sum + s.totalMarks, 0);
+      const pct = total > 0 ? Math.round((obtained / total) * 100 * 10) / 10 : 0;
+      journey.push({ cls, examType: finalExamType, percentage: pct });
+    }
+    res.json({ journey });
+  });
+
+  // Student: exam policy for their class — no published restriction
+  app.get("/api/student/exam/policy", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const cls = (req.query.class as string) || student.class;
+    const tiers = await storage.getExamPolicyTiers(student.schoolId);
+    const tier = tiers.find(t =>
+      (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
+    );
+    if (!tier) return res.status(404).json({ message: `No exam policy configured for Class ${cls}` });
+    const passPolicy = await storage.resolveClassPassPolicy(student.schoolId, cls);
+    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for Class ${cls}` });
+    try {
+      const gradingRules = await storage.getGradingRules(student.schoolId, passPolicy.id);
+      const { validateGradingRules } = await import("@shared/examination-calculation-engine");
+      validateGradingRules(gradingRules);
+      res.json({
+        ...tier,
+        passPercentage: passPolicy.passPercentage,
+        gradingRules,
+        gradingPolicy: { schoolId: student.schoolId, tierId: passPolicy.id },
+      });
+    } catch (error: any) {
+      return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
+    }
+  });
+
+  // Student: enrollment history — exact class/section per academic session
+  // Also auto-upserts the current active-session enrollment so the registry
+  // stays fresh even for students created before the enrollment table existed.
+  app.get("/api/student/exam/enrollment-history", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // Idempotent upsert: ensure the current session enrollment record exists
+    // (captures students who were created before the enrollment table or before
+    //  the active session was configured).
+    try {
+      const activeSession = await storage.getActiveSession(student.schoolId);
+      if (activeSession) {
+        await storage.upsertStudentEnrollment({
+          schoolId: student.schoolId,
+          studentId: student.id,
+          sessionId: activeSession.id,
+          className: student.class,
+          sectionName: student.section,
+          status: "Active",
+        });
+      }
+    } catch (e) {
+      // Non-fatal — historical data still returned even if upsert fails
+      console.warn("Enrollment upsert skipped:", (e as Error).message);
+    }
+
+    const history = await storage.getStudentEnrollmentHistory(student.schoolId, student.id);
+    res.json(history);
+  });
+
+  // Student: all exam scores for a class — real-time, no published gate
+  app.get("/api/student/exam/all-scores", async (req, res) => {
+    const context = await resolveStudentExaminationSession(
+      req.session.studentId,
+      (req as any).viewSessionId,
+      storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { student, schoolId, sessionId } = context;
+    const cls = (req.query.class as string) || student.class;
+    const scores = await storage.getStudentAllExamScores(schoolId, student.id, cls, sessionId);
+    res.json({ scores, cls });
+  });
+
+  // ===== STUDENT CLASSWORK ROUTES =====
+  app.get("/api/student/classwork", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const date = (req.query.date as string) || undefined;
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const items = await storage.getStudentClasswork(student.schoolId, student.class, student.section, date, viewSessionId);
+    res.json(items);
+  });
+
+  // ===== STUDENT GALLERY ROUTES =====
+  // GLOBAL MODULE — Gallery is permanent school-wide data.
+  // NEVER add session filtering here. Data must persist across all academic sessions.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (gallery_items table).
+
+  app.get("/api/student/gallery/tags", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — gallery is session-agnostic
+    const tags = await storage.getGalleryTagsBySchool(student.schoolId);
+    res.json(tags);
+  });
+
+  app.get("/api/student/gallery", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const tag = (req.query.tag as string) || undefined;
+    // GLOBAL MODULE: no viewSessionId filter — gallery is session-agnostic
+    const items = await storage.getApprovedGalleryItems(student.schoolId, tag);
+    res.json(items);
+  });
+
+  // ===== STUDENT LIBRARY =====
+  // GLOBAL MODULE — E-Library is permanent school-wide data.
+  // NEVER add session filtering here. Books and lending records persist across sessions.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (library_books, book_borrows tables).
+
+  app.get("/api/student/library", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — library catalog is session-agnostic
+    const books = await storage.getLibraryBooksWithUploaderNames(student.schoolId);
+    res.json(books.filter(b => b.verificationStatus === "approved"));
+  });
+
+  // ===== STUDENT FACULTY ROUTES =====
+  // GLOBAL MODULE — Faculty Info reflects the current teacher registry.
+  // NEVER add session filtering here. Faculty assignments are school-wide configuration.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (teachers, faculty_mappings tables).
+
+  app.get("/api/student/faculty", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    // GLOBAL MODULE: no viewSessionId filter — faculty info is session-agnostic
+    const faculty = await storage.getFacultyBySchoolWithMappings(student.schoolId);
+    res.json(faculty);
+  });
+
+  // ===== ADMIN CALENDAR ROUTES =====
+
+  app.get("/api/admin/calendar", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { month, year } = req.query;
+    if (month && year) {
+      const m = parseInt(month as string);
+      const y = parseInt(year as string);
+      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
+      const lastDay = new Date(y, m, 0).getDate();
+      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(schoolId, startDate, endDate);
+      return res.json(events);
+    }
+    const events = await storage.getCalendarEvents(schoolId);
+    res.json(events);
+  });
+
+  app.post("/api/admin/calendar", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const { title, description, eventType, startDate, endDate, isRecurring, colorCode, audienceScope, targetClass, targetSection } = req.body;
+    if (!title || !eventType || !startDate) return res.status(400).json({ message: "title, eventType, startDate required" });
+    let scopeValue: string = "All_School";
+    if (audienceScope === "Multi_Target") {
+      scopeValue = "Multi_Target";
+    } else if (targetClass && targetSection) {
+      scopeValue = "Specific_Section";
+    } else if (targetClass) {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Entire_Class") {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Specific_Section") {
+      scopeValue = "Specific_Section";
+    }
+    if (scopeValue !== "All_School" && !targetClass) {
+      return res.status(400).json({ message: "targetClass is required for class-targeted events" });
+    }
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
+
+    const baseInsert = {
+      schoolId, title, description: description || null, eventType, venue: null, colorCode: color,
+      isRecurring: !!isRecurring, audienceScope: scopeValue,
+      targetClass: scopeValue !== "All_School" ? (targetClass as string) : null,
+      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection as string) : null,
+    };
+    const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string; audienceScope: string; targetClass: string | null; targetSection: string | null }[] = [];
+
+    const start = new Date(startDate + "T00:00:00");
+    const end = endDate ? new Date(endDate + "T00:00:00") : start;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      entries.push({ ...baseInsert, date: dateStr });
+    }
+
+    if (isRecurring) {
+      const CALENDAR_HORIZON = 2126;
+      const startYear = new Date(startDate + "T00:00:00").getFullYear();
+      const extraYears = Math.max(0, CALENDAR_HORIZON - startYear);
+      const baseEntries = [...entries];
+      for (let yearOffset = 1; yearOffset <= extraYears; yearOffset++) {
+        baseEntries.forEach(e => {
+          const origDate = new Date(e.date + "T00:00:00");
+          origDate.setFullYear(origDate.getFullYear() + yearOffset);
+          const futureDate = `${origDate.getFullYear()}-${String(origDate.getMonth() + 1).padStart(2, "0")}-${String(origDate.getDate()).padStart(2, "0")}`;
+          entries.push({ ...e, date: futureDate });
+        });
+      }
+    }
+
+    const created = await storage.createCalendarEvents(entries);
+    res.status(201).json(created);
+  });
+
+  app.patch("/api/admin/calendar/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const { title, description, eventType, date, venue, colorCode, isRecurring, audienceScope, targetClass, targetSection } = req.body;
+    if (!title || !eventType || !date) return res.status(400).json({ message: "title, eventType, date required" });
+    let scopeValue: string = "All_School";
+    if (audienceScope === "Multi_Target") {
+      scopeValue = "Multi_Target";
+    } else if (targetClass && targetSection) {
+      scopeValue = "Specific_Section";
+    } else if (targetClass) {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Entire_Class") {
+      scopeValue = "Entire_Class";
+    } else if (audienceScope === "Specific_Section") {
+      scopeValue = "Specific_Section";
+    }
+    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
+    const updated = await storage.updateCalendarEvent(id, schoolId, {
+      title, description: description || null, eventType, date, venue: venue || null, colorCode: color,
+      isRecurring: !!isRecurring, audienceScope: scopeValue,
+      targetClass: scopeValue !== "All_School" ? (targetClass || null) : null,
+      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection || null) : null,
+    });
+    if (!updated) return res.status(404).json({ message: "Event not found or access denied" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/calendar/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    const ok = await storage.deleteCalendarEventBySchool(id, schoolId);
+    if (!ok) return res.status(404).json({ message: "Event not found or access denied" });
+    res.json({ message: "Deleted" });
+  });
+
+  // seed-holidays endpoint removed — all calendar entries must be created manually by the admin.
+
+  // ===== STUDENT CALENDAR ROUTES =====
+  // GLOBAL MODULE — School Calendar is permanent school-wide data.
+  // NEVER add session filtering here. Calendar events span academic years by design.
+  // Protected by the GLOBAL DATA PROTECTION CONTRACT (calendar_events table).
+
+  app.get("/api/student/calendar", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const studentFilter = student.class ? [{ cls: student.class, sec: student.section || undefined }] : undefined;
+    const monthParam = req.query.month !== undefined ? parseInt(req.query.month as string) : null;
+    const yearParam = req.query.year ? parseInt(req.query.year as string) : null;
+    if (yearParam !== null && monthParam === null) {
+      const startDate = `${yearParam}-01-01`;
+      const endDate = `${yearParam}-12-31`;
+      const events = await storage.getCalendarEventsByRange(student.schoolId, startDate, endDate, studentFilter);
+      return res.json(events);
+    }
+    if (monthParam !== null && yearParam !== null) {
+      const firstDay = new Date(yearParam, monthParam, 1);
+      const lastDay = new Date(yearParam, monthParam + 1, 0);
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const events = await storage.getCalendarEventsByRange(student.schoolId, fmt(firstDay), fmt(lastDay), studentFilter);
+      return res.json(events);
+    }
+    const events = await storage.getCalendarEvents(student.schoolId, studentFilter);
+    res.json(events);
+  });
+
+  // ===== STUDENT TIMETABLE ROUTES =====
+
+  app.get("/api/student/timetable", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, student.schoolId);
+    if (timetableSessionId === null) return;
+    const all = await storage.getTimetableBySchool(student.schoolId, timetableSessionId);
+    // Show all configured entries (draft + published) — students should see
+    // their schedule as soon as it is set up, regardless of publish status.
+    const entries = all.filter(e =>
+      e.class === student.class && e.section === student.section
+    );
+    const structure = await storage.getTimetableStructure(student.schoolId, timetableSessionId, student.class || "");
+    res.json({ entries, structure });
+  });
+
+  // ===== STUDENT LEAVE ROUTES =====
+
+  // Memory-storage multer — avoids diskStorage callback complexity that prevented req.body from being populated
+  const leaveMemUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+  });
+
+  // Single atomic endpoint: fields + optional file arrive together, file written to disk from buffer
+  app.post("/api/student/leave", leaveMemUpload.single("file"), async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+
+    // Archive-mode guard
+    const viewSessionId = req.headers["x-view-session-id"];
+    if (viewSessionId) {
+      const sessionId = parseInt(viewSessionId as string, 10);
+      if (!isNaN(sessionId)) {
+        const sessions = await storage.getAcademicSessions(student.schoolId);
+        const targetSession = sessions.find(s => s.id === sessionId);
+        if (targetSession && !targetSession.isActive) {
+          return res.status(403).json({ error: "Security Block: Leave applications cannot be submitted for historical academic terms." });
+        }
+      }
+    }
+
+    const startDate  = req.body?.startDate  ?? req.body?.start_date;
+    const endDate    = req.body?.endDate    ?? req.body?.end_date;
+    const reason     = req.body?.reason;
+    const category   = req.body?.category;
+
+    if (!startDate || !endDate || !reason) {
+      return res.status(400).json({ message: "startDate, endDate, and reason are required" });
+    }
+
+    // Save uploaded file buffer to disk (if any)
+    let attachmentUrl: string | null = null;
+    if (req.file?.buffer) {
+      const dir = path.join(process.cwd(), "uploads", "leave-attachments");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const ext = path.extname(req.file.originalname) || ".bin";
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`;
+      fs.writeFileSync(path.join(dir, filename), req.file.buffer);
+      attachmentUrl = `/uploads/leave-attachments/${filename}`;
+    }
+
+    // Tag with the school's active session for session-scoped filtering
+    const activeSessionForStudentLeave = await storage.getActiveSession(student.schoolId);
+
+    const leave = await storage.createStudentLeaveRequest({
+      studentId: student.id,
+      schoolId: student.schoolId,
+      startDate,
+      endDate,
+      reason,
+      status: "pending_teacher",
+      category: category || null,
+      attachmentUrl,
+      sessionId: activeSessionForStudentLeave?.id ?? null,
+    });
+    res.status(201).json(leave);
+  });
+
+  app.get("/api/student/leave", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const leaves = await storage.getStudentLeavesByStudent(req.session.studentId, viewSessionId);
+    res.json(leaves);
+  });
+
+  app.delete("/api/student/leave/:id", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const result = await storage.deleteStudentLeaveRequest(id, req.session.studentId);
+    if (!result.success) {
+      if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
+      if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
+      if (result.reason === "not_pending") return res.status(400).json({ message: "Only pending leave requests can be deleted" });
+    }
+    res.json({ message: "Leave request deleted" });
+  });
+
+  // ===== STUDENT NOTICEBOARD ROUTES =====
+
+  app.get("/api/student/notices", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const noticesWithRead = await storage.getStudentNotices(
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+    );
+    res.json(noticesWithRead);
+  });
+
+  app.post("/api/student/notices/mark-read", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { noticeIds } = req.body;
+    if (!Array.isArray(noticeIds)) return res.status(400).json({ message: "noticeIds must be an array" });
+    const requestedIds = noticeIds.map(Number).filter(n => !isNaN(n));
+    if (requestedIds.length === 0) return res.json({ marked: 0 });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    // Only allow marking notices that are actually visible to this student
+    const eligibleNotices = await storage.getStudentNotices(
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+    );
+    const eligibleIds = new Set(eligibleNotices.map(n => n.id));
+    const ids = requestedIds.filter(id => eligibleIds.has(id));
+    await storage.markNoticesRead(req.session.studentId, ids);
+    res.json({ marked: ids.length });
+  });
+
+  app.get("/api/student/notices/unread-count", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const count = await storage.getUnreadNoticeCount(
+      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+    );
+    res.json({ count });
+  });
+
+  // ===== STUDENT COMPLAINT ROUTES =====
+
+  app.get("/api/student/complaints/inbox", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentInboxComplaints(student.id, student.schoolId, viewSessionId);
+    res.json(list);
+  });
+
+  app.get("/api/student/complaints/filed", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const list = await storage.getStudentFiledComplaints(student.id, student.schoolId, viewSessionId);
+    res.json(list);
+  });
+
+  app.get("/api/student/complaint-teachers", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const teachers = await storage.getTeachersBySchool(student.schoolId);
+    res.json(teachers.map(t => ({ id: t.id, name: t.fullName, subject: t.subject })));
+  });
+
+  app.post("/api/student/complaints/staff-grievance", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { teacherId, content, contactNumber, suggestions } = req.body;
+    if (!teacherId || !content?.trim()) {
+      return res.status(400).json({ message: "Teacher and complaint description are required" });
+    }
+    const targetTeacher = await storage.getTeacherById(parseInt(teacherId));
+    if (!targetTeacher || targetTeacher.schoolId !== student.schoolId) {
+      return res.status(400).json({ message: "Invalid staff member" });
+    }
+    const ticketId = await storage.getNextTicketId(student.schoolId);
+    const complaint = await storage.createStudentComplaint({
+      ticketId,
+      teacherId: targetTeacher.id,
+      complainantStudentId: student.id,
+      schoolId: student.schoolId,
+      complaintType: "student-to-staff",
+      content: content.trim(),
+      contactNumber: contactNumber?.trim() || null,
+      suggestions: suggestions?.trim() || null,
+      status: "Pending",
+      isDeleted: false,
+    });
+    res.status(201).json(complaint);
+  });
+
+  // Student peer-search (student-session only, excludes self)
+  app.get("/api/student/search-peers", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const q = (req.query.q as string) || "";
+    if (q.length < 2) return res.json([]);
+    const results = await storage.searchStudents(student.schoolId, q);
+    res.json(results.filter(s => s.id !== req.session.studentId));
+  });
+
+  app.post("/api/student/complaints/peer-report", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const { reportedStudentName, reportedStudentId, incidentDate, content } = req.body;
+    if (!reportedStudentName?.trim() || !content?.trim()) {
+      return res.status(400).json({ message: "Reported student name and description are required" });
+    }
+    const ticketId = await storage.getNextTicketId(student.schoolId);
+    const complaint = await storage.createStudentComplaint({
+      ticketId,
+      complainantStudentId: student.id,
+      studentId: reportedStudentId ? parseInt(reportedStudentId) : null,
+      schoolId: student.schoolId,
+      complaintType: "student-peer-report",
+      content: content.trim(),
+      reportedStudentName: reportedStudentName.trim(),
+      incidentDate: incidentDate ? new Date(incidentDate) : null,
+      status: "Pending",
+      isDeleted: false,
+      complainantClass: student.class,
+      complainantSection: student.section,
+    });
+    res.status(201).json(complaint);
+  });
+
+  // ===== STUDENT COMPLAINT NOTES =====
+  // GET notes for a complaint the student is a party to
+  app.get("/api/student/complaints/:id/notes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(401).json({ message: "Student not found" });
+    const complaintId = parseInt(req.params.id);
+    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    // Only allow if this student is the recipient (inbox) or the filer
+    const isRecipient = c.studentId === student.id;
+    const isFiler = c.complainantStudentId === student.id;
+    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
+    const notes = await storage.getComplaintNotes(complaintId);
+    res.json(notes);
+  });
+
+  // POST a comment on a complaint the student is a party to
+  app.post("/api/student/complaints/:id/notes", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(401).json({ message: "Student not found" });
+    const complaintId = parseInt(req.params.id);
+    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
+    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const isRecipient = c.studentId === student.id;
+    const isFiler = c.complainantStudentId === student.id;
+    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ message: "Content required" });
+    const note = await storage.addComplaintNote({
+      complaintId,
+      authorId: student.id,
+      authorRole: "student",
+      authorName: student.name,
+      content: content.trim(),
+    });
+    res.status(201).json(note);
+  });
+
+  // ===== ADMIN SCHOOL CONFIG (strict session-scoped) =====
+  // ── GLOBAL MODULE — School Setup configuration is permanent school-wide data ─
+  // School metadata (classes, sections, subjects, exam types, policies, grading)
+  // is NOT filtered by viewSessionId.  Configuration spans all academic sessions.
+  // This route intentionally ignores x-view-session-id and MUST NOT be changed
+  // to do session filtering.
+  // Tables: school_metadata, attendance_policies, leave_policies, exam_policy_tiers,
+  //         grading_tiers, grading_rules (listed in GLOBAL DATA PROTECTION CONTRACT)
+  app.get("/api/admin/school-config", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    try {
+      const meta = await storage.getAllSchoolMetadata(schoolId);
+      const classSections = await storage.getClassSectionsMap(schoolId);
+      res.json({
+        classes: meta["classes"] ?? [],
+        sections: meta["sections"] ?? [],
+        subjects: meta["subjects"] ?? [],
+        classSections,
+      });
+    } catch {
+      res.json({ classes: [], sections: [], subjects: [], classSections: {} });
+    }
+  });
+
+  // ===== ADMIN ATTENDANCE: CLASS DETAIL =====
+  app.get("/api/admin/attendance/class-detail", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { class: cls, section, date } = req.query as { class?: string; section?: string; date?: string };
+    if (!cls || !section || !date) return res.status(400).json({ message: "class, section, and date are required" });
+    console.log(`[class-detail] schoolId=${schoolId} class=${cls} section=${section} date=${date}`);
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+      requireAttendanceDateInSession(date, attendanceSession);
+      const historicalRoster = await storage.getAttendanceReportRosterForSessionClass(
+        schoolId, attendanceSession.id, cls, section,
+      );
+      const studentIdList = historicalRoster.map(student => student.id);
+      const identityKeyList = historicalRoster.map(student => student.identityKey);
+      const profileRows = studentIdList.length > 0
+        ? await db.select({
+            studentId: studentProfiles.studentId,
+            rollNo: studentProfiles.rollNo,
+          }).from(studentProfiles).where(inArray(studentProfiles.studentId, studentIdList))
+        : [];
+      const rollNoByStudent = new Map(profileRows.map(profile => [profile.studentId, profile.rollNo ?? ""]));
+      const studentRows = historicalRoster.map(student => ({
+        id: student.id,
+        name: student.name,
+        digitalStudentId: student.digitalStudentId,
+        photoUrl: student.photoUrl,
+        rollNo: rollNoByStudent.get(student.id) ?? "",
+      }));
+      const filteredRecords = studentIdList.length > 0
+        ? await db.select().from(attendanceRecords).where(
+            and(
+              eq(attendanceRecords.schoolId, schoolId),
+              eq(attendanceRecords.class, cls),
+              eq(attendanceRecords.section, section),
+              eq(attendanceRecords.date, date),
+              inArray(attendanceRecords.identityKey, identityKeyList),
+              eq(attendanceRecords.sessionId, attendanceSession.id),
+            )
+          )
+        : [];
+      const result = studentRows.map(student => {
+        const rosterStudent = historicalRoster.find(candidate => candidate.id === student.id);
+        const record = filteredRecords.find(r => r.identityKey === rosterStudent?.identityKey);
+        return {
+          studentId: student.id,
+          name: student.name,
+          rollNo: student.rollNo ?? "",
+          digitalStudentId: student.digitalStudentId,
+          status: (record && record.status) ? record.status : "not-marked",
+        };
+      });
+      const workingDates = await getStudentAttendanceWorkingDates({
+        schoolId,
+        sessionId: attendanceSession.id,
+        class: cls,
+        section,
+        startDate: date,
+        endDate: date,
+      });
+      const summary = aggregateStudentAttendance({
+        schoolId,
+        sessionId: attendanceSession.id,
+        statuses: workingDates.length > 0
+          ? result.map(student =>
+              student.status === "not-marked" ? null : student.status
+            )
+          : [],
+      });
+
+      // Build submission metadata from attendance_records
+      const submittedRecs = filteredRecords.filter(r => r.markedAt).sort(
+        (a, b) => new Date(a.markedAt as Date).getTime() - new Date(b.markedAt as Date).getTime()
+      );
+      const firstSubmitted = submittedRecs[0] ?? null;
+      const editedRecs = filteredRecords
+        .filter(r => (r.editCount ?? 0) > 0 && r.markedAt)
+        .sort((a, b) => new Date(b.markedAt as Date).getTime() - new Date(a.markedAt as Date).getTime());
+      const lastEdited = editedRecs[0] ?? null;
+
+      const meta = {
+        isSubmitted: filteredRecords.length > 0,
+        submittedBy: firstSubmitted?.markedBy ?? null,
+        submittedAt: firstSubmitted?.markedAt ? new Date(firstSubmitted.markedAt as Date).toISOString() : null,
+        lastModifiedAt: lastEdited?.markedAt ? new Date(lastEdited.markedAt as Date).toISOString() : null,
+        modifiedBy: lastEdited?.markedBy ?? null,
+      };
+
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.json({ meta, students: result, summary });
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      console.error("class-detail error:", err);
+      res.status(500).json({ message: "Failed to fetch class attendance" });
+    }
+  });
+
+  // ===== ADMIN ATTENDANCE: SCHOOL-WIDE OVERVIEW (enrollment-based) =====
+  app.get("/api/admin/attendance/overview", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { date } = req.query as { date?: string };
+    if (!date) return res.status(400).json({ message: "date is required" });
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+      requireAttendanceDateInSession(date, attendanceSession);
+      const enrolledTotal = await storage.getAttendancePopulationForSession(
+        schoolId, attendanceSession.id,
+      );
+      const summary = await storage.getDailyAttendanceSummary(
+        schoolId, attendanceSession.id, date,
+      );
+
+      res.json({
+        enrolledTotal,
+        markedTotal: summary.total,
+        applicableTotal: summary.applicableTotal,
+        present: summary.present,
+        absent: summary.absent,
+        leave: summary.leave,
+        late: summary.late,
+        halfDay: summary.halfDay,
+        missing: summary.missing,
+        unknown: summary.unknown,
+        percentage: summary.percentage,
+      });
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      res.status(500).json({ message: "Failed to fetch attendance overview" });
+    }
+  });
+
+  app.get("/api/admin/attendance/teacher-summary", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
+    const { date } = req.query as { date?: string };
+    if (!date) return res.status(400).json({ message: "date is required" });
+    try {
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+        { allowActiveFallback: true },
+      );
+      requireAttendanceDateInSession(date, attendanceSession);
+      const [allTeachers, selfAttRows, mappingRows, corrRows, studentRecords] = await Promise.all([
+        storage.getTeachersBySchool(schoolId),
+        db.select().from(teacherSelfAttendance).where(
+          and(
+            eq(teacherSelfAttendance.schoolId, schoolId),
+            eq(teacherSelfAttendance.attendanceDate, date),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          )
+        ),
+        db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
+        db.select().from(attendanceCorrectionRequests).where(
+          and(
+            eq(attendanceCorrectionRequests.schoolId, schoolId),
+            eq(attendanceCorrectionRequests.attendanceDate, date),
+            eq(attendanceCorrectionRequests.sessionId, attendanceSession.id),
+          )
+        ),
+        db.select().from(attendanceRecords).where(
+          and(
+            eq(attendanceRecords.schoolId, schoolId),
+            eq(attendanceRecords.date, date),
+            eq(attendanceRecords.sessionId, attendanceSession.id),
+          )
+        ),
+      ]);
+
+      // Self-attendance map: teacherId → record
+      const selfMap = new Map<number, typeof selfAttRows[0]>();
+      for (const r of selfAttRows) selfMap.set(r.teacherId, r);
+
+      // Faculty mappings: teacherId → unique subjects array
+      const subjMap = new Map<number, Set<string>>();
+      for (const m of mappingRows) {
+        if (!subjMap.has(m.teacherId)) subjMap.set(m.teacherId, new Set());
+        if (m.subject) subjMap.get(m.teacherId)!.add(m.subject);
+      }
+
+      // Faculty mappings: teacherId → unique class-section pairs (e.g. ["6-A", "7-B"])
+      const csMap = new Map<number, Set<string>>();
+      for (const m of mappingRows) {
+        if (!csMap.has(m.teacherId)) csMap.set(m.teacherId, new Set());
+        csMap.get(m.teacherId)!.add(`${m.className}-${m.section}`);
+      }
+
+      // Correction counts per teacher for this date
+      const corrMap = new Map<number, number>();
+      for (const c of corrRows) corrMap.set(c.teacherId, (corrMap.get(c.teacherId) ?? 0) + 1);
+
+      // Student-marking map: teacherId → earliest markedAt
+      const markMap = new Map<number, Date>();
+      for (const r of studentRecords) {
+        if (!r.markedAt) continue;
+        const existing = markMap.get(r.teacherId);
+        if (!existing || r.markedAt < existing) markMap.set(r.teacherId, r.markedAt);
+      }
+
+      const result = allTeachers.map(t => {
+        const selfRec = selfMap.get(t.id) ?? null;
+        const subjectsFromMappings = Array.from(subjMap.get(t.id) ?? []);
+        const primarySubject = subjectsFromMappings[0] ?? t.subject ?? "";
+        const department = primarySubject || t.department || "";
+        // All subjects across all faculty mappings for this teacher
+        const subjects = subjectsFromMappings.length > 0
+          ? subjectsFromMappings
+          : (t.subject ? [t.subject] : []);
+        const corrCount = corrMap.get(t.id) ?? 0;
+        const studentMarkAt = markMap.get(t.id) ?? null;
+
+        const selfStatus = selfRec?.status ?? "Not Marked";
+        const isLate = selfStatus === "Late";
+
+        // Collect all class-section assignments from faculty mappings
+        const assignedClassSections = Array.from(csMap.get(t.id) ?? []).sort();
+
+        return {
+          teacherId: t.id,
+          name: t.fullName,
+          digitalTeacherId: t.digitalTeacherId ?? null,
+          assignedClass: t.assignedClass ?? "",
+          assignedSection: t.assignedSection ?? "",
+          assignedClassSections,
+          subject: primarySubject,
+          subjects,
+          department,
+          selfStatus,
+          selfCheckIn: selfRec?.checkInTime ? (selfRec.checkInTime as Date).toISOString() : null,
+          selfCheckOut: selfRec?.checkOutTime ? (selfRec.checkOutTime as Date).toISOString() : null,
+          selfWorkedMinutes: selfRec?.totalWorkingMinutes ?? 0,
+          isLate,
+          hasCorrectionAudit: corrCount > 0,
+          correctionCount: corrCount,
+          studentMarkStatus: studentMarkAt ? "marked" : "not-marked",
+          submittedAt: studentMarkAt ? studentMarkAt.toISOString() : null,
+        };
+      });
+
+      const totalFaculty = result.length;
+      const present = result.filter(r => r.selfStatus === "Present").length;
+      const notMarked = result.filter(r => r.selfStatus === "Not Marked").length;
+      const lateArrivals = result.filter(r => r.selfStatus === "Late").length;
+      const onLeave = result.filter(r => r.selfStatus === "Leave").length;
+      const halfDay = result.filter(r => r.selfStatus === "Half Day").length;
+      const pendingCorrections = corrRows.filter(c => c.status === "Pending").length;
+      const totalCorrections = corrRows.length;
+
+      res.json({
+        summary: { totalFaculty, present, notMarked, lateArrivals, onLeave, halfDay, pendingCorrections, totalCorrections },
+        teachers: result,
+      });
+    } catch (err) {
+      if (sendAttendanceReadSessionError(res, err)) return;
+      console.error("teacher-summary error:", err);
+      res.status(500).json({ message: "Failed to fetch teacher attendance summary" });
+    }
+  });
+
+  // ===== ACADEMIC SESSIONS API =====
+  // All routes are admin-only and strictly scoped to req.session.schoolId (tenant isolation).
+
+  app.get("/api/admin/academic-sessions", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const rows = await storage.getAcademicSessions(schoolId);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch sessions" });
+    }
+  });
+
+  // ── SESSION COPY ENGINE ────────────────────────────────────────────────────
+  //
+  // Runs INSIDE the create-session DB transaction.
+  // All copy operations are strictly scoped to schoolId + sourceSessionId.
+  // Returns a structured CopyResult that replaces the raw copiedModules string.
+  //
+  // Category A (safe) — school-wide config tables: already shared across every
+  //   session; we verify they exist and report counts. No physical duplication.
+  // Recurring calendar events — physically duplicated with dates advanced by
+  //   the year-delta between source and destination sessions.
+  // Category B (review) — teacherAllocations / facultyMappings / schoolAssets:
+  //   school-wide; verified and reported. No duplication.
+  // Category C — never touched. Listed in cleanSlate for audit clarity.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  type CopyEntry = { module: string; parentModule: string; label: string; count: number; note: string };
+  type SessionCopyResult = {
+    sourceSessionId: number;
+    sourceSessionName: string;
+    destSessionId: number;
+    approvedModules: string[];
+    copied: CopyEntry[];
+    sharedSchoolwide: CopyEntry[];
+    requestedButEmpty: CopyEntry[];
+    cleanSlate: string[];
+    totalRecordsCopied: number;
+    timestamp: string;
+  };
+
+  // Maps every sub-module ID (from the UI tree) onto the DB operation to run.
+  // "schoolwide" entries are verified-only; "calendar-recurring" entries are
+  // physically duplicated.
+  const SUBMODULE_OPS: Record<string, {
+    parentModule: string;
+    label: string;
+    kind: "schoolwide-meta" | "schoolwide-table" | "calendar-recurring" | "noop";
+    metaKey?: string;
+    note: string;
+  }> = {
+    // ── Cat A: School Setup ─────────────────────────────────────────────────
+    "classes":                    { parentModule: "School Setup",        label: "Classes",                  kind: "schoolwide-meta",    metaKey: "classes",           note: "Shared across all sessions for this school" },
+    "sections":                   { parentModule: "School Setup",        label: "Sections",                 kind: "schoolwide-meta",    metaKey: "sections",          note: "Shared across all sessions for this school" },
+    "subjects":                   { parentModule: "School Setup",        label: "Subjects",                 kind: "schoolwide-meta",    metaKey: "subjects",          note: "Shared across all sessions for this school" },
+    "exam-types":                 { parentModule: "School Setup",        label: "Exam Types",               kind: "schoolwide-meta",    metaKey: "exam_types",        note: "Shared across all sessions for this school" },
+    "class-mapping":              { parentModule: "School Setup",        label: "Class–Section Mapping",    kind: "schoolwide-meta",    metaKey: "class_sections",    note: "Shared across all sessions for this school" },
+    "subject-mapping":            { parentModule: "School Setup",        label: "Class–Subject Mapping",    kind: "schoolwide-meta",    metaKey: "class_subjects",    note: "Shared across all sessions for this school" },
+    "class-exam-type-mapping":    { parentModule: "School Setup",        label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",    metaKey: "class_exam_types",  note: "Shared across all sessions for this school" },
+    "grading-policy":             { parentModule: "School Setup",        label: "Grading Policy",           kind: "schoolwide-meta",    metaKey: "grading_config",    note: "Shared across all sessions for this school" },
+    "promotion-policy":           { parentModule: "School Setup",        label: "Promotion Policy",         kind: "schoolwide-table",   note: "exam_policy_tiers — shared across all sessions" },
+    "attendance-policy":          { parentModule: "School Setup",        label: "Attendance Policy",        kind: "schoolwide-table",   note: "attendance_policies — shared across all sessions" },
+    "leave-policy":               { parentModule: "School Setup",        label: "Leave Policy",             kind: "schoolwide-table",   note: "leave_policies — shared across all sessions" },
+    // ── Cat A: Timetable Master ─────────────────────────────────────────────
+    "bell-structure":             { parentModule: "Timetable Master",    label: "Bell Structure",           kind: "schoolwide-table",   note: "timetable_structure — shared across all sessions" },
+    "period-config":              { parentModule: "Timetable Master",    label: "Period Configuration",     kind: "schoolwide-table",   note: "timetable_structure — shared across all sessions" },
+    "timetable-template":         { parentModule: "Timetable Master",    label: "Timetable Template",       kind: "schoolwide-table",   note: "Draft timetable entries — shared across all sessions" },
+    // ── Cat A: School Calendar ──────────────────────────────────────────────
+    "holiday-templates":          { parentModule: "School Calendar",     label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring holiday events duplicated with dates advanced to destination year" },
+    "recurring-events":           { parentModule: "School Calendar",     label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced to destination year" },
+    // ── Cat A: ID Card Generator ────────────────────────────────────────────
+    "card-layouts":               { parentModule: "ID Card Generator",   label: "Card Layouts",             kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    "print-templates":            { parentModule: "ID Card Generator",   label: "Print Templates",          kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions for this school" },
+    // ── Cat B: Faculty Mapping ──────────────────────────────────────────────
+    "teacher-class-assignments":  { parentModule: "Faculty Mapping",     label: "Teacher–Class Assignments",kind: "schoolwide-table",   note: "teacher_allocations + faculty_mappings — shared across all sessions" },
+    // ── Cat B: Fees & Payments ──────────────────────────────────────────────
+    "fee-categories":             { parentModule: "Fees & Payments",     label: "Fee Categories",           kind: "schoolwide-meta",    metaKey: "fee_categories",    note: "Shared across all sessions for this school" },
+    "fee-heads":                  { parentModule: "Fees & Payments",     label: "Fee Heads",                kind: "schoolwide-meta",    metaKey: "fee_heads",         note: "Shared across all sessions for this school" },
+    "fee-structure":              { parentModule: "Fees & Payments",     label: "Fee Structure",            kind: "schoolwide-meta",    metaKey: "fee_structure",     note: "Shared across all sessions for this school" },
+    "fine-rules":                 { parentModule: "Fees & Payments",     label: "Fine Rules",               kind: "schoolwide-meta",    metaKey: "fee_fine_rules",    note: "Shared across all sessions for this school" },
+    "concession-rules":           { parentModule: "Fees & Payments",     label: "Concession Rules",         kind: "schoolwide-meta",    metaKey: "fee_concessions",   note: "Shared across all sessions for this school" },
+    // ── Cat B: Assets & Inventory ───────────────────────────────────────────
+    "asset-categories":           { parentModule: "Assets & Inventory",  label: "Asset Categories",         kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
+    "asset-master":               { parentModule: "Assets & Inventory",  label: "Asset Master",             kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
+    "storage-locations":          { parentModule: "Assets & Inventory",  label: "Storage Locations",        kind: "schoolwide-table",   note: "school_assets — shared across all sessions" },
+  };
+
+  // Cat C — modules that must always start clean. Listed in the audit only.
+  const CLEAN_SLATE_MODULES = [
+    "student-registry", "exam-controller", "attendance",
+    "complaint-hub", "noticeboard", "visitor-log", "audit-logs",
+  ];
+
+  app.post("/api/admin/academic-sessions", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId!;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    try {
+      // Execution log — human-readable record of every step taken.
+      // Included in the API response so the frontend can display it.
+      const executionLog: string[] = [];
+
+      // ── 1. Validate request body ───────────────────────────────────────────
+      console.log("[SESSION-CREATE] Step 1 — validating request body");
+      executionLog.push("STEP 1 → Validating inputs...");
+      const bodySchema = z.object({
+        sessionName:           z.string().min(1, "Session name is required"),
+        startDate:             z.string().min(1, "Start date is required"),
+        endDate:               z.string().min(1, "End date is required"),
+        status:                z.enum(["draft", "active"]).default("draft"),
+        setAsActive:           z.boolean().default(false),
+        newAdmissionsEnabled:  z.boolean().default(false),
+        promotionStrategy:     z.enum(["defer", "immediate"]).default("defer"),
+        copiedFromSessionId:   z.number().nullable().optional(),
+        copiedModules:         z.string().nullable().optional(),
+      });
+      const parsed = bodySchema.safeParse(req.body);
+      if (!parsed.success)
+        return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+
+      const {
+        sessionName, startDate, endDate, status, setAsActive,
+        newAdmissionsEnabled, promotionStrategy, copiedFromSessionId, copiedModules,
+      } = parsed.data;
+
+      // ── 2. Pre-transaction validations ────────────────────────────────────
+      if (new Date(startDate) >= new Date(endDate)) {
+        console.log("[SESSION-CREATE] ✗ STEP 1 failed: start >= end");
+        return res.status(400).json({ message: "Start date must be before end date" });
+      }
+
+      const existing = await storage.getAcademicSessions(schoolId);
+      // A brand-new school needs a usable active session immediately. Keep
+      // the existing request-driven behavior for schools that already have
+      // session history.
+      const isFirstSession = existing.length === 0;
+      const shouldActivate = isFirstSession || setAsActive;
+
+      if (existing.some(s => s.sessionName.trim().toLowerCase() === sessionName.trim().toLowerCase())) {
+        console.log(`[SESSION-CREATE] ✗ STEP 1 failed: duplicate name "${sessionName}"`);
+        return res.status(400).json({ message: `A session named "${sessionName}" already exists for this school` });
+      }
+
+      const overlap = existing.find(s => {
+        const [ns, ne] = [new Date(startDate), new Date(endDate)];
+        const [es, ee] = [new Date(s.startDate), new Date(s.endDate)];
+        return ns <= ee && ne >= es;
+      });
+      if (overlap) {
+        console.log(`[SESSION-CREATE] ✗ STEP 1 failed: date overlap with "${overlap.sessionName}"`);
+        return res.status(400).json({ message: `Dates overlap with existing session "${overlap.sessionName}"` });
+      }
+
+      executionLog.push(`STEP 1 ✓ — Inputs valid. Session: "${sessionName}", ${startDate} → ${endDate}`);
+      console.log(`[SESSION-CREATE] ✓ STEP 1 passed — "${sessionName}"`);
+
+      // ── Parse approved sub-module IDs ─────────────────────────────────────
+      let approvedSubModuleIds: string[] = [];
+      if (copiedFromSessionId && copiedModules) {
+        try {
+          const modulesParsed = JSON.parse(copiedModules);
+          if (Array.isArray(modulesParsed))
+            approvedSubModuleIds = modulesParsed.filter((x: unknown) => typeof x === "string");
+        } catch {
+          return res.status(400).json({ message: "copiedModules must be a valid JSON array of sub-module IDs" });
+        }
+        executionLog.push(`STEP 2 → Copy Engine queued — source #${copiedFromSessionId}, ${approvedSubModuleIds.length} modules: [${approvedSubModuleIds.join(", ")}]`);
+        console.log(`[SESSION-CREATE] Copy payload — source #${copiedFromSessionId}, modules: ${approvedSubModuleIds.join(", ")}`);
+      } else if (copiedFromSessionId) {
+        executionLog.push(`STEP 2 → Copy from session #${copiedFromSessionId} — no modules selected, copy engine will be skipped`);
+        console.log(`[SESSION-CREATE] Source session provided but no modules selected — copy engine skipped`);
+      } else {
+        executionLog.push("STEP 2 → Copy Engine not requested (fresh session, no source)");
+        console.log("[SESSION-CREATE] No source session — creating fresh session");
+      }
+
+      // ── 3. Single DB transaction ────────────────────────────────────────────
+      executionLog.push("STEP 3 → Starting database transaction...");
+      console.log("[SESSION-CREATE] STEP 3 — starting DB transaction");
+
+      const { session: newSession, copyResult } = await db.transaction(async (tx) => {
+
+        // Step 3a: Tenant isolation guard
+        if (copiedFromSessionId) {
+          console.log(`[SESSION-CREATE] 3a — verifying source session #${copiedFromSessionId} belongs to school #${schoolId}`);
+          const [srcGuard] = await tx
+            .select()
+            .from(academicSessions)
+            .where(and(
+              eq(academicSessions.id, copiedFromSessionId),
+              eq(academicSessions.schoolId, schoolId),
+            ));
+          if (!srcGuard)
+            throw new Error(`Source session #${copiedFromSessionId} not found or belongs to a different school. Cross-school copying is strictly prohibited.`);
+          executionLog.push(`STEP 3a ✓ — Source session "${srcGuard.sessionName}" verified (same school)`);
+          console.log(`[SESSION-CREATE] ✓ 3a — source "${srcGuard.sessionName}" verified`);
+        }
+
+        // ══════════════════════════════════════════════════════════════════
+        // GLOBAL DATA PROTECTION CONTRACT
+        // The following tables represent permanent school-wide data.
+        // They MUST NEVER be deleted from, truncated, or bulk-updated inside
+        // any session creation, activation, or deletion transaction.
+        // Any future developer who needs to modify this list must get explicit
+        // sign-off from the product owner and document the reason here.
+        //
+        // ── Core identity & configuration ───────────────────────────────
+        //   schools               — school identity record
+        //   teachers              — teacher registry (Teacher Profile module)
+        //   non_teaching_staff    — support staff registry
+        //   students              — student identity records
+        //   faculty_mappings      — teacher↔class↔subject assignments (Faculty Info module)
+        //   teacher_allocations   — weekly quota allocations
+        //   school_assets         — assets & inventory catalog
+        //   school_metadata       — classes / sections / subjects / exam types
+        //   leave_policies        — school leave policy definitions
+        //   attendance_policies   — attendance policy definitions
+        //   timetable_structure   — bell structure (period time slots)
+        //   grading_tiers         — grade boundary definitions
+        //   exam_policy_tiers     — exam scoring rules
+        //
+        // ── Permanent teacher-dashboard modules (explicitly protected) ───
+        //   calendar_events       — School Calendar (additive copies only — no deletes)
+        //   gallery_items         — Gallery (photos, events, memories — never wiped on rollover)
+        //   library_books         — Library books catalog (global e-book/resource registry)
+        //   book_borrows          — Library borrowing records (persistent lending history)
+        //
+        // ── Permanent student-portal modules (explicitly protected) ────
+        //   student_profiles      — Student Profile (identity, photo, verification — never wiped)
+        //   (gallery_items)       — Gallery student view — same table as teacher gallery above
+        //   (library_books)       — E-Library student view — same table as teacher library above
+        //   (faculty_mappings)    — Faculty Info student view — same table as above
+        //   (calendar_events)     — School Calendar student view — same table as above
+        //
+        // PERMITTED destructive operations in this transaction (Full Reset):
+        //   ✓ leave_requests           — teacher leave queue (session-scoped)
+        //   ✓ student_leave_requests   — student leave queue (session-scoped)
+        //   ✓ timetable_entries        — schedule grid assignments (session-scoped)
+        // ══════════════════════════════════════════════════════════════════
+
+        // Runtime guard: verify schoolId is locked to this request's authenticated school.
+        // This prevents any cross-school data mutation even if a parameter is tampered.
+        if (!schoolId || typeof schoolId !== "number" || schoolId <= 0) {
+          throw new Error("[GLOBAL-DATA-GUARD] Invalid schoolId — aborting transaction to protect global data integrity.");
+        }
+
+        // Step 3b: Insert session
+        console.log("[SESSION-CREATE] 3b — inserting session record");
+        const [session] = await tx
+          .insert(academicSessions)
+          .values({
+            schoolId,
+            sessionName:          sessionName.trim(),
+            startDate,
+            endDate,
+            isActive:             shouldActivate,
+            status:               shouldActivate ? "active" : status,
+            newAdmissionsEnabled,
+            promotionStrategy,
+            copiedFromSessionId:  copiedFromSessionId ?? null,
+            copiedModules:        null,
+          })
+          .returning();
+        executionLog.push(`STEP 3b ✓ — Session record created (ID #${session.id})`);
+        console.log(`[SESSION-CREATE] ✓ 3b — session #${session.id} inserted`);
+
+        // ─────────────────────────────────────────────────────────────────
+        // NOTE: Full Module Reset (all 11 session-scoped modules) is performed
+        // at ACTIVATION time only — inside PATCH /activate — NOT here.
+        // This ensures data is wiped only after the admin explicitly confirms.
+        // ─────────────────────────────────────────────────────────────────
+        executionLog.push("STEP 3b-reset — skipped at creation; reset runs at activation time");
+
+        // Step 3c: Activate if requested
+        if (shouldActivate) {
+          console.log("[SESSION-CREATE] 3c — activating, archiving siblings");
+          await tx.update(academicSessions)
+            .set({ isActive: false, status: "archived" })
+            .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)));
+          await tx.update(academicSessions)
+            .set({ isActive: true, status: "active" })
+            .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+          executionLog.push("STEP 3c ✓ — Session set as active, siblings archived");
+        }
+
+        // Step 3d: Copy engine
+        let copyResult: SessionCopyResult | null = null;
+
+        if (copiedFromSessionId && approvedSubModuleIds.length > 0) {
+          executionLog.push(`STEP 4 → Starting Copy Engine (${approvedSubModuleIds.length} modules to process)...`);
+          console.log(`[SESSION-CREATE] STEP 4 — copy engine starting, ${approvedSubModuleIds.length} modules`);
+
+          const [srcSession] = await tx
+            .select()
+            .from(academicSessions)
+            .where(and(eq(academicSessions.id, copiedFromSessionId), eq(academicSessions.schoolId, schoolId)));
+
+          const srcYear   = new Date(srcSession.startDate).getFullYear();
+          const destYear  = new Date(session.startDate).getFullYear();
+          const yearDelta = destYear - srcYear;
+          executionLog.push(`  Year delta: ${srcYear} → ${destYear} (Δ${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
+          console.log(`[SESSION-CREATE] Year delta: ${srcYear}→${destYear} (Δ${yearDelta})`);
+
+          const copied:             CopyEntry[] = [];
+          const sharedSchoolwide:   CopyEntry[] = [];
+          const requestedButEmpty:  CopyEntry[] = [];
+          const calendarCopyDone = { done: false, count: 0 };
+
+          for (const subId of approvedSubModuleIds) {
+            const op = SUBMODULE_OPS[subId];
+            if (!op) {
+              executionLog.push(`  [${subId}] SKIP — module ID not in registry`);
+              console.log(`[SESSION-CREATE]   SKIP ${subId} — not in SUBMODULE_OPS`);
+              continue;
+            }
+
+            console.log(`[SESSION-CREATE]   Processing ${subId} (${op.kind})...`);
+            executionLog.push(`  [${subId}] ${op.label} → running (${op.kind})...`);
+
+            // ── schoolwide-meta: verify schoolMetadata key ──────────────────
+            if (op.kind === "schoolwide-meta") {
+              const [row] = await tx
+                .select().from(schoolMetadata)
+                .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, op.metaKey!)));
+              if (row) {
+                let countHint = 1;
+                try {
+                  const val = JSON.parse(row.metaValue);
+                  if (Array.isArray(val)) countHint = val.length;
+                  else if (typeof val === "object" && val !== null) countHint = Object.keys(val).length;
+                } catch { /* noop */ }
+                sharedSchoolwide.push({ module: subId, parentModule: op.parentModule, label: op.label, count: countHint, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — schoolwide config verified (${countHint} items)`);
+                console.log(`[SESSION-CREATE]   ✓ ${subId} (${op.parentModule} › ${op.label}): ${countHint} items`);
+              } else {
+                requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "Not configured yet for this school" });
+                executionLog.push(`  [${subId}] ⚠ ${op.parentModule} › ${op.label} — no data found (not configured yet)`);
+                console.log(`[SESSION-CREATE]   ⚠ ${subId}: no data`);
+              }
+
+            // ── schoolwide-table: count rows in relevant table ──────────────
+            } else if (op.kind === "schoolwide-table") {
+              let count = 0;
+              switch (subId) {
+                case "promotion-policy": {
+                  const rows = await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId));
+                  count = rows.length; break;
+                }
+                case "attendance-policy": {
+                  const rows = await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId));
+                  count = rows.length; break;
+                }
+                case "leave-policy": {
+                  const rows = await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId));
+                  count = rows.length; break;
+                }
+                case "bell-structure":
+                case "period-config":
+                case "timetable-template": {
+                  const rows = await tx.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId));
+                  count = rows.length; break;
+                }
+                case "teacher-class-assignments": {
+                  const allocs = await tx.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId));
+                  const maps   = await tx.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId));
+                  count = allocs.length + maps.length; break;
+                }
+                case "asset-categories":
+                case "asset-master":
+                case "storage-locations": {
+                  const rows = await tx.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId));
+                  count = rows.length; break;
+                }
+                default: count = 0;
+              }
+              const tgt = count > 0 ? sharedSchoolwide : requestedButEmpty;
+              tgt.push({ module: subId, parentModule: op.parentModule, label: op.label, count, note: count > 0 ? op.note : "Not configured yet" });
+              executionLog.push(`  [${subId}] ${count > 0 ? "✓" : "⚠"} ${op.parentModule} › ${op.label} — ${count > 0 ? `${count} records (schoolwide)` : "no records found"}`);
+              console.log(`[SESSION-CREATE]   ${count > 0 ? "✓" : "⚠"} ${subId}: ${count} records`);
+
+            // ── calendar-recurring: physically duplicate with year+delta ─────
+            } else if (op.kind === "calendar-recurring") {
+              if (calendarCopyDone.done) {
+                // Calendar scan already ran — just reference the count
+                copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: calendarCopyDone.count, note: op.note });
+                executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — ${calendarCopyDone.count} events (shared from previous calendar pass)`);
+                continue;
+              }
+
+              const recurringEvents = await tx
+                .select().from(calendarEvents)
+                .where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true)));
+
+              if (recurringEvents.length === 0) {
+                requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "No recurring events found" });
+                executionLog.push(`  [${subId}] ⚠ ${op.parentModule} › ${op.label} — no recurring events found (nothing to duplicate)`);
+                console.log(`[SESSION-CREATE]   ⚠ ${subId}: no recurring events`);
+                continue;
+              }
+
+              const newEventRecords = recurringEvents.map(ev => {
+                return {
+                  schoolId: ev.schoolId, title: ev.title, date: replaceCalendarYear(ev.date, Number(ev.date.slice(0, 4)) + yearDelta),
+                  eventType: ev.eventType, venue: ev.venue, description: ev.description,
+                  colorCode: ev.colorCode, isRecurring: true as const,
+                  audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
+                };
+              });
+              await tx.insert(calendarEvents).values(newEventRecords);
+              calendarCopyDone.done  = true;
+              calendarCopyDone.count = newEventRecords.length;
+              copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: newEventRecords.length, note: op.note });
+              executionLog.push(`  [${subId}] ✓ ${op.parentModule} › ${op.label} — ${newEventRecords.length} events physically duplicated (dates +${yearDelta >= 0 ? "+" : ""}${yearDelta}yr)`);
+              console.log(`[SESSION-CREATE]   ✓ ${subId}: ${newEventRecords.length} events duplicated`);
+            }
+            // kind === "noop" → silently skip
+          }
+
+          const totalRecordsCopied = copied.reduce((acc, e) => acc + e.count, 0);
+
+          executionLog.push(`STEP 4 ✓ — Copy Engine completed:`);
+          executionLog.push(`  • ${copied.length} module(s) physically duplicated → ${totalRecordsCopied} new records`);
+          executionLog.push(`  • ${sharedSchoolwide.length} module(s) verified as schoolwide shared config`);
+          executionLog.push(`  • ${requestedButEmpty.length} module(s) had no data to copy`);
+          executionLog.push(`  • ${CLEAN_SLATE_MODULES.length} Category C modules always start clean`);
+          console.log(`[SESSION-CREATE] ✓ STEP 4 — ${totalRecordsCopied} records, ${sharedSchoolwide.length} verified, ${requestedButEmpty.length} empty`);
+
+          if (copied.length === 0 && sharedSchoolwide.length === 0 && requestedButEmpty.length > 0) {
+            executionLog.push("  ⚠ No configuration data found — source session may not be fully configured");
+          }
+
+          copyResult = {
+            sourceSessionId:    copiedFromSessionId,
+            sourceSessionName:  srcSession.sessionName,
+            destSessionId:      session.id,
+            approvedModules:    approvedSubModuleIds,
+            copied,
+            sharedSchoolwide,
+            requestedButEmpty,
+            cleanSlate:         CLEAN_SLATE_MODULES,
+            totalRecordsCopied,
+            timestamp:          new Date().toISOString(),
+          };
+
+          await tx
+            .update(academicSessions)
+            .set({ copiedModules: JSON.stringify(copyResult) })
+            .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
+
+        } else if (copiedFromSessionId && approvedSubModuleIds.length === 0) {
+          executionLog.push("STEP 4 → Copy Engine skipped — no modules were selected");
+          console.log("[SESSION-CREATE] Copy engine skipped — zero modules selected");
+        } else {
+          executionLog.push("STEP 4 → Copy Engine skipped — fresh session (no source specified)");
+          console.log("[SESSION-CREATE] Copy engine skipped — no source session");
+        }
+
+        // Step 3e: Write audit log
+        executionLog.push("STEP 5 → Writing audit log...");
+        console.log("[SESSION-CREATE] STEP 5 — writing audit log");
+        await tx.insert(auditLogs).values({
+          schoolId,
+          actionType:   "CREATE",
+          entityType:   "academic_session",
+          entityId:     session.id,
+          actionBy:     req.session.userId!,
+          actionByRole: "admin",
+          details: JSON.stringify({
+            sessionName:          session.sessionName,
+            startDate:            session.startDate,
+            endDate:              session.endDate,
+            copiedFromSessionId:  copiedFromSessionId ?? null,
+            approvedModules:      approvedSubModuleIds,
+            totalRecordsCopied:   copyResult?.totalRecordsCopied ?? 0,
+            calendarEventsCopied: copyResult?.copied.reduce((s, e) => s + e.count, 0) ?? 0,
+            sharedConfigs:        copyResult?.sharedSchoolwide.length ?? 0,
+            timestamp:            new Date().toISOString(),
+          }),
+        });
+        executionLog.push("STEP 5 ✓ — Audit log entry written");
+        console.log(`[SESSION-CREATE] ✓ STEP 5 — audit log written for session #${session.id}`);
+
+        return {
+          session: { ...session, copiedModules: copyResult ? JSON.stringify(copyResult) : null },
+          copyResult,
+        };
+      }); // ← END DB TRANSACTION
+
+      executionLog.push("STEP 6 ✓ — Database transaction committed successfully");
+      console.log(`[SESSION-CREATE] ✓ STEP 6 — committed. Session #${newSession.id} "${newSession.sessionName}" created.`);
+
+      res.status(201).json({ ...newSession, copyResult, executionLog });
+
+    } catch (e: any) {
+      console.error("[SESSION-CREATE] ✗ FAILED:", e.message);
+      res.status(500).json({
+        message: e.message || "Failed to create session — all changes rolled back",
+        rolled_back: true,
+      });
+    }
+  });
+
+  /**
+   * Promotion summary for the activation gate modal.
+   * Returns all promotion decisions for a session, joined with student names.
+   * Deduplicates per student: locked entries take priority, then most recent.
+   */
+  app.get("/api/admin/academic-sessions/:id/promotion-summary", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    try {
+      const rows = await db
+        .select({
+          studentId:      promotionDecisions.studentId,
+          studentName:    students.name,
+          currentClass:   promotionDecisions.class,
+          currentSection: promotionDecisions.section,
+          targetClass:    promotionDecisions.targetClass,
+          targetSection:  promotionDecisions.targetSection,
+          decision:       promotionDecisions.decision,
+          locked:         promotionDecisions.locked,
+          createdAt:      promotionDecisions.createdAt,
+        })
+        .from(promotionDecisions)
+        .innerJoin(students, eq(students.id, promotionDecisions.studentId))
+        .where(
+          and(
+            eq(promotionDecisions.sessionId, id),
+            eq(promotionDecisions.schoolId, schoolId),
+          )
+        );
+
+      // Deduplicate per student: prefer locked rows, then most recent createdAt
+      const seen = new Map<number, typeof rows[0]>();
+      for (const row of rows) {
+        const existing = seen.get(row.studentId);
+        if (!existing) { seen.set(row.studentId, row); continue; }
+        if (row.locked && !existing.locked) { seen.set(row.studentId, row); continue; }
+        if (!existing.locked && row.createdAt && existing.createdAt && row.createdAt > existing.createdAt) {
+          seen.set(row.studentId, row);
+        }
+      }
+
+      const result = Array.from(seen.values()).map(r => ({
+        studentId:      r.studentId,
+        studentName:    r.studentName,
+        currentClass:   r.currentClass,
+        currentSection: r.currentSection,
+        targetClass:    r.targetClass,
+        targetSection:  r.targetSection,
+        decision:       r.decision,
+        locked:         r.locked,
+      }));
+
+      // Sort by class then section then name for consistent display
+      result.sort((a, b) =>
+        a.currentClass.localeCompare(b.currentClass) ||
+        a.currentSection.localeCompare(b.currentSection) ||
+        a.studentName.localeCompare(b.studentName)
+      );
+
+      // Count active students who have NO promotion_decisions record for this session
+      const decidedStudentIds = Array.from(seen.keys());
+      let undecidedCount = 0;
+      if (decidedStudentIds.length > 0) {
+        const [undecidedRow] = await db
+          .select({ cnt: sql<number>`count(*)::int` })
+          .from(students)
+          .where(
+            and(
+              eq(students.schoolId, schoolId),
+              eq(students.isActive, true),
+              not(inArray(students.id, decidedStudentIds)),
+            )
+          );
+        undecidedCount = undecidedRow?.cnt ?? 0;
+      } else {
+        // No decisions at all — count all active students
+        const [totalRow] = await db
+          .select({ cnt: sql<number>`count(*)::int` })
+          .from(students)
+          .where(and(eq(students.schoolId, schoolId), eq(students.isActive, true)));
+        undecidedCount = totalRow?.cnt ?? 0;
+      }
+
+      res.json({ decisions: result, undecidedCount });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch promotion summary" });
+    }
+  });
+
+  /*
+   * Activate a session — inside a single atomic transaction:
+   *   1. Full Module Reset: wipes all 11 session-scoped modules for the school.
+   *      Global data tables (teachers, students, school setup, policies, etc.)
+   *      are NEVER touched — they are SELECT-only throughout.
+   *   2. Archives all sibling sessions for this school.
+   *   3. Marks the target session as active.
+   *
+   * The reset intentionally happens HERE (at activation time), not at creation.
+   * This guarantees data is cleared only after the admin explicitly confirms.
+   */
+  // ── SSE endpoint — real-time session activation push ──────────────────────
+  // Teachers and students connect here on login. When admin activates a
+  // session, broadcastSessionActivated() pushes the event to all of them.
+  app.get("/api/events/session-change", (req, res) => {
+    const schoolId = req.session.schoolId;
+    if (!req.session.userId || !schoolId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // prevent nginx from buffering SSE
+    res.flushHeaders();
+    // Confirm connection to client
+    res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+    // Register this client for its school
+    addSSEClient(schoolId, res);
+    // Heartbeat every 25 s to keep the connection alive through proxies
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { clearInterval(heartbeat); }
+    }, 25000);
+    res.on("close", () => clearInterval(heartbeat));
+  });
+
+  app.patch("/api/admin/academic-sessions/:id/activate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    try {
+      const updated = await db.transaction(async (tx) => {
+
+        // ── Step 1: Promotion Overrides Reset ───────────────────────────────
+        // ALL 11 session modules now carry session_id and are self-scoping.
+        // Activating a new session leaves all historical data intact — archive
+        // mode shows each session's own records.
+        //
+        // Only promotion_overrides is reset here because it has no session_id
+        // and is per-exam-cycle (not per-session-ID).
+        console.log(`[SESSION-ACTIVATE] Clearing promotion overrides for school ${schoolId}`);
+
+        const [delPromotionOverrides] = await Promise.all([
+          tx.delete(promotionOverrides).where(eq(promotionOverrides.schoolId, schoolId)).returning({ id: promotionOverrides.id }),
+        ]);
+
+        console.log(
+          `[SESSION-ACTIVATE] ✓ Reset complete — promotionOverrides:${delPromotionOverrides.length}. ` +
+          `All 11 session modules (timetable, exams, attendance, leaves, complaints, ` +
+          `notices, visitor-log, audit-log, fees, history, homework/classwork) ` +
+          `preserved in archive — each tagged with their session_id.`
+        );
+
+        // ── Step 2: Archive siblings ─────────────────────────────────────────
+        await tx.update(academicSessions)
+          .set({ isActive: false, status: "archived" })
+          .where(eq(academicSessions.schoolId, schoolId));
+
+        // ── Step 3: Activate target session ─────────────────────────────────
+        const [updated] = await tx.update(academicSessions)
+          .set({ isActive: true, status: "active" })
+          .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))
+          .returning();
+
+        if (!updated) throw new Error("Session not found or access denied");
+        return updated;
+      });
+
+      res.json(updated);
+      // Push real-time event to all connected teachers and students for this school
+      broadcastSessionActivated(schoolId, { sessionId: updated.id, sessionName: updated.sessionName });
+    } catch (e: any) {
+      console.error("[SESSION-ACTIVATE] ✗ FAILED:", e.message);
+      res.status(500).json({ message: e.message || "Failed to activate session" });
+    }
+  });
+
+  app.delete("/api/admin/academic-sessions/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+
+    // Require admin password confirmation
+    const { password } = req.body as { password?: string };
+    if (!password) return res.status(400).json({ message: "Password is required to delete a session" });
+
+    try {
+      // Verify the admin's own password
+      const adminUser = await storage.getUserById(req.session.userId);
+      if (!adminUser) return res.status(403).json({ message: "Admin account not found" });
+      const valid = await bcrypt.compare(password, adminUser.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+
+      const deleted = await storage.deleteAcademicSession(id, schoolId);
+      if (!deleted) return res.status(404).json({ message: "Academic session not found" });
+      res.json({ message: "Session deleted" });
+      // Notify all connected teachers and students so their session lists
+      // update instantly — no page refresh required.
+      broadcastSessionDeleted(schoolId, { sessionId: id });
+    } catch (e: any) {
+      if (e instanceof AcademicSessionFinancialHistoryError) {
+        return res.status(e.status).json({ message: e.message, code: e.code });
+      }
+      res.status(500).json({ message: e.message || "Failed to delete session" });
+    }
+  });
+
+  // ── MODULE PREVIEW — record counts per sub-module for the Copy Center ─────────
+  app.get("/api/admin/academic-sessions/module-preview", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const metaRows = await db.select().from(schoolMetadata)
+        .where(eq(schoolMetadata.schoolId, schoolId));
+      const metaMap: Record<string, string> = {};
+      for (const r of metaRows) metaMap[r.metaKey] = r.metaValue;
+      function cntMeta(key: string): number {
+        try {
+          const v = JSON.parse(metaMap[key] ?? "null");
+          if (Array.isArray(v)) return v.length;
+          if (v && typeof v === "object") return Object.keys(v).length;
+          return 0;
+        } catch { return 0; }
+      }
+      const [promR, attnR, leaveR, ttR, ttEntR, allocR, mapR, assetR, calR, gradR] = await Promise.all([
+        db.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId)),
+        db.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId)),
+        db.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId)),
+        db.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId)),
+        db.select().from(timetableEntries).where(eq(timetableEntries.schoolId, schoolId)),
+        db.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId)),
+        db.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId)),
+        db.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId)),
+        db.select().from(calendarEvents).where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true))),
+        db.select().from(gradingTiers).where(eq(gradingTiers.schoolId, schoolId)),
+      ]);
+      res.json({
+        counts: {
+          "classes":                   cntMeta("classes"),
+          "sections":                  cntMeta("sections"),
+          "subjects":                  cntMeta("subjects"),
+          "exam-types":                cntMeta("exam_types"),
+          "class-mapping":             cntMeta("class_sections"),
+          "subject-mapping":           cntMeta("class_subjects"),
+          "class-exam-type-mapping":   cntMeta("class_exam_types"),
+          "grading-policy":            gradR.length,   // grading_tiers table, NOT school_metadata
+          "promotion-policy":          promR.length,
+          "attendance-policy":         attnR.length,
+          "leave-policy":              leaveR.length,
+          "bell-structure":            ttR.length,
+          "period-config":             ttEntR.length,
+          "holiday-templates":         calR.length,
+          "recurring-events":          calR.length,
+          "card-layouts":              cntMeta("id_card_config"),
+          "print-templates":           cntMeta("id_card_config"),
+          "teacher-class-assignments": allocR.length + mapR.length,
+          "fee-categories":            cntMeta("fee_categories"),
+          "fee-heads":                 cntMeta("fee_heads"),
+          "fee-structure":             cntMeta("fee_structure"),
+          "fine-rules":                cntMeta("fee_fine_rules"),
+          "concession-rules":          cntMeta("fee_concessions"),
+          "asset-categories":          assetR.length,
+          "asset-master":              assetR.length,
+          "storage-locations":         assetR.length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch module preview" });
+    }
+  });
+
+  // ── COPY MODULES — Configuration Copy Center: copy specific sub-modules ────────
+  app.post("/api/admin/academic-sessions/:sessionId/copy-modules", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const destId = parseInt(req.params.sessionId);
+    if (isNaN(destId)) return res.status(400).json({ message: "Invalid session ID" });
+
+    const { sourceSessionId, subModuleIds } = req.body as {
+      sourceSessionId: number;
+      subModuleIds: string[];
+    };
+    if (!sourceSessionId || !Array.isArray(subModuleIds) || subModuleIds.length === 0)
+      return res.status(400).json({ message: "sourceSessionId and subModuleIds are required" });
+
+    type CEntry = { module: string; parentModule: string; label: string; count: number; note: string };
+    type CResult = {
+      sourceSessionId: number; sourceSessionName: string;
+      destSessionId: number; approvedModules: string[];
+      copied: CEntry[]; sharedSchoolwide: CEntry[]; requestedButEmpty: CEntry[];
+      cleanSlate: string[]; totalRecordsCopied: number; timestamp: string;
+    };
+    const CLEAN_SLATE_IDS = [
+      "student-registry","exam-controller","attendance",
+      "complaint-hub","noticeboard","visitor-log","audit-logs",
+    ];
+    const OPS: Record<string, { parentModule: string; label: string; kind: "schoolwide-meta"|"schoolwide-table"|"calendar-recurring"; metaKey?: string; note: string }> = {
+      "classes":                   { parentModule: "School Setup",       label: "Classes",                  kind: "schoolwide-meta",    metaKey: "classes",           note: "Shared across all sessions" },
+      "sections":                  { parentModule: "School Setup",       label: "Sections",                 kind: "schoolwide-meta",    metaKey: "sections",          note: "Shared across all sessions" },
+      "subjects":                  { parentModule: "School Setup",       label: "Subjects",                 kind: "schoolwide-meta",    metaKey: "subjects",          note: "Shared across all sessions" },
+      "exam-types":                { parentModule: "School Setup",       label: "Exam Types",               kind: "schoolwide-meta",    metaKey: "exam_types",        note: "Shared across all sessions" },
+      "class-mapping":             { parentModule: "School Setup",       label: "Class–Section Mapping",    kind: "schoolwide-meta",    metaKey: "class_sections",    note: "Shared across all sessions" },
+      "subject-mapping":           { parentModule: "School Setup",       label: "Class–Subject Mapping",    kind: "schoolwide-meta",    metaKey: "class_subjects",    note: "Shared across all sessions" },
+      "class-exam-type-mapping":   { parentModule: "School Setup",       label: "Class–Exam Type Mapping",  kind: "schoolwide-meta",    metaKey: "class_exam_types",  note: "Shared across all sessions" },
+      "grading-policy":            { parentModule: "School Setup",       label: "Academic Grading (Tiers)",  kind: "schoolwide-table",                                 note: "Shared across all sessions" },
+      "promotion-policy":          { parentModule: "School Setup",       label: "Promotion Policy",         kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "attendance-policy":         { parentModule: "School Setup",       label: "Attendance Policy",        kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "leave-policy":              { parentModule: "School Setup",       label: "Leave Policy",             kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "bell-structure":            { parentModule: "Timetable Master",   label: "Bell Structure",           kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "period-config":             { parentModule: "Timetable Master",   label: "Period Configuration",     kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "timetable-template":        { parentModule: "Timetable Master",   label: "Timetable Template",       kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "holiday-templates":         { parentModule: "School Calendar",    label: "Holiday Templates",        kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced" },
+      "recurring-events":          { parentModule: "School Calendar",    label: "Recurring Events",         kind: "calendar-recurring", note: "Recurring events duplicated with dates advanced" },
+      "card-layouts":              { parentModule: "ID Card Generator",  label: "Card Layouts",             kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions" },
+      "print-templates":           { parentModule: "ID Card Generator",  label: "Print Templates",          kind: "schoolwide-meta",    metaKey: "id_card_config",    note: "Shared across all sessions" },
+      "teacher-class-assignments": { parentModule: "Faculty Mapping",    label: "Teacher–Class Assignments",kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "fee-categories":            { parentModule: "Fees & Payments",    label: "Fee Categories",           kind: "schoolwide-meta",    metaKey: "fee_categories",    note: "Shared across all sessions" },
+      "fee-heads":                 { parentModule: "Fees & Payments",    label: "Fee Heads",                kind: "schoolwide-meta",    metaKey: "fee_heads",         note: "Shared across all sessions" },
+      "fee-structure":             { parentModule: "Fees & Payments",    label: "Fee Structure",            kind: "schoolwide-meta",    metaKey: "fee_structure",     note: "Shared across all sessions" },
+      "fine-rules":                { parentModule: "Fees & Payments",    label: "Fine Rules",               kind: "schoolwide-meta",    metaKey: "fee_fine_rules",    note: "Shared across all sessions" },
+      "concession-rules":          { parentModule: "Fees & Payments",    label: "Concession Rules",         kind: "schoolwide-meta",    metaKey: "fee_concessions",   note: "Shared across all sessions" },
+      "asset-categories":          { parentModule: "Assets & Inventory", label: "Asset Categories",         kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "asset-master":              { parentModule: "Assets & Inventory", label: "Asset Master",             kind: "schoolwide-table",   note: "Shared across all sessions" },
+      "storage-locations":         { parentModule: "Assets & Inventory", label: "Storage Locations",        kind: "schoolwide-table",   note: "Shared across all sessions" },
+    };
+
+    try {
+      const mergedResult = await db.transaction(async (tx) => {
+        const [destSession] = await tx.select().from(academicSessions)
+          .where(and(eq(academicSessions.id, destId), eq(academicSessions.schoolId, schoolId)));
+        if (!destSession) throw new Error("Destination session not found or access denied");
+
+        const [srcSession] = await tx.select().from(academicSessions)
+          .where(and(eq(academicSessions.id, sourceSessionId), eq(academicSessions.schoolId, schoolId)));
+        if (!srcSession) throw new Error("Source session not found or access denied");
+
+        const yearDelta = new Date(destSession.startDate).getFullYear() - new Date(srcSession.startDate).getFullYear();
+
+        let existingResult: CResult | null = null;
+        if (destSession.copiedModules) {
+          try {
+            const p = JSON.parse(destSession.copiedModules);
+            if (p && "approvedModules" in p) existingResult = p as CResult;
+          } catch { /* noop */ }
+        }
+
+        const copied: CEntry[]              = [...(existingResult?.copied           ?? [])];
+        const sharedSchoolwide: CEntry[]    = [...(existingResult?.sharedSchoolwide ?? [])];
+        const requestedButEmpty: CEntry[]   = [...(existingResult?.requestedButEmpty ?? [])];
+        const alreadyDone = new Set([
+          ...copied.map(e => e.module),
+          ...sharedSchoolwide.map(e => e.module),
+          ...requestedButEmpty.map(e => e.module),
+        ]);
+
+        const calDone = { done: false, count: 0 };
+
+        for (const subId of subModuleIds) {
+          if (alreadyDone.has(subId)) continue;
+          const op = OPS[subId];
+          if (!op) continue;
+
+          if (op.kind === "schoolwide-meta") {
+            const [row] = await tx.select().from(schoolMetadata)
+              .where(and(eq(schoolMetadata.schoolId, schoolId), eq(schoolMetadata.metaKey, op.metaKey!)));
+            if (row?.metaValue) {
+              let cnt = 0;
+              try {
+                const v = JSON.parse(row.metaValue);
+                if (Array.isArray(v)) cnt = v.length;
+                else if (v && typeof v === "object") cnt = Object.keys(v).length;
+              } catch { /* noop */ }
+              sharedSchoolwide.push({ module: subId, parentModule: op.parentModule, label: op.label, count: cnt, note: op.note });
+            } else {
+              requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "Not configured yet" });
+            }
+
+          } else if (op.kind === "schoolwide-table") {
+            let count = 0;
+            switch (subId) {
+              case "grading-policy":    count = (await tx.select().from(gradingTiers).where(eq(gradingTiers.schoolId, schoolId))).length; break;
+              case "promotion-policy":  count = (await tx.select().from(examPolicyTiers).where(eq(examPolicyTiers.schoolId, schoolId))).length; break;
+              case "attendance-policy": count = (await tx.select().from(attendancePolicies).where(eq(attendancePolicies.schoolId, schoolId))).length; break;
+              case "leave-policy":      count = (await tx.select().from(leavePolicies).where(eq(leavePolicies.schoolId, schoolId))).length; break;
+              case "bell-structure": case "period-config": case "timetable-template":
+                count = (await tx.select().from(timetableStructure).where(eq(timetableStructure.schoolId, schoolId))).length; break;
+              case "teacher-class-assignments": {
+                const a = (await tx.select().from(teacherAllocations).where(eq(teacherAllocations.schoolId, schoolId))).length;
+                const b = (await tx.select().from(facultyMappings).where(eq(facultyMappings.schoolId, schoolId))).length;
+                count = a + b; break;
+              }
+              case "asset-categories": case "asset-master": case "storage-locations":
+                count = (await tx.select().from(schoolAssets).where(eq(schoolAssets.schoolId, schoolId))).length; break;
+            }
+            (count > 0 ? sharedSchoolwide : requestedButEmpty).push({
+              module: subId, parentModule: op.parentModule, label: op.label, count,
+              note: count > 0 ? op.note : "Not configured yet",
+            });
+
+          } else if (op.kind === "calendar-recurring") {
+            if (calDone.done) {
+              copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: calDone.count, note: op.note });
+              continue;
+            }
+            const events = await tx.select().from(calendarEvents)
+              .where(and(eq(calendarEvents.schoolId, schoolId), eq(calendarEvents.isRecurring, true)));
+            if (events.length === 0) {
+              requestedButEmpty.push({ module: subId, parentModule: op.parentModule, label: op.label, count: 0, note: "No recurring events found" });
+              continue;
+            }
+            const newEvs = events.map(ev => {
+              const d = new Date(ev.date);
+              d.setFullYear(d.getFullYear() + yearDelta);
+              return {
+                schoolId: ev.schoolId, title: ev.title, date: replaceCalendarYear(ev.date, Number(ev.date.slice(0, 4)) + yearDelta),
+                eventType: ev.eventType, venue: ev.venue, description: ev.description,
+                colorCode: ev.colorCode, isRecurring: true as const,
+                audienceScope: ev.audienceScope, targetClass: ev.targetClass, targetSection: ev.targetSection,
+              };
+            });
+            await tx.insert(calendarEvents).values(newEvs);
+            calDone.done = true; calDone.count = newEvs.length;
+            copied.push({ module: subId, parentModule: op.parentModule, label: op.label, count: newEvs.length, note: op.note });
+          }
+        }
+
+        const totalRecordsCopied = copied.reduce((s, e) => s + e.count, 0);
+        const prevApproved = existingResult?.approvedModules ?? [];
+        const newApproved = subModuleIds.filter(id => !alreadyDone.has(id));
+
+        const newResult: CResult = {
+          sourceSessionId, sourceSessionName: srcSession.sessionName,
+          destSessionId: destId,
+          approvedModules: [...prevApproved, ...newApproved],
+          copied, sharedSchoolwide, requestedButEmpty,
+          cleanSlate: CLEAN_SLATE_IDS,
+          totalRecordsCopied,
+          timestamp: new Date().toISOString(),
+        };
+
+        await tx.update(academicSessions)
+          .set({ copiedModules: JSON.stringify(newResult) })
+          .where(and(eq(academicSessions.id, destId), eq(academicSessions.schoolId, schoolId)));
+
+        await tx.insert(auditLogs).values({
+          schoolId, actionType: "UPDATE", entityType: "academic_session",
+          entityId: destId, actionBy: req.session.userId!, actionByRole: "admin",
+          details: JSON.stringify({
+            action: "copy-modules", subModuleIds, sourceSessionId,
+            totalRecordsCopied, timestamp: new Date().toISOString(),
+          }),
+        });
+
+        return newResult;
+      });
+
+      res.json({ copyResult: mergedResult });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Copy failed", rolled_back: true });
+    }
+  });
+
+  // ===== ATTENDANCE POLICY ENGINE — CRUD =====
+
+  app.get("/api/admin/attendance-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const rows = await db.select().from(attendancePolicies)
+        .where(eq(attendancePolicies.schoolId, schoolId))
+        .orderBy(attendancePolicies.id);
+      res.json(rows);
+    } catch { res.status(500).json({ message: "Failed to fetch policies" }); }
+  });
+
+  app.get("/api/admin/attendance-policies/resolve", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const { role, class: cls } = req.query as { role?: string; class?: string };
+    if (!role) return res.status(400).json({ message: "role is required" });
+    try {
+      const rows = await db.select().from(attendancePolicies)
+        .where(and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true)));
+      res.json(resolvePolicy(rows, role, cls ?? ""));
+    } catch { res.status(500).json({ message: "Failed to resolve policy" }); }
+  });
+
+  app.post("/api/admin/attendance-policies", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    try {
+      const parsed = insertAttendancePolicySchema.parse({ ...req.body, schoolId });
+      const [created] = await db.insert(attendancePolicies).values(parsed).returning();
+      res.status(201).json(created);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation failed", errors: err.errors });
+      res.status(500).json({ message: "Failed to create policy" });
+    }
+  });
+
+  app.put("/api/admin/attendance-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const [existing] = await db.select().from(attendancePolicies)
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)));
+      if (!existing) return res.status(404).json({ message: "Policy not found" });
+      const { id: _id, schoolId: _sid, createdAt: _c, ...rest } = req.body;
+      const [updated] = await db.update(attendancePolicies)
+        .set({ ...rest, updatedAt: new Date() })
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)))
+        .returning();
+      res.json(updated);
+    } catch { res.status(500).json({ message: "Failed to update policy" }); }
+  });
+
+  app.delete("/api/admin/attendance-policies/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    try {
+      const [deleted] = await db.delete(attendancePolicies)
+        .where(and(eq(attendancePolicies.id, id), eq(attendancePolicies.schoolId, schoolId)))
+        .returning();
+      if (!deleted) return res.status(404).json({ message: "Policy not found" });
+      res.json({ message: "Policy deleted" });
+    } catch { res.status(500).json({ message: "Failed to delete policy" }); }
+  });
+
+  // ===== ADMIN: EDIT STUDENT =====
+  const updateStudentSchema = z.object({
+    name: z.string().min(2),
+    class: z.string().min(1),
+    section: z.string().min(1),
+    phone: z.string().regex(/^\d{10}$/, "Phone must be exactly 10 digits"),
+    dob: z.string().optional(),
+    enrollmentDate: z.string().optional(),
+    gender: z.enum(["Boy", "Girl"]).optional().nullable(),
+    rollNumber: z.number().int().positive().optional().nullable(),
+    guardianName: z.string().optional().nullable(),
+    bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional().nullable(),
+    fatherName: z.string().optional().nullable(),
+    motherName: z.string().optional().nullable(),
+    address: z.string().optional().nullable(),
+    aadharNumber: z.string().regex(/^(\d{12})?$/, "Aadhaar must be exactly 12 digits").optional().nullable(),
+    email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
+  });
+
+  app.patch("/api/admin/students/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
+    const parsed = updateStudentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const { rollNumber, ...rest } = parsed.data;
+    if (rollNumber) {
+      const conflict = await db.select({ id: students.id }).from(students)
+        .where(and(eq(students.schoolId, schoolId), eq(students.class, rest.class), eq(students.section, rest.section), eq(students.rollNumber, rollNumber), eq(students.isActive, true)));
+      if (conflict.length > 0 && conflict[0].id !== id) {
+        return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${rest.class}-${rest.section}` });
+      }
+    }
+    const updated = await storage.updateStudent(id, schoolId, {
+      ...rest,
+      rollNumber:   rollNumber   ?? null,
+      fatherName:   rest.fatherName   ?? null,
+      motherName:   rest.motherName   ?? null,
+      address:      rest.address      ?? null,
+      aadharNumber: rest.aadharNumber ?? null,
+      email:        rest.email,
+    });
+    if (!updated) return res.status(404).json({ message: "Student not found" });
+    res.json(updated);
+  });
+
+  // ===== ADMIN: ACTIVE STUDENT EXPORT (Excel) =====
+  app.get("/api/schools/:schoolId/students/export", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    try {
+      const { q, cls, section } = req.query as { q?: string; cls?: string; section?: string };
+      const conditions = [eq(students.schoolId, schoolId), eq(students.isActive, true)];
+      if (cls) conditions.push(eq(students.class, cls));
+      if (section) conditions.push(eq(students.section, section));
+      let rows = await db.select().from(students).where(and(...conditions)).orderBy(students.class, students.section, students.rollNumber);
+      if (q) {
+        const lq = q.toLowerCase();
+        rows = rows.filter(r =>
+          r.name.toLowerCase().includes(lq) ||
+          r.digitalStudentId.toLowerCase().includes(lq) ||
+          r.phone.includes(lq)
+        );
+      }
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Student Registry");
+      sheet.columns = [
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Father's Name",     key: "fatherName",       width: 26 },
+        { header: "Mother's Name",     key: "motherName",       width: 26 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Aadhaar Number",    key: "aadharNumber",     width: 18 },
+        { header: "Address",           key: "address",          width: 36 },
+      ];
+      const headerRow = sheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: "FF0A1628" } };
+      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD4AF37" } };
+      rows.forEach(r => {
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNumber:       r.rollNumber ?? "",
+          gender:           r.gender ?? "",
+          phone:            r.phone,
+          email:            r.email ?? "",
+          guardianName:     r.guardianName ?? "",
+          fatherName:       r.fatherName ?? "",
+          motherName:       r.motherName ?? "",
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
+          aadharNumber:     r.aadharNumber ?? "",
+          address:          r.address ?? "",
+        });
+      });
+      const filterLabel = [cls && `_Class${cls}`, section && `_Sec${section}`].filter(Boolean).join("");
+      const filename = `Student_Registry${filterLabel}_${todayInIST()}.xlsx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Student export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
+  });
+
+  // ===== ADMIN: STUDENT GENDER STATS =====
+  app.get("/api/schools/:schoolId/students/stats", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { cls, section } = req.query as { cls?: string; section?: string };
+    const stats = await storage.getStudentStats(schoolId, cls || undefined, section || undefined);
+    res.json(stats);
+  });
+
+  // ===== ADMIN: AUTO-ASSIGN ROLL NUMBERS =====
+  app.post("/api/schools/:schoolId/students/auto-assign-roll", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { cls, section } = req.body;
+    if (!cls || !section) return res.status(400).json({ message: "Class and section are required" });
+    const assigned = await storage.autoAssignRollNumbers(schoolId, cls, section);
+    res.json({ assigned, message: `Roll numbers 1–${assigned} assigned to ${cls}-${section} alphabetically` });
+  });
+
+  // ===== ADMIN: DEACTIVATED STUDENTS — EXPORT =====
+  app.get("/api/schools/:schoolId/students/deactivated/export", async (req, res) => {
+    try {
+      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+
+      const { q, cls, section } = req.query as Record<string, string | undefined>;
+      let rows = await storage.getDeactivatedStudents(schoolId);
+
+      // Apply filters
+      if (q) {
+        const lq = q.toLowerCase();
+        rows = rows.filter(r =>
+          r.name.toLowerCase().includes(lq) ||
+          r.digitalStudentId.toLowerCase().includes(lq) ||
+          r.phone.includes(q)
+        );
+      }
+      if (cls) rows = rows.filter(r => r.class === cls);
+      if (section) rows = rows.filter(r => r.section === section);
+
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "BENIUS";
+      workbook.created = new Date();
+
+      const sheet = workbook.addWorksheet("Deactivated Students", {
+        views: [{ state: "frozen", ySplit: 1 }],
+      });
+
+      sheet.columns = [
+        { header: "Student ID",        key: "digitalStudentId", width: 20 },
+        { header: "Full Name",         key: "name",             width: 28 },
+        { header: "Class",             key: "class",            width: 10 },
+        { header: "Section",           key: "section",          width: 10 },
+        { header: "Roll Number",       key: "rollNumber",       width: 14 },
+        { header: "Gender",            key: "gender",           width: 12 },
+        { header: "Guardian Name",     key: "guardianName",     width: 26 },
+        { header: "Phone",             key: "phone",            width: 18 },
+        { header: "Email",             key: "email",            width: 30 },
+        { header: "Date of Birth",     key: "dob",              width: 16 },
+        { header: "Date of Admission", key: "enrollmentDate",   width: 20 },
+        { header: "Blood Group",       key: "bloodGroup",       width: 14 },
+        { header: "Deactivated On",    key: "deactivatedAt",    width: 22 },
+        { header: "Reason",            key: "reason",           width: 40 },
+        { header: "Status",            key: "status",           width: 14 },
+      ];
+
+      const headerRow = sheet.getRow(1);
+      headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: "FF1A1A1A" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB91C1C" } };
+        cell.alignment = { vertical: "middle", horizontal: "left" };
+        cell.border = { bottom: { style: "thin", color: { argb: "FF991B1B" } } };
+      });
+      headerRow.height = 20;
+
+      for (const r of rows) {
+        const rawReason = r.deactivationReason ?? "";
+        const cleanedReason = rawReason.replace(/^Student .+? deactivated\. Reason:\s*/i, "") || rawReason;
+        sheet.addRow({
+          digitalStudentId: r.digitalStudentId,
+          name:             r.name,
+          class:            r.class,
+          section:          r.section,
+          rollNumber:       r.rollNumber ?? "",
+          gender:           r.gender ?? "",
+          guardianName:     r.guardianName ?? "",
+          phone:            r.phone,
+          email:            r.email ?? "",
+          dob:              r.dob ?? "",
+          enrollmentDate:   r.enrollmentDate ?? "",
+          bloodGroup:       r.bloodGroup ?? "",
+          deactivatedAt:    r.deactivatedAt
+            ? new Date(r.deactivatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+            : "",
+          reason:           cleanedReason,
+          status:           "Deactive",
+        });
+      }
+
+      const filterParts: string[] = [];
+      if (cls)     filterParts.push(`Class ${cls}`);
+      if (section) filterParts.push(`Section ${section}`);
+      if (q)       filterParts.push(`Search "${q}"`);
+      const filterLabel = filterParts.length ? ` (${filterParts.join(", ")})` : "";
+      const filename = `Deactivated_Students${filterLabel}_${todayInIST()}.xlsx`
+        .replace(/[^\w\s()._-]/g, "_");
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err) {
+      console.error("Deactivated export error:", err);
+      res.status(500).json({ message: "Export failed" });
+    }
+  });
+
+  // ===== ADMIN: DEACTIVATED STUDENT HISTORY =====
+  app.get("/api/schools/:schoolId/students/deactivated", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const schoolId = parseInt(req.params.schoolId);
+      if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+      const rows = await storage.getDeactivatedStudents(schoolId);
+      res.json(rows);
+    } catch (err) {
+      console.error("Deactivated students fetch error:", err);
+      res.status(500).json({ message: "Failed to load deactivated students" });
+    }
+  });
+
+  // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
+  app.post("/api/schools/:schoolId/students/bulk-deactivate", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
+    const { ids, reason, batchYear, comments, password } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "ids must be a non-empty array" });
+    if (!reason) return res.status(400).json({ message: "Reason is required" });
+    if (!batchYear) return res.status(400).json({ message: "Batch year is required" });
+    if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+    const numIds = ids.map(Number).filter(n => !isNaN(n));
+    const deactivatedStudents = await storage.bulkDeactivateStudents(numIds, schoolId);
+    // Write one per-student audit log (same format as single deactivation) so the
+    // Deactivated Students page JOIN finds each student individually.
+    const commentsPart = comments ? `. Comments: ${comments}` : "";
+    await Promise.all(
+      deactivatedStudents.map(s =>
+        storage.createAuditLog({
+          schoolId,
+          actionType: "deactivate",
+          entityType: "student",
+          entityId: s.id,
+          actionBy: req.session.userId!,
+          actionByRole: "admin",
+          details: `Student ${s.name} (${s.digitalStudentId}) deactivated. Reason: ${reason}. Batch: ${batchYear}${commentsPart}`,
+        })
+      )
+    );
+    res.json({ deactivated: deactivatedStudents.length });
+  });
+
+  // ===== ADMIN: FEE RECORDS =====
+  const feeRecordBaseSchema = z.object({
+    studentId: z.number().int().positive(),
+    feeType: z.string().min(1).max(100),
+    amount: z.number().int().positive(),
+    // Accept empty string from client and coerce to null so the DB never sees ""
+    dueDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
+    paidDate: z.string().optional().nullable().transform(v => (v === "" ? null : v ?? null)),
+    status: z.enum(["Due", "Paid", "Overdue"]),
+    receiptNumber: z.string().max(50).optional().nullable(),
+    notes: z.string().optional().nullable(),
+    academicYear: z.string().max(20).optional().nullable(),
+  });
+  // Full schema with conditional dueDate validation (for PATCH reuse as update)
+  const feeRecordBodySchema = feeRecordBaseSchema.superRefine((val, ctx) => {
+    const noDeadlineNeeded = val.status === "Paid";
+    if (!noDeadlineNeeded && !val.dueDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Due date is required", path: ["dueDate"] });
+    }
+  });
+  // Partial schema for PATCH — .partial() must be called on the base ZodObject, not ZodEffects
+  const feeRecordPatchSchema = feeRecordBaseSchema.partial();
+
+  // ── GET /api/admin/fees/filter-options ──────────────────────────────────────
+  // Returns distinct categorical values for the current session, used to
+  // populate the multi-select filter panel. Must be registered BEFORE the
+  // dynamic /:id routes.
+  app.get("/api/admin/fees/filter-options", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (sessionFilter == null) {
+      return res.json({
+        classes: [], sections: [], feeNames: [], feeTypes: [], feePeriods: [],
+        frequencies: [], statuses: [], paymentMethods: [], academicYears: [],
+      });
+    }
+
+    try {
+      const sessionCond = sql`AND fr.session_id = ${sessionFilter}`;
+
+      // Fetch all distinct categorical values from the full session (not paged).
+      // Fee-structure name is resolved via the SAME deterministic first-structure
+      // LATERAL join used by the ledger table, so it cannot duplicate rows even
+      // when several structures share a fee_type.
+      const rows = (await db.execute(sql`
+        SELECT DISTINCT
+          s.class                                        AS class,
+          s.section                                      AS section,
+          COALESCE(fr.fee_name, structure.fee_name, fr.fee_type) AS fee_name,
+          fr.fee_type                                    AS fee_type,
+          fr.frequency                                   AS frequency,
+          fr.status                                      AS status,
+          fr.academic_year                               AS academic_year,
+          fr.fee_period_start                            AS fee_period_start,
+          fr.fee_period_end                              AS fee_period_end,
+          lp.raw_payment_method                          AS payment_method
+        FROM fee_records fr
+        LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        LEFT JOIN LATERAL (
+          SELECT fs.name AS fee_name
+          FROM fee_structures fs
+          WHERE fs.school_id = fr.school_id
+            AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+          ORDER BY fs.id ASC
+          LIMIT 1
+        ) structure ON true
+        LEFT JOIN LATERAL (
+          SELECT pr.payment_method AS raw_payment_method
+          FROM payment_records pr
+          WHERE pr.school_id = fr.school_id
+            AND pr.fee_record_id = fr.id
+            AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+          ORDER BY pr.created_at DESC, pr.id DESC
+          LIMIT 1
+        ) lp ON true
+        WHERE fr.school_id = ${schoolId}
+        ${sessionCond}
+      `)).rows as any[];
+
+      // Collect unique values (filter nulls / blanks).
+      const setOf = (key: string): string[] =>
+        [...new Set(rows.map(r => r[key]).filter(Boolean) as string[])].sort();
+
+      const classes        = setOf("class");
+      const sections       = setOf("section");
+      const feeNames       = setOf("fee_name");
+      const feeTypes       = setOf("fee_type");
+      const frequencies    = setOf("frequency");
+      const statuses       = setOf("status");
+      const academicYears  = setOf("academic_year");
+      const paymentMethods = setOf("payment_method");
+
+      // Fee periods: unique encoded "start|end" pairs with human-readable label.
+      const periodMap = new Map<string, string>();
+      for (const r of rows) {
+        if (r.fee_period_start && r.fee_period_end) {
+          const key = encodeFeePeriod(r.fee_period_start, r.fee_period_end);
+          if (!periodMap.has(key)) {
+            periodMap.set(key, feePeriodLabel(r.fee_period_start, r.fee_period_end));
+          }
+        }
+      }
+      const feePeriods = [...periodMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([value, label]) => ({ value, label }));
+
+      res.json({
+        classes,
+        sections,
+        feeNames,
+        feeTypes,
+        feePeriods,
+        frequencies,
+        statuses,
+        paymentMethods,
+        academicYears,
+      });
+    } catch (err) {
+      console.error("[filter-options]", err);
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  app.get("/api/admin/fees", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const pageSize = 20;
+    const requestedPageSize = req.query.pageSize ? parseInt(String(req.query.pageSize), 10) : pageSize;
+    if (requestedPageSize !== pageSize) {
+      return res.status(400).json({ message: `pageSize must be ${pageSize}` });
+    }
+
+    const requestedPage = parseInt(String(req.query.page ?? "1"), 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+
+    // Extract studentId separately (not part of LedgerFilters — it's a security scope param)
+    const studentId = req.query.studentId ? String(req.query.studentId) : undefined;
+
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
+    if (sessionFilter == null) {
+      return res.json({ records: [], total: 0, page: 1, pageSize, totalPages: 0 });
+    }
+
+    // Normalize all ledger filters from query string (handles old singular fields).
+    const filters = normalizeLedgerFiltersFromQuery(req.query as Record<string, unknown>);
+
+    // Base conditions: tenant + session + optional student scope
+    const conditions: any[] = [
+      sql`fr.school_id = ${schoolId}`,
+    ];
+    conditions.push(sql`fr.session_id = ${sessionFilter}`);
+    if (studentId) {
+      const sid = parseInt(studentId, 10);
+      if (!Number.isFinite(sid)) return res.status(400).json({ message: "Invalid studentId" });
+      conditions.push(sql`fr.student_id = ${sid}`);
+    }
+
+    // Field expressions used by the predicate builder
+    const filterFields: LedgerFilterFields = {
+      invoiceNumber: sql`COALESCE(fr.invoice_number, '')`,
+      receiptNumber: sql`COALESCE(fr.receipt_number, '')`,
+      studentName:   sql`COALESCE(s.name, '')`,
+      dsid:          sql`COALESCE(s.digital_student_id, '')`,
+      class:         sql`s.class`,
+      section:       sql`s.section`,
+      feeName:       sql`COALESCE(fr.fee_name, structure.fee_name, fr.fee_type)`,
+      feeType:       sql`fr.fee_type`,
+      feePeriodStartEnd: [sql`fr.fee_period_start`, sql`fr.fee_period_end`],
+      frequency:     sql`fr.frequency`,
+      status:        sql`fr.status`,
+      paymentMethod: sql`ledger_payment.raw_payment_method`,
+      academicYear:  sql`fr.academic_year`,
+      amount:        sql`fr.amount`,
+      dueDate:       sql`fr.due_date`,
+      referenceNumber: sql`COALESCE(ledger_payment.raw_reference_number, '')`,
+    };
+
+    const filterPredicates = buildLedgerFilterPredicates(filters, filterFields);
+    const paymentDatePredicate = buildLedgerPaymentDatePredicate(filters, {
+      schoolId: sql`fr.school_id`,
+      feeRecordId: sql`fr.id`,
+    });
+    if (paymentDatePredicate) filterPredicates.push(paymentDatePredicate);
+    conditions.push(...filterPredicates);
+
+    const whereClause = sql.join(conditions, sql` AND `);
+    const structureJoin = sql`
+      LEFT JOIN LATERAL (
+        SELECT fs.name AS fee_name, fs.late_fee_config
+        FROM fee_structures fs
+        WHERE fs.school_id = fr.school_id
+          AND lower(trim(fs.fee_type)) = lower(trim(fr.fee_type))
+        ORDER BY fs.id ASC
+        LIMIT 1
+      ) structure ON true
+    `;
+    const ledgerPaymentJoin = sql`
+      LEFT JOIN LATERAL (
+        SELECT pr.payment_method AS raw_payment_method,
+               pr.reference_number AS raw_reference_number
+        FROM payment_records pr
+        WHERE pr.school_id = fr.school_id
+          AND pr.fee_record_id = fr.id
+          AND (pr.cashier_notes IS NULL OR pr.cashier_notes <> 'Auto-recorded from Add Fee Record')
+        ORDER BY pr.created_at DESC, pr.id DESC
+        LIMIT 1
+      ) ledger_payment ON true
+    `;
+
+    // Always include payment join (needed for paymentMethod filter + display).
+    const totalResult = await db.execute(sql`
+      SELECT COUNT(*)::int AS total
+      FROM fee_records fr
+      LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${structureJoin}
+      ${ledgerPaymentJoin}
+      WHERE ${whereClause}
+    `);
+    const total = Number((totalResult.rows[0] as any)?.total ?? 0);
+    const totalPages = Math.ceil(total / pageSize);
+    const safePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+
+    const result = await db.execute(sql`
+      SELECT
+        fr.id,
+        fr.student_id AS "studentId",
+        fr.school_id AS "schoolId",
+        fr.session_id AS "sessionId",
+        fr.fee_type AS "feeType",
+        fr.amount,
+        fr.due_date AS "dueDate",
+        COALESCE((
+          SELECT MAX(ledger_paid_date.received_date)
+          FROM payment_records ledger_paid_date
+          WHERE ledger_paid_date.school_id = fr.school_id
+            AND ledger_paid_date.fee_record_id = fr.id
+        ), fr.paid_date) AS "paidDate",
+        fr.status,
+        fr.receipt_number AS "receiptNumber",
+        fr.invoice_number AS "invoiceNumber",
+        fr.notes,
+        fr.late_fee_amount AS "lateFeeAmount",
+        fr.academic_year AS "academicYear",
+        fr.razorpay_order_id AS "razorpayOrderId",
+        fr.razorpay_order_expires_at AS "razorpayOrderExpiresAt",
+        fr.fee_period_start AS "feePeriodStart",
+        fr.fee_period_end AS "feePeriodEnd",
+        fr.breakdown_snapshot AS "breakdownSnapshot",
+        fr.fee_name AS "__manualFeeName",
+        fr.frequency AS "frequency",
+        fr.late_fee_config AS "__manualLateFeeConfig",
+        fr.created_at AS "createdAt",
+        fr.created_by AS "createdBy",
+        structure.fee_name AS "__feeName",
+        structure.late_fee_config AS "__lateFeeConfig",
+        s.name AS "__studentName",
+        s.class AS "__studentClass",
+        s.section AS "__studentSection",
+        s.digital_student_id AS "__studentDigitalStudentId",
+        ledger_payment.raw_payment_method AS "__paymentMethod"
+      FROM fee_records fr
+      LEFT JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+      ${structureJoin}
+      ${ledgerPaymentJoin}
+      WHERE ${whereClause}
+      ORDER BY fr.created_at DESC, fr.id DESC
+      LIMIT ${pageSize}
+      OFFSET ${(safePage - 1) * pageSize}
+    `);
+
+    const now = new Date();
+    const records = (result.rows as any[]).map(row => {
+      const {
+        __feeName, __lateFeeConfig, __manualFeeName, __manualLateFeeConfig, __studentName, __studentClass,
+        __studentSection, __studentDigitalStudentId, __paymentMethod, ...record
+      } = row;
+      const lateFeeConfig = __manualLateFeeConfig ?? __lateFeeConfig;
+      const accrued_late_fee = lateFeeConfig?.enabled
+        ? calculateLateFee(lateFeeConfig, record.dueDate, record.status, now)
+        : Number(record.lateFeeAmount ?? 0);
+      const base_amount = Number(record.amount);
+      const total_due   = base_amount + accrued_late_fee;
+      return {
+        ...record,
+        feeName:          __manualFeeName ?? __feeName ?? record.feeType,
+        paymentMethod:    record.status === "Paid" ? ledgerPaymentMethodLabel(__paymentMethod) : null,
+        student:          __studentName == null ? null : {
+          name: __studentName,
+          class: __studentClass,
+          section: __studentSection,
+          digitalStudentId: __studentDigitalStudentId,
+        },
+        lateFeeAmount:    accrued_late_fee,   // backward-compat alias
+        base_amount,
+        accrued_late_fee,
+        total_due,
+      };
+    });
+
+    res.json({ records, total, page: safePage, pageSize, totalPages });
+  });
+
+  app.post("/api/admin/fees", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const parsed = manualInvoiceBodySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const [studentCheck] = await db.select({
+      id: students.id,
+      schoolId: students.schoolId,
+      name: students.name,
+      class: students.class,
+      section: students.section,
+      isActive: students.isActive,
+    }).from(students).where(eq(students.id, parsed.data.studentId));
+    const studentError = manualInvoiceStudentValidationMessage(studentCheck, schoolId);
+    if (studentError) return res.status(400).json({ message: studentError });
+
+    try {
+      const actor = await resolveFeeAuditActor(req, schoolId);
+      const invoiceContext = await prepareManualInvoiceContext({
+        schoolId,
+        feeName: parsed.data.feeName,
+        feeType: parsed.data.feeType,
+        amount: parsed.data.amount,
+        frequency: parsed.data.frequency,
+        feePeriod: parsed.data.feePeriod,
+        dueDate: parsed.data.dueDate,
+        breakdown: parsed.data.breakdown,
+        lateFeeConfig: parsed.data.lateFeeConfig,
+      });
+      const result = await createManualInvoice({
+        context: invoiceContext,
+        studentId: parsed.data.studentId,
+        notes: parsed.data.notes,
+        createdBy: req.session.userId,
+        afterCreate: async (tx, record) => {
+          await appendFeeAudit({
+            schoolId,
+            actor,
+            action: "create",
+            entityType: "fee_record",
+            entityId: record.id,
+            studentId: parsed.data.studentId,
+            studentName: studentCheck.name,
+            sessionId: record.sessionId,
+            recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+            amount: record.amount,
+            description: `Created ${record.invoiceNumber ?? "invoice"} for ${studentCheck.name}: ${record.feeName ?? record.feeType}, ₹${Number(record.amount).toLocaleString("en-IN")}, due ${record.dueDate}.`,
+            ipAddress: requestIpAddress(req),
+          }, tx);
+        },
+      });
+      if (!result.created) {
+        return res.status(409).json({
+          message: `An invoice for "${invoiceContext.feeType}" already exists for this student for the selected fee period.`,
+        });
+      }
+
+      const rec = result.record;
+      res.status(201).json(rec);
+    } catch (error) {
+      if (error instanceof InvoiceGenerationError) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.patch("/api/admin/fees/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const [writeTarget] = await db.select({ sessionId: feeRecords.sessionId })
+      .from(feeRecords)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+    if (!writeTarget) return res.status(404).json({ message: "Fee record not found" });
+    const writeBlock = await feeRecordWriteBlock(writeTarget.sessionId, schoolId);
+    if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
+    const parsed = feeRecordPatchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (parsed.data.studentId !== undefined) {
+      const [studentCheck] = await db.select({ id: students.id }).from(students)
+        .where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, schoolId)));
+      if (!studentCheck) return res.status(400).json({ message: "Student does not belong to this school" });
+    }
+    // If dueDate was cleared for a paid invoice, fall back to paidDate or today
+    // rather than passing null into a NOT NULL column.
+    const patchData = { ...parsed.data };
+    if (patchData.dueDate == null) {
+      const today = todayInIST();
+      patchData.dueDate = patchData.paidDate || today;
+    }
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const updated = await db.transaction(async tx => {
+      const [before] = await tx.select().from(feeRecords).where(and(
+        eq(feeRecords.id, id),
+        eq(feeRecords.schoolId, schoolId),
+      ));
+      if (!before) return null;
+      // patchData.dueDate is non-null after the guard above.
+      const rec = await storage.updateFeeRecord(
+        id, schoolId,
+        patchData as Omit<Parameters<typeof storage.updateFeeRecord>[2], never>,
+        tx,
+      );
+      if (!rec) return null;
+      const [student] = await tx.select({ name: students.name }).from(students).where(and(
+        eq(students.id, rec.studentId),
+        eq(students.schoolId, schoolId),
+      ));
+      const changeSummary = describeFeeAuditChanges(before as any, rec as any, {
+        feeName: { label: "fee name" },
+        feeType: { label: "fee type" },
+        amount: { label: "amount", format: value => `₹${Number(value ?? 0).toLocaleString("en-IN")}` },
+        dueDate: { label: "due date" },
+        status: { label: "status" },
+        paidDate: { label: "paid date" },
+        notes: { label: "notes", format: value => value ? "provided" : "none" },
+      });
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "update",
+        entityType: "fee_record",
+        entityId: id,
+        studentId: rec.studentId,
+        studentName: student?.name ?? null,
+        sessionId: rec.sessionId,
+        recordLabel: rec.invoiceNumber ?? `${rec.feeType} invoice`,
+        amount: rec.amount,
+        description: `Updated ${rec.invoiceNumber ?? "invoice"}${changeSummary ? `: ${changeSummary}.` : "."}`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return rec;
+    });
+    if (!updated) return res.status(404).json({ message: "Fee record not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/admin/fees/:id", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const [writeTarget] = await db.select({ sessionId: feeRecords.sessionId })
+      .from(feeRecords)
+      .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+    if (!writeTarget) return res.status(404).json({ message: "Fee record not found" });
+    const writeBlock = await feeRecordWriteBlock(writeTarget.sessionId, schoolId);
+    if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
+
+    // Require password confirmation for single delete
+    const { password } = req.body ?? {};
+    if (!password || typeof password !== "string")
+      return res.status(400).json({ message: "Password is required to delete a fee record" });
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk)
+      return res.status(403).json({ message: "Incorrect password. Deletion cancelled." });
+
+    const actor = await resolveFeeAuditActor(req, schoolId);
+    const deleted = await db.transaction(async tx => {
+      const [feeDetail] = await tx
+        .select({
+          invoiceNumber: feeRecords.invoiceNumber,
+          feeType: feeRecords.feeType,
+          amount: feeRecords.amount,
+          studentId: feeRecords.studentId,
+          studentName: students.name,
+          sessionId: feeRecords.sessionId,
+        })
+        .from(feeRecords)
+        .leftJoin(students, and(
+          eq(students.id, feeRecords.studentId),
+          eq(students.schoolId, feeRecords.schoolId),
+        ))
+        .where(and(eq(feeRecords.id, id), eq(feeRecords.schoolId, schoolId)));
+      if (!feeDetail) return false;
+      const removed = await storage.deleteFeeRecord(id, schoolId, tx);
+      if (!removed) return false;
+      await appendFeeAudit({
+        schoolId,
+        actor,
+        action: "delete",
+        entityType: "fee_record",
+        entityId: id,
+        studentId: feeDetail.studentId,
+        studentName: feeDetail.studentName,
+        sessionId: feeDetail.sessionId,
+        recordLabel: feeDetail.invoiceNumber ?? `${feeDetail.feeType} invoice`,
+        amount: feeDetail.amount,
+        description: `Deleted ${feeDetail.invoiceNumber ?? "invoice"} for ${feeDetail.studentName ?? "Unknown student"}: ${feeDetail.feeType}, ₹${Number(feeDetail.amount).toLocaleString("en-IN")}. Password confirmation was verified.`,
+        ipAddress: requestIpAddress(req),
+      }, tx);
+      return true;
+    });
+    if (!deleted) return res.status(404).json({ message: "Fee record not found" });
+    res.json({ success: true });
+  });
+
+  // ── Bulk-delete fee records (requires principal password) ─────────────────
+  app.post("/api/admin/fees/bulk-delete", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const { ids, password } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ message: "No records selected for deletion" });
+    if (!password || typeof password !== "string")
+      return res.status(400).json({ message: "Password is required to confirm bulk deletion" });
+
+    // Verify the admin's current password (same helper used everywhere else)
+    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
+    if (!passwordOk)
+      return res.status(403).json({ message: "Incorrect password. Bulk deletion cancelled." });
+
+    const numericIds = ids.map((r: any) => parseInt(String(r))).filter((n: number) => !isNaN(n));
+    const writeTargets = numericIds.length > 0
+      ? await db.select({ sessionId: feeRecords.sessionId })
+          .from(feeRecords)
+          .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
+      : [];
+    for (const target of writeTargets) {
+      const writeBlock = await feeRecordWriteBlock(target.sessionId, schoolId);
+      if (writeBlock) return res.status(writeBlock.status).json({ message: writeBlock.message });
+    }
+
+    try {
+      const actor = await resolveFeeAuditActor(req, schoolId);
+      const result = await db.transaction(async tx => {
+        const details = numericIds.length > 0
+          ? await tx
+              .select({
+                id: feeRecords.id,
+                invoiceNumber: feeRecords.invoiceNumber,
+                feeType: feeRecords.feeType,
+                amount: feeRecords.amount,
+                 studentId: feeRecords.studentId,
+                studentName: students.name,
+                sessionId: feeRecords.sessionId,
+              })
+              .from(feeRecords)
+              .leftJoin(students, and(
+                eq(students.id, feeRecords.studentId),
+                eq(students.schoolId, feeRecords.schoolId),
+              ))
+              .where(and(eq(feeRecords.schoolId, schoolId), inArray(feeRecords.id, numericIds)))
+          : [];
+        let deleted = 0;
+        for (const record of details) {
+            if (!await storage.deleteFeeRecord(record.id, schoolId, tx)) continue;
+            deleted++;
+            await appendFeeAudit({
+              schoolId,
+              actor,
+              action: "delete",
+              entityType: "fee_record",
+              entityId: record.id,
+              studentId: record.studentId,
+              studentName: record.studentName,
+              sessionId: record.sessionId,
+              recordLabel: record.invoiceNumber ?? `${record.feeType} invoice`,
+              amount: record.amount,
+              description: `Deleted ${record.invoiceNumber ?? "invoice"} for ${record.studentName ?? "Unknown student"}: ${record.feeType}, ₹${Number(record.amount).toLocaleString("en-IN")}. Password confirmation was verified.`,
+              ipAddress: requestIpAddress(req),
+            }, tx);
+          }
+        return { deleted, notFound: ids.length - deleted };
+      });
+      res.json(result);
+    } catch (e: any) {
+      console.error("[bulk-delete] error:", e);
+      res.status(500).json({ message: e?.message || "Deletion failed. Please try again." });
+    }
+  });
+
+  // ── Student search for Record-Offline-Payment modal ───────────────────────
+  // Tenant-isolated: every query is hard-scoped to req.session.schoolId.
+  // Accepts EITHER ?invoiceNumber=  (searches fee_records only for this school)
+  //           OR   ?q=             (name / DSID of students in this school only)
+  // Sending both → 400. Must NOT be registered after any /:id wildcard.
+  app.get("/api/admin/fees/students/search", async (req, res) => {
+    if (!req.session.userId || req.session.userRole !== "admin")
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+
+    const invoiceNumber = ((req.query.invoiceNumber as string) ?? "").trim();
+    const q             = ((req.query.q             as string) ?? "").trim();
+
+    if (invoiceNumber && q)
+      return res.status(400).json({ message: "Use only one search field at a time" });
+    if (!invoiceNumber && !q)
+      return res.status(400).json({ message: "Enter an invoice number or student name / DSID" });
+
+    const val = invoiceNumber || q;
+    if (val.length < 2)
+      return res.status(400).json({ message: "Enter at least 2 characters to search" });
+
+    const pattern = `%${val}%`;
+
+    try {
+      let rows: Awaited<ReturnType<typeof db.execute>>;
+
+      if (invoiceNumber) {
+        // Invoice-number search: anchor on fee_records to guarantee tenant isolation.
+        // fr.school_id = schoolId is the hard tenant boundary — students from other
+        // schools who share an invoice number prefix will never appear here.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM fee_records fr
+          INNER JOIN students s
+            ON s.id = fr.student_id AND s.school_id = fr.school_id
+          WHERE fr.school_id = ${schoolId}
+            AND s.is_active = true
+            AND fr.invoice_number ILIKE ${pattern}
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      } else {
+        // Name / DSID search: tenant boundary is s.school_id = schoolId.
+        rows = await db.execute(sql`
+          SELECT DISTINCT
+            s.id,
+            s.name,
+            s.class,
+            s.section,
+            s.digital_student_id AS "digitalStudentId",
+            s.is_active          AS "isActive"
+          FROM students s
+          WHERE s.school_id = ${schoolId}
+            AND s.is_active = true
+            AND (
+              s.name               ILIKE ${pattern}
+              OR s.digital_student_id ILIKE ${pattern}
+            )
+          ORDER BY s.name ASC
+          LIMIT 20
+        `);
+      }
+
+      return res.json(rows.rows);
+    } catch (err: any) {
+      console.error("[fees/students/search] DB error:", err?.message ?? err);
+      return res.status(500).json({ message: "Search failed — please try again" });
+    }
+  });
+
+  // ===== STUDENT: VIEW OWN FEES =====
+  app.get("/api/student/academic-sessions", async (req, res) => {
+    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(404).json({ message: "Student not found" });
+    const sessions = await storage.getAcademicSessions(student.schoolId);
+    res.json(sessions);
+  });
+
+  app.get("/api/student/fees", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
+    const viewSessionId: number | null = (req as any).viewSessionId
+      ?? (await storage.getActiveSession(student.schoolId))?.id
+      ?? null;
+    if (viewSessionId == null) return res.json([]);
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
+
+    // Attach fee-structure name + breakdown to each record so students always
+    // see the current display name and component details.
+    const structures = await storage.getFeeStructuresBySchool(student.schoolId);
+    const ftToName    = new Map<string, string>();
+    const breakdownMap = new Map<string, Array<{ name: string; purpose: string; amount: number }>>();
+    const ftToConfig  = new Map<string, any>();
+    for (const s of structures) {
+      const key = s.feeType.trim().toLowerCase();
+      if (!ftToName.has(key)) ftToName.set(key, s.name);
+      if (!breakdownMap.has(key) && Array.isArray((s as any).breakdown) && (s as any).breakdown.length > 0) {
+        breakdownMap.set(key, (s as any).breakdown);
+      }
+      if (!ftToConfig.has(key)) ftToConfig.set(key, (s as any).lateFeeConfig ?? null);
+    }
+
+    // Fetch payment_failed audit entries for this student's fee records so we
+    // can surface a "last attempt failed" warning on each card.
+    const feeIds = records.map(r => r.id);
+    const failedMap = new Map<number, { count: number; lastError: string | null }>();
+    if (feeIds.length > 0) {
+      const failedRows = await db.execute(sql`
+        SELECT
+          entity_id::int                                                          AS "feeRecordId",
+          COUNT(id)::int                                                          AS count,
+          (ARRAY_AGG(description ORDER BY created_at DESC))[1]                   AS "lastError"
+        FROM fee_audit_log
+        WHERE school_id   = ${student.schoolId}
+          AND student_id  = ${req.session.studentId!}
+          AND action      = 'payment_failed'
+          AND entity_type = 'fee_record'
+          AND entity_id  IS NOT NULL
+          AND entity_id::int = ANY(${sql.raw(`ARRAY[${feeIds.join(",")}]::int[]`)})
+        GROUP BY entity_id
+      `);
+      for (const row of failedRows.rows as Array<{ feeRecordId: number; count: number; lastError: string | null }>) {
+        failedMap.set(row.feeRecordId, { count: row.count, lastError: row.lastError ?? null });
+      }
+    }
+
+    const now = new Date();
+    const enriched = records.map(r => {
+      const cfg = (r.lateFeeConfig as any) ?? ftToConfig.get(r.feeType.trim().toLowerCase());
+      const accrued_late_fee = cfg?.enabled
+        ? calculateLateFee(cfg, r.dueDate, r.status, now)
+        : ((r as any).lateFeeAmount ?? 0);
+      const failedInfo = failedMap.get(r.id);
+      // Compute immutable fee-period display label from stored period dates.
+      // Falls back to academicYear for pre-migration records that have no period.
+      const periodLabel = feePeriodLabel(
+        (r as any).feePeriodStart,
+        (r as any).feePeriodEnd,
+        r.academicYear,
+      );
+      return {
+        ...r,
+        feeName:           r.feeName ?? ftToName.get(r.feeType.trim().toLowerCase()) ?? r.feeType,
+        frequency:         r.frequency ?? null,
+        breakdown:         (r.breakdownSnapshot?.length ? r.breakdownSnapshot : breakdownMap.get(r.feeType.trim().toLowerCase())) ?? [],
+        base_amount:       r.amount,
+        accrued_late_fee,
+        total_due:         r.amount + accrued_late_fee,
+        failed_count:      failedInfo?.count ?? 0,
+        last_failed_error: failedInfo?.lastError ?? null,
+        // Display-oriented late-fee transparency object — built from the same cfg
+        // already loaded above. accruedLateFee is reused; calculateLateFee() is
+        // NOT called again. Payment logic is completely unaffected.
+        lateFeeInfo:       buildLateFeeInfo(cfg ?? null, r.dueDate, r.status, now, accrued_late_fee),
+        // Immutable fee period label — "August 2026", "April–June 2026", "2025–26", etc.
+        feePeriodLabel:    periodLabel,
+      };
+    });
+
+    res.json(enriched);
+  });
+
+  // ===== STUDENT: FEES BILLING SUMMARY =====
+  // Returns arrears (overdue from prior months) vs current-month charges separately
+  // so the student UI can show "Previous Arrears + Current Month = Total Outstanding".
+  app.get("/api/student/fees/summary", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
+    const today = new Date();
+    const currentYYYYMM = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    const viewSessionId: number | null = (req as any).viewSessionId
+      ?? (await storage.getActiveSession(student.schoolId))?.id
+      ?? null;
+    if (viewSessionId == null) {
+      return res.json({
+        previousArrears: 0,
+        currentMonthCharges: 0,
+        totalOutstanding: 0,
+        totalPaid: 0,
+        currentMonth: currentYYYYMM,
+      });
+    }
+
+    const sessionCond = sql`AND fr.session_id = ${viewSessionId}`;
+
+    // For each unpaid fee record: compute net balance = invoice amount - total paid so far.
+    // Split into "previous arrears" (due_date before this month) and "current charges" (due this month or later).
+    const rows = await db.execute(sql`
+      SELECT
+        fr.id,
+        fr.amount,
+        fr.late_fee_amount,
+        fr.due_date,
+        fr.status,
+        COALESCE(p.total_paid, 0)::int AS amount_paid,
+        GREATEST(fr.amount + fr.late_fee_amount - COALESCE(p.total_paid, 0), 0)::int AS net_balance
+      FROM fee_records fr
+      LEFT JOIN (
+        SELECT fee_record_id, SUM(amount)::int AS total_paid
+        FROM payment_records
+        WHERE school_id = ${student.schoolId} AND fee_record_id IS NOT NULL
+        GROUP BY fee_record_id
+      ) p ON p.fee_record_id = fr.id
+      WHERE fr.student_id = ${req.session.studentId}
+        AND fr.school_id  = ${student.schoolId}
+        AND fr.status IN ('Due', 'Overdue')
+      ${sessionCond}
+    `);
+
+    let previousArrears = 0;
+    let currentMonthCharges = 0;
+    let totalAmountPaid = 0;
+
+    for (const r of rows.rows as any[]) {
+      const dueMonth = String(r.due_date).slice(0, 7); // "YYYY-MM"
+      const net = Number(r.net_balance) || 0;
+      totalAmountPaid += Number(r.amount_paid) || 0;
+      if (dueMonth < currentYYYYMM) {
+        previousArrears += net;
+      } else {
+        currentMonthCharges += net;
+      }
+    }
+
+    // Also fetch total actually paid (for display)
+    const paidSessionCond = sql`AND COALESCE(fr.session_id, pr.session_id) = ${viewSessionId}`;
+    const paidRow = await db.execute(sql`
+      SELECT COALESCE(SUM(pr.amount), 0)::int AS total_paid
+      FROM payment_records pr
+      LEFT JOIN fee_records fr
+        ON fr.id = pr.fee_record_id
+       AND fr.school_id = pr.school_id
+      WHERE pr.student_id = ${req.session.studentId}
+        AND pr.school_id  = ${student.schoolId}
+        ${paidSessionCond}
+    `);
+    const totalPaid = Number((paidRow.rows[0] as any)?.total_paid) || 0;
+
+    res.json({
+      previousArrears,
+      currentMonthCharges,
+      totalOutstanding: previousArrears + currentMonthCharges,
+      totalPaid,
+      currentMonth: currentYYYYMM,
+    });
+  });
+
+  // ===== STUDENT: VIEW INVOICE =====
+  // Returns the same server-rendered invoice HTML as the admin route, but
+  // authorised against the student's own session and school.  Only due/overdue
+  // records are served — paid records must use the receipt route.
+  app.get("/api/student/fees/:id/invoice", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+
+    // Ownership check — the fee record must belong to this student and school.
+    // getFeeRecordsByStudent already scopes by studentId + schoolId so a forged
+    // id from a different student will simply not be found.
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
+    const owned = records.find(r => r.id === id);
+    if (!owned) return res.status(404).json({ message: "Invoice not found" });
+    if (owned.status === "Paid") {
+      return res.status(409).type("html").send(
+        `<!doctype html><title>Invoice unavailable</title>` +
+        `<body style="font-family:Arial,sans-serif;padding:32px;color:#334155">` +
+        `<h1>Invoice unavailable</h1>` +
+        `<p>This invoice is already paid. Use the payment receipt instead.</p>` +
+        `</body>`
+      );
+    }
+
+    try {
+      // Fetch full row with school + student joins (same query shape as admin route)
+      const result = await db.execute(sql`
+        SELECT fr.*,
+               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
+               sch.name AS school_name, sch.logo_url AS school_logo_url,
+               sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
+               sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
+               sch.country AS school_country, sch.phone AS school_phone, sch.email AS school_email,
+               sch.affiliation_number AS school_affiliation_number, sch.gstin AS school_gstin
+        FROM fee_records fr
+        JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
+        JOIN schools sch ON sch.id = fr.school_id
+        WHERE fr.id = ${id} AND fr.school_id = ${student.schoolId}
+        LIMIT 1
+      `);
+      const row = result.rows[0] as any;
+      if (!row) return res.status(404).json({ message: "Invoice not found" });
+
+      const relativeLogoUrl = row.school_logo_url as string | null;
+      const logoUrl = relativeLogoUrl
+        ? (/^https?:\/\//i.test(relativeLogoUrl)
+          ? relativeLogoUrl
+          : `${req.protocol}://${req.get("host")}${relativeLogoUrl}`)
+        : null;
+
+      // ── Authorized signature (tenant-scoped, same as admin invoice) ──────────
+      const invSigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
+      const invSigRelUrl =
+        invSigMeta?.processedSignatureUrl ??
+        invSigMeta?.originalSignatureUrl ??
+        invSigMeta?.fileUrl ?? null;
+      const invoiceSignatureUrl = invSigRelUrl
+        ? (/^https?:\/\//i.test(invSigRelUrl)
+          ? invSigRelUrl
+          : `${req.protocol}://${req.get("host")}${invSigRelUrl}`)
+        : null;
+      const invSignatoryMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_signatory_name") as any;
+      const invoiceSignatoryName: string | null =
+        (typeof invSignatoryMeta === "string" && invSignatoryMeta.trim())
+          ? invSignatoryMeta.trim()
+          : (typeof invSignatoryMeta?.name === "string" && invSignatoryMeta.name.trim())
+            ? invSignatoryMeta.name.trim()
+            : null;
+
+      const html = renderInvoiceDocument({
+        invoiceNumber: row.invoice_number ?? null,
+        status: row.status,
+        createdAt: row.created_at,
+        feeName: row.fee_name ?? row.fee_type,
+        feeType: row.fee_type,
+        amount: Number(row.amount),
+        lateFeeAmount: Number(row.late_fee_amount ?? 0),
+        frequency: row.frequency ?? null,
+        feePeriodStart: row.fee_period_start ?? null,
+        feePeriodEnd: row.fee_period_end ?? null,
+        academicYear: row.academic_year ?? null,
+        dueDate: row.due_date ?? null,
+        notes: row.notes ?? null,
+        breakdown: Array.isArray(row.breakdown_snapshot) ? row.breakdown_snapshot : [],
+        lateFeeConfig: row.late_fee_config ?? null,
+        student: {
+          name: row.student_name,
+          digitalStudentId: row.digital_student_id,
+          guardianName: row.guardian_name ?? null,
+          phone: row.student_phone ?? null,
+          className: row.class,
+          section: row.section,
+        },
+        school: {
+          name: row.school_name,
+          logoUrl,
+          addressLine1: row.school_address_line1 ?? null,
+          addressLine2: row.school_address_line2 ?? null,
+          city: row.school_city ?? null,
+          state: row.school_state ?? null,
+          pinCode: row.school_pin_code ?? null,
+          country: row.school_country ?? null,
+          phone: row.school_phone ?? null,
+          email: row.school_email ?? null,
+          affiliationNumber: row.school_affiliation_number ?? null,
+          gstin: row.school_gstin ?? null,
+          signatureUrl: invoiceSignatureUrl,
+          signatoryName: invoiceSignatoryName,
+        },
+      });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Content-Disposition", `inline; filename="invoice-${row.invoice_number ?? id}.html"`);
+      res.send(html);
+    } catch (error) {
+      console.error("[student-invoice-document]", error);
+      res.status(500).json({ message: "Unable to generate invoice document" });
+    }
+  });
+
+  // ===== STUDENT: DOWNLOAD RECEIPT =====
+  app.get("/api/student/fees/:id/receipt", async (req, res) => {
+    if (!req.session.studentId) return res.status(403).json({ message: "Student access required" });
+    const student = await storage.getStudentById(req.session.studentId);
+    if (!student) return res.status(403).json({ message: "Student not found" });
+    if (!await requireStudentFeeSession(req, res, student.schoolId)) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid fee record ID" });
+    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const records = await storage.getFeeRecordsByStudent(req.session.studentId, student.schoolId, viewSessionId);
+    const rec = records.find(r => r.id === id);
+    if (!rec) return res.status(404).json({ message: "Fee record not found" });
+    if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
+
+    // ── Fetch fee receipt signature (tenant-scoped via schoolMetadata) ────────
+    const sigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
+    // Use best available URL: processed (transparent) > original > legacy fileUrl
+    const _sigRelUrl = sigMeta?.processedSignatureUrl ?? sigMeta?.originalSignatureUrl ?? sigMeta?.fileUrl ?? null;
+    const feeReceiptSigUrl = _sigRelUrl ? `${req.protocol}://${req.get("host")}${_sigRelUrl}` : null;
+
+    // ── Fetch full tenant-scoped school profile ────────────────────────────────
+    const [school] = await db.select({
+      name: schools.name,
+      logoUrl: schools.logoUrl,
+      addressLine1: schools.addressLine1,
+      addressLine2: schools.addressLine2,
+      city: schools.city,
+      state: schools.state,
+      pinCode: schools.pinCode,
+      country: schools.country,
+      phone: schools.phone,
+      email: schools.email,
+      website: schools.website,
+      board: schools.board,
+      affiliationNumber: schools.affiliationNumber,
+      udiseCode: schools.udiseCode,
+      registrationNumber: schools.registrationNumber,
+      pan: schools.pan,
+      gstin: schools.gstin,
+    }).from(schools).where(eq(schools.id, student.schoolId));
+
+    // ── Fetch captured payment attempt for this fee record ────────────────────
+    const paRows = await db.execute(sql`
+      SELECT razorpay_payment_id, razorpay_order_id, bank_auth_code,
+             payment_method, card_network, card_last4, card_type, card_issuer,
+             bank_name, vpa, wallet, receipt_number, bank_rrn,
+             rzp_captured_at, created_at
+      FROM payment_attempts
+      WHERE fee_record_id = ${id}
+        AND school_id     = ${student.schoolId}
+        AND outcome       = 'captured'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    const pa = (paRows as any).rows?.[0] ?? null;
+
+    // ── Fetch payment_records row for canonical amounts + offline detail ─────
+    // payment_records.amount        = base + late_fee_paid (actual total collected)
+    // payment_records.late_fee_paid = frozen at payment time — never recalculated
+    // payment_records.reference_number = cheque no. / UTR / DD no. for offline pmts
+    // payment_records.payer_name    = payer captured at payment time (may be null)
+    // payment_records.received_date = date admin recorded offline payment
+    // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
+    const prRows = await db.execute(sql`
+      SELECT amount, late_fee_paid, payment_method,
+             reference_number, payer_name, received_date, created_at
+      FROM payment_records
+      WHERE fee_record_id = ${id}
+        AND school_id     = ${student.schoolId}
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    const pr = (prRows as any).rows?.[0] ?? null;
+    const baseFee     = rec.amount;                           // fee_records.amount — always the original base
+    const lateFeePaid = Number(pr?.late_fee_paid ?? 0);      // frozen at payment time; 0 when no late fee
+    const totalPaid   = baseFee + lateFeePaid;               // actual amount collected from student
+
+    // Offline payment detail — sourced only from payment_records (never fabricated)
+    const referenceNo    = (pr?.reference_number as string | null) ?? null;
+    const payerNameStored = (pr?.payer_name       as string | null) ?? null;
+    const receivedDateRaw = (pr?.received_date     as string | null) ?? null;
+
+    // Online-only: bank RRN from payment_attempts (already selected in paRows query)
+    const bankRrn = (pa?.bank_rrn as string | null) ?? null;
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    const esc = (s: string | null | undefined) =>
+      (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+               .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+    function amountInWords(n: number): string {
+      const ones = ["","One","Two","Three","Four","Five","Six","Seven","Eight","Nine",
+        "Ten","Eleven","Twelve","Thirteen","Fourteen","Fifteen","Sixteen","Seventeen","Eighteen","Nineteen"];
+      const tens = ["","","Twenty","Thirty","Forty","Fifty","Sixty","Seventy","Eighty","Ninety"];
+      function cv(x: number): string {
+        if (x === 0) return "";
+        if (x < 20)  return ones[x];
+        if (x < 100) return tens[Math.floor(x/10)] + (x%10 ? " "+ones[x%10] : "");
+        if (x < 1e3) return ones[Math.floor(x/100)]+" Hundred"+(x%100?" and "+cv(x%100):"");
+        if (x < 1e5) return cv(Math.floor(x/1e3))+" Thousand"+(x%1e3?(x%1e3<100?" and ":" ")+cv(x%1e3):"");
+        if (x < 1e7) return cv(Math.floor(x/1e5))+" Lakh"+(x%1e5?(x%1e5<100?" and ":" ")+cv(x%1e5):"");
+        return cv(Math.floor(x/1e7))+" Crore"+(x%1e7?(x%1e7<100?" and ":" ")+cv(x%1e7):"");
+      }
+      if (n <= 0) return "Zero Rupees Only";
+      const r = Math.floor(n), p = Math.round((n-r)*100);
+      return "Rupees "+cv(r).trim()+(p>0?" and "+cv(p).trim()+" Paise":"")+" Only";
+    }
+
+    const fmt = (n: number) =>
+      new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+
+    // Date-only formatter (no time) — for invoice date, due date, received date.
+    // Plain YYYY-MM-DD strings (from DB DATE columns) must be handled separately
+    // because appending "Z" directly to a date-only string ("2026-08-20Z") is
+    // not valid ISO 8601 and produces NaN in V8. We append "T00:00:00Z" instead.
+    const fmtDate = (d: string | Date | null | undefined): string => {
+      if (!d) return "—";
+      const s = String(d);
+      const norm = /^\d{4}-\d{2}-\d{2}$/.test(s)
+        ? s + "T00:00:00Z"
+        : s.replace(" ","T").replace(/([+-]\d{2})$/,"$1:00").replace(/Z?$/,"Z").replace("ZZ","Z");
+      const dt = new Date(norm);
+      return isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString("en-IN", {
+        day:"2-digit", month:"short", year:"numeric", timeZone:"Asia/Kolkata"
+      });
+    };
+
+    // ── Build dynamic sections ────────────────────────────────────────────────
+    const host     = `${req.protocol}://${req.get("host")}`;
+
+    // Logo: absolute URL so it resolves inside the print iframe
+    const logoSrc  = school?.logoUrl ? `${host}${school.logoUrl}` : null;
+
+    // Board/affiliation line — omit blank parts
+    const boardParts = [
+      school?.board               ? `Board: ${esc(school.board)}`                     : null,
+      school?.affiliationNumber   ? `Affiliation No: ${esc(school.affiliationNumber)}` : null,
+      school?.udiseCode           ? `UDISE: ${esc(school.udiseCode)}`                  : null,
+    ].filter(Boolean);
+    const boardLine = boardParts.join(" &nbsp;|&nbsp; ");
+
+    // Address line
+    const addrParts = [
+      school?.addressLine1,
+      school?.addressLine2,
+      school?.city,
+      school?.state ? (school.pinCode ? `${school.state} – ${school.pinCode}` : school.state) : school?.pinCode,
+      school?.country && school.country !== "India" ? school.country : null,
+    ].filter(Boolean).map(esc);
+    const addressLine = addrParts.join(", ");
+
+    // Contact line
+    const contactParts = [
+      school?.phone   ? `Ph: ${esc(school.phone)}`   : null,
+      school?.email   ? `Email: ${esc(school.email)}` : null,
+      school?.website ? `Web: ${esc(school.website)}` : null,
+    ].filter(Boolean);
+    const contactLine = contactParts.join(" &nbsp;|&nbsp; ");
+
+    // Legal / tax line
+    const legalParts = [
+      school?.gstin              ? `GSTIN: ${esc(school.gstin)}`                         : null,
+      school?.pan                ? `PAN: ${esc(school.pan)}`                              : null,
+      school?.registrationNumber ? `Reg No: ${esc(school.registrationNumber)}`            : null,
+    ].filter(Boolean);
+    const legalLine = legalParts.join(" &nbsp;|&nbsp; ");
+
+    // ── Payment method description ─────────────────────────────────────────────
+    // Gateway enrichment stays authoritative for Razorpay. Offline payments use
+    // the recorded method from payment_records, never a generic attempt label.
+    const prMethodRaw = (pr?.payment_method ?? "") as string;
+    // isGatewayPayment: true when payment originated from the Student Portal /
+    // Razorpay.  Checks both the current canonical label ("Portal Payment") and
+    // the legacy stored value ("Online") so un-migrated records behave correctly.
+    const isGatewayPayment = Boolean(pa?.razorpay_payment_id)
+      || prMethodRaw === "Online"
+      || prMethodRaw === "Portal Payment";
+    const offlineMethodDesc = formatOfflinePaymentMethod(prMethodRaw) ?? (prMethodRaw || "—");
+    let methodDesc = isGatewayPayment
+      ? ((pa?.payment_method as string | null) || "Portal Payment")
+      : offlineMethodDesc;
+    if (isGatewayPayment && pa?.payment_method === "card") {
+      const parts = [pa.card_network, pa.card_last4 ? `•••• ${pa.card_last4}` : null].filter(Boolean);
+      methodDesc = parts.length ? `Card (${parts.join(" ")})` : "Card";
+    } else if (isGatewayPayment && pa?.payment_method === "upi") {
+      methodDesc = pa.vpa ? `UPI (${esc(pa.vpa as string)})` : "UPI";
+    } else if (isGatewayPayment && pa?.payment_method === "netbanking") {
+      methodDesc = pa.bank_name ? `Net Banking – ${esc(pa.bank_name as string)}` : "Net Banking";
+    } else if (isGatewayPayment && pa?.payment_method === "wallet") {
+      methodDesc = pa.wallet ? `Wallet (${esc(pa.wallet as string)})` : "Wallet";
+    }
+
+    // ── Receipt identity fields ────────────────────────────────────────────────
+    // Invoice Date is the original fee_records.created_at timestamp, not any
+    // payment, Razorpay, receipt, or calculated timestamp.
+    const invoiceDateFmt = formatPersistedDateTimeIST((rec as any).createdAt);
+    const dueDateFmt     = fmtDate(rec.dueDate);               // fee_records.due_date
+    const paidTs = formatPersistedDateTimeIST(
+      (pa?.rzp_captured_at as string | null)
+      ?? (pr?.created_at as string | Date | null)
+      ?? (pa?.created_at as string | Date | null),
+    );
+
+    // ── Fee period label ───────────────────────────────────────────────────────
+    // Already computed inline in the HTML; pull it out here for the table column.
+    const feePeriodStartVal = (rec as any).feePeriodStart as string | null;
+    const feePeriodEndVal   = (rec as any).feePeriodEnd   as string | null;
+    // Format only the period persisted on this invoice. Do not replace a missing
+    // invoice period with the academic session or derive one from other dates.
+    const periodRowLabel = "Fee Period";
+    const feePeriodLbl   = feePeriodLabel(feePeriodStartVal, feePeriodEndVal, null);
+    const tableSessionCol = feePeriodStartVal && feePeriodEndVal ? feePeriodLbl : "—";
+    const frequencyLabels: Record<string, string> = {
+      monthly: "Monthly",
+      quarterly: "Quarterly",
+      annual: "Annual",
+      "one-time": "One-Time",
+    };
+    const frequencyDisplay = rec.frequency
+      ? (frequencyLabels[rec.frequency] ?? rec.frequency)
+      : "—";
+
+    // ── Offline reference number label (context-sensitive) ─────────────────────
+    const offlineRefLabel =
+      prMethodRaw === "Cheque"      ? "Cheque No."     :
+      prMethodRaw === "BankTransfer" ? "UTR / Ref. No." :
+      prMethodRaw === "DemandDraft"  ? "DD Number"      :
+      prMethodRaw === "Cash"         ? null             : // cash has no reference
+      referenceNo                    ? "Reference No."  : null;
+
+    // ── Amounts ────────────────────────────────────────────────────────────────
+    const amountStr   = fmt(totalPaid);
+    const amountWords = amountInWords(totalPaid);
+    const feeName     = esc((rec as any).feeName ?? rec.feeType);
+
+    // ── Fee component snapshot ─────────────────────────────────────────────────
+    // Source: fee_records.breakdown_snapshot (JSONB, frozen at invoice creation).
+    // NEVER reads fee_structures.breakdown — that is live config and may have changed.
+    // Legacy / admin-direct invoices have breakdown_snapshot = [] → components section omitted.
+    const rawSnap = (rec as any).breakdownSnapshot;
+    const breakdownComponents: Array<{ name: string; purpose: string; amount: number }> =
+      Array.isArray(rawSnap) && rawSnap.length > 0 ? rawSnap : [];
+    const hasComponents = breakdownComponents.length > 0;
+
+
+    // ── Payment detail rows (rendered in Payment Details box) ─────────────────
+    // These use ONLY stored canonical data — never inferred values.
+    type PRow = { label: string; value: string; mono?: boolean; small?: boolean };
+    const payDetailRows: PRow[] = [];
+    payDetailRows.push({ label: "Method", value: esc(methodDesc) });
+    if (isGatewayPayment) {
+      // Online (Razorpay) payment — use payment_attempts as primary source
+      payDetailRows.push({ label: "Payment ID",  value: esc(pa.razorpay_payment_id as string ?? "—"), mono: true, small: true });
+      payDetailRows.push({ label: "Order ID",    value: esc(pa.razorpay_order_id   as string ?? "—"), mono: true, small: true });
+      payDetailRows.push({ label: "Bank RRN",    value: esc(bankRrn ?? "—"), mono: true });
+      if (pa.payment_method === "upi") {
+        payDetailRows.push({ label: "UPI VPA",   value: esc(pa.vpa as string ?? "—") });
+      }
+      if (pa.payment_method === "card") {
+        const cardType = [pa.card_type, pa.card_network].filter(Boolean).join(" ");
+        payDetailRows.push({ label: "Card",      value: esc((cardType ? cardType + " " : "") + (pa.card_last4 ? `•••• ${pa.card_last4}` : "—")) });
+        if (pa.card_issuer) payDetailRows.push({ label: "Issuer", value: esc(pa.card_issuer as string) });
+      }
+      if (pa.payment_method === "netbanking") {
+        payDetailRows.push({ label: "Bank",      value: esc(pa.bank_name as string ?? "—") });
+      }
+      if (pa.payment_method === "wallet") {
+        payDetailRows.push({ label: "Wallet",    value: esc(pa.wallet as string ?? "—") });
+      }
+      if (pa.bank_auth_code) {
+        payDetailRows.push({ label: "Auth Code", value: esc(pa.bank_auth_code as string) });
+      }
+      payDetailRows.push({ label: "Payer Name",  value: esc(payerNameStored ?? "—") });
+    } else {
+      // Offline payment — use payment_records as primary source
+      if (offlineRefLabel && referenceNo) {
+        payDetailRows.push({ label: offlineRefLabel, value: esc(referenceNo), mono: true });
+      } else if (offlineRefLabel) {
+        payDetailRows.push({ label: offlineRefLabel, value: "—" });
+      }
+      payDetailRows.push({ label: "Received Date", value: esc(fmtDate(receivedDateRaw)) });
+      payDetailRows.push({ label: "Payer Name",    value: esc(payerNameStored ?? "—") });
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fee Receipt – ${esc(rec.invoiceNumber ?? rec.receiptNumber ?? String(id))}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px;color:#1e293b;}
+.wrap{max-width:720px;margin:auto;background:#fff;border:2px solid #1e3a5f;border-radius:8px;overflow:hidden;}
+
+/* ── HEADER ── */
+.hdr{display:flex;gap:18px;align-items:flex-start;padding:20px 24px;border-bottom:1px solid #e2e8f0;}
+.logo-box{flex-shrink:0;width:64px;height:64px;border-radius:6px;overflow:hidden;border:1px solid #e2e8f0;display:flex;align-items:center;justify-content:center;background:#f8fafc;}
+.logo-box img{width:100%;height:100%;object-fit:contain;}
+.logo-init{font-size:24px;font-weight:900;color:#1e3a5f;}
+.school-info{flex:1;min-width:0;}
+.school-name{font-size:18px;font-weight:900;color:#1e3a5f;line-height:1.2;margin-bottom:5px;}
+.school-meta{font-size:10.5px;color:#64748b;line-height:1.7;}
+.school-legal{font-size:9.5px;color:#94a3b8;margin-top:3px;line-height:1.6;}
+
+/* ── TITLE BAR ── */
+.title-bar{background:#1e3a5f;color:#fff;text-align:center;padding:9px 16px;font-size:12px;font-weight:700;letter-spacing:1.5px;}
+
+/* ── RECEIPT IDENTITY STRIP ── */
+.id-strip{background:#f8fafc;border-bottom:2px solid #e2e8f0;padding:12px 24px;}
+.id-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 16px;}
+.id-pair{display:flex;flex-direction:column;gap:2px;}
+.id-lbl{font-size:9px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;}
+.id-val{font-size:10.5px;color:#1e293b;font-weight:800;font-family:monospace;}
+.id-val.paid{color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:1px 8px;font-family:Arial,Helvetica,sans-serif;font-size:10px;display:inline-flex;align-items:center;gap:3px;width:fit-content;}
+
+/* ── 2-COL GRID ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 24px;}
+.box{background:#f8fafc;border-radius:8px;padding:12px;border:1px solid #f1f5f9;}
+.box-title{font-size:9.5px;font-weight:800;color:#0891b2;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:9px;}
+.brow{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:4px;}
+.bl{font-size:9.5px;color:#94a3b8;flex-shrink:0;white-space:nowrap;}
+.bv{font-size:9.5px;color:#1e293b;font-weight:600;text-align:right;word-break:break-all;font-family:monospace;}
+.bv.plain{font-family:Arial,Helvetica,sans-serif;}
+
+/* ── FEE PERIOD HIGHLIGHT ── */
+.period-band{background:#eff6ff;border-left:3px solid #2563eb;padding:8px 24px;font-size:10.5px;color:#1e3a5f;font-weight:700;display:flex;align-items:center;gap:8px;}
+
+/* ── TABLE ── */
+.tbl-wrap{padding:12px 24px 8px;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+thead th{background:#1e3a5f;color:#fff;padding:8px 10px;text-align:left;font-size:10.5px;font-weight:700;}
+thead th:last-child{text-align:right;}
+tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;color:#334155;vertical-align:top;}
+tbody td:last-child{text-align:right;font-weight:600;}
+tfoot td{padding:10px 10px;background:#eff6ff;font-weight:800;color:#1e3a5f;font-size:13px;border-top:2px solid #1e3a5f;}
+tfoot td:last-child{text-align:right;}
+
+/* ── NET FEE ROW (shown only when fee components are present) ── */
+.net-fee-row td{background:#eff6ff;font-weight:700;color:#1e3a5f;border-top:2px solid #bfdbfe;border-bottom:1px solid #bfdbfe;}
+.net-fee-row td:last-child{text-align:right;}
+
+
+/* ── AMOUNT WORDS ── */
+.words-wrap{padding:4px 24px 12px;}
+.words-box{background:#f0f9ff;border-left:3px solid #0891b2;padding:8px 12px;border-radius:0 4px 4px 0;font-size:10.5px;color:#334155;}
+
+/* ── FOOTER ROW ── */
+.footer-row{display:flex;align-items:flex-end;justify-content:flex-end;padding:16px 24px;border-top:1px solid #e2e8f0;}
+.sign-wrap{text-align:center;}
+.sign-space{height:36px;}
+.sign-line{width:150px;border-top:1.5px solid #475569;margin:0 auto 4px;}
+.sign-lbl{font-size:10px;font-weight:700;color:#334155;}
+.sign-sub{font-size:9px;color:#94a3b8;margin-top:2px;}
+
+/* ── FOOTER NOTE ── */
+.fnote{padding:8px 24px 16px;text-align:center;font-size:9.5px;color:#94a3b8;border-top:1px solid #f1f5f9;line-height:1.6;}
+
+
+@media (max-width:600px){
+  body{padding:8px;}
+  .id-grid{grid-template-columns:1fr 1fr;}
+  .grid2{grid-template-columns:1fr;}
+  .tbl-wrap{overflow-x:auto;}
+  table{min-width:400px;}
+}
+@media print{
+  body{background:#fff;padding:0;}
+  .wrap{border:1.5px solid #1e3a5f;box-shadow:none;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── SECTION A: SCHOOL HEADER ── -->
+  <div class="hdr">
+    <div class="logo-box">
+      ${logoSrc
+        ? `<img src="${logoSrc}" alt="School Logo" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" /><span class="logo-init" style="display:none;">${esc(school?.name?.[0] ?? "S")}</span>`
+        : `<span class="logo-init">${esc(school?.name?.[0] ?? "S")}</span>`}
+    </div>
+    <div class="school-info">
+      <p class="school-name">${esc(school?.name ?? "School")}</p>
+      <p class="school-meta">
+        ${boardLine   ? `${boardLine}<br>` : ""}
+        ${addressLine ? `${addressLine}<br>` : ""}
+        ${contactLine ? contactLine : ""}
+      </p>
+      ${legalLine ? `<p class="school-legal">${legalLine}</p>` : ""}
+    </div>
+  </div>
+
+  <!-- ── TITLE BAR ── -->
+  <div class="title-bar">OFFICIAL FEE PAYMENT RECEIPT</div>
+
+  <!-- ── SECTION B: RECEIPT IDENTITY STRIP ── -->
+  <!-- Sources: fee_records (receipt_number, invoice_number, created_at, due_date, paid_date) -->
+  <div class="id-strip">
+    <div class="id-grid">
+      <div class="id-pair">
+        <span class="id-lbl">Receipt No.</span>
+        <span class="id-val">${esc(rec.receiptNumber ?? "—")}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Invoice No.</span>
+        <span class="id-val">${esc(rec.invoiceNumber ?? "—")}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Status</span>
+        <span class="id-val paid">&#10003; PAID</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Invoice Date</span>
+        <span class="id-val" style="font-family:Arial">${esc(invoiceDateFmt)}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Due Date</span>
+        <span class="id-val" style="font-family:Arial">${esc(dueDateFmt)}</span>
+      </div>
+      <div class="id-pair">
+        <span class="id-lbl">Payment Date &amp; Time</span>
+        <span class="id-val" style="font-family:Arial">${esc(paidTs)}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FEE PERIOD BAND ── -->
+  <!-- Source: fee_records.fee_period_start / fee_period_end (immutable, set at invoice creation) -->
+  ${feePeriodStartVal
+    ? `<div class="period-band">&#128197;&nbsp; ${esc(periodRowLabel)}: <strong>${esc(feePeriodLbl)}</strong></div>`
+    : `<div class="period-band" style="color:#64748b;font-weight:600;border-left-color:#cbd5e1;">&#128197;&nbsp; Fee Period: <strong>—</strong></div>`}
+
+  <!-- ── SECTION C: DETAILS GRID ── -->
+  <div class="grid2">
+
+    <!-- Student Details — source: students table -->
+    <div class="box">
+      <p class="box-title">Student Details</p>
+      <div class="brow"><span class="bl">Name</span><span class="bv plain">${esc(student?.name ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Student ID</span><span class="bv">${esc(student?.digitalStudentId ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Admission No.</span><span class="bv plain">—</span></div>
+      <div class="brow"><span class="bl">Roll No.</span><span class="bv">${esc(student?.rollNumber != null ? String(student.rollNumber) : "—")}</span></div>
+      <div class="brow"><span class="bl">Class / Sec</span><span class="bv plain">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Parent / Guardian</span><span class="bv plain">${esc(student?.guardianName ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Student Phone</span><span class="bv plain">${esc(student?.phone ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Session</span><span class="bv plain">${esc(rec.academicYear ?? "—")}</span></div>
+    </div>
+
+    <!-- Payment Details — source: payment_attempts (online) or payment_records (offline) -->
+    <div class="box">
+      <p class="box-title">Payment Details</p>
+      ${payDetailRows.map(r =>
+        `<div class="brow"><span class="bl">${r.label}</span><span class="bv${r.small ? '" style="font-size:8px' : r.mono === false ? ' plain' : ''}">${r.value}</span></div>`
+      ).join("\n      ")}
+    </div>
+  </div>
+
+  <!-- ── SECTION D: FEE ITEMIZATION TABLE ── -->
+  <!-- Fee Type / Frequency / Fee Period: fee_records snapshots — never inferred           -->
+  <!-- Fee Period column: fee_period_start/end label — NOT derived from payment date       -->
+  <!-- Components: fee_records.breakdown_snapshot (immutable) — NEVER fee_structures       -->
+  <!-- Gateway Charges row removed — no charges are actually collected from students       -->
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th>Description</th>
+        <th>Fee Type</th>
+        <th>Frequency</th>
+        <th>Fee Period</th>
+        <th style="text-align:right">Amount (₹)</th>
+      </tr></thead>
+      <tbody>
+        ${hasComponents
+          ? /* ── Components path: one row per breakdown_snapshot entry, then Net Fee ── */
+            breakdownComponents.map(c => `
+        <tr>
+          <td>${esc(c.name || "—")}</td>
+          <td>${esc(rec.feeType)}</td>
+          <td>${esc(frequencyDisplay)}</td>
+          <td>${esc(tableSessionCol)}</td>
+          <td>${typeof c.amount === "number" && isFinite(c.amount) ? `₹${fmt(c.amount)}` : "—"}</td>
+        </tr>`).join("") + `
+        <tr class="net-fee-row">
+          <td colspan="4">Net Fee</td>
+          <td>₹${fmt(baseFee)}</td>
+        </tr>`
+          : /* ── Legacy / no-components path: single fee-type row ── */`
+        <tr>
+          <td>${feeName}</td>
+          <td>${esc(rec.feeType)}</td>
+          <td>${esc(frequencyDisplay)}</td>
+          <td>${esc(tableSessionCol)}</td>
+          <td>₹${fmt(baseFee)}</td>
+        </tr>`}
+        ${lateFeePaid > 0 ? `
+        <tr>
+          <td colspan="3">Late Fee / Penalty</td>
+          <td>${esc(tableSessionCol)}</td>
+          <td>₹${fmt(lateFeePaid)}</td>
+        </tr>` : ""}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="4"><strong>TOTAL AMOUNT PAID</strong></td>
+        <td>₹${amountStr}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+
+  <!-- ── AMOUNT IN WORDS ── -->
+  <div class="words-wrap">
+    <div class="words-box"><strong>Amount in Words:</strong> ${esc(amountWords)}</div>
+  </div>
+
+  <!-- ── AUTHORIZATION ── -->
+  <div class="footer-row">
+    <div class="sign-wrap">
+      ${feeReceiptSigUrl
+        ? `<img src="${feeReceiptSigUrl}" alt="Authorized Signature" style="max-height:45px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;" />`
+        : `<div class="sign-space"></div>`}
+      <div class="sign-line"></div>
+      <p class="sign-lbl">Authorized Accounts Signatory</p>
+      <p class="sign-sub">${esc(school?.name ?? "School")}</p>
+    </div>
+  </div>
+
+  <!-- ── FOOTER NOTE ── -->
+  <div class="fnote">
+    This is an official computer-generated receipt issued by <strong>${esc(school?.name ?? "the school")}</strong>. No physical signature required.<br>
+    &copy; ${new Date().getFullYear()} BENIUS &middot; ${esc(school?.name ?? "School")}
+  </div>
+
+</div>
+<script>setTimeout(()=>window.print(),600);</script>
+</body>
+</html>`;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Content-Disposition", `inline; filename="receipt-${rec.invoiceNumber ?? rec.receiptNumber ?? id}.html"`);
+    res.send(html);
+  });
+
+  registerFeesRoutes(app);
+  registerStudentPasswordRecoveryRoutes(app);
+  registerTeacherRoutes(app);
+
+  return httpServer;
+}

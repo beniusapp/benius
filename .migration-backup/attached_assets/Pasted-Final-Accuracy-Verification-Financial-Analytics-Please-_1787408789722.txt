@@ -1,0 +1,51 @@
+Final Accuracy Verification — Financial Analytics
+
+Please perform a thorough end-to-end verification of all Financial Analytics date ranges. The values shown must be 100% accurate and must match the underlying financial/ledger/payment records.
+
+Verify each range independently:
+
+- Today
+- This Week
+- This Month
+- Academic Year
+- Custom (if implemented)
+
+For each range, verify every analytics section, including:
+
+- Online / Portal payments
+- Offline payments
+- Gross collected
+- Refunds
+- Transaction count
+- Average transaction
+- Payment channel breakdown
+- Class performance
+- Fee-category analytics
+- Outstanding / receivables
+- Trends and totals
+- PDF exports
+
+Critical checks
+
+1. Verify exact IST date/time boundaries for every range.
+2. Ensure Today means only today's transactions, Week means the correct calendar week, Month means the correct calendar month, and Academic Year means the complete selected academic session.
+3. Ensure offline and online payments are never mixed incorrectly.
+4. Verify refunds are attributed to the correct date/range using their actual applicable IST timestamp.
+5. Ensure cancelled/failed/authorized/captured payments are classified correctly and never counted as collected revenue incorrectly.
+6. Compare Financial Analytics totals directly against the underlying ledger/payment records and database.
+7. Test boundary cases such as midnight, month-end, week-end, academic-year start/end, refunds and backdated transactions.
+8. Verify changing the date filter refreshes all cards, charts, tables, drill-downs and PDFs consistently.
+9. Verify there is no stale/cached data from the previous selected range.
+10. Verify tenant/school and academic-session isolation.
+11. Check that the same transaction cannot be counted twice.
+12. Verify PDF values exactly match the values displayed on screen.
+
+Please use real database records plus controlled test records to reconcile the numbers mathematically.
+
+For every range, provide a source-of-truth reconciliation showing:
+
+Database total → API total → UI total → PDF total
+
+If even a ₹1 difference, wrong transaction count, incorrect date boundary, duplicate, missing transaction, or incorrect classification is found, fix it and rerun the complete verification.
+
+Do not consider this task complete until Today, This Week, This Month, Academic Year and Custom all reconcile exactly with the underlying financial records.

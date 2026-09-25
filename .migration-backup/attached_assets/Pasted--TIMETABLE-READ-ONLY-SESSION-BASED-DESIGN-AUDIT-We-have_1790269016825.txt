@@ -1,0 +1,146 @@
+### TIMETABLE — READ-ONLY SESSION-BASED DESIGN AUDIT
+
+We have decided:
+
+> **The entire Timetable module must be 100% Academic Session-based.**
+
+This includes:
+
+* Admin Timetable Master
+* Timetable Period/Bell Structure
+* Teacher Timetable
+* Student Timetable
+* Timetable publish/status
+* Timetable create/update/delete
+* Timetable collision checks
+
+### IMPORTANT
+
+**DO NOT CHANGE ANY CODE.**
+**DO NOT CHANGE DATABASE/SCHEMA.**
+**DO NOT CREATE MIGRATIONS.**
+**DO NOT FIX ANYTHING YET.**
+
+This is ONLY a read-only audit.
+
+### Required architecture
+
+Every timetable operation must be isolated by:
+
+```text
+Authenticated School ID
++
+Selected Academic Session ID
+```
+
+Different Academic Sessions must be able to have completely different timetables.
+
+Example:
+
+```text
+School A
+ ├── 2025–26 Timetable
+ └── 2026–27 Timetable
+```
+
+Changing the 2026–27 timetable must NOT change the 2025–26 timetable.
+
+### Audit all 3 surfaces
+
+Trace the complete flow:
+
+```text
+Admin Timetable Master
+        ↓
+Database
+        ↓
+Teacher Timetable
+        ↓
+Student Timetable
+```
+
+Check:
+
+1. Database tables and columns
+2. `sessionId` usage
+3. Unique constraints/indexes
+4. Admin GET APIs
+5. Admin POST/PATCH/DELETE APIs
+6. Teacher GET APIs
+7. Teacher POST/PATCH/DELETE APIs
+8. Student GET APIs
+9. Publish/status logic
+10. Collision/conflict checks
+11. Session switching
+12. `x-view-session-id` / selected Session handling
+13. Active vs archived Session behavior
+14. School/tenant isolation
+15. Whether old Session data can be overwritten
+16. Whether one Session can see another Session's timetable
+17. Whether a new Session starts with a fresh timetable
+
+### Also check Period/Bell Structure
+
+We have decided that the **entire Timetable module is Session-based**.
+
+Therefore determine exactly what needs to change for:
+
+* Periods
+* Bell timings
+* Breaks
+* Number of periods
+* Class timetable slots
+
+Do NOT assume these should remain Global.
+
+### Final answer format
+
+Give me ONLY:
+
+#### 1. CURRENT STATE
+
+Explain in very simple words how Timetable currently works.
+
+#### 2. PROBLEMS
+
+List every confirmed Session-related problem.
+
+#### 3. DATABASE CHANGES REQUIRED
+
+Tell me exactly which tables, columns, indexes, constraints, or relationships need to change.
+
+#### 4. API CHANGES REQUIRED
+
+List the exact APIs that need Session ID handling.
+
+#### 5. ADMIN
+
+Explain what must happen when Admin changes the selected Academic Session.
+
+#### 6. TEACHER
+
+Explain what must happen when Teacher changes the selected Academic Session.
+
+#### 7. STUDENT
+
+Explain what must happen when Student changes the selected Academic Session.
+
+#### 8. NEW SESSION BEHAVIOR
+
+Explain exactly what happens to the old timetable and what happens when a new Academic Session becomes active.
+
+#### 9. MULTI-TENANT CHECK
+
+Confirm that School A can never access or modify School B's timetable.
+
+#### 10. SMALLEST SAFE IMPLEMENTATION PLAN
+
+Give the smallest step-by-step implementation plan.
+
+Do not implement anything.
+
+Do not refactor unrelated code.
+
+Do not modify Attendance, Exams, Homework, Enrollment, Student Registry, Teacher Registry, or any other module.
+
+After the audit, stop and wait for my approval.

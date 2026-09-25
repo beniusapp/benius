@@ -1,0 +1,922 @@
+Step 2 — Immutable Fee Component Snapshot at Invoice Creation
+
+We have completed Step 1 successfully.
+
+Step 1 added:
+
+fee_records.breakdown_snapshot
+
+with:
+
+JSONB NOT NULL DEFAULT []
+
+The existing baseline is:
+
+384 / 384 tests passing
+
+Now implement Step 2 only: populate "breakdown_snapshot" when a new invoice is created.
+
+This is a controlled implementation step.
+
+---
+
+1. ABSOLUTE RULES
+
+DO NOT modify:
+
+- Razorpay order creation
+- Razorpay client verification
+- Razorpay webhook
+- payment processing
+- offline payment processing
+- payment_records creation
+- payment_attempts
+- late-fee calculation
+- fee-period calculation
+- receipt HTML
+- receipt rendering
+- receipt CSS
+- student receipt endpoint behavior
+- concession calculation
+- "fee_structures.amount" semantics
+- school information
+- authorization/session logic
+
+DO NOT:
+
+- backfill existing invoices
+- update existing "fee_records"
+- read the current fee structure from the receipt
+- reconstruct historical component data
+- calculate historical component values
+- modify "fee_structures.breakdown"
+- add concession columns
+- implement original fee / gross fee logic
+- change invoice totals
+- change payment amounts
+- change invoice numbering
+- change due-date calculation
+
+This step is ONLY about writing an immutable component snapshot when a new invoice is created.
+
+---
+
+2. AUTHORITATIVE SOURCE
+
+For structure-based invoice generation, the source is:
+
+fee_structures.breakdown
+
+Its existing shape is:
+
+Array<{
+  name: string;
+  purpose: string;
+  amount: number;
+}>
+
+At invoice creation time, copy this data into:
+
+fee_records.breakdown_snapshot
+
+The snapshot must represent the exact component data that existed at invoice creation.
+
+After that, the receipt will eventually read only the snapshot.
+
+---
+
+3. IMPORTANT — COPY, DO NOT REFERENCE
+
+The invoice must receive an independent snapshot.
+
+Do not store a reference to the original JavaScript array/object.
+
+Do not mutate the source structure.
+
+Conceptually:
+
+const breakdownSnapshot = structure.breakdown
+  ? structure.breakdown.map(component => ({
+      name: component.name,
+      purpose: component.purpose,
+      amount: component.amount,
+    }))
+  : [];
+
+Use the project's existing validation/type conventions.
+
+The important requirement is that the database receives a snapshot of the values, not a live configuration object.
+
+---
+
+4. INVOICE CREATION PATHS
+
+The forensic audit identified exactly five invoice creation paths.
+
+There are two categories.
+
+Category A — Structure-Based Invoices
+
+These have access to a "fee_structures" record.
+
+They MUST populate:
+
+breakdown_snapshot
+
+from:
+
+structure.breakdown
+
+The three paths are:
+
+Path 1
+
+"server/index.ts"
+
+Monthly auto-invoice cron:
+
+runMonthlyAutoInvoice()
+
+Existing source:
+
+structure.amount
+structure.breakdown
+
+Add the snapshot to the "createFeeRecord" call.
+
+---
+
+Path 2
+
+"server/fees-routes.ts"
+
+Auto-trigger invoice generation:
+
+POST /api/admin/fees/structures/:id/auto-invoice/trigger
+
+Add the snapshot to the invoice creation payload.
+
+---
+
+Path 3
+
+"server/fees-routes.ts"
+
+Manual/bulk invoice generation:
+
+POST /api/admin/fees/generate-invoices
+
+Add the snapshot to the invoice creation payload.
+
+---
+
+5. ADMIN-DIRECT / NO-STRUCTURE PATHS
+
+Two invoice creation paths do not have a fee structure available.
+
+These are:
+
+Path 4
+
+Offline payment auto-create invoice:
+
+POST /api/admin/fees/payment
+
+Path 5
+
+Admin single invoice creation:
+
+POST /api/admin/fees
+
+These paths must NOT attempt to find a fee structure merely to manufacture a snapshot.
+
+For these paths:
+
+breakdown_snapshot = []
+
+must remain the value.
+
+Do not introduce an additional fee-structure lookup.
+
+Do not change their existing business behavior.
+
+Do not change the amount supplied by the administrator.
+
+Do not change payment processing.
+
+---
+
+6. NO HISTORICAL BACKFILL
+
+This is extremely important.
+
+Do NOT run an UPDATE against existing invoices such as:
+
+UPDATE fee_records
+SET breakdown_snapshot = ...
+
+Do not attempt to match old invoices to current fee structures.
+
+Do not populate old invoices from:
+
+fee_structures.breakdown
+
+Existing invoices must remain:
+
+[]
+
+unless they are newly created after this implementation.
+
+Historical information that was never stored must remain unavailable.
+
+---
+
+7. SNAPSHOT CONTENT
+
+For a structure like:
+
+[
+  {
+    "name": "Tuition",
+    "purpose": "Academic tuition fee",
+    "amount": 2200
+  },
+  {
+    "name": "Laboratory",
+    "purpose": "Laboratory fee",
+    "amount": 300
+  },
+  {
+    "name": "Library",
+    "purpose": "Library fee",
+    "amount": 500
+  }
+]
+
+the new invoice must store exactly that information in:
+
+fee_records.breakdown_snapshot
+
+Do not add:
+
+- current fee structure ID
+- current fee structure amount
+- student-specific calculations
+- payment information
+- late fee
+- concession information
+- timestamps
+- calculated totals
+
+Keep the existing component shape.
+
+---
+
+8. NULL / EMPTY BREAKDOWN
+
+If the structure has:
+
+breakdown = []
+
+store:
+
+[]
+
+If the structure breakdown is null/undefined due to an unexpected legacy value, safely store:
+
+[]
+
+Do not fabricate a component.
+
+Do not create:
+
+Tuition Fee
+
+automatically.
+
+Do not convert the entire fee amount into a fake component.
+
+---
+
+9. VALIDATION
+
+Before writing a non-empty snapshot, validate the component data.
+
+The validation must be conservative and must not change existing financial behavior.
+
+Validate:
+
+Component name
+
+Every component must have a valid name.
+
+If a component has an empty/missing name:
+
+BLOCK creation of that invoice and return a clear validation error.
+
+Do not silently create a fabricated name.
+
+---
+
+Component amount
+
+Amounts must be finite numbers.
+
+Reject:
+
+NaN
+Infinity
+-Infinity
+
+Reject negative component amounts.
+
+Zero is allowed.
+
+A zero amount may represent a legitimate placeholder component.
+
+---
+
+Purpose
+
+"purpose" may be empty if the existing schema allows it.
+
+Do not invent a purpose.
+
+If missing, preserve it as an empty string or the existing canonical representation used by the application.
+
+---
+
+Duplicate names
+
+Do not block invoice creation merely because two components have the same name.
+
+Duplicates are an edge case.
+
+If the existing project has an appropriate logging mechanism, a warning may be logged.
+
+Do not introduce a new logging framework.
+
+---
+
+10. COMPONENT SUM
+
+Do NOT require:
+
+SUM(breakdown_snapshot.amount) === fee_records.amount
+
+as a hard requirement.
+
+This is intentional.
+
+The forensic audit established that the existing database does not enforce:
+
+SUM(fee_structures.breakdown.amount) = fee_structures.amount
+
+Therefore existing fee structures may contain:
+
+Components = ₹2,800
+Fee amount = ₹3,000
+
+or another difference.
+
+Do NOT block invoice generation solely because of this mismatch.
+
+The authoritative invoice amount remains:
+
+fee_records.amount
+
+The snapshot must faithfully preserve the configured component values.
+
+If useful and consistent with the existing logging system, emit a warning when the sums differ.
+
+But:
+
+WARNING ONLY — NEVER BLOCK THE INVOICE.
+
+---
+
+11. DO NOT CHANGE FEE AMOUNT
+
+This is critical.
+
+For structure-based invoices:
+
+fee_records.amount
+
+must remain exactly what the current implementation would have written before Step 2.
+
+Do not calculate:
+
+component sum
+
+and use it as the invoice amount.
+
+Do not replace:
+
+structure.amount
+
+with:
+
+sum(structure.breakdown)
+
+Do not apply:
+
+- concession
+- discount
+- tax
+- GST
+- late fee
+
+to the amount.
+
+The only new behavior is:
+
+structure.breakdown
+        ↓
+fee_records.breakdown_snapshot
+
+---
+
+12. DO NOT IMPLEMENT CONCESSION
+
+Do NOT add:
+
+original_amount
+concession_amount
+concession_type_snap
+concession_percent_snap
+
+Do not calculate concession.
+
+Do not interpret:
+
+fee_structures.concessionPercent
+
+as a financial calculation.
+
+Do not change the meaning of:
+
+fee_structures.amount
+
+The concession architecture will be handled separately after explicit product approval.
+
+---
+
+13. IMMUTABILITY REQUIREMENT
+
+Once an invoice has been created:
+
+fee_records.breakdown_snapshot
+
+must never be automatically updated when:
+
+fee_structures.breakdown
+
+changes.
+
+There must be no synchronization mechanism such as:
+
+fee_structure changed
+       ↓
+update existing fee_records
+
+That must NOT exist.
+
+The snapshot is written at invoice creation only.
+
+---
+
+14. HISTORICAL IMMUTABILITY TEST
+
+Add a focused test for this exact scenario.
+
+At invoice creation:
+
+Fee structure breakdown:
+
+Tuition     ₹2,200
+Laboratory  ₹300
+Library     ₹500
+
+Invoice amount:
+₹3,000
+
+The resulting "fee_records" must contain:
+
+[
+  {
+    "name": "Tuition",
+    "purpose": "...",
+    "amount": 2200
+  },
+  {
+    "name": "Laboratory",
+    "purpose": "...",
+    "amount": 300
+  },
+  {
+    "name": "Library",
+    "purpose": "...",
+    "amount": 500
+  }
+]
+
+Then change the fee structure to:
+
+Tuition     ₹2,500
+Laboratory  ₹300
+Library     ₹200
+
+The existing invoice's:
+
+fee_records.breakdown_snapshot
+
+MUST remain:
+
+₹2,200
+₹300
+₹500
+
+It must never change.
+
+---
+
+15. TEST ADMIN-DIRECT INVOICE
+
+Create/verify an invoice through the admin-direct path where there is no fee structure.
+
+Expected:
+
+{
+  "breakdown_snapshot": []
+}
+
+Do not attempt to derive components.
+
+---
+
+16. TEST OFFLINE AUTO-CREATE INVOICE
+
+Verify the offline payment auto-create invoice path.
+
+Expected:
+
+{
+  "breakdown_snapshot": []
+}
+
+Do not introduce a fee structure lookup.
+
+Do not modify:
+
+payment_records
+
+behavior.
+
+---
+
+17. TEST EMPTY BREAKDOWN
+
+For a fee structure with:
+
+[]
+
+expected invoice:
+
+{
+  "breakdown_snapshot": []
+}
+
+No fake component should be created.
+
+---
+
+18. TEST INVALID COMPONENT
+
+Verify that a component such as:
+
+{
+  "name": "",
+  "purpose": "Test",
+  "amount": 500
+}
+
+does not silently create a misleading invoice.
+
+The invoice creation should be rejected with a clear validation error.
+
+Do not modify the fee structure itself.
+
+---
+
+19. TEST NEGATIVE AMOUNT
+
+Verify:
+
+{
+  "name": "Tuition",
+  "purpose": "Test",
+  "amount": -500
+}
+
+is rejected.
+
+---
+
+20. TEST NON-FINITE AMOUNT
+
+Verify components containing:
+
+NaN
+Infinity
+-Infinity
+
+are rejected.
+
+Use safe validation appropriate to the application's runtime and schema.
+
+---
+
+21. MULTI-TENANT SAFETY
+
+The snapshot must inherit the existing tenant boundary.
+
+Do not introduce any new cross-tenant query.
+
+Do not fetch a fee structure using only:
+
+structure.id
+
+without the existing school/tenant authorization context.
+
+If a structure is already loaded through a properly tenant-scoped query, use that canonical object.
+
+Do not add unnecessary database queries.
+
+A School A invoice must only receive School A's fee structure breakdown.
+
+---
+
+22. STORAGE LAYER
+
+Inspect the existing "createFeeRecord" implementation before changing it.
+
+If "createFeeRecord" already accepts arbitrary schema-backed fields, make the smallest possible change required.
+
+If its TypeScript type/interface needs updating to accept:
+
+breakdownSnapshot
+
+update only that necessary type.
+
+Do not modify unrelated storage methods.
+
+Do not change:
+
+createPaymentRecord
+
+or payment storage behavior.
+
+---
+
+23. RECEIPT MUST REMAIN UNCHANGED
+
+This is still Step 2.
+
+Do NOT modify:
+
+server/routes.ts
+
+for receipt rendering unless a TypeScript/schema compilation issue makes an absolutely minimal change unavoidable.
+
+The receipt must NOT start displaying components yet.
+
+The new snapshot is simply being stored for the next approved step.
+
+---
+
+24. ADMIN TRANSACTION DETAIL MUST REMAIN UNCHANGED
+
+Do not fix:
+
+feeRow.breakdown
+
+in the admin transaction-detail endpoint yet.
+
+That is a separate task.
+
+---
+
+25. FILE SCOPE
+
+Expected files may include:
+
+server/index.ts
+server/fees-routes.ts
+server/storage.ts
+
+and potentially a new focused utility/test file if genuinely necessary.
+
+Only modify files required to implement snapshot writing.
+
+Do NOT modify:
+
+shared/schema.ts
+
+again unless compilation reveals that the Step 1 schema definition needs a correction.
+
+Do NOT create a new migration.
+
+Step 1 already created the database column.
+
+---
+
+26. TEST REQUIREMENTS
+
+Run the complete existing test suite.
+
+Baseline:
+
+384 / 384 passing
+13 test files
+
+Do not modify existing tests merely to make them pass.
+
+Add focused tests for Step 2 where appropriate.
+
+At minimum test:
+
+1. Structure-based invoice receives breakdown snapshot.
+2. Snapshot contains exact component values.
+3. Empty breakdown produces "[]".
+4. Admin-direct invoice produces "[]".
+5. Offline auto-created invoice produces "[]".
+6. Negative component amount is rejected.
+7. Empty component name is rejected.
+8. Non-finite component amount is rejected.
+9. Component sum mismatch does NOT block invoice creation.
+10. Changing the fee structure after invoice creation does NOT change the stored snapshot.
+11. Existing payment behavior remains unchanged.
+12. Existing receipt behavior remains unchanged.
+
+---
+
+27. IMPORTANT TEST — FINANCIAL IMMUTABILITY
+
+Verify that this scenario remains unchanged:
+
+Fee amount = ₹3,000
+
+Components:
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+
+After invoice creation:
+
+fee_records.amount = ₹3,000
+breakdown_snapshot = [2200, 300, 500]
+
+Changing the structure later must NOT modify either:
+
+fee_records.amount
+
+or:
+
+fee_records.breakdown_snapshot
+
+Do not recalculate the invoice.
+
+---
+
+28. DO NOT TOUCH EXISTING HISTORICAL ROWS
+
+After implementation, verify that the existing pre-Step-2 invoices still contain:
+
+[]
+
+Do not update them.
+
+Report the count of existing rows with non-empty snapshots before and after the implementation.
+
+Expected for pre-existing invoices:
+
+0
+
+unless there were already records intentionally populated after Step 1.
+
+---
+
+29. FINAL VERIFICATION REPORT
+
+After implementation, return:
+
+A. Files Changed
+
+Exact files and exact purpose.
+
+B. Invoice Creation Paths
+
+Report each of the five paths:
+
+Path| Snapshot behavior
+Monthly auto-invoice| structure breakdown copied
+Auto-trigger| structure breakdown copied
+Manual generate| structure breakdown copied
+Offline auto-create| "[]"
+Admin single invoice| "[]"
+
+Confirm each one individually.
+
+C. Snapshot Validation
+
+Report:
+
+- empty breakdown behavior
+- invalid name behavior
+- negative amount behavior
+- non-finite amount behavior
+- duplicate-name behavior
+- sum mismatch behavior
+
+D. Historical Safety
+
+Explicitly confirm:
+
+- no existing invoice was backfilled
+- no current fee structure was used to reconstruct history
+- existing "fee_records.amount" was not changed
+- existing payment records were not changed
+
+E. Financial Safety
+
+Confirm:
+
+- invoice amount calculation unchanged
+- late fee unchanged
+- payment amount unchanged
+- total amount unchanged
+- concession unchanged
+
+F. Payment Safety
+
+Confirm:
+
+- Razorpay order creation unchanged
+- Razorpay verification unchanged
+- Razorpay webhook unchanged
+- offline payment processing unchanged
+- payment_attempts unchanged
+- payment_records unchanged
+
+G. Receipt Safety
+
+Confirm:
+
+- receipt rendering unchanged
+- receipt HTML unchanged
+- receipt CSS unchanged
+- receipt does not yet display components
+
+H. Tests
+
+Report:
+
+Existing tests: X
+Passed: X
+Failed: X
+Warnings: X
+New tests: X
+
+The existing baseline must remain green.
+
+I. Database Verification
+
+Confirm:
+
+fee_records.breakdown_snapshot
+
+is populated for newly generated structure-based invoices.
+
+Confirm old invoices remain:
+
+[]
+
+J. Scope Confirmation
+
+End with:
+
+STEP 2 COMPLETE — IMMUTABLE SNAPSHOT WRITING ONLY.
+
+Fee component data is now frozen into fee_records at invoice creation
+for structure-based invoice-generation paths.
+
+No receipt rendering, payment processing, Razorpay,
+offline payment, concession, fee-period, late-fee,
+or historical backfill logic was changed.
+
+DO NOT PROCEED TO STEP 3 WITHOUT EXPLICIT APPROVAL.
+
+Stop after this report.
+
+Do not automatically implement receipt rendering or admin transaction-detail changes.

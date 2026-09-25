@@ -1,0 +1,175 @@
+# 10L-12C — Narrow Investigation of Existing Self-Attendance Rate Test Failure
+
+We are investigating ONE verification failure from 10L-12C.
+
+## Current situation
+
+The 10L-12C Teacher Self-Attendance Session-boundary fix has already been implemented in:
+
+```text
+server/teacher-routes.ts
+```
+
+The new focused Session-boundary regression cases passed.
+
+However, during verification, one existing detailed-history rate assertion failed:
+
+```text
+Expected: 100
+Received: 0.4
+```
+
+The relevant Self-Attendance suite had otherwise passed 17 tests.
+
+## IMPORTANT — INVESTIGATION ONLY
+
+Do NOT fix anything yet.
+
+Do NOT change:
+
+* Teacher Self-Attendance rate calculation;
+* rate formula;
+* rate weights;
+* Teacher Working Days;
+* holiday rules;
+* Session rules;
+* test expectation;
+* historical Attendance data;
+* database schema;
+* migrations;
+* 10L-12C boundary validation;
+* 10L-12B;
+* unrelated code.
+
+Do NOT "make the test pass" by changing the expected `100` to `0.4`.
+
+Do NOT alter the rate implementation simply to satisfy this test.
+
+## Task
+
+Investigate ONLY why this existing detailed-history test:
+
+```text
+Expected: 100
+Received: 0.4
+```
+
+is producing `0.4`.
+
+### Step 1 — Identify the exact failing test
+
+Find the exact test file, test name, assertion, and setup producing:
+
+```text
+Expected: 100
+Received: 0.4
+```
+
+### Step 2 — Trace the calculation
+
+Trace the actual data flow used by this test:
+
+```text
+test fixture/setup
+→ Attendance records / working-day setup
+→ Session
+→ date range
+→ rate calculation
+→ detailed-history result
+→ assertion
+```
+
+Determine exactly where `0.4` comes from.
+
+Show the numerator/denominator or equivalent calculation inputs used by the existing implementation.
+
+### Step 3 — Compare with the test's expectation
+
+Determine whether the existing test expectation of `100` is consistent with the current intended Teacher Self-Attendance rate contract.
+
+The existing intended contract is:
+
+* Present = 1
+* Late = 1
+* Half Day = 0.5
+* Leave = 0
+* Absent = 0
+* Missing applicable working day = 0
+* configured Teacher Working Days determine applicable weekdays;
+* All_School holidays are excluded;
+* rate is Session-bound;
+* rate is calculated through the applicable period ending at the current IST date;
+* final rate is one decimal place.
+
+Do not alter this contract.
+
+### Step 4 — Determine the cause
+
+Classify the failure as exactly one of:
+
+1. **Existing test/fixture problem**
+2. **Existing implementation behavior that is correct under the current contract**
+3. **Regression introduced by 10L-12C**
+4. **Another genuine implementation defect**
+
+Do not choose a category without tracing the actual data.
+
+### Step 5 — Check whether 10L-12C caused it
+
+Specifically determine whether the new Session-date validation in:
+
+```text
+server/teacher-routes.ts
+```
+
+changed any data used by this detailed-history test.
+
+If there is no causal relationship, explicitly state that.
+
+## No code changes
+
+For this investigation:
+
+**CODE CHANGES = ZERO**
+
+Do not edit any file.
+
+Do not edit the test.
+
+Do not edit the rate calculation.
+
+Do not modify fixtures.
+
+Do not modify database data.
+
+Do not restart the app unless absolutely necessary for observation, and if restarted, report it.
+
+## Final report
+
+Return only:
+
+1. Exact failing test file/name.
+2. Exact assertion that failed.
+3. Why the result is `0.4`.
+4. Why the test expected `100`.
+5. Whether 10L-12C caused the failure.
+6. Classification:
+
+   * test/fixture problem,
+   * correct existing behavior,
+   * 10L-12C regression,
+   * or genuine implementation defect.
+7. Exact evidence supporting the classification.
+8. Files inspected.
+9. Confirmation:
+
+```text
+NO FILES CHANGED.
+NO RATE CALCULATION CHANGED.
+NO TEST EXPECTATION CHANGED.
+NO DATA CHANGED.
+```
+
+If the investigation shows that an actual code fix is required, **STOP**.
+
+Do not implement that fix under this investigation. Report the finding first so it can be handled as a separate controlled step.

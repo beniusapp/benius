@@ -1,0 +1,47 @@
+Refactor the /teacher-dashboard/timetable into a professional, high-contrast, dual-section command center. The UI must be modern and professional, using Deep Navy backgrounds and Glassmorphism, ensuring every word is 100% visible and bold.
+
+1. SECTION ONE: THE 'CLASS EXPLORER' (Allocation Mode):
+
+Class/Section Selector: Teachers select a Class and Section from a sleek dropdown.
+
+Dynamic Structure Fetching: Upon selection, the app must automatically fetch the Timetable Structure (Periods and Start/End times) exactly as configured by the Admin for that specific class.
+
+The '+' Subject Slotting:
+
+Every empty period slot should feature a subtle '+' (Add Subject) icon.
+
+Clicking the '+' opens a professional Modal where the teacher selects the Subject they are teaching in that specific slot.
+
+Collision Prevention Engine:
+
+Teacher Collision: Prevent the teacher from assigning themselves to Class 8-A if they are already scheduled for Class 7-B at that same time.
+
+Subject/Room Collision: Ensure the system checks that no other teacher has already claimed that specific Class/Section slot.
+
+2. SECTION TWO: 'MY SCHEDULE' (The Master View):
+
+This section acts as a Read-Only Personal Agenda for the teacher.
+
+It must automatically aggregate every slot the teacher claimed in the 'Class Explorer' and display them in a chronological Vertical Timeline.
+
+Each entry should show: Time Range | Class & Section | Subject | Room Number.
+
+3. VISUAL & MODERN UI/UX:
+
+Contrast & Visibility: Force all text, period numbers, and times to be Pure White (#FFFFFF) and Bold.
+
+Color-Coded Subject Cards: Assign modern, professional colors to different subjects (e.g., Science - Emerald, Math - Blue, History - Amber).
+
+Empty States: Use a clean, dashed-border 'Empty' card for slots that haven't been assigned yet.
+
+Current Period Glow: Use a pulsing Benius Emerald Green (#10b981) border to highlight the class the teacher should be in right now based on the system time.
+
+4. MOBILE OPTIMIZATION (Motorola G60 Fusion):
+
+Ensure the Class Explorer uses a 'Sticky Header' so the class/section selector is always visible while scrolling.
+
+Use Framer Motion for smooth transitions between 'Class Explorer' and 'My Schedule' tabs.
+
+5. DATABASE & REAL-TIME SYNC:
+
+Use React Query to ensure that once a subject is assigned, it updates the master_timetable table and instantly reflects in the Student Dashboard for that class without a refresh.

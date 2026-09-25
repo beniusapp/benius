@@ -1,0 +1,987 @@
+Final Student Fee Receipt Enhancement — Strict Implementation Specification
+
+We are enhancing the existing Student Fee Payment Receipt in our multi-tenant school ERP.
+
+IMPORTANT: READ THIS FIRST
+
+Before modifying anything, thoroughly inspect the existing implementation and architecture.
+
+Do not assume that a field exists merely because it is mentioned below.
+
+For every field:
+
+1. Identify its actual source table/column/API.
+2. Confirm how and when the value is written.
+3. Confirm whether it is immutable/historical.
+4. Confirm whether it is available for both online and offline payments.
+5. Use the existing canonical source of truth.
+6. Do not derive historical information from current fee configuration.
+7. Do not invent, guess, approximate, or fabricate values.
+8. If the required value is genuinely unavailable/null, display "—".
+9. Never display a misleading value merely to make the receipt look complete.
+
+This is a receipt accuracy and auditability enhancement, not a redesign of the payment system.
+
+Do not modify Razorpay payment processing, webhook logic, payment calculations, receipt-number generation, fee-period generation, or unrelated business logic unless absolutely required to safely expose an already-existing canonical value.
+
+---
+
+1. FIRST: PERFORM A READ-ONLY AUDIT
+
+Before making any changes, inspect:
+
+- "server/routes.ts"
+- "server/fees-routes.ts"
+- "server/fee-period.ts"
+- "shared/schema.ts"
+- "client/src/pages/student-fees.tsx"
+- "fee_records"
+- "payment_records"
+- "payment_attempts"
+- "fee_structures"
+- "students"
+- "schools"
+- Any existing receipt/signature metadata
+
+Specifically map the current source of truth for:
+
+School
+
+- logo
+- school name
+- board
+- affiliation number
+- UDISE
+- address
+- phone
+- email
+- website
+- GSTIN
+- PAN
+- registration number
+
+Receipt
+
+- receipt number
+- invoice number
+- invoice date
+- due date
+- payment date
+- payment status
+
+Student
+
+- student name
+- admission number
+- student ID
+- roll number
+- class
+- section
+- parent/guardian name
+- academic session
+
+Fee
+
+- fee period start
+- fee period end
+- fee period label
+- fee type/name
+- base amount
+- late fee
+- total paid
+- concession/discount
+- fee components
+
+Payment
+
+- payment method
+- Razorpay payment ID
+- Razorpay order ID
+- bank RRN
+- UPI VPA
+- card network
+- card last 4
+- bank name
+- wallet
+- cheque/reference number
+- UTR
+- DD number
+- received date
+- payer name
+
+Create a clear internal mapping of each field before editing.
+
+---
+
+2. DATA ACCURACY RULE — ABSOLUTE REQUIREMENT
+
+The receipt must use actual stored historical data.
+
+Never do this:
+
+- Do not calculate a past concession from today's fee structure.
+- Do not recalculate a historical late fee.
+- Do not derive the fee month from payment date.
+- Do not derive the invoice date from payment date.
+- Do not derive the due date from today's configuration.
+- Do not use the current fee structure to reconstruct an old invoice.
+- Do not assume "Tuition Fee" if the actual fee type is different.
+- Do not assume a payment method.
+- Do not fabricate reference numbers.
+- Do not fabricate payer names.
+- Do not fabricate student information.
+
+If a value does not exist in the canonical historical record:
+
+Display "—".
+
+Example:
+
+"Bank RRN: —"
+
+is correct when the RRN is unavailable.
+
+An incorrect value is worse than a missing value.
+
+---
+
+3. FINAL RECEIPT STRUCTURE
+
+Keep the existing professional school-receipt design, but improve its information architecture.
+
+Do not unnecessarily redesign the entire receipt.
+
+The receipt should contain the following sections.
+
+---
+
+SECTION A — SCHOOL HEADER
+
+Keep/show:
+
+- School Logo
+- School Name
+- Board / Affiliation
+- UDISE Code
+- Address
+- Phone
+- Email
+- Website
+- GSTIN
+- PAN
+- Registration Number
+
+Existing conditional behavior may remain.
+
+If a school field is unavailable, do not invent it.
+
+Prefer "—" where the field is part of a required receipt-information block; otherwise follow the existing clean conditional rendering where appropriate.
+
+---
+
+4. RECEIPT IDENTITY
+
+Display prominently:
+
+OFFICIAL FEE PAYMENT RECEIPT
+
+Then show:
+
+- Receipt No.
+- Invoice No.
+- Invoice Date
+- Due Date
+- Payment Date
+- Status
+
+Example:
+
+Receipt No.: ON-00452
+Invoice No.: INV-00821
+Invoice Date: 10 October 2026
+Due Date: 10 September 2026
+Payment Date: 15 October 2026
+Status: PAID
+
+Data source rules
+
+Receipt No:
+Use the actual stored "fee_records.receipt_number" / canonical payment receipt number.
+
+Invoice No:
+Use actual "fee_records.invoice_number".
+
+Invoice Date:
+Use the actual invoice creation timestamp/date from "fee_records.created_at".
+
+Due Date:
+Use the actual stored "fee_records.due_date".
+
+Payment Date:
+Use the actual stored payment date.
+
+Do NOT infer any of these values.
+
+If unavailable:
+
+"—"
+
+---
+
+5. STUDENT DETAILS
+
+Display:
+
+- Student Name
+- Admission No.
+- Student ID
+- Roll No.
+- Class
+- Section
+- Parent / Guardian Name
+- Academic Session
+
+Use the actual student record.
+
+Do not substitute one identifier for another.
+
+For example:
+
+- Student ID must remain Student ID.
+- Admission Number must remain Admission Number.
+- Roll Number must remain Roll Number.
+
+If any field is null/unavailable:
+
+"—"
+
+Do not guess.
+
+---
+
+6. FEE PERIOD — VERY IMPORTANT
+
+The receipt must make the fee period extremely clear.
+
+This is NOT the same thing as the payment date.
+
+Use the already implemented immutable:
+
+- "fee_period_start"
+- "fee_period_end"
+
+and the existing "feePeriodLabel()" / fee-period architecture.
+
+Examples:
+
+Monthly:
+
+"Fee Period: August 2026"
+
+Quarterly:
+
+"Fee Period: April–June 2026"
+
+Annual:
+
+"Academic Session: 2026–27"
+
+Critical rule
+
+Never derive the fee period from:
+
+- payment date
+- invoice generation date
+- current date
+- current fee structure
+
+The stored invoice fee period is authoritative.
+
+Example:
+
+Invoice Date: 10 October 2026
+Fee Period: August 2026
+Due Date: 10 September 2026
+Payment Date: 15 October 2026
+
+The receipt must still say:
+
+Fee Period: August 2026
+
+even if the payment occurred months later.
+
+---
+
+7. FEE BREAKDOWN TABLE
+
+Improve the existing fee table.
+
+Do NOT hardcode:
+
+"Tuition Fee"
+
+The fee description/category must come from the actual fee record / canonical fee type/name.
+
+For example:
+
+Description| Fee Period| Amount
+Tuition Fee| August 2026| ₹3,000
+Late Fee / Penalty| August 2026| ₹60
+Total Paid| | ₹3,060
+
+For quarterly:
+
+Description| Fee Period| Amount
+Tuition Fee| April–June 2026| ₹9,000
+
+For annual:
+
+Description| Fee Period| Amount
+Annual Fee| 2026–27| ₹40,000
+
+Important
+
+Use the already stored fee-period label.
+
+Do not replace it with the academic session unless the fee is actually annual/session-based.
+
+---
+
+8. LATE FEE
+
+Keep the existing correct late-fee behavior.
+
+Late fee must come from:
+
+"payment_records.late_fee_paid"
+
+It must remain frozen at payment time.
+
+If:
+
+"late_fee_paid > 0"
+
+show:
+
+Late Fee / Penalty
+
+with the correct fee period and amount.
+
+If:
+
+"late_fee_paid = 0"
+
+do not show a late-fee row.
+
+Never recalculate the late fee while generating the receipt.
+
+---
+
+9. CONCESSION / DISCOUNT
+
+This is an important audit requirement.
+
+If the existing system already has sufficient historical invoice-level data for:
+
+- original fee amount
+- concession/discount amount
+
+then display:
+
+Description| Amount
+Original Fee| ₹3,500
+Concession| −₹500
+Net Fee| ₹3,000
+Late Fee| ₹60
+Total Paid| ₹3,060
+
+VERY IMPORTANT
+
+Do NOT reconstruct historical concession data from the current "fee_structures".
+
+If the original amount/concession was NOT historically snapshotted on the invoice:
+
+Do not fake it.
+
+First determine whether the architecture already stores enough immutable information.
+
+If it does not, STOP and report the exact data-model gap before making a risky change.
+
+If schema changes are required to properly snapshot:
+
+- original amount
+- concession amount
+- concession percentage/type
+
+then propose the minimum safe schema change separately.
+
+Do not silently introduce a new financial calculation.
+
+---
+
+10. FEE COMPONENT BREAKDOWN
+
+If the invoice has components such as:
+
+- Tuition ₹2,200
+- Laboratory ₹300
+- Library ₹500
+
+the receipt should eventually be able to show:
+
+Component| Amount
+Tuition| ₹2,200
+Laboratory| ₹300
+Library| ₹500
+Base Fee| ₹3,000
+
+Historical accuracy requirement
+
+Do NOT read the current "fee_structures.breakdown" to reconstruct an old invoice.
+
+The component breakdown must be based on an invoice-time snapshot.
+
+If the current architecture does not snapshot fee components at invoice generation:
+
+Do not display reconstructed historical components.
+
+Report the architecture gap and propose the minimum safe snapshot field/change.
+
+Do not modify it without approval.
+
+---
+
+11. PAYMENT DETAILS
+
+The receipt must accurately support both online and offline payments.
+
+ONLINE PAYMENT
+
+Where available, display:
+
+- Payment Method
+- Razorpay Payment ID
+- Razorpay Order ID
+- Bank RRN
+- UPI VPA
+- Card Network
+- Card Last 4 Digits
+- Bank Name
+- Wallet
+- Payment Date/Time
+- Payer Name, if actually recorded
+
+Use "payment_attempts" for Razorpay-specific gateway information.
+
+Do not invent values.
+
+If a particular field does not apply:
+
+"—"
+
+For example:
+
+UPI VPA: user@bank
+Card Network: —
+Bank RRN: actual stored RRN
+
+---
+
+12. OFFLINE PAYMENT DETAILS
+
+This is particularly important.
+
+Use "payment_records" as the canonical source for offline payment information.
+
+Cash
+
+Show:
+
+- Payment Method: Cash
+- Received Date
+- Payer Name, if available
+
+If unavailable:
+
+"—"
+
+Cheque
+
+Show:
+
+- Payment Method: Cheque
+- Cheque Number / Reference Number
+- Received Date
+- Payer Name
+
+The reference number must come from the actual stored:
+
+"payment_records.reference_number"
+
+Do not create one.
+
+Bank Transfer
+
+Show:
+
+- Payment Method: Bank Transfer
+- UTR / Transaction Reference
+- Received Date
+- Payer Name
+
+Use the actual stored reference number.
+
+Demand Draft
+
+Show:
+
+- Payment Method: Demand Draft
+- DD Number
+- Received Date
+- Payer Name
+
+Again, use the actual stored reference number.
+
+Critical requirement
+
+The receipt must NOT show:
+
+"—"
+
+for an offline reference field if an actual stored reference number exists.
+
+The existing system already stores "payment_records.reference_number"; make sure the receipt actually reads it.
+
+---
+
+13. PAYMENT METHOD PRIORITY
+
+Preserve the existing correct two-tier architecture.
+
+For online Razorpay payments:
+
+"payment_attempts.payment_method"
+
+has priority because it contains enriched gateway information.
+
+For offline payments where no "payment_attempts" row exists:
+
+fall back to:
+
+"payment_records.payment_method"
+
+using the existing display mapping:
+
+- Cash → Cash
+- Cheque → Cheque
+- BankTransfer → Bank Transfer
+- DemandDraft → Demand Draft
+- Online → Online Transfer
+
+Do not alter payment processing.
+
+This is a receipt display concern only.
+
+---
+
+14. BANK RRN
+
+For online payments, display Bank RRN if actually available.
+
+Source:
+
+"payment_attempts.bank_rrn"
+
+If unavailable:
+
+"—"
+
+Do not confuse:
+
+- Razorpay Payment ID
+- Razorpay Order ID
+- Bank RRN
+
+They are different identifiers.
+
+---
+
+15. AMOUNT IN WORDS
+
+Keep the existing Indian-numbering implementation.
+
+Example:
+
+₹3,060
+
+must display:
+
+Rupees Three Thousand and Sixty Only
+
+The amount in words must correspond exactly to the final total actually paid.
+
+It must use the same canonical total used by the receipt.
+
+Do not independently calculate a different amount.
+
+---
+
+16. REMOVE MEANINGLESS GATEWAY CHARGES / GST ROW
+
+The current receipt contains a Gateway Charges / GST row that is effectively hardcoded to ₹0.00.
+
+If the school does not actually charge gateway fees or GST to the student:
+
+Remove this misleading zero-value row.
+
+Do not display a financial charge that was not actually collected.
+
+Do not add GST unless actual GST data exists and the architecture supports it.
+
+---
+
+17. AUTHORIZATION
+
+Keep:
+
+- Authorized Accounts Signatory
+- Signature
+- School Name
+- Computer-generated receipt disclaimer
+
+Keep the existing signature source and fallback behavior.
+
+Do not fabricate a signature.
+
+If no signature is configured, do not create a fake one.
+
+---
+
+18. ROLL NUMBER
+
+Add Roll Number to Student Details if it exists in the student record.
+
+If null:
+
+"—"
+
+Do not use Student ID or Admission Number as a substitute.
+
+---
+
+19. PAYER NAME
+
+Show Payer Name where actually recorded.
+
+Use the canonical stored value.
+
+Do not infer:
+
+Student Name ≠ Payer Name.
+
+If payer name is not stored:
+
+"—"
+
+---
+
+20. NO QR CODE
+
+Do NOT add:
+
+- QR code
+- receipt verification QR
+- verification URL
+
+This is intentionally excluded from the current scope.
+
+---
+
+21. RESPONSIVE / VISUAL REQUIREMENTS
+
+Keep the current professional design language.
+
+The receipt should remain:
+
+- formal
+- clean
+- school/financial-document appropriate
+- printable
+- A4 friendly
+- readable on desktop
+- usable on mobile
+
+Where necessary, improve responsive behavior so the receipt does not overflow on narrow screens.
+
+Do not radically redesign the existing receipt.
+
+Preserve:
+
+- school branding
+- logo
+- PAID status
+- clear total
+- amount in words
+- signature
+- disclaimer
+
+---
+
+22. HISTORICAL IMMUTABILITY
+
+This is a critical requirement.
+
+After an invoice/payment is created:
+
+The receipt must remain historically accurate even if the school later changes:
+
+- fee structure
+- fee amount
+- concession rules
+- late-fee rules
+- fee-period configuration
+- payment settings
+
+The receipt must never recompute historical financial information from today's configuration.
+
+Use immutable invoice/payment snapshots wherever they already exist.
+
+If a required historical snapshot does not exist, report the gap instead of reconstructing it.
+
+---
+
+23. MULTI-TENANT SAFETY
+
+This is a multi-tenant school application.
+
+Every receipt query must remain properly scoped to the authenticated student's school/tenant.
+
+Never allow:
+
+- another school's invoice
+- another school's payment
+- another school's student information
+- another school's receipt number
+
+to appear in a receipt.
+
+Do not weaken any existing authorization checks.
+
+---
+
+24. DO NOT MODIFY THESE SYSTEMS
+
+Unless a change is strictly necessary for exposing approved receipt data:
+
+Do NOT modify:
+
+- Razorpay order creation
+- Razorpay webhook logic
+- Razorpay payment verification
+- Payment idempotency
+- Offline payment processing
+- Late-fee calculation
+- Fee-period calculation
+- Invoice generation
+- Receipt-number generation
+- Payment-record creation
+- Database transaction behavior
+- Existing authorization/security
+- Unrelated modules
+
+---
+
+25. IMPLEMENTATION ORDER
+
+Follow this exact sequence.
+
+Phase 1 — Audit
+
+Inspect the existing implementation and identify exact canonical sources.
+
+Phase 2 — Report data gaps
+
+Before introducing any schema change, report:
+
+- field
+- current source
+- whether immutable
+- whether available
+- whether schema change is required
+
+Phase 3 — Implement safe existing-data improvements
+
+Implement fields that already exist reliably, including where applicable:
+
+- Invoice Date
+- Due Date
+- Admission Number
+- Parent/Guardian Name
+- Roll Number
+- Correct Fee Type/Name
+- Correct Fee Period in itemization
+- Offline Reference Number
+- Payer Name
+- Bank RRN
+- Online/offline payment details
+- Removal of misleading ₹0 Gateway Charges/GST row
+
+Phase 4 — Concession and component snapshots
+
+Only implement these if the existing architecture already has immutable invoice-level data.
+
+If not, stop and provide a proposal for the minimum schema/data-model change.
+
+Do not silently reconstruct historical data.
+
+Phase 5 — Tests
+
+Add focused tests covering at minimum:
+
+Monthly
+
+- August 2026 invoice
+- Fee period remains August 2026 even if paid in October
+
+Quarterly
+
+- April–June 2026
+
+Annual
+
+- Academic Session 2026–27
+
+Offline
+
+- Cash
+- Cheque + reference number
+- Bank Transfer + UTR/reference
+- Demand Draft + DD/reference
+
+Online
+
+- UPI
+- Card
+- Net Banking
+- Wallet
+
+Missing values
+
+Verify every missing optional field displays:
+
+"—"
+
+and never:
+
+- undefined
+- null
+- blank misleading value
+- fabricated value
+
+Late fee
+
+- No late fee → no late-fee row
+- Late fee → correct separate row
+
+Amount in words
+
+Verify it matches the final total.
+
+Historical immutability
+
+Change current fee configuration after payment and verify the old receipt does not change.
+
+Multi-tenant isolation
+
+Verify receipt data cannot cross school boundaries.
+
+---
+
+26. FINAL VERIFICATION
+
+After implementation:
+
+1. Run the complete existing test suite.
+2. Run all new receipt-specific tests.
+3. Verify online receipt visually.
+4. Verify offline Cash receipt visually.
+5. Verify offline Cheque receipt visually.
+6. Verify offline Bank Transfer receipt visually.
+7. Verify offline Demand Draft receipt visually.
+8. Verify receipt with late fee.
+9. Verify receipt without late fee.
+10. Verify monthly fee period.
+11. Verify quarterly fee period.
+12. Verify annual/session period.
+13. Verify missing data displays "—".
+14. Verify no fabricated data appears.
+15. Verify historical immutability.
+16. Verify multi-tenant isolation.
+17. Verify print/A4 layout.
+18. Verify mobile layout.
+
+---
+
+27. FINAL IMPLEMENTATION REPORT
+
+When finished, provide:
+
+Files changed
+
+List every file changed.
+
+Database changes
+
+Clearly state whether any schema/migration was required.
+
+Data-source mapping
+
+For every newly displayed field, state its exact source table and column.
+
+Example:
+
+"Invoice Date → fee_records.created_at"
+
+"Offline Reference → payment_records.reference_number"
+
+"Bank RRN → payment_attempts.bank_rrn"
+
+Tests
+
+Report:
+
+"X/X tests passed"
+
+Visual verification
+
+Report each receipt scenario separately.
+
+Scope confirmation
+
+Explicitly confirm whether any of the following were modified:
+
+- Payment processing
+- Razorpay webhook
+- Razorpay verification
+- Offline payment processing
+- Late-fee calculation
+- Fee-period calculation
+- Invoice generation
+- Receipt numbering
+- Database schema
+- Security/authorization
+
+Do not claim something is unchanged unless you actually verified it.
+
+MOST IMPORTANT FINAL RULE
+
+The receipt is a historical financial document. Accuracy is more important than completeness.
+
+If the database contains the value → show the real value.
+
+If the database does not contain the value → show "—".
+
+Never guess.
+Never infer historical financial data.
+Never reconstruct historical values from today's configuration.
+Never fabricate data merely to make the receipt look complete.

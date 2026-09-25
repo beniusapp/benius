@@ -1,0 +1,260 @@
+STEP 2L-9A — ATTENDANCE CALCULATION CROSS-SURFACE CONSISTENCY AUDIT
+
+MODE: READ-ONLY AUDIT ONLY.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE SCHEMA.
+DO NOT MODIFY TESTS.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE CONFIGURATION.
+DO NOT TOUCH PRODUCTION.
+DO NOT RUN DEPLOYMENT OR PRODUCTION MIGRATION.
+DO NOT FIX ANYTHING IN THIS STEP.
+
+IMPORTANT PROJECT RULES THAT MUST REMAIN UNCHANGED:
+
+1. MULTI-TENANT / MULTI-SCHOOL ISOLATION IS PERMANENT.
+   Every Attendance read, calculation, lookup, aggregation, and authorization must remain scoped to the authenticated School/Tenant.
+
+2. ATTENDANCE IS ACADEMIC-SESSION-SPECIFIC.
+   Student, Teacher, and Admin Attendance calculations must remain explicitly scoped to the selected Academic Session ID.
+
+3. APPLICATION DATE/TIME LOGIC MUST USE IST / ASIA-KOLKATA.
+   Do not introduce BST, UTC display logic, or another local timezone for application-facing dates/times.
+
+4. STUDENT REGISTRY IS GLOBAL/PERMANENT.
+   Do not recreate Students per Academic Session.
+
+5. SAME-SESSION CLASS TRANSFER IS EXPLICITLY SKIPPED.
+   Do not redesign or fix class-transfer history/calculation in this step.
+
+6. EXISTING ATTENDANCE POLICY IS THE SOURCE OF TRUTH.
+   Do not invent a new working-day, Sunday, holiday, leave, missing, weighting, or denominator rule.
+
+ESTABLISHED ATTENDANCE CALCULATION CONTRACT FROM STEP 2L-8B:
+
+A. APPLICABLE / WORKING DATE
+A date is applicable when there is at least one Attendance row for the exact:
+School + Academic Session + Class + Section + Date
+
+The date must remain within the inclusive Academic Session boundaries.
+
+This is RECORD-DRIVEN and CLASS-WIDE.
+
+A particular Student does not need an Attendance row for the date to be applicable to that Student.
+
+B. SUNDAY
+Sunday is NOT automatically a working day.
+
+A deliberately stored Sunday Attendance row remains valid Attendance evidence and its stored status is calculated normally.
+
+C. HOLIDAY
+A holiday alone does not create an applicable Attendance date.
+
+An existing Attendance row on a holiday remains valid calculation evidence.
+
+The existing direct-marking restriction for All_School holidays must remain unchanged unless a later explicit product decision changes it.
+
+D. STATUS WEIGHTS
+
+Present = 1
+Late = 1
+Leave Attendance row = 1
+Half Day = 0.5
+Absent = 0
+Missing/no Student row on applicable date = 0
+Unknown status = 0
+
+Missing remains distinct from explicit Absent.
+
+E. DENOMINATOR
+
+Denominator = number of applicable record-evidenced dates.
+
+Percentage:
+
+weighted attendance / applicable dates × 100
+
+Rounded to one decimal place.
+
+Zero applicable dates = 0.
+
+F. APPROVED LEAVE WITHOUT ATTENDANCE ROW
+
+An approved leave application by itself does NOT create an applicable Attendance date.
+
+If the class date is already applicable but the Student has no Attendance row, the Student is Missing, not Leave.
+
+Monthly calendar display may separately show an Approved Leave label; that presentation must not be confused with the shared percentage calculation contract.
+
+TASK:
+
+Audit EVERY Attendance calculation/read surface and determine whether it follows the above established contract.
+
+AT MINIMUM INSPECT:
+
+1. Student Attendance Monthly
+2. Student Attendance Yearly
+3. Student Attendance Stats / percentage
+4. Student Attendance history/archives if it calculates totals
+5. Teacher daily Attendance
+6. Teacher historical Attendance
+7. Teacher class cumulative/report calculations
+8. Admin Attendance Overview
+9. Admin class/detail Attendance
+10. Admin Attendance percentages/aggregates
+11. Any shared Attendance calculation helper
+12. Any other Attendance API or calculation path discovered during the audit
+
+SEARCH THE ENTIRE CODEBASE.
+
+INSPECT:
+
+* Attendance routes
+* Storage functions
+* calculation helpers
+* working-date helpers
+* Student Attendance components
+* Teacher Attendance components
+* Admin Attendance components
+* tests
+* project memory/documentation
+* relevant schema relationships
+* any duplicate calculation logic
+
+FOR EACH SURFACE, VERIFY:
+
+1. School/Tenant scope
+2. Academic Session scope
+3. Session start/end boundary handling
+4. Applicable-date source
+5. Sunday handling
+6. Holiday handling
+7. Approved-leave handling
+8. Missing handling
+9. Status weights
+10. Denominator
+11. Percentage formula
+12. Rounding
+13. Zero-applicable-date behavior
+14. Whether the surface is calculation-based or display-only
+
+IMPORTANT:
+
+Do not treat different presentation formats as a mismatch by themselves.
+
+For example:
+
+* Monthly may show calendar dates and labels such as Sunday, Holiday, Approved Leave, or Not Marked.
+* Yearly/stats may use the shared record-driven applicable-date calculation.
+* Teacher/Admin daily views may show roster Students with no row as Not Marked.
+
+Only call something a MISMATCH if it contradicts the established calculation contract or creates an incorrect Attendance calculation.
+
+For every discovered difference, classify it as exactly one of:
+
+PASS
+MISMATCH
+DISPLAY-ONLY DIFFERENCE
+UNDEFINED / PRODUCT DECISION
+
+Do NOT convert an UNDEFINED / PRODUCT DECISION into a new rule.
+
+SPECIAL CHECK:
+
+Look specifically for duplicate or independently implemented percentage formulas.
+
+If a surface calculates Attendance percentage without using the established working-date + aggregation contract, identify:
+
+* file
+* function
+* route
+* formula
+* why it differs
+* whether the difference changes actual calculated results
+
+Also verify that no route accidentally calculates applicable dates using:
+
+* weekdays
+* Monday-Friday assumptions
+* Sunday exclusion
+* holiday exclusion
+* leave application dates
+* enrollment alone
+* current Student class/section without the established Session context
+
+unless that behavior is explicitly part of a display-only path.
+
+SESSION ISOLATION CHECK:
+
+Verify that overlapping dates from different Academic Sessions cannot contribute to one another's Attendance calculations.
+
+TENANT ISOLATION CHECK:
+
+Verify that Attendance evidence from School A cannot establish applicable dates or affect percentages for School B.
+
+IST CHECK:
+
+Verify all "today", date-boundary, correction-window, and application-facing date logic uses the established IST/date-only semantics.
+
+CLASS-TRANSFER:
+
+Do NOT audit or fix the previously identified same-Session class-transfer calculation issue.
+
+FINAL REPORT MUST CONTAIN EXACTLY THESE SECTIONS:
+
+1. VERDICT
+2. ESTABLISHED ATTENDANCE CONTRACT USED
+3. STUDENT MONTHLY
+4. STUDENT YEARLY
+5. STUDENT STATS
+6. STUDENT HISTORY / ARCHIVES
+7. TEACHER ATTENDANCE
+8. ADMIN ATTENDANCE
+9. SHARED CALCULATION PATHS
+10. DUPLICATE CALCULATION PATHS
+11. POLICY VS IMPLEMENTATION
+12. MISMATCHES
+13. DISPLAY-ONLY DIFFERENCES
+14. UNDEFINED / PRODUCT DECISIONS
+15. SESSION ISOLATION
+16. TENANT ISOLATION
+17. IST / DATE SEMANTICS
+18. CLASS-TRANSFER ISSUE
+19. FILES CHANGED
+20. TESTS
+21. PRODUCTION STATUS
+22. RECOMMENDED NEXT STEP
+
+REQUIREMENTS FOR THE FINAL REPORT:
+
+* Give exact file paths and function/route names wherever possible.
+* Clearly distinguish calculation logic from display logic.
+* Do not invent policy.
+* Do not recommend a replacement policy.
+* Do not modify anything.
+* Do not run production commands.
+* Do not make any production changes.
+
+TESTS:
+
+Tests may be INSPECTED but do not need to be executed because this is a READ-ONLY audit.
+
+If existing test coverage clearly proves a contract, cite the test file and test name.
+
+FILES CHANGED:
+
+Must explicitly report:
+
+NONE
+
+unless an accidental change occurred; if so, STOP and report it.
+
+PRODUCTION STATUS:
+
+Must explicitly report:
+
+NOT TOUCHED
+
+STOP after producing the audit report.
+Do not implement fixes in this step.

@@ -1,0 +1,609 @@
+FULL-SYSTEM DATE & TIME ACCURACY AUDIT — IST
+
+I want you to perform a complete system-wide audit of DATE and TIME handling.
+
+This is extremely important because this application is a multi-tenant school ERP and contains:
+
+- Razorpay payments
+- payment attempts
+- webhook events
+- payment failures
+- payment cancellations
+- payment captures
+- refunds
+- disputes
+- invoices
+- receipts
+- fee ledger
+- transaction history
+- audit logs
+- student payment history
+- admin activity
+- attendance
+- academic sessions
+- reports
+- notifications
+- created/updated timestamps
+- scheduled/background jobs
+
+The requirement is:
+
+«Whenever the application displays or records a user-facing date/time for the school/India context, it must represent the correct Indian Standard Time (IST), timezone: "Asia/Kolkata" / UTC+05:30.»
+
+Do NOT assume that the current implementation is correct merely because dates "look right".
+
+Perform a complete investigation first.
+
+---
+
+1. FIRST: DO NOT MODIFY CODE
+
+Before making any changes, inspect the entire application and produce an audit of:
+
+Database
+
+Check every timestamp/date column and determine:
+
+- data type
+- whether it stores UTC
+- whether it stores local/IST time
+- whether PostgreSQL timezone/session settings affect it
+- whether "timestamp" vs "timestamptz" is being used
+- whether "DEFAULT NOW()" is used
+- whether application-generated timestamps are used
+- whether any timestamps are stored as strings
+- whether Unix timestamps are converted correctly
+- whether date-only fields are being incorrectly treated as timestamps.
+
+Do NOT change the schema yet.
+
+---
+
+2. BACKEND TIMESTAMP AUDIT
+
+Search the entire backend for all timestamp creation and conversion logic.
+
+Specifically inspect:
+
+- "new Date()"
+- "Date.now()"
+- "new Date(timestamp)"
+- "toISOString()"
+- "getTime()"
+- "getHours()"
+- "getMinutes()"
+- "getDate()"
+- "getMonth()"
+- "getFullYear()"
+- "setHours()"
+- "setDate()"
+- PostgreSQL "NOW()"
+- "CURRENT_TIMESTAMP"
+- "CURRENT_DATE"
+- "AT TIME ZONE"
+- "timezone"
+- "UTC"
+- "Asia/Kolkata"
+- "IST"
+- manual "+05:30"
+- manual "+5.5"
+- "moment"
+- "dayjs"
+- "date-fns"
+- timezone libraries
+- custom date formatting utilities.
+
+Identify every place where a timestamp is:
+
+1. created
+2. stored
+3. retrieved
+4. converted
+5. compared
+6. displayed
+7. exported.
+
+---
+
+3. RAZORPAY TIMESTAMP AUDIT
+
+This is especially important.
+
+Audit every Razorpay timestamp.
+
+Razorpay timestamps such as:
+
+- "created_at"
+- authorized time
+- captured time
+- failed time
+- refund time
+- dispute time
+- webhook event time
+
+must be interpreted correctly.
+
+Verify that Razorpay Unix timestamps are converted correctly from their actual epoch representation.
+
+Do NOT add +5:30 manually to a timestamp that has already been converted into a timezone-aware date.
+
+For every Razorpay lifecycle event determine:
+
+Provider timestamp
+
+The actual time reported by Razorpay.
+
+Application received timestamp
+
+The exact time our server received/processed the webhook.
+
+These are different facts and must remain separate.
+
+For example:
+
+Provider Event Time:
+21 Aug 2026, 10:15:32 IST
+
+Received by Application:
+21 Aug 2026, 10:15:34 IST
+
+Do not replace one with the other.
+
+---
+
+4. PAYMENT ATTEMPT HISTORY
+
+Audit every timestamp in:
+
+"payment_attempts"
+
+including:
+
+- initiated time
+- created_at
+- updated_at
+- failed time
+- authorized time
+- captured time
+- Razorpay created time
+- refund time
+- webhook received time
+- enrichment time.
+
+For the following sequence:
+
+Attempt 1 → Cancelled
+Attempt 2 → Failed
+Attempt 3 → Cancelled
+Attempt 4 → Captured
+
+verify that every displayed timestamp is accurate in IST.
+
+There must be no possibility that one attempt displays IST while another displays UTC.
+
+---
+
+5. WEBHOOK DELIVERY HISTORY
+
+Audit all timestamps in:
+
+- immutable webhook delivery records
+- webhook processing-history records
+- fee audit logs
+- payment attempt events.
+
+Every delivery must distinguish:
+
+Provider Event Time
+Application Received Time
+Processing Time
+
+where those values exist.
+
+All user-facing representations must be converted to:
+
+"Asia/Kolkata (UTC+05:30)"
+
+Do not silently replace missing provider timestamps with application timestamps.
+
+If a provider timestamp does not exist, explicitly use the application timestamp and label it accordingly.
+
+---
+
+6. ADMIN LEDGER / TRANSACTIONS
+
+Audit every date/time displayed in:
+
+Admin → Fees & Payments → Ledger
+
+including:
+
+- invoice date
+- due date
+- payment date
+- payment received time
+- attempt time
+- cancelled time
+- failed time
+- authorized time
+- captured time
+- refund time
+- dispute time
+- webhook event time
+- webhook received time
+- processing time
+- enrichment time
+- created time
+- updated time.
+
+Every displayed timestamp must be correct IST.
+
+The UI must not show raw ISO UTC strings such as:
+
+2026-08-21T04:30:00.000Z
+
+when the intended user-facing time is:
+
+21 Aug 2026, 10:00:00 AM IST
+
+Use a single centralized formatting strategy.
+
+---
+
+7. STUDENT PORTAL
+
+Audit every date/time displayed to students.
+
+Especially:
+
+- invoice date
+- due date
+- payment date
+- payment attempt date
+- cancelled attempt
+- failed attempt
+- successful payment
+- receipt date/time
+- refund information
+- payment history.
+
+The student should see the same real-world event time as the administrator.
+
+There must not be a situation where:
+
+Admin: 21 Aug 2026, 10:30 PM
+Student: 22 Aug 2026, 4:00 AM
+
+for the same event.
+
+---
+
+8. RECEIPTS
+
+Audit all receipt generators:
+
+- student receipt
+- admin payment receipt
+- admin fee-record receipt
+- PDF receipts
+- printed receipts.
+
+Check:
+
+- invoice date
+- due date
+- payment date
+- payment time
+- receipt creation time
+- Razorpay captured time
+- offline received date/time.
+
+All applicable user-facing times must be correct for India.
+
+For offline payments, preserve the business-entered date/time where it represents the actual receipt transaction time.
+
+Do not automatically overwrite a manually entered historical offline transaction date with the server's current timestamp.
+
+---
+
+9. FEE INVOICE DATES
+
+Be very careful with date-only fields.
+
+Examples:
+
+- invoice date
+- due date
+- academic session start date
+- academic session end date
+- attendance date
+- holiday date
+- examination date.
+
+Do NOT blindly convert date-only values through UTC because this can shift:
+
+2026-04-01
+
+into the previous calendar day depending on the user's timezone.
+
+Determine whether each field represents:
+
+A. An instant in time
+
+Example:
+
+Payment captured at 10:30:25 AM IST
+
+or
+
+B. A calendar date
+
+Example:
+
+Invoice Date = 21 August 2026
+
+Treat these correctly and separately.
+
+---
+
+10. DATABASE VS UI RULE
+
+Determine the current architecture.
+
+The preferred architecture is:
+
+Storage
+
+Store actual instants consistently in UTC / timezone-aware representation.
+
+Application
+
+Convert timestamps into the required timezone when presenting them.
+
+India school UI
+
+Use:
+
+Asia/Kolkata
+UTC+05:30
+
+for user-facing school date/time.
+
+Do NOT introduce random "+5:30" arithmetic throughout the application.
+
+Use one centralized timezone/date utility.
+
+---
+
+11. MULTI-TENANT REQUIREMENT
+
+This is a multi-tenant school application.
+
+Do not assume that every tenant will always use the same timezone in the future.
+
+Audit whether the system already has a school/tenant timezone configuration.
+
+If it does:
+
+- use the configured tenant timezone.
+
+If it does not:
+
+- current India deployment should consistently use "Asia/Kolkata".
+
+Do NOT introduce a large timezone-management feature unless the existing architecture already supports it.
+
+For this task, correctness for India is the priority.
+
+---
+
+12. SERVER / DATABASE TIMEZONE
+
+Check the actual runtime environment.
+
+Inspect:
+
+- server timezone
+- Node.js timezone behavior
+- PostgreSQL timezone
+- connection/session timezone
+- container timezone
+- deployment timezone
+- cron/background-job timezone.
+
+Determine whether the application currently runs in:
+
+UTC
+
+or
+
+Asia/Kolkata
+
+Do not change the server timezone merely to make the UI look correct.
+
+The application should remain deterministic regardless of server timezone.
+
+---
+
+13. FRONTEND DATE FORMATTING
+
+Search the entire frontend for inconsistent formatting.
+
+Find every occurrence of:
+
+- "new Date(...)"
+- ".toLocaleString()"
+- ".toLocaleDateString()"
+- ".toLocaleTimeString()"
+- ".toISOString()"
+- manual date formatting
+- manual timezone offsets.
+
+Check whether browser timezone is accidentally determining displayed time.
+
+This is critical.
+
+A user opening the application from another timezone should not cause the same school's payment timestamp to change.
+
+For school transaction history, the displayed time should be based on the configured school timezone, not the administrator's physical device timezone.
+
+---
+
+14. REPORTS / EXPORTS
+
+Audit:
+
+- CSV exports
+- Excel exports
+- PDF reports
+- transaction reports
+- payment reports
+- audit reports
+- fee reports.
+
+Verify that timestamps are consistent with the application's timezone policy.
+
+---
+
+15. SORTING
+
+This is extremely important.
+
+Chronological sorting must use the actual timestamp/instant, not the formatted IST string.
+
+Correct:
+
+sort by UTC instant
+↓
+format result as IST
+
+Incorrect:
+
+format everything as text
+↓
+sort the formatted strings
+
+The chronological sequence of:
+
+Cancelled
+Failed
+Cancelled
+Captured
+
+must remain correct.
+
+---
+
+16. DST / TIMEZONE SAFETY
+
+India does not observe daylight saving time.
+
+Use:
+
+Asia/Kolkata
+
+rather than hardcoding a generic "IST" abbreviation internally.
+
+Do not rely on:
+
+IST
+
+as a machine timezone identifier.
+
+The canonical timezone should be:
+
+Asia/Kolkata
+
+---
+
+17. HISTORICAL DATA AUDIT
+
+Do NOT modify historical data automatically.
+
+First determine whether existing records contain:
+
+- UTC timestamps
+- IST timestamps
+- mixed timestamps
+- ambiguous timestamps
+- incorrectly converted timestamps.
+
+Produce a report showing:
+
+Table
+Column
+Current storage format
+Example value
+Interpreted timezone
+Correct/Incorrect
+Risk
+Recommended correction
+
+Do not perform destructive historical conversion without explicit approval.
+
+---
+
+18. CREATE A SYSTEM-WIDE TIMESTAMP MATRIX
+
+At the end of the investigation provide a table like:
+
+Area| Table/API/UI| Timestamp| Current Source| Current TZ| Expected TZ| Correct?| Action
+Payment| payment_attempts| created_at| DB NOW()| UTC| IST display| Yes/No| ...
+Razorpay| payment_attempts| rzp_captured_at| Razorpay| UTC| IST display| Yes/No| ...
+Webhook| delivery| received_at| server| UTC| IST display| Yes/No| ...
+Ledger| UI| payment time| API| ?| IST| Yes/No| ...
+Receipt| PDF| paid time| API| ?| IST| Yes/No| ...
+
+Be exhaustive.
+
+---
+
+19. IMPORTANT: DO NOT MAKE CHANGES YET
+
+This first pass is an AUDIT ONLY.
+
+Do not modify:
+
+- schema
+- timestamps
+- payment logic
+- webhook logic
+- receipt logic
+- frontend formatting
+- historical data.
+
+First report every issue you find.
+
+Then clearly separate the findings into:
+
+A. Already correct
+
+B. Incorrect and must be fixed
+
+C. Potentially ambiguous / needs decision
+
+D. Historical records that may need backfill
+
+E. Low-risk cosmetic inconsistencies
+
+---
+
+20. FINAL ACCEPTANCE STANDARD
+
+The ultimate requirement is:
+
+«Every real-world payment, invoice, webhook, audit, receipt, refund, dispute, and transaction timestamp must represent the correct instant, and every user-facing India-school timestamp must display that instant accurately in Asia/Kolkata (UTC+05:30).»
+
+There must be:
+
+- no accidental browser-local timezone conversion
+- no accidental UTC display
+- no double +5:30 conversion
+- no missing timezone interpretation
+- no inconsistent payment timestamps
+- no incorrect chronological ordering
+- no date shifting for date-only fields
+- no difference between Admin and Student for the same event
+- no difference between Ledger and Receipt for the same payment event.
+
+Again: AUDIT FIRST. DO NOT MODIFY CODE UNTIL THE COMPLETE TIMESTAMP MATRIX AND FINDINGS ARE PROVIDED.

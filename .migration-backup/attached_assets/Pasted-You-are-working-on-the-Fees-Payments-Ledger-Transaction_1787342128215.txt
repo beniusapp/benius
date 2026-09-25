@@ -1,0 +1,1067 @@
+You are working on the Fees & Payments → Ledger & Transactions module of a multi-tenant school ERP.
+
+I want to redesign the current Ledger filtering/search experience into a clean, modern, Excel-style column filtering system.
+
+IMPORTANT:
+
+- First inspect the existing implementation carefully.
+- Do NOT rewrite unrelated modules.
+- Do NOT modify payment calculations, invoice generation, receipt generation, PDF rendering, transaction logic, or database schema unless absolutely required.
+- Preserve the existing Ledger PDF functionality and its GET/POST selection behavior.
+- Preserve tenant/security/session isolation.
+- Implement this as a reusable, maintainable filtering architecture.
+
+1. CURRENT PROBLEM
+
+The current Ledger & Transactions page has:
+
+- A search field
+- All Status dropdown
+- All Classes dropdown
+- All Fee Names dropdown
+- All Fee Types dropdown
+
+I do NOT want these four large dropdown filters permanently visible.
+
+The interface should become much cleaner and behave more like Microsoft Excel's column filtering.
+
+---
+
+2. NEW TOP TOOLBAR
+
+The top toolbar should contain:
+
+Search
+
+Keep one global search field.
+
+The search field must support searching by:
+
+1. Invoice Number
+2. Receipt Number
+3. Student Name
+4. Student DSID
+
+The placeholder should clearly communicate this, for example:
+
+"Search invoice, receipt, student or DSID..."
+
+Search should be case-insensitive and work correctly with partial matches.
+
+Examples:
+
+- "INV-0094"
+- "OF44"
+- "student3mis"
+- "MIS-0004"
+- partial invoice/receipt numbers
+- partial student names
+
+Do NOT make separate search boxes for these four fields.
+
+---
+
+3. REMOVE THE CURRENT LARGE FILTER DROPDOWNS
+
+Remove these from the main toolbar:
+
+- All Status
+- All Classes
+- All Fee Names
+- All Fee Types
+
+Do not keep them hidden and duplicate the same functionality elsewhere.
+
+Instead, introduce:
+
+Filter icon
+
+A small professional filter/funnel icon button.
+
+Clear filters icon
+
+A small clear/reset icon button.
+
+The toolbar should remain compact and modern.
+
+Example conceptual layout:
+
+[ Search invoice, receipt, student or DSID... ] [ Filter ] [ Clear ]
+
+Do not copy this exact visual design blindly. Use the existing application's design system.
+
+---
+
+4. EXCEL-STYLE COLUMN FILTERING
+
+Each filterable Ledger column should have a small filter icon in its column header.
+
+For example:
+
+| Invoice No. 🔽 | Receipt No. 🔽 | Student 🔽 | DSID 🔽 | Class 🔽 | Section | Fee Name 🔽 | Fee Type 🔽 | Fee Period 🔽 | Frequency 🔽 | ... |
+
+The icon should be subtle and professional.
+
+Do NOT make the header visually crowded.
+
+Only columns where filtering makes meaningful sense need a filter icon.
+
+Recommended filterable columns:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Payment Method
+- Reference No.
+
+Use judgment for numeric/date columns.
+
+---
+
+5. FILTER ICON BEHAVIOR
+
+When the user clicks a column's filter icon:
+
+Open a compact dropdown/popover directly beneath that column header.
+
+It should feel like Microsoft Excel's column filter experience.
+
+The popover should contain controls appropriate to that column.
+
+For example:
+
+Frequency
+
+Filter:
+
+Frequency
+
+☐ One-Time
+☐ Monthly
+☐ Quarterly
+☐ Annual
+
+Buttons:
+
+[Apply] [Clear]
+
+If the user selects:
+
+One-Time
+
+only One-Time records should remain visible.
+
+---
+
+6. CLASS + FEE NAME EXAMPLE
+
+Suppose the user wants:
+
+Class 6 + Math Book
+
+They should be able to:
+
+1. Open the Class column filter.
+2. Select "6".
+3. Apply.
+4. Open Fee Name filter.
+5. Select "Math book".
+6. Apply.
+
+The result must contain only records satisfying BOTH conditions:
+
+Class = 6
+AND
+Fee Name = Math Book
+
+Filters must combine using AND logic across different columns.
+
+Within a single column, multiple selected values may use OR logic.
+
+Example:
+
+Class = 6 OR 7
+AND
+Fee Name = Math Book
+
+---
+
+7. FILTER POPUP SHOULD BE CONTEXT-AWARE
+
+Do not hard-code every possible option into the frontend.
+
+The filter values should preferably come from the data available for the current school/session and current dataset.
+
+For example, Class filter should show the classes that actually exist for the current school/session.
+
+Fee Name should show available fee names.
+
+Frequency should show available frequencies.
+
+Status should show available statuses.
+
+Payment Method should show available payment methods.
+
+This prevents stale or irrelevant options.
+
+However, maintain strict tenant/session isolation.
+
+A school must NEVER see filter values originating from another school.
+
+---
+
+8. SEARCH + COLUMN FILTERS MUST WORK TOGETHER
+
+The global search and column filters must combine correctly.
+
+Example:
+
+Search:
+
+student3mis
+
+Filter:
+
+Class = 6
+
+Result:
+
+Student matches "student3mis"
+AND
+Class = 6
+
+Another example:
+
+Search:
+
+INV-009
+
+Filter:
+
+Status = Paid
+
+Result:
+
+Invoice matches INV-009
+AND
+Status = Paid
+
+Do not make search reset the selected filters unless the user explicitly clears them.
+
+---
+
+9. FILTER ICON VISUAL STATE
+
+When a column has an active filter:
+
+- The filter icon must visually change.
+- It should clearly indicate that this column is filtered.
+- The user should be able to immediately understand which columns have active filters.
+
+For example:
+
+Normal:
+
+"Class  [filter icon]"
+
+Active:
+
+"Class  [active filter icon]"
+
+Use the existing application's design language.
+
+Do NOT use excessive colors or large badges.
+
+---
+
+10. GLOBAL FILTER BUTTON
+
+The new top-level Filter button should also provide a clear indication when ANY column filter is active.
+
+For example:
+
+"Filter • 3"
+
+or an equivalent subtle active-state indicator.
+
+Clicking the top Filter button can open a compact overview/popover showing the currently active filters.
+
+Example:
+
+Active Filters
+
+Class
+6
+
+Fee Name
+Math Book
+
+Frequency
+One-Time
+
+Each active filter can optionally have an X/remove action.
+
+This is useful when many columns are filtered.
+
+---
+
+11. CLEAR FILTERS
+
+The Clear button/icon must clear:
+
+- All column filters
+- Global search
+
+It must return the Ledger to its normal unfiltered state.
+
+Ask for confirmation ONLY if the user has many active filters and the action could reasonably be accidental.
+
+Otherwise, clearing should be immediate.
+
+After clearing:
+
+- No filter icons should remain active.
+- Search should become empty.
+- Full dataset should return.
+- Pagination should reset to page 1.
+
+---
+
+12. IMPORTANT: FILTER STATE MUST BE CENTRALIZED
+
+Create one canonical filter state.
+
+Do NOT create independent disconnected filtering logic for:
+
+- Ledger table
+- Ledger PDF
+- Tx Report PDF
+- Export Ledger
+
+There should be one normalized filter model.
+
+Conceptually:
+
+type LedgerFilters = {
+  search: string;
+
+  invoiceNumbers: string[];
+  receiptNumbers: string[];
+
+  studentNames: string[];
+  dsids: string[];
+
+  classes: string[];
+  sections: string[];
+
+  feeNames: string[];
+  feeTypes: string[];
+
+  feePeriods: string[];
+  frequencies: string[];
+
+  statuses: string[];
+
+  paymentMethods: string[];
+
+  // Add date/amount filters only if supported cleanly
+};
+
+Do not blindly use this exact interface if the current architecture already has a better equivalent.
+
+Reuse existing types/helpers where possible.
+
+The important requirement is:
+
+There must be ONE source of truth for Ledger filtering.
+
+---
+
+13. TABLE FILTERING
+
+The visible Ledger table must use the same canonical filters.
+
+Do not filter only the currently loaded page in the browser if the application is using server-side pagination.
+
+Filtering must happen at the correct data layer.
+
+For large datasets:
+
+Database filtering
+        ↓
+Filtered result
+        ↓
+Pagination
+        ↓
+Ledger table
+
+NOT:
+
+Database result
+        ↓
+Load thousands of records
+        ↓
+Browser filtering
+        ↓
+Pagination
+
+The implementation must remain scalable for schools with thousands/tens of thousands of invoices.
+
+---
+
+14. BACKEND FILTERING
+
+Inspect the existing Ledger API.
+
+Extend the existing backend filtering mechanism instead of creating a completely separate query system.
+
+All filters must maintain:
+
+school_id = authenticated school
+AND
+session_id = selected academic session
+AND
+all active Ledger filters
+
+Never accept "school_id" directly from the browser as a trusted filter.
+
+Tenant isolation must remain server-controlled.
+
+---
+
+15. FILTER + PAGINATION
+
+Filtering must happen BEFORE pagination.
+
+Example:
+
+There are:
+
+5,000 invoices
+
+User selects:
+
+Class = 6
+Fee Name = Math Book
+
+Suppose only:
+
+73 invoices
+
+match.
+
+Pagination must operate on those 73 records.
+
+Do NOT filter only the current page.
+
+---
+
+16. FILTER + SELECTION
+
+The existing row selection system must continue working.
+
+If the user filters:
+
+Class = 6
+Frequency = One-Time
+
+and selects 3 invoices, those selected invoice IDs must remain correctly associated with the rows.
+
+Changing filters must NOT accidentally select unrelated invoices.
+
+Maintain the existing:
+
+- "selectedIds"
+- "selectAllMatching"
+- "excludedIds"
+
+behavior.
+
+Do not break the current Ledger PDF selection logic.
+
+---
+
+17. "SELECT ALL MATCHING" MUST MEAN FILTERED DATA
+
+This is extremely important.
+
+If the user applies:
+
+Class = 6
+Fee Name = Math Book
+Frequency = One-Time
+
+and clicks:
+
+Select All Matching
+
+it must mean:
+
+«Select all invoices matching the CURRENT SEARCH + ALL ACTIVE COLUMN FILTERS.»
+
+Not all invoices in the academic session.
+
+The backend must receive/use the same filter definition.
+
+---
+
+18. PDF EXPORTS MUST USE EXACTLY THE SAME FILTER STATE
+
+This is one of the most important requirements.
+
+The following three actions must export the exact same filtered dataset:
+
+Ledger PDF
+
+Tx Report PDF
+
+Export Ledger
+
+Example:
+
+User applies:
+
+Search: student3mis
+
+Class: 6
+
+Fee Name: Math Book
+
+Frequency: One-Time
+
+Status: Paid
+
+Then clicks:
+
+Ledger PDF
+
+The PDF must contain exactly the same matching records as the table.
+
+Then clicks:
+
+Tx Report PDF
+
+It must contain exactly the same filtered dataset.
+
+Then clicks:
+
+Export Ledger
+
+It must contain exactly the same filtered dataset.
+
+No export may silently ignore a new column filter.
+
+---
+
+19. DO NOT DUPLICATE FILTER LOGIC IN EACH EXPORT
+
+Do NOT implement:
+
+Ledger table filter logic
+Ledger PDF filter logic
+Tx Report filter logic
+Export Ledger filter logic
+
+as four independent systems.
+
+Instead:
+
+                    LedgerFilters
+                         │
+              ┌──────────┼──────────┐
+              ↓          ↓          ↓
+           Ledger      PDF       Export
+             Table      Reports    Ledger
+
+All must consume the same normalized filter state.
+
+Backend query-building helpers should be reused wherever practical.
+
+---
+
+20. FILTER POPUP UX
+
+The popup should be modern and compact.
+
+For categorical columns:
+
+Filter by Frequency
+
+[ Search values... ]
+
+☐ One-Time
+☐ Monthly
+☐ Quarterly
+☐ Annual
+
+[Clear]              [Apply]
+
+For Status:
+
+Filter by Status
+
+☐ Paid
+☐ Due
+☐ Overdue
+☐ Partially Paid
+...
+
+For Class:
+
+Filter by Class
+
+[ Search classes... ]
+
+☐ 1
+☐ 2
+☐ 3
+☐ 4
+☐ 5
+☐ 6
+☐ 7
+☐ 8
+...
+
+For text-heavy columns such as Student or Invoice:
+
+Provide an appropriate text filter/search mechanism rather than forcing a huge checkbox list.
+
+Example:
+
+Filter by Invoice No.
+
+[ Contains... ]
+
+[Clear] [Apply]
+
+For numeric/date columns, use sensible operators where appropriate:
+
+Amount
+Equals
+Greater than
+Less than
+Between
+
+Only implement advanced operators where they fit the existing architecture cleanly.
+
+Do not over-engineer the first version.
+
+---
+
+21. FILTER POPUP SHOULD NOT BE HUGE
+
+The filter dropdown must:
+
+- Have a sensible maximum height.
+- Scroll internally when there are many values.
+- Stay within the viewport.
+- Never extend outside the screen.
+- Work on desktop and mobile.
+- Close when clicking outside.
+- Close appropriately after Apply.
+- Not cause the entire page to jump.
+
+On mobile, convert it into a suitable responsive popover/sheet rather than allowing it to overflow horizontally.
+
+---
+
+22. EXCEL-LIKE "CHECK ALL" BEHAVIOR
+
+For categorical filters with multiple values, include:
+
+☐ Select All
+
+If all values are selected:
+
+☑ Select All
+
+If some values are selected:
+
+Use an indeterminate state.
+
+This should behave like a professional data-grid filter.
+
+---
+
+23. FILTER SUMMARY
+
+When filters are active, optionally show a compact summary beneath the toolbar.
+
+For example:
+
+3 filters active
+Class: 6
+Fee Name: Math Book
+Frequency: One-Time
+
+Do not create large filter chips that consume excessive vertical space.
+
+The table should remain the primary focus.
+
+---
+
+24. SEARCH PERFORMANCE
+
+The global search should search these fields:
+
+invoice number
+receipt number
+student name
+digital student ID / DSID
+
+Use proper server-side search.
+
+Avoid loading the entire dataset into React just to search.
+
+Use case-insensitive matching.
+
+Partial matching should work.
+
+---
+
+25. URL / STATE PERSISTENCE
+
+If the current Ledger architecture already supports URL/query-state persistence, integrate the new filters with it.
+
+Ideally, filters should be representable as a normalized query state so that:
+
+- Refreshing the page does not unexpectedly lose filters.
+- Pagination can safely coexist with filters.
+- Export actions can use the same state.
+
+Do not introduce URL complexity if it conflicts with the current architecture; inspect first and implement consistently.
+
+---
+
+26. ACCESSIBILITY
+
+The filter icons must have:
+
+- Tooltip
+- Accessible label
+- Keyboard accessibility
+- Visible focus state
+
+Example aria-label:
+
+Filter Class
+
+Do not use an icon without an accessible label.
+
+---
+
+27. IMPORTANT COLUMN LIST
+
+The current Ledger contains columns similar to:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Paid
+- Outstanding
+- Payment Method
+- Reference No.
+
+Do NOT blindly assume every column should have identical filter controls.
+
+Choose the most appropriate filter UI for each data type.
+
+---
+
+28. VISUAL DESIGN
+
+The existing application has a dark modern SaaS/ERP interface.
+
+Keep the existing visual language.
+
+The new filtering system should feel:
+
+- Modern
+- Professional
+- Minimal
+- Similar to Excel/data-grid filtering
+- Fast
+- Easy to understand
+- Not visually crowded
+
+Do not introduce a completely different design system.
+
+Use existing:
+
+- colors
+- typography
+- spacing
+- dropdown/popover components
+- buttons
+- icons
+- modal/sheet components
+
+where available.
+
+---
+
+29. IMPORTANT: DO NOT BREAK EXISTING FEATURES
+
+Before modifying anything, inspect:
+
+- "fees-manager.tsx"
+- Ledger API routes
+- Existing filter/query helpers
+- Ledger PDF route
+- Tx Report PDF route
+- Export Ledger route
+- Selection state
+- Pagination
+- Academic session filtering
+- School/tenant security
+
+Do not modify unrelated files.
+
+Do not touch:
+
+- payment calculations
+- payment records
+- invoice generation
+- receipt generation
+- Razorpay integration
+- transaction recording
+- database schema
+
+unless there is a genuine technical requirement.
+
+---
+
+30. TEST THESE EXACT SCENARIOS
+
+After implementation, test all of these.
+
+Test 1 — Global search
+
+Search:
+
+student3mis
+
+Expected:
+Only matching student records.
+
+Test 2 — Invoice search
+
+Search:
+
+INV-0094
+
+Expected:
+Only that invoice.
+
+Test 3 — Receipt search
+
+Search:
+
+OF44
+
+Expected:
+Correct receipt record(s).
+
+Test 4 — DSID search
+
+Search:
+
+MIS-0004
+
+Expected:
+Only matching DSID records.
+
+Test 5 — Frequency filter
+
+Frequency → One-Time
+
+Expected:
+Only One-Time records.
+
+Test 6 — Multiple filters
+
+Class → 6
+
+Fee Name → Math Book
+
+Expected:
+
+Class = 6
+AND
+Fee Name = Math Book
+
+Test 7 — Search + filter
+
+Search:
+
+student3mis
+
+Class:
+
+6
+
+Expected:
+
+Student matches
+AND
+Class = 6
+
+Test 8 — Clear
+
+Click Clear.
+
+Expected:
+
+- Search cleared
+- Every column filter cleared
+- Active filter indicators removed
+- Full dataset restored
+- Pagination reset
+
+Test 9 — Selection after filtering
+
+Apply:
+
+Class = 6
+
+Select 3 invoices.
+
+Generate Ledger PDF.
+
+Expected:
+Exactly those 3 selected invoices.
+
+Test 10 — Select All Matching
+
+Apply:
+
+Class = 6
+Fee Name = Math Book
+
+Select All Matching.
+
+Generate Ledger PDF.
+
+Expected:
+Every invoice matching those filters, across ALL pages.
+
+Test 11 — Export consistency
+
+With active filters:
+
+Class = 6
+Frequency = One-Time
+Status = Paid
+
+Generate:
+
+- Ledger PDF
+- Tx Report PDF
+- Export Ledger
+
+All three must contain the same filtered invoice population.
+
+Test 12 — Tenant security
+
+Verify that manipulating filter values or invoice IDs cannot expose another school's data.
+
+Test 13 — Pagination
+
+Apply a filter producing more than one page.
+
+Navigate to page 2.
+
+Verify records remain correctly filtered.
+
+Test 14 — Filter persistence during pagination
+
+Apply:
+
+Class = 6
+
+Go to page 2.
+
+Expected:
+Class 6 filter remains active.
+
+---
+
+31. FINAL ACCEPTANCE CRITERIA
+
+The implementation is complete only when:
+
+- The four large toolbar dropdowns are removed.
+- Global search searches Invoice + Receipt + Student Name + DSID.
+- Every appropriate Ledger column has its own Excel-style filter.
+- Filters use the correct control based on data type.
+- Multiple column filters combine with AND logic.
+- Multiple values inside one filter combine with OR logic.
+- Active filters are visually indicated.
+- Clear removes ALL search/filter state.
+- Filtering happens server-side where required.
+- Filtering happens before pagination.
+- Selection works correctly with filtering.
+- Select All Matching means ALL currently matching filtered records.
+- Ledger PDF respects the exact same filters.
+- Tx Report PDF respects the exact same filters.
+- Export Ledger respects the exact same filters.
+- Existing GET/POST Ledger PDF selection behavior is preserved.
+- School/session tenant isolation is preserved.
+- No unrelated modules are modified.
+- No database schema changes are introduced unnecessarily.
+- No existing payment/invoice functionality is broken.
+- Desktop and mobile behavior are both correct.
+- No console errors.
+- No TypeScript errors.
+- No backend SQL errors.
+
+MOST IMPORTANT ARCHITECTURAL RULE
+
+Do not treat this as merely a UI change.
+
+Build a single canonical Ledger filter model and make the table, pagination, selection, Ledger PDF, Tx Report PDF, and Export Ledger all use that same filtering definition.
+
+The final behavior should feel like:
+
+Search → Excel-style column filters → filtered Ledger → select rows → export exactly what is currently filtered/selected.
+
+Before making changes, inspect the existing code and explain briefly which files/functions you will modify. Then implement the change with the smallest safe set of file modifications.
+
+After implementation, run the application, verify the backend queries, and report:
+
+1. Files changed
+2. Components/functions changed
+3. Filter state architecture
+4. Search behavior
+5. Column filter behavior
+6. Pagination behavior
+7. Selection behavior
+8. Ledger PDF behavior
+9. Tx Report PDF behavior
+10. Export Ledger behavior
+11. Security/tenant isolation
+12. Exact test results
+
+Do not claim a test passed unless you actually verified it.

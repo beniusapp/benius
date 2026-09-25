@@ -1,0 +1,449 @@
+Task: Carefully Compare “Add Invoice” vs “Generate Invoices”
+
+I want you to perform a deep, read-only audit of the existing Fees & Payments system.
+
+Important: DO NOT CHANGE ANY CODE YET
+
+First, inspect and compare the two existing invoice-generation flows:
+
+1. Generate Invoices
+   
+   - Located under Fee Structures
+   - Generates invoices for multiple eligible students
+   - This is the source-of-truth logic and architecture
+
+2. Add Invoice
+   
+   - Located under Ledger & Transactions
+   - Should generate an invoice for ONE SELECTED STUDENT ONLY
+   - It should follow the same invoice-generation logic, architecture, calculations, validations, snapshots, numbering, duplicate protection, session handling, etc. as Generate Invoices.
+
+The only intentional difference should be:
+
+«Generate Invoices = multiple students
+Add Invoice = one specifically selected student»
+
+Everything else should behave the same.
+
+---
+
+1. Trace Generate Invoices Completely
+
+Do not only inspect the UI.
+
+Trace the complete Generate Invoices workflow from:
+
+Fee Structure → Generate Invoices → frontend → API → server route → service/function → database → fee_records → invoice creation
+
+Document exactly:
+
+- How the fee structure is selected
+- How applicable classes are determined
+- How eligible students are determined
+- How the academic session is determined
+- How fee name is determined
+- How fee type is determined
+- How amount is determined
+- How frequency is determined
+- How fee period is calculated
+- How start/end dates are calculated
+- How due date is calculated
+- How late fee / penalty is handled
+- How fee components are handled
+- How component snapshots are stored
+- How invoice number is generated
+- How duplicate invoices are prevented
+- How existing invoices are detected
+- How student eligibility is validated
+- How tenant/school isolation is enforced
+- How status is determined
+- How invoice records are inserted
+- What fields are stored in "fee_records"
+- What happens if one student already has an invoice
+- What happens if multiple students are being processed
+- What happens when an error occurs
+- Whether the operation is transactional/atomic
+- Whether concurrent requests can create duplicates
+- Any other business rules involved
+
+I want the actual code path, not a general explanation.
+
+---
+
+2. Trace Add Invoice Completely
+
+Now trace the current:
+
+Ledger & Transactions → Add Invoice
+
+from:
+
+UI → frontend state → API request → server route → service/function → database → fee_records
+
+Document exactly the same points listed above.
+
+Do not assume Add Invoice is correct just because it currently works.
+
+---
+
+3. Compare Them Side-by-Side
+
+Create a detailed comparison table like:
+
+Logic / Behavior| Generate Invoices| Add Invoice| Same?| Issue
+Student selection| Multiple eligible students| One selected student| Yes/No| ...
+Fee Name| ...| ...| Yes/No| ...
+Fee Type| ...| ...| Yes/No| ...
+Amount| ...| ...| Yes/No| ...
+Frequency| ...| ...| Yes/No| ...
+Fee Period| ...| ...| Yes/No| ...
+Due Date| ...| ...| Yes/No| ...
+Academic Session| ...| ...| Yes/No| ...
+Late Fee| ...| ...| Yes/No| ...
+Penalty| ...| ...| Yes/No| ...
+Components| ...| ...| Yes/No| ...
+Component Snapshot| ...| ...| Yes/No| ...
+Invoice Number| ...| ...| Yes/No| ...
+Duplicate Protection| ...| ...| Yes/No| ...
+Student Eligibility| ...| ...| Yes/No| ...
+Tenant Isolation| ...| ...| Yes/No| ...
+Status| ...| ...| Yes/No| ...
+Database fields| ...| ...| Yes/No| ...
+Error handling| ...| ...| Yes/No| ...
+Transaction/atomicity| ...| ...| Yes/No| ...
+
+---
+
+4. VERY IMPORTANT: Verify the Architecture
+
+I specifically want you to determine whether both flows actually use the same underlying invoice-creation logic.
+
+For example:
+
+Ideal architecture
+
+Generate Invoices
+        ↓
+Find multiple eligible students
+        ↓
+        └──────→ Shared Invoice Creation Logic
+                         ↓
+                    fee_records
+
+and:
+
+Add Invoice
+        ↓
+Select ONE student
+        ↓
+        └──────→ SAME Shared Invoice Creation Logic
+                         ↓
+                    fee_records
+
+The only difference should be the student selection/iteration layer.
+
+If Add Invoice has its own separate implementation of:
+
+- invoice number generation
+- fee period calculation
+- due date calculation
+- duplicate checking
+- fee amount calculation
+- component snapshotting
+- academic session handling
+- late fee logic
+- database insertion
+
+then flag that as an architectural difference.
+
+---
+
+5. Check for Hidden Differences
+
+Be especially careful about these.
+
+Invoice Number
+
+Verify that Add Invoice and Generate Invoices use the exact same invoice-number generation mechanism.
+
+Make sure there is no possibility of:
+
+- duplicate invoice numbers
+- different numbering formats
+- separate counters
+- client-generated numbers
+- race conditions
+
+---
+
+Fee Period
+
+Verify that the exact same frequency rules are used.
+
+For example:
+
+- Monthly
+- Quarterly
+- Half-yearly
+- Annual
+- One-time
+
+Check that Add Invoice creates the exact same start/end period that Generate Invoices would create for the same student and same fee structure.
+
+---
+
+Due Date
+
+Verify that Add Invoice uses exactly the same due-date calculation as Generate Invoices.
+
+Do not allow the two flows to have different date logic.
+
+---
+
+Academic Session
+
+Verify that both flows use the same active academic session.
+
+Make sure Add Invoice cannot accidentally create an invoice under:
+
+- wrong academic year
+- previous session
+- manually supplied session
+- client-controlled session
+
+---
+
+Fee Components
+
+This is extremely important.
+
+If a Fee Structure contains:
+
+- Tuition ₹25,000
+- Laboratory ₹5,000
+- Sports ₹5,000
+
+then verify that Add Invoice creates the same component snapshot that Generate Invoices creates.
+
+The resulting invoice must not lose, change, or recalculate the structure incorrectly.
+
+---
+
+Late Fee / Penalty
+
+Compare:
+
+- Flat penalty
+- Daily penalty
+- Tiered penalty
+- Penalty amount
+- Grace period, if applicable
+- Activation status
+- Any other penalty configuration
+
+Make sure Add Invoice follows the exact same rules.
+
+---
+
+Duplicate Protection
+
+Test the scenario:
+
+Student A
+Fee Structure: Monthly Fee
+Period: August 2027
+
+If Generate Invoices would reject/skip a duplicate, Add Invoice must behave exactly the same way.
+
+Also check:
+
+Generate Invoice → Add Invoice
+Add Invoice → Generate Invoice
+Add Invoice → Add Invoice
+Generate Invoice → Generate Invoice
+
+There must be no way to create an unintended duplicate through the different entry points.
+
+---
+
+6. Student Eligibility
+
+This is the one intentional difference.
+
+Generate Invoices may do:
+
+Find all students
+        ↓
+Check applicable classes
+        ↓
+Generate for eligible students
+
+Add Invoice should do:
+
+Select ONE student
+        ↓
+Check that student's eligibility
+        ↓
+Use the SAME invoice-generation rules
+        ↓
+Create ONE invoice
+
+Do NOT assume that because a student was manually selected, all Generate Invoice validation can be bypassed.
+
+Verify whether Add Invoice correctly respects all necessary student/fee/session rules.
+
+---
+
+7. Database-Level Comparison
+
+Compare the final database records created by both methods.
+
+For the same:
+
+- student
+- fee structure
+- academic session
+- fee period
+
+compare every relevant "fee_records" field.
+
+I want to know:
+
+«If Generate Invoices creates an invoice for Student A, and Add Invoice creates the equivalent invoice for Student A, are the resulting records structurally and logically identical except for automatically generated identifiers/timestamps?»
+
+List every field that differs.
+
+---
+
+8. Test Scenario
+
+Create a safe test scenario if the existing test infrastructure allows it.
+
+Do NOT modify production data.
+
+Use test fixtures or an isolated test database.
+
+Test:
+
+Scenario A
+
+Generate invoice using Generate Invoices for Student A.
+
+Scenario B
+
+Create the equivalent invoice using Add Invoice for Student B.
+
+Use the same:
+
+- fee structure
+- fee type
+- amount
+- frequency
+- fee period
+- due-date rules
+- penalty configuration
+- components
+- academic session
+
+Then compare the resulting records.
+
+Also test duplicate creation.
+
+---
+
+9. Check Frontend vs Backend Authority
+
+Verify whether Add Invoice allows the frontend to submit values that should actually be controlled by the server.
+
+For example:
+
+- amount
+- fee type
+- fee period
+- due date
+- academic year
+- status
+- penalty
+- components
+- invoice number
+
+Determine which values are:
+
+Server-authoritative
+
+versus
+
+Client-controlled
+
+and compare this with Generate Invoices.
+
+If Add Invoice can bypass rules that Generate Invoices cannot bypass, flag it as a security/data-integrity issue.
+
+---
+
+10. Final Verdict
+
+After completing the audit, give me a clear verdict:
+
+Option A — PERFECT MATCH
+
+If Add Invoice truly uses the same underlying logic and produces the same invoice structure:
+
+«PASS — Add Invoice is correctly implemented as a single-student version of Generate Invoices.»
+
+Explain why.
+
+Option B — MINOR DIFFERENCES
+
+If there are small differences that do not affect correctness:
+
+«PASS WITH MINOR DIFFERENCES»
+
+List them.
+
+Option C — NEEDS FIXING
+
+If there are meaningful differences:
+
+«FAIL — Add Invoice does NOT currently match Generate Invoices.»
+
+List every issue clearly and explain exactly what needs to change.
+
+---
+
+11. VERY IMPORTANT FINAL RULE
+
+DO NOT MODIFY ANY CODE DURING THIS AUDIT.
+
+Do not refactor.
+
+Do not fix.
+
+Do not migrate the database.
+
+Do not change UI.
+
+Do not change routes.
+
+Do not change the Generate Invoices flow.
+
+Do not change Add Invoice.
+
+First give me the complete comparison and identify every difference/issue.
+
+Only after I review your findings will I tell you whether to make changes.
+
+The main requirement is:
+
+«Generate Invoices = multiple students using the canonical invoice-generation logic.
+
+Add Invoice = exactly the same canonical invoice-generation logic, but for ONE selected student only.»
+
+The goal is NOT to make two similar implementations.
+
+The goal is to ensure one canonical invoice-generation behavior with two entry points:
+
+Generate Invoices → Multiple Students
+Add Invoice       → One Selected Student
+
+Everything underneath should be identical wherever logically applicable.

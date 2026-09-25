@@ -1,0 +1,189 @@
+I want you to give me a complete but easy-to-understand Technical Architecture & Technology Stack overview of my entire application.
+
+I built this application mainly through AI prompts, so I need to understand what I actually own and how it works as the CEO/product owner. Do not change any code. Investigation/documentation only.
+
+Please explain in simple language:
+
+1. Technology Stack
+
+- Frontend framework/library
+- Backend framework/runtime
+- Programming languages
+- CSS/UI framework
+- Database and PostgreSQL version
+- ORM/database layer
+- API architecture (REST, etc.)
+- Authentication/session system
+- Password hashing
+- Payment gateway/integration (Razorpay)
+- File/image/document storage
+- Email/SMS/notifications if any
+- Background jobs/cron/queues
+- Testing frameworks
+- Build tools
+- Deployment/hosting
+- Git/GitHub/Replit relationship
+
+2. Application Architecture
+   Explain the complete flow:
+
+Browser → Frontend → API → Backend → Database
+
+Also explain where authentication, authorization, tenant isolation, academic-session isolation, and payment processing happen.
+
+3. Multi-Tenant Architecture
+   Explain:
+
+- What identifies a school/tenant?
+- How does a logged-in user get associated with a school?
+- How is School A prevented from accessing School B data?
+- Where is tenant validation performed?
+- What happens if someone tries to manually change a school ID/session ID?
+
+4. Academic Session Architecture
+   Explain:
+
+- How sessions are stored
+- Active vs archived session
+- How the selected session reaches the frontend/backend
+- Which modules are session-based
+- Which modules are global and NOT session-based
+- What happens when a new academic session becomes active
+- What happens to the previous session
+
+5. Users & Roles
+   List all roles and explain what each can access.
+   Explain the difference between authentication and authorization.
+
+6. Database
+   Give me:
+
+- Main tables
+- What each important table stores
+- Important relationships
+- Primary keys/foreign keys
+- Important indexes
+- Which tables are tenant-scoped
+- Which are session-scoped
+- Which are global
+- How IDs such as student/teacher IDs are generated
+
+7. Fees & Payments
+   Explain the complete lifecycle:
+
+Fee/Invoice creation → payment attempt → Razorpay → webhook → payment verification → receipt → ledger/history
+
+Explain where the source of truth is and how duplicate/cross-session payments are prevented.
+
+8. Security
+   Explain the important security protections currently implemented:
+
+- Authentication
+- Password hashing
+- Sessions/cookies
+- Authorization
+- Tenant isolation
+- Academic-session isolation
+- CSRF/CORS if applicable
+- Rate limiting if applicable
+- Secrets/environment variables
+- Webhook verification
+- Audit logs
+- Re-authentication/security gates
+
+Also clearly tell me what security protections are NOT currently implemented.
+
+9. Development vs Production
+   Explain the difference between:
+
+- My local machine
+- Replit development environment
+- PostgreSQL database
+- Production deployment
+
+Explain how code moves:
+
+Local/Replit → Git → deployment
+
+And explain how database schema/migrations move between environments.
+
+10. Environment Variables & Secrets
+    List the NAME of every environment variable the application expects, but NEVER reveal the actual secret values.
+
+Explain what each variable is used for.
+
+11. Database Migration & Setup
+    Explain exactly how a fresh developer machine gets the database ready.
+
+Tell me:
+
+- What creates tables?
+- What creates indexes?
+- What performs data backfills?
+- What scripts need to be run?
+- What "npm" commands are important?
+- What happens on "npm run dev"?
+- What happens on "npm run build"?
+- What happens on "npm start"?
+- What happens on "npm run db:push"?
+- Are there any database objects that are NOT represented in the main schema/migration system?
+
+I specifically want to avoid another situation like the missing "id_sequences" table.
+
+12. Project Structure
+    Give me a simple map like:
+
+client/
+server/
+shared/
+scripts/
+migrations/
+...
+
+Explain what each directory is responsible for and identify the most important files.
+
+13. External Services
+    List every external service/API the application communicates with and explain why.
+
+14. Critical Business Logic
+    Identify the 10–20 most important business rules in the application that I should understand as CEO.
+
+15. Single Points of Failure
+    Tell me what could cause the application to fail completely:
+
+- Database
+- Authentication
+- Payment gateway
+- Environment variables
+- Migration problems
+- External APIs
+- etc.
+
+16. Backup & Recovery
+    Tell me:
+
+- How the database is backed up
+- How data can be restored
+- Whether there is currently an automated backup strategy
+- What happens if the production database is corrupted
+- What happens if a deployment breaks the database
+
+17. Monitoring & Logging
+    Explain what is currently monitored, where logs are stored, and how I would know if something is broken in production.
+
+18. What I MUST Know as CEO
+    At the end, give me a section called:
+
+"CEO Technical Cheat Sheet"
+
+Give me the 20–30 most important things I should understand about this application, explained in very simple language.
+
+For every point, distinguish between:
+
+- CONFIRMED FROM CODE
+- INFERRED
+- NOT IMPLEMENTED / UNKNOWN
+
+Do not modify anything. This is strictly an architecture/documentation audit.
+
+Finally, give me a one-page architecture diagram in text/ASCII showing how the entire application works from user → frontend → backend → database → external services.

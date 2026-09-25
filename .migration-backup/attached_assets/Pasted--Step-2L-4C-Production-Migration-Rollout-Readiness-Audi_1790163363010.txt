@@ -1,0 +1,792 @@
+# Step 2L-4C — Production Migration & Rollout Readiness Audit
+
+You are working on my Indian school MIS application in the BUILDING / DEVELOPMENT phase.
+
+This is a **controlled, READ-ONLY production migration and rollout-readiness audit** following:
+
+* Step 2L-4 — Historical Attendance preservation
+* Step 2L-4A — Identity & migration safety verification
+* Step 2L-4B — Identity/history remediation
+
+## CURRENT STATUS
+
+Step 2L-4B is:
+
+**SAFE WITH CONDITIONS**
+
+Development verification passed.
+
+The remaining condition is production rollout verification.
+
+Development currently has:
+
+* Student `attendance_identity_key` uniqueness;
+* Student identity immutability;
+* permanent UUID reservation;
+* Attendance historical identity snapshots;
+* Attendance `student_id -> students.id ON DELETE SET NULL`;
+* Attendance reassignment protection;
+* historical daily summary support for deleted Students;
+* migration 014;
+* migration 015;
+* regression tests passing.
+
+However, the actual production deployment mechanism has not been demonstrated to execute migrations 014 and 015 in the required order against production data.
+
+---
+
+# CRITICAL EXECUTION RULE
+
+## THIS IS A READ-ONLY AUDIT.
+
+Do NOT:
+
+* modify production;
+* execute migration 014 against production;
+* execute migration 015 against production;
+* run `drizzle-kit push` against production;
+* run `drizzle-kit migrate` against production;
+* create production tables;
+* alter production columns;
+* create production indexes;
+* create production triggers;
+* delete production rows;
+* update production rows;
+* backfill production data;
+* repair production data;
+* change production configuration;
+* deploy application code;
+* restart production services;
+* run destructive SQL;
+* run write SQL against production.
+
+You may inspect:
+
+* repository configuration;
+* migration files;
+* deployment configuration;
+* package scripts;
+* CI/CD configuration;
+* environment configuration **without exposing secrets**;
+* database connection mechanism;
+* migration tooling configuration;
+* production database metadata using strictly read-only operations if the environment provides an approved read-only connection.
+
+Never print:
+
+* passwords;
+* connection strings;
+* tokens;
+* API keys;
+* secrets;
+* private credentials.
+
+If production database access is unavailable, say so explicitly.
+
+Do not guess.
+
+---
+
+# OBJECTIVE
+
+Determine exactly whether the current project has a safe, deterministic way to deploy:
+
+1. Attendance historical preservation migration 014;
+2. Attendance identity enforcement migration 015;
+3. the corresponding application code;
+
+to a populated production database without losing or corrupting historical Attendance.
+
+The audit must answer:
+
+> **Can production safely receive the Step 2L-4B changes using the current deployment/release mechanism, and if not, exactly what must be changed or verified before deployment?**
+
+---
+
+# STEP 1 — IDENTIFY THE ACTUAL DEPLOYMENT PIPELINE
+
+Inspect:
+
+* `package.json`;
+* all migration scripts;
+* Drizzle configuration;
+* deployment configuration;
+* Replit deployment configuration;
+* CI/CD configuration;
+* startup scripts;
+* build scripts;
+* release scripts;
+* database initialization scripts;
+* schema validation scripts;
+* environment-specific scripts;
+* any pre-deploy/post-deploy hooks.
+
+Search the entire repository for:
+
+* `drizzle-kit push`
+* `drizzle-kit migrate`
+* `drizzle-kit generate`
+* `drizzle-kit`
+* migration directory references
+* `migrations/014`
+* `migrations/015`
+* schema synchronization
+* startup schema validation
+* database initialization
+* production deployment hooks.
+
+Determine exactly:
+
+### A. Development
+
+What command currently changes the development database?
+
+### B. Production
+
+What command actually changes the production database?
+
+### C. Startup
+
+Does application startup itself execute migrations?
+
+### D. Publish/deploy
+
+Does publishing automatically execute migrations?
+
+### E. Schema validation
+
+Does schema validation merely detect differences, or does it actually apply SQL migrations?
+
+Do not infer.
+
+Show the exact repository evidence.
+
+---
+
+# STEP 2 — DETERMINE WHETHER NUMBERED MIGRATIONS ARE ACTUALLY EXECUTED
+
+Specifically determine whether:
+
+`014_attendance_student_preservation.sql`
+
+and
+
+`015_attendance_identity_enforcement.sql`
+
+are guaranteed to execute in production.
+
+Distinguish carefully between:
+
+* Drizzle schema push;
+* generated schema diff;
+* numbered SQL migration execution;
+* application startup validation;
+* deployment scripts.
+
+Do not treat these as equivalent.
+
+The final report must explicitly state whether the current production flow guarantees:
+
+```text
+014 executes before 015
+015 executes before snapshot-dependent application code
+both execute against the intended production database
+both execute exactly once
+failed migration prevents incompatible application startup
+```
+
+---
+
+# STEP 3 — DETERMINE MIGRATION ORDERING
+
+Inspect 014 and 015 in detail.
+
+Confirm the intended dependency:
+
+```text
+014
+  ↓
+015
+  ↓
+application code relying on the completed identity model
+```
+
+Determine whether production deployment could accidentally produce:
+
+```text
+application code first
+        ↓
+old production schema
+```
+
+or:
+
+```text
+015 without 014
+```
+
+or:
+
+```text
+014 partially applied
+        ↓
+application startup
+```
+
+or:
+
+```text
+schema push changes only part of the required design
+```
+
+If any such path exists, document it.
+
+Do not modify it during this audit.
+
+---
+
+# STEP 4 — PRODUCTION DATA PRE-FLIGHT REQUIREMENTS
+
+Determine exactly what must be inspected in production BEFORE migration 014/015.
+
+Do not modify production.
+
+If read-only production database access exists, inspect only safe metadata/counts/validation queries.
+
+At minimum determine how to detect:
+
+### Student identity issues
+
+* NULL `attendance_identity_key`;
+* duplicate `attendance_identity_key`;
+* invalid UUID values;
+* already-existing reservation conflicts.
+
+### Attendance identity issues
+
+* Attendance with NULL `student_id`;
+* Attendance referencing a missing Student;
+* Attendance with missing snapshots;
+* Attendance with partially populated snapshots;
+* duplicate candidate canonical identities;
+* same-school mismatch;
+* cross-school mismatch;
+* contradictory identity data;
+* duplicate `(school_id, session_id, identity_key, date)` candidates.
+
+### Existing Attendance population
+
+Report:
+
+* total Attendance rows;
+* rows per school;
+* rows per Academic Session;
+* rows with existing Student references;
+* rows with anomalies.
+
+Do not expose student PII unnecessarily.
+
+Use counts/aggregates where possible.
+
+If production access is unavailable, provide the exact read-only SQL/query strategy that an authorized operator must run.
+
+Do not execute it if no approved read-only access exists.
+
+---
+
+# STEP 5 — SPECIAL CASE: EXISTING PRODUCTION STUDENTS
+
+Determine how migration 014 assigns:
+
+`students.attendance_identity_key`
+
+to existing Students.
+
+Verify:
+
+* every existing Student receives exactly one identity key;
+* keys are unique;
+* keys cannot later be changed;
+* key generation is deterministic only where required;
+* no historical Attendance is assigned based solely on name/code;
+* deactivated Students are included;
+* no existing Student is silently skipped.
+
+Explain what happens if production contains:
+
+* 0 Students;
+* 1 Student;
+* thousands of Students;
+* duplicate legacy identity data if any;
+* unusual/deactivated Students.
+
+---
+
+# STEP 6 — SPECIAL CASE: EXISTING PRODUCTION ATTENDANCE
+
+Determine exactly how migration 014 handles existing Attendance.
+
+For every Attendance row, establish whether the migration can safely derive:
+
+* `identity_key`;
+* `original_student_id`;
+* `student_name_snapshot`;
+* `student_code_snapshot`.
+
+Verify the matching rule is:
+
+* school-aware;
+* based on authoritative Student ID while that relationship exists;
+* not based solely on name;
+* not based solely on digital ID.
+
+Determine exactly what happens if an Attendance row cannot be safely resolved.
+
+Required behavior:
+
+**FAIL CLOSED.**
+
+It must not:
+
+* guess;
+* assign another Student;
+* cross school boundaries;
+* delete the Attendance;
+* deduplicate the Attendance;
+* silently overwrite trustworthy historical identity.
+
+---
+
+# STEP 7 — CHECK POPULATED-DATABASE MIGRATION SAFETY
+
+Determine whether migration 014/015 has actually been tested against a database containing realistic Attendance data.
+
+Do not count an empty Attendance database as sufficient.
+
+Determine whether development tests cover:
+
+* 1 Attendance row;
+* many Attendance rows;
+* multiple schools;
+* multiple Academic Sessions;
+* duplicate candidate identity;
+* missing Student;
+* missing snapshot;
+* contradictory identity;
+* deactivated Student;
+* physically deleted historical Student if applicable.
+
+Report what was actually tested.
+
+Do not claim production equivalence.
+
+---
+
+# STEP 8 — TRANSACTION AND FAILURE BEHAVIOR
+
+Inspect the SQL.
+
+Verify whether the migration is transactional.
+
+Determine:
+
+### If backfill fails
+
+Does the transaction roll back?
+
+### If validation fails
+
+Does the transaction roll back?
+
+### If unique index creation fails
+
+Does the transaction roll back?
+
+### If trigger creation fails
+
+Does the transaction roll back?
+
+### If deployment terminates midway
+
+What state could production be left in?
+
+### If migration succeeds but application deployment fails
+
+Is the schema backwards-compatible with the previous application version?
+
+This last question is important.
+
+Determine whether the migration is:
+
+### Backward-compatible
+
+Old application code can safely run temporarily after the migration.
+
+or:
+
+### Forward-only
+
+Old application code must not run after the migration.
+
+Document the evidence.
+
+---
+
+# STEP 9 — APPLICATION DEPLOYMENT ORDER
+
+Inspect whether the application deployment process can guarantee:
+
+```text
+database migration
+        ↓
+migration verification
+        ↓
+application deployment
+        ↓
+application traffic
+```
+
+or whether it currently does:
+
+```text
+application deployment
+        ↓
+database synchronization
+```
+
+If the current system does not provide safe ordering, document that as a blocker.
+
+Do not modify the deployment pipeline during this audit.
+
+---
+
+# STEP 10 — MULTI-INSTANCE / CONCURRENT DEPLOYMENT RISK
+
+Determine whether multiple application instances/workflows could attempt database migration simultaneously.
+
+Inspect whether the current migration mechanism has:
+
+* migration locking;
+* advisory locks;
+* migration journal;
+* transaction protection;
+* deployment serialization.
+
+Determine whether two concurrent deployments could both attempt 014/015.
+
+Do not assume the tooling protects against this unless verified.
+
+---
+
+# STEP 11 — MIGRATION JOURNAL / BOOKKEEPING
+
+Determine how the project knows:
+
+> migration 014 has already been applied
+
+and:
+
+> migration 015 has already been applied.
+
+Distinguish between:
+
+* SQL-level idempotency;
+* migration-runner bookkeeping;
+* schema drift detection.
+
+A migration being manually rerunnable is not the same as a migration system tracking that it was already applied.
+
+Report the exact mechanism.
+
+---
+
+# STEP 12 — PARTIAL-DEPLOYMENT SCENARIOS
+
+Analyze these scenarios without executing them:
+
+### Scenario A
+
+014 succeeds, application deployment fails.
+
+### Scenario B
+
+014 succeeds, 015 fails.
+
+### Scenario C
+
+015 succeeds, application deployment fails.
+
+### Scenario D
+
+Application code deploys before 014/015.
+
+### Scenario E
+
+Two deployment processes run simultaneously.
+
+### Scenario F
+
+Production contains an unexpected legacy Attendance row.
+
+### Scenario G
+
+Migration hits a duplicate canonical identity.
+
+For each scenario state:
+
+* expected database state;
+* whether application traffic is safe;
+* recovery action;
+* whether historical Attendance can be lost;
+* whether rollback is possible.
+
+Do not invent rollback capabilities.
+
+---
+
+# STEP 13 — BACKUP / RECOVERY REQUIREMENT
+
+Determine what backup/recovery protection is required before production rollout.
+
+Do not perform a backup yourself unless explicitly authorized in a separate step.
+
+Do not delete or restore production data.
+
+The final report must state whether a production backup/snapshot should be confirmed before migration.
+
+Also document:
+
+* why restoring the old CASCADE FK is not a sufficient rollback after physical Student deletion;
+* why database rollback and application rollback are separate concerns.
+
+---
+
+# STEP 14 — POST-MIGRATION VERIFICATION PLAN
+
+Create a read-only post-migration verification checklist.
+
+It must verify:
+
+### Student
+
+* `attendance_identity_key` exists;
+* NOT NULL;
+* unique;
+* immutable trigger exists;
+* reservation mechanism exists.
+
+### Attendance
+
+* snapshots exist;
+* snapshots are NOT NULL;
+* `student_id` is nullable;
+* FK uses `ON DELETE SET NULL`;
+* Attendance canonical unique index exists;
+* reassignment trigger exists.
+
+### Data
+
+* Attendance row count before = Attendance row count after;
+* no unexpected Attendance deletion;
+* no unexpected duplicate identities;
+* no cross-school identity assignment;
+* Session associations unchanged.
+
+### Historical behavior
+
+Verify through safe application/read-only checks that:
+
+* deleted Student Attendance remains visible;
+* historical daily summary includes it;
+* live marking does not resurrect it;
+* School A cannot see School B;
+* Session A cannot see Session B.
+
+Do not perform a physical Student deletion in production as part of this verification.
+
+Production verification must be non-destructive.
+
+---
+
+# STEP 15 — PRODUCTION ROLLOUT RUNBOOK
+
+Based on the audit, produce a proposed production rollout sequence.
+
+The runbook must be **planning only**.
+
+Do not execute it.
+
+It should include:
+
+1. backup/snapshot confirmation;
+2. production data preflight;
+3. migration eligibility decision;
+4. migration 014 execution method;
+5. verification;
+6. migration 015 execution method;
+7. verification;
+8. application deployment;
+9. post-deployment read-only validation;
+10. rollback/recovery decision points.
+
+If the current deployment tooling cannot safely execute this sequence, state exactly what tooling/process change is required.
+
+---
+
+# STEP 16 — DO NOT CHANGE PRODUCTION
+
+Again:
+
+**NO PRODUCTION CHANGES ARE AUTHORIZED IN THIS STEP.**
+
+The following must remain zero:
+
+* production migrations executed;
+* production schema modifications;
+* production data modifications;
+* production deletes;
+* production updates;
+* production deployment;
+* production restart.
+
+If any tool unexpectedly requires a write operation, STOP and report it.
+
+---
+
+# STEP 17 — FINAL VERDICT
+
+Use exactly one of these:
+
+### SAFE TO ROLLOUT
+
+Only if the current deployment mechanism and production preflight provide sufficient evidence that 014/015 can be safely and deterministically applied.
+
+### SAFE WITH CONDITIONS
+
+Use this if the migration design is sound but specific production verification/deployment prerequisites remain.
+
+### NOT SAFE TO ROLLOUT
+
+Use this if the current deployment mechanism or migration behavior presents an unresolved risk of data loss, partial schema incompatibility, unordered execution, or inability to recover safely.
+
+Do not call something safe merely because development tests pass.
+
+---
+
+# REQUIRED FINAL REPORT FORMAT
+
+## A. Overall verdict
+
+One of:
+
+**SAFE TO ROLLOUT**
+
+**SAFE WITH CONDITIONS**
+
+**NOT SAFE TO ROLLOUT**
+
+Then explain why.
+
+## B. Deployment mechanism
+
+| Area                             | Finding | Evidence | Status            |
+| -------------------------------- | ------- | -------- | ----------------- |
+| Production migration command     |         |          | PASS/PARTIAL/FAIL |
+| 014 execution                    |         |          |                   |
+| 015 execution                    |         |          |                   |
+| Migration ordering               |         |          |                   |
+| Migration bookkeeping            |         |          |                   |
+| Transaction safety               |         |          |                   |
+| Concurrent deployment protection |         |          |                   |
+| Application deployment order     |         |          |                   |
+| Startup behavior                 |         |          |                   |
+
+## C. Production data preflight
+
+List every required validation.
+
+For each:
+
+* query/check;
+* what constitutes PASS;
+* what constitutes FAIL;
+* whether it was actually executed.
+
+## D. Migration safety
+
+Explain:
+
+* 014;
+* 015;
+* ordering;
+* rollback;
+* failure behavior;
+* populated database behavior.
+
+## E. Application compatibility
+
+State whether:
+
+* old code can safely run after migration;
+* new code requires 014/015;
+* migration must precede application deployment.
+
+## F. Production rollout runbook
+
+Provide the exact proposed sequence, but **do not execute it**.
+
+## G. Post-migration verification
+
+Provide exact read-only checks.
+
+## H. Recovery
+
+Explain:
+
+* backup requirement;
+* application rollback;
+* schema rollback;
+* data recovery;
+* why restoring the old CASCADE FK is not a historical-data recovery mechanism.
+
+## I. Evidence
+
+List:
+
+* files inspected;
+* commands inspected;
+* migration files inspected;
+* tests reviewed;
+* production access status.
+
+## J. Explicit production status
+
+The report must end with:
+
+```text
+PRODUCTION DATABASE TOUCHED: YES/NO
+PRODUCTION MIGRATIONS EXECUTED: YES/NO
+PRODUCTION DATA MODIFIED: YES/NO
+PRODUCTION SCHEMA MODIFIED: YES/NO
+PRODUCTION APPLICATION DEPLOYED: YES/NO
+```
+
+For this audit, all five should be:
+
+```text
+NO
+```
+
+unless an unexpected event occurs. If anything other than NO occurs, stop and report it immediately.
+
+---
+
+# IMPORTANT
+
+Do not proceed to an actual production migration in this step.
+
+Do not proceed to Step 2L-5 merely because this audit passes.
+
+First produce the complete Step 2L-4C audit report.
+
+The next production action, if any, will be decided separately after reviewing this report.

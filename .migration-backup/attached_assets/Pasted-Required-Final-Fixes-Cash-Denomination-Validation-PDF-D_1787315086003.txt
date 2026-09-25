@@ -1,0 +1,270 @@
+Required Final Fixes — Cash Denomination Validation + PDF Downloads
+
+I have found one issue while testing the receipt and I also want to finalize PDF downloading for both invoices and receipts.
+
+1. Fix the Cash Denomination Issue
+
+The current receipt request returns:
+
+«Cash denomination total (₹12,500) does not match the recorded payment amount (₹500).»
+
+This validation is correct and must NOT be removed or bypassed.
+
+The problem is that the existing test/payment record has inconsistent denomination data.
+
+Please investigate the specific cash payment record and determine why:
+
+- Recorded payment amount = ₹500
+- Denomination breakdown total = ₹12,500
+
+The denomination breakdown must represent the actual cash received for that payment.
+
+For this example, if the payment amount is ₹500, the denomination total must also equal exactly ₹500.
+
+For example:
+
+- ₹500 × 1 = ₹500
+
+OR another valid combination whose total is exactly ₹500.
+
+Important financial-integrity rules
+
+Keep the validation permanently:
+
+SUM(denomination × quantity) === recorded payment amount
+
+Allow a tolerance of ₹0.01 for decimal precision.
+
+If the values do not match:
+
+- Do not generate the receipt.
+- Do not silently modify the payment amount.
+- Do not silently modify the denomination records.
+- Return a clear validation error.
+- Allow an authorized admin to correct the denomination record through the appropriate payment-edit/correction flow.
+
+Also verify that this validation works for every cash payment, not only this particular record.
+
+---
+
+2. Invoice Must Be Downloadable as PDF
+
+The invoice already renders correctly in the browser.
+
+Now implement a proper Download PDF function for invoices.
+
+Requirements:
+
+- Invoice must download as a real ".pdf" file.
+- Do not simply rename HTML to ".pdf".
+- PDF must contain the same invoice information currently shown on screen.
+- Preserve:
+  - School logo
+  - School information
+  - Student details
+  - Invoice number
+  - Invoice status
+  - Academic session
+  - Frequency
+  - Fee period
+  - Due date
+  - Fee details
+  - Fee breakdown
+  - Late fee/penalty information
+  - Amount summary
+  - Amount in words
+  - Authorized signature
+  - Footer/disclaimer
+
+Use a reliable server-side PDF generation approach already compatible with the project.
+
+The PDF should be suitable for official school records and printing.
+
+Use A4 paper size for the invoice.
+
+The downloaded filename should be meaningful, for example:
+
+Invoice-INV-0087.pdf
+
+Do not expose internal database IDs in the filename.
+
+---
+
+3. Receipt Must Be Downloadable as PDF
+
+Do the same for both online and offline receipts.
+
+The existing receipt renderer is already finalized. Do not redesign the receipt.
+
+The PDF should use the same finalized receipt renderer/layout.
+
+It must support:
+
+- Online payment receipts
+- Cash receipts
+- Demand Draft receipts
+- Cheque receipts
+- UPI/QR receipts
+- Bank Transfer / NEFT / RTGS / IMPS receipts
+
+The PDF must preserve all information currently displayed in the receipt, including:
+
+- School information
+- Student information
+- Invoice number
+- Receipt number
+- Payment date and time
+- Payment mode
+- Payment status
+- Amount received
+- Amount in words
+- Academic session
+- Fee details
+- Fee breakdown
+- Online transaction details where applicable
+- Payment ID
+- Order ID
+- Razorpay information where applicable
+- Transaction verification
+- Offline payment details where applicable
+- Cash denomination details where applicable
+- Processed By
+- Notes
+- Authorized signature
+- Footer
+
+Use A4 paper size.
+
+Example filenames:
+
+Receipt-ON23.pdf
+Receipt-OF44.pdf
+
+---
+
+4. Download Behaviour
+
+On the Invoice page, provide:
+
+Download PDF
+
+On the Receipt page, provide:
+
+Download PDF
+
+The download must:
+
+1. Generate the PDF.
+2. Set the correct "Content-Type":
+   "application/pdf"
+3. Set:
+   "Content-Disposition: attachment"
+4. Download immediately.
+5. Use the invoice/receipt number in the filename.
+6. Never expose internal database IDs.
+7. Work from Chrome on Android and desktop browsers.
+8. Work for both online and offline receipts.
+
+If the application already has a PDF generation library, reuse it instead of introducing another unnecessary dependency.
+
+---
+
+5. Print Quality
+
+Both PDFs must be professional and suitable for an actual school ERP.
+
+Requirements:
+
+- A4
+- Proper margins
+- No browser address bar/UI
+- No HTML debugging text
+- No clipped sections
+- No horizontal overflow
+- No unnecessary blank pages
+- School logo must render correctly
+- Signature must render correctly
+- Tables must remain aligned
+- Indian Rupee symbol ₹ must render correctly
+- IST dates/times must remain correct
+- Long student names/fee descriptions must wrap properly
+- Receipt/invoice should not be split awkwardly across pages
+
+If content exceeds one page, allow a clean second page rather than cutting content off.
+
+---
+
+6. Security / Privacy
+
+Do not expose confidential staff email addresses in either PDF.
+
+The finalized receipt privacy rules must remain unchanged.
+
+Do not expose:
+
+- Internal user IDs
+- Database IDs
+- Authentication information
+- Staff email addresses
+- Internal API information
+- Razorpay secrets
+- Webhook secrets
+
+Only official receipt/invoice information should be present.
+
+---
+
+7. Final Testing
+
+After implementation, test all of these:
+
+Invoice
+
+- [ ] Open invoice
+- [ ] Download PDF
+- [ ] Open downloaded PDF
+- [ ] Verify invoice number
+- [ ] Verify student details
+- [ ] Verify fee breakdown
+- [ ] Verify amount
+- [ ] Verify signature
+- [ ] Verify A4 layout
+
+Online Receipt
+
+- [ ] Open receipt
+- [ ] Download PDF
+- [ ] Verify Payment ID
+- [ ] Verify Order ID
+- [ ] Verify payment amount
+- [ ] Verify transaction status
+- [ ] Verify timestamps
+- [ ] Verify no staff email appears
+
+Offline Receipt
+
+- [ ] Open receipt
+- [ ] Download PDF
+- [ ] Verify payment method
+- [ ] Verify offline-specific fields
+- [ ] Verify Processed By
+- [ ] Verify no staff email appears
+
+Cash Receipt
+
+- [ ] Test a valid denomination breakdown.
+- [ ] Confirm receipt generates when denomination total equals payment amount.
+- [ ] Test an invalid denomination breakdown.
+- [ ] Confirm receipt generation is blocked with a clear error.
+
+Important
+
+Do NOT make any further visual redesign of the finalized invoice or receipt.
+
+This task is only:
+
+1. Correct the inconsistent cash denomination test data.
+2. Keep denomination validation.
+3. Add proper PDF downloading for invoices.
+4. Add proper PDF downloading for receipts.
+5. Verify both PDF outputs thoroughly.

@@ -1,0 +1,675 @@
+We have already completed the major Student Fee Receipt enhancements.
+
+Before making ANY further changes, I want a final read-only audit of the current implementation.
+
+IMPORTANT RULES
+
+1. DO NOT MODIFY ANY FILE.
+2. DO NOT change database schema.
+3. DO NOT change payment processing.
+4. DO NOT change Razorpay webhook or client verification.
+5. DO NOT change offline payment processing.
+6. DO NOT change invoice generation or fee-period calculation.
+7. DO NOT add QR verification.
+8. DO NOT invent, infer, calculate, or assume missing historical data.
+9. If a required value does not exist or is null, the receipt must display "—".
+10. Use the existing canonical database source for every value.
+11. Do not reconstruct historical values from the current fee structure/configuration.
+12. This is an investigation and verification task only.
+
+---
+
+1. Audit the complete receipt architecture
+
+Inspect the complete flow:
+
+Student Portal
+→ Student Fee
+→ Paid Invoice
+→ Receipt generation
+→ Online payment
+→ Offline payment
+→ Payment records
+→ Receipt HTML
+→ Browser print/PDF
+
+Confirm exactly which database field is the source for every displayed receipt value.
+
+Pay particular attention to:
+
+- "fee_records"
+- "payment_records"
+- "payment_attempts"
+- "students"
+- "schools"
+- "fee_structures"
+- fee-period utilities
+- receipt-generation route
+- student receipt download/open flow
+
+Do not assume anything based on variable names. Trace the actual data flow.
+
+---
+
+2. Verify receipt identity information
+
+Confirm that the receipt correctly displays:
+
+- Official Fee Payment Receipt
+- Receipt Number
+- Invoice Number
+- Invoice Date
+- Due Date
+- Payment Date
+- PAID status
+
+For every field, document:
+
+- exact source table
+- exact source column
+- fallback behavior
+- what happens if the value is null
+
+A missing value must display "—".
+
+---
+
+3. Verify student information
+
+Confirm the receipt displays, where actually available:
+
+- Student Name
+- Admission Number
+- Student ID
+- Roll Number
+- Class
+- Section
+- Parent / Guardian Name
+- Academic Session
+
+If Admission Number does not exist in the current schema, do not create or derive one.
+
+It must display:
+
+"—"
+
+Document this as a genuine data-model gap.
+
+---
+
+4. Verify Fee Period
+
+This is extremely important.
+
+The receipt must use the immutable:
+
+- "fee_period_start"
+- "fee_period_end"
+
+stored on the invoice/fee record.
+
+Verify the following examples:
+
+Monthly
+
+"Fee Period: August 2026"
+
+Quarterly
+
+"Fee Period: April–June 2026"
+
+Annual
+
+"Academic Session: 2026–27"
+
+The receipt must NEVER derive the fee period from:
+
+- payment date
+- invoice creation date
+- current date
+- current fee structure
+- current billing configuration
+
+Example that must remain correct:
+
+Invoice generated:
+October 2026
+
+Fee period:
+August 2026
+
+Paid:
+October 15, 2026
+
+Receipt must still say:
+
+"Fee Period: August 2026"
+
+Verify this explicitly.
+
+---
+
+5. Verify fee table
+
+The current fee table should have:
+
+| Description | Fee Period | Amount |
+
+Verify that:
+
+- Description uses the actual stored fee name/type.
+- It is NOT hardcoded as "Tuition Fee".
+- Monthly/quarterly fee periods show the correct stored period.
+- Annual fees show the academic session where appropriate.
+- Base fee is correct.
+- Late fee appears only when "late_fee_paid > 0".
+- Late fee is displayed separately.
+- Total equals the actual amount collected.
+- Gateway Charges / GST ₹0 row is not displayed when the school does not actually charge it.
+
+Do not invent fee components.
+
+---
+
+6. Verify late-fee immutability
+
+Confirm:
+
+"payment_records.late_fee_paid"
+
+is the canonical frozen late-fee amount.
+
+The receipt must NOT call:
+
+"calculateLateFee()"
+
+or any current late-fee configuration.
+
+Test conceptually:
+
+Invoice:
+
+Base Fee = ₹3,000
+Late Fee paid = ₹60
+
+Later:
+
+School changes late-fee policy.
+
+Receipt must still show:
+
+Base Fee = ₹3,000
+Late Fee = ₹60
+Total = ₹3,060
+
+---
+
+7. Verify online payment receipt
+
+For Razorpay payments, verify that the receipt accurately displays available information:
+
+- Payment Method
+- Razorpay Payment ID
+- Razorpay Order ID
+- Bank RRN
+- UPI VPA where applicable
+- Card network + last 4 digits where applicable
+- Net Banking bank name where applicable
+- Wallet where applicable
+- Payment date/time
+
+Do not display a field merely because the UI expects it.
+
+If the actual database value is missing:
+
+"—"
+
+Verify that the payment method shown is from the correct Razorpay/payment-attempt source.
+
+---
+
+8. Verify offline payment receipt
+
+Verify all four offline methods:
+
+Cash
+
+Should show:
+
+- Payment Method: Cash
+- Received Date
+- Payer Name, if available
+
+Cheque
+
+Should show:
+
+- Payment Method: Cheque
+- Cheque Number / Reference Number
+- Received Date
+- Payer Name
+
+Bank Transfer
+
+Should show:
+
+- Payment Method: Bank Transfer
+- UTR / Transaction Reference
+- Received Date
+- Payer Name
+
+Demand Draft
+
+Should show:
+
+- Payment Method: Demand Draft
+- DD Number
+- Received Date
+- Payer Name
+
+The canonical source for offline reference data should be:
+
+"payment_records.reference_number"
+
+Do NOT derive these values from another field.
+
+---
+
+9. Verify amount in words
+
+Verify that the amount in words always exactly matches the numeric total.
+
+Examples:
+
+₹3,000
+
+"Rupees Three Thousand Only"
+
+₹3,060
+
+"Rupees Three Thousand and Sixty Only"
+
+₹3,560
+
+"Rupees Three Thousand Five Hundred and Sixty Only"
+
+₹1,03,060
+
+"Rupees One Lakh Three Thousand and Sixty Only"
+
+Also test paise.
+
+No mismatch between numeric amount and words is acceptable.
+
+---
+
+10. Verify concession/discount handling
+
+IMPORTANT:
+
+Do NOT implement anything here.
+
+Only audit.
+
+Determine whether the current system has an immutable invoice-time snapshot of:
+
+- Original Fee
+- Concession/Discount
+- Net Fee
+
+If it does NOT, report:
+
+"NOT AVAILABLE — cannot safely display historical concession information."
+
+Do NOT reconstruct concession from the current "fee_structures".
+
+Do NOT add a fake concession amount.
+
+Do NOT change schema during this audit.
+
+---
+
+11. Verify fee component breakdown
+
+Again, audit only.
+
+Determine whether the invoice currently contains an immutable snapshot of fee components such as:
+
+- Tuition
+- Laboratory
+- Library
+- Activity
+- Transport
+- etc.
+
+If the current system only stores components in the live fee structure and does not snapshot them when the invoice is generated:
+
+DO NOT display those components on historical receipts.
+
+Report:
+
+"NOT AVAILABLE — invoice-time component snapshot does not exist."
+
+Do not reconstruct historical components from the current fee structure.
+
+---
+
+12. Verify authorization section
+
+Confirm:
+
+- Authorized Accounts Signatory
+- Signature, if actually configured
+- School name
+- Computer-generated receipt disclaimer
+
+If signature is not configured, do not fabricate one.
+
+Use the existing safe fallback.
+
+---
+
+13. Verify missing-value behavior
+
+This is mandatory.
+
+For EVERY receipt field, verify:
+
+If actual data exists → show actual data.
+
+If actual data is null/missing → show:
+
+"—"
+
+Never:
+
+- "undefined"
+- "null"
+- "NaN"
+- empty misleading labels
+- fabricated values
+- guessed values
+- current configuration values for historical records
+
+---
+
+14. Verify online vs offline source hierarchy
+
+Confirm this architecture:
+
+Online
+
+Use "payment_attempts" for Razorpay-specific enriched information.
+
+Use "payment_records" for canonical payment amount / late fee / payer/reference information where applicable.
+
+Offline
+
+Use "payment_records".
+
+There should be no dependency on "payment_attempts" for Cash/Cheque/Bank Transfer/Demand Draft.
+
+---
+
+15. Verify financial immutability
+
+Audit whether historical receipts can change if the administrator later changes:
+
+- Fee Structure
+- Fee Amount
+- Late Fee Policy
+- Billing Timing
+- Frequency
+- Fee Period configuration
+- Concession configuration
+- School information
+
+Separate the result into:
+
+SAFE
+
+Values already snapshotted and immutable.
+
+NOT SAFE / DATA MODEL GAP
+
+Values that are not historically snapshotted.
+
+Do not modify anything.
+
+---
+
+16. Verify multi-tenant isolation
+
+This is a multi-tenant school SaaS.
+
+Confirm that a receipt for School A cannot accidentally read:
+
+- payment records from School B
+- student information from School B
+- school configuration from School B
+- receipt numbering from School B
+- payment attempts from School B
+
+Verify that queries are properly scoped by:
+
+- school ID / tenant
+- fee record ID
+- student ID where appropriate
+
+Pay special attention to raw SQL queries.
+
+---
+
+17. Verify receipt security
+
+Confirm:
+
+- Student authentication is required.
+- A student cannot access another student's receipt by changing the fee-record ID.
+- School/tenant authorization is enforced.
+- Receipt data cannot cross tenant boundaries.
+
+Do not weaken or modify authorization.
+
+---
+
+18. Verify UI / visual design
+
+Perform a read-only visual review of the actual receipt.
+
+Check:
+
+Desktop
+
+- Clear hierarchy
+- School header
+- Receipt identity
+- Student information
+- Fee period
+- Fee table
+- Payment information
+- Total
+- Amount in words
+- Signature
+- Disclaimer
+
+A4 print
+
+Verify:
+
+- No important content is clipped.
+- No table overflow.
+- No unnecessary blank pages.
+- Receipt fits cleanly on A4 where practical.
+- Print version remains professional.
+
+Mobile
+
+Verify:
+
+- No horizontal overflow.
+- Two-column sections collapse appropriately.
+- Tables remain readable.
+- Long payment IDs do not destroy layout.
+- Long UPI VPA / bank names wrap correctly.
+
+---
+
+19. Check for inappropriate information
+
+Ensure the receipt does NOT expose unnecessary sensitive information.
+
+For example:
+
+- Do not expose full card numbers.
+- Do not expose sensitive authentication information.
+- Only show last four card digits.
+- Do not expose internal database IDs unless intentionally part of the receipt.
+- Do not expose internal debugging information.
+
+---
+
+20. VERY IMPORTANT — Do not show internal data-gap messages
+
+Inspect the current receipt carefully.
+
+If the receipt currently contains any internal message such as:
+
+- "Data gap"
+- "Not available in schema"
+- "Cannot be shown"
+- "Not snapshotted"
+- "Phase 4"
+- "Internal limitation"
+
+DO NOT leave such internal implementation/audit text visible to students or parents.
+
+Report it separately.
+
+The official receipt should simply show "—" where appropriate.
+
+Do not modify it during this audit.
+
+---
+
+21. Test scenarios
+
+At minimum, inspect/verify these scenarios:
+
+A — Online, no late fee
+
+₹3,000
+
+B — Online + late fee
+
+₹3,000 + ₹60 = ₹3,060
+
+C — Offline Cash
+
+₹3,000
+
+D — Offline Cheque
+
+₹3,000 + cheque/reference number
+
+E — Offline Bank Transfer
+
+₹3,000 + UTR
+
+F — Offline Demand Draft
+
+₹3,000 + DD number
+
+G — Monthly
+
+August 2026
+
+H — Quarterly
+
+April–June 2026
+
+I — Annual
+
+2026–27
+
+J — Missing optional fields
+
+Verify every missing value renders as "—".
+
+K — Historical period
+
+An August invoice generated in October must still display:
+
+"August 2026"
+
+L — Multi-tenant
+
+Verify receipt data cannot cross school boundaries.
+
+---
+
+22. Testing
+
+Run the existing test suite.
+
+Do NOT modify existing tests just to make them pass.
+
+If additional tests are needed, DO NOT implement them yet unless they can be created without changing production code.
+
+Report:
+
+- existing test count
+- passing count
+- failing count
+- any relevant warnings
+
+---
+
+23. Final report format
+
+Return a structured audit report with:
+
+A. PASS
+
+Everything that is correct.
+
+B. WARNING
+
+Anything that works but needs attention.
+
+C. DATA MODEL GAP
+
+Information that cannot safely be displayed because it is not historically stored.
+
+D. SECURITY / TENANT RISKS
+
+Any authorization or cross-tenant concerns.
+
+E. UI / PRINT ISSUES
+
+Any visual problems.
+
+F. DO NOT CHANGE
+
+List the systems confirmed untouched.
+
+G. RECOMMENDED NEXT STEP
+
+Only recommend changes that are genuinely necessary.
+
+---
+
+Most important rule
+
+Do not make any code changes during this task.
+
+I want an accurate forensic audit of the receipt exactly as it exists now.
+
+If data does not exist, say so.
+
+If data is null, the receipt should use "—".
+
+Never assume data.
+Never fabricate data.
+Never reconstruct historical financial information from current configuration.
+Never modify anything without my explicit approval after seeing your audit report.

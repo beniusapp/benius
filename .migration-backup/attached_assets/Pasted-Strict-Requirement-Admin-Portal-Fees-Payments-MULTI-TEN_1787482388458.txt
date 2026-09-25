@@ -1,0 +1,65 @@
+Strict Requirement — Admin Portal Fees & Payments
+
+MULTI-TENANT ISOLATION IS MANDATORY: Every school's Fees & Payments data must remain strictly isolated by School/Tenant ID + Academic Session ID. No school must ever see another school's data.
+
+1. Active Academic Session
+
+Suppose the current active session is 2027–2028.
+
+When the admin opens Fees & Payments, these sections must show only 2027–2028 data:
+
+- Financial Analytics
+- Fee Structures / Fee Structure data that is session-specific
+- Ledger & Transactions
+- Reminders
+- Audit Log related to Fees & Payments
+
+All financial records, invoices, payments, receipts, transactions, reminders, analytics, etc. must belong to the correct School/Tenant ID + Academic Session ID.
+
+2. When a New Session Becomes Active
+
+Suppose the admin creates 2028–2029 from School Setup and makes it active.
+
+When the admin then opens Fees & Payments under 2028–2029:
+
+- The session-specific sections must start fresh/empty if no data has been created for 2028–2029.
+- NO data from 2027–2028 may appear, carry forward, mix, or contribute to the new session.
+- Totals, outstanding, transactions, reminders, analytics, audit history, etc. must belong only to 2028–2029.
+
+3. Switching to a Previous Session
+
+If the admin switches back to 2027–2028, they must be able to see the complete historical Fees & Payments data belonging to that session.
+
+Therefore:
+
+2027–2028 → its own data
+2028–2029 → its own data
+
+No data may be lost, overwritten, duplicated, or mixed between sessions.
+
+4. Archived Sessions = READ ONLY
+
+Any previous/archived academic session must be strictly read-only in Fees & Payments.
+
+The admin can view historical data, analytics, invoices, transactions, reminders, audit records, etc., but must not be able to modify financial records belonging to an archived session.
+
+5. ⚠️ VERY IMPORTANT — EXTERNAL PORTAL IS DIFFERENT
+
+EXTERNAL PORTAL MUST NOT BE SESSION-BASED.
+
+External Portal is global school/tenant-level configuration, NOT academic-session data.
+
+Therefore:
+
+- It must NOT reset when a new academic session becomes active.
+- It must NOT become empty after switching sessions.
+- It must NOT be copied or recreated per session.
+- The same External Portal configuration must remain available across all academic sessions for that school.
+- Switching between 2027–2028, 2028–2029, or any other session must never change, clear, reset, or hide External Portal settings.
+
+In short:
+
+«Fees & Payments financial data = School/Tenant ID + Academic Session ID.
+External Portal = School/Tenant ID only (GLOBAL, NOT SESSION-LINKED).»
+
+Implement and verify this strictly. Do not modify unrelated modules or behavior.

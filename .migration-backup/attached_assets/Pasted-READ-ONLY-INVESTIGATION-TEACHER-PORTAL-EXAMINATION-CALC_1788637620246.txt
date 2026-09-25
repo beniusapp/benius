@@ -1,0 +1,511 @@
+READ-ONLY INVESTIGATION — TEACHER PORTAL → EXAMINATION CALCULATION LOGIC
+
+IMPORTANT:
+This is an investigation only.
+
+DO NOT modify any source code.
+DO NOT modify the database.
+DO NOT insert, update, delete, migrate, seed, or backfill any data.
+DO NOT change configuration, dependencies, routes, schema, or UI.
+DO NOT create or apply fixes.
+DO NOT checkout, reset, revert, cherry-pick, or change Git HEAD.
+
+The requested historical target is:
+
+Commit:
+d4b11e6f46a5a87c6b87c267edeb5f17aca7a634
+
+Message:
+Add investigation prompt asset
+
+Current workspace HEAD may be different. If so, inspect the historical commit/tree directly without changing the workspace.
+
+GOAL:
+
+I want to understand EXACTLY how calculations work in:
+
+Teacher Portal → Examination
+
+at commit d4b11e6.
+
+I am NOT asking you to redesign or fix the calculation system yet.
+
+Trace the actual code and report what it currently does.
+
+==================================================
+1. IDENTIFY ALL CALCULATION CODE
+==================================================
+
+Find every calculation-related function, helper, hook, utility, or inline calculation used by:
+
+client/src/pages/teacher-modules/examination.tsx
+
+Also identify any imported calculation helpers used by this page.
+
+Report:
+
+- exact file path
+- function name
+- approximate line range
+- what calls it
+- what it returns
+
+Do not infer functionality that is not supported by the code.
+
+==================================================
+2. INDIVIDUAL MARK CALCULATION
+==================================================
+
+Explain exactly what happens to a single mark.
+
+For example:
+
+Student mark = 70
+Total marks = 100
+
+Determine exactly:
+
+- what is stored
+- whether percentage is stored or calculated
+- percentage formula
+- rounding behavior
+- treatment of zero
+- treatment of null/empty mark
+- treatment of Absent
+- treatment of marks equal to total marks
+- treatment of marks greater than total marks
+- treatment of negative marks
+- treatment of fractional marks
+
+Give the actual formula/code behavior.
+
+==================================================
+3. ABSENT LOGIC
+==================================================
+
+Trace Absent from UI → request → backend → database → calculations.
+
+Explain:
+
+- what the frontend sends
+- what the backend stores
+- whether Absent means marks = 0
+- whether Absent is excluded from averages
+- whether Absent is considered failed
+- whether Absent affects percentage
+- whether Absent affects grade
+- whether Absent affects term results
+- whether Absent affects promotion calculations
+
+Separate facts for each calculation path.
+
+==================================================
+4. PERCENTAGE
+==================================================
+
+Find every place where percentage is calculated.
+
+For each one, report:
+
+- formula
+- input fields
+- rounding method
+- whether absent students are included
+- whether empty/unentered students are included
+- whether the calculation is per-exam, per-term, cumulative, or report-only
+- whether the value is stored or calculated dynamically
+
+IMPORTANT:
+If different parts of the application calculate percentage differently, report each implementation separately.
+
+==================================================
+5. GRADE
+==================================================
+
+Trace the exact grade calculation.
+
+Determine:
+
+- function used
+- thresholds
+- whether thresholds are configurable
+- whether 33% or another fixed value is used
+- whether exam policy affects grade
+- how absent students are handled
+- how missing marks are handled
+- whether grade is stored
+- where grade is displayed
+
+Show the actual grading ranges in plain English.
+
+==================================================
+6. PASS / FAIL
+==================================================
+
+Trace every pass/fail calculation.
+
+Determine:
+
+- exact formula or threshold
+- whether it is fixed or configurable
+- whether it uses marks, percentage, grade, or another result
+- absent behavior
+- missing-mark behavior
+- whether pass/fail is stored or calculated
+- whether different screens use different rules
+
+Do not combine separate implementations if they differ.
+
+==================================================
+7. CLASS AVERAGE
+==================================================
+
+Trace the class-average calculation.
+
+Determine exactly:
+
+- which students are included
+- whether absent students are excluded
+- whether students without entered marks are excluded
+- whether zero marks are included
+- whether average is based on raw marks or percentages
+- formula
+- rounding
+- whether total marks can differ between students
+- where the result is displayed
+
+Use an explicit numerical example if useful.
+
+==================================================
+8. RESULTS TAB / STUDENT RESULTS
+==================================================
+
+Investigate:
+
+computeAllStudentResults()
+
+and every helper it calls.
+
+Explain the complete calculation chain.
+
+Start from individual exam scores and show how the system gets to:
+
+- exam percentage
+- exam contribution/weight
+- term result
+- term percentage
+- cumulative result
+- cumulative percentage
+- grade
+- failed-subject count
+- attendance impact
+- promotion suggestion
+
+For every step, identify:
+
+- source data
+- formula
+- weighting
+- rounding
+- thresholds
+- fallback behavior
+- missing-data behavior
+
+==================================================
+9. EXAM WEIGHTS
+==================================================
+
+Determine exactly how Exam Type affects calculations.
+
+For example:
+
+Unit Test 1
+Unit Test 2
+Mid Term
+Final Exam
+
+Do NOT assume these names or weights.
+
+Find the actual configuration/policy logic.
+
+Report:
+
+- where weights come from
+- whether weights are configurable
+- whether weights differ by class/term
+- exact formula for applying weights
+- whether weights are normalized
+- what happens if weights are missing
+- what happens if weights do not total 100%
+
+==================================================
+10. TERM CALCULATION
+==================================================
+
+Trace how the application determines a term result.
+
+Explain:
+
+- how exams are grouped into terms
+- how exam types map to terms
+- how weighted marks are calculated
+- whether all exams are required
+- handling of missing exams
+- handling of absent exams
+- rounding
+- grade/pass/fail behavior
+- attendance interaction
+
+Identify the exact code.
+
+==================================================
+11. ANNUAL / CUMULATIVE CALCULATION
+==================================================
+
+Determine whether the Examination module calculates:
+
+- annual result
+- cumulative percentage
+- yearly average
+- combined term result
+
+If yes, explain the exact calculation.
+
+Determine whether it uses:
+
+- raw marks
+- percentages
+- weighted term percentages
+- attendance
+- grades
+- other values
+
+Show the formula.
+
+==================================================
+12. ATTENDANCE
+==================================================
+
+Determine exactly whether attendance affects:
+
+- percentage
+- grade
+- term result
+- annual result
+- pass/fail
+- promotion suggestion
+
+If attendance affects results, identify:
+
+- attendance source
+- calculation
+- threshold
+- weighting
+- missing attendance behavior
+
+Do not assume attendance is relevant merely because the Examination page calls an attendance endpoint.
+
+==================================================
+13. PROMOTION CALCULATION
+==================================================
+
+Trace any promotion-related calculation used by Teacher Examination.
+
+Determine:
+
+- whether Examination itself calculates promotion
+- which result values it uses
+- minimum percentage
+- failed-subject threshold
+- attendance threshold
+- any configurable policy
+- how incomplete results are handled
+- what is merely a suggestion versus an authoritative stored promotion decision
+
+Clearly distinguish calculation from actual promotion execution.
+
+==================================================
+14. ROUNDING
+==================================================
+
+Find every rounding operation in the calculation path.
+
+Create a table:
+
+Calculation | Formula | Rounding | Stage
+
+Examples:
+
+- individual percentage
+- class average
+- weighted exam contribution
+- term result
+- cumulative result
+- displayed percentage
+- grade input
+
+If different screens round differently, report that.
+
+==================================================
+15. STORED VS CALCULATED VALUES
+==================================================
+
+Create two clear lists.
+
+STORED:
+
+List every examination-related numeric/result value actually stored in the database.
+
+CALCULATED:
+
+List every numeric/result value calculated dynamically.
+
+Specifically determine whether these are stored:
+
+- marks
+- total marks
+- pass marks
+- percentage
+- grade
+- grade point
+- weighted marks
+- term result
+- annual result
+- average
+- pass/fail
+- promotion result
+
+==================================================
+16. SOURCE-OF-TRUTH ANALYSIS
+==================================================
+
+For each calculation, identify its source of truth.
+
+Use this format:
+
+Calculation:
+Source data:
+Function:
+Formula:
+Stored or calculated:
+Used by:
+Notes:
+
+Pay special attention to whether there are multiple competing calculation systems.
+
+==================================================
+17. CONCRETE NUMERICAL EXAMPLE
+==================================================
+
+Using ONLY the actual formulas found in the code, construct one small hypothetical example.
+
+For example:
+
+Student:
+Unit Test 1 = 70/100
+Unit Test 2 = 80/100
+Mid Term = 60/100
+Final = 75/100
+
+Use the actual exam weights discovered in the code.
+
+Then show step-by-step:
+
+1. individual percentages
+2. weighted exam values
+3. term result
+4. cumulative/annual result if applicable
+5. grade
+6. pass/fail
+7. attendance impact if applicable
+8. promotion suggestion if applicable
+
+Clearly label this as a hypothetical example and do not write anything to the database.
+
+==================================================
+18. IMPORTANT CONTRADICTIONS
+==================================================
+
+Look specifically for contradictions such as:
+
+- one place using 33% while another uses configurable pass marks
+- one place rounding while another does not
+- one place excluding absent students while another includes them
+- one calculation using raw marks while another uses percentages
+- hardcoded grade thresholds versus policy-based grading
+- different term formulas
+- different annual formulas
+- different attendance rules
+
+Report each contradiction separately.
+
+==================================================
+19. SECURITY / DATA-SCOPE NOTE
+==================================================
+
+Do NOT fix security.
+
+However, while tracing calculations, identify whether calculation queries are scoped by:
+
+- schoolId
+- sessionId
+- studentId
+- class
+- section
+
+Only report what the code actually does.
+
+==================================================
+20. FINAL REPORT FORMAT
+==================================================
+
+Return the investigation using exactly these sections:
+
+A. Calculation files/functions
+B. Individual mark calculation
+C. Absent calculation behavior
+D. Percentage
+E. Grade
+F. Pass/fail
+G. Class average
+H. Results calculation
+I. Exam weights
+J. Term calculation
+K. Annual/cumulative calculation
+L. Attendance
+M. Promotion calculation
+N. Rounding rules
+O. Stored vs calculated values
+P. Source of truth
+Q. Numerical example
+R. Contradictions / multiple calculation systems
+S. Data-scope observations
+T. Simple plain-English summary
+
+For every important claim, include:
+
+- exact file path
+- function name
+- line range where possible
+
+IMPORTANT:
+
+Do not modify anything.
+
+Do not propose fixes.
+
+Do not redesign anything.
+
+Do not implement anything.
+
+Do not create migrations.
+
+Do not change the database.
+
+Do not change Git HEAD.
+
+This is ONLY a read-only investigation of the calculation logic at commit:
+
+d4b11e6f46a5a87c6b87c267edeb5f17aca7a634
+
+Stop after producing the report.

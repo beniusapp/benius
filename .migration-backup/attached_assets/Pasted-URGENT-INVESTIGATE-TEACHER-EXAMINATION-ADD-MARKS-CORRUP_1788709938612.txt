@@ -1,0 +1,291 @@
+URGENT — INVESTIGATE TEACHER EXAMINATION ADD MARKS CORRUPTION
+
+The real application is showing a problem in:
+
+Teacher Dashboard → Examination → Add Marks
+
+Current context:
+- Academic Session: 2028–2029 Active
+- Class: 6
+- Section: A
+- Subject: Physics
+- Exam Type: Unit Test 1
+
+The Examination page initially loads correctly.
+
+However, when I proceed with ADDING MARKS, the application/page becomes corrupted and Replit Preview can show:
+
+"Your Start application artifact encountered an error"
+
+This appears to be a real runtime problem.
+
+IMPORTANT:
+INVESTIGATION ONLY.
+
+DO NOT FIX ANYTHING YET.
+
+DO NOT MODIFY CODE.
+DO NOT MODIFY DATABASE.
+DO NOT MODIFY SCHEMA.
+DO NOT CREATE MIGRATIONS.
+DO NOT CHANGE Fix 10A.
+DO NOT CHANGE CALCULATION LOGIC.
+DO NOT REFACTOR.
+
+==================================================
+REPRODUCE THE BUG
+==================================================
+
+Use the existing application and reproduce the problem.
+
+Start from:
+
+Teacher Dashboard
+→ Examination
+→ Add Marks
+
+Use:
+
+Academic Session: 2028–2029
+Class: 6
+Section: A
+Subject: Physics
+Exam Type: Unit Test 1
+
+Then reproduce the exact action sequence that causes the page to become corrupted.
+
+Pay particular attention to:
+
+1. Entering Total Marks.
+2. After Total Marks is entered.
+3. Student roster loading.
+4. Existing marks loading.
+5. Entering a student's mark.
+6. Entering 0.
+7. Marking Absent.
+8. Moving between student inputs.
+9. Clicking Save Marks.
+10. Any automatic recalculation after entering a mark.
+
+If possible, identify the FIRST action that causes the failure.
+
+==================================================
+CHECK BROWSER ERROR
+==================================================
+
+Inspect the browser/client console.
+
+Capture the exact:
+
+- JavaScript error
+- React error
+- component error
+- network error
+- failed request
+- HTTP status
+- stack trace
+
+Do not rely only on the Replit Preview message.
+
+==================================================
+CHECK SERVER
+==================================================
+
+Inspect server logs at the exact moment the problem occurs.
+
+Look for:
+
+- exceptions
+- database errors
+- undefined values
+- invalid session errors
+- 401
+- 403
+- 400
+- 404
+- 409
+- 500
+- serialization errors
+- API response errors
+- React/server mismatch
+- runtime crashes
+
+Capture the complete relevant stack trace.
+
+==================================================
+CHECK NETWORK REQUESTS
+==================================================
+
+Inspect every API request made immediately before and after the failure.
+
+For each relevant request report:
+
+- HTTP method
+- endpoint
+- status code
+- request purpose
+- whether x-view-session-id is present
+- whether the selected session is 2028–2029
+- response/error
+
+Especially inspect:
+
+- student roster request
+- existing marks request
+- score request
+- save/upsert request
+- result/calculation request
+
+==================================================
+CHECK Fix 10A
+==================================================
+
+Verify whether the new Fix 10A session transport/resolver is involved.
+
+Confirm:
+
+selected session
+→ x-view-session-id
+→ server session resolution
+→ authenticated teacher
+→ authenticated school
+→ exact session
+
+Determine whether any error is caused by:
+
+- missing session header
+- malformed session
+- incorrect session resolver
+- wrong request route
+- wrong session parameter
+- changed storage function
+- unexpected NULL
+- wrong data shape
+
+Do NOT change Fix 10A.
+
+==================================================
+CHECK FRONTEND STATE
+==================================================
+
+Inspect:
+
+client/src/pages/teacher-modules/examination.tsx
+
+Determine whether entering Total Marks or entering a student mark causes:
+
+- component crash
+- invalid state
+- undefined student
+- undefined score
+- invalid calculation input
+- infinite render
+- React hook problem
+- query invalidation problem
+- malformed response handling
+- form state corruption
+
+Do not modify the file.
+
+==================================================
+CHECK BACKEND
+==================================================
+
+Inspect the relevant Teacher Examination routes and storage functions.
+
+Determine whether the error happens in:
+
+- roster retrieval
+- existing score retrieval
+- score save
+- score update
+- calculation
+- session validation
+
+Do not modify backend code.
+
+==================================================
+IMPORTANT SCOPE RULE
+==================================================
+
+This investigation is NOT an opportunity to fix other issues.
+
+Do NOT touch:
+
+- Fix 5
+- Fix 7
+- Fix 9
+- Fix 10B
+- Fix 11
+- Fix 13
+- promotion
+- cumulative calculation
+- grading rules
+- pass/fail rules
+- historical placement
+- faculty mapping
+- database/schema
+- migrations
+
+Only investigate the Add Marks corruption.
+
+==================================================
+DATABASE SAFETY
+==================================================
+
+Do not:
+
+- insert test marks
+- update marks
+- delete marks
+- modify students
+- modify sessions
+- modify database records
+
+If testing Save Marks is absolutely necessary to reproduce the issue, STOP before performing a real database mutation and report that limitation.
+
+Prefer reproducing the failure before saving.
+
+==================================================
+FINAL REPORT
+==================================================
+
+Return exactly:
+
+1. EXACT BUG
+2. EXACT REPRODUCTION STEPS
+3. FIRST ACTION THAT TRIGGERS FAILURE
+4. BROWSER/CLIENT ERROR
+5. FAILED API REQUEST
+6. HTTP STATUS
+7. SERVER ERROR / STACK TRACE
+8. ROOT CAUSE
+9. WHETHER Fix 10A IS INVOLVED
+10. WHETHER THE DATABASE IS INVOLVED
+11. FILES RESPONSIBLE
+12. MINIMAL PROPOSED FIX
+13. TEST PLAN FOR THE FIX
+14. DATABASE/SCHEMA IMPACT
+15. SCOPE CHECK
+
+For scope check explicitly state:
+
+Fix 5 changed: NO
+Fix 7 changed: NO
+Fix 9 changed: NO
+Fix 10A changed: NO
+Promotion changed: NO
+Grading changed: NO
+Database changed: NO
+Schema changed: NO
+Migration created: NO
+
+IMPORTANT:
+
+DO NOT IMPLEMENT THE PROPOSED FIX.
+
+This is investigation only.
+
+End with:
+
+NO CODE CHANGES MADE.

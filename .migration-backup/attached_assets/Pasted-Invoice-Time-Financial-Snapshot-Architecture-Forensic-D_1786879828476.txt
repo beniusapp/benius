@@ -1,0 +1,774 @@
+Invoice-Time Financial Snapshot — Architecture & Forensic Design Audit
+
+We have completed the Student Fee Receipt enhancements and the read-only forensic audit.
+
+The current system correctly does NOT display historical fee-component breakdowns or concession/discount information, because those values are not currently snapshotted at invoice creation.
+
+I now want to design the correct architecture for this capability.
+
+VERY IMPORTANT
+
+THIS IS A DESIGN / FORENSIC AUDIT ONLY.
+
+DO NOT MODIFY ANYTHING.
+
+Do NOT:
+
+- modify any file
+- modify database schema
+- create migrations
+- modify invoice generation
+- modify payment processing
+- modify Razorpay
+- modify webhooks
+- modify offline payments
+- modify receipt generation
+- modify fee-period calculation
+- modify late-fee calculation
+- modify existing tests
+- add new production code
+- add QR verification
+
+Do not implement anything yet.
+
+I will review and approve the architecture before any code or schema changes are made.
+
+---
+
+1. OBJECTIVE
+
+Design a robust Invoice-Time Financial Snapshot architecture.
+
+The goal is that once an invoice is generated, its historical financial meaning is frozen.
+
+For example, if an invoice was generated in August 2026 with:
+
+Original Fee
+
+₹3,500
+
+Concession
+
+₹500
+
+Net Fee
+
+₹3,000
+
+Components
+
+- Tuition — ₹2,200
+- Laboratory — ₹300
+- Library — ₹500
+
+and the administrator changes the fee structure in September:
+
+- Tuition → ₹2,500
+- Laboratory → ₹300
+- Library → ₹200
+- Concession → different value
+
+the original August invoice and future receipt MUST continue to represent:
+
+- Original Fee: ₹3,500
+- Concession: ₹500
+- Net Fee: ₹3,000
+- Tuition: ₹2,200
+- Laboratory: ₹300
+- Library: ₹500
+
+The receipt must NEVER reconstruct these historical values from the current fee structure.
+
+---
+
+2. FIRST — FORENSICALLY TRACE THE CURRENT ARCHITECTURE
+
+Before proposing anything, inspect the actual code.
+
+Trace every invoice creation path.
+
+The previous audit identified these five areas:
+
+1. Automatic invoice generation
+   
+   - "server/index.ts"
+
+2. Generate-invoices bulk path A
+   
+   - "server/fees-routes.ts"
+
+3. Generate-invoices bulk path B
+   
+   - "server/fees-routes.ts"
+
+4. Offline payment auto-create invoice path
+   
+   - "server/fees-routes.ts"
+
+5. Admin single-invoice creation
+   
+   - "server/routes.ts"
+
+Do NOT assume these are still the only paths.
+
+Search the entire repository and identify every actual place where a "fee_records" invoice can be created.
+
+Report:
+
+Creation Path| File| Function/Route| Current Fields Written| Fee Structure Source| Concession Source| Breakdown Source
+
+---
+
+3. TRACE THE CURRENT FEE CALCULATION
+
+Determine exactly how the current system calculates:
+
+- base fee
+- concession
+- discount
+- final/net fee
+- late fee
+- fee components
+
+Trace the actual functions and data flow.
+
+Do NOT rely on variable names.
+
+Determine whether:
+
+"fee_structures.amount"
+
+is:
+
+- original fee
+- net fee
+- fee before concession
+- fee after concession
+
+Also determine exactly how:
+
+- "concessionPercent"
+- "concessionType"
+- "breakdown"
+- "amount"
+
+interact.
+
+---
+
+4. DESIGN THE HISTORICAL FINANCIAL SNAPSHOT
+
+Propose the minimum safe schema required to freeze historical invoice information.
+
+At minimum, evaluate whether "fee_records" should contain:
+
+Original fee
+
+original_amount
+
+Concession
+
+concession_amount
+concession_type
+concession_percent
+
+Snapshot of components
+
+breakdown_snapshot
+
+Do not automatically assume these exact names.
+
+Recommend the best names based on the existing schema conventions.
+
+Explain:
+
+- data type
+- nullability
+- default
+- JSON structure if applicable
+- migration behavior
+- backward compatibility
+
+---
+
+5. COMPONENT SNAPSHOT STRUCTURE
+
+Evaluate the best structure for:
+
+breakdown_snapshot
+
+Current live structure:
+
+Array<{
+  name: string;
+  purpose: string;
+  amount: number;
+}>
+
+Determine whether the snapshot should preserve exactly this structure or include additional information.
+
+For example:
+
+{
+  name,
+  purpose,
+  amount
+}
+
+or whether it should include:
+
+{
+  name,
+  purpose,
+  amount,
+  category,
+  ...
+}
+
+Do NOT add unnecessary fields.
+
+The snapshot should represent exactly what the invoice was generated from.
+
+---
+
+6. CONCESSION SNAPSHOT
+
+Design how the invoice should permanently preserve:
+
+Original Fee
+
+Concession Type
+
+Concession Percentage
+
+Concession Amount
+
+Net Fee
+
+Determine which values must be stored and which can safely be derived.
+
+Important:
+
+After invoice creation, the receipt should NEVER need to consult the current:
+
+fee_structures.concessionPercent
+fee_structures.concessionType
+fee_structures.amount
+
+to understand historical pricing.
+
+---
+
+7. FINANCIAL INVARIANTS
+
+Define the invariants that must always hold.
+
+For example:
+
+Original Fee - Concession = Net Fee
+
+and:
+
+SUM(component.amount) = Net Fee
+
+But do not blindly assume the second rule is always valid.
+
+Investigate the existing fee structure architecture first.
+
+Some structures may contain components that are informational or may not exactly equal the invoice amount.
+
+Determine the correct invariant based on the actual application.
+
+Report:
+
+MUST HOLD
+
+MAY HOLD
+
+MUST NOT BE ASSUMED
+
+---
+
+8. INVOICE CREATION ATOMICITY
+
+Determine how the snapshot should be written.
+
+The following must happen as one logical invoice-generation operation:
+
+Calculate fee
+↓
+Calculate concession
+↓
+Determine net amount
+↓
+Capture fee components
+↓
+Create fee_records
+↓
+Store immutable snapshot
+
+Evaluate whether the existing transaction mechanism guarantees this.
+
+If not, explain what must be changed later.
+
+Do NOT implement it now.
+
+---
+
+9. ALL INVOICE CREATION PATHS MUST BE COVERED
+
+Create a matrix showing whether the proposed snapshot will be applied to every invoice creation path.
+
+Example:
+
+Path| Original Amount| Concession| Components| Snapshot
+Auto Cron| ✅| ✅| ✅| Required
+Bulk Generate A| ✅| ✅| ✅| Required
+Bulk Generate B| ✅| ✅| ✅| Required
+Offline Auto Create| ✅| ✅| ✅| Required
+Admin Single Invoice| ✅| ✅| ✅| Required
+
+If any path behaves differently, explain why.
+
+There must be no path that creates a historical invoice without the snapshot, unless explicitly documented for legacy/pre-migration records.
+
+---
+
+10. LEGACY INVOICES
+
+This is extremely important.
+
+Existing invoices were created before the snapshot feature exists.
+
+Determine how they should behave.
+
+Recommended principle:
+
+If an old invoice has:
+
+breakdown_snapshot = []
+
+or null:
+
+DO NOT reconstruct it from the current fee structure.
+
+Likewise, if:
+
+original_amount
+concession_amount
+
+are unavailable:
+
+DO NOT attempt to calculate them retrospectively.
+
+The receipt should simply omit the breakdown/concession section or show "—" according to the final approved design.
+
+Explain the safest backward-compatible strategy.
+
+---
+
+11. RECEIPT ARCHITECTURE
+
+Design how the future receipt should consume the snapshot.
+
+The receipt should follow this hierarchy:
+
+Historical invoice snapshot
+        ↓
+fee_records snapshot fields
+        ↓
+receipt
+
+NOT:
+
+receipt
+   ↓
+current fee_structures
+
+The receipt must remain historically accurate even if administrators later change:
+
+- fee amount
+- fee components
+- concession
+- concession percentage
+- billing configuration
+- frequency
+- fee structure
+
+---
+
+12. FUTURE RECEIPT DESIGN
+
+Propose the final fee section.
+
+For example:
+
+Fee Breakdown
+
+Description| Fee Period| Amount
+Tuition| August 2026| ₹2,200
+Laboratory| August 2026| ₹300
+Library| August 2026| ₹500
+Base Fee| | ₹3,000
+Concession| | −₹500
+Net Fee| | ₹3,000
+Late Fee| August 2026| ₹60
+Total Paid| | ₹3,060
+
+But do NOT blindly implement this design.
+
+First determine whether it correctly matches the existing financial model.
+
+Pay particular attention to whether:
+
+- "fee_records.amount" is already net
+- components represent gross or net values
+- concession is applied before or after component calculation
+- late fee is outside the base fee
+- any component can have independent concession
+- transport/activity/etc. behave differently
+
+---
+
+13. MULTIPLE FEE TYPES
+
+Investigate whether one invoice can ever represent:
+
+- Tuition
+- Transport
+- Activity
+- Library
+- Laboratory
+- etc.
+
+or whether these are always separate "fee_records".
+
+Do not assume.
+
+Explain how the snapshot should work for:
+
+One fee type
+
+and
+
+Multiple fee types
+
+if the architecture supports them.
+
+---
+
+14. HISTORICAL IMMUTABILITY TEST DESIGN
+
+Design tests for this scenario:
+
+At invoice generation
+
+Original Fee = ₹3,500
+Concession = ₹500
+Net Fee = ₹3,000
+
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+
+Later administrator changes structure
+
+Original Fee = ₹4,000
+Concession = ₹200
+
+Tuition = ₹2,500
+Laboratory = ₹300
+Library = ₹1,200
+
+Expected historical receipt
+
+Must still show:
+
+Original Fee = ₹3,500
+Concession = ₹500
+Net Fee = ₹3,000
+
+Tuition = ₹2,200
+Laboratory = ₹300
+Library = ₹500
+
+Create additional scenarios for:
+
+- monthly invoice
+- quarterly invoice
+- annual invoice
+- no concession
+- 0% concession
+- percentage concession
+- fixed concession
+- no component breakdown
+- late fee
+- online payment
+- offline payment
+- legacy invoice
+
+---
+
+15. MULTI-TENANT SAFETY
+
+The snapshot must remain scoped to the invoice's:
+
+schoolId
+studentId
+feeRecordId
+sessionId
+
+Determine whether any new queries required by this architecture could create a cross-tenant risk.
+
+Do not weaken current authorization.
+
+---
+
+16. PERFORMANCE
+
+Evaluate:
+
+- JSONB snapshot size
+- impact on "fee_records"
+- invoice generation performance
+- receipt generation performance
+- indexing requirements
+- whether the snapshot should be queried directly or loaded with the invoice
+
+Do not over-engineer.
+
+Recommend the simplest architecture that is reliable for a multi-tenant school SaaS.
+
+---
+
+17. DATA MIGRATION
+
+Design the migration strategy but DO NOT execute it.
+
+Explain:
+
+Existing invoices
+
+What values should they receive?
+
+New invoices
+
+When does snapshotting begin?
+
+Partially migrated environment
+
+How does the receipt behave?
+
+Rollback
+
+What happens if deployment needs to be rolled back?
+
+No historical values should ever be fabricated.
+
+---
+
+18. ADMIN TRANSACTION DETAIL
+
+The previous audit found this issue:
+
+The admin transaction-detail endpoint attempts to read:
+
+feeRow.breakdown
+
+even though "fee_records" currently has no breakdown column.
+
+Evaluate how this endpoint should behave after the future snapshot architecture is implemented.
+
+Do not modify it now.
+
+---
+
+19. DATA VALIDATION
+
+Determine what validation should happen at invoice generation.
+
+At minimum investigate:
+
+- negative component amounts
+- negative concession
+- concession greater than original fee
+- component totals inconsistent with invoice amount
+- missing component names
+- duplicate component names
+- invalid JSON
+- NaN / Infinity
+- rounding issues
+- zero-value components
+
+Do not implement validation yet.
+
+Recommend which validations should:
+
+- block invoice generation
+- warn only
+- normalize automatically
+
+---
+
+20. IMPORTANT — NO RECONSTRUCTION
+
+The future architecture must NEVER do this:
+
+Old Invoice
+↓
+Current Fee Structure
+↓
+Guess historical breakdown
+
+or:
+
+Old Invoice
+↓
+Current concession %
+↓
+Calculate historical concession
+
+These are prohibited.
+
+Historical receipts must use only values that were actually frozen when the invoice was created.
+
+---
+
+21. SCHOOL INFORMATION SNAPSHOT
+
+Also evaluate the previous audit finding:
+
+Current receipts read school information live.
+
+Investigate whether financial/legal information such as:
+
+- School Name
+- GSTIN
+- PAN
+- Registration Number
+- Address
+
+should also be snapshotted on the invoice/receipt.
+
+Do NOT implement this.
+
+Simply provide a recommendation and explain the risks of live versus snapshot data.
+
+---
+
+22. FINAL REPORT
+
+Return a detailed architecture report with exactly these sections:
+
+A. CURRENT ARCHITECTURE
+
+What exists today.
+
+B. CURRENT DATA FLOW
+
+Fee Structure → Calculation → Invoice → Payment → Receipt.
+
+C. DATA MODEL GAPS
+
+What is currently not historically stored.
+
+D. RECOMMENDED SNAPSHOT MODEL
+
+Recommended fields, types, and structures.
+
+E. CONCESSION SNAPSHOT DESIGN
+
+Exactly how original fee, concession, and net fee should be preserved.
+
+F. COMPONENT SNAPSHOT DESIGN
+
+Exactly how fee components should be frozen.
+
+G. ALL INVOICE CREATION PATHS
+
+Every path that must be updated later.
+
+H. LEGACY INVOICE STRATEGY
+
+How old invoices behave safely.
+
+I. RECEIPT DESIGN
+
+How the receipt should consume the snapshot.
+
+J. FINANCIAL INVARIANTS
+
+What must always be true.
+
+K. VALIDATION RULES
+
+What should block versus warn.
+
+L. MULTI-TENANT / SECURITY
+
+Any risks or required protections.
+
+M. MIGRATION / ROLLBACK STRATEGY
+
+Safe deployment approach.
+
+N. TEST PLAN
+
+Complete test scenarios.
+
+O. SCHOOL INFORMATION SNAPSHOT
+
+Recommendation regarding historical school/legal information.
+
+P. IMPLEMENTATION PLAN
+
+Give the implementation in ordered phases.
+
+Example:
+
+Phase 1 — Schema
+Phase 2 — Snapshot calculation
+Phase 3 — All invoice creation paths
+Phase 4 — Receipt
+Phase 5 — Admin transaction detail
+Phase 6 — Tests
+Phase 7 — Migration verification
+
+Q. FILES THAT WOULD NEED TO CHANGE
+
+List exact files and why.
+
+R. FILES THAT MUST NOT CHANGE
+
+List payment/Razorpay systems that should remain untouched.
+
+S. FINAL RECOMMENDATION
+
+Tell me whether the proposed architecture is:
+
+- SAFE
+- SAFE WITH CONDITIONS
+- NOT SAFE
+
+and explain why.
+
+---
+
+FINAL RULE
+
+This is an architecture and forensic design review only.
+
+ZERO CODE CHANGES.
+
+Do not:
+
+- modify files
+- modify schema
+- create migrations
+- change production code
+- change tests
+- restart services unnecessarily
+
+First give me the complete architecture report.
+
+I will review and explicitly approve the design before asking you to implement it.

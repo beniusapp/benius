@@ -1,0 +1,45 @@
+Refactor the /admin-dashboard/timetable-master, /teacher-dashboard/calendar, and /student/calendar into a unified, high-performance Centennial School Event Engine designed for lifetime scalability and elite user interaction.
+
+1. THE 100-YEAR DYNAMIC CALENDAR ENGINE:
+
+Architecture: Integrate FullCalendar or Day.js logic to generate a dynamic calendar capable of navigating through the next 100 years (2026–2126).
+
+Pre-Load Intelligence: Implement a background function to automatically calculate and populate recurring Indian Gazetted Holidays (Republic Day, Independence Day, Gandhi Jayanti, etc.) and major variable holidays (Durga Puja, Eid, Diwali) for the upcoming decades using a holiday API or custom logic.
+
+Centennial Navigation: Add a professional 'Quick-Jump' year/month selector to the header for instant navigation across the century.
+
+2. ADMIN MASTER CONSOLE & RECURRING LOGIC:
+
+Click-to-Create: Clicking a date opens a Modal to add an event.
+
+Fields: Title, Description, Type (Holiday/Event/Exam), and Date Range.
+
+Advanced Frequency: Allow the Admin to set an event as 'One-time' or 'Recurring Annually' (e.g., School Foundation Day appearing every year automatically).
+
+Database Sync: Update the school_calendar table (Columns: id, school_id, title, date, type, desc, color_code, is_recurring).
+
+3. ELITE INTERACTIVE EXPERIENCE (Teacher & Student):
+
+Read-Only Mirrors: Refactor /student/calendar and /teacher-dashboard/calendar as interactive, read-only portals.
+
+Desktop 'Smart Pop-overs': On hover, use Framer Motion to trigger a glassmorphic tooltip showing the Event Title, Category Badge, and Description.
+
+Mobile 'Tap-to-Peek': On the Motorola G60 Fusion, a single tap on a date must open an elegant Bottom Sheet (Drawer) showing the full event details.
+
+4. VISUAL & MODERN UI/UX:
+
+Theme: Deep Navy/Slate background with Glassmorphism for calendar cards.
+
+Branding: Use Benius Emerald Green (#10b981) for the current date highlight (a glowing halo effect).
+
+Visual Legend: Include a clean 'Color Key' (e.g., 🔴 Holiday, 🟢 School Event, 🔵 Academic/Exam) at the top-right of the UI.
+
+Responsive Design: The calendar must automatically switch to an 'Agenda List View' on mobile for high readability.
+
+5. TECHNICAL ARCHITECTURE & LIVE SYNC:
+
+Real-Time Sync: Use React Query or SWR. Ensure that as soon as the Admin saves a change in the panel, the Student/Teacher views update automatically without a page refresh.
+
+Multi-Tenancy: Strictly enforce WHERE school_id = ? for all queries and indexing on event_date to ensure lightning-fast performance even with 100 years of data.
+
+Refresh Logic: Include a 'Sync Now' icon on portals to manually trigger a fresh data fetch.

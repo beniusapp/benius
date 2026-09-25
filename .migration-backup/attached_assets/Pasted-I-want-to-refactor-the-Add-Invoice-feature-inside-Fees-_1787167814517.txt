@@ -1,0 +1,576 @@
+I want to refactor the Add Invoice feature inside Fees & Payments → Ledger & Transactions.
+
+IMPORTANT — DO NOT CHANGE ANYTHING ELSE
+
+Make this change very carefully.
+
+- Do NOT modify the existing Fee Structure module.
+- Do NOT modify the existing Generate Invoices bulk-generation workflow.
+- Do NOT modify payment logic.
+- Do NOT modify Ledger & Transactions layout except for the Add Invoice workflow.
+- Do NOT modify invoice numbering logic.
+- Do NOT modify receipt/payment logic.
+- Do NOT modify historical data.
+- Do NOT create a new invoice architecture.
+- Do NOT remove or change existing database fields unless absolutely required.
+- Reuse the existing invoice-generation/business logic wherever possible.
+- The existing Fee Structure logic is the reference implementation.
+
+The only thing being refactored is Add Invoice.
+
+---
+
+1. Add Invoice — Overall Flow
+
+When the admin clicks:
+
+Ledger & Transactions → Add Invoice
+
+open the Add Invoice modal.
+
+The workflow must be:
+
+Step 1 → Search Student
+
+Admin should see:
+
+Student
+
+A search field:
+
+«Search by student name or Student ID...»
+
+and a Search button.
+
+The admin can search using either:
+
+- Student Name
+- Student DSID / Student ID
+
+Do NOT show:
+
+- All Classes
+- Class dropdown/filter
+- Applicable Classes
+- Bulk student selection
+
+This Add Invoice flow is strictly for ONE selected student.
+
+---
+
+2. Select Student
+
+After searching, show the matching student(s).
+
+Each result should clearly show:
+
+- Student Name
+- Student DSID / Student ID
+- Class
+- Section
+
+Admin selects exactly one student.
+
+Once selected, show the selected student at the top of the form.
+
+The admin must not be able to create an invoice without selecting one student.
+
+---
+
+3. Fee Name
+
+After selecting the student, show:
+
+Fee Name
+
+This must be a manual text input.
+
+The admin will type the fee name manually.
+
+Example:
+
+«Admission Fee»
+
+or
+
+«Monthly Tuition Fee»
+
+or
+
+«Laboratory Fee»
+
+Do NOT make Fee Name a dropdown.
+
+Do NOT force the admin to select an existing Fee Structure.
+
+---
+
+4. Fee Type
+
+Beside Fee Name, show:
+
+Fee Type
+
+This must also be a manual text input.
+
+The admin can type the fee type manually.
+
+Examples:
+
+«Tuition»
+
+«Transport»
+
+«Admission»
+
+«Laboratory»
+
+«Sports»
+
+Do NOT make this a dropdown unless the existing application architecture absolutely requires it.
+
+---
+
+5. Amount
+
+Below Fee Name/Fee Type, show:
+
+Amount (₹)
+
+This must be a manual numeric input.
+
+Example:
+
+₹35,000
+
+The admin should be able to enter the invoice amount directly.
+
+Use the existing amount validation used by the application.
+
+---
+
+6. Frequency
+
+Beside Amount, show:
+
+Frequency
+
+Use the same Frequency control and logic that already exists in Fee Structure.
+
+For example:
+
+- One Time
+- Monthly
+- Quarterly
+- Half-Yearly
+- Annual
+
+Use the application's existing supported frequency values.
+
+Do NOT create a second/different frequency system.
+
+---
+
+7. Fee Period
+
+The Fee Period must behave according to the selected Frequency.
+
+This is very important.
+
+Use the same Fee Period logic that already exists in Fee Structure / Generate Invoices.
+
+For example:
+
+Monthly
+
+Start → Month
+End → Month
+
+Quarterly
+
+Start → Quarter/period
+End → Quarter/period
+
+Annual
+
+Use the appropriate annual period.
+
+The exact available periods, validation, date calculation and calendar rules must be reused from the existing implementation.
+
+Do NOT invent a new period calculation.
+
+---
+
+8. Due Date
+
+Show:
+
+Due Date
+
+Use the same Due Date logic as Fee Structure.
+
+The due date should be calculated/selected according to the existing application rules.
+
+Do not create a separate due-date implementation.
+
+If Fee Structure already has validation for due dates, reuse that validation.
+
+---
+
+9. Late Fee & Penalty
+
+This section must be the same as Fee Structure.
+
+I want the Add Invoice Late Fee & Penalty section to behave and look the same as the existing Fee Structure implementation.
+
+It should support the same:
+
+- Enable/Disable toggle
+- Rule Type
+- Flat One-Time Penalty
+- Daily penalty, if supported
+- Tiered penalty/slab rules, if supported
+- Penalty amount
+- Any other existing penalty configuration
+- Existing validation
+- Existing calculation logic
+
+Do NOT create a simplified version.
+
+Do NOT create a new penalty calculation.
+
+Reuse the exact existing Fee Structure late-fee/penalty logic and components wherever possible.
+
+---
+
+10. Fee Breakdown / Components
+
+If the existing Fee Structure supports:
+
+Fee Breakdown / Components
+
+then Add Invoice should use the same component logic.
+
+The admin should be able to:
+
+- Add Component
+- Enter Component Name
+- Enter Description/Purpose
+- Enter Amount
+- Remove Component
+- See Components Total
+- Validate that component total matches the invoice amount
+
+Use the same UI/logic/validation already implemented in Fee Structure.
+
+Do NOT create a separate component architecture.
+
+If the existing Fee Structure has this functionality, reuse the same implementation.
+
+---
+
+11. Create Invoice
+
+At the bottom:
+
+Cancel
+
+and
+
+Create Invoice
+
+Create Invoice should only become active when all required information is valid.
+
+Before creating:
+
+- A student must be selected.
+- Fee Name must be provided.
+- Fee Type must be provided.
+- Amount must be valid.
+- Frequency must be valid.
+- Fee Period must be valid according to Frequency.
+- Due Date must be valid.
+- Late-fee configuration must pass the same validation as Fee Structure.
+- Component total must pass the same validation as Fee Structure, if components are used.
+
+---
+
+12. MOST IMPORTANT — Invoice Creation Logic
+
+The UI is different, but the underlying invoice creation logic must remain consistent with the existing system.
+
+The final invoice created by Add Invoice must use the same existing invoice architecture for:
+
+- Invoice number generation
+- Academic session
+- Student association
+- Fee period
+- Frequency
+- Due date
+- Amount
+- Fee information
+- Fee components/breakdown
+- Late fee configuration
+- Invoice status
+- Duplicate prevention
+- Tenant/school isolation
+- Database persistence
+- Audit information
+- Any existing invoice snapshot logic
+
+Do NOT create a second invoice-generation system.
+
+The key difference is ONLY:
+
+Generate Invoices = generates invoices for multiple applicable students/classes according to the existing bulk rules.
+
+Add Invoice = generates an invoice for ONE manually selected student.
+
+Everything else should follow the same underlying invoice architecture and rules.
+
+---
+
+13. Important Difference From Fee Structure
+
+Do NOT misunderstand this requirement.
+
+I am NOT asking Add Invoice to select an existing Fee Structure.
+
+Instead:
+
+The admin manually enters:
+
+Fee Name + Fee Type + Amount
+
+Then chooses:
+
+Frequency + Fee Period + Due Date
+
+Then configures:
+
+Late Fee & Penalty
+
+Then optionally configures:
+
+Fee Breakdown / Components
+
+Then creates an invoice for the one selected student.
+
+So the Add Invoice form is essentially the Fee Structure-style invoice creation experience, but it is directly creating an invoice for one selected student.
+
+---
+
+14. UI Layout
+
+Follow the existing Fee Structure modal's visual design as much as possible.
+
+Recommended order:
+
+Add Invoice
+
+Student
+
+- Search by Student Name or Student ID
+- Search
+- Select one student
+
+Fee Information
+
+- Fee Name | Fee Type
+- Amount | Frequency
+
+Fee Period
+
+- Start
+- End
+
+Due Date
+
+Late Fee & Penalty
+
+- Same as Fee Structure
+
+Fee Breakdown / Components
+
+- Same as Fee Structure, if applicable
+
+Bottom:
+
+Cancel | Create Invoice
+
+Keep the modal clean, consistent and responsive.
+
+---
+
+15. Remove These From Add Invoice
+
+The new Add Invoice form must NOT contain:
+
+- All Classes
+- Applicable Classes
+- Class selection
+- Bulk student selection
+- Fee Name dropdown
+- Fee Type dropdown
+- Existing Fee Structure selection
+
+Fee Name and Fee Type are manually entered.
+
+Only one student can be selected.
+
+---
+
+16. Reuse Existing Code
+
+Before making changes, inspect the current implementation of:
+
+1. Fee Structure creation/editing
+2. Fee Structure validation
+3. Frequency handling
+4. Fee Period calculation
+5. Due Date calculation
+6. Late Fee & Penalty
+7. Fee Components
+8. Generate Invoices
+9. Invoice numbering
+10. Invoice database creation
+11. Duplicate invoice prevention
+12. Academic session handling
+
+Then reuse the existing functions/services/components wherever possible.
+
+Do not duplicate business logic if an existing function can be reused.
+
+If a shared function needs to be extracted, extract it carefully and make both existing and new flows use the same function.
+
+---
+
+17. Do NOT Break Existing Generate Invoices
+
+This is critical.
+
+The existing:
+
+Generate Invoices
+
+button/workflow must continue working exactly as it works today.
+
+Do not change:
+
+- Which students are selected
+- Applicable classes
+- Bulk generation
+- Existing fee structures
+- Existing invoice generation rules
+- Existing duplicate checks
+
+The only addition is that Add Invoice will call the same underlying invoice creation rules for one manually selected student.
+
+---
+
+18. Do NOT Change Existing Data
+
+Do not delete or modify existing invoices.
+
+Do not modify historical payment records.
+
+Do not modify receipts.
+
+Do not modify existing paid/due/overdue records.
+
+Do not run destructive migrations.
+
+Do not reset the database.
+
+Only modify the Add Invoice code/UI and shared code where absolutely necessary.
+
+---
+
+19. Testing Requirements
+
+After implementation, verify:
+
+Student
+
+- Search by student name works.
+- Search by DSID/Student ID works.
+- One student can be selected.
+- Multiple students cannot be selected.
+
+Fee
+
+- Manual Fee Name works.
+- Manual Fee Type works.
+- Manual Amount works.
+- Frequency works.
+
+Period
+
+Test each supported frequency and confirm the Fee Period behaves exactly like Fee Structure.
+
+Due Date
+
+Confirm Due Date follows the same existing logic.
+
+Late Fee
+
+Test:
+
+- Disabled
+- Flat penalty
+- Daily penalty, if supported
+- Tiered penalty, if supported
+
+Components
+
+Test:
+
+- Add component
+- Edit component
+- Remove component
+- Total calculation
+- Amount mismatch validation
+
+Invoice
+
+After clicking Create Invoice:
+
+- Exactly one invoice is created.
+- It belongs to the selected student.
+- Correct invoice number is generated.
+- Correct amount is stored.
+- Correct fee name/type is stored.
+- Correct frequency is stored.
+- Correct fee period is stored.
+- Correct due date is stored.
+- Correct academic session is stored.
+- Correct late-fee configuration is stored.
+- Correct component snapshot is stored.
+- Existing duplicate-prevention logic still works.
+- Existing Ledger & Transactions displays the invoice correctly.
+
+---
+
+20. Final Safety Requirement
+
+Before editing anything, inspect the current code and identify exactly which components/services are responsible for:
+
+Fee Structure → Generate Invoice → Invoice Creation
+
+Then make the smallest possible change.
+
+Do not rewrite the entire Fees & Payments module.
+
+Do not change unrelated UI.
+
+Do not change payment functionality.
+
+Do not change Ledger functionality.
+
+Do not change existing Generate Invoices behavior.
+
+The final result should be:
+
+«Add Invoice = Fee Structure-style invoice configuration + ONE manually selected student + existing invoice creation architecture.»
+
+That is the exact requirement.

@@ -1,0 +1,473 @@
+We are continuing the Timetable Academic Session migration.
+
+## CURRENT STATUS
+
+Completed and PASS:
+
+* Stage 1 — Database + Storage
+* Stage 2 — API/Server
+* Stage 3A — Admin Timetable UI
+* Stage 3B — Teacher Timetable UI
+
+Stage 3C Student Timetable UI audit is complete.
+
+Audit verdict:
+
+`TIMETABLE STAGE 3C — STUDENT UI AUDIT — READY FOR FIX`
+
+Now implement ONLY the Student Timetable UI fixes identified by that audit.
+
+# TIMETABLE STAGE 3C — STUDENT UI FIX
+
+## SCOPE — VERY IMPORTANT
+
+This is a narrow Student Timetable UI fix.
+
+Allowed files:
+
+* `client/src/pages/student-timetable.tsx`
+* `client/src/contexts/student-session-provider.tsx`
+* `client/src/pages/student-dashboard.tsx` ONLY if strictly required
+* existing client session/query transport helper ONLY if strictly required
+* focused Student Timetable tests
+
+Do NOT change:
+
+* database
+* schema
+* migrations
+* Storage
+* server/API routes
+* Admin Timetable
+* Teacher Timetable
+* Attendance
+* Leave
+* Examination
+* Academic Session server architecture
+* unrelated modules
+
+Do NOT refactor unrelated code.
+
+---
+
+# 1. CANONICAL STUDENT SESSION
+
+Student Timetable must use the existing Student Session architecture.
+
+Effective Session resolution must be:
+
+1. Explicitly selected/viewed Session
+2. Otherwise active Session
+3. Otherwise NO Session
+
+Important:
+
+**Do NOT automatically choose `sessions[0]` as an implicit fallback.**
+
+A historical/archived Session explicitly selected by the Student must remain selected.
+
+If there is no selected Session and no active Session:
+
+`NO TIMETABLE REQUEST`
+
+Do not silently choose the first Session.
+
+---
+
+# 2. TIMETABLE REQUEST
+
+The Student Timetable request is:
+
+`GET /api/student/timetable`
+
+It currently uses native fetch without the selected Session.
+
+Fix it so that:
+
+* the effective Session ID is resolved once
+* the request uses that exact Session ID
+* use the existing session-aware transport/helper
+* do not rely on a mutable global header
+* do not fall back to active Session after a selected Session has been resolved
+* do not send the request when there is no effective Session
+
+The server already supports:
+
+`x-view-session-id`
+
+Use the existing project transport convention rather than creating a new mechanism.
+
+---
+
+# 3. QUERY KEY ISOLATION
+
+Change the Student Timetable query key from a shared key such as:
+
+`["/api/student/timetable"]`
+
+to a Session-specific key containing the exact resolved Session ID.
+
+For example:
+
+`["/api/student/timetable", sessionId]`
+
+The exact existing project query-key convention may be preserved if equivalent, but the Session ID MUST be part of the identity.
+
+Critical invariant:
+
+`Session ID in query key === Session ID sent to server`
+
+Always.
+
+---
+
+# 4. ABORT / STALE RESPONSE PROTECTION
+
+Use the query function's abort signal if the existing query mechanism provides one.
+
+The request should be cancelled/ignored safely when the Student switches Session.
+
+Scenario:
+
+A = Session A
+
+1. Student opens A.
+2. A request starts.
+3. Student switches to B.
+4. B query starts.
+5. A request finishes late.
+
+The A result MUST NOT populate B's query/cache/UI.
+
+Session-specific query keys must remain the primary protection.
+
+Do not create a complicated new state-management system.
+
+Use the existing React Query/query infrastructure.
+
+---
+
+# 5. SESSION SWITCHING
+
+When switching:
+
+A → B
+
+the Timetable must:
+
+* stop representing A
+* use B's query key
+* request B's Session ID
+* show B data only
+* never display A data under B
+
+Also verify:
+
+B → A
+
+works correctly.
+
+Do not depend on page remounting alone.
+
+---
+
+# 6. FRESH ACADEMIC SESSION
+
+A newly created Session must receive its own empty Timetable state.
+
+If B has no Timetable data:
+
+show:
+
+`No periods scheduled`
+
+ONLY after a successful B Timetable response containing no entries.
+
+Never use A's cached Timetable as B's data.
+
+Do not recreate/reset old Timetable data to solve this.
+
+---
+
+# 7. ERROR HANDLING
+
+Current defect:
+
+HTTP failures are converted into empty timetable data.
+
+Fix this.
+
+For non-OK responses such as:
+
+* 403
+* 404
+* 409
+* 500
+
+the query must fail/throw rather than return:
+
+`entries: []`
+`structure: []`
+
+The UI must display a distinct error state.
+
+For example:
+
+`Unable to load timetable.`
+
+Use the project's existing error UI pattern if one exists.
+
+Important distinction:
+
+### Successful empty response
+
+→ `No periods scheduled`
+
+### Failed request
+
+→ error state
+
+Do not make the UI look like a successful empty timetable when the request failed.
+
+---
+
+# 8. ARCHIVED SESSION
+
+Archived Student Timetable must remain readable.
+
+The Student Timetable is read-only, so there should be:
+
+* no save
+* no edit
+* no delete
+* no mutation request
+
+The selected archived Session ID must still be sent to:
+
+`GET /api/student/timetable`
+
+Never replace it with the active Session.
+
+---
+
+# 9. SCHOOL / STUDENT ISOLATION
+
+Do not weaken existing server-side protection.
+
+The request must continue relying on:
+
+* authenticated Student
+* authenticated school
+* selected Academic Session
+
+Do NOT add client-supplied schoolId or studentId parameters.
+
+Do not change server authorization.
+
+---
+
+# 10. CALENDAR REQUEST
+
+The audit identified:
+
+`GET /api/student/calendar`
+
+as separate from Timetable.
+
+Do NOT unnecessarily modify it.
+
+Only modify it if the existing Student Session architecture requires a minimal change for Session correctness and you can demonstrate that it is directly part of this fix.
+
+Otherwise leave it untouched.
+
+---
+
+# 11. STUDENT SESSION PROVIDER
+
+Address the identified issue:
+
+Current behavior may select:
+
+`sessions[0]`
+
+when there is no restored selection and no active Session.
+
+Change this so effective resolution is:
+
+`selected Session → active Session → none`
+
+Do not use:
+
+`sessions[0]`
+
+as an implicit fallback.
+
+Preserve:
+
+* explicitly selected archived Session
+* explicitly selected historical Session
+* active Session fallback
+* session persistence already used by the application
+
+Do not redesign the provider.
+
+---
+
+# 12. TESTS
+
+Add/update focused Student Timetable tests.
+
+At minimum verify:
+
+### A. Selected Session
+
+Selected B is used even when active Session is A.
+
+### B. Active fallback
+
+No explicit selection + active A → A is used.
+
+### C. No Session
+
+No selected Session + no active Session:
+
+* no Timetable request
+* no accidental `sessions[0]` fallback
+
+### D. Request transport
+
+The Timetable request contains the exact selected Session ID.
+
+### E. Query key
+
+Session A and Session B have different query identities.
+
+### F. Key/transport consistency
+
+The Session ID in the query key equals the Session ID sent to the server.
+
+### G. Archived
+
+Archived Session B can be read using B.
+
+### H. Fresh Session
+
+Empty B does not show A data.
+
+### I. Error handling
+
+403/404/409/500 are errors, not successful empty Timetables.
+
+### J. A → B
+
+Switching A → B cannot display A data under B.
+
+### K. B → A
+
+Switching B → A cannot display B data under A.
+
+### L. Late response
+
+A late A response cannot populate B's cache/UI.
+
+### M. Read-only
+
+Student Timetable has no mutation path.
+
+Use the smallest focused test additions necessary.
+
+---
+
+# 13. VERIFICATION
+
+After implementation:
+
+1. Run focused Student Timetable tests.
+2. Run the relevant existing Timetable tests.
+3. Run:
+
+`npm run check`
+
+4. Run:
+
+`git diff --check`
+
+5. Inspect the final diff carefully.
+
+6. Confirm no changes outside the approved scope.
+
+7. Restart the application successfully.
+
+Do not make additional cleanup/refactoring changes during verification.
+
+---
+
+# 14. FINAL REPORT
+
+Return:
+
+## TIMETABLE STAGE 3C — STUDENT UI FIX
+
+### Files changed
+
+List exact files.
+
+### Session behavior
+
+Explain selected → active → none.
+
+### API transport
+
+Confirm selected Session ID is sent.
+
+### Query/cache
+
+Confirm Session-specific keys.
+
+### Session switching
+
+Confirm A→B and B→A isolation.
+
+### Fresh Session
+
+Confirm no previous Session leakage.
+
+### Archived Session
+
+Confirm archived read behavior.
+
+### Error handling
+
+Confirm failed requests are not shown as empty.
+
+### Tests
+
+Give exact passed/failed count.
+
+### npm run check
+
+PASS/FAIL
+
+### git diff --check
+
+PASS/FAIL
+
+### Restart
+
+PASS/FAIL
+
+### Scope
+
+Confirm no unrelated changes.
+
+## FINAL VERDICT
+
+Use exactly:
+
+`TIMETABLE STAGE 3C — STUDENT UI FIX — PASS`
+
+or
+
+`TIMETABLE STAGE 3C — STUDENT UI FIX — INCOMPLETE`
+
+Do NOT proceed to another Timetable stage automatically.

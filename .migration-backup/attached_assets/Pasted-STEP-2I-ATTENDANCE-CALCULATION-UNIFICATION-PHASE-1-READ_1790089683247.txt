@@ -1,0 +1,397 @@
+STEP 2I — ATTENDANCE CALCULATION UNIFICATION
+PHASE 1: READ-ONLY AUDIT ONLY
+
+We are continuing the Attendance hardening work.
+
+COMPLETED AND PASSED:
+- Step 2D — authoritative active Academic Session for Teacher Attendance writes
+- Step 2E — canonical Attendance identity:
+  school_id + session_id + student_id + date
+- Step 2F — all Attendance readers are session-specific and fail closed
+- Step 2G — tenant isolation for Attendance reads/writes
+- Step 2H — historical Student identity/class-section resolution
+
+DO NOT IMPLEMENT ANY CHANGES IN THIS STEP.
+This is READ-ONLY investigation only.
+
+==================================================
+NON-NEGOTIABLE PROJECT RULES
+==================================================
+
+1. MULTI-TENANT ISOLATION
+Every Attendance calculation/read must remain strictly scoped to:
+- authenticated school/tenant
+- selected/authoritative Academic Session
+
+Never calculate or combine Attendance data across schools or sessions.
+
+2. STUDENT REGISTRY
+Student Registry is global/current.
+It must NOT be treated as historical Attendance membership.
+
+3. ENROLLMENT
+Enrollment is NOT an Attendance prerequisite.
+Do not introduce any Enrollment gate for Attendance.
+
+Enrollment may be used as a historical class/section source according to Step 2H,
+but a student must still be allowed to have Attendance without Enrollment.
+
+4. FACULTY MAPPING
+Attendance must NOT require Faculty Mapping, class assignment, or subject assignment.
+
+5. SESSION
+Attendance is completely Academic-Session-specific.
+No calculation may silently combine multiple sessions.
+
+6. HISTORICAL STUDENTS
+Historical Attendance must remain visible even if the student:
+- was promoted
+- changed class/section
+- is inactive now
+- is absent from the current Student Registry roster
+- has no current enrollment
+
+Use the Step 2H historical roster/context authority.
+
+7. IST
+Attendance business/display time remains Asia/Kolkata / IST.
+
+8. SCOPE
+Do not fix anything unrelated to Attendance calculation unification.
+
+==================================================
+OBJECTIVE
+==================================================
+
+Determine whether Admin, Student, and Teacher Attendance calculations
+currently interpret the same Attendance records differently.
+
+We need ONE authoritative Attendance calculation/data interpretation.
+
+This audit must determine exactly:
+
+A. What records are counted?
+B. What statuses are counted?
+C. How are PRESENT / ABSENT / LATE / HALFDAY / LEAVE handled?
+D. How is the denominator calculated?
+E. Are working days used?
+F. Is the denominator based on:
+   - Attendance records
+   - calendar working days
+   - Student Registry population
+   - selected-session Enrollment
+   - some combination
+G. How are missing Attendance records interpreted?
+H. How are Leave records interpreted?
+I. Are Late and Halfday weighted?
+J. Are percentages calculated differently between Admin and Student?
+K. Are Admin and Student using different formulas?
+L. Are Teacher summaries using another formula?
+M. Are zero-attendance / no-record students handled consistently?
+N. Are historical sessions calculated using historical roster/context?
+O. Does any calculation accidentally use current Student Registry data for
+   a historical session?
+P. Are any calculations silently mixing sessions?
+Q. Are any calculations silently mixing schools?
+
+IMPORTANT:
+Do NOT redesign the policy system.
+Do NOT change existing policy values.
+Do NOT change attendance records.
+Do NOT change the database schema.
+Do NOT change working-day/calendar behavior in this step.
+Step 2J will separately address working-day/calendar canonicalization.
+
+==================================================
+AREAS TO INSPECT
+==================================================
+
+Inspect the current implementation after Steps 2F and 2H.
+
+1. ADMIN
+Inspect:
+- Admin Attendance Overview
+- Admin Attendance Class Detail
+- Admin Attendance Teacher Summary
+- Admin Performance Analytics Attendance calculations
+- Admin Dashboard Attendance summaries
+- Any other Admin Attendance percentage/statistic helpers
+
+Identify:
+- exact storage/query functions
+- exact formulas
+- exact denominator
+- exact status handling
+- exact session source
+- exact historical roster source
+
+2. STUDENT
+Inspect:
+- Student Attendance Monthly
+- Student Attendance Yearly
+- Student Attendance Stats
+- Student Dashboard Attendance summaries
+- Student Examination/Archives Attendance summaries if applicable
+
+Identify:
+- exact storage/query functions
+- exact formulas
+- exact denominator
+- exact status handling
+- exact session source
+- exact historical roster source
+
+3. TEACHER
+Inspect:
+- Teacher Attendance daily summary
+- Teacher Attendance history
+- Teacher Attendance completion/status
+- Teacher Attendance summary
+- Teacher Examination attendance summary if it uses Attendance calculations
+
+Identify:
+- exact storage/query functions
+- exact formulas
+- exact denominator
+- exact status handling
+- exact session source
+- exact historical roster source
+
+4. STORAGE
+Inspect all Attendance-related calculation helpers in:
+- server/storage.ts
+- other Attendance-specific server files
+
+Do not assume similarly named functions use the same formula.
+
+5. POLICY
+Inspect Attendance policy/configuration only to determine whether current
+calculations consume policy values.
+
+Do not change policy values.
+
+==================================================
+REQUIRED TEST SCENARIO ANALYSIS
+==================================================
+
+Use concrete examples to trace the formulas.
+
+Scenario 1:
+Student has:
+- Present = 8
+- Absent = 2
+- no other statuses
+
+Expected raw interpretation should be explicitly documented.
+
+Scenario 2:
+Student has:
+- Present = 8
+- Absent = 1
+- Late = 1
+
+Determine exactly how each surface treats Late.
+
+Scenario 3:
+Student has:
+- Present = 8
+- Absent = 1
+- Halfday = 1
+
+Determine exactly how each surface treats Halfday.
+
+Scenario 4:
+Student has:
+- Present = 8
+- Absent = 1
+- Leave = 1
+
+Determine exactly how each surface treats Leave.
+
+Scenario 5:
+Student has no Attendance record on a working day.
+
+Determine whether each surface treats it as:
+- absent
+- missing/unmarked
+- excluded
+- something else
+
+Scenario 6:
+Historical student:
+- Session A: Class 9-A
+- Session B: Class 10-B
+- current Student Registry: Class 10-B
+
+When Session A is selected, verify the calculation uses Session A historical
+context and does not use the current Class 10-B roster incorrectly.
+
+Scenario 7:
+Two students in the same selected session:
+- Student A has Attendance records
+- Student B has no Attendance records
+
+Determine whether both are included in denominators and how.
+
+Scenario 8:
+Two Academic Sessions contain Attendance records for the same student on
+the same calendar dates.
+
+Verify calculations only use the selected session.
+
+Scenario 9:
+Same student ID cannot belong to another school, but test/trace whether every
+query still includes school_id where required.
+
+==================================================
+OUTPUT FORMAT
+==================================================
+
+Return ONLY an audit report.
+
+Do not modify files.
+
+Use this exact structure:
+
+# STEP 2I READ-ONLY AUDIT
+
+## A. Executive Result
+State one of:
+- PASS — calculations already use one authoritative interpretation
+- PARTIAL — mostly aligned but specific discrepancies exist
+- FAIL — Admin/Student/Teacher calculations materially differ
+
+Do not fix anything.
+
+## B. Calculation Inventory
+
+For each relevant calculation surface provide:
+
+| Surface | File/function | Source records | Session source | Roster source | Denominator | Formula | Status handling |
+|---|---|---|---|---|---|---|---|
+
+Include Admin, Student, and Teacher.
+
+## C. Status Semantics
+
+Document exactly how each surface treats:
+
+- present
+- absent
+- late
+- halfday
+- leave
+- missing/unmarked
+
+Show discrepancies explicitly.
+
+## D. Formula Comparison
+
+Show the exact formulas currently used by:
+- Admin
+- Student
+- Teacher
+
+If formulas differ, give a concrete numeric example showing the resulting
+difference.
+
+Do not recommend a winner yet.
+
+## E. Denominator Comparison
+
+Document whether each surface uses:
+- Attendance-record count
+- working-day count
+- historical roster count
+- current Student Registry count
+- selected-session Enrollment count
+- another source
+
+Explicitly identify any historical-session dependency on current Student Registry.
+
+## F. Historical Session Calculation
+
+Verify:
+- promoted students
+- class/section changes
+- inactive students
+- students missing from current Registry
+- students without Enrollment
+
+State whether Step 2H historical roster authority is respected.
+
+## G. Session Isolation
+
+Verify that no calculation combines:
+- multiple Academic Sessions
+- multiple schools
+
+Identify exact functions/routes if any risk remains.
+
+## H. Tenant Isolation
+
+Verify every calculation has:
+- authenticated school scope
+- selected Session scope
+
+Identify any weak helper or ID-only query.
+
+## I. Concrete Scenario Results
+
+Provide results for all 9 scenarios above.
+
+Use exact current behavior.
+Do not invent expected behavior where the code does not establish it.
+
+## J. Discrepancy List
+
+For every discrepancy provide:
+1. file
+2. function
+3. current behavior
+4. comparison surface
+5. why it differs
+6. whether it belongs to Step 2I or Step 2J
+
+IMPORTANT:
+Do NOT implement any fix.
+
+## K. Minimal Step 2I Change Scope
+
+Only if discrepancies exist, list the MINIMUM files/functions that would need
+changes to create one authoritative Attendance calculation interpretation.
+
+Do NOT include:
+- working-day/calendar redesign
+- schema redesign
+- Enrollment gating
+- Faculty Mapping
+- Student Registry redesign
+- unrelated cleanup
+
+## L. Explicit Non-Changes
+
+Confirm that this audit did not change:
+- Attendance records
+- database schema
+- migrations
+- Attendance policy values
+- Student Registry
+- Enrollment behavior
+- Faculty Mapping
+- Examination
+- production database
+
+## M. Validation
+
+Report:
+- tests run
+- tests passed/failed
+- npm run check
+- git diff --check
+- production untouched
+
+FINAL RULE:
+This is READ-ONLY.
+If you discover a problem, STOP at the audit report.
+Do not fix it in this step.

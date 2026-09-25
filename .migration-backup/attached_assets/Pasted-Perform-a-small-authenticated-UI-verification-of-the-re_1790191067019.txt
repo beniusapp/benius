@@ -1,0 +1,112 @@
+Perform a **small authenticated UI verification** of the recently implemented Teacher Self-Attendance Working Days feature.
+
+This is verification ONLY.
+
+## IMPORTANT
+
+Do NOT change application code.
+
+Do NOT:
+
+* refactor
+* redesign
+* change APIs
+* change database schema
+* change Attendance Policy logic
+* change Student Attendance
+* change production data
+
+Use only existing safe DEVELOPMENT/TEST accounts and data.
+
+## STEP 1 — ADMIN
+
+If an existing development/test Principal/Admin account is available, authenticate normally.
+
+Open:
+
+Admin → School Setup → Attendance Policy
+
+Verify:
+
+* Working Days section is visible.
+* Default/configured weekdays display correctly.
+* Current configuration can be read.
+
+Do NOT change the configuration unless a safe existing test school is available.
+
+If authentication cannot be completed, STOP and report that as the only blocker.
+
+## STEP 2 — SAFE SATURDAY CHECK
+
+If a safe development/test school is available:
+
+1. Record the current Working Days configuration.
+2. Change only Saturday:
+
+   * OFF → ON
+3. Save.
+4. Reload.
+5. Verify Saturday remains ON.
+6. Restore the original configuration.
+7. Save.
+8. Reload and verify the original configuration is restored.
+
+Do not perform this test on production or on a school where changing configuration could affect real users.
+
+## STEP 3 — ALL-OFF CHECK
+
+Using the same safe development/test school:
+
+Attempt to turn every weekday OFF.
+
+Verify the application prevents/rejects the save.
+
+Verify the previously valid configuration remains intact.
+
+Restore the original configuration if necessary.
+
+## STEP 4 — TEACHER
+
+If an existing safe development/test Teacher account is available:
+
+Open the Teacher Self-Attendance screens.
+
+Verify that the displayed rate loads successfully.
+
+Verify that:
+
+* the selected Academic Session is respected
+* future dates are not counted
+* the rate is displayed consistently between My Attendance and Attendance History
+
+Do not create or alter attendance records solely for this verification.
+
+## STEP 5 — TENANT ISOLATION
+
+Only if safe test accounts for two different schools already exist:
+
+Verify that School A cannot access or modify School B's Working Days configuration.
+
+Do not create new schools.
+
+## STEP 6 — RESULT
+
+Report:
+
+A. Admin authentication: PASS/BLOCKED
+B. Working Days UI: PASS/BLOCKED
+C. Saturday ON/OFF: PASS/NOT TESTED
+D. All-OFF protection: PASS/NOT TESTED
+E. Teacher rate: PASS/NOT TESTED
+F. Academic Session behavior: PASS/NOT TESTED
+G. Tenant isolation: PASS/NOT TESTED
+H. Actual defects found
+I. Any verification blockers
+
+## FINAL RULE
+
+If authentication or safe test data is unavailable, do NOT work around it and do NOT modify code.
+
+Report the blocker and stop.
+
+ZERO code changes unless absolutely required to fix an actual defect discovered during this verification.

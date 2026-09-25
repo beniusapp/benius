@@ -1,0 +1,358 @@
+Implement Attendance Step 2E only.
+
+IMPORTANT PROJECT RULES:
+- This is a multi-tenant school MIS.
+- school_id is the permanent tenant boundary.
+- Never trust browser-supplied school_id.
+- Attendance must be strictly identified by:
+  school_id + academic_session_id + student_id + date
+- Student Registry remains GLOBAL and MUST NOT become session-specific.
+- Do NOT introduce Enrollment as a prerequisite for Attendance.
+- Do NOT introduce Faculty Mapping/class/subject restrictions.
+- Any authenticated Teacher of the same school may mark Attendance.
+- Do NOT redesign Leave workflow.
+- Do NOT change Attendance readers/reporting/calculations yet.
+- Do NOT change calendar/working-day logic yet.
+- Do NOT change edit-count behavior yet.
+- Do NOT change Student Registry behavior.
+- Do NOT change Admin/Student Attendance UI.
+- Do NOT modify production.
+- Do NOT make unrelated fixes.
+- Preserve Step 2D behavior: POST /api/attendance resolves the active Academic Session server-side from the authenticated Teacher's school and ignores any browser-selected session.
+
+This is a focused persistence-identity change only.
+
+==================================================
+GOAL
+==================================================
+
+Change Attendance persistence so that the canonical identity is exactly:
+
+    school_id + session_id + student_id + date
+
+There must be exactly one attendance_records row for that combination.
+
+A Student/date in one Academic Session MUST NOT update or overwrite the same Student/date in another Academic Session.
+
+A Student/date in one school MUST NOT update or overwrite Attendance belonging to another school.
+
+Every attendance_records row must have a non-null session_id.
+
+==================================================
+STEP 1 — upsertAttendance()
+==================================================
+
+File:
+
+    server/storage.ts
+
+Function:
+
+    upsertAttendance()
+
+Change existing-row detection from:
+
+    studentId + date
+
+to:
+
+    schoolId + sessionId + studentId + date
+
+Requirements:
+
+1. sessionId must be required for this Attendance mutation path.
+2. Do NOT retain the old behavior where storage silently resolves an active session when sessionId is missing.
+3. Do NOT allow this method to insert an Attendance row with NULL session_id.
+4. If sessionId is missing/invalid, reject the mutation before INSERT/UPDATE.
+5. Preserve the existing Step 2D route behavior.
+6. Do not change edit-count semantics in this step.
+7. Do not redesign batch transaction behavior in this step except where necessary to safely support the new database uniqueness constraint.
+
+The existing-row query must include all four canonical identity fields:
+
+    school_id
+    session_id
+    student_id
+    date
+
+Do not use student_id + date alone anywhere in this mutation path.
+
+==================================================
+STEP 2 — markAttendanceAsLeave()
+==================================================
+
+File:
+
+    server/storage.ts
+
+Function:
+
+    markAttendanceAsLeave()
+
+This is the second and only other Attendance writer.
+
+Change its Attendance identity to the same canonical key:
+
+    school_id + session_id + student_id + date
+
+Requirements:
+
+1. The function must receive an authoritative sessionId.
+2. It must NOT resolve a session from browser input.
+3. It must NOT silently create a NULL-session Attendance row.
+4. Existing-row lookup must include:
+       school_id
+       session_id
+       student_id
+       date
+5. New Attendance rows created by Leave synchronization must contain:
+       school_id
+       session_id
+       student_id
+       date
+6. Do not redesign Leave approval, Leave date calculation, approval rules, or Leave UI.
+7. Do not introduce Enrollment checks.
+8. Do not introduce Faculty Mapping checks.
+
+==================================================
+STEP 3 — LEAVE APPROVAL CALLERS
+==================================================
+
+File:
+
+    server/teacher-routes.ts
+
+Existing callers:
+
+    PATCH /api/student-leaves/:id/approve
+    PATCH /api/student-leaves/:id/admin-approve
+
+Thread the authoritative Academic Session ID into markAttendanceAsLeave().
+
+IMPORTANT:
+
+- Use the authoritative Session already associated with the Leave workflow/data.
+- Do NOT accept a browser-selected session as authority.
+- Do NOT invent a new Leave/session workflow.
+- Do NOT use current Student Registry placement to determine the session.
+- If the existing Leave record already contains the session_id, use that.
+- If the existing code obtains the authoritative session through an existing server-side mechanism, reuse that mechanism.
+- If a caller currently has no authoritative session available, STOP and report the exact missing dependency instead of inventing behavior.
+
+The goal is only to make Leave-created Attendance records conform to the same canonical Attendance identity.
+
+==================================================
+STEP 4 — DATABASE CONSTRAINT
+==================================================
+
+The database must enforce:
+
+    UNIQUE (
+        school_id,
+        session_id,
+        student_id,
+        date
+    )
+
+Also make:
+
+    attendance_records.session_id
+
+NOT NULL.
+
+Because session_id is now part of the canonical identity, the current:
+
+    ON DELETE SET NULL
+
+foreign key behavior is incompatible.
+
+Change the Attendance -> Academic Session foreign key to a delete behavior that preserves Attendance history and never nulls session_id.
+
+Preferred behavior:
+
+    ON DELETE RESTRICT / NO ACTION
+
+Use the project's existing migration/schema conventions if one is already established.
+
+Do NOT delete or recreate historical Attendance rows.
+
+IMPORTANT:
+The development attendance_records table is currently empty, so there is no data backfill required.
+
+Before applying the constraint, verify again that:
+
+- attendance_records has zero rows
+OR
+- there are no duplicate canonical keys and no NULL session_id rows.
+
+If unexpected data is discovered, STOP and report it instead of silently modifying/deleting data.
+
+==================================================
+STEP 5 — TENANT SAFETY
+==================================================
+
+The canonical Attendance lookup must include school_id.
+
+For Teacher Attendance:
+
+- school_id must come from the authenticated Teacher context already established by Step 2D.
+- Never trust browser school_id.
+
+For Leave synchronization:
+
+- school_id must come from the authoritative Leave/Teacher/Admin server-side tenant context already used by the existing route.
+- Never trust browser school_id.
+
+Do not redesign general tenant authorization in this step.
+
+==================================================
+STEP 6 — SCHEMA / MIGRATION
+==================================================
+
+Update the appropriate schema definition and create the required development migration using the project's existing migration conventions.
+
+Required database changes:
+
+1. attendance_records.session_id NOT NULL
+2. unique canonical identity:
+       (school_id, session_id, student_id, date)
+3. Attendance session foreign key must no longer SET NULL.
+4. Do not modify unrelated Attendance columns.
+5. Do not modify unrelated tables unless PostgreSQL requires a supporting key or dependency specifically for this constraint.
+
+IMPORTANT:
+Do not use a destructive drop/recreate of attendance_records.
+
+==================================================
+STEP 7 — CONCURRENCY
+==================================================
+
+The database unique constraint must be the final authority preventing duplicate canonical Attendance rows.
+
+Do not claim that an application-level SELECT followed by INSERT is sufficient.
+
+Add focused coverage showing that the database rejects duplicate canonical keys.
+
+Do NOT redesign the entire Attendance write transaction/edit-count system in this step.
+
+If existing upsert logic needs minimal conflict handling because the new unique constraint can surface a duplicate race, make only the minimum change necessary and explain it.
+
+==================================================
+STEP 8 — TESTS
+==================================================
+
+Add focused tests for the new identity.
+
+Required cases:
+
+1. SAME canonical key:
+   same school + same session + same student + same date
+   -> updates the existing Attendance row rather than creating another row.
+
+2. DIFFERENT session:
+   same school + same student + same date
+   but different session
+   -> creates/maintains a separate Attendance row.
+   It MUST NOT update the other session's row.
+
+3. DIFFERENT school:
+   same student/date/session values where tenant context differs
+   -> MUST NOT cross-match another school's Attendance row.
+
+4. Missing session:
+   Attendance mutation without sessionId
+   -> rejected.
+   MUST NOT insert NULL session_id.
+
+5. Leave synchronization:
+   same school + same session + same student + same date
+   -> uses the same canonical identity.
+
+6. Leave synchronization across different sessions:
+   same student/date but different session
+   -> separate Attendance rows.
+
+7. Database uniqueness:
+   duplicate
+       school_id + session_id + student_id + date
+   -> database prevents duplicate row.
+
+8. Session deletion protection:
+   referenced Academic Session cannot be deleted in a way that nulls Attendance.session_id.
+
+9. Existing Step 2D tests must continue to pass:
+   - active session is resolved once
+   - browser session is ignored
+   - no active session prevents storage call
+   - every Teacher Attendance record receives the same active session ID
+   - holiday/date protections remain unchanged
+
+Do not create broad unrelated test suites.
+
+==================================================
+STEP 9 — DO NOT CHANGE THESE YET
+==================================================
+
+Explicitly leave these for later Attendance steps:
+
+- Teacher Attendance history reader changes
+- Student monthly/yearly/statistics changes
+- Admin Attendance calculation changes
+- Admin/Student calculation unification
+- Working-day/calendar redesign
+- Sunday/non-working-day redesign
+- Historical Student Registry identity/snapshot redesign
+- Student deletion/archive behavior
+- Attendance edit-count redesign
+- Attendance correction workflow
+- Leave percentage semantics
+- Attendance status redesign
+- Enrollment integration
+- Faculty Mapping integration
+- Attendance frontend redesign
+- Production deployment
+
+If any of these are required merely to make Step 2E compile or pass the focused tests, STOP and report the dependency instead of implementing unrelated behavior.
+
+==================================================
+STEP 10 — VALIDATION
+==================================================
+
+After implementation:
+
+1. Run the focused Attendance tests.
+2. Run relevant existing Attendance/Teacher tests.
+3. Run:
+
+    npm run check
+
+4. Run:
+
+    git diff --check
+
+5. Verify the final schema/migration.
+6. Verify attendance_records has:
+   - session_id NOT NULL
+   - canonical unique constraint/index
+   - Session FK no longer SET NULL
+7. Verify no NULL-session Attendance can be created through either Attendance writer.
+8. Verify Step 2D behavior remains unchanged.
+9. Verify no production database or production environment was modified.
+
+==================================================
+STOP CONDITION
+==================================================
+
+Do NOT proceed to Attendance Step 2F or any reader/reporting changes.
+
+At the end, report only:
+
+A. Files changed
+B. Database/schema changes
+C. Tests run and exact results
+D. npm run check result
+E. git diff --check result
+F. Whether any existing Attendance behavior changed outside the requested identity change
+G. Any unresolved dependency/blocker
+
+If anything unexpected is discovered, STOP before modifying it and report the exact issue.

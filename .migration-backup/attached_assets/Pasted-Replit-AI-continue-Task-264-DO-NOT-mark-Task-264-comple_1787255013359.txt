@@ -1,0 +1,632 @@
+Replit AI — continue Task #264.
+
+DO NOT mark Task #264 complete yet.
+
+The latest validation confirms that only ONE release blocker remains:
+
+«A signed webhook with no tenant notes and unknown payment/order identifiers cannot currently be retained as verified=true, tenant-null, unresolved audit data because the application does not know which tenant-specific Razorpay webhook secret should be used for verification.»
+
+Everything else is already implemented and validated:
+
+✓ Stored provider identity takes precedence over notes.
+✓ Ambiguous payment/order tenant matches are rejected.
+✓ Immutable delivery receipts are append-only.
+✓ Processing-history rows are append-only.
+✓ Duplicate webhook deliveries remain separate.
+✓ Admin transaction detail exposes processing history.
+✓ TypeScript passes.
+✓ Full suite passes: 687 tests.
+✓ Application restart succeeds.
+✓ Migration succeeds.
+
+Therefore, DO NOT change unrelated functionality.
+
+The objective now is ONLY to solve the secure retention/verification problem for signed-but-unattributable webhook deliveries.
+
+==================================================
+
+1. FIRST — UNDERSTAND THE SECURITY PROBLEM
+   ==================================================
+
+Do NOT simply set:
+
+verified = true
+
+just because the webhook appears to have a valid-looking signature.
+
+A Razorpay webhook signature can only be considered verified if it was checked against the correct webhook secret.
+
+Therefore:
+
+UNKNOWN TENANT
++
+UNKNOWN PAYMENT ID
++
+UNKNOWN ORDER ID
++
+NO TENANT NOTES
+
+must NEVER result in a fabricated:
+
+verified = true
+
+if the application genuinely has no way to determine which secret was used.
+
+Do not weaken cryptographic verification merely to satisfy the audit requirement.
+
+==================================================
+2. DETERMINE HOW TENANT-SPECIFIC WEBHOOK SECRETS ARE CURRENTLY STORED
+
+Before changing code, inspect the existing implementation and determine:
+
+- Where each school's Razorpay webhook secret is stored.
+- Whether webhook secrets are globally configured or tenant-specific.
+- Whether Razorpay provides any trusted tenant identifier in the webhook request itself.
+- Whether the webhook URL contains a tenant identifier.
+- Whether the request headers contain a usable provider identity.
+- Whether payment/order IDs can safely resolve the tenant before verification.
+- Whether notes can safely resolve the tenant before verification.
+- Whether the current multi-tenant webhook architecture has a central secret that signs all events.
+
+DO NOT assume.
+
+Use the actual current schema and code.
+
+==================================================
+3. IF THE WEBHOOK SECRET CAN BE RESOLVED WITHOUT TRUSTING THE PAYLOAD
+
+If the architecture provides a trusted way to determine the tenant/webhook secret BEFORE HMAC verification, use it.
+
+For example, if the request itself reaches a tenant-specific endpoint such as:
+
+/webhooks/razorpay/:tenantIdentifier
+
+then:
+
+request routing
+→ trusted tenant resolution
+→ retrieve tenant's webhook secret
+→ verify HMAC
+→ retain immutable delivery
+
+However:
+
+DO NOT introduce an insecure tenant identifier merely from an untrusted payload field.
+
+If the tenant identifier comes from the webhook body, it cannot be trusted before signature verification.
+
+==================================================
+4. IF PAYMENT/ORDER ID CAN RESOLVE THE TENANT
+
+If a provider payment ID or order ID exists:
+
+resolve the candidate tenant from the existing database records.
+
+Then:
+
+candidate tenant
+→ retrieve that tenant's webhook secret
+→ verify signature
+→ only then trust the payload.
+
+If:
+
+payment ID → School A
+order ID → School B
+
+then:
+
+DO NOT choose either.
+
+The event must become:
+
+verified = false / verification_status = "tenant_conflict"
+
+and MUST NOT mutate either tenant.
+
+If payment/order identity resolves exactly one tenant:
+
+verify against that tenant's secret.
+
+If verification succeeds:
+
+verified = true
+
+and retain the immutable delivery.
+
+==================================================
+5. THE HARD CASE — NO TENANT NOTES + UNKNOWN PAYMENT/ORDER
+
+This is the exact remaining blocker.
+
+Example:
+
+Webhook:
+
+event = payment.failed
+payment_id = unknown-to-database
+order_id = unknown-to-database
+notes = absent
+signature = present
+tenant = unknown
+
+The system cannot honestly know which tenant-specific secret should be used.
+
+Therefore DO NOT:
+
+- guess a tenant
+- try the first school
+- try arbitrary secrets and accept the first match
+- mark verified=true without cryptographic proof
+- create a fake tenant
+- create a fake invoice
+- mutate any financial record
+
+Instead, implement a secure unresolved verification state.
+
+Use a state such as:
+
+verification_status = "unverifiable_unattributed"
+
+or an equivalent precise enum.
+
+The immutable delivery must preserve:
+
+- delivery ID
+- provider event ID
+- event type
+- payment ID if present
+- order ID if present
+- signature-present flag
+- verification status
+- tenant_id = NULL
+- resolution_status = unresolved
+- resolution_reason
+- received_at
+- provider event timestamp if available
+- safe retained payload/reference
+- headers necessary for forensic verification only if safe to retain
+
+IMPORTANT:
+
+Do NOT call this:
+
+verified=true
+
+unless the correct secret was actually known and HMAC verification succeeded.
+
+The distinction must be explicit:
+
+VALIDATED / VERIFIED
+
+versus
+
+SIGNED-BUT-TENANT-UNRESOLVED
+
+versus
+
+INVALID_SIGNATURE
+
+These are three different security states.
+
+==================================================
+6. SIGNED-BUT-UNRESOLVED MUST STILL BE FORENSICALLY RETAINED
+
+The objective is not to pretend that an unknown webhook is verified.
+
+The objective is:
+
+NEVER LOSE AN AUTHENTIC WEBHOOK DELIVERY JUST BECAUSE TENANT ATTRIBUTION IS CURRENTLY IMPOSSIBLE.
+
+Therefore, if the infrastructure can establish that the webhook was received through a trusted Razorpay webhook ingress but cannot determine the correct tenant secret:
+
+retain it as:
+
+tenant_id = NULL
+
+resolution_status = unresolved
+
+verification_status = pending/unattributable
+
+with the exact reason.
+
+If the signature itself cannot be cryptographically verified because the secret is unknowable, explicitly state that.
+
+Never represent an unverifiable signature as verified.
+
+==================================================
+7. OPTIONAL — SUPPORT LATER RECONCILIATION
+
+If the architecture permits later resolution, make the delivery recoverable.
+
+For example:
+
+Day 1:
+
+Webhook received
+→ tenant unknown
+→ stored as unresolved
+
+Later:
+
+Payment/order identity becomes known.
+
+Then:
+
+unresolved delivery
+→ candidate tenant identified
+→ tenant's secret retrieved
+→ original signature verified against the original raw body
+→ verification succeeds
+→ append processing-history record
+
+DO NOT UPDATE THE ORIGINAL IMMUTABLE DELIVERY.
+
+Instead append:
+
+reconciliation_started
+reconciliation_tenant_resolved
+signature_reverified
+business_processing_started
+business_processing_completed
+
+If later verification is impossible because the original raw signed body was not retained, document that limitation rather than fabricating verification.
+
+==================================================
+8. RAW BODY REQUIREMENT
+
+HMAC verification must use the exact original webhook body required by Razorpay.
+
+Do not attempt to reconstruct the signature from a parsed/transformed JSON object if that can change the byte representation.
+
+Confirm that the original raw body is available at webhook ingress.
+
+If it is not currently retained:
+
+add safe raw-body retention according to the existing privacy/security model.
+
+Do not store unnecessary secrets.
+
+Never store:
+
+- webhook secret itself
+- sensitive credentials
+
+The original webhook payload/body may be retained only according to the existing audit/security policy.
+
+==================================================
+9. DO NOT BREAK THE EXISTING VERIFIED WEBHOOK FLOW
+
+Existing normal cases must continue working:
+
+KNOWN TENANT
+→ retrieve tenant secret
+→ verify signature
+→ immutable delivery
+→ lifecycle processing
+
+Known payment/order identity must continue working exactly as before.
+
+Do not regress:
+
+- payment.captured
+- payment.failed
+- payment.authorized
+- refund.*
+- payment.dispute.*
+- duplicate webhook handling
+- payment idempotency
+- receipt generation
+- Admin Ledger
+- offline payments
+
+==================================================
+10. REQUIRED SECURITY TEST MATRIX
+
+Add actual end-to-end webhook ingress tests.
+
+Not just helper/unit tests.
+
+---
+
+TEST 1 — KNOWN TENANT + VALID SIGNATURE
+
+Known payment/order belongs to School A.
+
+Use School A's actual configured webhook secret.
+
+Expected:
+
+verification_status = verified
+tenant = School A
+delivery retained
+business processing allowed
+
+---
+
+TEST 2 — KNOWN TENANT + INVALID SIGNATURE
+
+Known payment/order belongs to School A.
+
+Use wrong signature.
+
+Expected:
+
+verification_status = invalid_signature
+NO financial mutation
+NO tenant business processing
+
+---
+
+TEST 3 — UNKNOWN IDs + NO NOTES
+
+Webhook:
+
+unknown payment ID
+unknown order ID
+no tenant notes
+
+Expected:
+
+delivery IS retained
+
+BUT:
+
+tenant_id = NULL
+
+and:
+
+verification_status MUST NOT falsely be "verified".
+
+It should explicitly become:
+
+unverifiable_unattributed
+OR verification_pending
+OR equivalent.
+
+The exact enum name is your architectural decision.
+
+The important security requirement is:
+
+NEVER falsely claim HMAC verification.
+
+---
+
+TEST 4 — UNKNOWN IDs + NO NOTES + LATER RECONCILIATION
+
+Only if supported.
+
+First:
+
+unresolved delivery.
+
+Later:
+
+identity becomes resolvable.
+
+Expected:
+
+original delivery unchanged
+new processing history
+original signature reverified against original raw body
+business processing only after successful verification
+
+---
+
+TEST 5 — PAYMENT ID → SCHOOL A
+
+Order ID unknown.
+
+Expected:
+
+School A resolved from stored payment identity
+School A secret used
+signature verified
+event processed
+
+---
+
+TEST 6 — ORDER ID → SCHOOL A
+
+Payment ID unknown.
+
+Expected:
+
+School A resolved from stored order identity
+School A secret used
+signature verified
+event processed
+
+---
+
+TEST 7 — PAYMENT A / ORDER B
+
+Payment belongs to School A.
+
+Order belongs to School B.
+
+Expected:
+
+NO tenant selected
+verification/business processing blocked
+immutable delivery retained
+security conflict recorded
+neither school modified
+
+---
+
+TEST 8 — NOTES A / PROVIDER ID B
+
+Provider identity belongs to School B.
+
+Notes claim School A.
+
+Expected:
+
+School B identity takes precedence
+School A cannot be selected
+signature checked using School B secret
+conflict recorded
+
+---
+
+TEST 9 — FOUR IDENTICAL WEBHOOK DELIVERIES
+
+Send same webhook four times.
+
+Expected:
+
+4 immutable delivery rows.
+
+Business result:
+
+1 financial capture.
+
+This distinction must remain intact.
+
+==================================================
+11. DATABASE IMMUTABILITY
+
+Verify:
+
+webhook_delivery UPDATE → rejected
+
+webhook_delivery DELETE → rejected
+
+processing_history UPDATE → rejected
+
+processing_history DELETE → rejected
+
+Do not bypass the triggers.
+
+Existing authorized tenant deletion must continue to work through the explicit cleanup mechanism.
+
+==================================================
+12. ADMIN FORENSIC VISIBILITY
+
+The Admin Ledger must make the distinction obvious.
+
+For a verified event:
+
+VERIFIED
+
+For a signed but currently unattributable event:
+
+UNRESOLVED / VERIFICATION PENDING
+
+For a bad signature:
+
+INVALID SIGNATURE
+
+Do not display an unresolved event as a successful Razorpay transaction.
+
+Do not attach an unresolved event to an arbitrary invoice.
+
+If there is no invoice linkage, it should appear in the appropriate admin-level unresolved webhook/audit view.
+
+The record must still be discoverable by:
+
+- delivery ID
+- provider event ID
+- payment ID
+- order ID
+- timestamp
+
+where available.
+
+==================================================
+13. STUDENT PRIVACY
+
+The forensic webhook tables remain ADMIN-ONLY.
+
+Do not expose:
+
+- raw webhook payloads
+- webhook signatures
+- processing history
+- tenant-resolution metadata
+- internal delivery IDs
+
+through student payment-history endpoints.
+
+==================================================
+14. FINAL ACCEPTANCE CHECKLIST
+
+Task #264 may only be marked COMPLETE if all are true:
+
+✓ Known tenant + valid signature works.
+
+✓ Known tenant + invalid signature is rejected.
+
+✓ Unknown tenant + unknown IDs is retained without fabricated tenant attribution.
+
+✓ Unknown tenant is never assigned to a random school.
+
+✓ Unknown/unattributable webhook is never falsely marked verified=true.
+
+✓ Verification state clearly distinguishes verified / pending-unattributable / invalid.
+
+✓ Original raw body is retained if later cryptographic re-verification is required.
+
+✓ Provider identity takes precedence over notes.
+
+✓ Payment/order tenant conflicts cannot select a tenant.
+
+✓ Duplicate deliveries remain separate immutable rows.
+
+✓ Processing history remains append-only.
+
+✓ No unresolved webhook can mutate financial records.
+
+✓ Cross-tenant mutation is impossible.
+
+✓ End-to-end signed webhook regression tests exist.
+
+✓ All dedicated forensic tests pass.
+
+✓ Full project suite remains green.
+
+✓ Migration succeeds on clean and existing databases.
+
+✓ Application restart succeeds.
+
+✓ Admin Ledger exposes the correct forensic state.
+
+✓ Student APIs remain isolated from forensic data.
+
+==================================================
+15. FINAL SECURITY REVIEW
+
+Before claiming completion, explicitly answer these questions from the actual implementation:
+
+1. How is the tenant selected before HMAC verification?
+2. What happens when payment/order IDs are unknown?
+3. What happens when notes are absent?
+4. What happens when payment/order identities conflict?
+5. Can an unknown webhook ever become verified=true without a known secret?
+6. Where is the original raw body retained?
+7. Can the original signature be reverified later?
+8. Can an unresolved webhook mutate any financial record?
+9. Can an unresolved webhook be assigned to a school?
+10. Can duplicate deliveries be individually reconstructed?
+11. Can any immutable forensic row be UPDATEd or DELETEd?
+12. What exact test proves the unknown/no-notes case?
+13. What exact test proves cross-tenant protection?
+
+If any answer is unsafe or incomplete:
+
+DO NOT MARK TASK COMPLETE.
+
+Return:
+
+TASK NOT COMPLETE
+
+and identify the exact remaining blocker.
+
+Only when the entire acceptance checklist is demonstrably satisfied should you return:
+
+TASK COMPLETE
+
+with the exact test count and migration/restart evidence.
+
+Do not claim a 100% guarantee merely because the full test suite is green. The forensic/security behavior must be explicitly demonstrated.

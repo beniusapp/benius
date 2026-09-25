@@ -1,0 +1,278 @@
+STEP 2L-9B — FIX STUDENT YEARLY ATTENDANCE PERCENTAGE MISMATCH
+
+MODE: NARROW IMPLEMENTATION + FOCUSED VERIFICATION.
+
+IMPORTANT:
+This is a BUILDING/DEVELOPMENT change only.
+
+DO NOT TOUCH PRODUCTION.
+DO NOT RUN PRODUCTION MIGRATIONS.
+DO NOT DEPLOY.
+DO NOT REDESIGN ATTENDANCE.
+DO NOT MODIFY TEACHER SELF-ATTENDANCE.
+DO NOT MODIFY THE SAME-SESSION CLASS-TRANSFER BEHAVIOR.
+DO NOT CHANGE THE ESTABLISHED WORKING-DAY POLICY.
+DO NOT CHANGE ATTENDANCE STATUS WEIGHTS.
+DO NOT CHANGE DATABASE SCHEMA.
+
+PERMANENT PROJECT REQUIREMENTS:
+
+1. MULTI-TENANT / MULTI-SCHOOL ISOLATION IS MANDATORY.
+   Preserve school/tenant isolation in every Attendance calculation and test.
+
+2. ATTENDANCE IS ACADEMIC-SESSION-SPECIFIC.
+   Preserve selected Academic Session ID throughout Student Attendance calculations.
+
+3. APPLICATION DATE/TIME LOGIC USES IST / ASIA-KOLKATA.
+   Do not introduce UTC/BST/other application-facing timezone behavior.
+
+4. STUDENT REGISTRY IS GLOBAL/PERMANENT.
+   Do not change Student lifecycle or enrollment architecture.
+
+5. SAME-SESSION CLASS TRANSFER IS EXPLICITLY SKIPPED.
+   Do not fix, redesign, or revisit that issue in this step.
+
+6. EXISTING ATTENDANCE CALCULATION CONTRACT IS THE SOURCE OF TRUTH.
+   Do not invent a replacement formula.
+
+ESTABLISHED STUDENT ATTENDANCE CONTRACT:
+
+Applicable date:
+
+* A date is applicable when there is at least one stored Attendance row for:
+  School + Academic Session + Class + Section + Date
+* Date must be within inclusive Academic Session boundaries.
+* This is record-driven and class-wide.
+
+Status weights:
+
+* Present = 1
+* Late = 1
+* Leave Attendance row = 1
+* Half Day = 0.5
+* Absent = 0
+* Missing/no Student row on an applicable date = 0
+* Unknown = 0
+
+Percentage:
+weighted attendance / applicable dates × 100
+
+Round to ONE decimal place.
+
+Zero applicable dates:
+return/display 0 according to the existing canonical calculation behavior.
+
+KNOWN BUG:
+
+The Student yearly table in:
+
+client/src/pages/student-attendance.tsx
+
+currently independently calculates its displayed percentage around:
+
+client/src/pages/student-attendance.tsx:775–789
+
+The current expression effectively uses:
+
+(Present + 0.5 × Half Day + Leave) / Working Days × 100
+
+It incorrectly omits Late and rounds to a whole number.
+
+Example:
+
+If an evidenced month contains:
+
+* Late = 1
+* Working Days = 1
+
+Canonical result:
+100.0%
+
+Current yearly table:
+0%
+
+This is a real calculation/display mismatch and must be corrected.
+
+IMPLEMENTATION REQUIREMENTS:
+
+1. Inspect the current yearly table implementation before changing it.
+
+2. Make the smallest possible change so the yearly table follows the established Student Attendance calculation contract.
+
+3. The yearly percentage must account for:
+   Present = 1
+   Late = 1
+   Leave = 1
+   Half Day = 0.5
+   Absent = 0
+   Missing = 0
+
+4. The denominator must remain the existing yearly `workingDays`.
+
+5. Do NOT replace the server's record-driven applicable-date logic with:
+
+   * weekdays
+   * Monday-Friday
+   * calendar days
+   * enrollment days
+   * holiday-excluded days
+   * leave-request dates
+
+6. Percentage precision must be ONE decimal place.
+
+7. Do not alter monthly calendar presentation.
+
+8. Do not alter Student Stats API/calculation.
+
+9. Do not alter Teacher Attendance.
+
+10. Do not alter Teacher Self-Attendance.
+
+11. Do not alter Admin Attendance.
+
+12. Do not alter School Setup Attendance Policy.
+
+13. Do not alter holiday semantics.
+
+14. Do not alter Sunday semantics.
+
+15. Do not alter approved-leave semantics.
+
+16. Do not alter Session boundaries.
+
+17. Do not alter tenant isolation.
+
+PREFERRED IMPLEMENTATION:
+
+If the existing yearly response already contains enough information to calculate the canonical weighted percentage safely, correct the client calculation minimally.
+
+If the canonical server percentage is already available through an existing response/API path and can be reused without broad refactoring, prefer reusing it.
+
+However:
+
+DO NOT introduce a new API or schema merely to fix this small client mismatch unless the existing architecture makes the narrow fix impossible.
+
+TEST REQUIREMENTS:
+
+Add or update focused tests for the yearly Attendance percentage.
+
+At minimum verify:
+
+TEST 1 — LATE
+
+Working Days = 1
+Late = 1
+Expected percentage = 100.0
+
+TEST 2 — PRESENT
+
+Working Days = 1
+Present = 1
+Expected percentage = 100.0
+
+TEST 3 — HALF DAY
+
+Working Days = 1
+Half Day = 1
+Expected percentage = 50.0
+
+TEST 4 — ABSENT
+
+Working Days = 1
+Absent = 1
+Expected percentage = 0.0
+
+TEST 5 — LEAVE
+
+Working Days = 1
+Leave = 1
+Expected percentage = 100.0
+
+TEST 6 — MIXED WEIGHTS
+
+Use a small mixed dataset containing Present, Late, Half Day, Leave, and Absent.
+
+Verify the result follows:
+
+(Present + Late + Leave + 0.5 × Half Day) / Working Days × 100
+
+TEST 7 — ONE DECIMAL
+
+Use a dataset that produces a non-whole percentage.
+
+Verify the displayed/calculated result is rounded to exactly one decimal according to the existing project convention.
+
+TEST 8 — ZERO WORKING DAYS
+
+Working Days = 0.
+
+Verify there is no divide-by-zero or NaN/Infinity display and behavior remains consistent with the existing canonical zero-applicable-date behavior.
+
+IMPORTANT:
+
+Do not create a second Attendance calculation contract.
+
+If practical, extract/reuse a tiny pure calculation helper only if that is the smallest safe change and does not cause broad refactoring.
+
+Before implementation, inspect existing tests and existing canonical server calculation utilities.
+
+VERIFICATION:
+
+After implementation:
+
+1. Run the focused Student Attendance tests.
+2. Run the relevant existing Attendance calculation tests.
+3. Run:
+
+npm run check
+
+4. Run:
+
+git diff --check
+
+5. Restart/reload the development application if that is the existing normal verification procedure.
+
+6. Confirm there are no unintended changes.
+
+FINAL RESPONSE MUST CONTAIN EXACTLY:
+
+1. VERDICT
+2. ROOT CAUSE
+3. FILES CHANGED
+4. EXACT LOGIC FIXED
+5. TESTS ADDED/UPDATED
+6. TEST RESULTS
+7. npm run check
+8. git diff --check
+9. SESSION ISOLATION
+10. TENANT ISOLATION
+11. IST / DATE SEMANTICS
+12. TEACHER SELF-ATTENDANCE
+13. CLASS-TRANSFER ISSUE
+14. PRODUCTION STATUS
+15. UNINTENDED CHANGES
+
+ACCEPTANCE CRITERIA:
+
+The fix is acceptable only if:
+
+* Student yearly Late is weighted as 1.
+* Student yearly Half Day remains 0.5.
+* Student yearly Leave remains 1.
+* Absent remains 0.
+* Missing remains 0.
+* Existing `workingDays` denominator is preserved.
+* Result is rounded to one decimal.
+* Existing zero-working-day behavior is safe.
+* Student Stats and yearly calculation agree for equivalent data.
+* Session isolation remains intact.
+* Tenant isolation remains intact.
+* IST behavior is unchanged.
+* Teacher Self-Attendance is untouched.
+* Same-Session class-transfer issue is untouched.
+* Production is untouched.
+* No unrelated refactoring is introduced.
+
+STOP after implementation and verification.
+
+Do not proceed to another Attendance issue automatically.

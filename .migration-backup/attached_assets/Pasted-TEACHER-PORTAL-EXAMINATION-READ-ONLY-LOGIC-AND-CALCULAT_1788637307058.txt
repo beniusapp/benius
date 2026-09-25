@@ -1,0 +1,512 @@
+TEACHER PORTAL → EXAMINATION
+READ-ONLY LOGIC AND CALCULATION INVESTIGATION
+
+IMPORTANT:
+
+I have now rolled the DEVELOPMENT application back to:
+
+d4b11e6f46a5a87c6b87c267edeb5f17aca7a634
+
+I am still in the BUILDING/DEVELOPMENT phase.
+
+I now want to understand exactly how the Teacher Portal → Examination module currently works in this restored state.
+
+DO NOT MODIFY ANY CODE.
+
+DO NOT MODIFY THE DATABASE.
+
+DO NOT CREATE, UPDATE, OR DELETE ANY DATA.
+
+DO NOT IMPLEMENT ANYTHING.
+
+This is an investigation and explanation only.
+
+==================================================
+1. FIND THE TEACHER EXAMINATION MODULE
+==================================================
+
+Identify all files responsible for:
+
+Teacher Portal
+→ Examination
+
+Report:
+
+- frontend file(s)
+- backend route file(s)
+- storage/helper file(s)
+- schema/table involved
+- any calculation/helper functions involved
+
+==================================================
+2. EXPLAIN THE COMPLETE TEACHER WORKFLOW
+==================================================
+
+Explain exactly what happens when a teacher opens:
+
+Teacher Portal
+→ Examination
+
+Then explain step-by-step:
+
+1. How Academic Session is selected/resolved.
+2. How Class is selected.
+3. How Section is selected.
+4. How Subject is selected.
+5. How Exam Type is selected.
+6. How students are loaded.
+7. What determines which students appear.
+8. How marks are entered.
+9. How marks are validated.
+10. How marks are saved.
+11. What happens after saving.
+12. How previously saved marks are loaded.
+
+Show the actual current implementation.
+
+Do not assume the intended behavior.
+
+==================================================
+3. STUDENT ROSTER LOGIC
+==================================================
+
+Determine exactly how the Teacher Examination student roster is generated.
+
+Answer:
+
+Does it use:
+
+- Student Registry?
+- Enrollment?
+- Faculty Mapping?
+- Academic Session?
+- Class?
+- Section?
+- Subject?
+- Exam Type?
+
+Explain the exact database query and filters.
+
+For example, determine whether it uses:
+
+students.school_id
+students.is_active
+students.class
+students.section
+
+or another mechanism.
+
+Show the relevant code.
+
+==================================================
+4. FACULTY MAPPING LOGIC
+==================================================
+
+Determine whether Faculty Mapping affects Teacher Examination.
+
+Specifically answer:
+
+- Can a teacher see the Examination roster without a Faculty Mapping record?
+- Is Faculty Mapping used for authorization?
+- Is Faculty Mapping used only to identify the teacher/subject?
+- Does the selected Subject affect roster membership?
+- Does the selected Subject affect permission to enter marks?
+
+Show the exact current logic.
+
+==================================================
+5. ENROLLMENT LOGIC
+==================================================
+
+Determine exactly where Enrollment is used in Teacher Examination.
+
+Answer separately:
+
+A. Is Enrollment required to DISPLAY a student?
+
+B. Is Enrollment required to SAVE a mark?
+
+C. Is Enrollment used to determine Class/Section?
+
+D. Is Enrollment used to determine Academic Session?
+
+E. Is Enrollment used when loading existing marks?
+
+Show the exact code and database queries.
+
+==================================================
+6. ACADEMIC SESSION LOGIC
+==================================================
+
+Explain exactly how Academic Session works in Teacher Examination.
+
+Determine:
+
+- how the session is selected
+- how the session is resolved
+- whether active session is automatic
+- whether a teacher can select another session
+- whether archived sessions can be edited
+- whether session_id is stored with exam scores
+- whether session affects calculations
+
+Explain why Academic Session is important to examination records.
+
+==================================================
+7. EXAM TYPE LOGIC
+==================================================
+
+Identify exactly how Exam Type works.
+
+Examples may include:
+
+- Unit Test 1
+- Unit Test 2
+- Mid Term
+- Final Exam
+
+Determine:
+
+- where Exam Type comes from
+- whether it is configurable
+- whether it is stored with the score
+- whether it affects marks calculation
+- whether it affects the student roster
+- whether it is part of score identity
+
+==================================================
+8. SUBJECT LOGIC
+==================================================
+
+Determine exactly how Subject works.
+
+Answer:
+
+- where Subject comes from
+- whether it is free text or predefined
+- whether it is stored with the score
+- whether it affects roster membership
+- whether it affects marks calculation
+- whether Faculty Mapping controls it
+
+==================================================
+9. MARKS CALCULATION
+==================================================
+
+This is very important.
+
+Explain exactly what calculation happens when a teacher enters marks.
+
+Determine whether the current Teacher Examination module calculates:
+
+- obtained marks
+- maximum marks
+- percentage
+- grade
+- grade point
+- pass/fail
+- weighted marks
+- term result
+- annual result
+- total
+- average
+
+For each calculation, show:
+
+- formula
+- source fields
+- where calculation occurs
+- frontend or backend
+- when calculation happens
+- whether the result is stored or calculated dynamically
+
+DO NOT introduce a new calculation system.
+
+I only want to know what exists at d4b11e6.
+
+==================================================
+10. SCORE SAVING
+==================================================
+
+Trace exactly what happens when a teacher clicks Save.
+
+Show:
+
+Teacher enters mark
+↓
+frontend validation
+↓
+API request
+↓
+authentication
+↓
+school validation
+↓
+session validation
+↓
+student validation
+↓
+class/section validation
+↓
+subject validation
+↓
+exam type validation
+↓
+faculty validation
+↓
+enrollment validation
+↓
+marks validation
+↓
+database INSERT/UPDATE/UPSERT
+
+Do not assume every step exists.
+
+Show the actual sequence.
+
+==================================================
+11. SCORE DATABASE STRUCTURE
+==================================================
+
+Identify the exam score table.
+
+Report its relevant fields.
+
+Especially:
+
+- id
+- school_id
+- session_id
+- student_id
+- teacher_id
+- class
+- section
+- subject
+- exam_type
+- marks
+- maximum_marks
+- created_at
+- updated_at
+
+Only report fields that actually exist.
+
+==================================================
+12. SCORE IDENTITY
+==================================================
+
+Determine exactly how the application decides:
+
+"This is the same examination score and should be updated"
+
+rather than:
+
+"This is a new score."
+
+Identify:
+
+- unique constraint
+- unique index
+- upsert key
+- application-level lookup
+- combination of fields
+
+Explain whether two teachers can accidentally create duplicate marks for the same:
+
+School
++
+Session
++
+Student
++
+Subject
++
+Exam Type
++
+Class
++
+Section
+
+==================================================
+13. EXISTING MARKS
+==================================================
+
+Explain how Teacher Examination loads marks that were already entered.
+
+For example:
+
+Teacher opens:
+
+Class 6
+Section A
+Physics
+Unit Test 1
+
+How does the system know which mark belongs to which student?
+
+Explain the query and matching logic.
+
+==================================================
+14. CALCULATION VS STORAGE
+==================================================
+
+Clearly separate:
+
+A. DATA THE TEACHER ENTERS
+
+B. DATA THE SYSTEM STORES
+
+C. DATA THE SYSTEM CALCULATES
+
+D. DATA THE SYSTEM DISPLAYS
+
+I want to understand the difference.
+
+==================================================
+15. MULTI-TENANT SECURITY
+==================================================
+
+Audit the complete Examination module for school isolation.
+
+A teacher from School 1 must NEVER:
+
+- see School 2 students
+- load School 2 scores
+- create School 2 scores
+- update School 2 scores
+- access School 2 examination data
+
+Trace all school_id/tenant checks.
+
+Identify any possible cross-school vulnerability.
+
+DO NOT FIX ANYTHING.
+
+Only report it.
+
+==================================================
+16. CURRENT EXAMPLE
+==================================================
+
+Use this example only for explaining the current logic:
+
+Teacher:
+6
+
+School:
+1
+
+Academic Session:
+30375
+
+Class:
+6
+
+Section:
+B
+
+Subject:
+Bengali
+
+Exam Type:
+Unit Test 1
+
+Student:
+6
+
+Explain exactly what the current application would do when:
+
+A. Teacher opens Examination.
+
+B. Teacher selects the above options.
+
+C. Student 6 appears.
+
+D. Teacher enters a mark.
+
+E. Teacher clicks Save.
+
+F. Existing score is loaded later.
+
+DO NOT actually save or modify anything.
+
+==================================================
+17. IMPORTANT DISTINCTION
+==================================================
+
+Do NOT confuse:
+
+Student Registry
+Faculty Mapping
+Enrollment
+Academic Session
+Exam Score
+
+Explain the purpose of each one in the CURRENT implementation.
+
+==================================================
+18. FINAL REPORT FORMAT
+==================================================
+
+Return the answer using exactly this structure:
+
+A. TEACHER EXAMINATION FILES
+
+B. COMPLETE USER WORKFLOW
+
+C. STUDENT ROSTER LOGIC
+
+D. FACULTY MAPPING LOGIC
+
+E. ENROLLMENT LOGIC
+
+F. ACADEMIC SESSION LOGIC
+
+G. SUBJECT LOGIC
+
+H. EXAM TYPE LOGIC
+
+I. MARK ENTRY LOGIC
+
+J. MARK VALIDATION
+
+K. SCORE SAVING FLOW
+
+L. SCORE DATABASE STRUCTURE
+
+M. SCORE IDENTITY / UPSERT LOGIC
+
+N. EXISTING MARK LOADING
+
+O. CALCULATIONS AND FORMULAS
+
+P. STORED VS CALCULATED DATA
+
+Q. MULTI-TENANT SECURITY
+
+R. TEACHER 6 / STUDENT 6 EXAMPLE
+
+S. POTENTIAL PROBLEMS OR CONTRADICTIONS
+
+T. SIMPLE PLAIN-ENGLISH SUMMARY
+
+For every important claim, reference the actual file/function/code responsible.
+
+==================================================
+FINAL RULE
+==================================================
+
+READ ONLY.
+
+DO NOT MODIFY CODE.
+
+DO NOT MODIFY DATABASE.
+
+DO NOT RUN DATA-WRITING OPERATIONS.
+
+DO NOT IMPLEMENT FIXES.
+
+DO NOT PROPOSE A NEW ARCHITECTURE YET.
+
+I first want to understand exactly what Teacher Portal → Examination currently does in the restored d4b11e6 state.
+
+STOP AFTER THE REPORT.

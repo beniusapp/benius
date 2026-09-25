@@ -1,0 +1,115 @@
+Perform a **READ-ONLY FINAL AUDIT** of the Attendance module.
+
+## Goal
+
+Confirm that all important Attendance issues identified in the 10L-12A audit are now either:
+
+* FIXED and verified,
+* INTENTIONALLY DIFFERENT by design, or
+* DEFERRED because they require a business decision.
+
+## Check these areas only
+
+1. **Academic Session boundaries**
+
+   * Admin Attendance
+   * Teacher Student Attendance
+   * Teacher Self-Attendance
+   * Student Attendance
+
+2. **Tenant/school isolation**
+
+3. **Holiday behavior**
+
+   * All_School
+   * targeted holidays
+
+4. **Attendance calculations**
+
+5. **Teacher Self-Attendance rate**
+
+6. **Historical Attendance after Student deletion**
+
+7. **IST / Asia-Kolkata date handling**
+
+8. **Teacher historical assignment issue**
+
+   * Confirm it remains DEFERRED and is not accidentally changed.
+
+9. **10L-12F**
+
+   * Confirm the Admin profile school-filter hardening remains SKIPPED.
+   * Do not implement it.
+
+## Expected status
+
+Confirm these completed items:
+
+* 10L-12B — Session date-boundary reads ✅
+* 10L-12C — Teacher Self-Attendance Session write boundary ✅
+* 10L-12C-R — test fixture repair ✅
+* 10L-12D — Student targeted-holiday display ✅
+* 10L-12E — Teacher holiday-lock UI alignment ✅
+* 10L-12E-R — test fixture repair ✅
+
+Confirm these are intentionally deferred/skipped:
+
+* 10L-12F — Admin profile tenant hardening → SKIPPED
+* 10L-12G — Historical teacher assignment → DEFERRED pending business rule
+
+Confirm these intentional differences remain unchanged:
+
+* Student Attendance working-day calculation vs Teacher Self-Attendance working-day calculation
+* Student Leave credit vs Teacher Self-Attendance Leave credit
+
+## Important
+
+This is **AUDIT ONLY**.
+
+Do NOT:
+
+* change production code
+* change tests
+* change database data
+* change schema
+* create migrations
+* refactor
+* fix anything
+
+If you discover a new issue, simply report it. Do not fix it.
+
+## Verification
+
+Run the relevant existing Attendance tests.
+
+Run:
+
+`npm run check`
+
+Run:
+
+`git diff --check`
+
+Inspect:
+
+`git diff`
+
+The expected final diff should be empty.
+
+## Final report
+
+Keep the report SIMPLE.
+
+Give:
+
+* PASS items
+* DEFERRED/SKIPPED items
+* any NEW issue found
+* total tests passed
+* `npm run check`
+* `git diff --check`
+* final diff status
+
+If there are no new issues, state:
+
+`10L-12H COMPLETE — FINAL ATTENDANCE CONSISTENCY AUDIT PASSED — NO CODE CHANGES.`

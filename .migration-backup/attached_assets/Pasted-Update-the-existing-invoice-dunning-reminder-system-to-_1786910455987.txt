@@ -1,0 +1,119 @@
+Update the existing invoice dunning/reminder system to use exactly these 5 stages:
+
+1. D-2 — 2 days BEFORE the invoice due date
+2. D+0 — On the due date
+3. D+3 — 3 days overdue
+4. D+7 — 7 days overdue
+5. D+14 — 14 days overdue
+
+Remove the existing D+30 stage completely.
+
+Before changing anything:
+
+- Inspect the current dunning implementation, database schema, APIs, frontend Reminders UI, templates, cron logic, simulation logic, manual reminder logic, deduplication and tests.
+- Do not break the existing invoice-first/payment system.
+- Do not make unrelated changes.
+
+Implementation requirements:
+
+Scheduling
+
+The real scheduled job must trigger only on exact matching days:
+
+- daysUntilDue = 2 → D-2
+- daysSinceDue = 0 → D+0
+- daysSinceDue = 3 → D+3
+- daysSinceDue = 7 → D+7
+- daysSinceDue = 14 → D+14
+
+Templates
+
+Change the Reminders UI template tabs from:
+D+0 / D+7 / D+14 / D+30
+
+to:
+D-2 / D+0 / D+3 / D+7 / D+14
+
+All 5 stages must have separate SMS and Email templates.
+
+WhatsApp should continue using the configured MSG91/Meta approved template and receive the correct stage label.
+
+Deduplication
+
+Update the dunning deduplication key so each:
+feeRecordId + channel + stage
+is independently tracked.
+
+Example:
+invoice123 + sms + D-2
+invoice123 + sms + D+0
+
+must be treated as two separate reminder events.
+
+Invoice protection
+
+Keep the existing protection:
+
+- Only Due/Overdue invoices are eligible for scheduled reminders.
+- Paid/Waived invoices must never receive reminders.
+- Keep the final race-condition status check immediately before sending.
+
+Manual reminder
+
+Keep the existing manual "Send Reminder" functionality working.
+
+Simulation
+
+Update simulation to understand all 5 stages:
+D-2, D+0, D+3, D+7, D+14.
+
+Do not make real SMS, WhatsApp or Email API calls during simulation.
+
+Date/time
+
+Use India Standard Time (IST / Asia-Kolkata) explicitly for all due-date and reminder-stage calculations. Do not depend on the server's local timezone.
+
+Multiple invoices
+
+Keep each invoice independent. Do not combine multiple invoices into one reminder unless the existing architecture already explicitly supports that.
+
+UI
+
+Update all labels, tabs, stage names, template storage/loading, simulation output and Recent Deliveries references so there is no remaining D+30 logic.
+
+Database
+
+Inspect the existing schema and migration strategy before changing anything. Preserve existing delivery history where possible. Do not delete historical D+30 logs; they should remain as historical records, but D+30 must no longer be generated.
+
+Tests
+
+Update/add tests covering:
+
+- D-2
+- D+0
+- D+3
+- D+7
+- D+14
+- D+30 no longer triggering
+- exact-day matching
+- IST date boundary
+- deduplication per stage
+- Paid/Waived invoice protection
+- manual reminder
+- simulation
+- multi-tenant isolation
+
+Run the complete test suite after implementation.
+
+Do not stop after changing the UI. Verify the complete flow from invoice → stage calculation → scheduled job → template → provider → dunning_log → Recent Deliveries.
+
+At the end, report:
+
+1. Files changed
+2. Database/migration changes
+3. Exact reminder-stage logic
+4. Tests added/updated
+5. Full test result
+6. Any remaining limitations
+
+Do not implement anything until you have inspected the current code and schema.

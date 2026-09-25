@@ -1,0 +1,142 @@
+Change Only the Fee Period Display in Record Payment Modal
+
+I want to make only one small UI/display correction in the existing Record Payment modal.
+
+Current Display
+
+For an annual fee, the modal currently shows:
+
+Annual yearly fee (2027-04)
+
+The underlying database value is correctly stored as:
+
+"2027-04-01"
+
+However, displaying only "2027-04" is misleading because it looks like the fee is specifically for April 2027.
+
+Required Display
+
+For an Annual fee, change the display to:
+
+Annual yearly fee (2027–28)
+
+The "2027–28" label clearly represents the 2027–2028 academic year.
+
+---
+
+Important
+
+The underlying data is already correct.
+
+Do NOT change:
+
+- "fee_period_start"
+- "fee_period_end"
+- Invoice generation logic
+- Fee calculation logic
+- Academic session logic
+- Payment logic
+- Record Payment workflow
+- Cash denomination logic
+- Cheque workflow
+- Bank Transfer workflow
+- Demand Draft workflow
+- UPI / QR Payment workflow
+- Razorpay / Online payment system
+- Database schema
+- Existing invoice relationships
+- Tenant isolation
+- Payment validation
+- Any backend business logic
+
+This is ONLY a display correction.
+
+---
+
+Implementation
+
+The existing code currently does something equivalent to:
+
+inv.feePeriodStart.slice(0, 7)
+
+which produces:
+
+"2027-04"
+
+Do not continue using this raw "YYYY-MM" display for the invoice period.
+
+There is already an existing "feePeriodLabel()" utility/function in the application that can produce human-readable period labels.
+
+Reuse the existing utility/function rather than creating duplicate period-formatting logic.
+
+For example:
+
+Annual fee
+2027-04-01 → 2027-03-31
+
+Display:
+2027–28
+
+---
+
+Preserve Other Fee Frequencies
+
+Do not hard-code "2027–28".
+
+The display should use the existing fee-period logic so that other frequencies continue to display appropriately.
+
+Examples:
+
+Annual
+
+"2027-04-01 → 2028-03-31"
+
+Display:
+
+"2027–28"
+
+Monthly
+
+For example:
+
+"2026-08"
+
+Display appropriately as:
+
+"August 2026"
+
+Quarterly
+
+For example:
+
+"2027-04 → 2027-06"
+
+Display appropriately as:
+
+"April–June 2027"
+
+Use the application's existing "feePeriodLabel()" behavior wherever possible.
+
+---
+
+Expected Result
+
+Before:
+
+«Annual yearly fee (2027-04)»
+
+After:
+
+«Annual yearly fee (2027–28)»
+
+The rest of the Record Payment modal must remain exactly as it currently works.
+
+Final Requirement
+
+Before making changes, inspect the existing "feePeriodLabel()" implementation and the invoice display code.
+
+Then make the smallest possible change required to use the existing human-readable fee-period label.
+
+Run the existing TypeScript checks/tests after the change.
+
+Do not make any unrelated changes.

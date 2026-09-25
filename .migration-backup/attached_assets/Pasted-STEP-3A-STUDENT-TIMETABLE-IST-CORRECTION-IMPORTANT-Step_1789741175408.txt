@@ -1,0 +1,626 @@
+STEP 3A — STUDENT TIMETABLE IST CORRECTION
+
+IMPORTANT:
+Step 3 — Full Application IST Read-Only Audit — is COMPLETE and ACCEPTED.
+
+The audit identified one confirmed HIGH-severity Student Timetable timezone issue.
+
+This task is ONLY to fix the Student Timetable IST issue.
+
+DO NOT fix any other Step 3 findings in this task.
+
+DO NOT modify:
+
+- Student Dashboard
+- Admin Calendar
+- Teacher Calendar
+- Student Calendar
+- Homework
+- Classwork
+- Visitor Log
+- Fees
+- Google Calendar Scheduler
+- Teacher Approval History
+- Financial reports
+- Profile date formatting
+- Examination timestamp formatting
+- Attendance
+- Any unrelated module
+
+==================================================
+1. OBJECTIVE
+==================================================
+
+Make Student Timetable completely independent of the browser's local timezone.
+
+The application timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+The Student Timetable must always interpret:
+
+- current date
+- current weekday
+- current hour
+- current minute
+- current week
+- active/current timetable period
+
+according to IST.
+
+A student using the application from:
+
+India
+UK/BST
+UTC
+USA
+or any other timezone
+
+must see the same school timetable state.
+
+The browser timezone MUST NOT determine which timetable day or period is active.
+
+==================================================
+2. FIRST — INSPECT CURRENT CODE
+==================================================
+
+Inspect the actual current implementation of:
+
+client/src/pages/student-timetable.tsx
+
+Also inspect:
+
+shared/ist-time.ts
+
+and any existing shared timetable/date utilities used by the component.
+
+The Step 3 audit identified these relevant locations:
+
+- client/src/pages/student-timetable.tsx:54-57
+- client/src/pages/student-timetable.tsx:72-91
+- client/src/pages/student-timetable.tsx:119-129
+
+Do NOT blindly assume the line numbers are unchanged.
+
+Confirm the current code before editing.
+
+==================================================
+3. CURRENT TIME — MUST BE IST
+==================================================
+
+The timetable currently derives current hour/minute using browser-local:
+
+getHours()
+getMinutes()
+
+This must be corrected.
+
+The current school wall-clock time must be calculated using:
+
+Asia/Kolkata
+
+Use an existing shared IST helper if available.
+
+If an appropriate helper does not exist, add the smallest reusable helper to:
+
+shared/ist-time.ts
+
+Do NOT create a timezone utility inside the Student Timetable component if the logic should be shared.
+
+The timetable's active-period calculation must use IST hour/minute.
+
+==================================================
+4. CURRENT WEEKDAY — MUST BE IST
+==================================================
+
+The timetable currently uses browser-local:
+
+getDay()
+
+This must be corrected.
+
+The current timetable weekday must be determined from the current IST business date.
+
+Use the existing canonical date-only/IST utilities where possible.
+
+For example, if the existing:
+
+todayInIST()
+calendarWeekday()
+
+combination provides the required behavior, use that.
+
+Do NOT use browser-local getDay() to determine the school's current timetable day.
+
+==================================================
+5. CURRENT BUSINESS DATE — MUST BE IST
+==================================================
+
+The timetable currently obtains the current date using browser-local year/month/day logic.
+
+Replace this with the canonical IST business-date approach.
+
+Prefer:
+
+todayInIST()
+
+or the appropriate existing shared IST helper.
+
+Do NOT convert a date-only `YYYY-MM-DD` into a timezone-bearing JavaScript Date unnecessarily.
+
+The school business date must be represented as:
+
+YYYY-MM-DD
+
+where practical.
+
+==================================================
+6. WEEK DATE CONSTRUCTION
+==================================================
+
+Inspect the timetable's week/date construction.
+
+The Step 3 audit found browser-local date arithmetic around:
+
+client/src/pages/student-timetable.tsx:72-91
+
+Ensure the displayed/query week dates remain correct date-only values.
+
+The same timetable week must be produced regardless of browser timezone.
+
+For example, if the current IST date is:
+
+2026-09-18
+
+the timetable must calculate the same school week for a browser in:
+
+Asia/Kolkata
+UTC
+Europe/London
+America/New_York
+
+Do not allow a Date conversion to move a timetable date to the previous/next calendar day.
+
+Prefer the existing shared date-only helpers such as:
+
+todayInIST()
+addCalendarDays()
+calendarWeekday()
+dateOnlyParts()
+
+where appropriate.
+
+==================================================
+7. ACTIVE TIMETABLE PERIOD
+==================================================
+
+Inspect the logic around:
+
+client/src/pages/student-timetable.tsx:119-129
+
+Determine exactly how the application decides which timetable period/lesson is currently active.
+
+The comparison must use IST wall-clock time.
+
+For example, if the school period is:
+
+09:00–09:45 IST
+
+then:
+
+08:59 IST → not active
+09:00 IST → active
+09:30 IST → active
+09:45 IST → according to the existing boundary convention
+09:46 IST → not active
+
+IMPORTANT:
+
+Do NOT change the existing business definition of period boundaries.
+
+Only change the timezone source used to obtain the current time.
+
+Preserve existing:
+
+- start-time comparison
+- end-time comparison
+- period ordering
+- break handling
+- current-period highlighting
+- timetable display behavior
+
+==================================================
+8. IST MIDNIGHT BEHAVIOR
+==================================================
+
+Ensure the timetable reacts correctly across IST midnight.
+
+Example:
+
+At:
+
+2026-09-18 23:59:59 IST
+
+the current timetable date must be:
+
+2026-09-18.
+
+At:
+
+2026-09-19 00:00:00 IST
+
+the current timetable date must become:
+
+2026-09-19.
+
+The browser timezone must not change this.
+
+If the timetable currently refreshes or recalculates based on a timer, inspect that logic.
+
+If a timer is required to keep the current timetable state correct across IST midnight, use the existing shared IST midnight helper if available.
+
+Do not create unnecessary polling.
+
+==================================================
+9. REACTIVE CURRENT-TIME BEHAVIOR
+==================================================
+
+Inspect whether the current timetable/active-period state is calculated:
+
+- only during initial render
+- on a timer
+- on state changes
+- on page navigation
+
+Make the smallest safe change necessary so that the currently active timetable period remains correct as IST time progresses.
+
+Do not introduce a high-frequency timer unnecessarily.
+
+Do not use browser-local midnight scheduling.
+
+If an existing reusable IST-time mechanism from Attendance can be safely reused, prefer that.
+
+Do not modify Attendance code just to accomplish this.
+
+==================================================
+10. DATE-ONLY VS ABSOLUTE INSTANT
+==================================================
+
+Follow this architecture strictly.
+
+Timetable school dates:
+
+YYYY-MM-DD
+→ date-only
+→ IST business calendar
+
+Timetable period times:
+
+HH:MM
+→ school wall-clock time
+→ IST
+
+Actual timestamps, if any:
+
+→ absolute instant
+→ preserve existing persistence/transport behavior
+
+Do NOT convert date-only timetable values through:
+
+new Date("YYYY-MM-DD")
+
+unless there is a demonstrated reason and the conversion is explicitly timezone-safe.
+
+==================================================
+11. DISPLAY BEHAVIOR
+==================================================
+
+Inspect all Student Timetable date/time display.
+
+If a date/time is generated from an actual timestamp, make sure it is explicitly displayed in:
+
+Asia/Kolkata
+
+If a timetable value is already a date-only or wall-clock value, do not unnecessarily convert it through a JavaScript Date.
+
+Do not change visual design.
+
+Do not change labels, colors, layout, sorting, or unrelated UI behavior.
+
+==================================================
+12. MULTI-TENANT SAFETY
+==================================================
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+Timezone correction must NOT change tenant isolation.
+
+Do not modify:
+
+- schoolId authorization
+- authenticated student school context
+- timetable school filtering
+- class/section authorization
+- subject access
+- API authorization
+- student identity handling
+
+A Student from School A must never receive timetable data belonging to School B.
+
+Do not trust a client-provided schoolId for authorization.
+
+Preserve the existing authenticated school/tenant boundary.
+
+==================================================
+13. ACADEMIC SESSION SAFETY
+==================================================
+
+Preserve existing Academic Session behavior.
+
+Do not redesign Academic Session.
+
+Do not add or remove session requirements.
+
+Do not change session selection or session authorization.
+
+If Student Timetable data is session-aware, preserve its existing session filtering exactly.
+
+Only correct the timezone source for current date/week/time.
+
+==================================================
+14. BACKEND SCOPE
+==================================================
+
+This is primarily a frontend fix.
+
+Do NOT modify backend routes unless inspection proves there is a direct Student Timetable backend timezone defect required to complete this exact fix.
+
+The Step 3 audit finding was specifically:
+
+client/src/pages/student-timetable.tsx
+
+If backend changes are not required, leave all backend files untouched.
+
+==================================================
+15. SHARED IST UTILITIES
+==================================================
+
+Inspect:
+
+shared/ist-time.ts
+
+Reuse existing helpers wherever possible, including as applicable:
+
+- todayInIST()
+- addCalendarDays()
+- calendarDayDifference()
+- calendarWeekday()
+- dateOnlyParts()
+- formatDateOnly()
+- formatTimeIST()
+
+If a missing helper is genuinely required, add only the smallest reusable helper to:
+
+shared/ist-time.ts
+
+Add focused tests for any new helper.
+
+Do not create duplicate timezone logic.
+
+==================================================
+16. TEST REQUIREMENTS
+==================================================
+
+Add/update focused tests for Student Timetable date/time logic.
+
+At minimum test:
+
+A. Current IST weekday
+
+B. Current IST date
+
+C. Current IST hour/minute
+
+D. Week calculation
+
+E. Active timetable period calculation
+
+F. IST midnight transition
+
+G. Browser timezone independence
+
+Test behavior under:
+
+TZ=UTC
+TZ=Asia/Kolkata
+TZ=Europe/London
+TZ=America/New_York
+
+The expected school timetable date/weekday/active period must remain identical for the same IST instant.
+
+==================================================
+17. REQUIRED BOUNDARY TESTS
+==================================================
+
+Test at least these IST instants:
+
+2026-09-18 23:59:59 IST
+2026-09-19 00:00:00 IST
+2026-09-19 00:00:01 IST
+
+Also test a normal school timetable period.
+
+Example:
+
+09:00 IST
+09:30 IST
+period end boundary
+after period end
+
+Use the application's actual configured period-boundary semantics rather than inventing a new one.
+
+==================================================
+18. IMPORTANT CROSS-TIMEZONE TEST
+==================================================
+
+Explicitly test a scenario where the browser timezone disagrees with IST.
+
+For example:
+
+IST:
+2026-09-19 00:15
+
+Browser:
+Europe/London or America/New_York
+
+Verify that Student Timetable still uses:
+
+IST date = 2026-09-19
+
+and not the browser's local calendar date.
+
+Also test an IST school-time period while the browser is in another timezone.
+
+==================================================
+19. NO UNRELATED CHANGES
+==================================================
+
+Do NOT fix these Step 3 findings now:
+
+- Student Dashboard academic-year fallback
+- Teacher approval-history session boundaries
+- Visitor Log
+- Google Calendar scheduler
+- Fee CURRENT_DATE
+- Admin Calendar
+- Teacher Calendar
+- Student Calendar
+- Homework
+- Classwork
+- Profile date-only formatting
+- Other timestamp presentation
+- Examination report generation date
+
+Those are separate future steps.
+
+Do NOT touch Attendance.
+
+==================================================
+20. NO DATABASE CHANGES
+==================================================
+
+Do NOT:
+
+- modify database schema
+- create migrations
+- modify database data
+- change PostgreSQL timezone
+- change timestamp column types
+- change UTC persistence
+
+==================================================
+21. NO PROCESS TIMEZONE CHANGE
+==================================================
+
+Do NOT add:
+
+TZ=Asia/Kolkata
+
+to:
+
+- package.json
+- Replit configuration
+- workflow
+- Node startup
+- shell environment
+
+Use explicit IST logic instead.
+
+==================================================
+22. VERIFICATION
+==================================================
+
+After implementation run:
+
+npm run check
+
+Run all relevant Student Timetable/shared IST tests.
+
+Run existing IST/timezone tests.
+
+Run:
+
+git diff --check
+
+Verify the application starts successfully.
+
+Do not touch production.
+
+Do not run migrations.
+
+Do not modify production data.
+
+==================================================
+23. FINAL REPORT
+==================================================
+
+After implementation return:
+
+1. Exact files changed
+2. Exact components/functions changed
+3. How current date is now calculated
+4. How current weekday is now calculated
+5. How current hour/minute is now calculated
+6. How active timetable period is now determined
+7. How week/date calculations are now timezone-independent
+8. How IST midnight rollover is handled
+9. Shared IST helpers reused
+10. Any new helper added
+11. Tests added/updated
+12. Test results
+13. npm run check result
+14. git diff --check result
+15. Application startup result
+16. Confirmation that no database/schema/migration changes were made
+17. Confirmation that UTC persistence was unchanged
+18. Confirmation that multi-tenant isolation was preserved
+19. Confirmation that Academic Session handling was preserved
+20. Confirmation that no unrelated Step 3 findings were modified
+21. Any remaining Student Timetable timezone issues, if any
+
+==================================================
+24. FINAL RULE
+==================================================
+
+IMPLEMENT ONLY STEP 3A.
+
+The final Student Timetable must be based on:
+
+Asia/Kolkata / IST
+
+for:
+
+- current school date
+- current school weekday
+- current school time
+- current timetable period
+- current week
+- active-period highlighting
+
+regardless of the browser timezone.
+
+Do not change business rules.
+
+Do not redesign timetable functionality.
+
+Do not change tenant isolation.
+
+Do not change Academic Session architecture.
+
+Do not modify database persistence.
+
+Do not fix unrelated modules.
+
+Make the smallest safe implementation necessary and provide the complete verification report.

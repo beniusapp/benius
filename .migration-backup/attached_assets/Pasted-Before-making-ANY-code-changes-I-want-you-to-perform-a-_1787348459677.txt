@@ -1,0 +1,123 @@
+Before making ANY code changes, I want you to perform a complete audit of the Export Ledger functionality in the Fees & Payments → Ledger & Transactions module.
+
+Do NOT modify any files yet.
+
+I want you to inspect the current implementation and give me a precise technical report of how Export Ledger currently works.
+
+Please inspect:
+
+1. Frontend
+   
+   - Where the Export Ledger button is implemented.
+   - The exact function/callback triggered when Export Ledger is clicked.
+   - What filters/search state it currently reads.
+   - Whether it uses the new Excel-style column filters.
+   - Whether it uses:
+     - search
+     - column filters
+     - selectedIds
+     - selectAllMatching
+     - excludedIds
+     - current page/pageSize
+   - The exact request/URL/body sent to the backend.
+
+2. Backend
+   
+   - The exact API route used by Export Ledger.
+   - Which server file contains the route.
+   - The SQL/query used to retrieve export data.
+   - How school/tenant isolation is enforced.
+   - How academic-session isolation is enforced.
+   - How search and filters are applied.
+   - Whether pagination is applied.
+   - Whether the export contains all matching records or only the currently displayed page.
+
+3. Export format
+   
+   - Confirm whether the output is CSV, XLSX, or another format.
+   - List every exported column in its current order.
+   - Show one representative example of the exported row structure.
+   - Explain how dates, amounts, empty values, payment methods, statuses, invoice numbers, receipt numbers, DSIDs, etc. are formatted.
+
+4. Selection behavior
+   Test/inspect these cases:
+   
+   - No selection → export all matching records.
+   - Individual invoice selection → export only selected invoices.
+   - Select All Matching → export all records matching the active filters.
+   - Select All Matching + exclusions → export matching records except excluded invoices.
+   - Selection across multiple pages.
+   - Clear selection.
+   - Search/filter + selection intersection.
+
+5. Filter behavior
+   We recently implemented Excel-style column filtering for the Ledger.
+   
+   Confirm whether Export Ledger currently respects the SAME filter state used by the Ledger table.
+   
+   Specifically verify filters such as:
+   
+   - Invoice No.
+   - Receipt No.
+   - Student Name
+   - DSID
+   - Class
+   - Section
+   - Fee Name
+   - Fee Type
+   - Fee Period
+   - Frequency
+   - Amount
+   - Due Date
+   - Status
+   - Paid On
+   - Paid
+   - Outstanding
+   - Payment Method
+   - Reference No.
+   
+   Do not assume the filters work — trace the actual frontend request and backend SQL.
+
+6. Consistency
+   Compare Export Ledger's behavior with the already completed:
+   
+   - Ledger PDF
+   - Transaction Report PDF
+   - Excel-style Ledger filtering
+   
+   Identify any mismatch between them.
+
+7. Security
+   Verify that Export Ledger cannot export:
+   
+   - another school's records
+   - another academic session's records
+   - records outside the active tenant/session even if IDs are manually manipulated in the request.
+
+8. Potential problems
+   Identify any bugs, architectural inconsistencies, duplicated logic, legacy code, or places where Export Ledger could produce a different dataset from Ledger PDF.
+
+9. Files
+   Give me the exact list of files involved in Export Ledger.
+
+10. Final recommendation
+    At the end, give me:
+
+A. CURRENT BEHAVIOR
+B. WHAT IS ALREADY CORRECT
+C. WHAT NEEDS TO CHANGE
+D. RECOMMENDED MODERN ARCHITECTURE
+E. EXACT FILES THAT WOULD NEED MODIFICATION
+F. WHAT MUST NOT BE MODIFIED
+
+IMPORTANT:
+
+- Do NOT modify code yet.
+- Do NOT refactor anything yet.
+- Do NOT change the UI yet.
+- Do NOT change the database schema.
+- Do NOT change Ledger PDF or Transaction Report PDF.
+- Do NOT make assumptions based on how the code "should" work.
+- Inspect the actual implementation and report what it currently does.
+
+After completing the audit, stop and wait for my next instruction.

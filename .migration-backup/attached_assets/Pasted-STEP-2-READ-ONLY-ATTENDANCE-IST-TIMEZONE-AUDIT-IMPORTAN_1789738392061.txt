@@ -1,0 +1,591 @@
+STEP 2 — READ-ONLY ATTENDANCE IST TIMEZONE AUDIT
+
+IMPORTANT:
+This is a READ-ONLY investigation.
+
+DO NOT modify any code.
+DO NOT modify database/schema/migrations.
+DO NOT change environment variables.
+DO NOT change configuration.
+DO NOT change production or development data.
+DO NOT restart the application.
+DO NOT implement any fixes.
+
+STEP 1 — APPLICATION-WIDE IST FOUNDATION — IS ALREADY COMPLETE.
+
+The application-wide business timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+Cron wall-clock schedules have already been made explicitly Asia/Kolkata.
+
+The PostgreSQL persistence convention remains UTC and MUST NOT be changed.
+
+Now perform a COMPLETE, READ-ONLY AUDIT of the ATTENDANCE module only.
+
+==================================================
+1. ATTENDANCE BUSINESS TIMEZONE REQUIREMENT
+==================================================
+
+For the entire Attendance module:
+
+The school's business day MUST be based on:
+
+Asia/Kolkata
+
+NOT:
+- browser-local timezone
+- server/container-local timezone
+- BST
+- GMT
+- UTC as a displayed/business date
+- any other timezone
+
+A school attendance date such as:
+
+2026-09-18
+
+must always mean the Indian calendar date:
+
+2026-09-18 in Asia/Kolkata.
+
+==================================================
+2. TRACE THE COMPLETE ATTENDANCE FLOW
+==================================================
+
+Trace Attendance end-to-end:
+
+Teacher Portal
+→ Attendance UI
+→ API request
+→ backend route
+→ validation
+→ storage/database
+→ attendance policy/calculation
+→ reports/history
+→ displayed result
+
+Also inspect relevant Admin and Student Attendance functionality if present.
+
+Identify the exact files/functions involved.
+
+Do not assume anything.
+Trace the actual implementation.
+
+==================================================
+3. ATTENDANCE "TODAY"
+==================================================
+
+Find every place where Attendance determines:
+
+- today
+- current date
+- current school day
+- attendance date
+- current attendance period
+
+Inspect:
+
+new Date()
+Date.now()
+getFullYear()
+getMonth()
+getDate()
+getDay()
+setHours()
+setDate()
+
+and any helper functions.
+
+Determine whether "today" is calculated using:
+
+Asia/Kolkata
+
+or:
+
+server/process timezone
+browser timezone
+UTC
+another timezone.
+
+Give exact file and line/function references.
+
+==================================================
+4. ATTENDANCE DATE STORAGE
+==================================================
+
+Inspect the database schema and actual Attendance persistence.
+
+Determine:
+
+- Attendance date column type
+- whether it is PostgreSQL DATE
+- whether timestamps are involved
+- how attendance date is constructed before saving
+- whether JavaScript Date objects are used
+- whether strings in YYYY-MM-DD format are preserved
+- whether timezone conversion occurs before saving
+
+IMPORTANT:
+
+Do NOT change the database schema.
+
+Determine whether the existing storage model is safe for an Indian calendar date.
+
+==================================================
+5. ATTENDANCE DATE RETRIEVAL
+==================================================
+
+Trace how attendance records are retrieved.
+
+Check whether:
+
+2026-09-18
+
+is queried as the exact calendar date:
+
+2026-09-18
+
+or converted through JavaScript Date/timezone handling.
+
+Look specifically for:
+
+new Date(date)
+new Date("YYYY-MM-DD")
+toISOString()
+toLocaleDateString()
+date-fns
+Luxon
+Day.js
+Moment
+SQL date comparisons
+start-of-day/end-of-day calculations
+
+Determine whether a date can shift by one day.
+
+==================================================
+6. ATTENDANCE CORRECTION WINDOW
+==================================================
+
+Audit the Attendance correction/edit window.
+
+The existing audit identified logic around:
+
+server/teacher-routes.ts
+
+including the correction window and midnight calculation.
+
+Trace exactly how the system determines:
+
+- current time
+- today's midnight
+- seven-day cutoff
+- whether a teacher can correct attendance
+- whether an attendance date is inside/outside the correction window
+
+Determine whether the boundary is based on:
+
+Asia/Kolkata
+
+or server/process timezone.
+
+Test the conceptual boundary around:
+
+23:59 IST
+00:00 IST
+00:01 IST
+
+and explain whether the behavior can change incorrectly because of timezone.
+
+Do NOT change anything.
+
+==================================================
+7. WEEKDAY CALCULATION
+==================================================
+
+Audit all Attendance weekday calculations.
+
+Find:
+
+getDay()
+weekday()
+day-of-week helpers
+calendar calculations
+
+Determine whether the weekday is calculated using:
+
+Asia/Kolkata
+
+or server-local/browser-local time.
+
+Pay particular attention to code previously identified around:
+
+server/teacher-routes.ts:4802-4803
+
+Determine whether the same instant could produce different weekdays depending on host/browser timezone.
+
+==================================================
+8. ACADEMIC YEAR CALCULATION
+==================================================
+
+Audit Attendance logic that determines the academic year/session from an attendance date.
+
+Previously identified area:
+
+server/teacher-routes.ts:438-442
+
+Trace exactly how the academic year is derived.
+
+Determine whether:
+
+2026-03-31
+2026-04-01
+
+and other academic-year boundaries are interpreted as Indian calendar dates.
+
+Do NOT redesign Academic Session architecture.
+
+This is only a timezone/date-semantics audit.
+
+==================================================
+9. ATTENDANCE HISTORY
+==================================================
+
+Audit:
+
+Teacher Attendance History
+Admin Attendance History
+Student Attendance History
+
+if present.
+
+Inspect:
+
+- calendar month
+- selected date
+- today
+- previous/next month
+- date ranges
+- report period
+- displayed attendance date
+- timestamps
+- filtering
+- sorting
+
+Determine whether any of these use browser-local timezone.
+
+A teacher/student/admin using a browser configured for:
+
+UK/BST
+US timezones
+UTC
+etc.
+
+must NOT see a different Indian attendance date.
+
+==================================================
+10. ATTENDANCE REPORTS
+==================================================
+
+Inspect all Attendance reports.
+
+Check:
+
+- report generated date
+- attendance period start/end
+- daily attendance date
+- monthly attendance
+- academic-year attendance
+- export/PDF date
+- printed date/time
+
+Determine whether displayed times are explicitly:
+
+Asia/Kolkata
+
+or browser-local.
+
+Also check backend-generated report timestamps.
+
+==================================================
+11. ATTENDANCE POLICY ENGINE
+==================================================
+
+Inspect the Attendance Policy Engine.
+
+Previously identified:
+
+server/attendance-policy-engine.ts
+
+Determine:
+
+- how timestamps are interpreted
+- how attendance dates are determined
+- how IST conversion is performed
+- whether all relevant calculations use the canonical IST utilities
+- whether any local Date methods remain
+
+Do not modify the engine.
+
+==================================================
+12. EXISTING IST UTILITIES
+==================================================
+
+Inspect and document how Attendance currently uses:
+
+shared/ist-time.ts
+
+and any other date/time utility.
+
+Determine:
+
+- which Attendance paths already use the canonical IST helpers
+- which paths bypass them
+- whether duplicate date/time utilities exist
+- whether different parts of Attendance use different date semantics
+
+Do NOT create new utilities during this audit.
+
+==================================================
+13. FRONTEND DATE/TIME FORMATTING
+==================================================
+
+Search Attendance frontend code for:
+
+toLocaleString()
+toLocaleDateString()
+toLocaleTimeString()
+Intl.DateTimeFormat
+new Date()
+getFullYear()
+getMonth()
+getDate()
+getDay()
+setHours()
+setDate()
+toISOString()
+
+For every relevant occurrence determine:
+
+A. Is the value an absolute timestamp?
+B. Is the value a calendar date?
+C. Is it an Attendance business date?
+D. Is explicit Asia/Kolkata required?
+E. Is browser-local behavior currently possible?
+
+IMPORTANT:
+
+`en-IN` or `en-GB` alone does NOT guarantee IST.
+
+Only explicit:
+
+timeZone: "Asia/Kolkata"
+
+or a safe canonical IST utility guarantees the intended timezone.
+
+==================================================
+14. BACKEND DATE/TIME FORMATTING
+==================================================
+
+Perform the same analysis for Attendance backend code.
+
+Pay special attention to:
+
+- Date parsing
+- Date formatting
+- date arithmetic
+- midnight boundaries
+- date comparisons
+- timestamps converted to calendar dates
+
+==================================================
+15. DATABASE UTC VS IST — DO NOT CONFUSE THEM
+==================================================
+
+Do NOT classify UTC database persistence itself as a defect.
+
+The following architecture is acceptable:
+
+Absolute instant
+→ persisted using existing UTC convention
+→ explicitly converted to Asia/Kolkata for Indian business/user-facing purposes
+
+However, a PostgreSQL DATE such as:
+
+2026-09-18
+
+must remain a calendar date and must NOT be unnecessarily converted through a timezone-bearing JavaScript Date.
+
+Determine whether Attendance follows this distinction correctly.
+
+==================================================
+16. MULTI-TENANT SAFETY
+==================================================
+
+This is a TRUE MULTI-TENANT SaaS application.
+
+Attendance must remain strictly tenant-isolated.
+
+Confirm that timezone/date handling cannot cause:
+
+- School A attendance to appear in School B
+- incorrect attendance date for a school
+- incorrect academic year
+- incorrect attendance totals
+- incorrect correction-window authorization
+- incorrect report periods
+
+Do NOT modify tenant authorization.
+
+Only audit whether timezone/date handling could interact with tenant isolation.
+
+==================================================
+17. EDGE-CASE ANALYSIS
+==================================================
+
+Analyze these boundaries specifically:
+
+A. IST midnight:
+
+23:59:59 IST
+→
+00:00:00 IST
+
+B. UTC midnight vs IST midnight.
+
+C. Browser timezone set to UK/BST.
+
+D. Browser timezone set to US.
+
+E. Server/container timezone different from IST.
+
+F. Academic-year boundary.
+
+G. Seven-day Attendance correction boundary.
+
+H. Month boundary.
+
+I. Year boundary.
+
+For each, state whether Attendance behavior remains correct.
+
+==================================================
+18. FIND ALL ATTENDANCE TIMEZONE ISSUES
+==================================================
+
+Create a table:
+
+| Area | File/function | Current behavior | Current timezone | IST-safe? | Risk | Recommended approach |
+|------|---------------|------------------|------------------|-----------|------|----------------------|
+
+Use these classifications:
+
+SAFE
+NEEDS FIX
+POTENTIAL RISK
+INFORMATIONAL
+
+Do not exaggerate findings.
+
+==================================================
+19. PRIORITIZE FINDINGS
+==================================================
+
+Separate findings into:
+
+P0 — Can produce incorrect attendance date/business behavior
+P1 — Can produce incorrect attendance period/window/report
+P2 — User-facing timestamp/display inconsistency
+P3 — Cleanup/consistency only
+
+Only classify something as P0/P1 if the actual code supports that conclusion.
+
+==================================================
+20. RECOMMENDED ATTENDANCE ARCHITECTURE
+==================================================
+
+Based on the actual code, define the recommended Attendance timezone architecture.
+
+It should clearly distinguish:
+
+A. Calendar dates
+
+Example:
+
+attendanceDate = "2026-09-18"
+
+This is an IST school calendar date and should remain date-only.
+
+B. Absolute timestamps
+
+Example:
+
+createdAt = an instant
+
+These may remain persisted under the existing UTC convention and must be converted to Asia/Kolkata when displayed.
+
+C. Business-time calculations
+
+"Today", midnight, correction cutoff, weekday, month/day boundaries, etc.
+
+These must be calculated according to:
+
+Asia/Kolkata.
+
+D. User-facing times
+
+Must explicitly display:
+
+Asia/Kolkata.
+
+==================================================
+21. DO NOT IMPLEMENT
+==================================================
+
+Again:
+
+DO NOT change code.
+DO NOT modify schema.
+DO NOT create migrations.
+DO NOT change database timezone.
+DO NOT change PostgreSQL UTC configuration.
+DO NOT change environment variables.
+DO NOT change production.
+DO NOT change development data.
+DO NOT restart the application.
+DO NOT fix any findings yet.
+
+This is strictly a READ-ONLY Attendance IST audit.
+
+==================================================
+22. FINAL REPORT
+==================================================
+
+Return a complete report with:
+
+1. Attendance architecture summary
+2. Backend findings
+3. Database findings
+4. Frontend findings
+5. Attendance History findings
+6. Correction-window findings
+7. Weekday findings
+8. Academic-year findings
+9. Attendance Policy Engine findings
+10. Report/export findings
+11. Browser-timezone risks
+12. Server-timezone risks
+13. IST-safe paths already present
+14. All remaining issues
+15. P0/P1/P2/P3 prioritization
+16. Recommended fix order
+17. Exact files/functions that would need changes
+18. Confirmation that no changes were made
+
+MOST IMPORTANT:
+
+Do not implement anything.
+
+After producing the report, STOP and wait for further instructions.

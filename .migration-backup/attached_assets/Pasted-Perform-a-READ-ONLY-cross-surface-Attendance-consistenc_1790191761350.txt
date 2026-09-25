@@ -1,0 +1,437 @@
+Perform a READ-ONLY cross-surface Attendance consistency audit covering:
+
+1. Admin Attendance
+2. Teacher Attendance
+3. Student Attendance
+
+This is an AUDIT ONLY.
+
+ABSOLUTE RULE
+
+Do NOT modify any files.
+
+Do NOT:
+
+- refactor
+- redesign
+- change APIs
+- change database schema
+- create migrations
+- change attendance records
+- change holidays
+- change Working Days configuration
+- change Attendance Policy
+- change Academic Session behavior
+- change authentication
+- change production
+
+If a defect is discovered, REPORT it only. Do not fix it.
+
+---
+
+1. ACADEMIC SESSION
+
+Inspect all three Attendance surfaces and their server APIs.
+
+Verify whether Attendance reads, writes, calculations, history, and date generation are correctly scoped to:
+
+- authenticated "schoolId"
+- selected Academic Session ID
+
+Verify that:
+
+- a Session cannot access another school's attendance
+- attendance from another Session cannot leak into the selected Session
+- dates outside the selected Session are not incorrectly treated as attendance dates
+- archived Sessions remain read-only where already required
+- active Session correction/edit rules remain respected
+
+Report any difference between Admin, Teacher, and Student behavior.
+
+---
+
+2. TENANT ISOLATION
+
+For each Attendance surface, inspect:
+
+- attendance queries
+- student/teacher lookups
+- class/section lookups
+- holiday lookups
+- Session lookups
+- attendance calculations
+- history/report endpoints
+
+Verify that school ownership is always enforced.
+
+Pay particular attention to:
+
+- request-supplied "schoolId"
+- student IDs
+- teacher IDs
+- class IDs
+- section IDs
+- Session IDs
+
+A resource belonging to School A must never be readable, writable, or calculable from School B.
+
+Report PASS/FAIL separately for:
+
+- Admin
+- Teacher
+- Student
+
+---
+
+3. WORKING-DAY SEMANTICS
+
+Compare how Admin, Teacher, and Student Attendance determine whether a date is applicable.
+
+Important:
+
+The recently implemented Teacher Self-Attendance Working Days configuration is:
+
+- school-wide
+- stored in "school_metadata"
+- Mon–Fri ON by default
+- Sat/Sun OFF by default
+- configurable by school
+
+Do NOT assume Student Attendance should use this same Teacher rule.
+
+Determine exactly what each surface currently uses.
+
+Report:
+
+- Admin working-day source
+- Teacher working-day source
+- Student working-day source
+
+Then classify any difference as:
+
+- INTENTIONAL DIFFERENCE
+- POTENTIAL ISSUE
+- DEFECT
+
+Do not change anything.
+
+---
+
+4. HOLIDAY SEMANTICS
+
+Inspect holiday behavior across all three surfaces.
+
+Determine:
+
+- what calendar source is used
+- whether the holiday is school-scoped
+- whether "All_School" holidays are excluded
+- whether targeted/class-specific holidays are supported
+- whether holidays prevent marking
+- whether holidays affect calculations
+- whether holidays affect displayed history
+
+Do not assume that Teacher, Student, and Admin must have identical holiday behavior.
+
+Identify whether differences are intentional or inconsistent.
+
+---
+
+5. ATTENDANCE STATUS
+
+Compare the status vocabulary and meaning across:
+
+- Admin Attendance
+- Teacher Attendance
+- Student Attendance
+- Teacher Self-Attendance
+
+Document:
+
+- Present
+- Late
+- Half Day
+- Absent
+- Leave
+- Missing
+- Weekend/holiday display states
+- any other status
+
+Determine which statuses are:
+
+A. Stored database statuses
+B. Calculated/display-only states
+C. Generated missing-date states
+
+Verify that one surface does not accidentally reinterpret another surface's stored historical status.
+
+---
+
+6. DATE / IST BEHAVIOR
+
+Inspect all three surfaces for business-date handling.
+
+Verify:
+
+- IST / "Asia/Kolkata" is used for application business dates
+- date-only attendance dates are not shifted by UTC conversion
+- today's date is calculated consistently
+- future dates are handled consistently with each surface's intended contract
+- Session boundaries are respected
+
+Look specifically for unsafe patterns involving:
+
+- "new Date("YYYY-MM-DD")"
+- UTC conversion
+- browser-local date conversion
+- server-local timezone
+- timestamp-to-date conversion
+
+Do not modify anything.
+
+---
+
+7. HISTORICAL ATTENDANCE
+
+Verify what happens when a Student or Teacher's current organizational information changes.
+
+Especially inspect:
+
+- class
+- section
+- Session enrollment
+- historical attendance
+- Student deletion/history behavior
+
+Confirm the previously established requirement:
+
+Historical Student Attendance must survive physical Student deletion.
+
+Verify that historical records retain enough identity/context to remain meaningful.
+
+Do not revisit same-Session class transfer; that requirement is intentionally skipped for now.
+
+---
+
+8. CALCULATION CONSISTENCY
+
+Compare Attendance calculations across the three surfaces.
+
+Document the exact formula/source used for:
+
+- daily status
+- attendance percentage
+- monthly percentage
+- yearly percentage
+- Session percentage
+- working-day denominator
+- missing attendance
+- half-day weighting
+- holiday treatment
+
+Important:
+
+Do not force Teacher Self-Attendance and Student Attendance to use the same formula if their existing contracts are intentionally different.
+
+The purpose is to discover whether differences are documented/intentional or accidental.
+
+Pay particular attention to previously identified issues:
+
+- Student yearly percentage was fixed in 10L-9B.
+- Teacher Self-Attendance previously had three different rate formulas and now has one canonical rate.
+
+Verify those fixes remain intact.
+
+---
+
+9. ADMIN ATTENDANCE
+
+Give special attention to Admin Attendance because it has not yet received the same focused audit.
+
+Inspect:
+
+- Admin daily attendance
+- Admin attendance history
+- Admin reports
+- Admin corrections/approval
+- Admin calculations
+- Session selection
+- holiday handling
+- working-day handling
+- tenant isolation
+
+Determine whether Admin Attendance is:
+
+- an operational marking surface
+- a reporting surface
+- an approval/correction surface
+- or a combination
+
+Document the actual behavior. Do not redesign it.
+
+---
+
+10. TEACHER ATTENDANCE
+
+Verify both areas:
+
+Teacher marking Student Attendance
+
+and
+
+Teacher Self-Attendance
+
+Keep these concepts separate.
+
+Verify that the recently completed Teacher Self-Attendance Working Days/rate implementation remains intact.
+
+Do not change it.
+
+---
+
+11. STUDENT ATTENDANCE
+
+Verify:
+
+- Session-scoped enrollment
+- school isolation
+- applicable-date logic
+- existing Student Attendance working-day contract
+- holiday behavior
+- historical records
+- yearly/monthly calculations
+- no accidental dependency on Teacher Working Days configuration
+
+Do not change the established Student Attendance contract.
+
+---
+
+12. CROSS-SURFACE MATRIX
+
+Produce a concise matrix:
+
+Area| Admin| Teacher| Student| Consistent?| Finding
+Tenant isolation| | | | | 
+Academic Session| | | | | 
+Working days| | | | | 
+Holidays| | | | | 
+Status semantics| | | | | 
+Missing attendance| | | | | 
+Percentage formula| | | | | 
+Session boundary| | | | | 
+IST| | | | | 
+Historical records| | | | | 
+
+Do not label a difference as a defect merely because the implementations differ.
+
+---
+
+13. AUTOMATED TESTS
+
+Inspect existing Attendance tests.
+
+Identify coverage for:
+
+- tenant isolation
+- Academic Session
+- historical Attendance
+- Student deletion
+- holidays
+- Working Days
+- Teacher Self-Attendance
+- IST
+- percentage calculations
+
+Run relevant existing tests if useful.
+
+Do NOT add or modify tests.
+
+---
+
+14. FINAL REPORT
+
+Return:
+
+A. Admin Attendance
+
+PASS/FAIL + actual behavior
+
+B. Teacher Attendance
+
+PASS/FAIL + actual behavior
+
+C. Student Attendance
+
+PASS/FAIL + actual behavior
+
+D. Academic Session
+
+PASS/FAIL
+
+E. Tenant isolation
+
+PASS/FAIL
+
+F. Working Days
+
+Document each surface's source and differences
+
+G. Holidays
+
+Document each surface's behavior
+
+H. Status semantics
+
+Document stored vs calculated/display-only statuses
+
+I. IST/date handling
+
+PASS/FAIL
+
+J. Historical Attendance
+
+PASS/FAIL
+
+K. Calculation consistency
+
+Document formulas and differences
+
+L. Cross-surface matrix
+
+Provide the requested matrix.
+
+M. Automated tests
+
+Report existing relevant coverage and test results.
+
+N. Findings
+
+List ONLY actual findings.
+
+Classify every finding as:
+
+- DEFECT
+- POTENTIAL ISSUE
+- INTENTIONAL DIFFERENCE
+- INFORMATIONAL
+
+For each DEFECT/POTENTIAL ISSUE include:
+
+- exact file/API
+- exact behavior
+- why it matters
+- smallest likely correction area
+
+Do not fix anything.
+
+FINAL SAFETY GATE
+
+If no defect is found, explicitly state:
+
+"10L-12A AUDIT PASS — NO CODE CHANGES REQUIRED."
+
+If a defect is found:
+
+"10L-12A AUDIT COMPLETE — IMPLEMENTATION STOPPED FOR REVIEW."
+
+No implementation work is authorized by this prompt.

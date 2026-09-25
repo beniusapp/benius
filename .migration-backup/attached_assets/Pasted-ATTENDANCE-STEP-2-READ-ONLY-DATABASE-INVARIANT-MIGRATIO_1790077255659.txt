@@ -1,0 +1,484 @@
+ATTENDANCE STEP 2 — READ-ONLY DATABASE INVARIANT & MIGRATION DESIGN AUDIT
+
+IMPORTANT:
+This is a READ-ONLY architecture/design step.
+
+DO NOT modify:
+- application code
+- shared/schema.ts
+- any migration
+- database tables
+- indexes
+- constraints
+- triggers
+- seed data
+- configuration
+- production environment
+- development database data
+
+DO NOT run:
+- drizzle-kit push
+- drizzle-kit migrate
+- ALTER TABLE
+- CREATE INDEX
+- CREATE TABLE
+- DROP
+- DELETE
+- UPDATE
+- INSERT
+- any other mutating SQL
+
+Do not implement anything.
+
+The goal is to produce the exact database invariant and migration plan that will later make Student Attendance tenant-safe, Academic-Session-safe, enrollment-safe, historically reliable, and race-safe.
+
+PROJECT HARD REQUIREMENTS:
+1. This is a multi-tenant school MIS.
+2. Every school is an isolated tenant.
+3. No Student, Teacher, Enrollment, Attendance, Academic Session, or other school-owned record may cross school boundaries.
+4. Authenticated school/tenant context is authoritative.
+5. Browser-supplied schoolId must never establish ownership.
+6. Academic Session is mandatory for session-scoped Student Attendance.
+7. Application business/display dates use Asia/Kolkata / IST.
+8. Do not introduce a global timezone configuration that changes existing Postgres timestamp semantics.
+9. Existing unrelated modules must not be redesigned.
+10. Student Registry remains the global/current Student master.
+11. Enrollment remains the session-specific placement authority.
+12. Historical Attendance must not move when current Student Registry or enrollment placement changes unless a separately audited correction operation is later designed.
+13. Teacher Examination's existing authorization architecture must not be copied blindly into Attendance. Attendance's own business contract must remain explicit.
+14. Do not solve unresolved product-policy questions by guessing.
+
+KNOWN ATTENDANCE CONTRACT FROM STEP 1/1A:
+
+STUDENT ATTENDANCE IDENTITY:
+
+school_id + session_id + student_id + attendance_date
+
+Canonical uniqueness should eventually be:
+
+UNIQUE (
+    school_id,
+    session_id,
+    student_id,
+    attendance_date
+)
+
+SESSION:
+- Attendance writes use the authenticated school's active Academic Session.
+- Browser cannot choose the write session.
+- Historical sessions are read-only.
+- Attendance must retain its session identity.
+- A referenced historical Academic Session must eventually be archived/deactivated rather than hard-deleted.
+
+ENROLLMENT:
+- Attendance requires a matching enrollment:
+  school_id + student_id + session_id
+- Enrollment is the session-specific authority for class and section.
+- Attendance class/section should be historical snapshots derived from enrollment at mark time.
+- Browser class/section must not be trusted as authority.
+- Enrollment status vocabulary is NOT yet finalized, so do not invent a status allowlist in this step.
+
+STUDENT:
+- students has school ownership.
+- Student identity must be tenant-bound.
+- Current students.class / students.section must NOT be used to reconstruct historical Attendance placement.
+
+TEACHER:
+- Teacher identity is tenant-bound.
+- Current Attendance behavior allows any authenticated same-school Teacher.
+- Assignment restriction (Faculty Mapping vs legacy assignment vs unrestricted same-school Teacher) remains a product decision.
+- Do not implement assignment restrictions in this step.
+
+STATUS:
+Settled future canonical persisted Student Attendance statuses:
+- present
+- absent
+- late
+- halfday
+
+Do not persist:
+- not-marked
+- none
+- holiday
+- future
+
+half_day is legacy compatibility only if real legacy data exists.
+
+leave remains unresolved because leave authority/precedence/percentage rules are still a product decision.
+
+EDIT COUNT:
+Future intended contract:
+- initial creation = edit_count 0
+- only changed status increments edit_count
+- unchanged save = no update/no increment
+- maximum Teacher changes = 3
+- cap failure must be explicit
+- enforcement must be atomic
+- seven-day Teacher edit window uses IST calendar arithmetic
+- Admin override/correction behavior remains unresolved
+
+TEACHER SELF ATTENDANCE:
+Current logical identity:
+school_id + teacher_id + attendance_date
+
+It is a separate subsystem.
+Do NOT redesign Student Attendance identity based on Teacher self-attendance.
+
+CURRENT DATABASE FINDINGS:
+- attendance_records currently has zero rows in development.
+- attendance_records currently has nullable session_id.
+- attendance_records currently has no unique constraint for Student/day.
+- attendance_records currently has no composite tenant ownership FKs.
+- attendance_records.student_id -> students.id ON DELETE CASCADE.
+- attendance_records.teacher_id -> teachers.id ON DELETE CASCADE.
+- attendance_records.school_id -> schools.id ON DELETE CASCADE.
+- attendance_records.session_id -> academic_sessions.id ON DELETE SET NULL.
+- enrollments has unique:
+  (school_id, student_id, session_id)
+- students has school ownership.
+- teachers has school ownership.
+- academic_sessions has school ownership.
+- Current Attendance tables were apparently created outside tracked migrations / likely through previous Drizzle schema push.
+- No tracked migration currently establishes the complete Attendance DDL.
+- Development database is PostgreSQL 16.x.
+
+TASK:
+
+Perform a COMPLETE READ-ONLY DATABASE DESIGN AUDIT specifically for the future Attendance migration.
+
+==================================================
+PART 1 — EXACT CURRENT DATABASE STRUCTURE
+==================================================
+
+Inspect the actual development PostgreSQL database and repository schema.
+
+Report exact current definitions for:
+
+1. students
+2. teachers
+3. academic_sessions
+4. enrollments
+5. attendance_records
+6. teacher_self_attendance
+7. attendance_correction_requests
+8. attendance_policies
+
+For each table report:
+
+- columns
+- PostgreSQL data types
+- nullable/not-null
+- defaults
+- primary key
+- unique constraints
+- foreign keys
+- ON DELETE behavior
+- ON UPDATE behavior if present
+- CHECK constraints
+- indexes
+- partial indexes
+- generated columns if any
+- triggers if any
+
+Do not infer from Drizzle schema alone.
+
+The actual PostgreSQL database is authoritative for current DB state.
+
+==================================================
+PART 2 — SUPPORTING COMPOSITE KEYS
+==================================================
+
+Determine exactly which parent tables can safely support tenant-bound composite foreign keys.
+
+We need to evaluate:
+
+students:
+    (id, school_id)
+
+teachers:
+    (id, school_id)
+
+academic_sessions:
+    (id, school_id)
+
+enrollments:
+    (school_id, student_id, session_id)
+
+schools:
+    (id)
+
+For each candidate key determine:
+
+- Does an exact UNIQUE constraint already exist?
+- Does an exact unique index already exist?
+- Is the pair/triple guaranteed unique?
+- If not, could a future unique constraint safely be added based on current data?
+- Run READ-ONLY duplicate checks.
+- Report duplicate counts and example duplicate keys if any.
+
+DO NOT create the constraints.
+
+==================================================
+PART 3 — ATTENDANCE RECORD DATA PROFILING
+==================================================
+
+Profile attendance_records completely.
+
+Report:
+
+- total rows
+- rows with NULL session_id
+- rows with NULL class
+- rows with NULL section
+- rows with invalid status values
+- rows with status='half_day'
+- rows with status='leave'
+- rows with status='not-marked'
+- rows with status='none'
+- rows with unknown/unexpected statuses
+- rows with edit_count < 0
+- rows with edit_count > 3
+- duplicate rows by:
+
+  school_id + session_id + student_id + date
+
+- duplicate rows by:
+
+  school_id + student_id + date
+
+- rows where attendance.school_id != student.school_id
+- rows where attendance.school_id != teacher.school_id
+- rows where attendance.school_id != academic_session.school_id
+- rows where the student has no enrollment for:
+  school_id + student_id + session_id
+
+For every non-zero integrity issue:
+
+- give count
+- give a few example IDs/keys
+- do NOT modify anything.
+
+Because the current database is believed to have zero Attendance rows, explicitly confirm whether that remains true.
+
+==================================================
+PART 4 — ENROLLMENT DATA PROFILING
+==================================================
+
+Inspect enrollments.
+
+Report:
+
+- total rows
+- duplicate school/student/session keys
+- NULL school_id
+- NULL student_id
+- NULL session_id
+- NULL/empty class_name
+- NULL/empty section_name
+- distinct status values
+- count by status
+- rows whose school_id differs from student's school_id
+- rows whose school_id differs from academic_session.school_id
+
+Do not decide the meaning of unknown enrollment statuses.
+
+This is profiling only.
+
+==================================================
+PART 5 — PARENT KEY SAFETY
+==================================================
+
+Determine whether these future relationships are technically possible without changing parent tables:
+
+A.
+attendance_records
+(student_id, school_id)
+→ students
+(id, school_id)
+
+B.
+attendance_records
+(teacher_id, school_id)
+→ teachers
+(id, school_id)
+
+C.
+attendance_records
+(session_id, school_id)
+→ academic_sessions
+(id, school_id)
+
+D.
+attendance_records
+(school_id, student_id, session_id)
+→ enrollments
+(school_id, student_id, session_id)
+
+For each relationship state:
+
+- supported now
+- requires parent UNIQUE constraint
+- requires data cleanup first
+- requires parent-table redesign
+- safe to add after migration
+
+Pay special attention to PostgreSQL requirements for referenced composite keys.
+
+==================================================
+PART 6 — SESSION DELETION DEPENDENCY ANALYSIS
+==================================================
+
+Inspect the actual FK graph from academic_sessions.
+
+Produce a complete list of every table that references academic_sessions.
+
+For each:
+
+- FK column
+- ON DELETE behavior
+- whether it contains current rows
+- whether it represents historical evidence
+- whether deleting the session would destroy or detach historical identity
+
+Specifically include:
+
+attendance_records
+teacher_self_attendance
+attendance_correction_requests
+enrollments
+exam_scores
+promotion_decisions
+academic_history
+student_leave_requests
+leave_requests
+homework
+classwork
+timetable_entries
+notices
+complaints
+audit_logs
+visitor_logs
+financial tables
+
+Do not change any FK.
+
+Then determine whether the future Attendance migration can safely change only the Attendance FK behavior, or whether session deletion must be addressed at the application/service layer first.
+
+==================================================
+PART 7 — MIGRATION HISTORY AUDIT
+==================================================
+
+Inspect all tracked migrations.
+
+Determine:
+
+1. Which migration originally created attendance_records?
+2. Which migration created teacher_self_attendance?
+3. Which migration created attendance_correction_requests?
+4. Which migration created attendance_policies?
+5. Whether their actual production/dev DDL is reproducible from tracked migrations.
+6. Whether Drizzle schema and tracked migrations disagree.
+7. Whether there are schema objects in development that have no migration provenance.
+
+Do NOT create a migration.
+
+We need an exact answer to:
+
+"Can the current Attendance database state be reproduced deterministically from the repository?"
+
+==================================================
+PART 8 — PROPOSED FUTURE INVARIANTS
+==================================================
+
+Based ONLY on the evidence and already-settled contract, design the future Student Attendance DB invariants.
+
+Separate them into:
+
+A. Safe invariants that can be implemented without additional product decisions.
+
+B. Invariants that must wait for unresolved product decisions.
+
+Safe candidates include:
+
+- session_id NOT NULL
+- canonical unique attendance identity
+- tenant-bound student FK
+- tenant-bound teacher FK
+- tenant-bound session FK
+- enrollment relationship
+- canonical status CHECK excluding unresolved leave
+- edit_count >= 0
+- potentially edit_count <= 3 if this is purely a hard DB ceiling
+- DATE semantics
+- session archival protection
+
+But explicitly explain which are truly safe and which depend on application behavior.
+
+DO NOT implement them.
+
+==================================================
+PART 9 — MIGRATION ORDER
+==================================================
+
+Design an exact future migration sequence.
+
+It should account for:
+
+- current data cleanup
+- parent supporting keys
+- Attendance constraints
+- composite FKs
+- unique identity
+- status validation
+- session deletion protection
+- compatibility with existing application code
+- rollback feasibility
+
+Important:
+
+Do NOT assume we can simply make session_id NOT NULL immediately.
+
+Explain whether a temporary backfill is required and what authoritative source would be used.
+
+If Attendance is truly empty, explicitly say whether this makes the migration simpler.
+
+==================================================
+PART 10 — ROLLBACK / FAILURE SAFETY
+==================================================
+
+Design the future migration's safety requirements.
+
+We need to know:
+
+- which operations are transactional in PostgreSQL
+- which indexes might require special handling
+- whether unique constraint creation could fail
+- whether adding composite FKs could fail
+- whether existing application writes would break during migration
+- whether a failed migration can be rolled back safely
+
+Do not perform the migration.
+
+==================================================
+PART 11 — FINAL RECOMMENDATION
+==================================================
+
+Return a concise final design containing:
+
+1. Current DB integrity state
+2. Parent keys required
+3. Attendance constraints required
+4. Composite FKs required
+5. Session deletion changes required
+6. Migration order
+7. Data cleanup required before migration
+8. Product decisions that still block implementation
+9. Anything that must NOT be changed
+
+CRITICAL:
+
+This is still a READ-ONLY step.
+
+At the end explicitly state:
+
+"NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED."

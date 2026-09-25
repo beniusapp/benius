@@ -1,0 +1,208 @@
+STEP — APPLICATION-WIDE TIMEZONE AUDIT (IST ONLY)
+
+IMPORTANT:
+This is a READ-ONLY investigation.
+DO NOT modify any code, database, schema, migration, configuration, environment variable, dependency, or production/development data.
+
+Our MIS is an Indian school-management application.
+
+NON-NEGOTIABLE REQUIREMENT:
+The entire application must use IST (Asia/Kolkata) as the application's business/user-facing timezone.
+
+We must NOT have application-facing times represented or interpreted as BST, UTC, browser-local time, server-local time, or any other timezone.
+
+Audit the ENTIRE codebase and determine exactly how timezone/date/time handling currently works.
+
+1. BACKEND
+Inspect:
+- server timezone configuration
+- Node.js/runtime timezone
+- Date/DateTime handling
+- new Date()
+- Date.now()
+- toISOString()
+- toLocaleString()
+- Intl.DateTimeFormat
+- date-fns / date-fns-tz / Luxon / Day.js / Moment or any other date library
+- database timestamp handling
+- SQL CURRENT_TIMESTAMP / NOW()
+- date comparisons
+- start-of-day/end-of-day logic
+- scheduled/background jobs
+- API-generated timestamps
+
+Determine whether backend logic consistently uses Asia/Kolkata where business/user-facing time is required.
+
+2. DATABASE
+Inspect the database schema and timestamp/date columns.
+
+Identify:
+- timestamp with timezone
+- timestamp without timezone
+- date columns
+- default CURRENT_TIMESTAMP/NOW()
+- any timezone-dependent database functions
+
+Determine whether database storage is safe and whether application reads can accidentally shift dates/times.
+
+DO NOT change the schema.
+
+3. FRONTEND
+Inspect all date/time handling in:
+- Admin Portal
+- Teacher Portal
+- Student Portal
+- Examination
+- Attendance
+- Academic Sessions
+- reports
+- dashboards
+- notifications
+- audit logs
+- schedules
+- any date/time pickers
+
+Check for:
+- browser-local timezone usage
+- UTC rendering
+- automatic JavaScript Date conversion
+- toLocaleDateString()
+- toLocaleTimeString()
+- Intl formatting without explicit timezone
+- date input handling that can shift the date
+
+4. ACADEMIC SESSION
+Inspect:
+- session creation
+- session start/end dates
+- activation
+- switching
+- current-session determination
+- session display
+
+Confirm whether Academic Session dates are treated as Indian calendar dates and cannot shift because of timezone conversion.
+
+5. ATTENDANCE
+Inspect:
+- "today" determination
+- attendance date creation
+- attendance retrieval
+- attendance reports
+- day boundaries
+
+A school day must be determined according to IST.
+
+6. EXAMINATION
+Inspect:
+- exam dates
+- exam schedules
+- marks deadlines/windows if present
+- result timestamps
+- publishing timestamps
+- audit timestamps
+
+Confirm that any application-facing time uses Asia/Kolkata.
+
+7. AUDIT LOGS / NOTIFICATIONS
+Inspect:
+- createdAt
+- updatedAt
+- publishedAt
+- executedAt
+- notification timestamps
+- audit timestamps
+
+Determine how these are generated and displayed.
+
+8. SEARCH THE ENTIRE CODEBASE
+Search for timezone-related patterns including, but not limited to:
+
+UTC
+GMT
+BST
+Asia/Kolkata
+Asia/Calcutta
+IST
+Z
+toISOString
+toLocaleString
+toLocaleDateString
+toLocaleTimeString
+Intl.DateTimeFormat
+CURRENT_TIMESTAMP
+NOW()
+new Date()
+Date.now()
+getTimezoneOffset
+date-fns
+date-fns-tz
+Luxon
+Day.js
+Moment
+
+Also identify any environment variable such as TZ.
+
+9. MULTI-TENANT SAFETY
+This is a TRUE MULTI-TENANT SaaS application.
+
+Confirm that timezone handling cannot cause:
+- School A data to appear under School B
+- incorrect attendance date
+- incorrect academic-session date
+- incorrect examination date
+- incorrect audit timestamp ownership
+
+Timezone handling must never weaken school/tenant isolation.
+
+10. CLASSIFY EVERY FINDING
+
+Create a table:
+
+| Area | Current behavior | Current timezone | IST-safe? | Risk | File/location |
+|------|------------------|------------------|-----------|------|---------------|
+
+Classify each finding as:
+- SAFE
+- NEEDS FIX
+- POTENTIAL RISK
+- INFORMATIONAL
+
+11. IMPORTANT DISTINCTION
+
+Do NOT blindly conclude that database UTC storage is wrong.
+
+If the database stores timestamps in UTC but the application correctly converts them to Asia/Kolkata for Indian business/user-facing behavior, explain that this can be acceptable.
+
+The requirement is:
+
+APPLICATION BUSINESS/USER-FACING TIME = Asia/Kolkata (IST)
+
+Do not change storage merely for the sake of changing storage.
+
+12. FINAL VERDICT
+
+At the end provide:
+
+A. Current application timezone
+B. Backend timezone
+C. Database timezone/storage behavior
+D. Frontend timezone behavior
+E. Whether any part currently uses BST or another unintended timezone
+F. Exact places where dates/times can shift from one calendar day to another
+G. Exact places requiring changes
+H. Recommended single timezone architecture for this Indian MIS
+I. Whether an environment-level TZ setting is currently present
+J. Whether any database/schema change is actually necessary
+
+MOST IMPORTANT:
+DO NOT IMPLEMENT ANYTHING.
+
+This is ONLY an investigation/audit.
+
+Do not modify files.
+Do not run migrations.
+Do not change environment variables.
+Do not restart the application.
+Do not alter development or production data.
+
+Return the complete findings and wait for approval before making any changes.

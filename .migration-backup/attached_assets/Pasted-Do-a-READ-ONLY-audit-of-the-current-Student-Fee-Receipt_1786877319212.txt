@@ -1,0 +1,258 @@
+Do a READ-ONLY audit of the current Student Fee Receipt system.
+
+Do not modify any code, database, schema, UI, payment logic, or receipt design. Do not implement anything yet.
+
+I want to understand exactly what is currently present before deciding the next changes.
+
+1. Current Receipt Architecture
+
+Inspect the complete receipt flow and explain:
+
+- How a successful online payment becomes a Paid invoice
+- How an offline payment becomes a Paid invoice
+- Which tables/fields are the source of truth
+- How the receipt number is generated
+- How the invoice number is linked to the receipt
+- How the receipt is generated
+- Whether it is HTML/PDF/other
+- Whether it is generated dynamically or stored
+- How the student downloads it
+- How the browser print/PDF flow works
+- Exact backend route/file responsible for receipt generation
+- Exact frontend file/component responsible for the Download Receipt action
+
+2. Current Receipt Design
+
+Inspect the actual current receipt and provide a complete inventory of everything currently displayed.
+
+Group it into:
+
+School Information
+
+- Logo
+- School name
+- Board
+- Affiliation
+- UDISE
+- Address
+- Phone
+- Email
+- Website
+- GSTIN
+- PAN
+- Registration number
+
+Student Information
+
+- Student name
+- Student ID
+- Admission number
+- Roll number
+- Class
+- Section
+- Parent/Guardian
+- Academic session
+
+Invoice Information
+
+- Invoice number
+- Receipt number
+- Fee period/month/quarter/year
+- Invoice date
+- Due date
+- Payment date/time
+
+Fee Breakdown
+
+- Individual fee components
+- Tuition fee
+- Transport
+- Activities
+- Discount/concession
+- Late fee/penalty
+- Previous balance/arrears
+- Gateway charges
+- GST/taxes
+- Total amount paid
+- Amount in words
+
+Payment Information
+
+- Payment method
+- Razorpay Payment ID
+- Razorpay Order ID
+- Bank/auth code
+- Card details
+- UPI details
+- Cheque number
+- UTR/reference number
+- Demand Draft number
+- Other offline payment references
+
+Authorization
+
+- Signature
+- Authorized signatory
+- Computer-generated receipt disclaimer
+
+For every field, clearly mark:
+
+- ✅ Present
+- ❌ Missing
+- ⚠️ Present but only for certain payment types
+- ⚠️ Present but sourced from a non-canonical table
+- ⚠️ Present but potentially unreliable
+
+3. Fee Period Architecture
+
+Since the system now has "fee_period_start" and "fee_period_end", verify exactly how Fee Period flows:
+
+Fee Structure
+→ Billing Frequency
+→ Billing Timing
+→ Invoice Generation
+→ fee_period_start/end
+→ Student Portal
+→ Payment
+→ Receipt
+
+Explain how the receipt determines whether the payment represents:
+
+- August 2026
+- April–June 2026
+- Annual 2026–27
+
+Confirm that the receipt does not infer the fee period from the payment date.
+
+4. Multiple Fee Components
+
+Investigate whether one invoice can currently contain multiple fee components.
+
+For example:
+
+- Tuition ₹3,000
+- Transport ₹800
+- Activity ₹200
+- Discount −₹300
+- Late Fee ₹60
+- Total ₹3,760
+
+Tell me exactly how these values are stored and whether the current receipt can display them individually.
+
+Do not change anything.
+
+5. Online vs Offline Receipt
+
+Compare both receipt paths.
+
+Create a table:
+
+Feature| Online| Offline
+Receipt number| | 
+Payment method| | 
+Transaction ID| | 
+Reference number| | 
+Late fee| | 
+Fee breakdown| | 
+Payment date| | 
+Amount| | 
+Amount in words| | 
+
+Identify any inconsistencies.
+
+6. Financial Accuracy & Immutability
+
+Verify that the receipt uses the actual historical payment data and does not recalculate anything from the current fee configuration.
+
+Specifically verify:
+
+- Base fee
+- Late fee
+- Discount
+- Total paid
+- Fee period
+- Payment method
+- Receipt number
+
+Check what happens if the school changes its fee structure or late-fee policy after payment.
+
+7. Receipt Design Review
+
+Review the current visual structure and tell me whether the information hierarchy is suitable for a professional school receipt.
+
+Do not redesign it yet.
+
+Evaluate:
+
+- Header hierarchy
+- Student information
+- Invoice information
+- Fee breakdown
+- Payment details
+- Total section
+- Amount in words
+- Signature
+- Footer
+- Print/PDF layout
+- Mobile/desktop behavior
+- A4 printing suitability
+- Readability for parents
+- Accounting/audit usefulness
+
+8. Missing Information — Prioritized
+
+After the audit, give me a prioritized list:
+
+P0 — Essential / must have
+
+P1 — Strongly recommended
+
+P2 — Optional / nice to have
+
+For every missing field, explain:
+
+- Why it is useful
+- Where the data currently exists, if anywhere
+- Whether adding it would require schema changes
+- Whether it should be displayed for online, offline, or both payments
+
+9. Architecture Recommendation
+
+Finally, propose the ideal receipt architecture for this existing system without implementing it.
+
+The recommendation must preserve the current architecture wherever possible and avoid unnecessary changes.
+
+Clearly separate:
+
+Already correct
+Needs improvement
+Potential data integrity risks
+Potential UI/design improvements
+
+Important restrictions
+
+This is an INVESTIGATION ONLY task.
+
+Do NOT:
+
+- Modify files
+- Modify database/schema
+- Add migrations
+- Change receipt HTML
+- Change payment logic
+- Change Razorpay logic
+- Change webhook logic
+- Change offline payment logic
+- Change fee calculations
+- Change tests
+
+At the end, provide:
+
+1. Files inspected
+2. Database tables/fields inspected
+3. Current receipt architecture
+4. Complete current receipt field inventory
+5. Missing/recommended fields
+6. Risks or inconsistencies found
+7. Recommended final receipt architecture
+8. Confirmation that zero code changes were made

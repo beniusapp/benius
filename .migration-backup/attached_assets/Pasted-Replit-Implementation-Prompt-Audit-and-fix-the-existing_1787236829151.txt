@@ -1,0 +1,309 @@
+Replit Implementation Prompt
+
+Audit and fix the existing Receipt PDF / Receipt view with ONLY the following four changes.
+
+1. Fix Invoice Date — MUST NOT show "—"
+
+Currently the receipt shows:
+
+- Receipt No.: ON22
+- Invoice No.: INV-0066
+- Invoice Date: "—" ❌
+- Due Date: 19 Apr 2027
+- Payment Date & Time: 20 Aug 2026, 07:40:14 PM IST
+
+Fix this.
+
+Required behavior
+
+Invoice Date must come from the original persisted invoice creation timestamp/date, i.e. the invoice's own "createdAt" / equivalent authoritative invoice-created timestamp.
+
+It MUST NOT use:
+
+- Payment date
+- Receipt date
+- Razorpay payment date
+- Webhook timestamp
+- Due date
+- Any newly calculated date
+
+The receipt should display the exact invoice creation date and time in IST.
+
+Example:
+
+"Invoice Date: 20 Aug 2026, 06:32:15 PM IST"
+
+If the invoice record contains the authoritative timestamp, use that exact persisted value and convert/display it in IST.
+
+Do not create a new invoice date field unless the existing architecture genuinely requires it.
+
+---
+
+2. Add Fee Type to the Receipt
+
+Add Fee Type to the existing fee/invoice details section.
+
+Example:
+
+Description| Fee Type| Frequency| Fee Period| Amount
+Math Book| Books| One-time| 2026-2027| ₹500
+
+Use the actual persisted Fee Type from the invoice/"fee_records" record.
+
+Do not infer Fee Type from:
+
+- Fee Name
+- Frequency
+- Components
+- Amount
+
+---
+
+3. Add Frequency to the Receipt
+
+Add Frequency to the same existing fee/invoice details section.
+
+Examples:
+
+- Monthly
+- Quarterly
+- Annual
+- One-time
+
+Use the actual persisted "frequency" value from the invoice/fee record.
+
+Do not calculate or infer it from Fee Period.
+
+The displayed value must accurately represent what was stored when the invoice was created.
+
+---
+
+4. Fee Period — USE THE EXACT PERSISTED VALUE
+
+This is extremely important.
+
+The receipt must capture the exact Fee Period represented by the invoice record.
+
+Do NOT derive the Fee Period from:
+
+- Academic Session
+- Frequency
+- Payment date
+- Invoice date
+- Due date
+
+Do NOT generate a new period.
+
+Do NOT substitute the Academic Session for the Fee Period.
+
+Examples
+
+If the invoice represents:
+
+"April 2027 – June 2027"
+
+show:
+
+Fee Period: April 2027 – June 2027
+
+If it represents:
+
+"August 2027"
+
+show:
+
+Fee Period: August 2027
+
+If the persisted invoice period represents:
+
+"2027-2028"
+
+show:
+
+Fee Period: 2027-2028
+
+For a one-time invoice whose stored period is "2027-2028", display:
+
+Fee Period: 2027-2028
+
+The receipt must use the invoice's authoritative persisted "feePeriodStart" / "feePeriodEnd" or the existing persisted Fee Period representation, following the application's existing canonical formatting.
+
+Do not silently replace it with the Academic Session.
+
+The Fee Period shown on the receipt must correspond to the exact period attached to that invoice.
+
+---
+
+Important: Preserve Existing Design
+
+Do NOT redesign the receipt.
+
+Keep the current:
+
+- Professional layout
+- Colors
+- Typography
+- Branding
+- Receipt number presentation
+- Invoice number presentation
+- PAID status
+- Student details
+- Parent/Guardian
+- Student phone
+- Academic session
+- Payment details
+- Razorpay details
+- Amount section
+- Amount in Words
+- Authorized Accounts Signatory
+- Footer
+- A4/PDF layout
+- Signature positioning
+
+Only add the requested information in the existing fee/invoice details area.
+
+Keep the receipt clean, compact, modern, and readable.
+
+---
+
+Data Authority Rules
+
+Use the existing persisted invoice/fee record as the source of truth.
+
+Invoice Date
+
+Persisted invoice creation timestamp → display in IST.
+
+Fee Type
+
+Persisted invoice "feeType".
+
+Frequency
+
+Persisted invoice "frequency".
+
+Fee Period
+
+Persisted invoice period ("feePeriodStart" / "feePeriodEnd" or existing canonical persisted representation).
+
+Payment Date & Time
+
+Keep using the existing authoritative payment timestamp.
+
+Do not mix these timestamps.
+
+---
+
+DO NOT CHANGE
+
+This is strictly a receipt presentation/data-mapping fix.
+
+Do NOT modify:
+
+- Invoice creation logic
+- Add Invoice logic
+- Generate Invoice logic
+- Fee Structure logic
+- Fee Period calculation logic
+- Academic Session logic
+- Invoice numbering
+- Receipt numbering
+- Payment processing
+- Razorpay integration
+- Razorpay webhooks
+- Payment verification
+- Payment history
+- Transaction history
+- Refund logic
+- Duplicate-payment protection
+- Invoice duplicate protection
+- Database schema unless absolutely required to correctly read an already-persisted value
+- Existing payment business rules
+
+The receipt must remain fully compatible with both:
+
+1. Generate Invoice
+2. Add Invoice
+
+Both types of invoices must produce receipts using the same receipt renderer.
+
+---
+
+Required Testing
+
+Before considering this complete, verify with at least:
+
+Test 1 — Generated Monthly Invoice
+
+Verify:
+
+- Invoice Date = actual invoice creation timestamp in IST
+- Fee Type = persisted value
+- Frequency = Monthly
+- Fee Period = exact invoice period
+- Payment Date & Time remains correct
+
+Test 2 — Generated Quarterly Invoice
+
+Verify:
+
+- Frequency = Quarterly
+- Fee Period correctly represents the stored quarter
+- Invoice Date is the invoice creation timestamp, not payment date
+
+Test 3 — Add Invoice
+
+Verify:
+
+- Manually entered Fee Type appears
+- Selected Frequency appears
+- Exact Fee Period appears
+- Invoice Date is populated correctly
+
+Test 4 — One-time Invoice
+
+Verify:
+
+- Frequency = One-time
+- Fee Period uses the invoice's persisted period
+- It is NOT replaced with the academic session unless that is actually the persisted invoice period
+
+Test 5 — Receipt PDF
+
+Verify the PDF contains:
+
+- Invoice Number
+- Receipt Number
+- Invoice Date + exact IST time
+- Due Date
+- Payment Date + exact IST time
+- Fee Name / Description
+- Fee Type
+- Frequency
+- Exact Fee Period
+- Amount
+- Amount in Words
+- Student details
+- Parent/Guardian
+- Student phone
+- Academic Session
+- Payment details
+- Razorpay details where applicable
+- Authorized signature
+- Footer
+
+The receipt must remain properly formatted on A4 and must not unnecessarily create an additional page.
+
+Final requirement
+
+After implementation, report exactly:
+
+1. Where Invoice Date is sourced from.
+2. Where Fee Type is sourced from.
+3. Where Frequency is sourced from.
+4. Where Fee Period is sourced from.
+5. Confirmation that the Fee Period is not derived from Academic Session.
+6. Confirmation that payment/Razorpay logic was not changed.
+7. Tests performed and their results.
+
+Do not make any unrelated UI, database, payment, invoice, or business-logic changes.

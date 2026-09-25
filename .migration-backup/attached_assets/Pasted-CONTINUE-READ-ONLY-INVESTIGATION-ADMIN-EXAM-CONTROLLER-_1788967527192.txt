@@ -1,0 +1,481 @@
+CONTINUE READ-ONLY INVESTIGATION — ADMIN EXAM CONTROLLER
+
+Continue the previous Admin Exam Controller investigation from exactly where the previous report stopped.
+
+The previous report stopped at:
+
+## 13. TEACHER PROMOTION DECISION
+
+under:
+
+## Important fields
+
+DO NOT repeat Sections 1–13 unnecessarily.
+
+Continue from there and complete Sections 13–24 below.
+
+IMPORTANT:
+This is still STRICTLY READ-ONLY.
+
+DO NOT:
+- modify code
+- modify database
+- modify schema
+- create migrations
+- modify data
+- modify tests
+- refactor anything
+- fix anything
+
+If you find a problem, REPORT it only.
+
+==================================================
+13. TEACHER PROMOTION DECISION — CONTINUE
+==================================================
+
+Complete the previous section.
+
+Explain exactly:
+
+- All important fields in promotion_decisions
+- How Admin matches a decision to a student
+- Whether matching includes:
+  - school
+  - session
+  - class
+  - section
+  - term
+  - student
+- What happens when teacher decision is:
+  - PASS
+  - REPEAT
+  - GRACE_PASS
+  - missing
+  - locked
+- Whether teacher decision overrides calculated eligibility
+- Whether Admin can change it
+- Whether Admin override has higher priority
+- Exact API and storage functions involved
+
+==================================================
+14. ADMIN OVERRIDE / GRACE PASS LOGIC
+==================================================
+
+Trace the complete Admin override mechanism.
+
+Identify:
+
+- Frontend state
+- API endpoints
+- Backend routes
+- Storage functions
+- Database table
+- Important columns
+- Student identity
+- School identity
+- Session identity
+- Term identity
+- Class/section identity
+
+Explain exactly what happens when Admin chooses:
+
+1. Promote
+2. Retain/Repeat
+3. Grace Pass
+4. Clears an override
+
+IMPORTANT:
+
+Determine whether "Grace Pass":
+
+- changes marks
+- changes percentage
+- changes grade
+- changes pass/fail
+- changes promotion eligibility
+- only changes final promotion destination
+- changes academic history
+
+Do not assume.
+
+==================================================
+15. FINAL DECISION PRECEDENCE
+==================================================
+
+This is the MOST IMPORTANT section.
+
+Find the exact code that determines the final promotion decision.
+
+Do NOT infer.
+
+Trace the actual precedence.
+
+For one student, explain:
+
+Raw exam scores
+↓
+Aggregate percentage
+↓
+Grade
+↓
+Teacher decision
+↓
+Admin override
+↓
+Target class/section
+↓
+Final Promote/Repeat decision
+
+But replace this with the ACTUAL order found in code.
+
+Explicitly answer:
+
+If these conflict:
+
+A. Calculated percentage says PASS
+B. Teacher says REPEAT
+C. Admin says PROMOTE
+
+Which one wins?
+
+Also test/explain other combinations:
+
+- Calculated FAIL + Teacher PASS + no Admin override
+- Calculated PASS + Teacher REPEAT + no Admin override
+- Calculated FAIL + Teacher PASS + Admin PROMOTE
+- Calculated PASS + Teacher REPEAT + Admin GRACE_PASS
+- No Teacher decision + Admin override
+- No Teacher decision + no Admin override
+
+Explain what final action occurs in each case.
+
+==================================================
+16. TARGET CLASS / SECTION LOGIC
+==================================================
+
+Explain exactly how Admin chooses the destination class and section.
+
+Determine:
+
+- Source class
+- Source section
+- Target class
+- Target section
+- Whether target class is validated
+- Whether target section is validated
+- Whether target belongs to the same school
+- Whether Admin can select arbitrary values
+- Whether promoted students automatically move to the next class
+- Whether retained students remain in the same class
+- How Grace Pass affects target placement
+
+Identify all validation performed before execution.
+
+==================================================
+17. FINAL PROMOTION EXECUTION
+==================================================
+
+Trace the complete execution path.
+
+Start from:
+
+Admin clicks final "Promote/Execute"
+
+Then show:
+
+Frontend
+→ API
+→ backend route
+→ authorization
+→ validation
+→ transaction
+→ database writes
+
+Identify exact API endpoint and function names.
+
+Explain every database mutation.
+
+Especially check:
+
+- students table
+- academic_history
+- promotion_decisions
+- promotion_overrides
+- audit_logs
+- enrollments
+- any other table
+
+Explain what happens if one student fails during a bulk operation.
+
+Is the operation:
+
+- fully transactional
+- partially successful
+- rollback-all
+- per-student
+
+Do not assume.
+
+==================================================
+18. ACADEMIC HISTORY CREATION
+==================================================
+
+Explain exactly what gets written to academic_history.
+
+For every field determine:
+
+- source
+- destination
+- session
+- academic year
+- class
+- section
+- student
+- subject
+- marks
+- total marks
+- percentage
+- grade
+- promotion status
+- teacher decision
+- Admin override
+
+Determine whether history is:
+
+- a snapshot
+- a live reference
+- recalculated later
+
+Also determine whether historical data can be changed if the student's current class changes later.
+
+==================================================
+19. ACADEMIC SESSION INTEGRITY
+==================================================
+
+Focus ONLY on Admin Exam Controller.
+
+Trace the selected Academic Session from:
+
+Admin UI
+→ session context
+→ HTTP request
+→ backend
+→ storage
+→ database query
+
+Determine exactly which operations are session-scoped.
+
+Create TWO lists:
+
+### CORRECTLY SESSION-SCOPED
+
+List every confirmed operation.
+
+### NOT SESSION-SCOPED / POTENTIAL RISK
+
+List every operation where:
+
+- session is omitted
+- NULL means all sessions
+- active session fallback occurs
+- session is supplied by client but not validated
+- query can retrieve multiple sessions
+- historical data can mix
+
+Pay special attention to:
+
+- ledger status
+- exam aggregation
+- teacher decisions
+- overrides
+- promotion execution
+- academic history
+- promotion history
+
+DO NOT FIX ANYTHING.
+
+==================================================
+20. MULTI-TENANT ISOLATION
+==================================================
+
+Again focus ONLY on Admin Exam Controller.
+
+For every major operation determine:
+
+1. Where authenticated schoolId comes from
+2. Whether client schoolId exists
+3. Whether client schoolId is trusted
+4. Whether backend derives schoolId
+5. Database school filter
+6. Cross-school risk
+
+Check:
+
+- ledger terms
+- ledger status
+- exam aggregation
+- grading policy
+- teacher decisions
+- overrides
+- promotion execution
+- academic history
+- audit logs
+
+Explicitly identify any operation where:
+
+School A Admin could potentially access or modify School B data.
+
+Do not fix it.
+
+==================================================
+21. DATABASE TABLE FLOW
+==================================================
+
+Create a table:
+
+TABLE | PURPOSE | READ/WRITE | SESSION FILTER | SCHOOL FILTER | IMPORTANT FIELDS
+
+Include only tables actually used by Admin Exam Controller.
+
+Especially inspect:
+
+- school_metadata
+- exam_scores
+- students
+- grading_tiers
+- grading_rules
+- exam_policy_tiers
+- promotion_decisions
+- promotion_overrides
+- academic_sessions
+- enrollments
+- academic_history
+- audit_logs
+- teachers
+- faculty_mappings
+
+==================================================
+22. API FLOW
+==================================================
+
+List EVERY API endpoint called by Admin Exam Controller.
+
+For each provide:
+
+METHOD
+ENDPOINT
+PURPOSE
+AUTHORIZATION
+AUTHENTICATED SCHOOL SOURCE
+SESSION SOURCE
+SESSION VALIDATION
+DATABASE READ/WRITE
+
+Also identify frontend calls that use:
+
+- sessionFetch()
+- apiRequest()
+- raw fetch()
+
+==================================================
+23. ERROR / FAILURE PATHS
+==================================================
+
+Explain actual behavior for:
+
+- No term
+- Invalid term
+- No cohort
+- No score rows
+- Missing subjects
+- Missing teacher decision
+- Teacher decision conflicts with result
+- No grading policy
+- Invalid grading policy
+- Invalid Academic Session
+- Foreign-school Academic Session
+- Existing override
+- Conflicting override
+- Invalid target class
+- Invalid target section
+- Archived session
+- Promotion execution failure
+- Duplicate student
+- Duplicate promotion record
+
+Do not speculate.
+
+If behavior is unknown, say UNKNOWN.
+
+==================================================
+24. COMPLETE ADMIN EXAM CONTROLLER DECISION TREE
+==================================================
+
+Create the FINAL ACTUAL decision tree for ONE student.
+
+It must show:
+
+1. How student enters the Admin Controller
+2. How scores are found
+3. How aggregate percentage is calculated
+4. How grade is calculated
+5. How Teacher decision is found
+6. How Admin override is found
+7. How final promotion decision is selected
+8. How target class/section is selected
+9. What happens during execution
+10. What gets written to academic history
+11. What gets written to audit/ledger tables
+
+Use actual code behavior.
+
+==================================================
+25. FINAL SIMPLE EXPLANATION
+==================================================
+
+Finish with a plain-English explanation:
+
+"If I am an Admin and I open Exam Controller for one class, what exactly happens from start to finish?"
+
+Explain it as a numbered list:
+
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+9.
+10.
+
+Then answer these questions explicitly:
+
+- Does Admin Exam Controller calculate the complete examination result?
+- Does it use the shared examination calculation engine?
+- Does it independently evaluate promotion rules?
+- Does it trust Teacher promotion decisions?
+- Can Admin override Teacher decisions?
+- Does Grace Pass modify marks?
+- What exactly happens when Promote is executed?
+- What exactly happens to the student's class/section?
+- What exactly is stored in academic history?
+- Is the entire flow strictly Academic-Session scoped?
+- Is the entire flow strictly school/tenant scoped?
+
+==================================================
+IMPORTANT FINAL RULE
+==================================================
+
+This remains a READ-ONLY investigation.
+
+NO implementation.
+NO fixes.
+NO migrations.
+NO schema changes.
+NO data changes.
+
+If you discover a defect or risk, REPORT it only.
+
+Do not propose implementation steps unless explicitly requested later.

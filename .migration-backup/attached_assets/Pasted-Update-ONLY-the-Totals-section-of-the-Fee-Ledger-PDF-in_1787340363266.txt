@@ -1,0 +1,403 @@
+Update ONLY the Totals section of the Fee Ledger PDF in "server/ledger-pdf.ts".
+
+Do NOT modify the table layout, column widths, row heights, wrapping logic, pagination logic, filters, selection logic, SQL queries, payment calculations, invoice calculations, or any other part of the PDF.
+
+The current table rendering is now correct. Do not disturb it.
+
+Objective
+
+Replace the current basic totals section:
+
+- Total Invoiced: ₹X
+- Total Paid: ₹X
+- Total Outstanding: ₹X
+
+with a modern, aesthetic, professional financial summary section suitable for a real school ERP/accounting document.
+
+The section must clearly communicate three figures:
+
+1. Total Invoiced
+2. Total Paid
+3. Total Outstanding
+
+And each amount must also be displayed in words.
+
+---
+
+1. Totals section placement
+
+The totals section must appear only once, after the final invoice record.
+
+It must never appear between invoice rows.
+
+It must remain attached to the end of the report after all records.
+
+If there is insufficient space at the bottom of the final page, move the entire totals section together to a new page.
+
+Never split the totals section across two pages.
+
+The existing rule that totals must never be silently dropped must remain.
+
+---
+
+2. Modern three-card layout
+
+Create a clean three-column financial summary layout:
+
+Card 1 — Total Invoiced
+
+Label:
+TOTAL INVOICED
+
+Large amount:
+₹3,31,500
+
+Amount in words:
+Rupees Three Lakh Thirty-One Thousand Five Hundred Only
+
+Card 2 — Total Paid
+
+Label:
+TOTAL PAID
+
+Large amount:
+₹2,17,100
+
+Amount in words:
+Rupees Two Lakh Seventeen Thousand One Hundred Only
+
+Card 3 — Total Outstanding
+
+Label:
+TOTAL OUTSTANDING
+
+Large amount:
+₹1,14,400
+
+Amount in words:
+Rupees One Lakh Fourteen Thousand Four Hundred Only
+
+These values are examples from the current PDF. The implementation MUST calculate them dynamically from the existing totals variables.
+
+Do not hard-code these numbers or words.
+
+---
+
+3. Visual design
+
+Make the section look like a professional accounting/ERP financial summary.
+
+Use:
+
+- clean rectangular cards
+- subtle rounded corners
+- thin, elegant borders
+- generous internal padding
+- clear hierarchy
+- consistent spacing
+- professional typography
+- enough whitespace
+- aligned currency values
+- no excessive decoration
+
+The design should feel similar to a modern banking/accounting dashboard, but still appropriate for a printed school document.
+
+Do NOT make it look like a colorful dashboard or advertisement.
+
+Keep the existing professional navy/white visual language of the Fee Ledger Report.
+
+---
+
+4. Card hierarchy
+
+Each card should have this hierarchy:
+
+Small uppercase label
+
+"TOTAL INVOICED"
+
+↓
+
+Large bold amount
+
+"₹3,31,500"
+
+↓
+
+Small secondary text
+
+"Rupees Three Lakh Thirty-One Thousand Five Hundred Only"
+
+The amount must be the strongest visual element.
+
+The label should be smaller but clearly readable.
+
+The amount-in-words should be smaller and muted, but still completely readable when the PDF is printed.
+
+---
+
+5. Amount formatting
+
+Continue using Indian currency formatting:
+
+₹1,000
+₹12,000
+₹1,14,400
+₹2,17,100
+₹3,31,500
+
+Use the existing INR formatting logic if one already exists.
+
+Do not introduce decimal places when the amount is a whole rupee.
+
+Do not display:
+
+"₹331500"
+
+Instead display:
+
+"₹3,31,500"
+
+---
+
+6. Amount in words
+
+Create a reliable reusable helper such as:
+
+"amountToWordsIndian(amount)"
+
+or an equivalent appropriately named helper.
+
+It must support the Indian numbering system:
+
+- Thousand
+- Lakh
+- Crore
+
+Examples:
+
+₹500
+→ "Rupees Five Hundred Only"
+
+₹2,700
+→ "Rupees Two Thousand Seven Hundred Only"
+
+₹12,000
+→ "Rupees Twelve Thousand Only"
+
+₹1,14,400
+→ "Rupees One Lakh Fourteen Thousand Four Hundred Only"
+
+₹2,17,100
+→ "Rupees Two Lakh Seventeen Thousand One Hundred Only"
+
+₹3,31,500
+→ "Rupees Three Lakh Thirty-One Thousand Five Hundred Only"
+
+₹1,00,00,000
+→ "Rupees One Crore Only"
+
+Use proper English capitalization and hyphenation where appropriate.
+
+For example:
+
+"Thirty-One"
+
+not:
+
+"Thirty One"
+
+Do not use decimal/paise wording unless the actual amount contains paise.
+
+If the amount is exactly zero:
+
+"Rupees Zero Only"
+
+---
+
+7. Do NOT alter financial calculations
+
+Very important:
+
+Do NOT change how these values are calculated.
+
+Continue using the existing calculation results for:
+
+- Total Invoiced
+- Total Paid
+- Total Outstanding
+
+The totals section is only a presentation improvement.
+
+Do not recalculate the totals using a different source.
+
+Do not introduce a new SQL query.
+
+Do not change payment aggregation.
+
+Do not change outstanding calculation.
+
+Do not change invoice amounts.
+
+---
+
+8. Relationship between totals
+
+The displayed figures should remain mathematically consistent:
+
+Total Outstanding = Total Invoiced − Total Paid
+
+subject to the existing application's current calculation rules.
+
+Do not independently recalculate this if the application already has an authoritative outstanding total. Use the existing authoritative total.
+
+---
+
+9. Professional visual emphasis
+
+Use subtle visual differentiation:
+
+- Total Invoiced → neutral/professional treatment
+- Total Paid → positive/financially successful treatment
+- Total Outstanding → attention treatment
+
+However, keep the colors restrained and professional.
+
+Do not use extremely bright colors.
+
+The three cards should still look like one unified financial summary.
+
+---
+
+10. Add a section heading
+
+Above the three cards, add a small professional heading:
+
+FINANCIAL SUMMARY
+
+Optionally add a very subtle subtitle:
+
+"Invoice position for the selected report scope"
+
+Do not make the heading excessively large.
+
+The main report title FEE LEDGER REPORT remains unchanged.
+
+---
+
+11. Example visual structure
+
+Conceptually, the final section should look like:
+
+FINANCIAL SUMMARY
+
+┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
+│ TOTAL INVOICED     │  │ TOTAL PAID         │  │ TOTAL OUTSTANDING  │
+│                    │  │                    │  │                    │
+│ ₹3,31,500          │  │ ₹2,17,100          │  │ ₹1,14,400          │
+│                    │  │                    │  │                    │
+│ Rupees Three Lakh  │  │ Rupees Two Lakh    │  │ Rupees One Lakh    │
+│ Thirty-One Thousand│  │ Seventeen Thousand │  │ Fourteen Thousand  │
+│ Five Hundred Only  │  │ One Hundred Only   │  │ Four Hundred Only  │
+└────────────────────┘  └────────────────────┘  └────────────────────┘
+
+This is a conceptual layout only. Implement it professionally using the existing PDFKit rendering system.
+
+---
+
+12. Important PDFKit requirements
+
+Because this is PDFKit:
+
+- Calculate the required height of the totals section before rendering it.
+- Make sure every text element has sufficient width.
+- Amount-in-words must wrap at WORD boundaries.
+- Never allow words to overlap another card.
+- Never allow text to overflow outside a card.
+- Never use character-level breaking for normal words.
+- Long text must wrap cleanly to a second line if required.
+- The cards must remain equal height.
+- All three cards must have the same top and bottom alignment.
+
+The totals section must remain completely readable in the actual generated PDF, not merely look correct in code.
+
+---
+
+13. Keep the existing pagination protection
+
+Before rendering the totals section:
+
+1. Calculate its complete required height.
+2. Check the remaining space on the current page.
+3. If it does not fit:
+   - create a new page
+   - render the entire financial summary there
+4. Never split a card or the financial summary between pages.
+
+The footer/page numbering must remain correct.
+
+---
+
+14. Do not change anything else
+
+ONLY modify the totals/financial-summary rendering and the helper required to convert amounts to Indian words.
+
+Do NOT modify:
+
+- "server/fees-routes.ts"
+- "fees-manager.tsx"
+- Ledger PDF SQL
+- GET "/api/admin/fees/ledger/pdf"
+- POST "/api/admin/fees/ledger/pdf"
+- selection handling
+- selectedIds
+- selectAllMatching
+- excludedIds
+- filters
+- pagination of invoice data
+- invoice calculations
+- payment aggregation
+- outstanding calculations
+- table columns
+- table widths
+- row heights
+- text wrapping in invoice rows
+- status pills
+- header
+- footer
+- Tx Report PDF
+- Export Ledger
+- database schema
+
+---
+
+15. Verification required
+
+After implementation, generate the actual Ledger PDF and verify visually.
+
+Do not only verify that the TypeScript compiles.
+
+Confirm that:
+
+✓ All three totals are present
+✓ Each amount is correctly formatted in INR
+✓ Each amount has the correct amount-in-words text
+✓ Amount-in-words does not overlap another card
+✓ No text is clipped
+✓ No card is cut by the page boundary
+✓ Totals never appear between invoice rows
+✓ Totals move completely to a new page if required
+✓ Page numbering remains correct
+✓ Existing invoice table remains completely unchanged
+✓ Existing invoice row wrapping remains unchanged
+✓ No other files are modified
+
+Finally report:
+
+1. Files changed
+2. Functions/helpers changed
+3. Exact totals calculation source used
+4. Amount-to-words implementation used
+5. Confirmation that the invoice table was not modified
+6. Confirmation that the generated PDF was visually inspected
+7. Number of pages in the final test PDF

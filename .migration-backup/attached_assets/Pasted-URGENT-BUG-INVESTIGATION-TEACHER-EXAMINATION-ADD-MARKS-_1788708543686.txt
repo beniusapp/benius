@@ -1,0 +1,102 @@
+URGENT BUG INVESTIGATION — TEACHER EXAMINATION ADD MARKS
+
+The Teacher Examination → Add Marks page is intermittently showing:
+
+"Your Start application artifact encountered an error"
+
+The page is:
+
+Teacher Dashboard → Examination → Add Marks
+
+Current visible context:
+- Academic Session: 2028–2029 Active
+- Class: 6
+- Section: A
+- Subject: Physics
+- Exam Type: Unit Test 1
+
+A second screenshot shows the page loading normally, but the first screenshot shows the Replit Preview artifact error.
+
+IMPORTANT:
+This is a BUG INVESTIGATION ONLY.
+
+DO NOT modify code yet.
+DO NOT modify schema.
+DO NOT modify database data.
+DO NOT create migrations.
+DO NOT refactor anything.
+DO NOT change Fix 10A.
+DO NOT change examination calculation logic.
+
+First determine the exact cause.
+
+Investigate:
+
+1. Server logs when opening:
+   /teacher-dashboard/examination
+   or the exact current Teacher Examination route.
+
+2. Browser/client console errors related to the failure.
+
+3. Network/API requests made when:
+   - opening Teacher Examination
+   - selecting Class 6
+   - selecting Section A
+   - selecting Physics
+   - selecting Unit Test 1
+   - entering Total Marks
+   - loading the student roster
+
+4. Identify any request returning:
+   - 400
+   - 401
+   - 403
+   - 404
+   - 409
+   - 500
+   - 502
+   - or another error.
+
+5. Inspect whether the selected Academic Session is being transported correctly using:
+   x-view-session-id
+
+6. Inspect the server-side Teacher Examination session resolver and determine whether it is rejecting the request.
+
+7. Inspect whether the failure occurs:
+   A. before the roster request,
+   B. while loading the roster,
+   C. while loading existing scores,
+   D. when Total Marks is entered,
+   E. when Save Marks is clicked,
+   F. or only during Preview/Start application startup.
+
+8. Check the exact server stack trace if one exists.
+
+9. Check whether the problem reproduces specifically with:
+   2028–2029 + Class 6 + Section A + Physics + Unit Test 1.
+
+10. Also test whether another Class/Section/Subject combination behaves differently.
+
+IMPORTANT:
+Do not infer the cause from the screenshot alone.
+
+I need the actual error message, failing endpoint, status code, and stack trace if available.
+
+FINAL RESPONSE MUST CONTAIN:
+
+1. EXACT ERROR
+2. WHERE IT OCCURS
+3. FAILING API/REQUEST
+4. HTTP STATUS
+5. SERVER ERROR / STACK TRACE
+6. WHETHER IT IS RELATED TO Fix 10A
+7. ROOT CAUSE
+8. PROPOSED MINIMAL FIX
+9. FILES THAT WOULD NEED TO CHANGE
+10. WHETHER DATABASE/SCHEMA CHANGES ARE REQUIRED
+
+Do NOT implement the proposed fix yet.
+
+End with:
+
+"NO CODE CHANGES MADE."

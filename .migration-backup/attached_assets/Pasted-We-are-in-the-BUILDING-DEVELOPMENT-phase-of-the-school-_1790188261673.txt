@@ -1,0 +1,306 @@
+We are in the BUILDING / DEVELOPMENT phase of the school MIS application.
+
+I want to inspect the EXISTING Attendance Policy functionality before we make any business decisions for Teacher Self-Attendance rate calculation.
+
+TARGET AREA:
+
+Admin → School Setup → Attendance Policy
+
+Route/path:
+`/admin-dashboard/school-setup/attendance-policy`
+
+IMPORTANT PROJECT RULES — DO NOT CHANGE:
+
+1. This is a MULTI-TENANT / MULTI-SCHOOL application.
+2. All school-scoped data and operations must remain isolated by authenticated `schoolId`.
+3. Attendance is Academic Session-specific.
+4. Application/business/display date and timestamp handling must use IST / Asia/Kolkata.
+5. This is an AUDIT / DISCOVERY task only.
+6. DO NOT modify code, database schema, migrations, APIs, UI, calculations, tests, or configuration.
+7. DO NOT refactor anything.
+8. DO NOT fix anything you find.
+9. DO NOT introduce a new Attendance Policy.
+10. DO NOT make assumptions about what the policy SHOULD do.
+11. Report what the CURRENT implementation actually does.
+
+==================================================
+PART 1 — FIND THE COMPLETE ATTENDANCE POLICY IMPLEMENTATION
+===========================================================
+
+Trace the Attendance Policy from the UI all the way through the backend/database.
+
+Identify:
+
+* Frontend page/component
+* Route definition
+* React components/hooks used
+* API endpoints called
+* Backend route/controller/service files
+* Database tables/models used
+* Relevant schema definitions
+* Any shared utilities/services involved
+* Any default/fallback configuration
+* Any validation logic
+* Any authorization/tenant checks
+* Any Academic Session checks, if present
+
+Give exact file paths and relevant function/component names.
+
+==================================================
+PART 2 — WHAT CAN ADMIN ACTUALLY CONFIGURE?
+===========================================
+
+List every configurable field/setting currently available under:
+
+Admin → School Setup → Attendance Policy
+
+For each setting, provide:
+
+* Setting name
+* UI field/control
+* Data type
+* Default value
+* Allowed values/range
+* Where it is stored
+* Whether it is school-specific
+* Whether it is Academic Session-specific
+* Whether changing it affects existing/historical attendance
+* Whether it affects future attendance only
+* Any validation rules
+
+Do not infer. Only report what the code actually implements.
+
+==================================================
+PART 3 — EXACT FUNCTIONAL LOGIC
+===============================
+
+Explain exactly how each Attendance Policy setting is used.
+
+Trace the complete flow:
+
+Admin configures policy
+↓
+Policy is saved
+↓
+Teacher attendance event occurs
+↓
+System evaluates the policy
+↓
+Attendance status is determined
+↓
+Attendance record is stored
+
+For each step, identify the actual code responsible.
+
+Specifically determine whether the policy controls things such as:
+
+* Working hours
+* School start time
+* School end time
+* Arrival time
+* Late threshold
+* Grace period
+* Half-day threshold
+* Leave handling
+* Present/Late/Absent/Half Day determination
+* Teacher attendance
+* Student attendance
+* Other attendance types
+
+Clearly separate Teacher Attendance policy from Student Attendance policy.
+
+==================================================
+PART 4 — WORKING DAY / HOLIDAY LOGIC
+====================================
+
+This is especially important.
+
+Determine whether the existing Attendance Policy already has any concept of:
+
+* Working days
+* Weekdays
+* Saturday
+* Sunday
+* Holidays
+* Holiday calendar
+* School closure
+* Non-working days
+* Special working days
+* Date exceptions
+* Calendar dates
+
+If YES:
+
+Explain exactly how it works and where the data comes from.
+
+If NO:
+
+Explicitly state:
+
+"NO existing working-day/holiday configuration was found in Attendance Policy."
+
+Do not invent or propose implementation.
+
+==================================================
+PART 5 — ATTENDANCE RATE / PERCENTAGE
+=====================================
+
+Determine whether Attendance Policy defines ANY rule for calculating an attendance percentage/rate.
+
+Check specifically for:
+
+* Applicable working-day denominator
+* Present weight
+* Late weight
+* Half Day weight
+* Leave weight
+* Absent weight
+* Missing/unmarked treatment
+* Holiday treatment
+* Weekend treatment
+* Future-date treatment
+* Rounding
+* Zero applicable days
+* Date range
+* Academic Session rate
+* Monthly rate
+* Selected-range rate
+
+If the policy does NOT define these, explicitly state that.
+
+Do not assume that existing UI calculations are policy rules.
+
+==================================================
+PART 6 — CURRENT TEACHER SELF-ATTENDANCE CONNECTION
+===================================================
+
+Trace whether the Attendance Policy is actually used by Teacher Self-Attendance.
+
+Identify:
+
+* Which API records Teacher attendance
+* Which backend function determines Teacher attendance status
+* Which policy fields it reads
+* Which policy fields it does NOT read
+* Whether policy changes reinterpret historical attendance
+* Whether historical stored statuses remain unchanged
+* Whether rate calculations use the policy or separate hard-coded logic
+
+==================================================
+PART 7 — MULTI-TENANT / SESSION SAFETY AUDIT
+============================================
+
+For Attendance Policy, verify:
+
+A. School isolation
+
+Does every read/write use the authenticated school/tenant?
+
+B. Academic Session isolation
+
+Is the policy itself session-specific or school-wide?
+
+If session-specific, how is Session ID enforced?
+
+If school-wide, explicitly say so.
+
+C. Cross-school access
+
+Look for any possibility that one school's policy could be read or modified for another school.
+
+D. IST
+
+Identify how date/time values are interpreted/stored/displayed.
+
+==================================================
+PART 8 — EXISTING SOURCES OF TRUTH
+==================================
+
+Identify the current source of truth for each:
+
+| Concern                       | Current Source of Truth |
+| ----------------------------- | ----------------------- |
+| Teacher attendance status     | ?                       |
+| Student attendance status     | ?                       |
+| Working day                   | ?                       |
+| Holiday                       | ?                       |
+| Teacher attendance percentage | ?                       |
+| Student attendance percentage | ?                       |
+| Academic Session boundary     | ?                       |
+| Attendance Policy             | ?                       |
+
+Use exact implementation evidence.
+
+==================================================
+PART 9 — CONFLICTS / DUPLICATE LOGIC
+====================================
+
+Find whether Attendance Policy overlaps or conflicts with other attendance logic.
+
+Especially check for:
+
+* Hard-coded weekday logic
+* Hard-coded weekend logic
+* Hard-coded holiday logic
+* Client-side attendance calculations
+* Server-side attendance calculations
+* Different percentage formulas
+* Different treatment of missing attendance
+* Different treatment of Late/Half Day/Leave
+* Different date-range rules
+
+List each conflict separately.
+
+==================================================
+PART 10 — FINAL FACTUAL SUMMARY
+===============================
+
+At the end provide exactly these sections:
+
+### A. What Attendance Policy currently controls
+
+### B. What Attendance Policy currently does NOT control
+
+### C. Existing working-day logic
+
+### D. Existing holiday logic
+
+### E. Existing Teacher Self-Attendance rate logic
+
+### F. Existing Student Attendance rate logic
+
+### G. School/Tenant isolation status
+
+### H. Academic Session status
+
+### I. IST/date-time status
+
+### J. Important existing capabilities we should NOT duplicate
+
+### K. Open business decisions still required
+
+IMPORTANT:
+
+This is a DISCOVERY ONLY task.
+
+DO NOT CHANGE ANY FILES.
+
+DO NOT CREATE ANY MIGRATION.
+
+DO NOT CREATE ANY NEW CONFIGURATION.
+
+DO NOT FIX ANY BUG.
+
+DO NOT IMPLEMENT ANY DECISION.
+
+At the end provide:
+
+* Files inspected
+* APIs inspected
+* Tables/schema inspected
+* Tests run, if any
+* Confirmation: "No files changed."
+* Confirmation: "No database changes made."
+* Confirmation: "No production changes made."
+
+We will use your findings to decide the simplest correct Teacher Self-Attendance rate contract in the NEXT step.

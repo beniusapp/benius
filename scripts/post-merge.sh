@@ -1,6 +1,4 @@
 #!/bin/bash
 set -e
-
-npm install
-npx drizzle-kit push --force
-node scripts/seed-id-sequences.cjs
+pnpm install --frozen-lockfile
+pnpm --filter db push

@@ -1,0 +1,812 @@
+FIX 6 — AUTHORITATIVE PROMOTION RULE INTERPRETATION
+====================================================
+
+IMPORTANT — READ THIS FIRST
+====================================================
+
+This application is a TRUE MULTI-TENANT SAAS PLATFORM.
+
+It is designed for 1,000+ independent schools to register and use the same application.
+
+This is NOT merely a school MIS that happens to support multiple schools.
+
+Each registered school is an independent TENANT.
+
+The tenant/data-ownership boundary is the authenticated school's tenant ID / schoolId.
+
+Every future feature and every existing module must preserve this fundamental architecture.
+
+Conceptually:
+
+Application
+  └── Tenant / School
+        ├── Students
+        ├── Teachers
+        ├── Staff
+        ├── Parents
+        ├── Classes
+        ├── Sections
+        ├── Subjects
+        ├── Academic Sessions
+        ├── Attendance
+        ├── Examinations
+        ├── Marks
+        ├── Results
+        ├── Grading Policies
+        ├── Promotion Policies
+        ├── Fees
+        ├── Reports
+        ├── Analytics
+        └── all other school-owned data
+
+School A must NEVER be able to access, retrieve, calculate with, save, update, modify, or infer School B's data.
+
+This applies across the ENTIRE application, not just Examination.
+
+The authenticated user's tenant/school context is authoritative.
+
+NEVER trust a client-supplied schoolId as an authorization boundary.
+
+====================================================
+CURRENT FIX STATUS
+====================================================
+
+Completed and accepted:
+
+- Fix 1 — Shared Examination Calculation Engine
+- Fix 2 — Academic Session Isolation
+- Fix 3 — Pass Percentage Authority
+- Fix 4 — Grade Calculation Authority
+
+Deferred intentionally:
+
+- Fix 5 — Scored vs Absent vs Missing
+
+DO NOT implement Fix 5 in this task.
+
+This task is ONLY Fix 6.
+
+Do not continue to Fix 7 or any later fix.
+
+====================================================
+FIX 6 OBJECTIVE
+====================================================
+
+Implement:
+
+FIX 6 — AUTHORITATIVE PROMOTION RULE INTERPRETATION
+
+The goal is to make the application's EXISTING promotion rules interpreted consistently wherever promotion eligibility, promotion status, or promotion suggestion is calculated or displayed.
+
+This fix is NOT intended to redesign the school's promotion policy.
+
+Do not invent a new promotion system.
+
+Do not introduce new business rules unless the existing code/schema clearly requires them.
+
+First inspect the existing implementation thoroughly.
+
+====================================================
+STEP 1 — INSPECT BEFORE MODIFYING
+====================================================
+
+DO NOT immediately start editing files.
+
+First inspect the codebase and identify:
+
+1. The existing promotion policy schema/configuration.
+2. All existing promotion-related fields.
+3. The shared examination calculation engine.
+4. Teacher Examination promotion evaluation.
+5. Teacher Results promotion logic.
+6. Student Examination promotion/result logic.
+7. Student result/report promotion logic.
+8. Admin Performance Analytics promotion logic.
+9. Admin reports involving promotion.
+10. Server-side promotion evaluation.
+11. Any helper/service performing promotion calculations.
+12. Any API endpoint returning promotion status/suggestion.
+13. Any hardcoded promotion thresholds.
+14. Any fallback promotion thresholds.
+15. Any duplicate promotion algorithms.
+16. Any differences in boundary interpretation.
+17. Any places where client-provided policy values are trusted.
+
+Search the ENTIRE repository.
+
+Do not assume promotion logic exists in only one file.
+
+After inspection, implement the smallest safe change needed to establish one authoritative interpretation.
+
+====================================================
+TENANT ISOLATION — NON-NEGOTIABLE
+====================================================
+
+This is a 1,000+ tenant SaaS application.
+
+Promotion policy MUST be tenant-owned.
+
+The authoritative flow must be:
+
+Authenticated user
+        ↓
+Authenticated user's school/tenant
+        ↓
+Validated Academic Session belonging to that tenant
+        ↓
+Validated student belonging to that tenant
+        ↓
+Promotion policy belonging to that tenant
+        ↓
+Tenant + session scoped examination/result data
+        ↓
+Promotion evaluation
+
+A client-supplied schoolId MUST NOT select the promotion policy.
+
+For example:
+
+Authenticated user = School A
+
+Client attempts to request:
+
+schoolId = School B
+
+The server MUST continue using School A as the tenant authority.
+
+It must NEVER load School B's promotion policy.
+
+It must NEVER evaluate School A students using School B policy.
+
+It must NEVER combine School A result data with School B policy.
+
+It must NEVER expose whether another school's promotion policy/data exists.
+
+If a supplied promotion policy belongs to another tenant:
+- reject it, or
+- treat it as invalid configuration,
+
+according to the existing secure architecture.
+
+NEVER fall back to:
+- universal policy
+- default policy belonging to another tenant
+- first available policy
+- another school's policy
+- client-selected policy.
+
+====================================================
+ACADEMIC SESSION ISOLATION
+====================================================
+
+Preserve all Fix 2 behavior.
+
+Promotion evaluation involving Examination results MUST remain Academic-Session scoped.
+
+The selected/validated Academic Session is part of the evaluation boundary.
+
+The session must belong to the authenticated tenant.
+
+Do NOT combine results from:
+
+School A / Session 2027-2028
+with
+School A / Session 2028-2029
+
+Do NOT combine:
+
+School A / Session X
+with
+School B / Session X
+
+Do NOT use NULL-session records as a substitute.
+
+Existing NULL-session historical records must remain untouched.
+
+Do NOT:
+- migrate them
+- delete them
+- assign them to a session
+- reinterpret them
+- silently include them.
+
+Preserve the strict session matching introduced by Fix 2.
+
+====================================================
+EXISTING PROMOTION RULES
+====================================================
+
+Inspect the ACTUAL existing schema and configuration.
+
+The application may contain existing rules such as:
+
+- maximum failed subjects
+- minimum current-term percentage
+- minimum cumulative percentage
+- minimum attendance percentage
+- other existing promotion requirements
+
+Do NOT assume these fields exist.
+
+Confirm them from the actual code.
+
+For EACH existing promotion rule, determine:
+
+1. What does the configured value mean?
+2. What comparison operator is intended?
+3. Is the boundary inclusive or exclusive?
+4. What happens exactly at the boundary?
+5. What happens below/above the boundary?
+6. What happens when the rule is unconfigured?
+7. What happens when the configured value is zero?
+8. What happens when required result data is unavailable?
+9. Does one violation make the student ineligible?
+10. Are multiple violations accumulated?
+11. What final promotion status/suggestion is returned?
+
+Preserve the existing application's terminology wherever it already exists.
+
+If implementations disagree, do NOT silently choose a convenient interpretation.
+
+Determine the intended interpretation from:
+- schema
+- configuration UI
+- existing business logic
+- existing tests
+- surrounding code
+
+Then document the decision in code/tests.
+
+====================================================
+IMPORTANT: DO NOT CHANGE FIX 3
+====================================================
+
+Fix 3 established the authoritative PASS/FAIL percentage:
+
+authenticated tenant
+→ class-matching grading tier
+→ configured passPercentage
+
+Do NOT change this in Fix 6.
+
+Do NOT use:
+
+- 33%
+- 35%
+- examScores.passMarks
+- hardcoded percentage
+- universal fallback
+
+as promotion-policy authority.
+
+Pass percentage and promotion thresholds are separate concepts.
+
+====================================================
+IMPORTANT: DO NOT CHANGE FIX 4
+====================================================
+
+Fix 4 established authoritative grade calculation using:
+
+authenticated tenant
+→ class-matching grading tier
+→ configured grading rules
+→ minPercent/maxPercent
+
+Do NOT modify grade calculation in Fix 6.
+
+Do NOT use grade boundaries as promotion thresholds.
+
+For example:
+
+A grade beginning at 90%
+
+does NOT automatically mean:
+
+promotion threshold = 90%.
+
+They are separate policies.
+
+====================================================
+PROMOTION EVALUATION
+====================================================
+
+Prefer one authoritative promotion evaluation function/service.
+
+If appropriate, extend the existing shared examination calculation engine.
+
+Keep pure calculation logic separate from:
+- authentication
+- database access
+- HTTP request handling.
+
+The evaluator should receive already validated/scoped inputs.
+
+Conceptually:
+
+PromotionInput
+  ├── authenticated tenant context
+  ├── validated session context
+  ├── applicable promotion policy
+  ├── student result data
+  ├── attendance summary if already part of existing policy
+  └── existing configured promotion rules
+
+Then produce the existing promotion result/suggestion format.
+
+Possible existing factors include:
+
+- failed subject count
+- current-term average
+- cumulative percentage
+- attendance percentage
+
+Use ONLY factors that actually exist in the current application.
+
+====================================================
+PROMOTION VIOLATIONS
+====================================================
+
+Where multiple rules fail, preserve enough information to explain why.
+
+For example, if these concepts already exist, violations might correspond to:
+
+- failed subject limit exceeded
+- current-term minimum not met
+- cumulative minimum not met
+- attendance minimum not met
+
+Do not invent new user-facing terminology if the application already has established terminology.
+
+Use the existing promotion status/suggestion model where possible.
+
+====================================================
+BOUNDARY SEMANTICS
+====================================================
+
+Boundary behavior is critical.
+
+For every configured promotion threshold, explicitly test its exact boundary.
+
+Example:
+
+If minimum current-term percentage = 40:
+
+Determine from the existing business rules whether:
+
+40 = pass
+or
+40 = fail
+
+Then encode and test that exact behavior.
+
+Likewise:
+
+If minimum attendance = 75:
+
+Determine whether exactly 75 is eligible.
+
+If maximum failed subjects = 2:
+
+Determine whether exactly 2 failed subjects is allowed.
+
+DO NOT guess.
+
+The actual configured/business semantics must be established from the existing application.
+
+====================================================
+MISSING CONFIGURATION
+====================================================
+
+Do NOT introduce arbitrary fallback values.
+
+NEVER introduce universal promotion defaults such as:
+
+35%
+33%
+40%
+75%
+
+unless that exact value is already an explicitly configured school policy.
+
+If an existing promotion rule is optional/unconfigured:
+- preserve the existing intended behavior.
+
+If required promotion configuration is missing:
+- preserve the existing configuration-error behavior, if one exists.
+
+Do NOT silently replace missing policy with:
+- another school's policy
+- universal policy
+- first available policy
+- hardcoded threshold.
+
+====================================================
+ATTENDANCE
+====================================================
+
+DO NOT redesign attendance calculation in Fix 6.
+
+If attendance is already an input into promotion evaluation:
+
+Use the existing attendance calculation/value.
+
+Do NOT change:
+- attendance date range
+- attendance aggregation
+- attendance recording
+- attendance calculation
+- attendance eligibility logic
+
+Only make sure the existing configured attendance promotion rule is interpreted consistently.
+
+Attendance can be handled separately in a future fix if required.
+
+====================================================
+ROSTER
+====================================================
+
+DO NOT change the Teacher Examination roster.
+
+The Examination roster remains the live Student Registry roster:
+
+students.school_id = authenticated tenant
+students.is_active = true
+students.class = selected class
+students.section = selected section
+
+Enrollment is NOT required merely to display or evaluate the Examination roster.
+
+Faculty Mapping is NOT an Examination permission prerequisite.
+
+Do NOT make Enrollment mandatory.
+
+Do NOT make Faculty Mapping mandatory.
+
+====================================================
+SUBJECT / EXAM TYPE
+====================================================
+
+Do NOT change the existing meaning of:
+
+- Subject
+- Exam Type
+
+They remain Examination context.
+
+Do not make them additional tenant authorization mechanisms.
+
+====================================================
+SESSION / SCORE DATA
+====================================================
+
+Preserve Fix 2 score isolation.
+
+When promotion uses Examination results:
+
+ONLY use scores belonging to:
+
+authenticated tenant
++
+selected Academic Session
+
+Do not accidentally combine sessions.
+
+Do not use current student placement to reinterpret historical session results.
+
+Do not introduce a NULL-session fallback.
+
+====================================================
+DUPLICATE CALCULATION SEARCH
+====================================================
+
+Search for duplicate promotion algorithms throughout the repository.
+
+If several locations currently calculate promotion independently:
+
+Do not maintain contradictory copies.
+
+Prefer routing them through one authoritative evaluator.
+
+Likely locations may include:
+
+- shared/examination-calculation-engine.ts
+- Teacher Examination
+- Teacher Results
+- Teacher report cards
+- Student Examination
+- Student result pages
+- Admin Performance Analytics
+- Admin reports
+- server promotion evaluation
+- promotion API endpoints
+- helper utilities/services
+
+These are examples only.
+
+Search the actual repository.
+
+====================================================
+NO UNRELATED REFACTOR
+====================================================
+
+Do NOT use Fix 6 as an excuse to refactor unrelated modules.
+
+Do NOT change:
+
+- examination weighting
+- cumulative calculation formula
+- grade boundaries
+- pass percentage
+- mark validation
+- absent vs missing behavior
+- score uniqueness
+- roster behavior
+- attendance calculation
+- enrollment requirements
+- Faculty Mapping requirements
+- database architecture
+
+Those are separate concerns.
+
+If another system prevents a safe Fix 6 implementation:
+
+STOP and report the conflict.
+
+Do not silently expand scope.
+
+====================================================
+TESTS
+====================================================
+
+Add focused tests for the authoritative promotion evaluator.
+
+At minimum test:
+
+1. Student meets all configured promotion requirements.
+
+2. Failed-subject rule at exact boundary.
+
+3. Failed-subject rule one beyond boundary.
+
+4. Current-term minimum exactly at boundary.
+
+5. Current-term percentage below boundary.
+
+6. Cumulative minimum exactly at boundary, if configured.
+
+7. Cumulative percentage below boundary, if configured.
+
+8. Attendance exactly at configured boundary, if attendance is an existing promotion rule.
+
+9. Attendance below configured boundary.
+
+10. Multiple simultaneous promotion violations.
+
+11. Optional/unconfigured promotion rule.
+
+12. Missing required promotion configuration.
+
+13. No hardcoded fallback is used when configuration is missing.
+
+14. Promotion policy from School A cannot be used with School B calculation context.
+
+15. School A teacher cannot evaluate School B student/result data.
+
+16. Selected Academic Session is preserved.
+
+17. Results from another Academic Session cannot enter the promotion calculation.
+
+18. Client-supplied schoolId cannot change the authenticated tenant's promotion policy.
+
+19. A policy from another tenant cannot be substituted when the requested policy is unavailable.
+
+20. Existing promotion result/status remains compatible with current UI/API expectations.
+
+Use deterministic unit/contract tests wherever possible.
+
+====================================================
+TENANT SECURITY TESTS
+====================================================
+
+These are mandatory because this is a 1,000+ school SaaS platform.
+
+Test at the authorization/calculation boundary, not only the UI.
+
+At minimum:
+
+CASE A — VALID
+
+Authenticated School A user
++ School A student
++ School A session
++ School A promotion policy
+
+→ evaluation succeeds.
+
+CASE B — CROSS-TENANT POLICY
+
+Authenticated School A user
++ School A student
++ School A session
++ School B promotion policy
+
+→ MUST fail/reject.
+
+CASE C — CROSS-TENANT STUDENT
+
+Authenticated School A user
++ School B student
+
+→ MUST fail/reject.
+
+CASE D — CROSS-TENANT RESULT
+
+Authenticated School A user
++ School A student
++ School A session
++ School B examination result
+
+→ School B result MUST NOT enter the calculation.
+
+CASE E — CROSS-TENANT SESSION
+
+Authenticated School A user
++ School A student
++ School B Academic Session
+
+→ MUST fail/reject.
+
+CASE F — CLIENT schoolId MANIPULATION
+
+Authenticated School A user
++ client sends School B schoolId
+
+→ server MUST continue using School A as authoritative tenant.
+
+These tests must prove actual isolation, not merely frontend hiding.
+
+====================================================
+NO DATABASE/DATA MIGRATION
+====================================================
+
+Do NOT:
+
+- modify existing examination scores
+- rewrite historical results
+- migrate NULL-session records
+- delete historical data
+- assign historical records to sessions
+- change school ownership
+- modify existing promotion-policy records
+
+This should be code + tests only.
+
+If a database/schema migration appears necessary:
+
+STOP before performing it.
+
+Report:
+- why it appears necessary
+- which table/field is involved
+- why the fix cannot safely proceed without it
+
+Do NOT create the migration automatically.
+
+====================================================
+MEMORY / DOCUMENTATION
+====================================================
+
+Update project memory documentation if appropriate.
+
+Record:
+
+- authoritative promotion-rule interpretation
+- boundary semantics
+- tenant ownership requirements
+- Academic Session scope
+- missing-configuration behavior
+- what was intentionally NOT changed
+- any ambiguity discovered
+- any deferred issue
+
+Do not rewrite unrelated memory.
+
+====================================================
+VALIDATION
+====================================================
+
+After implementation, run:
+
+1. Focused promotion tests.
+
+2. Examination calculation-engine tests.
+
+3. Teacher Examination tests.
+
+4. Tenant/scope/security contract tests.
+
+5. Relevant Student/Admin result tests.
+
+6. npm run check
+
+7. git diff --check
+
+8. Confirm the application starts successfully on the existing development port.
+
+If any test fails:
+
+DO NOT hide or bypass the failure.
+
+Investigate and fix only if the failure is directly related to Fix 6.
+
+====================================================
+FINAL REPORT
+====================================================
+
+When finished, report:
+
+1. Files changed.
+
+2. Existing promotion rules discovered.
+
+3. Exact interpretation selected for EACH existing promotion rule.
+
+4. Exact boundary behavior for each rule.
+
+5. Missing/unconfigured policy behavior.
+
+6. How the authoritative promotion evaluator works.
+
+7. Where duplicate promotion logic was removed/consolidated.
+
+8. How tenant isolation is enforced.
+
+9. How Academic Session isolation is preserved.
+
+10. Security tests added.
+
+11. Promotion tests added.
+
+12. Test results.
+
+13. npm run check result.
+
+14. git diff --check result.
+
+15. Whether database/schema/data was changed.
+
+16. Any ambiguity discovered.
+
+17. Any issue intentionally deferred.
+
+18. Confirm explicitly:
+
+"Fix 5 — Scored vs Absent vs Missing was NOT implemented."
+
+====================================================
+FINAL SCOPE RULE
+====================================================
+
+IMPLEMENT ONLY FIX 6.
+
+Do not continue to Fix 7.
+
+Do not modify unrelated business rules.
+
+Do not change database/data.
+
+Do not weaken tenant isolation.
+
+Do not use client-provided schoolId as authorization.
+
+Do not introduce universal defaults.
+
+Do not guess ambiguous business behavior.
+
+If the existing code contradicts this specification or the promotion policy semantics cannot be determined confidently from the existing code/schema/tests:
+
+STOP and report the exact conflict before making a broader change.
+
+====================================================
+END FIX 6
+====================================================

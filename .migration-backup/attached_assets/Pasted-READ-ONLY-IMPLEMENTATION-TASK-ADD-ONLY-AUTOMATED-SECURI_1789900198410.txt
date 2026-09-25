@@ -1,0 +1,444 @@
+READ-ONLY IMPLEMENTATION TASK — ADD ONLY AUTOMATED SECURITY TESTS
+
+I want to permanently verify the multi-tenant isolation of the Forgot Password + SendGrid flow.
+
+IMPORTANT:
+The current production/application logic has already been audited and is considered tenant-safe.
+
+DO NOT change the existing Forgot Password implementation.
+DO NOT change SendGrid logic.
+DO NOT change notification configuration logic.
+DO NOT change database schema.
+DO NOT create migrations.
+DO NOT change existing data.
+DO NOT change UI.
+DO NOT change API contracts.
+DO NOT change authentication behavior.
+DO NOT refactor production code.
+
+ONLY add automated tests that prove the existing behavior.
+
+==================================================
+BUSINESS REQUIREMENT
+==================================================
+
+This is a TRUE MULTI-TENANT school MIS SaaS application.
+
+Each school is an independent tenant.
+
+Example:
+
+Mary Immaculate School
+School Code: MIS
+Own recovery account
+Own notification configuration
+Own SendGrid API key
+Own From Email
+
+Prabha Public School
+School Code: PPS
+Own recovery account
+Own notification configuration
+Own SendGrid API key
+Own From Email
+
+CRITICAL SECURITY RULE:
+
+Mary Immaculate MUST NEVER use Prabha Public's SendGrid configuration.
+
+Prabha Public MUST NEVER use Mary Immaculate's SendGrid configuration.
+
+The recovery email address alone must NEVER determine the tenant.
+
+The validated school code must establish the tenant first.
+
+The intended flow is:
+
+schoolCode
+→ validated school
+→ validated school.id
+→ recovery email scoped to that school.id
+→ correct user
+→ notification_config scoped to that same school.id
+→ that school's SendGrid API key
+→ that school's From Email / From Name
+→ email provider
+
+==================================================
+TESTING REQUIREMENT
+==================================================
+
+Add automated tests at the HTTP/application orchestration boundary for:
+
+POST /api/admin/forgot-password
+
+The tests must prove that the complete flow preserves tenant isolation.
+
+Use mocked/fake email delivery.
+
+DO NOT send any real email through SendGrid.
+
+DO NOT use any real API keys.
+
+DO NOT access production credentials.
+
+==================================================
+TEST 1 — VALID MARY REQUEST
+==================================================
+
+Create two isolated test tenants:
+
+Tenant A:
+- school code: MIS
+- recovery email: mary-test@example.test
+- SendGrid API key: fake-MIS-key
+- From Email: mary@example.test
+
+Tenant B:
+- school code: PPS
+- recovery email: prabha-test@example.test
+- SendGrid API key: fake-PPS-key
+- From Email: prabha@example.test
+
+Submit:
+
+POST /api/admin/forgot-password
+
+{
+  recoveryEmail: "mary-test@example.test",
+  schoolCode: "MIS"
+}
+
+Verify:
+
+- request succeeds with the normal generic response
+- MIS user is selected
+- MIS notification configuration is selected
+- fake-MIS-key is used by the mocked provider
+- mary@example.test is used as From Email
+- PPS configuration is NOT accessed
+- fake-PPS-key is NOT used
+
+DO NOT expose secrets in test output.
+
+==================================================
+TEST 2 — VALID PRABHA REQUEST
+==================================================
+
+Submit:
+
+{
+  recoveryEmail: "prabha-test@example.test",
+  schoolCode: "PPS"
+}
+
+Verify:
+
+- PPS user is selected
+- PPS notification configuration is selected
+- fake-PPS-key is used by the mocked provider
+- prabha@example.test is used as From Email
+- MIS configuration is NOT accessed
+- fake-MIS-key is NOT used
+
+==================================================
+TEST 3 — MIS CODE + PRABHA EMAIL
+==================================================
+
+Submit:
+
+{
+  recoveryEmail: "prabha-test@example.test",
+  schoolCode: "MIS"
+}
+
+This MUST NOT resolve the Prabha account.
+
+Verify:
+
+- no Prabha account is accessed
+- no Prabha notification configuration is loaded
+- no Prabha SendGrid API key is used
+- no email is sent
+- response remains the generic Forgot Password response
+- no account enumeration information is disclosed
+
+==================================================
+TEST 4 — PPS CODE + MARY EMAIL
+==================================================
+
+Submit:
+
+{
+  recoveryEmail: "mary-test@example.test",
+  schoolCode: "PPS"
+}
+
+Verify:
+
+- no Mary account is accessed
+- no Mary notification configuration is loaded
+- no Mary SendGrid API key is used
+- no email is sent
+- response remains generic
+- no account enumeration information is disclosed
+
+==================================================
+TEST 5 — SAME EMAIL EXISTS IN BOTH SCHOOLS
+==================================================
+
+Create/use two test users with the SAME recovery email:
+
+shared-test@example.test
+
+MIS:
+- school code MIS
+- user belongs to MIS
+- MIS notification configuration
+
+PPS:
+- school code PPS
+- user belongs to PPS
+- PPS notification configuration
+
+Request:
+
+{
+  recoveryEmail: "shared-test@example.test",
+  schoolCode: "MIS"
+}
+
+Verify ONLY MIS user/configuration/provider is selected.
+
+Then request:
+
+{
+  recoveryEmail: "shared-test@example.test",
+  schoolCode: "PPS"
+}
+
+Verify ONLY PPS user/configuration/provider is selected.
+
+This test is especially important.
+
+The same email address must NOT create tenant ambiguity.
+
+==================================================
+TEST 6 — CLIENT-SUPPLIED schoolId / tenantId ATTEMPT
+==================================================
+
+Submit a request containing valid MIS credentials/context but add a conflicting field such as:
+
+{
+  recoveryEmail: "mary-test@example.test",
+  schoolCode: "MIS",
+  schoolId: "<PPS-ID>",
+  tenantId: "<PPS-ID>"
+}
+
+Verify that the extra fields cannot override the tenant.
+
+The application must continue using MIS because the production route establishes tenant identity from schoolCode.
+
+Do NOT modify the production route to support these fields.
+
+This test only proves they cannot override the existing tenant selection.
+
+==================================================
+TEST 7 — INVALID SCHOOL CODE
+==================================================
+
+Submit:
+
+{
+  recoveryEmail: "mary-test@example.test",
+  schoolCode: "NOT-A-REAL-SCHOOL"
+}
+
+Verify:
+
+- generic response
+- no user lookup for another tenant
+- no notification configuration lookup
+- no SendGrid provider call
+- no email sent
+
+==================================================
+TEST 8 — VALID SCHOOL + FOREIGN EMAIL
+==================================================
+
+Submit:
+
+{
+  recoveryEmail: "does-not-belong-to-MIS@example.test",
+  schoolCode: "MIS"
+}
+
+Verify:
+
+- no account from another tenant is selected
+- no other tenant's configuration is loaded
+- no SendGrid provider call
+- no email sent
+- generic response
+
+==================================================
+TEST 9 — VERIFY SENDGRID CONFIGURATION BINDING
+==================================================
+
+For the valid MIS request, capture the mocked provider call.
+
+Verify the provider receives:
+
+- MIS fake API key
+- MIS From Email
+- MIS From Name
+- MIS recovery recipient
+
+For the valid PPS request, verify the provider receives:
+
+- PPS fake API key
+- PPS From Email
+- PPS From Name
+- PPS recovery recipient
+
+Never print the actual fake API key value in test output.
+
+Use safe assertions such as:
+
+- key belongs to expected test tenant
+- provider call used expected configuration object
+
+==================================================
+TEST 10 — NO GLOBAL SENDGRID FALLBACK
+==================================================
+
+The tests must prove that when a tenant has no usable SendGrid configuration:
+
+- the application does NOT fall back to another school's SendGrid configuration
+- no other tenant's API key is used
+- no other tenant's From Email is used
+- the email is not sent
+
+Do not introduce any fallback.
+
+==================================================
+TEST 11 — TEST SEND TENANT ISOLATION
+==================================================
+
+If there are already suitable tests for:
+
+POST /api/admin/fees/notification-config/test
+
+add an application-level test proving:
+
+MIS authenticated admin
+→ MIS notification configuration
+→ MIS SendGrid configuration
+
+and:
+
+PPS authenticated admin
+→ PPS notification configuration
+→ PPS SendGrid configuration
+
+Also verify a client-supplied schoolId/tenantId cannot override req.session.schoolId.
+
+Again, do not modify production logic.
+
+If this endpoint is already sufficiently covered by existing tests, do not duplicate tests unnecessarily. Report the existing coverage.
+
+==================================================
+TEST IMPLEMENTATION RULES
+==================================================
+
+Use the project's existing test framework and testing conventions.
+
+Before adding tests:
+
+1. Inspect existing password-recovery tests.
+2. Inspect existing route/integration test utilities.
+3. Reuse existing test helpers where possible.
+4. Do not introduce a new testing framework.
+5. Do not add dependencies unless absolutely necessary.
+6. Do not modify production behavior to make tests pass.
+
+If the current architecture makes a true HTTP-level test difficult, first determine the correct existing test harness and use it.
+
+Do not create artificial production behavior solely for testing.
+
+==================================================
+DATABASE SAFETY
+==================================================
+
+Tests must use the project's existing test database/test isolation mechanism.
+
+Do NOT:
+
+- modify development production data
+- modify real school records
+- modify real notification configurations
+- modify real API keys
+- create development migrations
+- alter schema
+
+Use test fixtures/factories/transactions according to the existing test architecture.
+
+==================================================
+SECURITY REQUIREMENTS
+==================================================
+
+Never print:
+
+- real SendGrid API keys
+- OTP values
+- reset tokens
+- passwords
+- real recovery email addresses if the test framework treats them as sensitive
+
+Use test-only values.
+
+The tests must not send real emails.
+
+==================================================
+FINAL REPORT
+==================================================
+
+After implementation, run ONLY the relevant tests first.
+
+Then report:
+
+1. Exact test files created/modified.
+2. Number of tests added.
+3. Number passed.
+4. Number failed.
+5. Exact test names.
+6. Whether all 11 scenarios are covered.
+7. Whether any production code was changed.
+8. Whether any database/schema/migration was changed.
+9. Whether any real email was sent.
+10. Whether any real API credential was accessed.
+
+Then run:
+
+npm run check
+
+and:
+
+git diff --check
+
+Confirm both pass.
+
+Finally provide:
+
+MULTI-TENANT SENDGRID SECURITY TEST STATUS:
+PASS / FAIL / BLOCKED
+
+IMPORTANT:
+If any test fails, DO NOT modify production code automatically.
+
+Stop and report the failure.
+
+If all tests pass, STOP.
+
+Do not perform any unrelated cleanup or fixes.

@@ -1,0 +1,162 @@
+# 10L-12C-R — Repair Existing Detailed-History Test/Fixture
+
+This is a separate, narrowly scoped test-maintenance step.
+
+## Background
+
+During 10L-12C verification, one existing test failed:
+
+```text
+server/__tests__/teacher-self-attendance-session-regressions.test.ts
+```
+
+Test:
+
+```text
+filters detailed history and computes summaries from the same stored statuses
+```
+
+Failing assertion:
+
+```text
+expect(all.body.statistics.attendanceRate).toBe(100)
+```
+
+Actual result:
+
+```text
+0.4
+```
+
+A read-only investigation established that this is an **existing test/fixture problem**, not a 10L-12C production regression.
+
+The current Teacher Self-Attendance rate contract calculates the rate across the applicable working days in the selected Academic Session through the current IST date.
+
+The fixture currently creates:
+
+* Session beginning 2025-04-01;
+* only two Attendance records;
+* Present = 1;
+* Half Day = 0.5;
+* Monday–Friday working days;
+* no All_School holidays;
+* current calculation period extending through 2026-09-24;
+* 388 applicable working days.
+
+Therefore:
+
+```text
+(1 + 0.5) / 388 * 100 = 0.3866...
+```
+
+which correctly rounds to:
+
+```text
+0.4
+```
+
+Even a two-record-only calculation would be:
+
+```text
+(1 + 0.5) / 2 * 100 = 75%
+```
+
+not 100%.
+
+## Objective
+
+Repair ONLY the stale test expectation/fixture so that the test correctly verifies the existing intended behavior.
+
+## Critical restrictions
+
+DO NOT:
+
+* change `calculateTeacherSelfRate`;
+* change `getTeacherSelfRate`;
+* change Teacher Working Days;
+* change rate weights;
+* change Session-rate semantics;
+* change holiday semantics;
+* change production Attendance behavior;
+* change the 10L-12C boundary implementation;
+* change 10L-12B;
+* add migrations;
+* change database schema;
+* modify historical data;
+* introduce unrelated refactoring.
+
+The production rate calculation is considered correct for this step.
+
+## Required investigation before editing
+
+Open the failing test and inspect the complete test setup and assertion.
+
+Determine the narrowest test-only correction that makes the test accurately verify the intended contract.
+
+Prefer changing the test assertion from the stale `100` expectation to the value that follows from the fixture and current contract, IF that is the correct interpretation after reviewing the test.
+
+Do not blindly replace `100` with `0.4`.
+
+The corrected test must still meaningfully verify:
+
+1. detailed history filtering;
+2. the stored Present status;
+3. the stored Half Day status;
+4. the summary calculation;
+5. that the rate comes from the established full-Session rate contract.
+
+If changing the fixture produces a clearer and more meaningful test than changing the assertion, explain why before doing so and keep the fixture change minimal.
+
+## Important
+
+Do not weaken the test merely to make it pass.
+
+The final test must continue to detect a genuine regression in the Teacher Self-Attendance rate behavior.
+
+## Verification
+
+After the minimal test correction:
+
+1. Run the affected Self-Attendance test file.
+2. Run the existing Teacher Self-Attendance rate tests.
+3. Run the relevant Attendance tests.
+4. Run:
+
+```bash
+npm run check
+```
+
+5. Run:
+
+```bash
+git diff --check
+```
+
+6. Inspect the final diff.
+
+## Expected outcome
+
+The previously failing detailed-history test should now pass while the production rate implementation remains completely unchanged.
+
+## Final report
+
+Report:
+
+* exact file changed;
+* exact test changed;
+* exact reason for the correction;
+* old expectation;
+* new expectation/fixture;
+* confirmation that production rate calculation was untouched;
+* tests passed;
+* `npm run check` result;
+* `git diff --check` result;
+* confirmation that no schema, migration, or data changes were made.
+
+If anything other than this existing test/fixture requires modification:
+
+**STOP and report it. Do not fix unrelated issues.**
+
+Final line:
+
+**10L-12C-R COMPLETE — EXISTING RATE TEST ALIGNED WITH CURRENT CONTRACT — NO PRODUCTION RATE LOGIC CHANGED.**

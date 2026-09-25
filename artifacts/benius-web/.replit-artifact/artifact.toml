@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "BENIUS"
+description = "The existing BENIUS school management web app for administrators, teachers, and students, including academics, attendance, communications, and fees."
+version = "1.0.0"
+id = "artifacts/benius-web"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26203
+
+[services.development]
+run = "pnpm --filter @workspace/benius-web run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/benius-web", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/benius-web/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26203"
+BASE_PATH = "/"

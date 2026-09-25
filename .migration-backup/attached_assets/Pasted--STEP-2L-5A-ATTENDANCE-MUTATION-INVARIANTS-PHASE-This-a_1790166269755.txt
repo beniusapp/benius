@@ -1,0 +1,918 @@
+# STEP 2L-5A — ATTENDANCE MUTATION INVARIANTS
+
+## PHASE
+
+This application is currently in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **narrow implementation task**.
+
+Implement ONLY the defects explicitly listed in this prompt.
+
+Do NOT expand scope.
+
+Do NOT redesign Attendance.
+
+Do NOT work on migration/deployment/production rollout.
+
+Do NOT modify production.
+
+---
+
+# CURRENT AUDIT BASELINE
+
+The latest read-only Attendance audit established the following:
+
+### Already PASS — DO NOT CHANGE
+
+* Student Registry is global/permanent.
+* Tenant/school isolation is working.
+* Any authenticated same-school Teacher can mark Attendance.
+* Student Attendance is Academic Session isolated.
+* Direct Teacher Attendance marking already uses the server-authoritative active Academic Session.
+* Archived Sessions are blocked for the direct Teacher Attendance marking path.
+* Existing Sunday behavior for deliberately stored Attendance is correct.
+* Existing historical Student identity preservation is implemented in development.
+
+### Confirmed defects to fix in THIS step
+
+The audit found:
+
+1. **Leave approval can mutate Attendance belonging to an archived Academic Session.**
+2. **Leave approval can mutate Attendance dates outside the existing 7-day correction window.**
+3. **Leave automation can create Attendance on school holidays even though direct Teacher marking correctly blocks school holidays.**
+4. **Leave-created Attendance rows can be missing class/section context.**
+5. **Direct Teacher Attendance accepts a client-supplied class/section that may be unrelated to the submitted Students.**
+
+For this step, fix these confirmed mutation/data-integrity problems only.
+
+---
+
+# ABSOLUTE SCOPE BOUNDARY
+
+## DO NOT TOUCH THESE ITEMS IN THIS STEP
+
+Do NOT modify:
+
+* Attendance calculation formulas
+* Present/Late/Leave/Half Day/Absent weights
+* Student monthly calculation
+* Student yearly calculation
+* Student statistics
+* working-day denominator semantics
+* class-transfer calculation behavior
+* historical Attendance identity model
+* Student UUID identity
+* deleted Student preservation
+* digital-ID reuse policy
+* Teacher Self-Attendance
+* legacy NULL Teacher Self-Attendance
+* IST / timezone formatting
+* `markedBy` display
+* Student Attendance UI
+* Admin Attendance UI unless absolutely required to test the mutation rejection
+* promotion logic
+* examination logic
+* Academic Session creation
+* Student Registry redesign
+* migration runner
+* production deployment
+* `.replit` deployment hooks
+* database migration strategy
+
+Do NOT fix any product-decision item from the previous audit.
+
+---
+
+# CORE BUSINESS RULE
+
+All Attendance mutation paths must obey the same fundamental invariants.
+
+For Attendance belonging to a normal Student Attendance record:
+
+### School
+
+The authenticated user's school/tenant is authoritative.
+
+### Academic Session
+
+The Attendance mutation must belong to the **currently active Academic Session for that school**.
+
+A browser-provided Session ID/header must not be able to select another Session.
+
+A server-stored object such as a leave request must NOT become an exception to this rule.
+
+### Archived Session
+
+Archived Session Attendance is **read-only**.
+
+No Attendance mutation may modify or insert Attendance for an archived Session.
+
+### Date
+
+The existing Attendance correction rule remains:
+
+> An active Session Teacher Attendance correction/marking may operate only within the existing **7-day correction window**, subject to the existing future-date, Session-boundary, and holiday rules.
+
+Do NOT redefine the 7-day window.
+
+Do NOT change the existing direct Teacher behavior.
+
+Instead, ensure indirect Attendance mutation paths obey the same rules.
+
+### School Holiday
+
+Attendance must not be automatically created or modified on a school holiday.
+
+Do NOT remove or weaken the existing direct Teacher holiday lock.
+
+---
+
+# PHASE A — INSPECT CURRENT IMPLEMENTATION FIRST
+
+Before changing code, inspect the actual current implementation.
+
+At minimum inspect:
+
+* `server/teacher-routes.ts`
+* `server/storage.ts`
+* Attendance route definitions
+* Leave approval routes
+* Leave approval service/helper functions
+* `markAttendanceAsLeave`
+* any Admin/support-staff leave approval path
+* Teacher leave approval path
+* Attendance date validation helpers
+* Academic Session resolution helpers
+* holiday/calendar helpers
+* class/section handling for Attendance inserts
+* existing Attendance tests
+
+Specifically trace both paths reported by the audit:
+
+### Path 1
+
+Teacher leave approval → Attendance mutation
+
+### Path 2
+
+Admin/support-staff leave approval → Attendance mutation
+
+Determine whether both eventually use:
+
+`markAttendanceAsLeave`
+
+or another common storage operation.
+
+Do not assume.
+
+---
+
+# PHASE B — CENTRALIZE THE MUTATION INVARIANTS
+
+Use the smallest safe design.
+
+If multiple leave-approval paths call a shared Attendance mutation function, prefer enforcing the critical invariants at the shared Attendance mutation/storage boundary so that callers cannot accidentally bypass them.
+
+Do NOT blindly duplicate validation in multiple routes if a shared safe boundary already exists.
+
+However, preserve route-level authorization.
+
+The final architecture should ensure that **every caller of the Attendance mutation operation gets the same invariant enforcement**.
+
+---
+
+# PHASE C — ACTIVE ACADEMIC SESSION ENFORCEMENT
+
+For Attendance mutations performed through leave approval:
+
+The server must determine whether the target Session is currently active for the authenticated school.
+
+A leave record's stored Session ID is **not sufficient authorization** to mutate Attendance.
+
+Example:
+
+* Leave was created while Session A was active.
+* Session A later becomes archived.
+* Leave is approved after Session A is archived.
+
+The approval must NOT mutate Attendance for Session A.
+
+Required behavior:
+
+**Reject the Attendance mutation.**
+
+Do not silently redirect it to the new active Session.
+
+Do not rewrite the leave record to another Session.
+
+Do not create the Attendance record in another Session.
+
+Do not guess.
+
+---
+
+# PHASE D — ARCHIVED SESSION PROTECTION
+
+Explicitly enforce:
+
+> Attendance mutation for an archived Academic Session is forbidden.
+
+This must be enforced server-side.
+
+Do not depend on:
+
+* `x-view-session-id`
+* UI state
+* archived-view headers
+* client-side controls
+
+A request must not become safe merely because a browser supplies or omits a view header.
+
+The authoritative Session state must come from the server/database.
+
+---
+
+# PHASE E — EXISTING 7-DAY CORRECTION WINDOW
+
+Leave approval currently bypasses the normal direct Teacher Attendance date rules.
+
+Fix this.
+
+For each Attendance date that leave approval would create or modify, apply the existing Attendance date rules.
+
+The target date must satisfy the same existing active-Session correction constraints as direct Attendance mutation.
+
+At minimum preserve:
+
+* active Session requirement
+* Session start boundary
+* Session end boundary
+* no future Attendance
+* existing 7-day correction window
+* existing holiday restriction
+* existing Sunday semantics
+
+### IMPORTANT
+
+Do NOT invent a new number.
+
+The existing rule is exactly the existing **7-day** correction window.
+
+Do NOT change the direct Teacher endpoint's current behavior.
+
+---
+
+# PHASE F — SCHOOL HOLIDAY PROTECTION
+
+The audit found:
+
+> Leave automation loops through Session dates and skips Sundays but does not check school holidays.
+
+Fix only this behavior.
+
+Before an automatic leave Attendance record is created or modified for a date:
+
+* determine whether that date is a school holiday using the application's existing holiday/calendar mechanism
+* if it is a school holiday, do NOT create or modify Attendance for that date
+
+Do NOT create a new holiday system.
+
+Do NOT change holiday configuration.
+
+Do NOT alter direct Teacher holiday behavior.
+
+Use the existing source of truth.
+
+---
+
+# PHASE G — SUNDAY BEHAVIOR
+
+Do NOT introduce new Sunday-specific business logic.
+
+Preserve the already accepted semantics:
+
+### Unmarked Sunday
+
+No Attendance record/status/count.
+
+### Deliberately stored Attendance
+
+Normal stored status semantics.
+
+For leave automation specifically:
+
+If the existing leave automation intentionally skips Sundays, preserve that existing behavior unless the actual current product requirement explicitly says otherwise.
+
+Do NOT turn this task into a Sunday-policy redesign.
+
+---
+
+# PHASE H — CLASS/SECTION DATA INTEGRITY
+
+The audit found two related but distinct data-integrity concerns.
+
+## H1 — Leave-created Attendance
+
+Automatically inserted Attendance rows currently may have missing class/section.
+
+Fix this.
+
+When leave approval creates a new Attendance record, it must have the correct historical class/section context available for that Student/Session/date.
+
+Determine the authoritative source from the existing application model.
+
+Prefer:
+
+* Session-specific enrollment
+* existing Attendance context
+* other authoritative server-side Student/Session enrollment data
+
+Do NOT take class/section blindly from the browser.
+
+Do NOT infer it from a mutable current Student class/section when a Session-specific enrollment exists.
+
+The saved Attendance class/section must represent the Student's correct context for the relevant Academic Session.
+
+If no authoritative class/section can be determined safely:
+
+**FAIL CLOSED.**
+
+Do not insert a partially populated Attendance record.
+
+---
+
+# H2 — DIRECT TEACHER MARKING
+
+The audit also found:
+
+> Direct Teacher Attendance accepts a client-supplied class/section that may be unrelated to the submitted Students.
+
+This is a data-integrity problem.
+
+Fix it WITHOUT changing the authorization model.
+
+### DO NOT DO THIS:
+
+Do not require Faculty Mapping.
+
+Do not require Subject Mapping.
+
+Do not restrict Teachers to specific classes.
+
+Do not change the requirement:
+
+> Any authenticated same-school Teacher may mark Attendance.
+
+### Required fix
+
+The submitted class/section must be validated against the submitted Students' authoritative Session enrollment/context.
+
+The client cannot simply submit:
+
+`class = Class A`
+
+while submitting Students whose active Session enrollment is:
+
+`Class B`
+
+and cause Attendance to be stored under Class A.
+
+Use the server-side authoritative Student/Session enrollment information.
+
+If the submitted Students do not belong to the submitted class/section context:
+
+**Reject the mutation.**
+
+Do not silently rewrite the class/section to something else unless the existing application contract already explicitly does that.
+
+Do not modify Student enrollment as a side effect.
+
+---
+
+# PHASE I — DO NOT BREAK SAME-SCHOOL TEACHER ACCESS
+
+This is critical.
+
+After the fix:
+
+An authenticated same-school Teacher who is otherwise allowed to use Attendance must still be able to mark Attendance.
+
+The fix is about:
+
+**data integrity**
+
+not:
+
+**Faculty Mapping authorization**.
+
+Test at least:
+
+* same-school Teacher + correct class/section → allowed
+* same-school Teacher + Student mismatch → rejected
+* cross-school Student → rejected
+* unauthorized user → rejected
+
+---
+
+# PHASE J — LEAVE APPROVAL BEHAVIOR
+
+For leave approval, determine the existing semantics carefully.
+
+If a leave request covers multiple dates, evaluate each date individually.
+
+For each target date:
+
+1. verify school ownership
+2. verify target Session
+3. verify target Session is active
+4. verify date is inside Session boundaries
+5. verify date is inside the existing 7-day correction window
+6. verify date is not future
+7. verify date is not a school holiday
+8. preserve existing Sunday handling
+9. resolve authoritative Student/Session class/section
+10. only then create/update Attendance
+
+If any date fails an invariant:
+
+Do NOT silently create a partially invalid Attendance record.
+
+Prefer failing the approval/mutation operation according to the existing API error conventions.
+
+Do not invent a new response format if an existing appropriate error mechanism exists.
+
+---
+
+# PHASE K — EXISTING ATTENDANCE RECORDS
+
+Be careful when leave approval modifies an existing Attendance record.
+
+Do NOT overwrite Attendance merely because leave was approved.
+
+Preserve existing business behavior unless the mutation itself violates one of the new invariants.
+
+For an existing Attendance record:
+
+* preserve its historical Student identity
+* preserve school
+* preserve Academic Session
+* preserve correct class/section context
+* update only the intended Attendance status/leave semantics
+* do not move it to another Session
+* do not move it to another class/section as a side effect
+
+If the existing row belongs to an archived Session or an invalid date:
+
+**reject the mutation.**
+
+Do not silently repair the historical record.
+
+---
+
+# PHASE L — TRANSACTIONAL SAFETY
+
+If leave approval can affect multiple Attendance dates, preserve the application's existing transactional behavior where available.
+
+Do not create a situation where:
+
+* date 1 is modified
+* date 2 fails validation
+* approval returns failure
+* but date 1 remains unexpectedly changed
+
+If the existing leave approval operation is transactional, preserve it.
+
+If it is not transactional, inspect carefully before changing it.
+
+Do NOT perform a broad transaction architecture rewrite.
+
+If a narrow transaction boundary is required to prevent partial invalid Attendance mutations, implement only that narrow change and explain it.
+
+---
+
+# PHASE M — TESTS
+
+Add focused regression tests for ONLY this step.
+
+Tests may use the existing development/test database infrastructure.
+
+Do NOT use production.
+
+Do NOT modify unrelated existing tests merely to make them pass.
+
+## Test 1 — Archived Session leave approval
+
+Create:
+
+* School A
+* archived Session A
+* Student
+* leave request associated with Session A
+
+Attempt approval that would create/update Attendance.
+
+Expected:
+
+**rejected**
+
+Expected:
+
+**no Attendance mutation**
+
+---
+
+## Test 2 — Session becomes archived before approval
+
+Create leave while Session A is active.
+
+Then make Session A archived in the test fixture.
+
+Approve the leave.
+
+Expected:
+
+**rejected**
+
+No Attendance mutation.
+
+This proves the leave's stored Session cannot bypass current Session state.
+
+---
+
+## Test 3 — Older than 7 days
+
+Attempt leave approval for an Attendance date outside the existing 7-day correction window.
+
+Expected:
+
+**rejected**
+
+No Attendance mutation.
+
+---
+
+## Test 4 — Valid past date
+
+Attempt a valid date inside the existing 7-day window.
+
+Expected:
+
+**allowed**, assuming all other existing rules pass.
+
+---
+
+## Test 5 — Future date
+
+Attempt leave approval for a future date.
+
+Expected:
+
+**rejected**
+
+---
+
+## Test 6 — Session boundary
+
+Attempt leave approval before Session start.
+
+Expected:
+
+**rejected**
+
+Attempt after Session end.
+
+Expected:
+
+**rejected**
+
+---
+
+## Test 7 — School holiday
+
+Configure a school holiday.
+
+Approve leave covering that date.
+
+Expected:
+
+**no Attendance record created/modified for the holiday**
+
+Do not count this as a working Attendance day.
+
+---
+
+## Test 8 — Normal non-holiday leave date
+
+Approve leave for a valid non-holiday date.
+
+Expected:
+
+Attendance created/updated according to existing leave semantics.
+
+---
+
+## Test 9 — Leave-created class/section
+
+Create a Student with a Session-specific enrollment.
+
+Approve leave that creates Attendance.
+
+Verify the Attendance record contains the authoritative class/section.
+
+---
+
+## Test 10 — Missing authoritative class/section
+
+Create a fixture where authoritative class/section cannot safely be determined.
+
+Expected:
+
+**mutation rejected**
+
+No partially populated Attendance row.
+
+---
+
+## Test 11 — Direct Teacher correct class/section
+
+Same-school Teacher submits Attendance for Students belonging to submitted class/section.
+
+Expected:
+
+**allowed**
+
+---
+
+## Test 12 — Direct Teacher mismatched class/section
+
+Same-school Teacher submits Student IDs belonging to Class B while claiming Class A.
+
+Expected:
+
+**rejected**
+
+No Attendance records created/updated under Class A.
+
+---
+
+## Test 13 — Same-school Teacher without Faculty Mapping
+
+Use a valid same-school Teacher with no Faculty Mapping.
+
+Submit a valid Attendance operation.
+
+Expected:
+
+**allowed**
+
+This protects the existing requirement.
+
+---
+
+## Test 14 — Cross-school Student
+
+Teacher from School A attempts to mark Student from School B.
+
+Expected:
+
+**rejected**
+
+---
+
+## Test 15 — Browser Session override
+
+Attempt to submit Attendance using a browser-selected Session/header different from the server-authoritative active Session.
+
+Expected:
+
+**rejected or ignored according to the already accepted Step 2L-1 contract**
+
+The write must not land in the browser-selected Session.
+
+---
+
+## Test 16 — Archived direct Teacher marking
+
+Attempt direct Teacher Attendance against archived Session.
+
+Expected:
+
+**rejected**
+
+Verify existing behavior remains unchanged.
+
+---
+
+## Test 17 — Multiple leave dates
+
+Create a leave spanning multiple dates containing:
+
+* valid date
+* school holiday
+* out-of-window date
+
+Verify the operation follows the chosen existing transactional/API semantics and never leaves invalid Attendance mutations behind.
+
+Do not silently create a partial invalid set.
+
+---
+
+# PHASE N — REGRESSION TESTS
+
+After implementing the narrow fixes, run relevant existing Attendance tests covering:
+
+* Step 2L-1 server-authoritative Session
+* Step 2L-2 Session date boundaries
+* Step 2L-3 Sunday behavior
+* Step 2L-4B historical Student deletion/identity preservation
+* tenant isolation
+* archived Session protection
+* 7-day correction behavior
+
+Also run:
+
+`npm run check`
+
+Do not claim success without actual results.
+
+---
+
+# PHASE O — NO UNRELATED FIXES
+
+If you discover:
+
+* class-transfer calculation mismatch
+* Admin vs Student denominator mismatch
+* IST `markedBy` UTC string
+* digital code reuse policy issue
+* legacy NULL Teacher Self-Attendance
+* historical presentation question
+* approved-leave-without-record calculation semantics
+
+DO NOT FIX THEM.
+
+Report them separately under:
+
+**OUT OF SCOPE — NOT MODIFIED**
+
+This is critical.
+
+---
+
+# PHASE P — FILE/SCOPE CONTROL
+
+Before implementation, identify the files expected to change.
+
+Prefer the smallest possible set.
+
+Likely areas may include:
+
+* `server/teacher-routes.ts`
+* `server/storage.ts`
+* focused Attendance/leave tests
+
+But do not assume these are the only files.
+
+Do not modify files unrelated to this task.
+
+Do not create a migration unless absolutely required by an existing schema constraint.
+
+This step is primarily a server-side invariant/data-integrity fix.
+
+---
+
+# PHASE Q — FINAL REPORT
+
+At completion, provide:
+
+## 1. VERDICT
+
+Use exactly one:
+
+**STEP 2L-5A ACCEPTED**
+
+or
+
+**STEP 2L-5A NOT ACCEPTED**
+
+Only use ACCEPTED if all required focused tests and regression tests pass.
+
+---
+
+## 2. FIXES IMPLEMENTED
+
+List each confirmed defect fixed:
+
+1. archived Session leave-approval mutation
+2. 7-day correction bypass
+3. holiday bypass
+4. missing class/section on leave-created Attendance
+5. direct Teacher class/section mismatch
+
+For each provide:
+
+* file
+* function/endpoint
+* old behavior
+* new behavior
+* test proving it
+
+---
+
+## 3. SAME-SCHOOL TEACHER ACCESS
+
+Explicitly confirm:
+
+* Faculty Mapping requirement added: YES/NO
+* Same-school Teacher without Faculty Mapping can still mark: YES/NO
+* Student/class mismatch is rejected: YES/NO
+
+The expected result is:
+
+**Faculty Mapping requirement added: NO**
+
+**Same-school Teacher without Faculty Mapping can still mark: YES**
+
+**Student/class mismatch is rejected: YES**
+
+---
+
+## 4. TEST RESULTS
+
+Provide exact commands and exact counts.
+
+Example:
+
+* focused Step 2L-5A tests: X passed / Y failed
+* regression tests: X passed / Y failed
+* `npm run check`: PASS/FAIL
+
+Do not omit failures.
+
+---
+
+## 5. FILES CHANGED
+
+List every changed file.
+
+Explain why each changed file was necessary.
+
+---
+
+## 6. OUT OF SCOPE — NOT MODIFIED
+
+Explicitly confirm that these were NOT changed:
+
+* calculation semantics
+* class-transfer calculations
+* IST
+* historical identity model
+* Teacher Self-Attendance
+* legacy NULL Session records
+* product decisions
+* migration/deployment infrastructure
+
+---
+
+## 7. PRODUCTION STATUS
+
+Explicitly state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# HARD STOP CONDITIONS
+
+STOP and report before making changes if:
+
+* you discover the current requirement conflicts with existing Attendance semantics
+* you cannot determine the authoritative Session
+* you cannot determine authoritative Student/Session class/section
+* a safe fix requires changing calculation semantics
+* a safe fix requires changing Student Registry design
+* a safe fix requires a production migration
+* a safe fix requires modifying unrelated modules
+* a safe fix requires changing Faculty Mapping authorization
+* a leave operation would require guessing historical identity
+* a migration is unexpectedly required
+* tests would require production access
+
+Do not guess.
+
+Do not broaden the scope.
+
+Do not fix unrelated issues.
+
+## FINAL INSTRUCTION
+
+Implement **ONLY Step 2L-5A**.
+
+The objective is:
+
+> **Make every relevant Attendance mutation obey the existing Session, archived-session, date-window, holiday, and class/section integrity rules without changing Attendance calculation semantics or Teacher authorization policy.**
+
+Nothing beyond that.

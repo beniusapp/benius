@@ -1,0 +1,931 @@
+FIX 7 — AUTHORITATIVE, TENANT-SCOPED CUMULATIVE CALCULATION
+=============================================================
+
+IMPORTANT — READ THIS FIRST
+=============================================================
+
+This application is a TRUE MULTI-TENANT SAAS PLATFORM designed for 1,000+ independent schools to register and use the same application.
+
+Each school is an independent TENANT.
+
+This is NOT one universal School MIS policy shared by all schools.
+
+Every school may configure its own academic/examination policies.
+
+Therefore:
+
+SCHOOL A may have one cumulative calculation policy.
+SCHOOL B may have a completely different cumulative calculation policy.
+SCHOOL C may have another policy.
+SCHOOL D may have another policy.
+And so on for 1,000+ schools.
+
+The application MUST calculate cumulative results according to the policy belonging to the authenticated/current tenant.
+
+There must NEVER be a universal cumulative formula silently applied to every school.
+
+Tenant isolation is permanent and non-negotiable.
+
+=============================================================
+CURRENT FIX STATUS
+=============================================================
+
+Completed and accepted:
+
+- Fix 1 — Shared Examination Calculation Engine
+- Fix 2 — Academic Session Isolation
+- Fix 3 — Pass Percentage Authority
+- Fix 4 — Grade Calculation Authority
+- Fix 6 — Authoritative Promotion Rule Interpretation
+
+Deferred:
+
+- Fix 5 — Scored vs Absent vs Missing
+
+DO NOT implement Fix 5 in this task.
+
+This task is ONLY Fix 7.
+
+Do not continue to Fix 8 or any later fix.
+
+=============================================================
+FIX 7 OBJECTIVE
+=============================================================
+
+Implement:
+
+FIX 7 — AUTHORITATIVE, TENANT-SCOPED CUMULATIVE CALCULATION
+
+The purpose of this fix is to establish one authoritative cumulative/year-end calculation interpretation while allowing EACH SCHOOL/TENANT to use its own configured cumulative policy.
+
+The system must determine:
+
+Authenticated tenant
+        ↓
+That tenant's applicable cumulative policy
+        ↓
+That tenant's validated Academic Session
+        ↓
+That student's valid term results
+        ↓
+That tenant's cumulative calculation
+        ↓
+Cumulative result
+
+DO NOT create one global cumulative formula for all schools.
+
+=============================================================
+CRITICAL RULE — SCHOOL-SPECIFIC POLICY
+=============================================================
+
+The most important requirement in this fix is:
+
+CUMULATIVE CALCULATION IS TENANT-SPECIFIC.
+
+For example:
+
+School A could configure:
+
+Term 1 = 20%
+Term 2 = 30%
+Term 3 = 50%
+
+School B could configure:
+
+Term 1 = 25%
+Term 2 = 25%
+Term 3 = 25%
+Term 4 = 25%
+
+School C could configure:
+
+Term 1 = 40%
+Term 2 = 60%
+
+These are examples only.
+
+DO NOT create these policies automatically.
+
+The actual application's existing configuration/schema must determine what is possible.
+
+The calculation engine must use the policy belonging to the authenticated tenant.
+
+School A's policy MUST NOT be used for School B.
+
+School B's policy MUST NOT be used for School C.
+
+No school may inherit another school's cumulative policy.
+
+=============================================================
+STEP 1 — INSPECT BEFORE MODIFYING
+=============================================================
+
+DO NOT immediately edit files.
+
+First inspect the entire repository.
+
+Identify:
+
+1. Existing cumulative calculation logic.
+2. Existing term-average calculation logic.
+3. Existing term-weight configuration.
+4. Existing cumulative/year-end policy configuration.
+5. Existing academic session configuration.
+6. Existing school-specific examination policies.
+7. Existing cumulative result fields.
+8. Existing cumulative grade/result displays.
+9. Teacher Examination cumulative calculations.
+10. Student Examination cumulative calculations.
+11. Admin Performance Analytics cumulative calculations.
+12. Teacher report-card cumulative calculations.
+13. Student report/report-card cumulative calculations.
+14. Admin report-card cumulative calculations.
+15. Printable cumulative reports.
+16. Server-side cumulative calculations.
+17. Any cumulative helper/service.
+18. Any hardcoded cumulative formula.
+19. Any default/global term weights.
+20. Any fallback cumulative policy.
+21. Any calculation that combines results from multiple Academic Sessions.
+
+Search the ENTIRE repository.
+
+Do not assume the shared examination calculation engine is the only location.
+
+=============================================================
+IMPORTANT — DO NOT ASSUME THE CURRENT POLICY MODEL
+=============================================================
+
+Do NOT assume every school currently has configurable cumulative weights.
+
+Inspect the actual schema/configuration.
+
+Determine:
+
+- whether cumulative weights are already configurable per school
+- where they are stored
+- whether they are attached to a grading tier
+- whether they are attached to an academic session
+- whether they are attached to another policy object
+- whether different terms can have different weights
+- whether the cumulative trigger term is configurable
+- whether cumulative calculation is already configurable in another way.
+
+If the existing system does NOT have enough configuration to support school-specific cumulative methodologies:
+
+STOP BEFORE INVENTING A NEW DATABASE DESIGN.
+
+Report exactly:
+
+1. What configuration currently exists.
+2. What is missing.
+3. Why the existing model cannot represent school-specific cumulative calculations.
+4. What schema/configuration change would be required.
+
+Do NOT create a migration in this fix unless explicitly necessary and approved.
+
+=============================================================
+AUTHORITATIVE TENANT FLOW
+=============================================================
+
+Cumulative calculation MUST follow:
+
+Authenticated user
+        ↓
+Authenticated user's schoolId / tenant
+        ↓
+Validated Academic Session belonging to that tenant
+        ↓
+Applicable cumulative policy belonging to that tenant
+        ↓
+Student belonging to that tenant
+        ↓
+Term results belonging to that tenant + session
+        ↓
+Authoritative cumulative calculation
+
+The authenticated server-side tenant is authoritative.
+
+A client-supplied schoolId MUST NEVER select cumulative policy.
+
+A client-supplied policy ID MUST NOT bypass tenant ownership validation.
+
+A client-supplied term result or cumulative value MUST NOT become authoritative.
+
+=============================================================
+CROSS-TENANT PROTECTION
+=============================================================
+
+The calculation must reject or prevent:
+
+School A context
++
+School B cumulative policy
+
+School A context
++
+School B student
+
+School A context
++
+School B result
+
+School A context
++
+School B Academic Session
+
+School A context
++
+School B term weights
+
+These combinations must NEVER enter the calculation.
+
+The shared calculation layer should reject policy/context tenant mismatch where appropriate.
+
+Database queries must remain tenant-scoped.
+
+=============================================================
+ACADEMIC SESSION ISOLATION
+=============================================================
+
+Preserve Fix 2.
+
+Cumulative calculation must be scoped to ONE validated Academic Session.
+
+For example:
+
+School A
+Session 2028–2029
+Term 1
+Term 2
+Term 3
+
+must NOT accidentally combine with:
+
+School A
+Session 2027–2028
+
+And must NEVER combine with another school's session.
+
+The selected Academic Session remains authoritative.
+
+Do NOT use a "current session" fallback when an explicit selected session exists.
+
+Do NOT use NULL-session records as substitutes.
+
+Existing NULL-session historical records must remain untouched.
+
+Do NOT:
+- migrate them
+- delete them
+- assign them
+- reinterpret them
+- silently include them.
+
+=============================================================
+WHAT EXACTLY IS CUMULATIVE?
+=============================================================
+
+First inspect the existing application and establish what it means by:
+
+- term average
+- cumulative average
+- cumulative percentage
+- year-end percentage
+- weighted cumulative result
+- final/year-end result
+
+Do not assume these are interchangeable.
+
+If the application has separate concepts, preserve them.
+
+If several screens incorrectly use different concepts for the same displayed "cumulative" value, consolidate only the calculation that is genuinely intended to represent the cumulative result.
+
+=============================================================
+TERM WEIGHTS
+=============================================================
+
+If the existing school policy supports term weights, the cumulative calculation must use the authenticated school's configured weights.
+
+Example only:
+
+Term 1 = 20%
+Term 2 = 30%
+Term 3 = 50%
+
+Then the calculation should use those configured weights.
+
+Do NOT hardcode these example values.
+
+If another school has different weights, use that school's configuration.
+
+=============================================================
+WEIGHT NORMALIZATION
+=============================================================
+
+This is an important area.
+
+Inspect the current application to determine what happens when:
+
+- all configured terms have results
+- one configured term has no result
+- multiple configured terms have no result
+- weights do not total exactly 100
+- weights total more than 100
+- weights total less than 100
+- a configured term has a zero weight
+- a term is disabled/unconfigured.
+
+DO NOT guess the desired behavior.
+
+Determine the intended semantics from:
+
+- existing policy configuration
+- schema
+- admin UI
+- existing calculation code
+- existing tests
+- surrounding business logic.
+
+If the current implementation is ambiguous or contradictory:
+
+STOP and report the ambiguity rather than silently inventing a new formula.
+
+=============================================================
+MISSING TERM RESULTS
+=============================================================
+
+This fix must NOT implement Fix 5.
+
+Do NOT change the distinction between:
+
+- scored
+- absent
+- missing.
+
+That is intentionally deferred.
+
+However, inspect how the CURRENT system represents unavailable term results.
+
+Determine how cumulative currently handles an unavailable term.
+
+Do not silently redesign missing/absent behavior.
+
+If the existing cumulative calculation renormalizes available configured term weights, preserve that behavior only if it is clearly established as the existing intended rule.
+
+If this is ambiguous:
+
+STOP and report it.
+
+=============================================================
+ROUNDING
+=============================================================
+
+Inspect current rounding behavior.
+
+Determine:
+
+- term average precision
+- weighted component precision
+- cumulative precision
+- final displayed precision
+
+Do NOT introduce a new rounding methodology unless required to eliminate an existing contradiction.
+
+If different screens currently round differently:
+
+identify the contradiction.
+
+Then establish the authoritative behavior only if it can be determined from existing policy/business rules.
+
+Otherwise report the ambiguity.
+
+Do not silently choose a new rounding rule.
+
+=============================================================
+CUMULATIVE TRIGGER / YEAR-END
+=============================================================
+
+Inspect whether the existing application has a concept such as:
+
+- cumulative trigger term
+- final term
+- year-end term
+- annual result term.
+
+If configured:
+
+preserve that concept.
+
+Determine whether cumulative should be calculated:
+
+- after every term
+- only at the final term
+- when a configured trigger term is reached
+- under another existing rule.
+
+Do NOT invent a new trigger model.
+
+=============================================================
+CUMULATIVE GRADE
+=============================================================
+
+Fix 4 already established authoritative grade selection.
+
+Do NOT create a separate cumulative grade algorithm.
+
+If cumulative percentage is passed into grade selection:
+
+use the existing authoritative grading policy for that authenticated tenant.
+
+Do NOT:
+- hardcode A+/A/B+/B/C+/C/D/F
+- use 33%
+- use 35%
+- use another school's grading policy.
+
+Cumulative percentage and cumulative grade are related but distinct calculations.
+
+=============================================================
+PROMOTION
+=============================================================
+
+Fix 6 established authoritative promotion-rule interpretation.
+
+Do NOT redesign promotion rules in Fix 7.
+
+If promotion uses cumulative percentage:
+
+provide the authoritative cumulative percentage to the promotion evaluator.
+
+Do not calculate cumulative independently inside promotion logic.
+
+There must be one cumulative result.
+
+=============================================================
+PERFORMANCE ANALYTICS
+=============================================================
+
+Fix 6 deliberately left the broader duplicate Performance Analytics examination calculator for later.
+
+Fix 7 may update its cumulative calculation if necessary to use the authoritative cumulative result.
+
+However:
+
+DO NOT perform a broad unrelated Performance Analytics refactor.
+
+Only change what is necessary for cumulative authority and consistency.
+
+=============================================================
+AUTHORITATIVE CUMULATIVE EVALUATOR
+=============================================================
+
+Prefer one pure shared cumulative calculation function.
+
+If appropriate, add it to:
+
+shared/examination-calculation-engine.ts
+
+or an appropriate shared calculation module.
+
+The pure evaluator should receive already validated/scoped inputs.
+
+Conceptually:
+
+CumulativeCalculationInput
+  ├── authenticated tenant context
+  ├── validated Academic Session
+  ├── tenant-specific cumulative policy
+  ├── term results
+  ├── term configuration
+  └── any existing required cumulative settings
+
+It should return a deterministic cumulative result.
+
+The calculation function MUST NOT query the database.
+
+Authentication and authorization MUST remain outside the pure calculation layer.
+
+=============================================================
+TENANT POLICY VALIDATION
+=============================================================
+
+The cumulative evaluator MUST verify policy ownership/context where appropriate.
+
+Conceptually:
+
+if policy.schoolId !== context.schoolId:
+
+reject.
+
+Do not permit cross-tenant calculation.
+
+This must work for 1,000+ independent schools.
+
+=============================================================
+NO GLOBAL DEFAULTS
+=============================================================
+
+Do NOT create a universal cumulative fallback.
+
+Never silently use:
+
+- equal weighting
+- 25% per term
+- 33% per term
+- 50/50
+- average of all terms
+- current session's policy
+- first available policy
+- another school's policy.
+
+unless that behavior is explicitly configured for that tenant.
+
+A missing cumulative policy must NOT silently become a global formula.
+
+=============================================================
+DATABASE / POLICY OWNERSHIP
+=============================================================
+
+Inspect all cumulative policy queries.
+
+Every policy lookup must enforce the authenticated tenant.
+
+For example:
+
+WHERE school_id = authenticatedSchoolId
+
+Do not rely solely on a client-supplied policy ID.
+
+If a policy references another tenant's configuration:
+
+reject it.
+
+Do not "fix" it by searching for another policy globally.
+
+=============================================================
+RESULT DATA OWNERSHIP
+=============================================================
+
+Every term result entering cumulative calculation must belong to:
+
+- authenticated tenant
+- validated student
+- selected Academic Session.
+
+Do not rely only on student ID.
+
+Do not rely only on session ID.
+
+Do not rely only on client-provided schoolId.
+
+Use the authenticated tenant as the primary boundary.
+
+=============================================================
+NO DATA MIGRATION
+=============================================================
+
+Do NOT modify historical data.
+
+Do NOT:
+
+- rewrite existing examination scores
+- rewrite historical cumulative results
+- migrate NULL-session scores
+- delete results
+- reassign historical results
+- change school ownership
+- change Academic Session ownership
+- modify policy records automatically.
+
+This should be code + tests + documentation only.
+
+If schema changes appear necessary:
+
+STOP before making them and report the exact requirement.
+
+=============================================================
+TESTING — TENANT-SPECIFIC POLICY
+=============================================================
+
+Add tests proving that different schools can have different cumulative policies.
+
+At minimum:
+
+TEST 1
+
+School A:
+Term weights = one configured policy.
+
+School B:
+Term weights = different configured policy.
+
+The same term scores must produce different cumulative results according to each school's policy.
+
+TEST 2
+
+School A policy cannot be used with School B context.
+
+Must reject.
+
+TEST 3
+
+School B policy cannot be used with School A context.
+
+Must reject.
+
+TEST 4
+
+Client-provided schoolId cannot change authenticated tenant policy.
+
+Must remain authenticated tenant.
+
+=============================================================
+TESTING — ACADEMIC SESSION
+=============================================================
+
+Add tests proving:
+
+1. Same school + selected session → valid.
+
+2. Same school + different session → excluded/rejected as appropriate.
+
+3. School A session + School B context → rejected.
+
+4. NULL-session results are not substituted.
+
+5. Results from another session cannot enter cumulative calculation.
+
+=============================================================
+TESTING — CALCULATION
+=============================================================
+
+Add focused tests for the actual established cumulative behavior.
+
+At minimum test:
+
+1. All configured terms available.
+
+2. Different term weights.
+
+3. Exact configured weight behavior.
+
+4. Boundary case where weights sum to 100.
+
+5. Weight behavior when total differs from 100, if the existing policy permits it.
+
+6. Missing/unavailable term behavior according to existing semantics.
+
+7. Multiple missing terms according to existing semantics.
+
+8. Zero-weight term if supported.
+
+9. Cumulative trigger term if configured.
+
+10. Exact cumulative result.
+
+11. Rounding behavior according to established existing semantics.
+
+12. Cumulative grade uses Fix 4 authority.
+
+13. Promotion uses the authoritative cumulative percentage from this calculation rather than recalculating it separately.
+
+Do not write tests for invented behavior.
+
+=============================================================
+TESTING — CROSS-MODULE CONSISTENCY
+=============================================================
+
+Where practical, verify that:
+
+Teacher Examination
+Student Examination
+Admin Performance Analytics
+Teacher reports
+Student reports
+Admin reports
+server-side calculations
+
+do not independently produce contradictory cumulative values.
+
+If a broader duplicate calculator remains intentionally deferred:
+
+document it clearly.
+
+=============================================================
+REGRESSION TESTS
+=============================================================
+
+Run all relevant existing tests for:
+
+- examination calculation engine
+- Teacher Examination
+- Student Examination
+- Admin Performance Analytics
+- tenant/security scope
+- Academic Session transport
+- promotion evaluation
+- grading policy
+- cumulative/term calculations.
+
+Do not remove existing tests just to make the suite pass.
+
+=============================================================
+NO CHANGE TO FIX 5
+=============================================================
+
+Explicitly:
+
+Fix 5 — Scored vs Absent vs Missing
+
+MUST NOT be implemented.
+
+Do not alter the application's existing absent/missing semantics.
+
+=============================================================
+NO CHANGE TO OTHER FIXES
+=============================================================
+
+Do NOT change:
+
+- pass percentage authority
+- grade boundary authority
+- promotion-rule interpretation
+- attendance calculation
+- roster
+- Enrollment
+- Faculty Mapping
+- mark validation
+- score uniqueness
+- database architecture
+- historical data
+- NULL-session records.
+
+Those are separate fixes.
+
+=============================================================
+DOCUMENTATION / MEMORY
+=============================================================
+
+Update project memory documentation if appropriate.
+
+Document:
+
+- cumulative calculation authority
+- tenant-specific policy requirement
+- Academic Session scope
+- term-weight semantics
+- missing-term behavior
+- rounding behavior
+- cumulative trigger behavior
+- cross-tenant rejection
+- what was intentionally not changed
+- any unresolved ambiguity.
+
+Make the documentation explicit that different schools may legitimately have different cumulative calculation policies.
+
+=============================================================
+VALIDATION
+=============================================================
+
+After implementation run:
+
+1. Focused cumulative tests.
+
+2. Examination calculation-engine tests.
+
+3. Teacher Examination tests.
+
+4. Student Examination tests.
+
+5. Admin Performance Analytics tests.
+
+6. Promotion tests.
+
+7. Tenant/security contract tests.
+
+8. Academic Session tests.
+
+9. npm run check
+
+10. git diff --check
+
+11. Confirm the application starts successfully on the existing development port.
+
+If any test fails:
+
+Do NOT bypass it.
+
+Investigate and fix only if directly related to Fix 7.
+
+=============================================================
+CRITICAL STOP CONDITIONS
+=============================================================
+
+STOP and report before making a broader change if:
+
+1. The current database/schema cannot represent school-specific cumulative policies.
+
+2. It is impossible to determine the intended cumulative formula from the existing application.
+
+3. Missing-term behavior is ambiguous and changing it would overlap Fix 5.
+
+4. Weight normalization behavior is ambiguous.
+
+5. Rounding behavior cannot be determined without changing business rules.
+
+6. A schema migration appears necessary.
+
+7. A historical data migration appears necessary.
+
+8. Fix 7 would require changing pass percentage, grading, promotion, attendance, or roster rules.
+
+Do not guess.
+
+=============================================================
+FINAL REPORT
+=============================================================
+
+At the end report:
+
+1. Files changed.
+
+2. Existing cumulative policy/configuration discovered.
+
+3. How cumulative policy is associated with a tenant/school.
+
+4. Whether different schools can have different cumulative policies.
+
+5. Exact authoritative cumulative formula.
+
+6. Exact term-weight behavior.
+
+7. Weight normalization behavior.
+
+8. Missing-term behavior.
+
+9. Rounding behavior.
+
+10. Cumulative trigger/year-end behavior.
+
+11. How cumulative grade uses Fix 4 authority.
+
+12. How promotion uses the authoritative cumulative result from Fix 7.
+
+13. How tenant isolation is enforced.
+
+14. How Academic Session isolation is enforced.
+
+15. Cross-tenant tests added.
+
+16. Cumulative tests added.
+
+17. Test results.
+
+18. npm run check result.
+
+19. git diff --check result.
+
+20. Whether database/schema/data was changed.
+
+21. Any ambiguity discovered.
+
+22. Any issue intentionally deferred.
+
+23. Explicitly confirm:
+
+"Fix 5 — Scored vs Absent vs Missing was NOT implemented."
+
+24. Explicitly confirm:
+
+"No universal cumulative calculation was introduced. Cumulative calculation remains tenant/school-policy specific."
+
+=============================================================
+FINAL SCOPE RULE
+=============================================================
+
+IMPLEMENT ONLY FIX 7.
+
+Do not continue to Fix 8.
+
+Do not invent a global cumulative formula.
+
+Do not assume all schools use the same term weights.
+
+Do not trust client-supplied schoolId.
+
+Do not allow cross-tenant policies.
+
+Do not mix Academic Sessions.
+
+Do not modify historical data.
+
+Do not implement Fix 5.
+
+Do not silently create a schema migration.
+
+If the existing application cannot currently support school-specific cumulative calculation policies, STOP and report that limitation instead of inventing a solution.
+
+=============================================================
+END FIX 7
+=============================================================

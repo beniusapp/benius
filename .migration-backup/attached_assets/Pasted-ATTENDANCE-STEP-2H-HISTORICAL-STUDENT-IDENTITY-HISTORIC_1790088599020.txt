@@ -1,0 +1,940 @@
+ATTENDANCE — STEP 2H — HISTORICAL STUDENT IDENTITY + HISTORICAL CLASS/SECTION
+IMPLEMENTATION — MINIMUM SAFE CHANGE ONLY
+
+We completed the Step 2H read-only audit.
+
+Current status:
+
+Step 2D = PASS
+Step 2E = PASS
+Step 2F = PASS
+Step 2G = PASS
+Step 2H audit = FAIL
+
+The Step 2H audit found that several Attendance/history readers incorrectly
+depend on the CURRENT Student Registry roster for historical Session data.
+
+Implement ONLY the Step 2H corrections described below.
+
+==================================================
+1. NON-NEGOTIABLE RULES
+==================================================
+
+READ THE EXISTING CODE BEFORE EDITING.
+
+Implement the smallest safe change.
+
+Do NOT perform unrelated fixes.
+
+Do NOT redesign Student Registry.
+
+Do NOT make Student Registry session-specific.
+
+Do NOT change Attendance canonical identity.
+
+Do NOT weaken Step 2F.
+
+Do NOT weaken Step 2G.
+
+Do NOT change Teacher Attendance authorization.
+
+Do NOT add Faculty Mapping restrictions.
+
+Do NOT add Enrollment as a prerequisite for Attendance marking.
+
+Do NOT require Enrollment merely for an existing Attendance row to be
+visible.
+
+Do NOT change Attendance calculation policy.
+
+Do NOT change working-day/calendar policy except where explicitly required
+below to stop historical calculations from using the CURRENT class/section.
+
+Do NOT redesign Academic Sessions.
+
+Do NOT change production.
+
+Do NOT create a production migration.
+
+Do NOT modify production data.
+
+==================================================
+2. CORE HISTORICAL RULE
+==================================================
+
+Student Registry is GLOBAL/CURRENT.
+
+Attendance is HISTORICAL + SESSION-SPECIFIC.
+
+Example:
+
+2025-2026:
+    Ijaz Saikh = Class 9-A
+
+2026-2027:
+    Ijaz Saikh = Class 10-B
+
+Current Student Registry:
+    Ijaz Saikh = Class 10-B
+
+When the user selects:
+
+    Attendance → 2025-2026
+
+Ijaz Saikh's historical Attendance must remain visible in:
+
+    Class 9-A
+
+When the user selects:
+
+    Attendance → 2026-2027
+
+Ijaz Saikh's Attendance belongs to:
+
+    Class 10-B
+
+The current Student Registry class/section MUST NOT rewrite or hide
+historical Attendance.
+
+==================================================
+3. CRITICAL DISTINCTION — ENROLLMENT IS NOT AN ATTENDANCE GATE
+==================================================
+
+This is extremely important.
+
+Existing Attendance records are authoritative historical records.
+
+Session-specific Enrollment may be used to determine the historical
+class/section/roster CONTEXT where appropriate.
+
+BUT:
+
+An Attendance record MUST NOT disappear merely because a corresponding
+Enrollment row does not exist.
+
+Do NOT change the Attendance marking rule to require Enrollment.
+
+Do NOT reject Attendance because a student has no Enrollment.
+
+Do NOT make Attendance visibility depend exclusively on Enrollment.
+
+The following must remain possible:
+
+    Attendance record exists
+    +
+    valid school_id
+    +
+    valid session_id
+    +
+    valid student_id
+
+Even if no Enrollment row is found, the Attendance record itself must
+remain readable when the authenticated user is authorized to view that
+school/session.
+
+Enrollment is historical context where available, NOT the authoritative
+existence condition for Attendance.
+
+==================================================
+4. HISTORICAL CLASS/SECTION SOURCE
+==================================================
+
+Use the strongest existing historical source without introducing a new
+schema/table unless absolutely necessary.
+
+Preferred order:
+
+A. Selected-session historical Enrollment, when available,
+   for determining historical class/section context.
+
+B. Existing Attendance record class/section snapshot, when appropriate.
+
+C. Do NOT fall back to the student's CURRENT Student Registry
+   class/section for historical Session context.
+
+The current Student Registry class/section MUST NOT override historical
+Session context.
+
+If there is no Enrollment and no usable Attendance class/section,
+do not invent a historical class/section.
+
+The Attendance record should still remain visible wherever the UI/API
+can display the student without requiring a fabricated class/section.
+
+==================================================
+5. SHARED SESSION-AWARE HISTORICAL ROSTER RESOLUTION
+==================================================
+
+Create or reuse the smallest appropriate shared helper/resolver for
+historical Attendance roster resolution.
+
+The resolver must be:
+
+- school-scoped
+- session-scoped
+- deterministic
+- read-only
+- reusable
+- tenant-safe
+
+For a selected historical Session, it should obtain historical student
+membership/class/section from the selected Session rather than the
+current Student Registry.
+
+Do NOT create a new enrollment requirement.
+
+Do NOT make this resolver reject students simply because they lack
+Enrollment.
+
+Where Enrollment exists, it can provide historical class/section.
+
+Where Enrollment does not exist, existing Attendance records remain
+authoritative and must remain readable.
+
+Do not duplicate the same historical-resolution logic across multiple
+routes if a small shared helper can safely be reused.
+
+==================================================
+6. FIX server/storage.ts
+==================================================
+
+Fix:
+
+    getAttendanceHistory()
+
+Current problem:
+
+It uses:
+
+    getStudentsByClassSection()
+
+which depends on CURRENT:
+
+- students.class
+- students.section
+- students.isActive
+
+This causes historical Attendance to disappear after promotion,
+class/section changes, inactivity, or removal from the current roster.
+
+Change it so that selected-session historical context is used.
+
+Requirements:
+
+- school_id remains mandatory
+- session_id remains mandatory
+- selected Session remains authoritative
+- historical students must not be filtered out because of CURRENT
+  `students.class`
+- historical students must not be filtered out because of CURRENT
+  `students.section`
+- historical students must not be filtered out merely because
+  `students.isActive = false`
+- do not require Enrollment for Attendance row visibility
+- preserve existing return shape unless a minimal change is necessary
+
+Ensure existing callers continue to work.
+
+==================================================
+7. FIX ADMIN CLASS DETAIL
+==================================================
+
+File:
+
+    server/routes.ts
+
+Route:
+
+    GET /api/admin/attendance/class-detail
+
+Current problem:
+
+It builds a current active Student Registry roster using:
+
+- current class
+- current section
+- current isActive
+
+Then limits selected-session Attendance to that roster.
+
+This is incorrect for historical Sessions.
+
+Change the route so that the selected Academic Session determines
+historical class/section membership.
+
+Example:
+
+Current Registry:
+
+    Ijaz = 10-B
+
+Historical Session:
+
+    2025-2026
+    Ijaz = 9-A
+
+When 2025-2026 + Class 9-A is selected:
+
+    Ijaz MUST appear.
+
+When 2026-2027 + Class 10-B is selected:
+
+    Ijaz MUST appear there.
+
+Do NOT require current `isActive`.
+
+Do NOT use current class/section to remove historical students.
+
+Do NOT require Enrollment as a prerequisite for Attendance.
+
+If a historical Attendance record exists but Enrollment is missing,
+do not silently delete/hide the Attendance row.
+
+==================================================
+8. FIX ADMIN ATTENDANCE OVERVIEW
+==================================================
+
+File:
+
+    server/routes.ts
+
+Route:
+
+    GET /api/admin/attendance/overview
+
+Current problem:
+
+Attendance rows are selected by Session, but `enrolledTotal`
+comes from the CURRENT active Student Registry.
+
+This mixes historical numerator with current denominator.
+
+Change the historical denominator to use the selected Session's
+historical student population/context.
+
+Use existing session-specific enrollment information where available.
+
+However:
+
+Do NOT make the existence of Enrollment a prerequisite for Attendance
+records themselves.
+
+Do NOT alter unrelated Attendance calculation rules.
+
+The selected Session must not be compared against today's active
+Student Registry population.
+
+Preserve tenant isolation.
+
+==================================================
+9. FIX TEACHER ATTENDANCE HISTORY
+==================================================
+
+Files:
+
+- server/teacher-routes.ts
+- server/storage.ts
+
+Routes/functions:
+
+    GET /api/attendance/history/:schoolId/:class/:section/:startDate/:endDate
+
+    getAttendanceHistory()
+
+Use selected-session historical context.
+
+For historical Sessions:
+
+- do not use current Student Registry class/section
+- do not require current isActive
+- do not remove a student merely because current class changed
+- do not remove a student merely because current roster changed
+- do not require Enrollment for Attendance row existence
+
+Example:
+
+2025-2026:
+    Ijaz = 9-A
+
+2026-2027:
+    Ijaz = 10-B
+
+Viewing 2025-2026 + 9-A must still show Ijaz's 9-A Attendance.
+
+==================================================
+10. FIX TEACHER ATTENDANCE SUMMARY
+==================================================
+
+File:
+
+    server/teacher-routes.ts
+
+Route:
+
+    GET /api/teacher/attendance-summary/:class/:section
+
+This currently inherits defective historical resolution through
+getAttendanceHistory().
+
+After correcting the underlying historical resolver, ensure this route
+uses the corrected historical context.
+
+Do not duplicate logic unnecessarily.
+
+==================================================
+11. FIX HISTORICAL TEACHER CLASS SCORES
+==================================================
+
+File:
+
+    server/teacher-routes.ts
+
+Route:
+
+    GET /api/teacher/class-scores/:class/:section
+
+Current problem:
+
+The selected Session is respected for scores, but the Student list
+comes from the CURRENT active Student Registry.
+
+Change the historical student list to use the selected Session's
+historical context.
+
+Do NOT introduce Enrollment as a prerequisite for the score/Attendance
+feature.
+
+Do NOT modify unrelated examination behavior.
+
+Do not weaken existing examination Session/tenant validation.
+
+==================================================
+12. FIX TEACHER COMPLETION/STATUS
+==================================================
+
+Files:
+
+- server/teacher-routes.ts
+- server/storage.ts
+
+Functions/routes:
+
+    GET /api/attendance/status/:teacherId
+
+    hasAttendanceToday()
+
+Current issue:
+
+Historical Session requests can use the current active Student Registry
+population.
+
+Correct the selected-session historical population where applicable.
+
+Do not change current-session marking authorization.
+
+Do not alter unrelated Teacher self-attendance.
+
+==================================================
+13. FIX PERFORMANCE ANALYTICS
+==================================================
+
+Files:
+
+- server/teacher-routes.ts
+- client/src/pages/admin-modules/performance-analytics.tsx
+
+The Attendance summary currently inherits the defective
+getAttendanceHistory() behavior.
+
+After correcting the storage/history resolver:
+
+- ensure the selected Academic Session is explicitly transmitted
+- use the standard selected-session request mechanism already used
+  elsewhere
+- ensure the query/cache key remains Session-specific
+- do not allow the current Student Registry class/section to replace
+  historical Session context
+
+Do not redesign Performance Analytics.
+
+==================================================
+14. FIX STUDENT YEARLY ATTENDANCE
+==================================================
+
+Files:
+
+- server/routes.ts
+- server/storage.ts
+
+The Student's Attendance rows are already properly scoped to:
+
+- authenticated Student
+- school
+- selected Session
+
+Preserve that.
+
+The problem is historical working-day/class/section context currently
+uses the Student's CURRENT class/section.
+
+Correct this so that when a historical Session is selected:
+
+- use the selected Session's historical class/section where available
+- do not use the student's current Registry class/section to reinterpret
+  the historical Session
+- do not make Enrollment a prerequisite for displaying existing
+  Attendance rows
+- do not change Attendance status calculations
+
+If historical class/section cannot be resolved, do not invent one.
+
+==================================================
+15. FIX STUDENT ATTENDANCE STATISTICS
+==================================================
+
+Files:
+
+- server/routes.ts
+- server/storage.ts
+
+Apply the same historical Session context rule as yearly Attendance.
+
+Selected historical Session:
+
+    historical class/section context
+
+Current Student Registry:
+
+    must NOT override historical class/section
+
+Preserve:
+
+- authenticated Student identity
+- school isolation
+- selected Session isolation
+- existing calculation formulas unless the only required change is
+  the historical class/section input
+
+Do not redesign Student statistics.
+
+==================================================
+16. STUDENT MONTHLY ATTENDANCE
+==================================================
+
+The audit found monthly Attendance is already correctly scoped by:
+
+- authenticated Student
+- school
+- selected Session
+- date
+
+Do NOT unnecessarily rewrite this path.
+
+Only change it if implementation reveals a direct historical
+Student Registry dependency.
+
+Otherwise leave it unchanged.
+
+==================================================
+17. HISTORICAL INACTIVE STUDENTS
+==================================================
+
+A historical Attendance row must remain visible even if:
+
+    students.isActive = false
+
+when the selected Academic Session contains the historical Attendance.
+
+Do not use current `isActive` as a historical Attendance visibility gate.
+
+==================================================
+18. STUDENT ABSENT FROM CURRENT ROSTER
+==================================================
+
+A historical Attendance row must remain visible even if the student
+is no longer returned by the CURRENT Student Registry roster.
+
+Do not use today's roster as the historical source.
+
+==================================================
+19. HARD-DELETED STUDENTS
+==================================================
+
+The audit found that true hard deletion of a Student currently cascades
+to Attendance.
+
+DO NOT change this in Step 2H.
+
+Do NOT modify the Student foreign key.
+
+Do NOT create a deletion-retention migration.
+
+Do NOT redesign Student deletion.
+
+Treat hard-deletion Attendance retention as a separate future,
+explicitly approved requirement.
+
+Step 2H concerns historical visibility for existing Attendance data.
+
+==================================================
+20. CROSS-SCHOOL / TENANT ISOLATION
+==================================================
+
+Preserve all Step 2G protections.
+
+Every historical Attendance read must remain constrained by:
+
+    authenticated school
+    +
+    selected Session belonging to that school
+
+Never allow:
+
+School A historical Attendance
+to be returned to
+School B.
+
+Do not trust browser schoolId or Session ID.
+
+Do not weaken:
+
+- resolveAttendanceReadSession()
+- school predicates
+- Student school validation
+- Session school validation
+- Teacher school validation
+- existing Step 2G storage protections
+
+==================================================
+21. ACTIVE SESSION BEHAVIOR
+==================================================
+
+Do not unnecessarily redesign current-session behavior.
+
+However, if the selected Session is the active Session and the
+existing session-specific historical context is already available,
+prefer the same authoritative Session-aware context rather than
+mixing current Registry data.
+
+Do not change Teacher's authorization to mark Attendance.
+
+Any authenticated Teacher in the school remains allowed to mark
+Attendance.
+
+No Enrollment prerequisite.
+
+No Faculty Mapping prerequisite.
+
+==================================================
+22. ATTENDANCE WRITER MUST NOT CHANGE
+==================================================
+
+Do NOT modify the Attendance writer logic from Steps 2D/2E/2G unless
+a compile/test issue proves an absolutely necessary compatibility
+adjustment.
+
+Preserve:
+
+- authoritative active Session resolution
+- canonical identity
+- tenant validation
+- transactional validation
+- no partial writes
+
+Step 2H is primarily a historical READ/context correction.
+
+==================================================
+23. NO UNNECESSARY SCHEMA CHANGES
+==================================================
+
+Do NOT create:
+
+- new tables
+- new migrations
+- new columns
+- new foreign keys
+- new indexes
+
+unless absolutely required by an implementation blocker.
+
+The audit specifically concluded that selected-session Enrollment is
+the strongest existing historical context source.
+
+Use existing structures.
+
+If you believe a schema change is unavoidable, STOP before making it
+and report:
+
+- why existing structures cannot satisfy the requirement
+- exact proposed schema change
+- why it is unavoidable
+
+Do not silently create it.
+
+==================================================
+24. TESTS REQUIRED
+==================================================
+
+Add or update focused tests.
+
+At minimum cover:
+
+TEST 1 — PROMOTION
+
+2025-2026:
+    Ijaz = 9-A
+
+2026-2027:
+    Ijaz = 10-B
+
+Current Registry:
+    Ijaz = 10-B
+
+When viewing 2025-2026 + 9-A:
+
+    Ijaz's historical Attendance is visible.
+
+TEST 2 — CURRENT CLASS MUST NOT HIDE HISTORY
+
+Current Registry says 10-B.
+
+Historical Attendance says 9-A.
+
+Historical 9-A Attendance remains visible.
+
+TEST 3 — INACTIVE STUDENT
+
+Historical Attendance exists.
+
+Current Student Registry:
+    isActive = false
+
+Historical Attendance remains visible.
+
+TEST 4 — CURRENT ROSTER ABSENCE
+
+Historical Attendance exists.
+
+Student is not returned by current roster.
+
+Historical Attendance remains visible.
+
+TEST 5 — NO ENROLLMENT GATE
+
+Create/use a valid historical Attendance record where the student
+does not have a corresponding Enrollment row.
+
+Verify:
+
+    Attendance remains readable.
+
+Do NOT make the test violate tenant/session validation.
+
+TEST 6 — HISTORICAL CLASS CONTEXT
+
+Historical class/section:
+
+    9-A
+
+Current Registry:
+
+    10-B
+
+Verify historical views use 9-A and do not reinterpret it as 10-B.
+
+TEST 7 — STUDENT YEARLY/STATISTICS
+
+Historical Session uses 9-A.
+
+Current Registry uses 10-B.
+
+Verify historical calculations do not use current 10-B class/section
+where historical context is available.
+
+TEST 8 — ADMIN OVERVIEW
+
+Historical Session denominator/context must not come from today's
+current active roster.
+
+TEST 9 — TEACHER HISTORY
+
+Historical promoted/inactive Student remains visible.
+
+TEST 10 — PERFORMANCE ANALYTICS
+
+Selected Session is transmitted and historical Student context is
+preserved.
+
+TEST 11 — CROSS-SCHOOL
+
+School B cannot read School A historical Attendance.
+
+TEST 12 — REGRESSION
+
+Existing Step 2D tests pass.
+
+Existing Step 2E tests pass.
+
+Existing Step 2F tests pass.
+
+Existing Step 2G tests pass.
+
+==================================================
+25. TEST DATA SAFETY
+==================================================
+
+Use isolated test fixtures/test DB behavior already used by the
+repository.
+
+Do not alter real development records unnecessarily.
+
+Do not alter production data.
+
+Clean up test fixtures using the existing test cleanup mechanism.
+
+==================================================
+26. VALIDATION COMMANDS
+==================================================
+
+After implementation run:
+
+1. Focused Step 2H tests
+2. All relevant Attendance tests
+3. Existing Step 2D tests
+4. Existing Step 2E tests
+5. Existing Step 2F tests
+6. Existing Step 2G tests
+7. npm run check
+8. git diff --check
+
+If the project has a standard schema/workflow validator, run it as
+well.
+
+Do NOT deploy.
+
+Do NOT touch production.
+
+==================================================
+27. SCOPE CONTROL
+==================================================
+
+Do NOT fix unrelated issues discovered during implementation.
+
+Do NOT change:
+
+- Student Registry architecture
+- Enrollment architecture
+- Faculty Mapping
+- Attendance writer authorization
+- Attendance canonical identity
+- Academic Session model
+- calendar design
+- leave policy
+- unrelated examination logic
+- unrelated dashboard behavior
+- unrelated performance analytics
+- unrelated authentication
+- production configuration
+
+If an unrelated issue is discovered, report it separately instead
+of fixing it.
+
+==================================================
+28. REQUIRED FINAL REPORT
+==================================================
+
+After implementation, return a report with exactly:
+
+A. Files changed
+
+B. Historical Student Identity changes
+
+C. Historical class/section changes
+
+D. Admin changes
+
+E. Teacher changes
+
+F. Student changes
+
+G. Enrollment-gate confirmation
+
+Explicitly state:
+
+"Enrollment is NOT an Attendance prerequisite."
+
+H. Tenant-isolation confirmation
+
+I. Tests
+
+Include exact number passed/failed.
+
+J. npm run check
+
+K. git diff --check
+
+L. Production safety
+
+M. Schema/migration status
+
+N. Scope confirmation
+
+Explicitly confirm:
+
+- Student Registry remains global/current
+- No Enrollment prerequisite was added
+- No Faculty Mapping prerequisite was added
+- Step 2D preserved
+- Step 2E preserved
+- Step 2F preserved
+- Step 2G preserved
+- Attendance writer behavior preserved
+- No unrelated fixes
+
+O. Known limitations
+
+Include the previously identified hard-delete issue ONLY as a
+known limitation if it remains unchanged.
+
+P. Final Step 2H assessment
+
+Use exactly one:
+
+PASS
+
+PASS WITH FINDINGS
+
+FAIL
+
+==================================================
+FINAL IMPLEMENTATION SAFETY RULE
+==================================================
+
+Implement ONLY Step 2H.
+
+The core success condition is:
+
+If:
+
+    2025-2026 → Ijaz Saikh → Class 9-A
+    2026-2027 → Ijaz Saikh → Class 10-B
+
+and the current Student Registry says:
+
+    Ijaz Saikh → Class 10-B
+
+then selecting 2025-2026 MUST still show Ijaz's historical
+Attendance in the 9-A historical context.
+
+A missing Enrollment row must NOT by itself make an existing valid
+Attendance record disappear.
+
+A current `isActive = false` must NOT by itself make historical
+Attendance disappear.
+
+A current class/section change must NOT rewrite or hide historical
+Attendance.
+
+Cross-school isolation must remain absolute.
+
+Do not make any other changes.

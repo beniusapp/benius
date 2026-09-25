@@ -1,0 +1,45 @@
+Build the /student/gallery and /student/faculty modules with Strict Multi-Tenant Isolation. The UI must be modern, using the Emerald Green & White theme, and fully optimized for Motorola 60 Fusion and Desktop.
+
+1. THE PRIVATE SCHOOL GALLERY (/student/gallery):
+
+Mandatory Filter: Only fetch images where school_id matches the logged-in student's school_id AND status == 'approved'.
+
+Masonry Layout: Use a 2-column (Mobile) or 4-column (Desktop) masonry grid for a high-end portfolio look.
+
+Album Categorization: Provide a horizontal scroll of categories (e.g., Sports Day 2025, Science Exhibition) strictly pulled from the school's own gallery_albums table.
+
+Interaction: Clicking an image opens a Full-Screen Lightbox with a 'Save to Device' button and the Date/Caption of the event.
+
+2. THE FACULTY DIRECTORY (/student/faculty):
+
+Staff Verification: Display ONLY the faculty members registered under the student's specific school_id.
+
+Professional Cards: Each card must include:
+
+Profile Image: Circular with an Emerald Green border.
+
+Details: Full Name, Designation (e.g., Senior Coordinator), and Qualifications.
+
+Subject Tags: Small badges indicating which subjects they teach in this school.
+
+Search & Sort:
+
+Search bar to find a teacher by name.
+
+Filter by Department (e.g., Science, Humanities, Administration).
+
+3. Modern UI/UX Specifications:
+
+Empty States: If no images or faculty are uploaded for this school yet, show a clean 3D illustration with the message: '[School Name] hasn't uploaded any content here yet.'
+
+Loading States: Use shimmering Skeleton Loaders to maintain a 'premium' feel during data fetching.
+
+Icons: Use Lucide-React (Aperture, UserCheck, GraduationCap).
+
+4. High-Security Backend Logic:
+
+Database Guard: Every API call to these routes MUST include a WHERE school_id = $1 clause.
+
+Zero Leakage: Ensure that even if a student tries to manually change a URL ID, the system blocks access to any data not belonging to their school_id.
+
+Image Hosting: Ensure image URLs are served via a secure CDN or protected storage bucket linked to the school's account.

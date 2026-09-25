@@ -1,0 +1,173 @@
+The premium receipt implementation sounds good, but do not consider the task complete based only on TypeScript/tests.
+
+Now perform a complete visual and functional verification of the actual generated receipts from the Admin Ledger / Transaction Details.
+
+I want the receipt to look like a professional modern school ERP financial document, not like a plain HTML table.
+
+Verify all of the following:
+
+1. DESIGN
+
+- Modern, premium, professional visual hierarchy.
+- School logo and school identity should look polished.
+- Clear PAYMENT RECEIPT heading.
+- Very clear PAID / PAYMENT RECEIVED status.
+- Proper spacing, typography, alignment, borders and section hierarchy.
+- No excessive empty space.
+- No cramped or overlapping content.
+- No tiny unreadable text.
+- The receipt should look good when viewed on screen and when printed/saved as PDF.
+
+2. RECEIPT STRUCTURE
+   The receipt should clearly separate:
+
+- School Information
+- Receipt / Transaction Identification
+- Student Information
+- Payment Summary
+- Fee Details
+- Online Transaction Details OR Offline Payment Details
+- Notes, if applicable
+- Verification Information where appropriate
+- Authorized Signatory
+- Footer / generated timestamp
+
+3. ONLINE PAYMENT RECEIPT
+   Verify that the actual generated receipt contains, where available:
+
+- School logo
+- School name
+- Full school address
+- Phone
+- Official email
+- Affiliation number
+- GSTIN
+- Invoice Number
+- Receipt Number
+- Student Name
+- Student ID / DSID
+- Roll Number
+- Parent / Guardian
+- Class / Section
+- Student phone/email where appropriate
+- Fee Type
+- Fee Period
+- Due Date
+- Academic Session
+- Base Fee
+- Late Fee
+- Discount / concession where applicable
+- Other charges where applicable
+- Total invoice amount
+- Amount received
+- Payment status
+- Razorpay Payment ID
+- Razorpay Order ID
+- Payment method
+- Provider captured timestamp
+- Application recorded timestamp
+- All displayed timestamps must be accurately formatted in IST (Asia/Kolkata)
+
+Do not expose sensitive payment information such as full card numbers, CVV, API keys, webhook secrets, credentials or other prohibited/sensitive data.
+
+4. OFFLINE PAYMENT RECEIPT
+   Verify cash, bank transfer, UPI and cheque receipts separately.
+
+For cash:
+
+- Cash denomination
+- Quantity
+- Subtotal
+- Total received
+
+For bank/UPI/cheque:
+
+- Appropriate transaction/reference/UTR/cheque information
+- Transaction date
+- Amount
+- Relevant notes
+
+Do not show irrelevant online-payment fields on offline receipts and vice versa.
+
+5. FINANCIAL INTEGRITY
+   Verify that:
+
+- Invoice Number is permanent.
+- Receipt Number is permanent.
+- Original payment amount is not overwritten.
+- Receipt amount exactly matches the actual payment record.
+- Fee breakdown totals correctly.
+- Late fee/discount/concession calculations are correct.
+- Online and offline receipts use the correct payment record.
+- The receipt does not accidentally display data belonging to another student, invoice or payment.
+
+6. DATE AND TIME
+   This is especially important.
+
+Every school-facing timestamp on the receipt must use Asia/Kolkata / IST.
+
+Do not use:
+
+- Browser local timezone
+- Device timezone
+- UTC display
+- Manual +05:30 arithmetic
+
+Keep provider event time and application-recorded time separate where both are available.
+
+Verify the receipt around an IST midnight boundary as well.
+
+7. PDF QUALITY
+   Generate actual PDF receipts and inspect them.
+
+Check:
+
+- No content is cut off.
+- No section is split badly across pages.
+- No overlapping elements.
+- Logo is sharp enough.
+- Text remains readable.
+- Signature is correctly positioned.
+- Footer is not clipped.
+- Page count is appropriate.
+- The receipt should ideally fit cleanly on one page for normal transactions.
+
+8. SECURITY
+   Verify that no receipt contains:
+
+- API secrets
+- Razorpay webhook secret
+- Passwords
+- Card number
+- CVV
+- Authentication credentials
+- Raw webhook payload
+- Internal reconciliation information
+- Internal tenant-resolution information
+
+9. BOTH ENTRY POINTS
+   Verify that the exact same premium renderer is actually being used for:
+
+- Ledger transaction receipt
+- Fee-record receipt
+
+Test both online and offline payments.
+
+10. TEST WITH REALISTIC DATA
+    Create/test at least:
+
+- Online payment with normal fee
+- Online payment with late fee
+- Online payment with discount/concession
+- Offline cash payment with multiple denominations
+- Offline bank/UPI payment
+- Receipt with notes
+- Receipt with missing optional fields
+- Receipt with school logo
+- Receipt without school logo
+
+Finally, show/inspect the actual generated receipts and report any visual or data issues found.
+
+Do not make unrelated changes to the payment, invoice, receipt-number, or financial logic.
+
+The objective is not simply "code passes"; the objective is a genuinely professional, accurate and production-ready school financial receipt.

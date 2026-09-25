@@ -1,0 +1,39 @@
+Refactor the Timetable System across Admin, Teacher, and Student portals to allow for complete school-specific customization.
+
+1. THE ADMIN 'STRUCTURE BUILDER' (/admin-dashboard):
+
+Class-Wise Period Logic: Create a setup screen where the Admin defines the number of periods per class. (e.g., Class 10 has 9 periods, Class 8 has 4 periods).
+
+Time Slot Configuration: For each class, the Admin must be able to set the Start Time and End Time for every individual period (e.g., Period 1: 10:00 AM - 10:40 AM).
+
+Break Management: Allow the Admin to insert 'Break' slots (Lunch, Recess) at any point in the sequence.
+
+Master Save: Save this configuration into a timetable_structure table that defines the 'Empty Grid' for each class.
+
+2. THE TEACHER 'SLOT ALLOCATOR' (/teacher-dashboard):
+
+Dynamic Grid Loading: When a teacher logs in, their timetable view must pull the exact structure defined by the Admin for their specific classes.
+
+Subject & Section Assignment: The teacher (or Admin) can then click into these pre-defined time slots to assign a Subject and a Section.
+
+Conflict Detection: Prevent a teacher from being assigned to two different classes at the same time slot.
+
+3. THE STUDENT 'READ-ONLY' VIEW (/student/timetable):
+
+Personalized Schedule: Students should see a beautiful, high-contrast grid showing only the timetable for their specific Class and Section.
+
+Current Period Highlight: Use a glowing Benius Emerald Green border to highlight the class currently in progress based on the system clock.
+
+4. MODERN UI/UX & VISUALS:
+
+Theme: Deep Navy background with Glassmorphism.
+
+Contrast Fix: All text (Subject names, Times, Room numbers) must be Pure White (#FFFFFF) and Bold. No 'invisible' text.
+
+Card Design: Use professional 'Time-Cards' instead of a messy table. Each card should show: [Period Number] | [Time Range] | [Subject] | [Teacher Name].
+
+5. MOBILE OPTIMIZATION (Motorola G60 Fusion):
+
+On mobile, use a Horizontal Day-Picker (Mon, Tue, Wed...) at the top, and show the periods as a Vertical Timeline for easy scrolling with a thumb.
+
+Ensure all 'Edit' modals have high-contrast inputs with Black ink on White backgrounds for maximum visibility.

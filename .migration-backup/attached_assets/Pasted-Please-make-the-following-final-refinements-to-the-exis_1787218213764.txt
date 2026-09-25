@@ -1,0 +1,199 @@
+Please make the following final refinements to the existing Invoice PDF design.
+
+Do not redesign the entire invoice from scratch. Do not change any existing invoice, payment, Razorpay, receipt, or fee business logic. This is only a professional PDF layout and presentation refinement.
+
+1. Keep normal invoices to ONE PAGE
+
+This is the most important change.
+
+Currently, the invoice is spilling onto page 2 because the Authorized Signature and footer are being pushed down.
+
+For a normal invoice, everything should fit cleanly on one page:
+
+- School header
+- Invoice number/status
+- Student details
+- Invoice metadata
+- Invoice details
+- Fee breakdown
+- Late fee/penalty
+- Amount summary
+- Authorized signature
+- Footer/disclaimer
+
+The Authorized Signature must NOT be pushed onto a separate second page when there is sufficient space on page 1.
+
+Use professional spacing, typography, margins, table sizing, and section spacing to make the complete normal invoice fit naturally on one page.
+
+2. Intelligent multi-page handling
+
+Do NOT force every invoice into one page if it genuinely contains too much information.
+
+If an invoice has a large number of fee components or other legitimate content that cannot reasonably fit:
+
+- Allow page 2 or additional pages when genuinely necessary.
+- Keep the layout professional across all pages.
+- Do not split table rows or components awkwardly between pages.
+- Repeat appropriate invoice/header information on subsequent pages where necessary.
+- Keep the Authorized Signature and final footer at the appropriate end of the invoice.
+
+However, ordinary invoices with normal content should remain one page.
+
+3. Invoice Date & Time — exact persisted timestamp
+
+The Invoice Date & Time must come from the actual invoice creation timestamp stored in the database.
+
+Display it in IST / Asia/Kolkata.
+
+Example:
+
+"19 Aug 2026, 03:14:54 PM IST"
+
+Important:
+
+- Do NOT use the current time when the PDF is downloaded.
+- Do NOT use the current time when the invoice is viewed.
+- Do NOT regenerate the timestamp.
+- The same invoice must always show the same original creation date/time.
+
+4. Improve Amount in Words
+
+Use a clean professional presentation:
+
+Amount in Words
+Rupees Two Thousand Seven Hundred Only
+
+Examples:
+
+₹1,000 → Rupees One Thousand Only
+
+₹2,700 → Rupees Two Thousand Seven Hundred Only
+
+₹35,000 → Rupees Thirty-Five Thousand Only
+
+Keep the amount-in-words value clearly associated with the Amount Summary.
+
+5. Authorized Signature
+
+Keep the existing Authorized Signature section.
+
+For normal one-page invoices, position it naturally near the bottom of page 1.
+
+Display:
+
+Authorized Signatory
+
+[Configured school signature image, if available]
+
+Principal / Authorized Signatory
+
+Use the school's existing configured signature/signatory information.
+
+Do NOT hard-code a person's name.
+
+If no signature image is configured, show a clean professional signature line/space instead.
+
+The signature must remain school/tenant-specific.
+
+6. Footer
+
+Keep the professional footer at the bottom of the invoice:
+
+«This document is an invoice and confirms the amount due. A payment receipt will be issued separately after successful payment.»
+
+Also retain the computer-generated document statement where appropriate.
+
+Do not allow the footer to be isolated on a separate page for a normal invoice.
+
+7. Preserve everything already implemented
+
+Do NOT remove any of the following:
+
+- School logo
+- School name/address/contact information
+- Affiliation number
+- GSTIN/tax ID where configured
+- Prominent INVOICE heading
+- Invoice Number
+- Invoice status
+- Student Name
+- Student ID / MIS ID
+- Parent/Guardian Name
+- Student Phone Number
+- Class
+- Section
+- Exact Invoice Date & Time in IST
+- Academic Session
+- Frequency
+- Fee Period
+- Due Date
+- Fee Name
+- Fee Type
+- Amount
+- Fee Breakdown / Components
+- Component subtotal
+- Late Fee & Penalty
+- Amount Summary
+- Amount in Words
+- Total Payable
+- Authorized Signature
+- Footer/disclaimer
+
+8. Important — do not change business logic
+
+This task is ONLY for PDF presentation/layout.
+
+Do not modify:
+
+- Invoice numbering
+- Invoice creation
+- Fee period resolution
+- "resolveInvoicePeriod()"
+- Payment processing
+- Razorpay
+- Webhooks
+- Receipt generation
+- Receipt numbering
+- Duplicate protection
+- Fee records
+- Academic session logic
+- Student data
+- Tenant isolation
+
+Use the existing persisted invoice data as the single source of truth.
+
+9. Final visual goal
+
+The final invoice should look like a modern, highly professional school ERP invoice, not like a webpage printed to PDF.
+
+Prioritize:
+
+- Strong visual hierarchy
+- Highly prominent Invoice Number
+- Clean school branding
+- Clear student information
+- Easy-to-scan invoice details
+- Professional tables
+- Balanced whitespace
+- Clear amount summary
+- Professional signature placement
+- Clean footer
+- Excellent A4/print/PDF appearance
+- Mobile PDF preview compatibility
+
+Acceptance criteria
+
+Before considering this complete, verify:
+
+1. A normal invoice fits on exactly one page.
+2. Authorized Signature appears on page 1.
+3. Footer appears on page 1.
+4. A genuinely large invoice can intelligently flow to additional pages.
+5. Invoice Date & Time is the original persisted creation timestamp converted to IST.
+6. Downloading the same invoice later does not change its timestamp.
+7. Amount in Words is professionally formatted.
+8. All existing invoice details remain present.
+9. No existing invoice/payment functionality is changed.
+10. Existing invoice data remains exactly consistent between Admin Portal and Student Portal PDFs.
+
+Please implement only these refinements and run the existing invoice/PDF regression tests.

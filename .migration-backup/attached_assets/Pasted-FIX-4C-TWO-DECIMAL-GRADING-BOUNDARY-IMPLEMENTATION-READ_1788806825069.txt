@@ -1,0 +1,516 @@
+FIX 4C — TWO-DECIMAL GRADING BOUNDARY IMPLEMENTATION READINESS INVESTIGATION
+READ-ONLY — DO NOT MODIFY CODE, DATABASE, SCHEMA, DATA, CONFIGURATION, OR TESTS
+
+We are considering changing the school's Academic Policy grading boundaries from integer-only percentages to exact two-decimal percentages.
+
+Example intended policy:
+
+D: 0.00–34.99
+C: 35.00–59.99
+B: 60.00–79.99
+A: 80.00–100.00
+
+This investigation is ONLY to determine exactly what implementation would be required if this model is approved.
+
+DO NOT IMPLEMENT ANYTHING.
+
+DO NOT:
+- edit files
+- change database schema
+- create migrations
+- change existing school policies
+- change grading rules
+- change pass percentage
+- change examination calculations
+- change cumulative calculations
+- change promotion rules
+- change Academic Session behavior
+- change tenant isolation
+- modify seed data
+- modify production/database data
+- commit code
+- run a migration
+- silently convert existing ranges such as 59 → 59.99
+
+==================================================
+1. VERIFY THE PROPOSED CONTRACT
+==================================================
+
+Assume ONLY for this investigation that the proposed grading-boundary contract is:
+
+- PostgreSQL exact numeric values
+- maximum precision: 2 decimal places
+- valid range: 0.00 through 100.00
+- minimum and maximum boundaries are inclusive
+- grading input is normalized to at most 2 decimal places before grade selection
+- example:
+  D = 0.00–34.99
+  C = 35.00–59.99
+  B = 60.00–79.99
+  A = 80.00–100.00
+
+Do NOT assume that existing policies should automatically be changed to .99.
+
+Existing:
+C = 35–59
+B = 60–79
+
+must remain unchanged unless a future explicit data-migration decision is made.
+
+==================================================
+2. TRACE EVERY REQUIRED CODE CHANGE
+==================================================
+
+Identify the exact files, functions, schemas, API routes, database definitions, and calculations that would need modification to support this contract.
+
+For each affected location provide:
+
+- file path
+- function/component name
+- current behavior
+- exact reason it is affected
+- proposed type/logic change
+- whether the change is REQUIRED or OPTIONAL
+
+Do not modify anything.
+
+==================================================
+3. DATABASE / DRIZZLE
+==================================================
+
+Confirm exactly how these columns are currently defined:
+
+grading_rules.min_percent
+grading_rules.max_percent
+
+Determine the safest exact PostgreSQL representation for two-decimal percentages.
+
+Expected candidate:
+
+NUMERIC(5,2)
+
+Verify:
+
+- current Drizzle definition
+- required Drizzle definition
+- how Drizzle returns NUMERIC values in this project
+- whether application code currently expects number or string
+- every place that consumes these values
+- whether explicit conversion is required
+
+Also verify whether any other database tables or columns must change.
+
+Do NOT create the migration.
+
+==================================================
+4. PRINCIPAL / ADMIN ACADEMIC POLICY UI
+==================================================
+
+Trace the complete lifecycle:
+
+User enters:
+59.99
+
+through:
+
+- React state
+- input element
+- validation
+- gap/overlap validation
+- saveTier()
+- request payload
+- API
+- database
+- reload
+- React state after reload
+
+Identify every location currently using:
+
+parseInt()
+Number()
+parseFloat()
+integer validation
+HTML input step/min/max
+string-to-number conversion
+
+Determine exactly what must change so:
+
+59.99
+
+arrives at the API as:
+
+59.99
+
+without silently truncating it.
+
+Also investigate:
+
+- 59.9
+- 59.90
+- 59.99
+- 59.999
+- 100.00
+- 100.01
+- -0.01
+- empty value
+- non-numeric value
+
+The future implementation must reject excess precision rather than silently truncate it.
+
+==================================================
+5. RANGE VALIDATION
+==================================================
+
+Current validation is integer-based.
+
+Determine how validation should safely work for two-decimal boundaries WITHOUT using floating-point equality such as:
+
+nextMin === previousMax + 0.01
+
+Investigate whether the safest implementation is to internally represent percentages as hundredths:
+
+34.99 → 3499
+35.00 → 3500
+
+and validate:
+
+nextMinUnits === previousMaxUnits + 1
+
+Determine all required validation rules for:
+
+- minimum 0.00
+- maximum 100.00
+- min <= max
+- no overlaps
+- no gaps
+- ordering
+- decimal precision <= 2
+- first range
+- last range
+- duplicate ranges
+- duplicate grade labels
+
+Do not decide any new business rule that is not explicitly stated above.
+
+Clearly identify anything that still requires business approval.
+
+==================================================
+6. SHARED GRADING ENGINE
+==================================================
+
+Inspect:
+
+shared/examination-calculation-engine.ts
+
+especially:
+
+- validateGradingRules()
+- selectGrade()
+- computeGrade()
+- computeAllStudentResults()
+
+Determine exactly what must change for:
+
+59.7
+
+to correctly match:
+
+C = 35.00–59.99
+
+and:
+
+60.0
+
+to correctly match:
+
+B = 60.00–79.99
+
+Also test conceptually:
+
+34.99 → D
+35.00 → C
+59.99 → C
+60.00 → B
+79.99 → B
+80.00 → A
+
+Determine whether the percentage passed into selectGrade() should be normalized to two decimals.
+
+Do NOT change the code.
+
+==================================================
+7. TRACE ALL GRADE-SELECTION CONSUMERS
+==================================================
+
+Find every production path that ultimately resolves a grade from grading rules.
+
+At minimum investigate:
+
+- Teacher Examination
+- Teacher Results
+- Teacher report cards
+- Teacher View Marks/timelines
+- Student Results
+- Student print/result output
+- Admin Performance Analytics
+- Admin reports
+- server-side grade resolution
+- promotion-related grade resolution
+- any other active production path
+
+For each path determine:
+
+- where percentage is calculated
+- whether it is raw floating-point
+- whether it is rounded
+- whether it is truncated
+- whether it is normalized to one decimal
+- whether it is normalized to integer
+- where selectGrade() is called
+- whether decimal boundaries would produce the same grade
+
+Identify any path where:
+
+Teacher Results = C
+
+but another page could show:
+
+B
+
+for the same underlying result.
+
+Do not fix the inconsistency.
+
+==================================================
+8. PASS/FAIL MUST REMAIN SEPARATE
+==================================================
+
+Do NOT change pass_percentage as part of this investigation.
+
+Confirm:
+
+grading_tiers.pass_percentage
+
+remains integer-based.
+
+Trace all consumers of pass_percentage and verify that changing only:
+
+grading_rules.min_percent
+grading_rules.max_percent
+
+would not unintentionally change:
+
+- pass/fail
+- passMarks
+- promotion
+- attendance rules
+- cumulative calculations
+- component weights
+
+Also separately report the existing:
+
+parseInt(tier.passPercentage) || 35
+
+zero-value issue.
+
+Do NOT fix it.
+
+==================================================
+9. MULTI-TENANT SAFETY
+==================================================
+
+This application is TRUE MULTI-TENANT SaaS.
+
+Every school is an independent tenant.
+
+Verify that the proposed decimal implementation would preserve:
+
+authenticated user
+→ authenticated school
+→ school-owned grading tier
+→ school-owned grading rules
+→ class-specific policy
+
+Confirm that:
+
+- no client-supplied schoolId can select another school's grading policy
+- rule replacement remains school-scoped
+- tier ownership remains school-scoped
+- shared calculation context remains tenant-scoped
+- no global grading-rule cache exists
+- no cross-school policy reuse can occur
+
+Do NOT weaken or modify any tenant authorization.
+
+==================================================
+10. ACADEMIC SESSION SAFETY
+==================================================
+
+Grading tiers and grading rules currently do not have session_id.
+
+Confirm that this remains unchanged for the proposed decimal-boundary implementation.
+
+Verify that changing numeric precision does NOT require changes to:
+
+- x-view-session-id
+- selected academic session
+- Teacher session resolution
+- Student session resolution
+- exact score filtering
+- NULL-session handling
+- archived session behavior
+
+Do not modify session logic.
+
+==================================================
+11. EXISTING DATA COMPATIBILITY
+==================================================
+
+Inspect actual current grading data and determine:
+
+- how many existing grading rules exist
+- whether any currently contain non-integer values
+- whether all existing values are safely representable as NUMERIC(5,2)
+- whether any values are outside 0–100
+- whether any existing tiers have gaps
+- whether any existing tiers have overlaps
+
+DO NOT change any data.
+
+For each compatibility issue, report it.
+
+IMPORTANT:
+
+Do NOT recommend automatically changing:
+
+59 → 59.99
+
+or:
+
+79 → 79.99
+
+unless explicitly marked as a separate future DATA POLICY decision.
+
+==================================================
+12. MIGRATION PLAN — DESIGN ONLY
+==================================================
+
+Design, but DO NOT execute, the database migration required to change:
+
+grading_rules.min_percent
+grading_rules.max_percent
+
+from integer to NUMERIC(5,2).
+
+Explain:
+
+- exact SQL type conversion
+- whether conversion is lossless
+- how existing values would appear afterward
+- how to verify row counts before/after
+- how to verify values before/after
+- rollback considerations
+
+Do NOT create or run a migration.
+
+==================================================
+13. TEST PLAN
+==================================================
+
+Provide the exact tests that should exist before implementation.
+
+At minimum include:
+
+BOUNDARY TESTS:
+
+34.99 → D
+35.00 → C
+35.01 → C
+59.00 → C
+59.01 → C
+59.50 → C
+59.66 → C
+59.70 → C
+59.99 → C
+60.00 → B
+60.01 → B
+79.99 → B
+80.00 → A
+100.00 → A
+
+INVALID INPUT TESTS:
+
+- -0.01
+- 100.01
+- 59.999
+- 35.001
+- missing value
+- NaN
+- Infinity
+- min > max
+
+POLICY TESTS:
+
+- gap
+- overlap
+- incomplete 0–100 coverage
+- duplicate grade labels
+- invalid precision
+
+TENANT TESTS:
+
+- School A cannot use School B grading rules
+- School A cannot update School B grading rules
+- calculation context cannot use another school's policy
+
+SESSION TESTS:
+
+- decimal grading works with selected session
+- decimal grading does not alter session isolation
+
+REGRESSION TESTS:
+
+- existing integer grading continues to work
+- pass percentage remains unchanged
+- pass/fail remains unchanged
+- promotion rules remain unchanged
+- cumulative rules remain unchanged
+
+==================================================
+14. FINAL REPORT FORMAT
+==================================================
+
+Return a READ-ONLY report with exactly these sections:
+
+1. EXECUTIVE SUMMARY
+2. EXACT FILES REQUIRING CHANGE
+3. DATABASE / DRIZZLE CHANGES
+4. PRINCIPAL UI CHANGES
+5. API / VALIDATION CHANGES
+6. SHARED GRADING ENGINE CHANGES
+7. ALL GRADE-CONSUMER PATHS
+8. EXISTING DATA COMPATIBILITY
+9. MULTI-TENANT SAFETY
+10. ACADEMIC SESSION SAFETY
+11. MIGRATION DESIGN
+12. TEST PLAN
+13. BUSINESS DECISIONS STILL REQUIRED
+14. RISK ASSESSMENT
+15. MINIMAL SAFE IMPLEMENTATION ORDER
+
+At the very end state clearly:
+
+- whether two-decimal grading boundaries can be implemented safely
+- whether any schema migration is required
+- whether any existing school data must be changed
+- whether pass_percentage needs to change
+- whether Academic Session logic needs to change
+- whether tenant isolation needs to change
+
+FINAL RULE:
+
+THIS IS AN INVESTIGATION ONLY.
+
+MAKE ZERO CHANGES.
+
+If you discover an ambiguity that requires a business decision, STOP and report it instead of choosing a behavior yourself.

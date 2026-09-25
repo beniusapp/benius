@@ -1,0 +1,43 @@
+Refactor the Timetable module for my platform at /admin-dashboard/timetable-master and /teacher-dashboard/timetable. Implement a simplified shared-grid model with strict Multi-Tenant (school_id) isolation and a draft-to-save workflow.
+
+1. ADMIN REFACTOR (/admin-dashboard/timetable-master):
+
+Cleanup: Remove the 'Allocation Engine' and quota logic entirely.
+
+Class Status (Master View): Create a dropdown to select a Class and Section. Display their full weekly (Mon-Sat) timetable. Each slot must show the Subject and the Teacher Name.
+
+Admin Override (Edit Mode):
+
+Admins can click any slot to manually set, edit, or delete an entry for that specific class.
+
+Save Changes: Add a primary 'Save Changes' button. Edits made in the grid must remain in the local state and only be committed to the database (scoped to the school_id) when this button is clicked.
+
+2. TEACHER REFACTOR (/teacher-dashboard/timetable):
+
+Section 1: My Schedule (Personal Workspace):
+
+A personalized 6-day grid where the teacher manages their own periods.
+
+Collision Logic: If a teacher attempts to save a slot (e.g., Class 10A, Mon, P1) that is already occupied by another teacher in that school, show a prompt: 'This slot is already booked by [Teacher Name] for [Subject].'
+
+Save Changes: Add a 'Save Changes' button. Changes are only pushed to the database once this is clicked.
+
+Section 2: Class Explorer (School Transparency):
+
+A read-only search tool where the teacher can select any Class/Section in the school to view their current full timetable.
+
+3. BACKEND & SECURITY (The Multi-Tenancy Guard):
+
+Scoped Queries: Every SQL operation (SELECT, INSERT, UPDATE, DELETE) must include WHERE school_id = ?. Ensure School A's data is never accessible to School B.
+
+Atomic Validation: The system must verify that a specific (Class + Section + Day + Period) combination is unique within a school_id.
+
+Local Migration Ready: Write the logic using standard relational database queries for the timetables table to ensure ease of migration to a local machine.
+
+4. UI/UX SPECIFICATIONS:
+
+Theme: Benius Emerald Green (#10b981).
+
+Feedback: Use clear 'Success' or 'Conflict' toast notifications upon clicking 'Save Changes'.
+
+Responsive: Ensure the grid and 'Save' buttons are easily clickable on the Motorola 60 Fusion.

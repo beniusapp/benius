@@ -1,0 +1,47 @@
+Refactor the /admin-dashboard/attendance-overview module into a professional, dual-layered attendance system with a Master School Summary and a dedicated Top-Right Teacher Monitor.
+
+1. TOP-RIGHT STAFF MONITOR & GLOBAL CONTROLS:
+
+Teacher Quick-Stat: In the top-right corner, directly above the date filter, implement a Teacher Attendance Summary box.
+
+It must show: Total Faculty, Present, and Absent/On Leave for the selected date.
+
+Unified Date Picker: Positioned clearly below the Teacher Summary. Selecting a date must instantly refresh all Student and Teacher data on the page for that specific school_id.
+
+2. THE MASTER SUMMARY SECTION (Student Pulse):
+
+Display high-level Global Student Cards for the selected date:
+
+Total Students: Total enrollment.
+
+Total Marked: Number of students whose attendance has been submitted today.
+
+Present / Absent: Global numerical breakdown.
+
+Attendance %: Automated calculation: (Present / Total Marked) * 100.
+
+3. SECTION A: STUDENT ATTENDANCE (Class-Specific Deep Dive):
+
+Granular Filters: Dropdowns for Class and Section (populated ONLY from the Admin’s official list via WHERE school_id = ?).
+
+Class Stats: Show 'Class Strength', 'Present', 'Absent', and 'On Leave' specifically for the selected group.
+
+Student Grid: A searchable table showing Roll No, Name, and Status. Use Emerald Green for Present and Red for Absent.
+
+4. SECTION B: TEACHER ATTENDANCE (Detailed Staff List):
+
+Staff Grid: Below the student section (or in a separate tab), provide a full table showing: Teacher Name, Department, and Clock-in Status.
+
+Late Alerts: Highlight any teacher who marked 'Present' after the official school start time in Orange.
+
+5. BACKEND & SECURITY (The Multi-Tenancy Guard):
+
+Strict Isolation: Every SQL query must include WHERE school_id = ?. Ensure zero data leakage between different schools.
+
+Local Machine Ready: Use standard relational SQL queries (Postgres/SQLite) to ensure 100% portability for the local migration from Replit.
+
+6. UI/UX SPECIFICATIONS:
+
+Theme: Benius Emerald Green (#10b981) and Slate Gray.
+
+Device Focus: Ensure the Top-Right Teacher Monitor and Date Picker are perfectly aligned and touch-friendly for the Motorola 60 Fusion.

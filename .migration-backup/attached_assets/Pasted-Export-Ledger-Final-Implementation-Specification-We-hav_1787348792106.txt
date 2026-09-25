@@ -1,0 +1,712 @@
+Export Ledger — Final Implementation Specification
+
+We have completed a full technical audit of the current Export Ledger implementation.
+
+The existing filter system is already correct and must be preserved.
+
+Now bring Export Ledger to the same production-quality architecture and behavior as the already-completed Ledger PDF and Transaction Report PDF.
+
+1. Primary Goal
+
+The Export Ledger CSV must behave consistently with the Ledger UI, Ledger PDF, and Transaction Report PDF.
+
+It must:
+
+- Respect the exact current Ledger filters.
+- Respect explicit invoice/record selection.
+- Respect "Select All Matching".
+- Respect exclusions from "Select All Matching".
+- Export all matching records when nothing is selected.
+- Never export records outside the current school.
+- Never export records outside the current academic session.
+- Include the important columns that currently exist in the Ledger/PDF but are missing from CSV.
+- Preserve the existing CSV quality and formatting.
+- Work correctly with both small and large filter sets.
+- Avoid duplicating filter/query logic unnecessarily.
+
+Do not redesign the Ledger filtering system. It is already working correctly.
+
+---
+
+2. CURRENT FUNCTIONALITY THAT MUST REMAIN UNCHANGED
+
+The existing Excel-style Ledger filtering is already implemented and verified.
+
+Do NOT modify:
+
+- "shared/ledger-filters.ts"
+- Existing Ledger filter state
+- Existing Excel-style column filtering
+- Search behavior
+- Filter AND/OR semantics
+- Amount range filtering
+- Date range filtering
+- Session filtering
+- Tenant isolation
+- Existing Ledger PDF filtering
+- Existing Ledger PDF GET/POST behavior
+- Existing Transaction Report PDF filtering
+- Existing Transaction Report PDF GET/POST behavior
+- Database schema
+
+The Export Ledger must consume the existing canonical filter state rather than creating a second filtering system.
+
+---
+
+3. EXPORT LEDGER MUST USE THE SAME FILTER STATE
+
+The current frontend already passes:
+
+canonicalFilters={filters}
+
+and the current serializer already produces the correct repeated query parameters.
+
+Keep this behavior.
+
+The Export Ledger must continue to respect all existing filter dimensions, including:
+
+- Search
+- Invoice No.
+- Receipt No.
+- Student Name
+- DSID
+- Reference No.
+- Class
+- Section
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Status
+- Payment Method
+- Academic Year
+- Amount Min
+- Amount Max
+- Due Date From
+- Due Date To
+- Paid Date From
+- Paid Date To
+
+Do NOT change the existing filter semantics.
+
+---
+
+4. ADD SELECTION SUPPORT
+
+This is the most important missing feature.
+
+Export Ledger currently ignores Ledger selection state.
+
+Bring it into parity with Ledger PDF and Transaction Report PDF.
+
+It must support:
+
+A. No selection
+
+If the user has not selected anything:
+
+Export Ledger
+→ export ALL records matching the current filters/session
+
+B. Individual selection
+
+If the user selects specific invoices/records:
+
+Select 3 records
+→ Export Ledger
+→ export ONLY those 3 selected records
+
+Do not export the entire filtered dataset.
+
+C. Select All Matching
+
+If the user selects:
+
+Select All Matching
+
+then:
+
+Export Ledger
+→ export every record matching the current filters
+
+D. Select All Matching + exclusions
+
+If the user selects all matching and then excludes specific records:
+
+Select All Matching
+Excluded:
+INV-0008
+INV-0012
+
+then:
+
+Export Ledger
+→ export every matching record EXCEPT the excluded records
+
+E. Multiple-page selection
+
+Selection must work correctly even when matching records span multiple pages.
+
+Do not rely on the currently visible table page.
+
+Selection must be based on the actual record/invoice IDs.
+
+---
+
+5. USE THE SAME SELECTION CONTRACT AS THE OTHER EXPORTS
+
+Use the already-established selection model:
+
+selectedIds
+selectAllMatching
+excludedIds
+
+Do not invent a second selection mechanism.
+
+The semantics must be identical to Ledger PDF POST and Transaction Report PDF POST.
+
+The backend must correctly distinguish:
+
+1. No selection
+2. Explicit selection
+3. Select All Matching
+4. Select All Matching + exclusions
+
+---
+
+6. ADD POST EXPORT ROUTE
+
+Keep the existing:
+
+GET /api/admin/fees/export-ledger
+
+for normal filter-based exports.
+
+Add:
+
+POST /api/admin/fees/export-ledger
+
+for selection-aware exports.
+
+The POST body should use the same canonical filter + selection structure already established by the Ledger PDF and Transaction Report PDF.
+
+Do not create a new incompatible request format.
+
+Conceptually:
+
+{
+  filters: canonicalFilters,
+  selectedIds?: string[],
+  selectAllMatching?: boolean,
+  excludedIds?: string[]
+}
+
+Use the exact existing project conventions/types where available rather than duplicating types.
+
+---
+
+7. FRONTEND EXPORT LOGIC
+
+Update "ExportLedgerDialog" in:
+
+client/src/pages/admin-modules/fees-manager.tsx
+
+so it receives whatever selection state is already used by Ledger PDF / Transaction Report PDF.
+
+Do not create an independent selection state.
+
+The Export Ledger button must use the existing Ledger selection state.
+
+Behavior:
+
+No selection
+
+Use:
+
+GET /api/admin/fees/export-ledger
+
+with the existing canonical filter query parameters.
+
+Selection exists
+
+Use:
+
+POST /api/admin/fees/export-ledger
+
+with:
+
+- canonical filters
+- selectedIds
+- selectAllMatching
+- excludedIds
+
+Use the same transport pattern already proven for the other PDF exports.
+
+---
+
+8. CSV COLUMN CORRECTION
+
+The current CSV is missing three important fields that are already filterable and already exist conceptually in the Ledger/PDF.
+
+Add:
+
+Invoice No.
+
+This must be included in the CSV.
+
+Fee Period
+
+Include the human-readable fee period, using the same representation as the Ledger/PDF.
+
+Example:
+
+Apr 2027 – Mar 2028
+
+or the project's existing canonical fee-period formatting.
+
+Do not invent a different format.
+
+Frequency
+
+Include values such as:
+
+One-Time
+Monthly
+Quarterly
+
+using the same display value/normalization used by the Ledger.
+
+---
+
+9. RECOMMENDED FINAL CSV COLUMN ORDER
+
+Keep the CSV accountant-friendly and aligned with the Ledger.
+
+Use this order:
+
+1. Invoice No.
+2. Receipt No.
+3. Student Name
+4. Student ID / DSID
+5. Class
+6. Section
+7. Fee Name
+8. Fee Type
+9. Fee Period
+10. Frequency
+11. Amount (₹)
+12. Due Date
+13. Status
+14. Paid On
+15. Acad. Year
+16. Notes
+17. Amount Paid (₹)
+18. Outstanding (₹)
+19. Payment Method
+20. Reference No.
+
+Do not remove useful existing columns merely to make this change.
+
+The objective is that someone opening the CSV can reconcile it directly against the Ledger PDF.
+
+---
+
+10. FINANCIAL DATA MUST REMAIN AUTHORITATIVE
+
+Do not change the existing financial calculation logic.
+
+Continue calculating:
+
+Amount
+Amount Paid
+Outstanding
+
+from the authoritative server/database data.
+
+Do not calculate financial totals in the browser.
+
+Do not introduce floating-point rounding problems.
+
+Preserve the existing rupee representation.
+
+---
+
+11. PAYMENT METHOD AND REFERENCE
+
+Continue using the same payment aggregation logic currently used by Export Ledger.
+
+The exported:
+
+Payment Method
+Reference No.
+
+must correspond to the same payment information displayed by the Ledger.
+
+Do not introduce a different interpretation between:
+
+- Ledger UI
+- Ledger PDF
+- Export Ledger
+
+If the existing canonical Ledger logic already determines the latest relevant payment record, reuse that logic.
+
+---
+
+12. SECURITY — DO NOT WEAKEN THIS
+
+Tenant isolation is currently correct.
+
+Preserve it exactly.
+
+"schoolId" MUST continue to come from:
+
+req.session.schoolId
+
+Never trust:
+
+schoolId
+
+from query parameters or request body.
+
+The query must remain school-scoped.
+
+Student joins must remain school-scoped.
+
+Payment record aggregation must remain school-scoped.
+
+Academic session isolation must remain enforced by the existing server-side session context.
+
+Do not allow:
+
+selectedIds
+
+to bypass school/session filtering.
+
+A malicious user must not be able to select an ID belonging to another school and receive it in the export.
+
+Selection is an additional restriction, never a replacement for tenant/session predicates.
+
+---
+
+13. ARCHIVED SESSION BEHAVIOR
+
+Export Ledger is read-only.
+
+Therefore the new:
+
+POST /api/admin/fees/export-ledger
+
+must be treated like the existing read-only POST export routes.
+
+It must NOT be blocked by the archived-session mutation guard merely because the HTTP method is POST.
+
+Follow the same established pattern already used by:
+
+- Ledger PDF POST
+- Transaction Report PDF POST
+
+Do not weaken any actual mutation protection.
+
+---
+
+14. AVOID DUPLICATED SQL
+
+Do not copy the entire GET SQL query and create another almost-identical POST query.
+
+Extract/reuse the common query-building logic where practical.
+
+Ideal architecture:
+
+canonical filters
+        ↓
+normalize
+        ↓
+build shared predicates
+        ↓
+apply session + tenant isolation
+        ↓
+apply optional selection restriction
+        ↓
+execute export query
+        ↓
+CSV
+
+GET and POST should ultimately use the same data/query logic.
+
+---
+
+15. SELECTION + FILTER INTERACTION
+
+This must be handled carefully.
+
+Example:
+
+Current filter:
+
+Class = 6
+Fee Name = Math Book
+Frequency = One-Time
+
+Suppose 12 records match.
+
+User selects 3 of those 12.
+
+Export must contain:
+
+ONLY those 3
+
+Now user changes the filter.
+
+Selection behavior must follow the existing Ledger selection model.
+
+Do not invent new semantics.
+
+If the existing selection model clears/reconciles selections when filters change, Export Ledger must follow that exact behavior.
+
+---
+
+16. CSV QUALITY
+
+Preserve the current high-quality CSV implementation:
+
+- UTF-8 BOM
+- CRLF line endings
+- Proper CSV escaping
+- Double-quoted values
+- Internal quotes escaped correctly
+- Correct date formatting
+- Correct filename
+- No broken columns
+- No accidental commas breaking fields
+
+Filename can remain:
+
+payment-ledger-YYYY-MM-DD.csv
+
+using the existing IST date logic.
+
+---
+
+17. REMOVE DEAD DATA
+
+The current SQL selects:
+
+fr.id AS fee_record_id
+
+but does not use it in the CSV.
+
+Do one of the following:
+
+- Reuse it for selection filtering if appropriate, OR
+- Remove it from the SELECT if it is genuinely unnecessary.
+
+Do not leave unused fields in the query without a purpose.
+
+Prefer using the existing canonical record ID used by the selection system.
+
+---
+
+18. DO NOT CHANGE THE DATABASE
+
+This feature does NOT require a schema change.
+
+Do not:
+
+- create new tables
+- add columns
+- modify existing columns
+- migrate data
+
+Use the existing database structure.
+
+---
+
+19. FILES THAT MAY NEED CHANGES
+
+Expected files:
+
+client/src/pages/admin-modules/fees-manager.tsx
+server/fees-routes.ts
+server/routes.ts
+
+Potentially a small shared helper only if genuinely necessary.
+
+Do NOT modify unrelated files.
+
+Do NOT modify:
+
+server/transaction-report-data.ts
+server/transaction-pdf.ts
+
+because Transaction Report PDF is already complete.
+
+Do NOT modify the Ledger filtering implementation unless absolutely required.
+
+---
+
+20. TESTING REQUIREMENTS
+
+Do not stop after TypeScript compilation.
+
+Test the real behavior.
+
+Test 1 — No selection
+
+Apply filters and export.
+
+Expected:
+
+CSV = all matching records
+
+Test 2 — Three selected records
+
+Select exactly 3 records.
+
+Export Ledger.
+
+Expected:
+
+CSV = exactly those 3 records
+
+Test 3 — Select All Matching
+
+Apply:
+
+Class = 6
+Fee Name = Math Book
+
+Select All Matching.
+
+Export.
+
+Expected:
+
+CSV = every record matching those filters
+
+Test 4 — Select All + exclusions
+
+Select all matching.
+
+Exclude 2 records.
+
+Export.
+
+Expected:
+
+CSV = matching records minus those 2
+
+Test 5 — Multiple pages
+
+Use enough records to span multiple pages.
+
+Select records from different pages.
+
+Export.
+
+Expected:
+
+CSV = exactly the selected records
+
+Test 6 — Combined filters
+
+Test:
+
+Class = 6
+Fee Name = Math Book
+Frequency = One-Time
+
+Verify CSV contains only the expected records.
+
+Test 7 — Search
+
+Test search by:
+
+- Invoice
+- Receipt
+- Student name
+- DSID
+
+Verify exported rows match the filtered Ledger.
+
+Test 8 — Security
+
+Attempt selection with an ID belonging to another school.
+
+Expected:
+
+No cross-school record is exported.
+
+Test 9 — Archived academic session
+
+Verify read-only export continues to work for the appropriate archived session context.
+
+Test 10 — CSV reconciliation
+
+Compare:
+
+Ledger UI
+Ledger PDF
+Export Ledger CSV
+
+for the same filters.
+
+The underlying record set must be identical.
+
+---
+
+21. FINAL ACCEPTANCE CRITERIA
+
+Do not consider the task complete until all of these are true:
+
+- Export Ledger respects every existing Ledger filter.
+- Export Ledger supports explicit selection.
+- Export Ledger supports Select All Matching.
+- Export Ledger supports exclusions.
+- Selection works across multiple pages.
+- No-selection export still exports all filtered records.
+- Invoice No. exists in CSV.
+- Fee Period exists in CSV.
+- Frequency exists in CSV.
+- Financial calculations remain unchanged.
+- CSV formatting remains correct.
+- School/tenant isolation remains enforced.
+- Academic session isolation remains enforced.
+- POST export is treated as read-only.
+- GET and POST use the same canonical filtering/query logic.
+- No database schema changes.
+- No Ledger PDF regression.
+- No Transaction Report PDF regression.
+- TypeScript/build passes.
+- Existing tests pass.
+- New selection/export tests pass.
+- Real authenticated GET and POST exports are tested.
+- CSV output is inspected, not merely generated successfully.
+
+IMPORTANT
+
+Before modifying anything:
+
+1. Inspect the existing Ledger PDF POST selection implementation.
+2. Inspect the existing Transaction Report PDF POST selection implementation.
+3. Reuse their exact selection semantics.
+4. Inspect the current "ExportLedgerDialog".
+5. Inspect "ledgerFiltersToSearchParams".
+6. Inspect "normalizeLedgerFiltersFromQuery".
+7. Inspect "buildLedgerFilterPredicates".
+8. Inspect the existing session/tenant protection.
+9. Then implement the minimum necessary changes.
+
+Do NOT rewrite working systems unnecessarily.
+
+After implementation, show me:
+
+1. Files changed
+2. Exact behavior implemented
+3. GET vs POST behavior
+4. Selection behavior
+5. Final CSV columns
+6. Tests performed
+7. Test results
+8. Any remaining concerns
+
+Do not claim completion based only on compilation. Verify the actual authenticated export routes and inspect the generated CSV.

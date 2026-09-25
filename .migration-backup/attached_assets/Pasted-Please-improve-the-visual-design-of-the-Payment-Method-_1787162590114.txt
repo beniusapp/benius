@@ -1,0 +1,146 @@
+Please improve the visual design of the Payment Method column in:
+
+Admin Portal → Fees & Payments → Ledger & Transactions
+
+The Payment Method column is already correctly separated from the Status column. Do not change the functionality or data logic.
+
+I only want to improve how the payment methods are displayed visually.
+
+Current payment methods
+
+The column can contain:
+
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- UPI / QR
+- Portal Payment
+- "—" for unpaid invoices
+
+Required UI
+
+Do NOT display these as plain text.
+
+Instead, display each payment method as a small, attractive, rounded pill/badge with a subtle background, border, and appropriate icon.
+
+Each payment method should have its own visually distinct color, while remaining professional and consistent with the existing dark Admin Portal design.
+
+Suggested styling:
+
+- Cash → Green/emerald pill with a cash/wallet icon
+- Cheque → Blue pill with a document/cheque icon
+- Bank Transfer → Purple/indigo pill with a bank/building icon
+- Demand Draft → Orange/amber pill with a document icon
+- UPI / QR → Teal/cyan pill with a QR/scan icon
+- Portal Payment → Violet/indigo pill with a monitor/globe/portal icon
+- — → Neutral muted gray, without an unnecessary icon
+
+Example appearance
+
+Instead of:
+
+"Cash"
+
+show something like:
+
+🟢 "Cash"
+
+Instead of:
+
+"Cheque"
+
+show:
+
+🔵 "Cheque"
+
+Instead of:
+
+"Bank Transfer"
+
+show:
+
+🟣 "Bank Transfer"
+
+Instead of:
+
+"Demand Draft"
+
+show:
+
+🟠 "Demand Draft"
+
+Instead of:
+
+"UPI / QR"
+
+show:
+
+🩵 "UPI / QR"
+
+Instead of:
+
+"Portal Payment"
+
+show:
+
+🟪 "Portal Payment"
+
+The actual implementation should use the application's existing icon library and proper UI styling, not emoji.
+
+Important design requirements
+
+1. Keep the badges compact so the Ledger table does not become unnecessarily wide.
+2. Use rounded corners/pill styling.
+3. Use a subtle tinted background with a slightly stronger text color.
+4. Add a subtle border where appropriate.
+5. Use small icons consistently.
+6. Do not use extremely bright/saturated colors.
+7. The design should match the existing dark theme of the Admin Portal.
+8. Make sure the text remains clearly readable.
+9. Do not change the existing Status badge colors.
+10. Do not make Payment Method badges visually stronger than the Paid/Due/Overdue Status badges.
+11. On mobile/tablet, the badges should remain compact and should not break the table layout.
+
+Status must remain separate
+
+The Status column should continue to show only:
+
+- Paid
+- Due
+- Overdue
+
+For example:
+
+Status: 🟢 Paid
+Payment Method: 🟣 Portal Payment
+
+Do NOT combine them into one badge.
+
+Unpaid invoices
+
+For "Due" or "Overdue" invoices where no payment has been made, display:
+
+Payment Method: "—"
+
+Use a subtle muted gray style so that it looks intentional rather than like missing/broken data.
+
+Final goal
+
+The Ledger should look approximately like this conceptually:
+
+Status| Payment Method
+🟢 Paid| 🟢 Cash
+🟢 Paid| 🔵 Cheque
+🟢 Paid| 🟣 Bank Transfer
+🟢 Paid| 🟠 Demand Draft
+🟢 Paid| 🩵 UPI / QR
+🟢 Paid| 🟪 Portal Payment
+🟠 Due| —
+🔴 Overdue| —
+
+Again, do not use emoji in the actual UI. Use proper icons and styled badges.
+
+Please inspect the existing design system/components first and reuse the existing badge, icon, typography, spacing, and color conventions wherever possible instead of introducing a completely different design language.
+
+Do not modify payment logic, database structure, payment statuses, payment history, or any unrelated functionality.

@@ -1,0 +1,1050 @@
+# Step 2L-4B — Historical Attendance Identity & Historical Read Remediation
+
+You are working on my Indian school MIS application in the BUILDING / DEVELOPMENT phase.
+
+This is a **controlled remediation step** following the Step 2L-4A verification audit.
+
+## CURRENT STEP STATUS
+
+Step 2L-4A concluded:
+
+**NOT SAFE TO ACCEPT**
+
+The underlying historical Attendance preservation design is viable, but the following blocking gaps were identified:
+
+1. `students.attendance_identity_key` is not enforced as unique or immutable at the database level.
+2. Admin/Teacher historical daily summaries can omit Attendance belonging to physically deleted Students because `getDailyAttendanceSummary()` uses the live Student roster and nullable `student_id`.
+3. Production migration execution is not yet verified.
+4. Existing Attendance `student_id` remains mutable even though the historical identity snapshot is immutable.
+5. Migration validation detects missing snapshots but does not adequately detect non-null but inconsistent legacy identity/snapshot data.
+
+Your job in this step is to remediate these findings **only**.
+
+Do not redesign the Attendance architecture.
+
+Do not start Step 2L-5.
+
+---
+
+# NON-NEGOTIABLE PROJECT RULES
+
+These rules remain permanent:
+
+### 1. Multi-tenant / school isolation
+
+This is a multi-school MIS.
+
+Every school-scoped Attendance read, write, lookup, calculation, history query, summary, migration backfill, identity lookup, and authorization path must remain constrained to the authenticated/current school.
+
+Never allow Attendance belonging to School A to appear in School B.
+
+A matching UUID, numeric Student ID, digital ID, name, or other identity value must never be sufficient by itself to cross a school boundary.
+
+### 2. Student Registry is GLOBAL / PERMANENT
+
+Students are global Registry entities.
+
+Do not recreate/reset the Student Registry per Academic Session.
+
+Do not make Enrollment a prerequisite for historical Attendance preservation.
+
+Physical Student deletion must remain possible.
+
+Do not solve this problem by disabling Student deletion.
+
+### 3. Historical Attendance must survive physical Student deletion
+
+If a Student is physically deleted:
+
+* historical Attendance rows must remain;
+* historical Attendance must retain its original Student identity;
+* historical class/section must remain;
+* school and Academic Session must remain;
+* historical reports must continue to be able to display the Attendance;
+* the deleted Student must not reappear in the current/live marking roster.
+
+The accepted design from Step 2L-4 uses historical snapshot identity while allowing the live `student_id` FK to become NULL.
+
+Preserve that fundamental design.
+
+### 4. Academic Session isolation
+
+Attendance remains strongly Academic Session-specific.
+
+Historical Attendance must remain associated with its original Academic Session.
+
+Never move Attendance between Sessions.
+
+Never allow a historical Attendance row from Session A to appear in Session B.
+
+### 5. Sunday behavior
+
+A Sunday is not automatically a working day.
+
+If Attendance was deliberately marked on Sunday, it is a valid Attendance record and must behave exactly like the corresponding stored weekday status.
+
+Do not introduce Sunday-specific Attendance business rules.
+
+### 6. Existing Teacher authorization
+
+Any authenticated same-school Teacher may mark Attendance.
+
+Do not introduce Faculty Mapping/class/subject restrictions into Attendance unless an existing security check already requires them.
+
+### 7. Active Session correction rules
+
+Preserve the existing Attendance correction behavior:
+
+* active Session retains the existing 7-day correction/edit window;
+* archived Sessions are read-only;
+* Step 2L-1 server-authoritative active Session behavior remains intact;
+* Step 2L-2 Session date boundaries remain intact.
+
+Do not weaken or replace these controls.
+
+### 8. Application timezone
+
+All application/business/display date and timestamp logic must use:
+
+**IST / Asia/Kolkata**
+
+Do not introduce BST, UTC-derived business dates, browser-local date calculations, or another local timezone for Attendance business logic.
+
+### 9. Minimal-change principle
+
+Make the smallest safe changes necessary.
+
+Do not refactor unrelated Attendance code.
+
+Do not rename unrelated APIs.
+
+Do not redesign Student Registry.
+
+Do not redesign Academic Sessions.
+
+Do not redesign Teacher Attendance.
+
+Do not redesign Student Attendance.
+
+Do not redesign Admin Exam Controller or any other module.
+
+---
+
+# STEP 1 — INSPECT BEFORE MODIFYING
+
+Before changing anything, inspect the current implementation and confirm the exact current state of:
+
+* `students.attendance_identity_key`
+* Attendance identity/snapshot columns
+* Attendance FK to Students
+* Attendance unique indexes
+* Attendance triggers
+* Student deletion path(s)
+* `getDailyAttendanceSummary`
+* Admin historical Attendance reads
+* Teacher historical Attendance reads
+* Teacher date-view Attendance reads
+* Student historical Attendance reads
+* active marking roster
+* migration 014
+* migration execution/release mechanism
+* existing Step 2L-4 tests
+
+Do not assume the Step 2L-4A report is still perfectly synchronized with the current workspace.
+
+If anything differs, report the actual current implementation before deciding how to modify it.
+
+---
+
+# STEP 2 — FIX STUDENT ATTENDANCE IDENTITY KEY ENFORCEMENT
+
+## Objective
+
+`students.attendance_identity_key` must become a protected identity for the Student's Attendance history.
+
+It must not be possible for an application/database write to intentionally or accidentally make Student B inherit Student A's Attendance identity key.
+
+### Required properties
+
+For every Student:
+
+* `attendance_identity_key` is present;
+* it is generated automatically for new Students;
+* it is unique among Students;
+* it is immutable after Student creation;
+* it remains associated with that Student for the lifetime of that Student Registry row;
+* deleting the Student does not transfer the key to another Student;
+* a newly created replacement Student receives a new key.
+
+### Database enforcement
+
+Prefer database-level enforcement rather than relying only on application code.
+
+Implement the smallest safe database mechanism available in the current PostgreSQL design.
+
+At minimum:
+
+1. Add/enforce a UNIQUE constraint or unique index on:
+
+`students(attendance_identity_key)`
+
+2. Ensure the column remains NOT NULL.
+
+3. Prevent changing an existing non-null `attendance_identity_key`.
+
+Use a narrowly scoped PostgreSQL trigger or equivalent database constraint mechanism if necessary.
+
+The immutability rule should allow the initial value to be generated/set during INSERT but reject attempts to change it afterward.
+
+Do not implement a mechanism that prevents ordinary Student updates unrelated to the identity key.
+
+For example, changing:
+
+* name,
+* class,
+* section,
+* contact information,
+* status,
+
+must remain possible if those changes are otherwise permitted.
+
+Only changing `attendance_identity_key` should be blocked.
+
+### Important
+
+Do not use probabilistic uniqueness as the acceptance criterion.
+
+`gen_random_uuid()` being extremely unlikely to collide is not sufficient.
+
+The database must enforce uniqueness.
+
+---
+
+# STEP 3 — PROTECT ATTENDANCE HISTORICAL IDENTITY FROM LIVE STUDENT REASSIGNMENT
+
+The Step 2L-4A audit identified another risk:
+
+The Attendance snapshot identity is immutable, but `attendance_records.student_id` may still be mutable.
+
+Audit the current Attendance INSERT/UPDATE triggers and application upsert path.
+
+The desired invariant is:
+
+### For an existing Attendance row
+
+The historical identity must never silently become associated with a different Student.
+
+Do not permit this sequence:
+
+Student A creates Attendance
+
+→ Attendance stores A's historical identity
+
+→ existing Attendance row is updated so `student_id = Student B`
+
+→ snapshots still identify Student A
+
+That creates a contradictory Attendance row.
+
+Implement the smallest safe protection.
+
+Preferred behavior:
+
+* On INSERT, existing validation remains.
+* On UPDATE of an existing Attendance row, if `student_id` is being changed:
+
+  * either reject the reassignment;
+  * or only allow it when the new Student's `attendance_identity_key` exactly matches the immutable historical `identity_key`, which in normal operation means no actual Student change is possible.
+
+Prefer **rejecting reassignment** unless there is a demonstrated existing application workflow that legitimately requires it.
+
+Do not break ordinary Attendance status updates.
+
+For example, changing:
+
+* Present → Absent,
+* Absent → Present,
+* Late,
+* Half Day,
+* Leave,
+
+must continue to work according to the existing Attendance rules.
+
+Only changing the Student association on an existing Attendance row should be protected.
+
+Also preserve:
+
+* school isolation;
+* Session isolation;
+* date uniqueness;
+* existing correction window;
+* archived-session protection.
+
+---
+
+# STEP 4 — FIX ADMIN / TEACHER HISTORICAL DAILY SUMMARY
+
+This is a blocking issue.
+
+Current behavior identified by Step 2L-4A:
+
+`getDailyAttendanceSummary()` uses the live Student roster and matches Attendance by nullable `student_id`.
+
+After physical deletion:
+
+`attendance_records.student_id = NULL`
+
+Therefore the Attendance row survives but can disappear from the daily summary.
+
+That is not acceptable.
+
+## Required behavior
+
+For a historical date/session:
+
+If Attendance exists for a physically deleted Student, the summary must still include that Student's historical Attendance using the saved snapshot identity.
+
+The summary must not require the Student to still exist in the live `students` table.
+
+### However
+
+Do NOT simply replace the live roster with all historical Attendance rows.
+
+The system must preserve the distinction between:
+
+1. Current/live Students eligible for Attendance marking.
+2. Historical Students whose old Attendance must remain visible.
+
+### Required model
+
+For historical reporting:
+
+* start with the appropriate school + Academic Session + date scope;
+* include applicable live Students;
+* include applicable preserved Attendance snapshot entries even when `student_id IS NULL`;
+* match existing Students safely;
+* avoid duplicates when a live Student already corresponds to an Attendance row;
+* use historical snapshot identity as the fallback for deleted Students.
+
+The deleted Student must appear only because a historical Attendance record exists.
+
+A physically deleted Student must **not** be recreated in the live roster.
+
+### Identity matching
+
+Do not match historical Attendance using only:
+
+* numeric Student ID;
+* digital ID;
+* name.
+
+Use the immutable Attendance `identity_key` as the canonical historical identity.
+
+For live Students, their `attendance_identity_key` can be used to match the Attendance record.
+
+School and Academic Session must remain mandatory query scopes.
+
+### Preserve existing status semantics
+
+The summary must preserve the existing status values and calculations:
+
+* Present
+* Absent
+* Late
+* Half Day
+* Leave
+
+Do not introduce different weighting or Sunday behavior.
+
+### Check all callers
+
+After fixing `getDailyAttendanceSummary`, inspect every caller.
+
+Determine whether the caller expects:
+
+* live roster only;
+* historical report roster;
+* daily summary;
+* marking roster.
+
+Do not globally change live marking behavior.
+
+The current/live marking roster must continue to use live Students.
+
+Deleted Students must never return to the marking UI simply because historical Attendance exists.
+
+---
+
+# STEP 5 — CHECK TEACHER DATE VIEW VS TEACHER HISTORY
+
+The audit found:
+
+* Teacher history uses the snapshot-safe reader;
+* Teacher date/marking read can use the live roster.
+
+Do not blindly merge these endpoints.
+
+Determine whether the Teacher date-view endpoint can be used for historical Attendance viewing.
+
+If it is a historical Attendance viewing/read endpoint, it must preserve deleted-Student Attendance.
+
+If it is strictly a live marking roster, it may remain live-Student based.
+
+The final implementation must make this distinction explicit and must not silently cause historical Attendance to disappear from a read surface that claims to show the day's Attendance.
+
+Document which endpoint is:
+
+* live marking;
+* historical viewing;
+* historical summary.
+
+Do not alter API contracts unnecessarily.
+
+---
+
+# STEP 6 — STRENGTHEN MIGRATION 014 VALIDATION
+
+Audit:
+
+`migrations/014_attendance_student_preservation.sql`
+
+Do not rewrite it unnecessarily.
+
+Strengthen only the validation needed to address the Step 2L-4A findings.
+
+## Required migration guarantees
+
+Before converting the Student FK to `ON DELETE SET NULL` and relying on snapshots:
+
+Every existing Attendance row must have a valid historical identity.
+
+At minimum verify:
+
+* `identity_key`
+* `original_student_id`
+* `student_name_snapshot`
+* `student_code_snapshot`
+
+are populated correctly.
+
+The backfill must remain school-aware.
+
+A cross-school Student must never satisfy the backfill.
+
+### Important legacy-data concern
+
+The existing audit found that the migration checks for NULL snapshots but does not adequately detect non-null but inconsistent values.
+
+Add safe validation for inconsistent legacy data where practical without inventing semantics that the existing schema cannot establish.
+
+For example, where an Attendance row still has a valid live `student_id` and same-school Student:
+
+verify that the historical snapshot being established corresponds to that Student.
+
+If the row contains an impossible or contradictory state that cannot be safely repaired with existing authoritative data:
+
+**abort the migration rather than guessing.**
+
+Do not silently assign an identity based on name/code alone.
+
+Do not delete or deduplicate Attendance rows.
+
+Do not silently overwrite trustworthy existing historical identity data unless the migration can prove the replacement is authoritative.
+
+### Duplicate handling
+
+If the resulting canonical identity uniqueness would produce duplicates:
+
+* fail safely;
+* do not delete rows;
+* do not merge rows;
+* do not invent dates;
+* do not invent Students.
+
+---
+
+# STEP 7 — MIGRATION TRANSACTION SAFETY
+
+Keep migration 014 transactional.
+
+The intended ordering must remain logically equivalent to:
+
+1. Add Student identity column.
+2. Populate existing Student identity keys.
+3. Enforce Student identity NOT NULL/default/uniqueness/immutability.
+4. Add Attendance snapshot columns.
+5. Backfill Attendance identity/snapshots from same-school Students.
+6. Validate all existing Attendance rows.
+7. Make required snapshots NOT NULL.
+8. Make Attendance live Student FK nullable.
+9. Replace FK with `ON DELETE SET NULL`.
+10. Replace/update canonical Attendance uniqueness.
+11. Install required triggers.
+12. Complete successfully.
+
+If any validation fails:
+
+**ROLL BACK rather than partially converting the schema.**
+
+Do not add destructive cleanup.
+
+Do not delete Attendance rows.
+
+Do not delete Students.
+
+Do not deduplicate automatically.
+
+---
+
+# STEP 8 — MIGRATION IDEMPOTENCY / RELEASE MECHANISM
+
+Do not claim that migration 014 is production-ready merely because its SQL is rerunnable.
+
+Inspect the actual release mechanism.
+
+The audit reported:
+
+* `package.json` uses `drizzle-kit push`;
+* startup schema validation does not demonstrate numbered migration 014 execution.
+
+Determine exactly how schema changes are deployed in this project.
+
+Do not modify production.
+
+Do not run migration 014 against production.
+
+Do not fabricate production evidence.
+
+If the current release mechanism does not guarantee execution of the ordered SQL migration before snapshot-dependent application code, document that as a deployment prerequisite rather than pretending it is solved.
+
+If a safe development-only improvement to the migration/release process is necessary, make it only if it is directly required for this remediation and does not alter production.
+
+Otherwise leave the deployment mechanism unchanged and provide exact deployment prerequisites in the final report.
+
+---
+
+# STEP 9 — REQUIRED REGRESSION TESTS
+
+Add or update focused tests.
+
+Do not remove existing Step 2L-4 tests.
+
+Tests must exercise actual database behavior where the behavior depends on PostgreSQL constraints/triggers.
+
+## Test A — Student identity uniqueness
+
+Create Student A.
+
+Attempt to create Student B with Student A's `attendance_identity_key`.
+
+Expected:
+
+* database rejects the operation;
+* no duplicate Student identity exists.
+
+## Test B — Student identity immutability
+
+Create Student A.
+
+Capture its Attendance identity key.
+
+Attempt to update Student A's `attendance_identity_key` to a different UUID.
+
+Expected:
+
+* database rejects the update;
+* original key remains unchanged.
+
+Also verify that ordinary Student updates still work.
+
+## Test C — Replacement Student receives different identity
+
+Create Student A.
+
+Create Attendance.
+
+Physically delete Student A.
+
+Create Student B while deliberately reusing:
+
+* A's numeric Student ID, if the schema/test allows it;
+* A's digital ID/code.
+
+Do NOT reuse A's UUID.
+
+Expected:
+
+* Student B has a different Attendance identity key;
+* A's historical Attendance remains attached to A's saved identity;
+* B's new Attendance is separate.
+
+## Test D — Explicit UUID reuse attempt
+
+Create Student A.
+
+Delete Student A.
+
+Attempt to create Student B using A's old `attendance_identity_key`.
+
+Expected:
+
+* database rejects the operation.
+
+This test is mandatory because it directly proves the Step 2L-4A blocking issue is fixed.
+
+## Test E — Existing Attendance Student reassignment
+
+Create Students A and B.
+
+Create Attendance for A.
+
+Attempt to update that Attendance so `student_id` points to B.
+
+Expected:
+
+* operation is rejected;
+* historical identity remains A;
+* no contradictory Attendance row is created.
+
+Also verify ordinary status updates still succeed.
+
+## Test F — Historical daily summary after physical deletion
+
+Create a Student.
+
+Create Attendance for that Student.
+
+Physically DELETE the Student.
+
+Call the Admin/Teacher daily historical summary for the same:
+
+* school;
+* Academic Session;
+* date.
+
+Expected:
+
+* Attendance remains present;
+* deleted Student's saved historical name/code/identity is represented;
+* status is correct;
+* class/section is preserved;
+* the row is not lost because `student_id` is NULL.
+
+## Test G — Live roster exclusion
+
+After deleting Student A:
+
+* call the current/live Attendance marking roster.
+
+Expected:
+
+* Student A does not appear.
+
+The existence of historical Attendance must not resurrect A into live marking.
+
+## Test H — Existing live Student summary
+
+Create Student B and Attendance.
+
+Verify daily summary still returns B correctly.
+
+There must be no regression in ordinary live Student Attendance.
+
+## Test I — No duplicate historical summary rows
+
+Create a live Student with Attendance.
+
+Verify the daily summary returns exactly one Attendance representation for that Student.
+
+Do not return one row from the live roster plus another from the historical Attendance set.
+
+## Test J — Two schools
+
+Create School A Student and School B Student.
+
+Ensure their identity keys and Attendance remain isolated.
+
+If the test intentionally uses UUID values or attempts collisions:
+
+* a School A historical identity must never resolve to School B;
+* School A daily summary must not show School B Attendance;
+* School B daily summary must not show School A Attendance.
+
+School and Session predicates must remain enforced.
+
+## Test K — Two Academic Sessions
+
+Create Attendance for the same Student identity in two Sessions.
+
+Delete the Student.
+
+Verify:
+
+* Session A returns only Session A Attendance;
+* Session B returns only Session B Attendance;
+* neither summary leaks into the other.
+
+## Test L — Migration validation
+
+Where practical, create controlled test fixtures for:
+
+* valid populated Attendance;
+* missing Student association;
+* missing snapshot;
+* duplicate canonical identity;
+* inconsistent legacy identity state.
+
+Expected:
+
+* valid data migrates;
+* invalid/unresolvable data causes safe failure;
+* no Attendance rows are deleted;
+* failed migration leaves the database in the expected transactional state.
+
+Do not run destructive migration tests against the application's shared development data unless the test uses an isolated test database/transaction.
+
+---
+
+# STEP 10 — TEST THE ACTUAL PHYSICAL DELETE
+
+The preservation test must continue to perform a genuine SQL:
+
+`DELETE FROM students ...`
+
+Do not replace it with:
+
+* deactivation;
+* `is_active = false`;
+* soft deletion;
+* application-level hiding.
+
+The purpose is specifically to prove PostgreSQL's `ON DELETE SET NULL` behavior and historical snapshot preservation.
+
+---
+
+# STEP 11 — AUDIT ALL HISTORICAL READ SURFACES
+
+After implementing the fix, perform a focused static audit of Attendance read paths.
+
+At minimum inspect:
+
+* Student Attendance monthly;
+* Student Attendance yearly;
+* Student Attendance statistics;
+* Admin Attendance daily view;
+* Admin Attendance class detail;
+* Admin Attendance summaries;
+* Teacher Attendance date view;
+* Teacher Attendance history;
+* Teacher daily summaries;
+* historical rosters;
+* Attendance population/aggregate calculations.
+
+For every read path, explicitly classify it:
+
+### LIVE ROSTER
+
+May require an existing Student.
+
+Deleted Students must not appear.
+
+### HISTORICAL REPORT
+
+Must be able to represent preserved Attendance without requiring the Student row.
+
+### AGGREGATE / SUMMARY
+
+Must include preserved Attendance where the summary claims to represent historical Attendance.
+
+### AUTHENTICATED DELETED-STUDENT PORTAL
+
+It is acceptable that a physically deleted Student cannot authenticate through the normal Student Registry login.
+
+Do not invent a fake Student login identity to solve this.
+
+The requirement is preservation of the Attendance data, not restoration of deleted Student portal access.
+
+---
+
+# STEP 12 — DO NOT BREAK PREVIOUSLY ACCEPTED STEPS
+
+Explicitly regression-check these previously accepted Attendance controls:
+
+### Step 2L-1
+
+* server resolves active Academic Session;
+* browser `x-view-session-id` cannot override write Session;
+* no active Session prevents write;
+* archived Session cannot be mutated;
+* school isolation remains intact.
+
+### Step 2L-2
+
+* Attendance date must be within Session start/end inclusive;
+* existing 7-day rule remains;
+* future-date rule remains;
+* IST date handling remains;
+* Sunday behavior remains.
+
+### Step 2L-3
+
+* unmarked Sunday does not become a working day;
+* deliberately marked Sunday displays its stored status;
+* Sunday counts exactly according to stored status;
+* no fabricated Sunday Attendance.
+
+### Step 2L-4 preservation
+
+* physical Student deletion preserves Attendance;
+* snapshots remain intact;
+* class/section remain intact;
+* Session remains intact;
+* school remains intact;
+* replacement Student does not inherit old history;
+* deleted Student is absent from live marking.
+
+---
+
+# STEP 13 — NO UNRELATED CHANGES
+
+Do NOT change:
+
+* Student Registry lifecycle beyond identity-key enforcement;
+* Enrollment architecture;
+* Academic Session architecture;
+* Teacher authorization model;
+* Attendance policy;
+* Attendance weighting;
+* Sunday rules;
+* correction window;
+* archived-session behavior;
+* unrelated modules;
+* Exam Controller;
+* examination logic;
+* fees;
+* complaints;
+* homework;
+* promotion;
+* unrelated database FKs.
+
+If an unrelated issue is discovered, report it separately.
+
+Do not fix it in this step.
+
+---
+
+# STEP 14 — REQUIRED FINAL REPORT
+
+When implementation is complete, provide a precise remediation report.
+
+Use this structure:
+
+## A. Result
+
+State:
+
+* what was changed;
+* why it was changed;
+* which Step 2L-4A finding it resolves.
+
+## B. Student identity enforcement
+
+Report:
+
+* exact column definition;
+* NOT NULL state;
+* UNIQUE constraint/index;
+* immutability mechanism;
+* INSERT behavior;
+* UPDATE behavior;
+* whether UUID reuse is now rejected.
+
+## C. Attendance identity enforcement
+
+Report:
+
+* Attendance identity columns;
+* whether `student_id` reassignment is blocked;
+* trigger behavior;
+* ordinary status update behavior.
+
+## D. Historical daily summary
+
+Report:
+
+* exact function(s) changed;
+* how deleted Students are included historically;
+* how live Students are matched;
+* how duplicates are prevented;
+* how live marking remains protected from deleted Students.
+
+## E. Migration 014
+
+Report:
+
+* exact changes;
+* validation improvements;
+* transaction behavior;
+* duplicate behavior;
+* unresolved/mismatched legacy-data behavior;
+* whether existing Attendance data is ever deleted.
+
+## F. Production deployment
+
+Clearly distinguish:
+
+**VERIFIED IN DEVELOPMENT**
+
+from
+
+**REQUIRES PRODUCTION VERIFICATION / DEPLOYMENT ACTION**
+
+Do not claim production readiness unless it was actually demonstrated.
+
+## G. Tests
+
+Provide a table:
+
+| Test                                     | Result            | Evidence       |
+| ---------------------------------------- | ----------------- | -------------- |
+| Student UUID uniqueness                  | PASS/FAIL         | exact test     |
+| Student UUID immutability                | PASS/FAIL         | exact test     |
+| UUID reuse after deletion                | PASS/FAIL         | exact test     |
+| Attendance reassignment protection       | PASS/FAIL         | exact test     |
+| Deleted Student historical daily summary | PASS/FAIL         | exact test     |
+| Live roster exclusion                    | PASS/FAIL         | exact test     |
+| Normal live summary                      | PASS/FAIL         | exact test     |
+| Duplicate prevention                     | PASS/FAIL         | exact test     |
+| School isolation                         | PASS/FAIL         | exact test     |
+| Session isolation                        | PASS/FAIL         | exact test     |
+| Migration validation                     | PASS/FAIL/PARTIAL | exact evidence |
+| Step 2L-1 regression                     | PASS/FAIL         | exact evidence |
+| Step 2L-2 regression                     | PASS/FAIL         | exact evidence |
+| Step 2L-3 regression                     | PASS/FAIL         | exact evidence |
+| `npm run check`                          | PASS/FAIL         | exact output   |
+| Application startup                      | PASS/FAIL         | exact evidence |
+
+## H. Files changed
+
+List every changed file.
+
+For each file, give one sentence explaining why it changed.
+
+## I. Database changes
+
+List:
+
+* new/changed constraints;
+* indexes;
+* triggers;
+* FK behavior;
+* columns.
+
+## J. Production status
+
+State explicitly whether:
+
+* production was touched;
+* production migration was executed;
+* production schema was verified.
+
+Never imply verification that did not occur.
+
+## K. Remaining risks
+
+List only genuine remaining risks.
+
+Do not hide limitations.
+
+---
+
+# FINAL ACCEPTANCE CRITERIA
+
+Step 2L-4B is successful only if all of the following are true:
+
+### Identity
+
+* `students.attendance_identity_key` is NOT NULL.
+* It has database-enforced uniqueness.
+* It is database-enforced immutable after Student creation.
+* A deleted Student's identity key cannot be assigned to a new Student.
+* Numeric Student ID reuse cannot transfer historical Attendance.
+* Digital Student ID/code reuse cannot transfer historical Attendance.
+
+### Attendance
+
+* Historical Attendance snapshots remain immutable.
+* Existing Attendance cannot be reassigned from Student A to Student B.
+* Ordinary Attendance status updates continue to work.
+* `ON DELETE SET NULL` remains the Student FK behavior.
+* No Attendance row is deleted when a Student is physically deleted.
+
+### Historical reporting
+
+* Deleted Student Attendance appears in applicable historical daily summaries.
+* Admin historical Attendance remains complete.
+* Teacher historical Attendance remains complete.
+* Historical aggregates do not silently omit preserved deleted-Student Attendance where they represent historical Attendance.
+* No duplicate rows are introduced.
+* Live marking never resurrects deleted Students.
+
+### Isolation
+
+* school isolation remains enforced;
+* Academic Session isolation remains enforced;
+* shared/colliding identity values cannot cross school boundaries.
+
+### Migration
+
+* migration is transactionally safe;
+* valid populated data can be migrated;
+* invalid/unresolvable data fails closed;
+* duplicate candidate identities fail without deleting data;
+* no destructive cleanup is introduced;
+* production execution is not falsely claimed.
+
+### Regression
+
+All previously accepted Step 2L-1, Step 2L-2, Step 2L-3, and Step 2L-4 behavior must remain intact.
+
+---
+
+# IMPORTANT EXECUTION RULE
+
+Before making changes:
+
+**INSPECT FIRST.**
+
+Then implement only the required remediation.
+
+After implementation:
+
+**RUN THE FOCUSED TESTS.**
+
+Then run:
+
+`npm run check`
+
+Then restart/verify the application if that is part of the existing development workflow.
+
+Do not execute anything against production.
+
+Do not claim production readiness from development-only evidence.
+
+At the end, give the exact final status:
+
+**SAFE TO ACCEPT**
+
+only if every blocking Step 2L-4A finding has been resolved and the required tests/evidence pass.
+
+Otherwise:
+
+**SAFE WITH CONDITIONS**
+
+or
+
+**NOT SAFE TO ACCEPT**
+
+with the exact remaining blocker(s).
+
+Do not proceed to Step 2L-5 unless this remediation is fully accepted.

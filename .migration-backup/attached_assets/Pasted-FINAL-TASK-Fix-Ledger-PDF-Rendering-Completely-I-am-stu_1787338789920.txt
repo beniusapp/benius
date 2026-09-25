@@ -1,0 +1,827 @@
+FINAL TASK — Fix Ledger PDF Rendering Completely
+
+I am stuck on the Ledger PDF rendering and I do NOT want another partial fix or another redesign.
+
+I have reviewed the actual generated Ledger PDF. The remaining problems are rendering/layout problems, especially text wrapping, column width, status rendering, and totals.
+
+IMPORTANT
+
+Do NOT simply increase the row height.
+
+Increasing row height alone will NOT fix the problem because the main issue is horizontal wrapping inside narrow columns.
+
+The correct rendering pipeline must be:
+
+Column width → calculate actual text width → word-based wrapping → calculate required row height → render the row
+
+Do NOT use:
+
+Fixed/increased row height → hope the text fits
+
+---
+
+1. FIRST: Inspect the CURRENT implementation
+
+Before making changes:
+
+1. Open the current "server/ledger-pdf.ts".
+2. Inspect the current "renderLedgerPdf()" implementation.
+3. Inspect the actual generated Ledger PDF.
+4. Identify exactly why these are still happening:
+   - "Bank Transfer" breaking into "BankTransfe" / "r"
+   - "Demand Draft" breaking incorrectly
+   - long references breaking badly
+   - some text appearing cramped
+   - totals amounts wrapping
+   - status pill/background not rendering correctly if still present
+5. Fix the underlying rendering logic rather than masking the problem with larger row heights.
+
+Do NOT modify unrelated modules.
+
+---
+
+2. Files that may be modified
+
+ONLY modify:
+
+- "server/ledger-pdf.ts"
+
+If the Ledger PDF route requires a tiny change to support the renderer, you may modify only the Ledger PDF route in:
+
+- "server/fees-routes.ts"
+
+Do NOT modify:
+
+- "fees-manager.tsx"
+- Tx Report PDF
+- Export Ledger
+- payment calculations
+- selection logic
+- pagination logic
+- database schema
+- payment aggregation logic
+- invoice generation
+- any unrelated module
+
+---
+
+3. Keep the existing Ledger PDF functionality
+
+The following must remain unchanged:
+
+Filters
+
+The Ledger PDF must continue respecting:
+
+- Search
+- Status
+- Class
+- Fee Name
+- Fee Type
+- Academic Session
+
+Selection
+
+Keep the existing GET/POST selection behavior exactly as implemented:
+
+- no selection
+- individual selected invoices
+- Select All Matching
+- excluded IDs
+
+Do NOT change selection state or frontend selection logic.
+
+Pagination
+
+The PDF must continue exporting the complete matching dataset, not only the currently visible table page.
+
+Calculations
+
+Do NOT change:
+
+- invoice amount
+- amount paid
+- outstanding amount
+- payment aggregation
+- payment method selection
+- reference number selection
+- status
+
+Only fix presentation/rendering.
+
+---
+
+4. TABLE WIDTH MUST REMAIN CORRECT
+
+Use:
+
+- A4 landscape
+- 32pt left margin
+- 32pt right margin
+- table width = available page width
+
+Keep a compile-time/runtime assertion:
+
+TABLE_WIDTH === Math.round(PAGE_W - MARGIN_H * 2)
+
+It must pass.
+
+There must be zero horizontal table overflow.
+
+---
+
+5. FINAL COLUMN WIDTH PRIORITY
+
+Do NOT give excessive width to columns that contain short values.
+
+Prioritize width for columns where real-world data can be longer.
+
+Priority:
+
+Highest priority
+
+1. Student
+2. Fee Name
+3. Fee Period
+4. Payment Method
+5. Reference No.
+
+Medium priority
+
+6. Fee Type
+7. Frequency
+8. Invoice No.
+9. Receipt No.
+10. DSID
+
+Lowest priority
+
+11. Class
+12. Amount
+13. Due Date
+14. Status
+15. Paid On
+16. Paid
+17. Outstanding
+
+You may adjust the exact widths if necessary, but the total MUST equal the available table width.
+
+Do not make "Payment Method" so narrow that:
+
+- Bank Transfer
+- Demand Draft
+- Portal Payment
+
+are unnecessarily broken.
+
+---
+
+6. CRITICAL — FIX WORD WRAPPING
+
+This is the most important part.
+
+Do NOT rely blindly on PDFKit's automatic "lineBreak: true" behavior for table cells.
+
+The actual PDF has demonstrated that automatic wrapping is producing ugly mid-word breaks.
+
+For example, this is NOT acceptable:
+
+BankTransfe
+r
+
+or:
+
+DemandDra
+ft
+
+Instead:
+
+Bank Transfer
+
+and:
+
+Demand Draft
+
+should remain intact whenever the column has enough room.
+
+---
+
+7. Implement reliable manual word wrapping
+
+Use PDFKit's actual font metrics to calculate text width.
+
+For every wrapping-enabled cell:
+
+1. Get the actual column width.
+2. Apply cell padding.
+3. Measure candidate text using:
+
+doc.widthOfString(text)
+
+4. Split on whitespace/word boundaries first.
+5. Build lines word-by-word.
+6. Only fall back to character-level splitting when a SINGLE token itself is longer than the available width.
+
+Example:
+
+Bank Transfer
+
+must be treated as two words and remain together if the combined width fits.
+
+Do NOT remove the space simply because the string does not fit on the first estimated line.
+
+---
+
+8. Character-level wrapping is ONLY for genuinely long tokens
+
+Some values such as Razorpay IDs or long reference numbers may have no spaces.
+
+Those may legitimately need character-level wrapping.
+
+For example:
+
+pay_TS9NVJ
+yLnCrdfO
+
+is acceptable if the reference is genuinely too long for the column.
+
+But normal human-readable phrases must NOT be character-broken.
+
+Examples that must remain word-based:
+
+- Bank Transfer
+- Demand Draft
+- Portal Payment
+- Monthly Fee
+- Quarterly Fee
+- Laboratory Purpose
+- Science Fee
+- Math Fees
+
+---
+
+9. Use the SAME wrapping calculation for row height and rendering
+
+This is critical.
+
+Do NOT calculate row height using one approximation and render text using a different wrapping mechanism.
+
+Instead:
+
+Step 1
+
+Precompute wrapped lines for every cell.
+
+Step 2
+
+Use those exact lines to calculate row height.
+
+Step 3
+
+Use those exact same lines when rendering.
+
+Therefore:
+
+wrappedLines = calculateWrappedLines(...)
+rowHeight = calculateHeight(wrappedLines)
+render(wrappedLines)
+
+There must be no mismatch between measurement and rendering.
+
+---
+
+10. Dynamic row height — NOT globally increased
+
+Keep dynamic row heights.
+
+For example:
+
+Normal row
+
+If all text fits:
+
+row height ≈ 19–21pt
+
+Two-line row
+
+If Fee Name or Reference requires two lines:
+
+row height ≈ 28–32pt
+
+Three-line row
+
+Only when genuinely necessary:
+
+row height ≈ 38–42pt
+
+Do NOT make every row 30–40pt just to solve wrapping.
+
+That would unnecessarily create a very long PDF.
+
+The row height must be determined by the tallest wrapped cell in that row.
+
+---
+
+11. Wrapping-enabled columns
+
+These columns should use reliable manual wrapping:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Fee Name
+- Fee Type
+- Fee Period
+- Payment Method
+- Reference No.
+
+Short-value columns should normally remain single-line:
+
+- Class
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Paid
+- Outstanding
+
+If an unexpected value genuinely exceeds a short column, handle it gracefully rather than clipping.
+
+---
+
+12. Payment Method MUST be readable
+
+The following values must render professionally:
+
+Cash
+Online
+UPI
+UPI QR
+Bank Transfer
+Demand Draft
+Portal Payment
+Cheque
+
+Especially:
+
+Bank Transfer
+Demand Draft
+Portal Payment
+
+Do not allow:
+
+BankTransfe
+r
+
+or:
+
+DemandDra
+ft
+
+If necessary, recover a few points from very short columns and give them to Payment Method.
+
+---
+
+13. Student and Fee Name
+
+Student names must not be clipped.
+
+Long names should wrap naturally.
+
+Example:
+
+Sunny SUNNY
+skkk
+
+is acceptable if required by the available width.
+
+Similarly:
+
+Laboratory
+purpose
+
+is acceptable for a long Fee Name.
+
+No text should overlap another column.
+
+---
+
+14. Fee Period
+
+Keep Fee Period readable.
+
+Examples:
+
+Apr 2027 – Jun 2027
+
+or:
+
+Aug 2027
+
+It may wrap across two lines when required.
+
+Do NOT clip it.
+
+---
+
+15. Status pill
+
+The Status column should display a proper readable pill.
+
+Examples:
+
+- Paid
+- Due
+- Overdue
+- Partial
+- Waived
+
+Use explicit graphics-state isolation:
+
+doc.save();
+doc.fillColor(backgroundColor);
+doc.roundedRect(...).fill();
+doc.restore();
+
+doc.save();
+doc.fillColor(textColor);
+doc.text(...);
+doc.restore();
+
+The pill background must actually be visible in the generated PDF.
+
+Text must remain readable.
+
+Do NOT rely on an ambiguous chained graphics-state sequence.
+
+---
+
+16. Totals section — FIX COMPLETELY
+
+The totals section must NOT place large amounts inside the narrow Amount/Paid/Outstanding table columns.
+
+The current PDF demonstrates that this can produce broken amounts such as:
+
+₹2,17,10
+0
+
+That is NOT acceptable.
+
+Use a dedicated totals block after the final record.
+
+Example:
+
+┌──────────────────────────────────────────────┐
+│ TOTALS                                       │
+└──────────────────────────────────────────────┘
+
+Total Invoiced:       ₹3,31,500
+Total Paid:           ₹2,17,100
+Total Outstanding:    ₹1,14,400
+
+Give the amount a sufficiently wide area.
+
+Amounts MUST be rendered with:
+
+lineBreak: false
+
+and enough width that they cannot wrap.
+
+Use Indian currency formatting:
+
+₹3,31,500
+₹2,17,100
+₹1,14,400
+
+---
+
+17. Totals must NEVER disappear
+
+Before rendering the totals block, calculate whether there is enough vertical space.
+
+If it does not fit:
+
+1. Finish the current page.
+2. Start a new page.
+3. Render the totals block there.
+4. Never clip or silently drop totals.
+
+The page count must include the totals-only continuation page if one is required.
+
+---
+
+18. Header
+
+Keep the professional header:
+
+Left
+
+- School logo
+- School name
+- Address
+- Phone
+- Email
+
+Right
+
+FEE LEDGER REPORT
+
+Subtitle:
+
+Invoice-wise fee ledger showing billed amount, payments received, and outstanding balance.
+
+Then:
+
+- Academic Session
+- Generated timestamp
+- Record count
+
+Below that, show the filter/scope line.
+
+Example:
+
+Filters: Status = Overdue | Class = 6A
+
+or, when no filters are active:
+
+Scope: All matching records for this session
+
+Do NOT duplicate the page number in the header.
+
+---
+
+19. Page number
+
+Page number must appear ONLY in the footer.
+
+Footer:
+
+Mary Immaculate School • Fee Ledger Report • Session 2027–28
+                                                Page 1 of 2
+
+Do NOT show:
+
+Page 1 of 2
+
+again in the header.
+
+---
+
+20. Column headers
+
+Use these exact readable names:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Class
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Paid
+- Outstanding
+- Payment Method
+- Reference No.
+
+Do not use:
+
+Cls
+Outstdg.
+Method
+Reference
+
+---
+
+21. Missing values
+
+Use:
+
+—
+
+for genuinely missing values.
+
+Do not display:
+
+- "null"
+- "undefined"
+- "N/A"
+- blank cells where a missing-value indicator is expected
+
+---
+
+22. Financial formatting
+
+All monetary values must be:
+
+- whole rupees
+- Indian comma formatting
+- right aligned
+
+Examples:
+
+₹1,000
+₹12,000
+₹2,70,000
+₹3,31,500
+
+No unnecessary decimals.
+
+---
+
+23. Dates
+
+Use:
+
+22 Apr 2027
+
+for dates.
+
+Do not use unnecessarily long date strings.
+
+---
+
+24. Multi-page behavior
+
+The PDF must:
+
+- repeat the report header appropriately
+- repeat column headers on every page
+- never split a single table row across pages
+- keep the entire row together
+- render all records
+- render totals only after the final record
+- create an additional page for totals if necessary
+
+---
+
+25. VERY IMPORTANT — DO NOT OVERENGINEER
+
+Do NOT rewrite the entire fees system.
+
+Do NOT change SQL unless absolutely necessary for rendering data that already exists.
+
+Do NOT change payment calculations.
+
+Do NOT change selection logic.
+
+Do NOT change the database.
+
+Do NOT modify Tx Report PDF.
+
+Do NOT modify Export Ledger.
+
+Do NOT change frontend behavior.
+
+This is a Ledger PDF rendering correction only.
+
+---
+
+26. Required verification before declaring DONE
+
+After making the changes, actually generate a fresh Ledger PDF and inspect the generated PDF.
+
+Do NOT rely only on TypeScript compilation or server startup.
+
+Verify these exact cases:
+
+Test 1 — Bank Transfer
+
+Must appear as:
+
+Bank Transfer
+
+NOT:
+
+BankTransfe
+r
+
+Test 2 — Demand Draft
+
+Must appear as:
+
+Demand Draft
+
+NOT:
+
+DemandDra
+ft
+
+Test 3 — Long reference
+
+May wrap across lines, but must not clip or overlap.
+
+Test 4 — Long student name
+
+May wrap naturally.
+
+Test 5 — Long Fee Name
+
+May wrap naturally.
+
+Test 6 — Status
+
+Paid/Due/Overdue pill must visibly render.
+
+Test 7 — Totals
+
+Verify:
+
+- Total Invoiced
+- Total Paid
+- Total Outstanding
+
+are complete and never wrapped.
+
+Test 8 — Multiple pages
+
+Verify:
+
+- no row is split
+- column headers repeat
+- footer page numbers are correct
+- totals appear on the final page
+- no duplicate page number appears in the header
+
+Test 9 — No clipping
+
+Zoom into the PDF and verify that no text:
+
+- overlaps
+- clips into another column
+- disappears
+- gets cut at the page edge
+- breaks normal words unnecessarily
+
+---
+
+27. Final acceptance criteria
+
+I will consider this DONE only when the actual generated PDF satisfies ALL of these:
+
+- [ ] No "BankTransfe / r"
+- [ ] No "DemandDra / ft"
+- [ ] No unnecessary mid-word wrapping
+- [ ] Long references wrap gracefully
+- [ ] Student names wrap gracefully
+- [ ] Fee names wrap gracefully
+- [ ] Payment Method is readable
+- [ ] DSID can wrap if necessary
+- [ ] Fee Type can wrap if necessary
+- [ ] Fee Period can wrap if necessary
+- [ ] Row height is dynamic, not globally increased
+- [ ] No row clipping
+- [ ] No column overlap
+- [ ] Status pills are visible
+- [ ] Totals never wrap
+- [ ] Totals never disappear
+- [ ] Page number appears only in footer
+- [ ] Correct "Page N of M"
+- [ ] Table width assertion passes
+- [ ] All monetary values use Indian formatting
+- [ ] All matching records are included
+- [ ] Existing filters remain functional
+- [ ] Existing selection behavior remains functional
+- [ ] Tx Report PDF untouched
+- [ ] Export Ledger untouched
+- [ ] No database schema changes
+- [ ] No unrelated files changed
+
+MOST IMPORTANT INSTRUCTION
+
+Do not tell me that the implementation is complete merely because the server compiles.
+
+Generate the actual Ledger PDF and inspect the output.
+
+If the generated PDF still contains:
+
+BankTransfe
+r
+
+or:
+
+DemandDra
+ft
+
+or wrapped totals,
+
+then the task is NOT complete.
+
+Fix the renderer until the actual PDF output passes the acceptance criteria above.
+
+At the end, report:
+
+1. Exact files changed
+2. Exact rendering changes made
+3. Actual PDF generated and inspected
+4. Confirmation that "Bank Transfer" and "Demand Draft" are no longer broken mid-word
+5. Confirmation that totals do not wrap
+6. Confirmation that page numbering appears only in the footer
+7. Confirmation that no unrelated modules were modified

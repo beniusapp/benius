@@ -1,0 +1,41 @@
+Refactor the backend logic and action flow for the Complaint System across Admin, Teacher, and Student portals. Maintain all existing 'Perfect UI' designs.
+
+1. THE CLASS FEED LOGIC (Multi-Tenant Routing):
+
+Logic: Fix the 'Class Feed' in /teacher-dashboard/complaint.
+
+Rule: If Teacher 'Tubai' is assigned to Class 11-A, the feed must display all complaints where the Target Student belongs to Class 11-A, regardless of who filed the complaint (e.g., if Sachin from Class 2-A reports Virat from Class 11-A, it must appear in Tubai's feed).
+
+Database Query: Update the SQL/NoSQL query to filter by target_student_class and target_student_section matching the teacher's assigned class.
+
+2. TEACHER ACTIONS & ESCALATION:
+
+Inside the Class Feed, add two clear action buttons to every complaint:
+
+'Mark as Solved': Closes the complaint and notifies the parties.
+
+'Escalate to Principal': Moves the complaint to the /admin-dashboard 'Complaint Hub'.
+
+Feedback Loop: Teachers must be able to see a 'Principal’s Remarks' field on escalated complaints to see what the Admin decided.
+
+3. TEACHER-TO-STUDENT COMPLAINTS:
+
+When a teacher files a complaint against a student, it must go instantly to the student’s profile (No Admin approval needed).
+
+Optional Toggle: Add a checkbox: 'Notify Admin/Principal'. If checked, the complaint also appears in the /admin-dashboard (Teacher-Student section).
+
+4. PRIVATE ADMIN COMPLAINTS (Teacher-to-Admin):
+
+In /teacher-dashboard/complaint, the 'To Admin (Private)' section must route messages only to the /admin-dashboard 'Private Complaint Hub'. These must not be visible to students or other teachers.
+
+5. STAFF GRIEVANCE (Student-to-Teacher):
+
+In /student/complaints, the 'Staff Grievance' section must bypass the teacher entirely.
+
+These reports must go directly and privately to the /admin-dashboard 'Complaint Hub (By Student)'.
+
+6. VISIBILITY & SYNC:
+
+Ensure all status updates (Solved, Escalated, Principal Remarks) reflect instantly using React Query or SWR.
+
+Ensure all text in these new buttons and status labels is Bold Black on high-contrast backgrounds to maintain visibility.

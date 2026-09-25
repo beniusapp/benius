@@ -1,0 +1,998 @@
+# 1. Faculty Mapping Decision
+
+## CURRENT BEHAVIOR
+
+The Teacher authorization architecture is hybrid.
+
+Two assignment systems coexist:
+
+1. Legacy fields on `teachers`:
+   - `assigned_class`
+   - `assigned_section`
+2. Multi-class `faculty_mappings`:
+   - `school_id`
+   - `teacher_id`
+   - `class_name`
+   - `section`
+   - optional `subject`
+
+Faculty Mapping currently controls or contributes to:
+
+- Faculty directory by class/section
+- Multi-class Teacher leave roster access
+- Teacher Examination class/section selection
+- Several Student profile and complaint authorization checks
+- Teacher dashboard assignment presentation
+- Admin Faculty Mapping UI
+
+Other modules still use legacy `assignedClass/assignedSection`, including:
+
+- Timetable
+- Noticeboard
+- Teacher profile/faculty information
+- Attendance policy resolution
+- Compatibility fallbacks in several Teacher modules
+
+Student Attendance currently requires neither system. Its UI loads school configuration classes and sections, and its POST accepts any class, section, and Student IDs from an authenticated Teacher.
+
+## EVIDENCE
+
+- `shared/schema.ts:197–205`
+- `shared/schema.ts:939–950`
+- `server/storage.ts:2298–2320`
+- `server/storage.ts:3090–3117`
+- `server/storage.ts:5300–5335`
+- `server/teacher-routes.ts:414–462`
+- `server/teacher-routes.ts:4178–4220`
+- `server/teacher-routes.ts:4381+`
+- `client/src/pages/admin-modules/faculty-mapping.tsx`
+- `client/src/pages/teacher-modules/examination.tsx:916–920`
+- `client/src/pages/teacher-dashboard.tsx:716`
+- `replit.md:29–32`
+
+## RECOMMENDED CONTRACT
+
+The repository does not establish that Faculty Mapping was intended to gate Student Attendance.
+
+Therefore, requiring strict Faculty Mapping would be a **product behavior change**, not merely enforcement of the existing Attendance contract.
+
+The safest compatibility contract, if assignment-based authorization is approved, would be:
+
+```text
+Teacher may mark a class/section when either:
+
+1. a tenant-matching Faculty Mapping exists for that Teacher/class/section; or
+2. the Teacher’s legacy assignedClass/assignedSection exactly matches,
+   while legacy assignment remains supported.
+```
+
+Subject should not affect whole-day Attendance authority.
+
+## WHO IS CURRENTLY ALLOWED TO MARK ATTENDANCE?
+
+Any authenticated Teacher whose account resolves successfully can submit Student Attendance under that Teacher’s school.
+
+## WHAT CURRENTLY PROVES AUTHORIZATION?
+
+Only:
+
+```text
+req.session.teacherId
+→ existing Teacher row
+```
+
+No class/section assignment fact is checked.
+
+## UNRESOLVED DECISION
+
+The repository cannot prove whether intended product policy is:
+
+- Any authenticated same-school Teacher, or
+- Only a class/section-assigned Teacher.
+
+This must be explicitly decided before route authorization is tightened.
+
+---
+
+# 2. Enrollment Eligibility Decision
+
+## CURRENT BEHAVIOR
+
+`enrollments.status` is:
+
+- Required
+- Free-form `varchar`
+- Defaulted to `Active`
+- Not constrained by an enum or check
+- Not consulted by roster readers or authorization logic
+
+Known actual status semantics are limited to:
+
+| Status/value | Evidence-backed meaning |
+|---|---|
+| `Active` | Schema default for a created enrollment |
+| Other strings | Technically accepted, but no defined application meaning was found |
+
+No implemented `Withdrawn`, `Transferred`, or `Inactive` enrollment-state contract was found.
+
+Promotion decisions use separate values such as:
+
+- `promote`
+- `retain`
+- `grace_pass`
+
+Those are promotion decisions, not enrollment eligibility statuses.
+
+Student Registry has an independent `students.isActive` flag. It must not be conflated with `enrollments.status`.
+
+## EVIDENCE
+
+- `shared/schema.ts:168–195`
+- `shared/schema.ts:1070–1091`
+- `server/storage.ts:1024–1039`
+- `server/storage.ts:1871–1876`
+- `server/storage.ts:3423–3459`
+- `server/storage.ts:6614–6655`
+- `server/storage.ts:4840–4846`
+
+No `enrollments.status` comparison was found in existing roster/Attendance readers.
+
+## RECOMMENDED CONTRACT
+
+The only evidence-backed mandatory Attendance condition is:
+
+```text
+A tenant-matching enrollment must exist for
+school + Student + Academic Session.
+```
+
+It is not currently safe to define an eligibility allowlist beyond existence.
+
+Class and section must come from that enrollment.
+
+## Specific conclusions
+
+- A Student can be active in Student Registry but lack an active-session enrollment.
+- Such a Student currently can still appear through current Registry roster logic.
+- Under the future session-safe model, that Student should not be writable until an enrollment exists.
+- Historical Attendance remains valid if current Student Registry state later changes.
+- Class/section transfers within a session are technically possible because enrollment upsert replaces class/section.
+- No cross-school Student transfer workflow was found.
+- Historical Attendance must not move automatically when enrollment placement is later changed.
+
+## UNRESOLVED DECISION
+
+The project must define the supported enrollment statuses and their Attendance eligibility. Declaring only `Active` eligible would be sensible, but existing code does not establish it as current product policy.
+
+---
+
+# 3. Leave vs Attendance Decision
+
+## CURRENT BEHAVIOR
+
+Student leave currently has two representations.
+
+### Authoritative approval record
+
+```text
+student_leave_requests
+```
+
+This stores:
+
+- Student
+- School
+- Session
+- Date range
+- Approval status
+- Reviewer information
+
+### Materialized Attendance outcome
+
+When Teacher or Admin approves leave, `markAttendanceAsLeave()` attempts to create or update daily `attendance_records` rows with:
+
+```text
+status = 'leave'
+```
+
+For every date in the approved range:
+
+- Sundays are skipped.
+- Holidays are not explicitly skipped.
+- Existing Attendance is overwritten to `leave`.
+- Existing `edit_count` is not incremented.
+- Missing Attendance is inserted only if an applicable Teacher ID is available.
+- The leave request can remain approved even when no Attendance row can be inserted.
+
+Student monthly Attendance also independently reads approved leave requests and returns `isApprovedLeave`.
+
+Therefore, `leave` is currently both:
+
+- A real persisted Attendance status
+- An overlay from `student_leave_requests`
+
+This creates duplicate sources of truth.
+
+## EVIDENCE
+
+- `shared/schema.ts:516–533`
+- `server/teacher-routes.ts:1797–1821`
+- `server/teacher-routes.ts:3093–3115`
+- `server/storage.ts:3197–3215`
+- `server/storage.ts:4480–4510`
+- `server/storage.ts:4616–4629`
+- `client/src/pages/student-attendance.tsx:103–131`
+
+## Current precedence
+
+If approved leave exists but the Attendance row contains `absent`, Student monthly UI gives the persisted Attendance status precedence. The leave request still remains approved.
+
+A later Teacher Attendance save can overwrite a synchronized `leave` row because `leave` is not available as a Teacher UI selection but the ordinary upsert can replace the row.
+
+## Current percentage rule
+
+Current stats calculate:
+
+```text
+leave = 1 attended unit
+```
+
+Leave remains inside the working-day denominator.
+
+Thus current behavior is:
+
+```text
+leave counts the same as present for percentage
+```
+
+## RECOMMENDED CONTRACT
+
+The approval decision should have one authority:
+
+```text
+student_leave_requests
+```
+
+If `attendance_records.status = 'leave'` is retained, it should be treated as a synchronized/materialized outcome of an approved leave—not a separately editable Teacher choice.
+
+Teacher Attendance UI should not manually create `leave`, consistent with current UI.
+
+## UNRESOLVED DECISIONS
+
+The repository does not establish:
+
+1. Whether approved leave must always override an existing absence.
+2. Whether approving leave after Attendance is marked should require Admin confirmation.
+3. Whether leave should count as fully attended.
+4. Whether leave should instead reduce the working-day denominator.
+5. Whether approval should write Attendance on holidays.
+6. What should happen when no class Teacher exists to create the materialized row.
+
+These must be decided before a status constraint and calculation contract are finalized.
+
+---
+
+# 4. Class/Section Authority Decision
+
+## CURRENT BEHAVIOR
+
+### Student Registry
+
+`students.class` and `students.section` represent current/live placement.
+
+They are used for:
+
+- Current active rosters
+- Current Teacher Attendance roster
+- Some Student yearly and stats calculations
+- General Student Registry presentation
+
+### Enrollment
+
+`enrollments.class_name` and `enrollments.section_name` represent placement in a specific Academic Session.
+
+They are used for:
+
+- Archive look-back roster
+- Session-scoped Student association
+- Promotion/session transition behavior
+
+### Attendance
+
+`attendance_records.class` and `attendance_records.section` are nullable copied values. They are currently used in working-day calculations but are not relationally validated against enrollment.
+
+## EVIDENCE
+
+- `shared/schema.ts:168–195`
+- `shared/schema.ts:227–241`
+- `shared/schema.ts:1070–1091`
+- `server/storage.ts:928–973`
+- `server/storage.ts:975–1001`
+- `server/storage.ts:1024–1039`
+- `server/routes.ts:2025–2056`
+
+## RECOMMENDED AUTHORITY HIERARCHY
+
+### Current active session
+
+Enrollment should be the session-specific Attendance authority.
+
+Student Registry may continue as the current master/display record, but its class and section should agree with the active-session enrollment through the enrollment/transition process.
+
+### Historical session
+
+Enrollment must be authoritative.
+
+Current Student Registry class/section must never be used to reconstruct historical placement.
+
+### Attendance class and section
+
+`attendance_records.class` and `attendance_records.section` should be treated as immutable historical snapshots derived from enrollment at mark time.
+
+They should not be:
+
+- Trusted from the browser
+- Treated as independent authority
+- Automatically rewritten when Registry placement changes
+- Automatically rewritten when enrollment is later corrected
+
+If an enrollment correction must also correct historical Attendance snapshots, that should be a separate audited operation.
+
+## REASON
+
+This preserves what the Teacher saw and marked at the time while retaining enrollment as the underlying placement authority.
+
+---
+
+# 5. Academic Session Dependency Decision
+
+## Complete dependency table
+
+| Table | Session field | Delete behavior | Historical importance | Current delete protection |
+|---|---:|---|---|---|
+| `attendance_records` | Yes | `SET NULL` | Student daily Attendance | None |
+| `teacher_self_attendance` | Yes | `SET NULL` | Staff Attendance | None |
+| `attendance_correction_requests` | Yes | `SET NULL` | Correction/audit evidence | None |
+| `enrollments` | Yes, required | `CASCADE` | Session roster and placement | None |
+| `homework` | Yes | `CASCADE` | Academic work | None |
+| `classwork` | Yes | `CASCADE` | Academic work | None |
+| `notices` | Yes | `SET NULL` | Session communications | None |
+| `complaints` | Yes | `SET NULL` | Complaint history | None |
+| `exam_scores` | Yes | `CASCADE` | Examination results | None |
+| `promotion_decisions` | Yes | `CASCADE` | Promotion history | None |
+| `academic_history` | Yes | `SET NULL` | Archived academic/promotion history | None |
+| `leave_requests` | Yes | `SET NULL` | Teacher leave history | None |
+| `student_leave_requests` | Yes | `SET NULL` | Student leave history | None |
+| `timetable_entries` | Yes | `SET NULL` | Session timetable | None |
+| `audit_logs` | Yes | `SET NULL` | Audit evidence | None |
+| `visitor_logs` | Yes | `CASCADE` | Operational history | None |
+| `fee_records` | Yes | `SET NULL` | Financial evidence | Application deletion blocker |
+| `payment_records` | Yes | `SET NULL` | Financial evidence | Application deletion blocker |
+| `refunds` | Integer only | No FK | Financial evidence | Application deletion blocker |
+| `fee_audit_log` | Yes | `SET NULL` | Financial audit | Application deletion blocker |
+| `payment_attempt_events` | Integer only | No FK | Payment event history | Application deletion blocker |
+| `payment_attempts` | Deployed table | Not declared in schema | Payment lifecycle | Application deletion blocker |
+| `payment_webhook_events` | Indirect through fee record | — | Webhook evidence | Application deletion blocker |
+
+`copied_from_session_id` on `academic_sessions` is not a foreign key.
+
+## CURRENT BEHAVIOR
+
+The normal deletion service:
+
+- Locks the session.
+- Checks financial evidence only.
+- Blocks deletion if financial evidence exists.
+- Hard-deletes the session otherwise.
+- Allows database FK behavior to cascade or null nonfinancial references.
+
+Therefore, deleting a financially empty but academically populated session can:
+
+- Delete enrollments
+- Delete exam scores
+- Delete promotion decisions
+- Delete homework/classwork
+- Null Student Attendance session identity
+- Null leave/correction/audit attribution
+
+## EVIDENCE
+
+- `shared/schema.ts:227–241`
+- `shared/schema.ts:254`
+- `shared/schema.ts:287`
+- `shared/schema.ts:303`
+- `shared/schema.ts:343`
+- `shared/schema.ts:362–403`
+- `shared/schema.ts:463–532`
+- `shared/schema.ts:870–892`
+- `shared/schema.ts:985–1020`
+- `shared/schema.ts:1047–1091`
+- `server/storage.ts:6481–6583`
+- `server/routes.ts:3784–3803`
+
+## RECOMMENDED CONTRACT
+
+The architecture supports:
+
+```text
+Hard deletion only when the session has no historical references.
+Otherwise archive/deactivate only.
+```
+
+It does not safely support hard deletion of a historical session.
+
+Deletion eligibility must eventually include all academic, operational, Attendance, leave, audit, and financial dependencies—not only finance.
+
+## REASON
+
+The application already presents archived sessions as historical contexts. Destroying enrollment, examination, promotion, and Attendance relationships contradicts that architecture.
+
+---
+
+# 6. Whole-Day Attendance Confirmation
+
+## CONFIRMED CURRENT MODEL
+
+Student Attendance is:
+
+```text
+one Student
++ one Academic Session
++ one civil date
+= one daily Attendance outcome
+```
+
+The implemented Student Attendance record contains no:
+
+- Subject
+- Period
+- Class period
+- Morning/evening slot
+- Shift
+- Biometric event
+- Check-in
+- Check-out
+
+Timetable and Examination have subject/period dimensions, but Student Attendance does not reference them.
+
+Teacher self-attendance has check-in/out fields, but it is a separate subsystem and does not change Student Attendance identity.
+
+## CANONICAL IDENTITY
+
+The evidence continues to support:
+
+```text
+school_id + session_id + student_id + date
+```
+
+No hidden implemented dimension requires multiple Student Attendance records for one session/day.
+
+---
+
+# 7. Status Contract Decision
+
+| Status | Persisted? | Written by | Read by | Used in calculation? | Intended future status? |
+|---|---:|---|---|---:|---|
+| `present` | Yes | Teacher/default | All roles | Yes, weight 1 | Yes |
+| `absent` | Yes | Teacher | All roles | Yes, weight 0 | Yes |
+| `late` | Yes | Teacher | All roles | Yes, weight 1 | Yes |
+| `halfday` | Yes | Teacher UI | All roles | Yes, weight 0.5 | Yes, canonical spelling candidate |
+| `half_day` | Possible legacy/custom | No normal current writer found | Yearly/stats | Yes, weight 0.5 | No; legacy alias |
+| `leave` | Yes | Leave approval synchronization | Admin/Student calculations | Yes, weight 1 | Pending leave-model decision |
+| `not-marked` | No normal persistence | Teacher/Admin GET fallback | Teacher/Admin UI | No | Derived only |
+| `none` | No | Student monthly projection | Student UI | No | Derived only |
+| `holiday` | No | Calendar table | Teacher marking guard/Student UI | Not consistently | Calendar only |
+
+## CURRENT BEHAVIOR
+
+- Teacher UI permits `present`, `absent`, `late`, and `halfday`.
+- POST accepts any text because it has no server allowlist.
+- `halfday` and `half_day` are an accidental compatibility divergence.
+- Unknown yearly statuses are treated as present in one calculation.
+- Unknown statuses are ignored in another.
+- Holiday is a calendar state.
+- Not marked/none represent no Attendance row.
+
+## RECOMMENDED CONTRACT
+
+Settled persisted statuses:
+
+```text
+present
+absent
+late
+halfday
+```
+
+Derived/nonpersisted states:
+
+```text
+not-marked
+none
+holiday
+future
+```
+
+`half_day` should be treated as a legacy read alias only if legacy data exists elsewhere.
+
+`leave` cannot be finalized until the unresolved leave-authority and percentage decisions are answered.
+
+---
+
+# 8. Edit Count Contract Decision
+
+## CURRENT BEHAVIOR
+
+- New record starts at `edit_count = 0`.
+- Initial creation does not count as an edit.
+- Every subsequent save increments edit count.
+- Saving the same status still increments it.
+- Full-roster bulk saves submit every Student, consuming edits even when unchanged.
+- Once `edit_count >= 3`, the row is silently skipped.
+- API reports only total saved rows.
+- Teacher UI displays edits remaining using `3 - editCount`.
+- Server also applies a seven-calendar-day edit window.
+- Concurrent updates can race and lose increments or bypass intended cap behavior.
+
+## EVIDENCE
+
+- `server/storage.ts:928–973`
+- `server/teacher-routes.ts:419–427`
+- `server/teacher-routes.ts:460–461`
+- `client/src/pages/teacher-modules/attendance.tsx:66–71`
+- `client/src/pages/teacher-modules/attendance.tsx:190–196`
+- `client/src/pages/teacher-modules/attendance.tsx:264–283`
+
+## INTERPRETATION
+
+The visible UI establishes an intended maximum of:
+
+```text
+3 edits after initial creation
+```
+
+Current implementation does not accurately represent meaningful edits because unchanged bulk saves also consume the allowance.
+
+## RECOMMENDED CONTRACT
+
+- Initial creation: `edit_count = 0`
+- Changed status: increment by 1
+- Unchanged status: no update and no increment
+- Maximum Teacher changes: 3
+- At the cap: return explicit per-Student rejection, not silent skipping
+- Date limit: seven IST calendar days, unless a separately authorized correction flow applies
+- Enforcement: atomic in the database update predicate
+
+## UNRESOLVED DECISION
+
+No evidence establishes an Admin override contract. Whether Admin can bypass the edit cap or seven-day window, and what audit requirements apply, remains open.
+
+---
+
+# 9. Teacher Self-Attendance Decision
+
+## CURRENT BEHAVIOR
+
+Teacher self-attendance identity is operationally:
+
+```text
+teacher_id + IST attendance date
+```
+
+The current unique constraint matches that identity.
+
+School is derived from the authenticated Teacher, but it is not part of uniqueness.
+
+Session is attached as metadata on insert but is not used consistently by:
+
+- Today lookup
+- Check-in
+- Checkout
+- History
+- Corrections
+
+The same Teacher cannot have two self-attendance records on one date across different sessions.
+
+## EVIDENCE
+
+- `shared/schema.ts:985–1000`
+- `server/teacher-routes.ts:4483–4525`
+- `server/teacher-routes.ts:4538–4623`
+- `server/teacher-routes.ts:4624–4673`
+
+## RECOMMENDED BUSINESS IDENTITY
+
+Based on actual behavior, Teacher self-attendance should remain:
+
+```text
+school_id + teacher_id + attendance_date
+```
+
+Session should be historical context, not part of logical uniqueness, unless the product explicitly wants two physical Teacher workday records on the same date during a session transition.
+
+`attendance_date` should eventually be SQL `DATE`.
+
+## Historical behavior
+
+Teacher self-attendance must survive session archival.
+
+If the associated Academic Session is later archived, the row remains valid.
+
+If hard deletion remains possible, session attribution must not be silently lost; preferably, a referenced session should not be deletable.
+
+## UNRESOLVED DECISIONS
+
+- Whether Teacher self-attendance must be filtered by Academic Session in history.
+- Whether `session_id` is mandatory contextual metadata.
+- Whether location verification is informational or mandatory.
+- Whether historical status should be frozen under the policy at mark time instead of recomputed using the current policy.
+
+---
+
+# 10. Final Attendance Business Contract
+
+## STUDENT ATTENDANCE
+
+### Identity
+
+```text
+school_id + session_id + student_id + date
+```
+
+### Write authority
+
+Current:
+
+```text
+Any authenticated Teacher with an existing Teacher record
+```
+
+Future assignment restriction is pending explicit product approval.
+
+At minimum, every write must be tenant-safe and enrollment-safe.
+
+### Session authority
+
+The server resolves the school’s active Academic Session.
+
+The browser cannot choose the write session.
+
+Archived sessions are read-only.
+
+### Enrollment requirement
+
+A matching enrollment must exist for:
+
+```text
+school + Student + session
+```
+
+Enrollment status eligibility remains unresolved because current code defines no status semantics beyond default `Active`.
+
+### Class/section authority
+
+```text
+enrollments.class_name
+enrollments.section_name
+```
+
+Attendance class/section values are enrollment-derived immutable snapshots.
+
+### Teacher authorization
+
+Current product behavior is same-school authenticated Teacher authority.
+
+If class-assignment gating is approved, authorization should be proven by:
+
+```text
+tenant-matching Faculty Mapping
+OR supported legacy exact class/section assignment
+```
+
+### Persisted statuses
+
+Settled:
+
+```text
+present
+absent
+late
+halfday
+```
+
+`leave` remains conditional on the leave-model decision.
+
+Never persist:
+
+```text
+not-marked
+none
+holiday
+future
+```
+
+### Leave model
+
+Approved `student_leave_requests` are the approval authority.
+
+Current code also materializes approved leave as `attendance_records.status = 'leave'`.
+
+The future precedence and percentage rules remain unresolved.
+
+### Date model
+
+- PostgreSQL `DATE`
+- Transported as `YYYY-MM-DD`
+- “Today” determined in `Asia/Kolkata`
+- No UTC or host-local parsing for date-only values
+- Seven-day Teacher edit window uses IST calendar arithmetic
+
+### Edit rule
+
+- Initial creation is not an edit.
+- Only a changed status increments edit count.
+- Teacher maximum is three changed-status edits.
+- Unchanged saves do nothing.
+- Cap failures are explicit.
+- Concurrent enforcement is atomic.
+
+### Historical behavior
+
+- Historical roster comes from enrollment.
+- Registry promotion or class changes do not move old Attendance.
+- Attendance survives session archival.
+- Referenced sessions cannot be hard-deleted.
+- Class/section snapshots do not change automatically.
+
+## TEACHER SELF ATTENDANCE
+
+### Identity
+
+```text
+school_id + teacher_id + attendance_date
+```
+
+### Session
+
+Session is contextual metadata under current behavior, not logical uniqueness.
+
+Whether it becomes mandatory remains open.
+
+### Date
+
+IST civil date, eventually stored as PostgreSQL `DATE`.
+
+### Historical behavior
+
+- Survives session archival.
+- Must not lose session context through deletion.
+- Status/policy snapshot behavior still needs definition.
+
+## ACADEMIC SESSION
+
+### Deletion
+
+Allowed only when no historical academic, operational, Attendance, leave, audit, or financial data references the session.
+
+### Archival
+
+A referenced session should be deactivated/archived rather than deleted.
+
+### Referenced historical data
+
+Includes at least:
+
+- Attendance
+- Teacher self-attendance
+- Corrections
+- Enrollment
+- Homework/classwork
+- Examination scores
+- Promotion decisions
+- Academic history
+- Student and Teacher leave
+- Timetable
+- Complaints/notices
+- Audit records
+- Financial records and events
+
+---
+
+# 11. Open Questions
+
+## 1. Teacher assignment restriction
+
+**Question:** Can any same-school Teacher mark any class, or must the Teacher be assigned to the class/section?
+
+**Why it matters:** Determines the central authorization predicate.
+
+**Options:**
+
+- Same-school Teacher authority
+- Faculty Mapping only
+- Faculty Mapping plus legacy assignment fallback
+- Homeroom Teacher only
+
+**Affected code:**
+
+- Teacher Attendance UI
+- `POST /api/attendance`
+- Teacher roster GET
+- Faculty Mapping storage/routes
+
+---
+
+## 2. Enrollment status vocabulary
+
+**Question:** Which enrollment status values exist and which are Attendance-eligible?
+
+**Why it matters:** The schema accepts arbitrary text, and readers currently ignore status.
+
+**Options:**
+
+- Only `Active`
+- `Active` plus explicitly defined transitional states
+- Enrollment existence alone
+
+**Affected code:**
+
+- Enrollment creation/upsert
+- Teacher rosters
+- Attendance authorization
+- Historical Student reads
+- Promotion/transfer workflows
+
+---
+
+## 3. Approved leave precedence
+
+**Question:** If approved leave conflicts with an Attendance record, which wins?
+
+**Options:**
+
+- Approved leave always wins
+- Existing Attendance wins
+- Admin must resolve conflict
+- Latest audited action wins
+
+**Affected code:**
+
+- Leave approval
+- Attendance upsert
+- Student monthly calendar
+- Admin summaries
+- Attendance audit history
+
+---
+
+## 4. Leave percentage treatment
+
+**Question:** How should approved leave affect percentage?
+
+**Options:**
+
+- Count as attended, current behavior
+- Count as absent
+- Remain in denominator with separate weight
+- Remove from denominator
+
+**Affected code:**
+
+- Yearly summaries
+- Stats
+- Admin percentages
+- Examination/promotion consumers
+
+---
+
+## 5. Admin correction/override
+
+**Question:** Can Admin bypass Teacher edit count and seven-day restrictions?
+
+**Options:**
+
+- No override
+- Audited correction with reason
+- Approval workflow
+- Limited correction window
+
+**Affected code:**
+
+- Admin Attendance UI/routes
+- Attendance audit schema
+- Edit-count semantics
+
+---
+
+## 6. Teacher self-attendance session semantics
+
+**Question:** Is Teacher self-attendance globally one row per Teacher/date, or session-specific?
+
+Existing behavior strongly supports one Teacher/date, but Admin session filtering creates conflicting semantics.
+
+**Affected code:**
+
+- Self-attendance uniqueness
+- History
+- Admin Teacher summary
+- Session deletion
+
+---
+
+## 7. Historical Teacher policy
+
+**Question:** Should historical self-attendance status be frozen using the policy at check-in, or recalculated under the current policy?
+
+**Affected code:**
+
+- Policy engine
+- History reads
+- Corrections
+- Reporting
+
+---
+
+# 12. Files Inspected
+
+- `attached_assets/Pasted-STEP-1A-ATTENDANCE-BUSINESS-CONTRACT-VERIFICATION-IMPOR_1790076457785.txt`
+- `replit.md`
+- `shared/schema.ts`
+- `shared/ist-time.ts`
+- `server/storage.ts`
+- `server/routes.ts`
+- `server/teacher-routes.ts`
+- `server/attendance-policy-engine.ts`
+- `client/src/pages/teacher-modules/attendance.tsx`
+- `client/src/pages/teacher-modules/examination.tsx`
+- `client/src/pages/teacher-modules/complaint.tsx`
+- `client/src/pages/teacher-modules/profile.tsx`
+- `client/src/pages/teacher-modules/faculty-info.tsx`
+- `client/src/pages/teacher-modules/noticeboard.tsx`
+- `client/src/pages/teacher-modules/timetable.tsx`
+- `client/src/pages/teacher-modules/student-profiles.tsx`
+- `client/src/pages/teacher-dashboard.tsx`
+- `client/src/pages/student-attendance.tsx`
+- `client/src/pages/admin-modules/faculty-mapping.tsx`
+- `client/src/pages/admin-modules/attendance-overview.tsx`
+- `client/src/pages/admin-modules/session-migration.tsx`
+- Attendance and IST-related tests
+- Tracked migration files
+
+---
+
+# 13. Database Objects Inspected
+
+Based on the connected development database metadata and repository schema inspection:
+
+- `academic_sessions`
+- `attendance_records`
+- `teacher_self_attendance`
+- `attendance_correction_requests`
+- `attendance_policies`
+- `students`
+- `teachers`
+- `faculty_mappings`
+- `enrollments`
+- `student_leave_requests`
+- `leave_requests`
+- `calendar_events`
+- `homework`
+- `classwork`
+- `notices`
+- `complaints`
+- `exam_scores`
+- `promotion_decisions`
+- `academic_history`
+- `timetable_entries`
+- `audit_logs`
+- `visitor_logs`
+- `fee_records`
+- `payment_records`
+- `payment_attempts`
+- `payment_attempt_events`
+- `refunds`
+- `fee_audit_log`
+- `payment_webhook_events`
+
+**IMPLEMENTATION STATUS:  
+NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED.**

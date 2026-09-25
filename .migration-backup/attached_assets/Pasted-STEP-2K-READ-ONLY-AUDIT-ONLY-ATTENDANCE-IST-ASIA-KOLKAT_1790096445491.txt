@@ -1,0 +1,160 @@
+STEP 2K — READ-ONLY AUDIT ONLY
+ATTENDANCE IST / ASIA-KOLKATA DATE-TIME CONSISTENCY
+
+IMPORTANT:
+This is an AUDIT ONLY.
+DO NOT modify any files.
+DO NOT create migrations.
+DO NOT change schema.
+DO NOT change Attendance behavior.
+DO NOT fix anything yet.
+Do not make unrelated changes.
+
+PROJECT CONTEXT:
+This is a multi-tenant school MIS application.
+
+Attendance has already been corrected through Step 2J.
+
+The following Attendance rules are NON-NEGOTIABLE and must remain unchanged:
+
+1. Attendance is strictly tenant/school scoped.
+2. Attendance is Academic-Session scoped.
+3. Every Attendance read/write must use the authenticated school's selected Academic Session.
+4. Historical Attendance must remain available when an older Academic Session is selected.
+5. Student Registry is global and is NOT an Attendance gate.
+6. Enrollment is NOT an Attendance prerequisite.
+7. Faculty Mapping is NOT an Attendance restriction.
+8. Any authenticated teacher belonging to the school can mark Attendance.
+9. Working Attendance day rule from Step 2J:
+   For a PARTICULAR school + Academic Session + CLASS + SECTION,
+   a working Attendance day exists when at least one Attendance record exists
+   for that exact class/section/date and the date is within the selected
+   Academic Session startDate/endDate.
+10. Sunday/holiday/weekend does NOT automatically exclude a date.
+11. Missing Attendance rows remain Missing; they must not silently become Absent.
+12. Step 2I canonical Attendance weights remain unchanged:
+    Present = 1.0
+    Late = 1.0
+    Approved Leave = 1.0
+    Halfday = 0.5
+    Absent = 0
+    Unknown = 0
+    Missing/no row = 0 and tracked separately.
+13. Admin, Teacher and Student Attendance calculations must use the same
+    authoritative Attendance calculation logic.
+14. Attendance application/business/display timestamps must use
+    IST / Asia-Kolkata.
+15. Do NOT introduce a new calendar system or redesign working-day logic.
+
+AUDIT OBJECTIVE:
+
+Determine whether Attendance consistently uses IST / Asia-Kolkata for:
+
+A. Attendance record creation
+B. Attendance record date derivation
+C. Attendance update/upsert
+D. Attendance leave synchronization
+E. Teacher daily Attendance
+F. Teacher Attendance history
+G. Teacher Attendance summaries
+H. Admin daily Attendance
+I. Admin Attendance history
+J. Admin Attendance analytics
+K. Student daily Attendance
+L. Student Attendance history/yearly statistics
+M. Attendance working-day calculations
+N. Academic Session date comparisons
+O. Attendance API date filters
+P. Attendance frontend date display
+Q. Attendance frontend date selection
+R. Attendance cache/query keys involving dates
+S. Any cron/background job affecting Attendance
+T. Any use of:
+   - new Date()
+   - Date.UTC()
+   - toISOString()
+   - getDate()
+   - getDay()
+   - getMonth()
+   - setDate()
+   - UTC date extraction
+   - server-local timezone behavior
+   - browser-local timezone behavior
+   - PostgreSQL date/timestamp casting
+   - SQL CURRENT_DATE / NOW()
+   - date-fns or other date libraries
+   - timezone conversion utilities
+
+IMPORTANT DISTINCTION:
+
+Do NOT treat a plain database DATE such as:
+2026-09-22
+as a timezone problem by itself.
+
+We specifically need to find places where a timestamp or JavaScript Date
+can cross a UTC/local-time boundary and cause the Attendance DATE to become
+the previous or next calendar day.
+
+CHECK ESPECIALLY FOR:
+
+- Attendance marked around midnight IST.
+- Attendance date generated from current timestamp.
+- Frontend date picker sending dates.
+- Backend parsing YYYY-MM-DD.
+- Database DATE vs TIMESTAMP/TIMESTAMPTZ handling.
+- Historical Attendance queries.
+- Academic Session startDate/endDate comparisons.
+- Working-day helper from Step 2J.
+- Any "today" calculation.
+- Any default Attendance date.
+- Any date-range calculation.
+- Any browser rendering that changes the displayed date.
+- Any API response that converts Attendance dates through UTC.
+
+REQUIRED OUTPUT:
+
+1. Overall result:
+   PASS
+   or
+   NEEDS CHANGES
+
+2. Show the exact Attendance-related files/functions inspected.
+
+3. For every potentially unsafe timezone/date operation, report:
+   - file
+   - function/route
+   - exact operation
+   - why it is safe or unsafe
+   - whether it can change the Attendance calendar date
+
+4. Explicitly verify the Step 2J working-day helper:
+   getStudentAttendanceWorkingDates()
+
+5. Explicitly verify Attendance record creation/upsert paths.
+
+6. Explicitly verify Admin, Teacher and Student Attendance date readers.
+
+7. Explicitly verify frontend Attendance date handling.
+
+8. Explicitly verify database date/timestamp handling.
+
+9. Explicitly verify Academic Session startDate/endDate boundaries.
+
+10. Explicitly verify behavior around midnight IST.
+
+11. Identify only Attendance-related issues.
+    Do NOT list unrelated application timezone issues.
+
+12. If everything is already correct, clearly state:
+    "STEP 2K AUDIT PASS — NO CHANGES REQUIRED"
+
+13. If changes are required, do NOT implement them.
+    Instead provide a minimal list of the exact changes required for Step 2K.
+
+14. Do not modify any code during this audit.
+
+15. Finish with:
+    - Tests inspected/relevant existing tests
+    - npm run check status
+    - git diff --check status
+    - confirmation that the working tree was not modified by this audit

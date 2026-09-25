@@ -1,0 +1,501 @@
+We completed:
+
+* TIMETABLE STAGE 1 — Database + Storage — PASS
+* TIMETABLE STAGE 2 — API/Server — PASS
+* TIMETABLE STAGE 3A — Admin Timetable UI — PASS
+* TIMETABLE STAGE 3B — Teacher Timetable UI Audit — READY FOR FIX
+
+Now implement the **smallest safe fixes for the verified Teacher Timetable UI Session defects**.
+
+# CRITICAL SCOPE
+
+This stage is ONLY for making the Teacher Timetable UI Academic Session-based.
+
+Primary file:
+
+`client/src/pages/teacher-modules/timetable.tsx`
+
+Directly related client files may be changed only when required:
+
+* `client/src/pages/teacher-dashboard.tsx`
+* `client/src/lib/queryClient.ts`
+* existing session context/helper files
+
+Do NOT change:
+
+* `shared/schema.ts`
+* migrations
+* `server/storage.ts`
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* Admin Timetable UI
+* Student Timetable UI
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated modules
+
+## IMPORTANT: DO NOT FIX THE EXISTING TEACHER ALLOCATION GAP IN THIS STAGE
+
+The audit found a separate server-side authorization gap in:
+
+`teacher-routes.ts:2425–2436`
+
+where the batch route does not perform the same allocation validation as the single-slot route.
+
+Do NOT change that in this stage.
+
+Report it separately as a remaining concern.
+
+We will handle it in a separate, explicitly approved server-security task.
+
+---
+
+# 1. USE THE CANONICAL TEACHER SELECTED SESSION
+
+Teacher Timetable must use the existing canonical:
+
+`TeacherSelectedSessionContext`
+
+The effective Session is:
+
+1. selected/viewing Session when one is selected
+2. otherwise authenticated school's active Session
+3. if neither exists → no Timetable request
+
+Do NOT create another Session-selection mechanism.
+
+Most importantly:
+
+**Selected Session MUST take priority over active Session.**
+
+Example:
+
+```text
+Active Session = A
+Teacher selects B
+→ Timetable must use B
+```
+
+---
+
+# 2. FIX EVERY TEACHER TIMETABLE READ
+
+Every Timetable GET must use the resolved Session.
+
+This includes:
+
+* `/api/timetable/teacher/:teacherId`
+* `/api/timetable/class-view`
+* `/api/timetable/structure`
+* `/api/timetable/slot-check`
+
+Do not use native `fetch()` without the Session header.
+
+Use the existing session-aware transport/helper.
+
+If no Session resolves:
+
+* do not make the request
+* do not silently show it as a successful empty timetable
+* use the existing loading/error behavior appropriately
+
+---
+
+# 3. CAPTURE SESSION ID WITH EACH QUERY
+
+Each Session-owned query must have the Session ID in its query key.
+
+For example, conceptually:
+
+```text
+[teacher-timetable, sessionId]
+[class-view, sessionId, class, section]
+[structure, sessionId, class]
+[slot-check, sessionId, ...]
+```
+
+The exact existing key structure may be preserved; simply add Session identity where needed.
+
+VERY IMPORTANT:
+
+The Session ID in the query key and the Session ID sent in the request must be the SAME captured value.
+
+Do not read a mutable global Session during a query after the query has already been keyed to another Session.
+
+---
+
+# 4. FIX MUTATION SESSION TARGETING
+
+Teacher save/delete currently relies on the current global session header.
+
+Make the mutation target Session explicit.
+
+For:
+
+* single-slot save
+* single-slot delete
+
+capture the resolved Session ID before submitting.
+
+Expected:
+
+```text
+Teacher viewing Session B
+→ Save
+→ POST explicitly targets B
+```
+
+Never silently fall back to active Session A when B is selected.
+
+---
+
+# 5. FIX MODAL / DRAFT SESSION LEAK
+
+Current problem:
+
+Teacher opens a slot modal in Session A.
+
+Then changes Session.
+
+The modal can remain open.
+
+Its Save/Delete can then operate using the new Session.
+
+Prevent this.
+
+Preferred simple solution:
+
+When the selected/effective Session changes:
+
+* close the timetable modal
+* clear unsaved subject
+* clear unsaved room
+* clear selected day/period slot state where necessary
+* clear any pending timetable mutation state
+
+Do NOT carry unsaved Timetable edits between Sessions.
+
+---
+
+# 6. ADD DEFENSIVE DRAFT OWNERSHIP
+
+Also protect the mutation handlers.
+
+When a slot/modal is opened, record the originating Session ID.
+
+Before Save or Delete:
+
+```text
+originSession === currentSession
+```
+
+must be true.
+
+If not:
+
+* do not submit the mutation
+* close/reset the stale editor
+* show the existing safe error/notification mechanism if appropriate
+
+Do not introduce a large state-management redesign.
+
+---
+
+# 7. SESSION SWITCHING
+
+When Teacher switches:
+
+```text
+Session A → Session B
+```
+
+the Timetable page must:
+
+1. use B as the effective Session
+2. stop/cancel obsolete A queries where appropriate
+3. fetch B timetable
+4. fetch B class-view
+5. fetch B structure
+6. use B for occupancy checks
+7. clear A modal/draft state
+8. prevent A data from being written into B
+9. prevent A responses from replacing B state
+
+Use existing React Query/session mechanisms where possible.
+
+Do not create unnecessary custom request infrastructure.
+
+---
+
+# 8. CACHE ISOLATION
+
+Session A and Session B must have separate cache identities.
+
+Ensure every Session-owned Timetable query includes Session ID.
+
+Do not use a single shared cache key for multiple Sessions.
+
+Mutation invalidation must target the current Session's queries.
+
+For example:
+
+After Save/Delete:
+
+* current Session teacher timetable
+* current Session class-view
+* current Session structure if affected
+* current Session occupancy-related data where appropriate
+
+Do not invalidate unrelated Sessions.
+
+---
+
+# 9. RACE CONDITION PROTECTION
+
+Protect against:
+
+```text
+Session A request starts
+        ↓
+Teacher switches to B
+        ↓
+A response arrives later
+        ↓
+A data appears in B
+```
+
+Use Session-aware React Query keys and cancellation/refetch behavior.
+
+If the existing query mechanism already prevents stale results once keys contain Session ID, do not add unnecessary custom logic.
+
+---
+
+# 10. ARCHIVED SESSION UI
+
+Archived Sessions must remain readable.
+
+But mutation controls must be disabled.
+
+Disable:
+
+* Add slot
+* Edit slot
+* Delete slot
+* Save
+* Remove
+* modal mutation controls
+* subject/room editing where appropriate
+
+The modal should ideally not open for an archived Session.
+
+If it opens because of existing UI flow, its fields and mutation actions must remain read-only.
+
+Server-side Storage protection remains the final authority.
+
+Do NOT weaken it.
+
+---
+
+# 11. NO-SESSION / ERROR HANDLING
+
+Current behavior incorrectly treats some failed Timetable requests as empty/free data.
+
+Fix this narrowly.
+
+If there is no resolved Session:
+
+* do not call Timetable APIs
+* do not treat the result as an empty timetable
+* do not treat occupancy as free
+* do not allow a save
+
+If a Timetable GET fails:
+
+* surface the existing error state/notification where the page supports it
+* do not convert the failure into:
+
+  * empty timetable
+  * empty structure
+  * free slot
+
+Especially:
+
+**Unknown occupancy must NOT be treated as available.**
+
+Do not redesign the global error system.
+
+---
+
+# 12. DO NOT CHANGE TEACHER AUTHORIZATION
+
+Preserve all existing Teacher authorization.
+
+Do not weaken:
+
+* authenticated Teacher identity
+* teacher-school relationship
+* entry ownership checks
+* existing subject/class/section checks
+
+Again, the separate batch allocation gap must NOT be fixed in this stage.
+
+---
+
+# 13. TESTS
+
+Add/update focused Teacher Timetable UI tests.
+
+At minimum:
+
+### Test A — Selected Session
+
+Active = A, selected = B.
+
+Verify Timetable uses B.
+
+### Test B — No selection
+
+No selected Session + active A.
+
+Verify Timetable uses A.
+
+### Test C — No Session
+
+No selected and no active Session.
+
+Verify no Timetable request is made.
+
+### Test D — GET transport
+
+Verify all Timetable GET requests send the correct Session ID.
+
+### Test E — Query keys
+
+Verify A and B produce different Timetable query keys.
+
+### Test F — Save
+
+Selected B → save targets B.
+
+### Test G — Delete
+
+Selected B → delete targets B.
+
+### Test H — Modal isolation
+
+Open modal in A → switch to B → modal/draft cannot save/delete into B.
+
+### Test I — Archived Session
+
+Archived Session:
+
+* timetable remains readable
+* mutation controls are disabled
+* Save/Delete cannot execute
+
+### Test J — Fresh Session
+
+New Session with no Timetable:
+
+* no A data
+* no A cache
+* no A draft
+* no A occupancy result
+
+### Test K — Session switching
+
+A → B:
+
+* B data loads
+* A data cannot overwrite B
+* B mutations target B
+
+### Test L — Error handling
+
+Failed occupancy/read does not become "free" or valid empty data.
+
+Use focused tests only.
+
+Do not rewrite unrelated tests.
+
+---
+
+# 14. VERIFICATION
+
+Run:
+
+1. Focused Teacher Timetable UI tests
+2. Existing relevant Timetable tests
+3. `npm run check`
+4. `git diff --check`
+
+Then inspect the complete diff.
+
+Confirm explicitly:
+
+* no schema changes
+* no migration changes
+* no Storage changes
+* no server/API changes
+* no Admin UI changes
+* no Student UI changes
+* no Attendance changes
+* no Leave changes
+* no Examination changes
+* no unrelated refactoring
+
+Restart the application if required and confirm it starts.
+
+---
+
+# 15. FINAL REPORT
+
+Return:
+
+### Files changed
+
+### Selected Session behavior
+
+### Timetable GET requests
+
+### Mutation Session targeting
+
+### Query/cache isolation
+
+### Session switching
+
+### Modal/draft isolation
+
+### Archived Session UI
+
+### Error handling
+
+### Tests
+
+Exact passed/failed count.
+
+### npm run check
+
+PASS/FAIL.
+
+### git diff --check
+
+PASS/FAIL.
+
+### Scope confirmation
+
+### Remaining concern
+
+Report the previously identified Teacher batch allocation authorization gap separately.
+
+Do NOT fix it in this stage.
+
+End with exactly one:
+
+**TIMETABLE STAGE 3B — TEACHER UI FIX — PASS**
+
+or
+
+**TIMETABLE STAGE 3B — TEACHER UI FIX — INCOMPLETE**

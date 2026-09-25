@@ -1,0 +1,532 @@
+STEP 2K — IMPLEMENTATION
+ATTENDANCE IST / ASIA-KOLKATA + ACADEMIC SESSION CONSISTENCY
+
+IMPORTANT:
+Implement ONLY the changes explicitly listed below.
+
+Do NOT make unrelated fixes.
+Do NOT redesign Attendance.
+Do NOT redesign the calendar.
+Do NOT change Step 2I Attendance calculation rules.
+Do NOT change Step 2J working-day rules.
+Do NOT change Student Registry behavior.
+Do NOT make Enrollment an Attendance prerequisite.
+Do NOT add Faculty Mapping restrictions.
+Do NOT change Exam Controller behavior.
+Do NOT modify unrelated modules.
+
+==================================================
+NON-NEGOTIABLE PROJECT RULES
+==================================================
+
+1. This is a multi-tenant school MIS.
+
+2. Every Attendance operation must remain strictly scoped to:
+   authenticated school/tenant + Academic Session + applicable
+   class/section/student.
+
+3. Never trust browser-supplied schoolId as the tenant authority.
+
+4. Attendance is Academic-Session-specific.
+
+5. Attendance business dates and application-facing times must use:
+   Asia/Kolkata / IST.
+
+6. Student Registry is global/permanent and must NOT be reset or recreated
+   when Academic Session changes.
+
+7. Enrollment is NOT an Attendance prerequisite.
+
+8. Faculty Mapping is NOT an Attendance restriction.
+
+9. Any authenticated Teacher belonging to the school can mark Attendance.
+
+10. Step 2I calculation rules must remain exactly unchanged:
+
+    Present = 1.0
+    Late = 1.0
+    Approved Leave = 1.0
+    Halfday = 0.5
+    Absent = 0
+    Unknown = 0
+    Missing/no Attendance row = 0 and tracked separately
+
+11. Step 2J working-day rule must remain exactly unchanged:
+
+    For a particular:
+    school + Academic Session + class + section,
+
+    a working Attendance day exists when at least one Attendance record
+    exists for that exact class/section/date and the date is inside the
+    selected Academic Session startDate/endDate.
+
+12. Sunday/holiday/weekend must NOT automatically exclude a date.
+
+==================================================
+CHANGE 1 — ADMIN ATTENDANCE ANALYTICS IST YEAR
+==================================================
+
+File:
+server/teacher-routes.ts
+
+Find the Admin Attendance analytics fallback using:
+
+new Date().getFullYear()
+
+Replace it with the existing IST date utility.
+
+Use:
+
+todayInIST()
+
+or the existing:
+
+getAcademicYearForISTDate()
+
+Use the smallest safe change.
+
+The year must be based on the IST calendar date, not the server timezone.
+
+Do NOT change the actual analytics calculation.
+
+==================================================
+CHANGE 2 — STUDENT MONTHLY ATTENDANCE WEEKDAY
+==================================================
+
+File:
+server/storage.ts
+
+Function:
+getStudentMonthlyAttendance()
+
+Find logic similar to:
+
+new Date(year, month - 1, day).getDay()
+
+Replace it with the existing shared:
+
+calendarWeekday()
+
+Use the existing YYYY-MM-DD date value.
+
+Do NOT construct a JavaScript Date just to determine the weekday.
+
+The result must be independent of the server runtime timezone.
+
+Do NOT change Attendance calculation behavior.
+
+==================================================
+CHANGE 3 — TEACHER LEAVE DATE VALIDATION
+==================================================
+
+File:
+server/teacher-routes.ts
+
+Find Teacher leave creation.
+
+Leave startDate and endDate are calendar dates.
+
+Require both to pass:
+
+isValidDateOnly()
+
+Accepted format:
+
+YYYY-MM-DD
+
+Reject:
+
+- malformed dates
+- timestamp-bearing values
+- offset-bearing values
+- ambiguous date values
+
+Do NOT silently convert timestamp values into calendar dates.
+
+Calculate leave duration using date-only calendar arithmetic.
+
+Do NOT use JavaScript Date millisecond arithmetic for these calendar dates.
+
+Preserve existing authorization, tenant, teacher and leave-policy behavior.
+
+==================================================
+CHANGE 4 — LEAVE BALANCE DATE ARITHMETIC
+==================================================
+
+File:
+server/storage.ts
+
+Find Attendance-related leave balance/summary calculations using:
+
+new Date(r.startDate)
+new Date(r.endDate)
+
+Replace timezone-sensitive timestamp arithmetic with existing shared
+date-only calendar utilities.
+
+Calendar dates must remain calendar dates.
+
+Examples:
+
+2026-09-01 → 2026-09-01 = 1 day
+
+2026-09-01 → 2026-09-03 = 3 days
+
+Do NOT change existing leave policy rules or balance semantics.
+
+==================================================
+CHANGE 5 — ATTENDANCE POLICY TIMESTAMP PARSING
+==================================================
+
+File:
+server/attendance-policy-engine.ts
+
+Find timestamp parsing using:
+
+new Date(timestamp)
+
+followed by manual/fixed IST conversion.
+
+Use the existing shared:
+
+instant()
+
+and existing IST utilities.
+
+IMPORTANT:
+
+These are real timestamps/instants, not Attendance business dates.
+
+Do NOT change stored timestamp meaning.
+
+Do NOT convert attendance_records.date from timestamp.
+
+The objective is only to ensure timestamp-based policy evaluation uses
+the application's canonical IST handling.
+
+Preserve all existing policy thresholds and behavior.
+
+==================================================
+CHANGE 6 — TEACHER SELF-ATTENDANCE IST HANDLING
+==================================================
+
+File:
+client/src/pages/teacher-modules/my-attendance.tsx
+
+There are two specific areas.
+
+A. ELAPSED TIMER
+
+Current code uses browser-side:
+
+new Date(todayRec.checkInTime).getTime()
+
+Make timestamp parsing explicitly safe for the actual stored instant.
+
+Use the existing shared instant/date-time handling where available.
+
+Do not change the displayed Attendance business date.
+
+B. SCHOOL-END COMPARISON
+
+Current code manually adds:
+
+19,800,000 milliseconds
+
+and then reads UTC hours/minutes.
+
+Replace this duplicated timezone logic with the application's existing
+IST time-of-day utility/policy.
+
+Do NOT add another hardcoded +05:30 calculation.
+
+Do NOT change the configured school closing time.
+
+==================================================
+CHANGE 7 — ATTENDANCE DATE RANGE VALIDATION
+==================================================
+
+Files:
+
+server/teacher-routes.ts
+server/routes.ts
+
+Find Attendance history/statistics/yearly routes accepting:
+
+startDate
+endDate
+
+Validate both with:
+
+isValidDateOnly()
+
+Reject:
+
+- malformed values
+- timestamp-bearing values
+- invalid date-only values
+
+Also reject:
+
+startDate > endDate
+
+Valid YYYY-MM-DD behavior must remain unchanged.
+
+Preserve selected Academic Session validation.
+
+Preserve authenticated school/tenant isolation.
+
+Do NOT add generic validation to unrelated modules.
+
+==================================================
+CHANGE 8 — STUDENT ATTENDANCE WRITE MUST USE
+THE VALIDATED SELECTED ACADEMIC SESSION
+==================================================
+
+IMPORTANT SESSION-SCOPING FIX.
+
+Find:
+
+POST /api/attendance
+
+The audit found that this route can resolve the active Academic Session
+instead of consistently using the selected/view Academic Session.
+
+Correct this.
+
+The Attendance write must use the authenticated school's validated
+selected Academic Session.
+
+Requirements:
+
+- Resolve the selected Academic Session through the existing Attendance
+  session validation mechanism.
+- Verify the Session belongs to authenticated schoolId.
+- Never trust browser schoolId.
+- Never silently replace the selected Session with another active Session.
+- Save attendance_records.session_id using the validated selected Session.
+- Preserve existing tenant validation.
+- Preserve existing class/section/student validation.
+- Preserve existing IST date validation.
+- Preserve existing seven-day editing window.
+- Preserve historical Attendance behavior.
+
+IMPORTANT:
+
+Do NOT make Enrollment a prerequisite.
+
+Do NOT require Faculty Mapping.
+
+Do NOT change Student Registry behavior.
+
+Do NOT invent a new historical-write restriction.
+
+Add regression tests proving that Attendance cannot silently be written
+to another Academic Session.
+
+==================================================
+CHANGE 9 — TEACHER SELF-ATTENDANCE SESSION ISOLATION
+==================================================
+
+Relevant files may include:
+
+server/teacher-routes.ts
+server/storage.ts
+client/src/pages/teacher-modules/my-attendance.tsx
+
+Ensure Teacher self-attendance operations follow the same
+Academic-Session-specific Attendance rule.
+
+Check:
+
+- create/check-in
+- check-out
+- today's status
+- history
+- update predicates
+- query/cache identity
+
+Requirements:
+
+- Use the validated Academic Session where the operation is
+  session-specific.
+- Prevent the same teacher/date from Session A colliding with Session B.
+- Prevent history from returning records from another Session.
+- Include Session ID in frontend query/cache identity where required.
+- Preserve school/tenant isolation.
+- Never trust browser schoolId.
+
+Do NOT redesign Teacher self-attendance.
+
+Do NOT change check-in/check-out semantics.
+
+Do NOT change policy thresholds.
+
+Only enforce the existing Academic Session invariant.
+
+Before changing any database uniqueness constraint, inspect the current
+schema first.
+
+If a schema/migration is genuinely required for this Session isolation,
+implement ONLY that required migration.
+
+Do NOT make unrelated schema changes.
+
+==================================================
+CHANGE 10 — LEAVE → ATTENDANCE SESSION BOUNDARY
+==================================================
+
+Relevant files may include:
+
+server/storage.ts
+server/teacher-routes.ts
+
+When approved leave synchronizes into Attendance records:
+
+- Use exact YYYY-MM-DD values.
+- Use shared date-only calendar arithmetic.
+- Respect selected/validated Academic Session boundaries.
+- Do not create Attendance records outside the Session.
+- Preserve school/tenant isolation.
+- Preserve existing leave synchronization behavior within the Session.
+
+Example:
+
+If Session ends on:
+
+2026-03-31
+
+and leave continues until:
+
+2026-04-05
+
+Attendance synchronization for that Session must stop at:
+
+2026-03-31
+
+Do NOT create Attendance records in the next Session.
+
+Do NOT change leave approval policy.
+
+Do NOT change Step 2J working-day behavior.
+
+==================================================
+DO NOT CHANGE THESE ALREADY-CORRECT AREAS
+==================================================
+
+Keep unchanged:
+
+1. attendance_records.date remains PostgreSQL DATE.
+2. attendance_records.session_id remains required.
+3. Canonical identity remains:
+   school + session + student + date.
+4. Step 2I status weights.
+5. Step 2J working-day authority.
+6. Sunday/holiday behavior.
+7. Missing Attendance behavior.
+8. Historical Attendance behavior.
+9. Student Registry behavior.
+10. Enrollment not being an Attendance gate.
+11. Faculty Mapping not restricting Attendance.
+12. Any authenticated school Teacher can mark Attendance.
+13. Unified Admin/Teacher/Student Attendance calculation.
+14. Existing IST utilities.
+15. No new calendar system.
+
+==================================================
+TESTS REQUIRED
+==================================================
+
+Add focused regression tests for:
+
+1. IST midnight:
+
+   2026-09-22T18:29:59Z
+   => 2026-09-22 IST
+
+   2026-09-22T18:30:00Z
+   => 2026-09-23 IST
+
+2. Admin analytics year uses IST.
+
+3. Student monthly weekday calculation is independent of
+   server timezone.
+
+4. Valid Teacher leave YYYY-MM-DD is accepted.
+
+5. Timestamp-bearing/malformed Teacher leave dates are rejected.
+
+6. Leave duration is correct across month/year boundaries.
+
+7. Leave balance is timezone-independent.
+
+8. Attendance policy timestamp parsing remains correct.
+
+9. Teacher self-attendance elapsed time remains correct.
+
+10. Teacher self-attendance school-end logic remains IST-based.
+
+11. Attendance history/statistics reject invalid date ranges.
+
+12. Attendance history/statistics reject startDate > endDate.
+
+13. Student Attendance write uses the validated selected Session.
+
+14. Student Attendance cannot silently fall back to another active Session.
+
+15. Teacher self-attendance Session A cannot collide with Session B.
+
+16. Teacher self-attendance history cannot return another Session's records.
+
+17. Leave synchronization cannot create Attendance outside Session boundaries.
+
+18. Existing tenant-isolation tests still pass.
+
+19. Existing Step 2I tests still pass.
+
+20. Existing Step 2J working-day tests still pass.
+
+==================================================
+VALIDATION
+==================================================
+
+Run:
+
+npm run check
+
+Then:
+
+git diff --check
+
+Run focused Attendance tests and the relevant existing Attendance suite.
+
+Do NOT modify production/deployment configuration.
+
+Do NOT modify unrelated files.
+
+==================================================
+FINAL REPORT REQUIRED
+==================================================
+
+After implementation report:
+
+1. Exact files changed.
+2. Exact functions/routes changed.
+3. Exact tests added/updated.
+4. Test results.
+5. npm run check result.
+6. git diff --check result.
+7. Whether a schema/migration was required.
+8. Confirmation of multi-tenant isolation.
+9. Confirmation Attendance remains Academic-Session-specific.
+10. Confirmation Student Registry was not changed.
+11. Confirmation Enrollment was not made an Attendance gate.
+12. Confirmation Faculty Mapping was not added as a restriction.
+13. Confirmation Step 2I was unchanged.
+14. Confirmation Step 2J was unchanged.
+15. Confirmation Attendance date/time behavior is IST / Asia-Kolkata.
+
+If you discover anything outside the exact scope above,
+DO NOT fix it in this step.
+
+Report it separately as an observation.

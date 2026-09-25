@@ -1,0 +1,44 @@
+Please review and fix the Financial Analytics PDF based on the latest PDF I provided.
+
+The overall design is good, but I found some important reporting issues that need to be corrected:
+
+1. Fix the Online Channel section
+   
+   - The PDF currently shows Online Channel → Transactions: 10 → Gross Collected: ₹1,45,050, which is correct.
+   - However, underneath it, the Status table shows:
+     - Captured: 25 — ₹2,75,488
+     - Cancelled: 12 — ₹1,98,800
+     - Failed: 4 — ₹80,000
+   - This is incorrect/misleading because those figures represent the overall payment lifecycle, including offline payments, not only the Online Channel.
+   - If the section is titled ONLINE CHANNEL, every figure inside that section must belong only to online/portal payments.
+   - Keep the overall payment-attempt statistics separate under a clearly labelled section such as Portal Payment Lifecycle / Payment Attempts, if those statistics are required.
+
+2. Do not mix online and offline data
+   
+   - Online Channel should contain only online/portal transactions.
+   - Offline Channel should contain only offline transactions.
+   - Overall totals should remain separate and should reconcile with the Executive Summary.
+
+3. Keep the financial authority consistent
+   
+   - Gross Collected, Net Collected, Transactions, Payment Channel Split, Class-wise Breakdown and Fee Category Breakdown must all use the same authoritative successful-payment data.
+   - Do not duplicate or reuse an overall value inside a channel-specific section.
+
+4. Improve PDF pagination
+   
+   - Avoid leaving a section heading at the bottom of a page with its actual content starting on the next page.
+   - Keep each section heading together with its first content block wherever reasonably possible.
+   - The PDF should look like a professional financial/board report.
+
+5. Keep the existing good parts
+   
+   - Do not unnecessarily redesign the PDF.
+   - Keep the current clean layout, header, footer, page numbering, IST timezone display, colours and overall structure.
+   - Continue using Asia/Kolkata (IST) consistently.
+
+6. Important: do not change the underlying financial data just to make the PDF look correct.
+   
+   - Fix the data mapping/section authority instead.
+   - After fixing, verify that all totals reconcile across the Financial Analytics UI and PDF.
+
+Please implement this carefully and run the relevant tests/regression checks after the changes.

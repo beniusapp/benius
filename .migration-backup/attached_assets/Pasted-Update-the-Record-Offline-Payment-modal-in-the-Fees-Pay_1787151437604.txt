@@ -1,0 +1,77 @@
+Update the Record Offline Payment modal in the Fees & Payments module.
+
+Requirement
+
+In the Record Offline Payment form, fields that are currently labelled with “(optional)” or “Optional” should no longer display that text.
+
+For example, if the form currently shows:
+
+- Bank Name (optional)
+- Branch (optional)
+- Payer Name (optional)
+- Notes (optional)
+
+Change the labels to simply:
+
+- Bank Name
+- Branch
+- Payer Name
+- Notes
+
+Important behavior
+
+These fields must remain optional from a validation perspective.
+
+The cashier should be able to:
+
+1. Enter the information if they have it.
+2. Leave the field completely blank if they don't want or need to enter it.
+3. Successfully record the offline payment without filling these fields.
+
+Do NOT add required validation to these fields.
+
+Payment methods
+
+Apply the same principle to the optional supporting fields for:
+
+- Cash
+- Cheque
+- Bank Transfer
+- Demand Draft
+- UPI / QR Payment
+
+Only fields that are genuinely required for a specific payment method should remain required and continue showing the existing "*" indicator.
+
+For example, in the Demand Draft form:
+
+- DD Number * → required, keep the "*"
+- DD Date * → required, keep the "*"
+- Bank Name → optional, but remove the word “optional”
+- Branch → optional, but remove the word “optional”
+- Payer Name → optional, but remove the word “optional”
+
+Do not change
+
+Do NOT change:
+
+- Payment method logic
+- Required-field validation
+- Payment recording logic
+- Database schema
+- API behavior
+- Receipt generation
+- Payment verification
+- Invoice logic
+- Razorpay/online payment logic
+- UI layout or styling beyond removing the “Optional” text
+
+This should be a small UI/label cleanup only.
+
+After implementation:
+
+1. Check every payment method in Record Offline Payment.
+2. Confirm no unnecessary “Optional” / “(optional)” labels remain.
+3. Confirm optional fields can still be left blank.
+4. Confirm genuinely required fields still show "*".
+5. Run TypeScript checks and existing tests.
+6. Do not submit/create any actual payment during testing.

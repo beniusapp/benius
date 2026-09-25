@@ -1,0 +1,293 @@
+Investigation Only — Payment Date & Time Missing on Receipt
+
+Do NOT modify, fix, migrate, refactor, or change any code or database data yet.
+
+I only want a complete investigation and root-cause report.
+
+Problem
+
+I made a successful fee payment from the Student Portal through Razorpay.
+
+The payment was successfully completed and the receipt is generated.
+
+However, on the generated Official Fee Payment Receipt, the section:
+
+PAYMENT DATE & TIME
+
+is showing:
+
+—
+
+even though this was a successful Razorpay payment.
+
+The receipt is clearly showing:
+
+- Receipt No.
+- Invoice No.
+- Status: PAID
+- Payment Details
+- Payment Method: Card
+- Payment ID
+- Order ID
+- Card details
+- Auth Code
+- Total Amount Paid
+
+But Payment Date & Time is empty.
+
+What I want you to investigate
+
+Trace this payment completely from beginning to end:
+
+Student Portal → Razorpay Checkout → Razorpay payment → callback/webhook → backend payment processing → database → receipt generation → PDF renderer
+
+Do not assume where the problem is.
+
+---
+
+1. Find the exact source of "Payment Date & Time"
+
+Locate the receipt renderer/template responsible for displaying:
+
+PAYMENT DATE & TIME
+
+Tell me:
+
+- Which file?
+- Which component/function?
+- Which database field is being used?
+- Which variable is ultimately displayed?
+- Why is it becoming "—"?
+
+Show me the exact data flow.
+
+---
+
+2. Investigate the database record
+
+For a successful Student Portal Razorpay payment, inspect the corresponding:
+
+- fee record
+- payment record
+- payment attempt record
+- Razorpay payment ID
+- Razorpay order ID
+
+Determine whether the successful payment has a timestamp stored anywhere.
+
+Check fields such as:
+
+- "paid_date"
+- "paid_at"
+- "payment_date"
+- "created_at"
+- "updated_at"
+- payment attempt timestamp
+- webhook timestamp
+- Razorpay payment "created_at"
+
+Do NOT change any data.
+
+Tell me exactly which fields contain values and which are NULL/empty.
+
+---
+
+3. Investigate Razorpay data
+
+For the successful Razorpay payment, determine whether our application receives/stores the Razorpay payment creation/capture timestamp.
+
+Razorpay payment objects provide a "created_at" Unix timestamp.
+
+Also investigate the "payment.captured" webhook payload and determine whether its timestamp is received and stored.
+
+Do not assume the webhook event timestamp and payment creation timestamp are identical.
+
+I want you to identify exactly which timestamp our application currently receives and which timestamp the receipt is trying to use.
+
+---
+
+4. Investigate callback vs webhook
+
+Determine whether the payment date is supposed to come from:
+
+1. Razorpay checkout callback
+2. Razorpay "payment.captured" webhook
+3. Razorpay Payment API
+4. "payment_records"
+5. "payment_attempts"
+6. "fee_records"
+7. Some other source
+
+Trace the actual successful payment flow used by this application.
+
+Do not make assumptions based only on the intended architecture.
+
+---
+
+5. Compare successful payment data
+
+Find at least one recent successful Student Portal Razorpay payment and compare:
+
+Razorpay
+
+- Payment ID
+- Order ID
+- created_at
+- captured status
+- method
+
+Our database
+
+- Payment ID
+- Order ID
+- payment status
+- payment method
+- paid date
+- created_at
+- any payment timestamp
+
+Receipt
+
+- Payment Date & Time source
+- resulting value
+
+Show where the value disappears.
+
+---
+
+6. Check ALL receipt generation paths
+
+Do not investigate only one receipt route.
+
+Find every place where an official fee receipt can be generated, including:
+
+- Student Portal receipt
+- Admin Portal receipt
+- Receipt PDF
+- Receipt preview
+- Download receipt
+- Transaction/payment detail receipt if applicable
+
+Check whether they all use the same payment-date source.
+
+If one path has the correct date and another shows "—", clearly explain the difference.
+
+---
+
+7. Check payment types
+
+Investigate whether this problem affects only:
+
+Student Portal → Razorpay
+
+or also:
+
+- Cash
+- UPI/QR
+- Bank Transfer
+- Demand Draft
+- Cheque
+- Other offline payments
+
+I specifically want to know whether the missing date/time is a Razorpay-specific issue or a general receipt data-mapping issue.
+
+---
+
+8. Check timezone handling
+
+The application uses Indian Standard Time.
+
+Verify whether timestamps are stored as:
+
+- Unix timestamp
+- UTC
+- database timestamp
+- ISO timestamp
+
+and how they are converted to:
+
+IST (Asia/Kolkata)
+
+Do not change timezone handling.
+
+Only report what is currently happening.
+
+---
+
+9. Check recent Payment Method changes
+
+We recently changed the payment-channel normalization so that Student Portal Razorpay payments are represented as:
+
+Portal Payment
+
+instead of:
+
+Online
+
+Do NOT change anything.
+
+Just verify whether this recent payment-method normalization could have affected the receipt's payment date/time mapping.
+
+Specifically check whether any code now uses:
+
+- "Portal Payment"
+- "Online"
+- Razorpay payment method ("card", "upi", etc.)
+
+in a way that could affect receipt date/time resolution.
+
+---
+
+10. Important: Do not fix anything yet
+
+This is an investigation-only task.
+
+DO NOT:
+
+- edit code
+- edit database records
+- create migrations
+- change receipt templates
+- change webhook logic
+- change payment logic
+- change timestamps
+- change payment-method logic
+- restart/redeploy as part of a fix
+
+You may run read-only queries/tests needed for investigation.
+
+---
+
+Final response required
+
+After investigating, give me a clear report with:
+
+A. Root Cause
+
+Exactly why the receipt displays:
+
+Payment Date & Time: —
+
+B. Actual data flow
+
+Show:
+
+Razorpay → webhook/callback → backend → database → receipt
+
+and identify exactly where the timestamp is lost/missing.
+
+C. Correct timestamp available
+
+Tell me whether the correct payment timestamp already exists somewhere in the system.
+
+D. Affected receipt paths
+
+List every receipt/report affected.
+
+E. Recommended fix
+
+Explain the safest modern approach to fix it.
+
+Do not implement the fix yet.
+
+I will review your investigation first and then give you a separate instruction to implement the fix.

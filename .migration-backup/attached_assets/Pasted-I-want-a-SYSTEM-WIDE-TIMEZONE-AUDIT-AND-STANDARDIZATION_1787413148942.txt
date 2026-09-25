@@ -1,0 +1,128 @@
+I want a SYSTEM-WIDE TIMEZONE AUDIT AND STANDARDIZATION.
+
+This application is exclusively for India, so Asia/Kolkata (IST, UTC+05:30) must be the authoritative business timezone everywhere in the entire application — now and for all future development.
+
+Do NOT only fix Financial Analytics. Audit the WHOLE codebase.
+
+Mandatory requirement
+
+Search the entire project for every place where dates/times are:
+
+- Created
+- Stored
+- Converted
+- Parsed
+- Compared
+- Filtered
+- Grouped by day/week/month/year
+- Displayed
+- Exported to PDF/CSV
+- Used in reports/analytics
+- Used in audit logs
+- Used in payment/receipt records
+- Used in Razorpay/webhook processing
+- Used in academic sessions
+- Used in reminders/dunning
+- Used in scheduled jobs
+- Used in dashboards
+- Used in API responses
+
+The business timezone must consistently be:
+
+Asia/Kolkata
+
+Critical rule
+
+A payment received at:
+
+22-Aug-2026 00:30 IST
+
+must ALWAYS belong to:
+
+22-Aug-2026
+
+It must never become 21-Aug-2026 because of UTC conversion.
+
+The same rule must apply to every financial and business event.
+
+Audit specifically for
+
+1. Financial Analytics
+2. Ledger & Transactions
+3. Payment history
+4. Offline payments
+5. Razorpay payments/webhooks
+6. Refunds
+7. Receipts
+8. Invoices
+9. Fee records
+10. Audit logs
+11. Academic sessions
+12. Today / Week / Month / Academic Year / Custom filters
+13. Trends and charts
+14. Aging/overdue calculations
+15. Scheduled reports/reminders
+16. PDF/CSV exports
+17. Dashboard statistics
+18. Any other module using dates
+
+Important architecture rule
+
+Do NOT blindly overwrite valid UTC timestamps.
+
+First identify the authoritative timestamp for every entity.
+
+If timestamps are stored in UTC, retain the authoritative instant, but convert to Asia/Kolkata whenever calculating business dates, filtering, grouping, displaying, reporting, or generating PDFs/CSV.
+
+Avoid inconsistent patterns such as:
+
+- "new Date().toISOString().slice(0, 10)"
+- UTC calendar-date extraction for Indian business dates
+- database date fields being treated as authoritative when the actual transaction timestamp is authoritative
+- mixing server timezone, browser timezone and database timezone
+- different timezone logic in different modules
+
+Create and use a single shared timezone utility/policy for the entire application instead of fixing individual screens separately.
+
+Boundary testing
+
+Test timestamps around midnight IST, especially:
+
+- 21-Aug 23:59:59 IST
+- 22-Aug 00:00:00 IST
+- 22-Aug 00:00:01 IST
+- 22-Aug 23:59:59 IST
+- 23-Aug 00:00:00 IST
+
+Verify that Today, Week, Month, Academic Year and Custom ranges classify records correctly.
+
+Financial reconciliation
+
+After the timezone audit, independently reconcile:
+
+Database → API → UI → Ledger → Analytics → PDF → CSV
+
+for all financial figures.
+
+No payment, refund, receipt, invoice, transaction, audit event or report should move to the wrong calendar day because of UTC/IST conversion.
+
+Future-proof requirement
+
+Do not make this a one-time patch.
+
+Establish Asia/Kolkata as the documented application-wide business timezone policy and ensure all new date/time code follows it.
+
+Add automated regression tests so a future developer cannot accidentally reintroduce UTC calendar-date bugs.
+
+I want you to:
+
+1. Audit the complete codebase.
+2. Identify every UTC/IST inconsistency.
+3. Fix all business-date issues.
+4. Centralize timezone handling.
+5. Add regression tests, especially around midnight IST.
+6. Verify all existing financial modules after the change.
+7. Run typecheck/build/full regression tests.
+8. Report exactly what was changed and which modules were verified.
+
+Do not mark this complete just because Financial Analytics passes. I want system-wide timezone correctness for the entire application, permanently.

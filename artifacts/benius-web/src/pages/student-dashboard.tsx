@@ -1,0 +1,781 @@
+import { useEffect, useMemo, useState, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { motion, AnimatePresence } from "framer-motion";
+import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
+import { apiRequest, queryClient, getQueryFn, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useSessionView } from "@/contexts/session-view-context";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  nextStudentDashboardGreetingHour,
+  studentDashboardAcademicYear,
+  studentDashboardGreeting,
+} from "@/lib/student-dashboard-time";
+import {
+  millisecondsUntilNextISTHour,
+  minutesSinceMidnightIST,
+} from "@shared/ist-time";
+
+interface StudentMeResponse {
+  id: number;
+  name: string;
+  digitalStudentId: string;
+  class: string;
+  section: string;
+  phone: string;
+  dob: string;
+  photoUrl?: string | null;
+  email?: string | null;
+  schoolName: string;
+  schoolCode: string;
+  schoolId?: number;
+}
+
+interface AttendanceStatsResponse {
+  overallPercent: number;
+  workingDays: number;
+  daysPresent: number;
+}
+
+interface FeeRecord {
+  id: number;
+  status: string;
+  amount: number;
+}
+
+interface PortalInfo {
+  isEnabled: boolean;
+  gatewayUrl: string | null;
+  bannerMessage: string | null;
+}
+
+interface HomeworkSubmission {
+  id: number;
+  homeworkId: number;
+  studentId: number;
+  schoolId: number;
+  fileUrl: string | null;
+  status: string;
+  submittedAt: string;
+}
+
+interface HomeworkItem {
+  id: number;
+  schoolId: number;
+  teacherId: number;
+  class: string;
+  section: string;
+  subject: string;
+  content: string;
+  fileUrl: string | null;
+  dueDate: string | null;
+  createdAt: string;
+  teacherName: string;
+  submission: HomeworkSubmission | null;
+}
+
+interface Tile {
+  id: string;
+  label: string;
+  emoji: string;
+  accent: string;
+  bg: string;
+  route: string | null;
+  pulse: boolean;
+  noticeKey?: boolean;
+  feesKey?: boolean;
+}
+
+const TILES: Tile[] = [
+  { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
+  { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
+  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: false },
+  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false },
+  { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
+  { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: true, feesKey: true },
+  { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination",  pulse: false },
+  { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false },
+  { id: "gallery",          label: "Gallery",          emoji: "🎨", accent: "#6366f1", bg: "#eef2ff", route: "/student/gallery",      pulse: false },
+  { id: "faculty-info",     label: "Faculty Info",     emoji: "👨‍🏫", accent: "#14b8a6", bg: "#f0fdfa", route: "/student/faculty",     pulse: false },
+  { id: "school-calendar",  label: "School Calendar",  emoji: "📅", accent: "#84cc16", bg: "#f7fee7", route: "/student/calendar",    pulse: false },
+  { id: "leave",            label: "Leave",            emoji: "🌴", accent: "#a78bfa", bg: "#faf5ff", route: "/student/leave",        pulse: false },
+  { id: "timetable",        label: "Timetable",        emoji: "🗓️", accent: "#0ea5e9", bg: "#f0f9ff", route: "/student/timetable",   pulse: false },
+  { id: "e-library",        label: "E-Library",        emoji: "📖", accent: "#10b981", bg: "#f0fdf4", route: "/student/library",      pulse: false },
+];
+
+const containerVariants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.06 } },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 22 },
+  show:   { opacity: 1, y: 0,  transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] } },
+};
+
+// ── Session-based modules (reset to empty on new session) ───────────────────
+const SESSION_MODULES = [
+  { emoji: "✅", label: "Attendance" },
+  { emoji: "📝", label: "Homework" },
+  { emoji: "📚", label: "Classwork" },
+  { emoji: "🔔", label: "Noticeboard" },
+  { emoji: "💳", label: "Fees" },
+  { emoji: "🏆", label: "Examination" },
+  { emoji: "🎭", label: "Complaints" },
+  { emoji: "🌴", label: "Leave" },
+  { emoji: "🗓️", label: "Timetable" },
+];
+
+// ── Global modules (never reset — session independent) ───────────────────────
+const GLOBAL_MODULES = [
+  { emoji: "🎓", label: "Profile" },
+  { emoji: "🎨", label: "Gallery" },
+  { emoji: "👨‍🏫", label: "Faculty Info" },
+  { emoji: "📅", label: "School Calendar" },
+  { emoji: "📖", label: "E-Library" },
+];
+
+export default function StudentDashboard() {
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
+  const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading, pendingActivation, confirmActivation } = useSessionView();
+  const today = useISTToday();
+  const fallbackAcademicYear = studentDashboardAcademicYear(today);
+  const [greetingMinutes, setGreetingMinutes] = useState(minutesSinceMidnightIST);
+  const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const sessionDropdownRef = useRef<HTMLDivElement>(null);
+
+  const greeting = studentDashboardGreeting(greetingMinutes);
+
+  useEffect(() => {
+    const nextHour = nextStudentDashboardGreetingHour(greetingMinutes);
+    const timeout = window.setTimeout(
+      () => setGreetingMinutes(minutesSinceMidnightIST()),
+      millisecondsUntilNextISTHour(nextHour) + 25,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [greetingMinutes]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (sessionDropdownRef.current && !sessionDropdownRef.current.contains(e.target as Node)) {
+        setSessionDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
+    queryKey: ["/api/student-me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  const { data: unreadData } = useQuery<{ count: number }>({
+    queryKey: ["/api/student/notices/unread-count"],
+    enabled: !!student,
+    refetchInterval: 60000,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
+  const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
+    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? fallbackAcademicYear],
+    queryFn: async () => {
+      const params = selectedSession
+        ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}&sessionId=${selectedSession.id}`
+        : `academicYear=${encodeURIComponent(fallbackAcademicYear)}`;
+      const r = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, selectedSession?.id);
+      if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
+      return r.json() as Promise<AttendanceStatsResponse>;
+    },
+    enabled: !!student && !isSessionsLoading,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+  });
+
+  const { data: homeworkItems } = useQuery<HomeworkItem[]>({
+    queryKey: ["/api/student/homework"],
+    enabled: !!student,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+  });
+
+  const { data: feeRecords = [] } = useQuery<FeeRecord[]>({
+    queryKey: ["/api/student/fees", selectedSession?.id ?? "default"],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/student/fees", { credentials: "include" });
+      if (!r.ok) throw new Error(`Fee fetch failed: ${r.status}`);
+      return r.json() as Promise<FeeRecord[]>;
+    },
+    enabled: !!student && !isSessionsLoading,
+    staleTime: 0,
+    refetchOnMount: true,
+  });
+
+  const { data: portalInfo } = useQuery<PortalInfo>({
+    queryKey: ["/api/student/fees/portal-info"],
+    enabled: !!student,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!isLoading && (isError || !student || !student.schoolId)) {
+      setLocation("/student-login");
+    }
+  }, [isLoading, isError, student, setLocation]);
+
+  const logoutMutation = useMutation({
+    mutationFn: async () => { await apiRequest("POST", "/api/student-logout"); },
+    onSuccess: () => {
+      queryClient.clear();
+      setLocation("/student-login");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const initials = useMemo(() => {
+    if (!student) return "";
+    return student.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  }, [student?.name]);
+
+  const attendPct = attendanceStats?.overallPercent ?? null;
+
+  const pendingHwCount = useMemo(() => {
+    if (!homeworkItems) return null;
+    return homeworkItems.filter(
+      (hw) => hw.submission === null || hw.submission.status === "rejected"
+    ).length;
+  }, [homeworkItems]);
+
+  const unreadCount = unreadData?.count ?? 0;
+
+  const feesTotalDue = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
+  const feesOverdueCount = feeRecords.filter(r => r.status === "Overdue").length;
+  const feesHasOutstanding = feeRecords.some(r => r.status !== "Paid");
+
+  if (isLoading || !student) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+          <p className="text-sm text-slate-400 font-medium">Loading your portal…</p>
+        </div>
+      </div>
+    );
+  }
+
+  const firstName = student.name.split(" ")[0];
+
+  const handleTileClick = (label: string, route: string | null) => {
+    if (route) { setLocation(route); return; }
+    toast({ title: label, description: `${label} module coming soon.` });
+  };
+
+  return (
+    <div
+      className="min-h-screen"
+      style={{ background: "#f8fafc" }}
+    >
+      {/* Decorative background radial accents */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        <div style={{ position: "absolute", top: "-120px", right: "-80px",  width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", bottom: "-100px", left: "-60px", width: "460px", height: "460px", borderRadius: "50%", background: "radial-gradient(circle, rgba(16,185,129,0.07) 0%, transparent 65%)" }} />
+        <div style={{ position: "absolute", top: "38%", left: "28%",        width: "360px", height: "360px", borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.05) 0%, transparent 65%)" }} />
+      </div>
+
+      {/* ── Fixed glass navigation bar ── */}
+      <header
+        className="fixed top-0 left-0 right-0 z-50"
+        style={{
+          backdropFilter: "blur(18px)",
+          WebkitBackdropFilter: "blur(18px)",
+          background: "rgba(255, 255, 255, 0.75)",
+          borderBottom: "1px solid rgba(255,255,255,0.7)",
+          boxShadow: "0 1px 28px rgba(0,0,0,0.07)",
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="flex items-center justify-center w-9 h-9 rounded-xl"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)" }}
+            >
+              <GraduationCap className="w-5 h-5 text-white" />
+            </div>
+            <div className="leading-tight">
+              <p className="font-bold text-base text-slate-800 tracking-tight" data-testid="text-app-title">BENIUS</p>
+              <p className="text-[11px] text-slate-400 font-medium">Student Portal</p>
+            </div>
+          </div>
+
+          {/* ── Academic Session Switcher ── */}
+          {!isSessionsLoading && sessions.length > 0 && (
+            <div className="flex-1 flex justify-center" ref={sessionDropdownRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setSessionDropdownOpen((p) => !p)}
+                  data-testid="button-session-picker"
+                  className="flex items-center gap-2 text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all duration-200"
+                  style={{
+                    background: isArchiveMode ? "rgba(251,191,36,0.12)" : "rgba(16,185,129,0.10)",
+                    border: isArchiveMode ? "1px solid rgba(251,191,36,0.40)" : "1px solid rgba(16,185,129,0.30)",
+                    color: isArchiveMode ? "#b45309" : "#15803d",
+                  }}
+                >
+                  {isArchiveMode
+                    ? <History className="w-3 h-3 flex-shrink-0" />
+                    : <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" style={{ boxShadow: "0 0 6px #10b981" }} />}
+                  <span className="hidden sm:inline">
+                    {isArchiveMode
+                      ? `${selectedSession?.sessionName} · Archive`
+                      : selectedSession
+                        ? `${selectedSession.sessionName} · Active`
+                        : "Current Session"}
+                  </span>
+                  <ChevronDown
+                    className="w-3 h-3 transition-transform"
+                    style={{ transform: sessionDropdownOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                  />
+                </button>
+
+                {sessionDropdownOpen && (
+                  <div
+                    className="absolute top-full mt-2 left-1/2 z-[60] rounded-xl overflow-hidden"
+                    style={{
+                      transform: "translateX(-50%)",
+                      minWidth: "220px",
+                      background: "rgba(255,255,255,0.98)",
+                      backdropFilter: "blur(20px)",
+                      border: "1px solid rgba(0,0,0,0.08)",
+                      boxShadow: "0 12px 36px rgba(0,0,0,0.14)",
+                    }}
+                  >
+                    <div className="px-3 py-2 border-b" style={{ borderColor: "rgba(0,0,0,0.06)" }}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Academic Sessions</p>
+                    </div>
+                    {sessions.map((s) => {
+                      const isViewing = s.id === selectedSession?.id;
+                      return (
+                        <button
+                          key={s.id}
+                          data-testid={`session-option-${s.id}`}
+                          onClick={() => { setSelectedSession(s); setSessionDropdownOpen(false); }}
+                          className="w-full flex items-center justify-between px-3 py-2.5 transition-colors text-left hover:bg-slate-50"
+                          style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
+                        >
+                          <span className="text-xs font-medium text-slate-700">{s.sessionName}</span>
+                          {s.isActive
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(16,185,129,0.12)", color: "#15803d" }}>Active</span>
+                            : isViewing
+                              ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: "rgba(251,191,36,0.15)", color: "#b45309" }}>Viewing</span>
+                              : <History className="w-3 h-3 text-slate-300" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all disabled:opacity-60 text-slate-600 hover:text-slate-800"
+            style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)" }}
+            data-testid="button-student-logout"
+          >
+            {logoutMutation.isPending
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <LogOut className="w-4 h-4" />}
+            <span className="hidden sm:inline">Logout</span>
+          </button>
+        </div>
+      </header>
+
+      {/* ── Main content (offset for fixed header) ── */}
+      <main className="relative z-10 max-w-7xl mx-auto w-full px-4 sm:px-6 pt-24 pb-12 space-y-8">
+
+        {/* ── Hero greeting + profile card ── */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="rounded-[24px] p-6 sm:p-8"
+          style={{
+            background: "rgba(255,255,255,0.78)",
+            backdropFilter: "blur(14px)",
+            WebkitBackdropFilter: "blur(14px)",
+            border: "1px solid rgba(255,255,255,0.75)",
+            boxShadow: "0 8px 40px rgba(59,130,246,0.10), 0 1px 3px rgba(0,0,0,0.05)",
+          }}
+          data-testid="card-student-profile"
+        >
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+            {/* Avatar */}
+            <div
+              className="flex-shrink-0 w-[72px] h-[72px] sm:w-20 sm:h-20 rounded-full shadow-lg overflow-hidden flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg, #3b82f6, #8b5cf6)" }}
+              data-testid="avatar-student"
+            >
+              {student.photoUrl ? (
+                <img
+                  src={student.photoUrl}
+                  alt={student.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <span className="text-white font-bold text-2xl sm:text-3xl select-none">{initials}</span>
+              )}
+            </div>
+
+            {/* Greeting + info */}
+            <div className="flex-1 text-center sm:text-left min-w-0">
+              <p className="text-sm font-medium text-slate-400 mb-0.5">{student.schoolName}</p>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-slate-800 mb-2 truncate" data-testid="text-student-name">
+                {greeting}, {firstName}! 👋
+              </h1>
+
+              {/* Info badges */}
+              <div className="flex flex-wrap justify-center sm:justify-start gap-2">
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+                  style={{ background: "#eff6ff", color: "#3b82f6", border: "1px solid #bfdbfe" }}
+                  data-testid="text-student-dsid"
+                >
+                  {student.digitalStudentId}
+                </span>
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold"
+                  style={{ background: "#f0fdf4", color: "#10b981", border: "1px solid #a7f3d0" }}
+                  data-testid="text-student-class"
+                >
+                  Class {student.class} – {student.section}
+                </span>
+              </div>
+
+              {/* Quick stats pills — always rendered once data loads */}
+              <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
+                <span
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                  style={{
+                    background: attendPct === null ? "#f1f5f9" : attendPct >= 75 ? "#f0fdf4" : "#fef2f2",
+                    color:      attendPct === null ? "#94a3b8" : attendPct >= 75 ? "#10b981" : "#ef4444",
+                    border:     `1px solid ${attendPct === null ? "#e2e8f0" : attendPct >= 75 ? "#bbf7d0" : "#fecaca"}`,
+                  }}
+                  data-testid="badge-attendance-pct"
+                >
+                  <span>📊</span>
+                  Attendance: {attendPct !== null ? `${attendPct}%` : "—"}
+                </span>
+                {unreadCount > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
+                    style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca" }}
+                    data-testid="badge-unread-notices"
+                  >
+                    <span>🔔</span>
+                    {unreadCount} New Notice{unreadCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* School code badge (desktop) */}
+            <div className="hidden sm:flex flex-col items-center gap-1.5 flex-shrink-0">
+              <div
+                className="w-12 h-12 rounded-xl flex items-center justify-center"
+                style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)", boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }}
+              >
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
+              <p className="text-[10px] text-slate-400 font-mono font-semibold">{student.schoolCode}</p>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── Section heading ── */}
+        {/* ── Archive Mode Banner ── */}
+        {isArchiveMode && selectedSession && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="flex items-center gap-3 rounded-2xl px-4 py-3"
+            style={{
+              background: "#fefce8",
+              border: "1.5px solid #fde68a",
+              boxShadow: "0 2px 10px rgba(234,179,8,0.14)",
+            }}
+            data-testid="banner-archive-dashboard"
+          >
+            <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800 leading-tight">
+                Viewing Archive Mode — Read Only
+              </p>
+              <p className="text-xs text-amber-600 mt-0.5 leading-snug">
+                Browsing <span className="font-semibold">{selectedSession.sessionName}</span>. All submission and payment actions are locked.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
+        >
+          <h2 className="text-base font-bold text-slate-700">My Modules</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Tap a card to access your portal</p>
+        </motion.div>
+
+        {/* ── Module grid ── */}
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate="show"
+          className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4"
+        >
+          {TILES.map((tile) => {
+            const showPulse =
+              (tile.noticeKey && unreadCount > 0) ||
+              (tile.feesKey && feesTotalDue > 0) ||
+              (tile.pulse && !tile.noticeKey && !tile.feesKey && (pendingHwCount ?? 0) > 0);
+
+            return (
+              <motion.button
+                key={tile.id}
+                variants={cardVariants}
+                whileHover={{
+                  scale: 1.05,
+                  boxShadow: `0 0 0 2px ${tile.accent}55, 0 12px 36px ${tile.accent}30`,
+                  transition: { duration: 0.18, ease: "easeOut" },
+                }}
+                whileTap={{ scale: 0.97 }}
+                data-testid={`tile-${tile.id}`}
+                onClick={() => handleTileClick(tile.label, tile.route)}
+                className="relative text-left focus:outline-none"
+                style={{
+                  background: "rgba(255,255,255,0.78)",
+                  backdropFilter: "blur(12px)",
+                  WebkitBackdropFilter: "blur(12px)",
+                  borderRadius: "20px",
+                  border: "1px solid rgba(255,255,255,0.72)",
+                  boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+                  borderTop: `4px solid ${tile.accent}`,
+                  cursor: "pointer",
+                  padding: "20px 16px",
+                  minHeight: "130px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "12px",
+                }}
+              >
+                {/* Pulse dot */}
+                {showPulse && (
+                  <span
+                    className="absolute top-3 right-3"
+                    data-testid={`badge-${tile.id}-pulse`}
+                    aria-label={
+                      tile.noticeKey
+                        ? `${unreadCount} unread notices`
+                        : tile.feesKey
+                          ? `${feeRecords.filter(r => r.status !== "Paid").length} fees outstanding`
+                          : `${pendingHwCount ?? 0} pending`
+                    }
+                  >
+                    <span
+                      className="relative flex h-3 w-3"
+                    >
+                      <span
+                        className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                        style={{ background: "#ef4444" }}
+                      />
+                      <span
+                        className="relative inline-flex rounded-full h-3 w-3"
+                        style={{ background: "#ef4444" }}
+                      />
+                    </span>
+                  </span>
+                )}
+
+                {/* Emoji icon in colored circle */}
+                <div
+                  className="flex items-center justify-center rounded-2xl"
+                  style={{
+                    width: "68px",
+                    height: "68px",
+                    background: tile.bg,
+                    boxShadow: `0 4px 14px ${tile.accent}22`,
+                    fontSize: "36px",
+                    lineHeight: 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  {tile.emoji}
+                </div>
+
+                {/* Label */}
+                <div className="text-center">
+                  <span
+                    className="text-xs sm:text-sm font-bold leading-tight block"
+                    style={{ color: "#1e293b" }}
+                  >
+                    {tile.label}
+                  </span>
+                  {tile.route === null && (
+                    <span
+                      className="text-[10px] font-semibold mt-0.5 block"
+                      style={{ color: tile.accent }}
+                    >
+                      Coming Soon
+                    </span>
+                  )}
+                </div>
+              </motion.button>
+            );
+          })}
+        </motion.div>
+
+        {/* ── Footer ── */}
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.9, duration: 0.4 }}
+          className="text-center text-[11px] text-slate-400 pb-2"
+        >
+          © {new Date().getFullYear()} BENIUS · {student.schoolName}
+        </motion.p>
+      </main>
+
+      {/* ── New Session Activation Modal (blocking) ── */}
+      <AnimatePresence>
+        {pendingActivation && (
+          <motion.div
+            key="session-activation-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+            style={{ background: "rgba(15,23,42,0.72)", backdropFilter: "blur(6px)" }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.88, y: 28 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 16 }}
+              transition={{ type: "spring", stiffness: 380, damping: 30 }}
+              className="w-full max-w-sm rounded-[28px] overflow-hidden"
+              style={{
+                background: "rgba(255,255,255,0.98)",
+                boxShadow: "0 32px 80px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.6)",
+              }}
+            >
+              {/* Header band */}
+              <div
+                className="px-6 pt-7 pb-5 text-center"
+                style={{ background: "linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)" }}
+              >
+                <div
+                  className="mx-auto mb-3 flex items-center justify-center rounded-2xl"
+                  style={{ width: 64, height: 64, background: "rgba(255,255,255,0.18)" }}
+                >
+                  <PartyPopper className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-white font-extrabold text-xl leading-tight">
+                  New Academic Session!
+                </h2>
+                <p className="text-blue-100 text-sm mt-1 font-medium">
+                  Your school has started a new year
+                </p>
+              </div>
+
+              {/* Body */}
+              <div className="px-6 py-5 space-y-4">
+                {/* Session pill */}
+                <div className="flex items-center justify-center">
+                  <span
+                    className="px-4 py-1.5 rounded-full text-sm font-bold"
+                    style={{ background: "rgba(99,102,241,0.10)", color: "#4f46e5", border: "1.5px solid rgba(99,102,241,0.25)" }}
+                  >
+                    🎓 {pendingActivation.sessionName}
+                  </span>
+                </div>
+
+                <p className="text-slate-600 text-sm text-center leading-relaxed">
+                  Tap <strong>Confirm</strong> to switch your portal to the new session.
+                </p>
+
+                {/* What resets */}
+                <div className="rounded-2xl overflow-hidden border border-slate-100">
+                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "#fff7ed", borderBottom: "1px solid #fed7aa" }}>
+                    <RefreshCw className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
+                    <span className="text-xs font-bold text-orange-700 uppercase tracking-wide">Starts fresh this session</span>
+                  </div>
+                  <div className="px-4 py-3 flex flex-wrap gap-1.5" style={{ background: "#fffbf5" }}>
+                    {SESSION_MODULES.map((m) => (
+                      <span
+                        key={m.label}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                        style={{ background: "#fff", border: "1px solid #fed7aa", color: "#9a3412" }}
+                      >
+                        {m.emoji} {m.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* What stays */}
+                <div className="rounded-2xl overflow-hidden border border-slate-100">
+                  <div className="flex items-center gap-2 px-4 py-2.5" style={{ background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" }}>
+                    <Shield className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                    <span className="text-xs font-bold text-emerald-700 uppercase tracking-wide">Always available</span>
+                  </div>
+                  <div className="px-4 py-3 flex flex-wrap gap-1.5" style={{ background: "#f9fffe" }}>
+                    {GLOBAL_MODULES.map((m) => (
+                      <span
+                        key={m.label}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                        style={{ background: "#fff", border: "1px solid #bbf7d0", color: "#166534" }}
+                      >
+                        {m.emoji} {m.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Confirm button */}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={confirmActivation}
+                  className="w-full py-3.5 rounded-2xl text-white font-bold text-base shadow-lg"
+                  style={{
+                    background: "linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)",
+                    boxShadow: "0 8px 24px rgba(99,102,241,0.35)",
+                  }}
+                >
+                  Confirm &amp; Continue →
+                </motion.button>
+
+                <p className="text-center text-[11px] text-slate-400 pb-1">
+                  You can always browse past sessions from the session picker
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

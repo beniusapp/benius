@@ -1,0 +1,62 @@
+Refactor the School Calendar System across the Admin, Teacher, and Student portals into a high-end, multi-view event engine with full lifecycle management.
+
+1. THE ADMIN COMMAND CENTER (/admin-dashboard):
+
+Full Lifecycle Management: When an Admin clicks an existing event, open a Modal that allows them to either Edit the details or Delete the event entirely with a 'Confirm Delete' pop-up.
+
+The Century-Jump Navigation: Implement a 'Quick-Jump' header. This should include:
+
+A Year Dropdown (covering 100 years: 2026–2126).
+
+A Month Dropdown.
+
+'Previous' and 'Next' buttons for rapid scrolling.
+
+Dynamic Population: Automatically calculate and pre-load Indian Gazetted Holidays for the selected year.
+
+2. ELITE USER EXPERIENCE (Student & Teacher Portals):
+
+Multi-View Layouts: Refactor /student/calendar and /teacher-dashboard/calendar to support three distinct viewing modes:
+
+Month View: The classic grid for long-term planning.
+
+Week View: A detailed vertical/horizontal breakdown of the current 7 days.
+
+Agenda/Year View: A scrollable list of all upcoming holidays and events for the year.
+
+Modern Interactive UI:
+
+Hover Pop-overs (Desktop): Glassmorphic tooltips showing Event Title, Type (Holiday/Exam/Event), and Description.
+
+Tap-to-Peek (Mobile): On the Motorola G60 Fusion, a single tap opens an elegant Bottom Sheet with details.
+
+3. VISUAL & PROFESSIONAL STYLING:
+
+Theme: Deep Navy background with Glassmorphism.
+
+Color Coding: 🔴 Red (Holidays), 🟢 Emerald (School Events), 🔵 Blue (Academic/Exams).
+
+Branding: Highlight the 'Today' date with a glowing Emerald Halo.
+
+Legend: Display a clear color-key at the top of the calendar.
+
+4. TECHNICAL SYNC & PERFORMANCE:
+
+Instant Reflection: Use React Query or SWR. Any Delete or Add action by the Admin must instantly reflect in the Teacher/Student views without a page refresh.
+
+Multi-Tenancy: Every SQL query must be locked to WHERE school_id = ?.
+
+Database Logic: Update the school_calendar table to handle deletions accurately and ensure the frontend re-renders immediately.
+
+5. MOBILE OPTIMIZATION:
+
+Ensure the Week and Year views are perfectly responsive for the Motorola G60 Fusion, using a 'Sticky Header' for dates so the user doesn't get lost while scrolling."
+
+💡 Why this is the "Best of the Best":
+Total Control: If the Admin accidentally marks the wrong day for a holiday, they can Delete it in two clicks.
+
+Speed: The Year Dropdown means you don't have to click "Next" 12 times just to see 2027. You can jump straight to 2100 if you want!
+
+Detail-Oriented: The Week View is perfect for teachers who need to plan their upcoming lessons around school events.
+
+Professionalism: Multi-view support is what separates a "simple table" from a "professional application.

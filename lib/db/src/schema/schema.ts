@@ -1,0 +1,1455 @@
+import { relations, sql } from "drizzle-orm";
+import { pgTable, text, varchar, serial, integer, numeric, boolean, date, timestamp, uniqueIndex, unique, index, jsonb, check, primaryKey, foreignKey, uuid } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod/v4";
+
+export const schools = pgTable("schools", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  logoUrl: text("logo_url"),
+  logoUpdatedAt: timestamp("logo_updated_at"),
+  // ── Contact & Location (structured address) ──────────────────────────────
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
+  city: text("city"),
+  state: text("state"),
+  pinCode: varchar("pin_code", { length: 6 }),
+  country: text("country").default("India"),
+  phone: varchar("phone", { length: 20 }),
+  email: text("email"),
+  website: text("website"),
+  // ── Academic Identity ────────────────────────────────────────────────────
+  board: text("board"),
+  schoolType: text("school_type"),
+  affiliationNumber: text("affiliation_number"),
+  udiseCode: text("udise_code"),
+  establishedYear: integer("established_year"),
+  // ── Legal & Tax ──────────────────────────────────────────────────────────
+  registrationNumber: text("registration_number"),
+  pan: text("pan"),
+  gstin: text("gstin"),
+});
+
+// Monotonically-increasing DSID/DTID counters, scoped per school and ID type.
+// Keep the deployed table contract unchanged: the composite key is authoritative
+// and school_id intentionally has no foreign-key constraint.
+export const idSequences = pgTable("id_sequences", {
+  schoolId: integer("school_id").notNull(),
+  type: text("type").notNull(),
+  lastIssued: integer("last_issued").notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.schoolId, table.type], name: "id_sequences_pkey" }),
+]);
+
+/**
+ * Immutable online-payment lifecycle records.  `payment_attempts` remains the
+ * provider-state projection managed by the payment service; these tables retain
+ * the durable history that must never be overwritten by later callbacks.
+ */
+export const paymentAttemptEvents = pgTable("payment_attempt_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentAttemptId: integer("payment_attempt_id").notNull(),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  feeRecordId: integer("fee_record_id"),
+  sessionId: integer("session_id"),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  outcome: varchar("outcome", { length: 30 }),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  refundId: varchar("refund_id", { length: 100 }),
+  disputeId: varchar("dispute_id", { length: 100 }),
+  amountPaise: integer("amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  source: varchar("source", { length: 20 }).notNull(),
+  webhookEventId: integer("webhook_event_id"),
+  idempotencyKey: varchar("idempotency_key", { length: 200 }).notNull(),
+  payload: jsonb("payload"),
+  providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  historical: boolean("historical").notNull().default(false),
+}, (table) => [
+  uniqueIndex("payment_attempt_events_school_key_uniq").on(table.schoolId, table.idempotencyKey),
+]);
+
+export const paymentWebhookEvents = pgTable("payment_webhook_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").references(() => schools.id, { onDelete: "set null" }),
+  provider: varchar("provider", { length: 30 }).notNull().default("razorpay"),
+  providerEventId: varchar("provider_event_id", { length: 160 }).notNull(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  feeRecordId: integer("fee_record_id"),
+  feeResolutionSource: varchar("fee_resolution_source", { length: 20 }),
+  feeResolutionStatus: varchar("fee_resolution_status", { length: 20 }).notNull().default("unresolved"),
+  signatureVerified: boolean("signature_verified").notNull().default(false),
+  payload: jsonb("payload").notNull(),
+  providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  processingStatus: varchar("processing_status", { length: 30 }).notNull().default("received"),
+  processingError: text("processing_error"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  lastReceivedAt: timestamp("last_received_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+  deliveryCount: integer("delivery_count").notNull().default(1),
+}, (table) => [
+]);
+
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("admin"),
+  // Financial actions are deliberately opt-in.  A school may have several
+  // administrators, but only explicitly authorised users can initiate refunds.
+  canRefund: boolean("can_refund").notNull().default(false),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  isActive: boolean("is_active").notNull().default(true),
+  pinHash: text("pin_hash"),
+  recoveryEmail: text("recovery_email"),
+  recoveryPhone: varchar("recovery_phone", { length: 20 }),
+  isInitialized: boolean("is_initialized").notNull().default(false),
+  otpCode: varchar("otp_code", { length: 10 }),
+  otpExpiresAt: timestamp("otp_expires_at"),
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+  signatureUrl: text("signature_url"),
+});
+
+export const passwordResetChallenges = pgTable("password_reset_challenges", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  otpHash: text("otp_hash").notNull(),
+  otpExpiresAt: timestamp("otp_expires_at", { withTimezone: true }).notNull(),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  requestIp: text("request_ip"),
+}, (table) => [
+  index("password_reset_challenges_user_school_idx").on(table.userId, table.schoolId),
+  index("password_reset_challenges_active_idx").on(table.userId, table.schoolId, table.consumedAt),
+]);
+export type PasswordResetChallenge = typeof passwordResetChallenges.$inferSelect;
+
+export const studentPasswordResetChallenges = pgTable("student_password_reset_challenges", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull(),
+  purpose: varchar("purpose", { length: 40 }).notNull().default("student_password_recovery"),
+  otpHash: text("otp_hash").notNull(),
+  otpExpiresAt: timestamp("otp_expires_at", { withTimezone: true }).notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at", { withTimezone: true }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  requestIp: text("request_ip"),
+}, (table) => [
+  index("student_password_reset_school_student_idx").on(table.schoolId, table.studentId),
+  index("student_password_reset_active_idx").on(table.schoolId, table.studentId, table.consumedAt),
+  index("student_password_reset_expiry_idx").on(table.otpExpiresAt, table.resetTokenExpiresAt),
+  foreignKey({
+    name: "student_password_reset_student_tenant_fk",
+    columns: [table.studentId, table.schoolId],
+    foreignColumns: [students.id, students.schoolId],
+  }).onDelete("cascade"),
+  check("student_password_reset_purpose_chk", sql`${table.purpose} = 'student_password_recovery'`),
+  check("student_password_reset_attempts_chk", sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 5`),
+]);
+export type StudentPasswordResetChallenge = typeof studentPasswordResetChallenges.$inferSelect;
+
+export const students = pgTable("students", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  attendanceIdentityKey: uuid("attendance_identity_key").notNull().defaultRandom(),
+  digitalStudentId: varchar("digital_student_id", { length: 50 }).notNull().unique(),
+  name: text("name").notNull(),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  dob: date("dob").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  photoUrl: text("photo_url"),
+  isActivated: boolean("is_activated").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  enrollmentDate: date("enrollment_date"),
+  verifiedProfile: text("verified_profile"),
+  gender: varchar("gender", { length: 10 }),
+  rollNumber: integer("roll_number"),
+  guardianName: text("guardian_name"),
+  bloodGroup: varchar("blood_group", { length: 5 }),
+  idCardPendingReissue: boolean("id_card_pending_reissue").notNull().default(false),
+  fatherName: text("father_name"),
+  motherName: text("mother_name"),
+  address: text("address"),
+  aadharNumber: varchar("aadhar_number", { length: 12 }),
+  email: varchar("email", { length: 255 }),
+}, (table) => [
+  unique("students_id_school_uniq").on(table.id, table.schoolId),
+  uniqueIndex("students_attendance_identity_key_uidx").on(table.attendanceIdentityKey),
+]);
+
+/** Permanent reservations for attendance identities.  This intentionally has
+ * no student foreign key: deleting a student must not release its identity. */
+export const attendanceIdentityReservations = pgTable("attendance_identity_reservations", {
+  identityKey: uuid("identity_key").primaryKey(),
+});
+
+export const teachers = pgTable("teachers", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fullName: text("full_name").notNull(),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  subject: text("subject").notNull(),
+  assignedClass: varchar("assigned_class", { length: 20 }).notNull(),
+  assignedSection: varchar("assigned_section", { length: 10 }).notNull(),
+  mustChangePassword: boolean("must_change_password").notNull().default(true),
+  otpCode: varchar("otp_code", { length: 6 }),
+  otpExpiresAt: timestamp("otp_expires_at"),
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+  profileImageUrl: text("profile_image_url"),
+  designation: text("designation"),
+  qualifications: text("qualifications"),
+  department: text("department"),
+  digitalTeacherId: text("digital_teacher_id").unique(),
+  gender: varchar("gender", { length: 10 }),
+  dateOfBirth: text("date_of_birth"),
+  govtIdType: text("govt_id_type"),
+  govtIdNumber: text("govt_id_number"),
+  address: text("address"),
+  joiningDate: text("joining_date"),
+  isActive: boolean("is_active").notNull().default(true),
+  deactivatedAt: timestamp("deactivated_at"),
+  deactivationReason: text("deactivation_reason"),
+});
+
+export const attendanceRecords = pgTable("attendance_records", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  originalStudentId: integer("original_student_id").notNull(),
+  identityKey: uuid("identity_key").notNull(),
+  studentNameSnapshot: text("student_name_snapshot").notNull(),
+  studentCodeSnapshot: varchar("student_code_snapshot", { length: 50 }).notNull(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "restrict" }),
+  date: date("date").notNull(),
+  status: text("status").notNull().default("present"),
+  editCount: integer("edit_count").notNull().default(0),
+  markedBy: text("marked_by").notNull(),
+  markedAt: timestamp("marked_at").notNull().defaultNow(),
+  class: varchar("class", { length: 20 }),
+  section: varchar("section", { length: 10 }),
+  academicYear: varchar("academic_year", { length: 20 }),
+}, (table) => [
+  uniqueIndex("attendance_records_canonical_identity_uidx").on(
+    table.schoolId,
+    table.sessionId,
+    table.identityKey,
+    table.date,
+  ),
+]);
+
+export const homework = pgTable("homework", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  subject: varchar("subject", { length: 100 }).notNull().default("General"),
+  content: text("content").notNull(),
+  fileUrl: text("file_url"),
+  dueDate: date("due_date"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
+});
+
+export const homeworkViews = pgTable("homework_views", {
+  id: serial("id").primaryKey(),
+  homeworkId: integer("homework_id").notNull().references(() => homework.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  viewedAt: timestamp("viewed_at").notNull().defaultNow(),
+});
+
+export const homeworkSubmissions = pgTable("homework_submissions", {
+  id: serial("id").primaryKey(),
+  homeworkId: integer("homework_id").notNull().references(() => homework.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fileUrl: text("file_url"),
+  textAnswer: text("text_answer"),
+  status: text("status").notNull().default("submitted"),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+  reviewedBy: integer("reviewed_by"),
+});
+
+export const classwork = pgTable("classwork", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  subject: varchar("subject", { length: 100 }).notNull().default("General"),
+  content: text("content").notNull(),
+  fileUrl: text("file_url"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
+});
+
+export const notices = pgTable("notices", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  createdById: integer("created_by_id").notNull(),
+  creatorRole: text("creator_role").notNull(),
+  targetType: text("target_type").notNull(),
+  targetClass: varchar("target_class", { length: 50 }),
+  targetSection: varchar("target_section", { length: 100 }),
+  targetTeacherId: integer("target_teacher_id").references(() => teachers.id, { onDelete: "set null" }),
+  noticeType: varchar("notice_type", { length: 30 }).default("Routine"),
+  content: text("content").notNull(),
+  fileUrl: text("file_url"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+});
+
+export const noticeReads = pgTable("notice_reads", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  noticeId: integer("notice_id").notNull().references(() => notices.id, { onDelete: "cascade" }),
+  readAt: timestamp("read_at").notNull().defaultNow(),
+});
+
+export const insertNoticeReadSchema = createInsertSchema(noticeReads).omit({ id: true, readAt: true });
+export type InsertNoticeRead = z.infer<typeof insertNoticeReadSchema>;
+export type NoticeRead = typeof noticeReads.$inferSelect;
+
+export const complaints = pgTable("complaints", {
+  id: serial("id").primaryKey(),
+  ticketId: varchar("ticket_id", { length: 30 }).notNull(),
+  teacherId: integer("teacher_id").references(() => teachers.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  complaintType: varchar("complaint_type", { length: 30 }).notNull().default("teacher-to-student"),
+  status: varchar("status", { length: 20 }).notNull().default("Pending"),
+  content: text("content").notNull(),
+  reportedStudentName: varchar("reported_student_name", { length: 100 }),
+  fileUrl: text("file_url"),
+  isDeleted: boolean("is_deleted").notNull().default(false),
+  complainantStudentId: integer("complainant_student_id").references(() => students.id, { onDelete: "cascade" }),
+  contactNumber: text("contact_number"),
+  suggestions: text("suggestions"),
+  incidentDate: timestamp("incident_date"),
+  complainantClass: varchar("complainant_class", { length: 20 }),
+  complainantSection: varchar("complainant_section", { length: 10 }),
+  resolutionRemarks: text("resolution_remarks"),
+  escalatedToPrincipal: boolean("escalated_to_principal").notNull().default(false),
+  notifyAdmin: boolean("notify_admin").notNull().default(false),
+  batchId: varchar("batch_id", { length: 50 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: integer("deleted_by"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+});
+
+export const complaintNotes = pgTable("complaint_notes", {
+  id: serial("id").primaryKey(),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  authorId: integer("author_id").notNull(),
+  authorRole: varchar("author_role", { length: 20 }).notNull(),
+  authorName: varchar("author_name", { length: 100 }).notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const complaintStudents = pgTable("complaint_students", {
+  id: serial("id").primaryKey(),
+  complaintId: integer("complaint_id").notNull().references(() => complaints.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+});
+
+export const examScores = pgTable("exam_scores", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  subject: text("subject").notNull(),
+  examType: text("exam_type").notNull(),
+  marks: integer("marks").notNull(),
+  totalMarks: integer("total_marks").notNull().default(100),
+  passMarks: integer("pass_marks").notNull().default(33),
+  isAbsent: boolean("is_absent").notNull().default(false),
+  class: text("class"),
+  section: text("section"),
+  published: boolean("published").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
+});
+
+export const promotionDecisions = pgTable("promotion_decisions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  class: text("class").notNull(),
+  section: text("section").notNull(),
+  term: text("term").notNull(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  decision: text("decision").notNull().default("promoted"),
+  targetClass: text("target_class").notNull(),
+  targetSection: text("target_section").notNull(),
+  editCount: integer("edit_count").notNull().default(0),
+  processedByTeacherId: integer("processed_by_teacher_id").references(() => teachers.id),
+  locked: boolean("locked").notNull().default(false),
+  lockedAt: timestamp("locked_at"),
+  autoSuggestion: text("auto_suggestion"),
+  manualIntervention: boolean("manual_intervention").notNull().default(false),
+  adminExecuted: boolean("admin_executed").notNull().default(false),
+  adminExecutedAt: timestamp("admin_executed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
+});
+export type PromotionDecision = typeof promotionDecisions.$inferSelect;
+
+export const galleryItems = pgTable("gallery_items", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  uploadedById: integer("uploaded_by_id").notNull(),
+  uploaderRole: text("uploader_role").notNull().default("teacher"),
+  title: text("title").notNull(),
+  description: text("description"),
+  eventTag: text("event_tag"),
+  capturedDate: text("captured_date"),
+  capturedTime: text("captured_time"),
+  location: text("location"),
+  imageUrl: text("image_url").notNull(),
+  approved: boolean("approved").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const calendarEvents = pgTable("calendar_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  date: date("date").notNull(),
+  eventType: text("event_type").notNull(),
+  venue: text("venue"),
+  description: text("description"),
+  colorCode: text("color_code"),
+  isRecurring: boolean("is_recurring").notNull().default(false),
+  audienceScope: varchar("audience_scope", { length: 30 }).notNull().default("All_School"),
+  targetClass: text("target_class"),
+  targetSection: text("target_section"),
+});
+
+export const libraryBooks = pgTable("library_books", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  author: text("author").notNull(),
+  isbn: varchar("isbn", { length: 20 }),
+  targetClass: text("target_class"),
+  category: text("category"),
+  fileUrl: text("file_url"),
+  fileType: text("file_type"),
+  uploadedById: integer("uploaded_by_id"),
+  verificationStatus: text("verification_status").notNull().default("approved"),
+  totalCopies: integer("total_copies").notNull().default(1),
+  availableCopies: integer("available_copies").notNull().default(1),
+});
+
+export const bookBorrows = pgTable("book_borrows", {
+  id: serial("id").primaryKey(),
+  bookId: integer("book_id").notNull().references(() => libraryBooks.id, { onDelete: "cascade" }),
+  borrowerId: integer("borrower_id").notNull(),
+  borrowerType: text("borrower_type").notNull(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  borrowedAt: timestamp("borrowed_at").notNull().defaultNow(),
+  returnedAt: timestamp("returned_at"),
+});
+
+export const leaveRequests = pgTable("leave_requests", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  policyId: integer("policy_id").references(() => leavePolicies.id, { onDelete: "set null" }),
+  leaveType: text("leave_type").notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending"),
+  approvedBy: integer("approved_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+});
+
+export const schoolMetadata = pgTable("school_metadata", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  metaKey: varchar("meta_key", { length: 50 }).notNull(),
+  metaValue: text("meta_value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("school_metadata_unique").on(table.schoolId, table.metaKey),
+]);
+
+export const timetableEntries = pgTable("timetable_entries", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  dayOfWeek: integer("day_of_week").notNull(),
+  period: integer("period").notNull(),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  subject: text("subject").notNull(),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  status: text("status").notNull().default("draft"),
+  room: text("room"),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+}, (table) => [
+  uniqueIndex("timetable_class_slot_unique").on(table.schoolId, table.sessionId, table.class, table.section, table.dayOfWeek, table.period),
+]);
+
+export const teacherAllocations = pgTable("teacher_allocations", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  subject: text("subject").notNull(),
+  class: varchar("class", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  weeklyQuota: integer("weekly_quota").notNull().default(6),
+});
+
+export const studentLeaveRequests = pgTable("student_leave_requests", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("pending_teacher"),
+  reviewedBy: integer("reviewed_by"),
+  reviewerRole: text("reviewer_role"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  category: text("category"),
+  attachmentUrl: text("attachment_url"),
+  rejectionReason: text("rejection_reason"),
+  adminComment: text("admin_comment"),
+  teacherComment: text("teacher_comment"),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  actionType: text("action_type").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: integer("entity_id").notNull(),
+  actionBy: integer("action_by").notNull(),
+  actionByRole: text("action_by_role").notNull(),
+  details: text("details"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const visitorLogs = pgTable("visitor_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
+  visitorName: text("visitor_name").notNull(),
+  purpose: text("purpose").notNull(),
+  hostName: text("host_name").notNull(),
+  phone: text("phone"),
+  email: text("email"),
+  visitorIdNumber: text("visitor_id_number"),
+  address: text("address"),
+  checkIn: timestamp("check_in").notNull().defaultNow(),
+  checkOut: timestamp("check_out"),
+  badge: text("badge"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const studentProfiles = pgTable("student_profiles", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }).unique(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  fullName: text("full_name"),
+  class: varchar("class", { length: 20 }),
+  section: varchar("section", { length: 10 }),
+  rollNo: varchar("roll_no", { length: 20 }),
+  fatherName: text("father_name"),
+  motherName: text("mother_name"),
+  presentAddress: text("present_address"),
+  aadharNumber: varchar("aadhar_number", { length: 12 }),
+  gender: varchar("gender", { length: 10 }),
+  phone: varchar("phone", { length: 20 }),
+  dob: date("dob"),
+  enrollmentDate: date("enrollment_date"),
+  guardianName: text("guardian_name"),
+  bloodGroup: varchar("blood_group", { length: 5 }),
+  email: text("email"),
+  photoUrl: text("photo_url"),
+  photoStatus: varchar("photo_status", { length: 20 }).notNull().default("none"),
+  rejectionNote: text("rejection_note"),
+  approvedSnapshot: text("approved_snapshot"),
+  submittedAt: timestamp("submitted_at"),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: integer("verified_by"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const schoolsRelations = relations(schools, ({ many }) => ({
+  students: many(students),
+  users: many(users),
+  teachers: many(teachers),
+}));
+
+export const usersRelations = relations(users, ({ one }) => ({
+  school: one(schools, {
+    fields: [users.schoolId],
+    references: [schools.id],
+  }),
+}));
+
+export const studentsRelations = relations(students, ({ one }) => ({
+  school: one(schools, {
+    fields: [students.schoolId],
+    references: [schools.id],
+  }),
+}));
+
+export const teachersRelations = relations(teachers, ({ one, many }) => ({
+  user: one(users, { fields: [teachers.userId], references: [users.id] }),
+  school: one(schools, { fields: [teachers.schoolId], references: [schools.id] }),
+}));
+
+export const insertSchoolSchema = createInsertSchema(schools).omit({ id: true });
+export type InsertSchool = z.infer<typeof insertSchoolSchema>;
+export type School = typeof schools.$inferSelect;
+
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
+export const securityAudit = pgTable("security_audit", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id"),
+  action: varchar("action", { length: 50 }).notNull(),
+  success: boolean("success").notNull().default(true),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSecurityAuditSchema = createInsertSchema(securityAudit).omit({ id: true, createdAt: true });
+export type InsertSecurityAudit = z.infer<typeof insertSecurityAuditSchema>;
+export type SecurityAudit = typeof securityAudit.$inferSelect;
+
+export const insertStudentSchema = createInsertSchema(students).omit({ id: true });
+export type InsertStudent = z.infer<typeof insertStudentSchema>;
+export type Student = typeof students.$inferSelect;
+
+export const insertTeacherSchema = createInsertSchema(teachers).omit({ id: true });
+export type InsertTeacher = z.infer<typeof insertTeacherSchema>;
+export type Teacher = typeof teachers.$inferSelect;
+
+export const insertAttendanceSchema = createInsertSchema(attendanceRecords).omit({ id: true });
+export type InsertAttendance = z.infer<typeof insertAttendanceSchema>;
+export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
+
+export const insertHomeworkSchema = createInsertSchema(homework).omit({ id: true, createdAt: true });
+export type InsertHomework = z.infer<typeof insertHomeworkSchema>;
+export type Homework = typeof homework.$inferSelect;
+
+export const insertHomeworkViewSchema = createInsertSchema(homeworkViews).omit({ id: true, viewedAt: true });
+export type InsertHomeworkView = z.infer<typeof insertHomeworkViewSchema>;
+export type HomeworkView = typeof homeworkViews.$inferSelect;
+
+export const insertClassworkSchema = createInsertSchema(classwork).omit({ id: true, createdAt: true });
+export type InsertClasswork = z.infer<typeof insertClassworkSchema>;
+export type Classwork = typeof classwork.$inferSelect;
+
+export const insertNoticeSchema = createInsertSchema(notices).omit({ id: true, createdAt: true });
+export type InsertNotice = z.infer<typeof insertNoticeSchema>;
+export type Notice = typeof notices.$inferSelect;
+
+export const insertComplaintSchema = createInsertSchema(complaints).omit({ id: true, createdAt: true });
+export type InsertComplaint = z.infer<typeof insertComplaintSchema>;
+export type Complaint = typeof complaints.$inferSelect;
+
+export const insertComplaintNoteSchema = createInsertSchema(complaintNotes).omit({ id: true, createdAt: true });
+export type InsertComplaintNote = z.infer<typeof insertComplaintNoteSchema>;
+export type ComplaintNote = typeof complaintNotes.$inferSelect;
+
+export const insertComplaintStudentSchema = createInsertSchema(complaintStudents).omit({ id: true });
+export type InsertComplaintStudent = z.infer<typeof insertComplaintStudentSchema>;
+export type ComplaintStudent = typeof complaintStudents.$inferSelect;
+
+export const insertExamScoreSchema = createInsertSchema(examScores).omit({ id: true, createdAt: true });
+export type InsertExamScore = z.infer<typeof insertExamScoreSchema>;
+export type ExamScore = typeof examScores.$inferSelect;
+
+export const insertGalleryItemSchema = createInsertSchema(galleryItems).omit({ id: true, createdAt: true });
+export type InsertGalleryItem = z.infer<typeof insertGalleryItemSchema>;
+export type GalleryItem = typeof galleryItems.$inferSelect;
+
+export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit({ id: true });
+export type InsertCalendarEvent = z.infer<typeof insertCalendarEventSchema>;
+export type CalendarEvent = typeof calendarEvents.$inferSelect;
+
+export const insertLibraryBookSchema = createInsertSchema(libraryBooks).omit({ id: true });
+export type InsertLibraryBook = z.infer<typeof insertLibraryBookSchema>;
+export type LibraryBook = typeof libraryBooks.$inferSelect;
+
+export const insertBookBorrowSchema = createInsertSchema(bookBorrows).omit({ id: true });
+export type InsertBookBorrow = z.infer<typeof insertBookBorrowSchema>;
+export type BookBorrow = typeof bookBorrows.$inferSelect;
+
+export const insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true });
+export type InsertLeaveRequest = z.infer<typeof insertLeaveRequestSchema>;
+export type LeaveRequest = typeof leaveRequests.$inferSelect;
+
+export const insertTimetableEntrySchema = createInsertSchema(timetableEntries).omit({ id: true });
+export type InsertTimetableEntry = z.infer<typeof insertTimetableEntrySchema>;
+export type TimetableEntry = typeof timetableEntries.$inferSelect;
+
+export const insertTeacherAllocationSchema = createInsertSchema(teacherAllocations).omit({ id: true });
+export type InsertTeacherAllocation = z.infer<typeof insertTeacherAllocationSchema>;
+export type TeacherAllocation = typeof teacherAllocations.$inferSelect;
+
+export const insertSchoolMetadataSchema = createInsertSchema(schoolMetadata).omit({ id: true, updatedAt: true });
+export type InsertSchoolMetadata = z.infer<typeof insertSchoolMetadataSchema>;
+export type SchoolMetadata = typeof schoolMetadata.$inferSelect;
+
+export const insertStudentLeaveRequestSchema = createInsertSchema(studentLeaveRequests).omit({ id: true, createdAt: true });
+export type InsertStudentLeaveRequest = z.infer<typeof insertStudentLeaveRequestSchema>;
+export type StudentLeaveRequest = typeof studentLeaveRequests.$inferSelect;
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;
+
+export const insertVisitorLogSchema = createInsertSchema(visitorLogs).omit({ id: true, createdAt: true, checkIn: true });
+export type InsertVisitorLog = z.infer<typeof insertVisitorLogSchema>;
+export type VisitorLog = typeof visitorLogs.$inferSelect;
+
+export const insertStudentProfileSchema = createInsertSchema(studentProfiles).omit({ id: true, updatedAt: true });
+export type InsertStudentProfile = z.infer<typeof insertStudentProfileSchema>;
+export type StudentProfile = typeof studentProfiles.$inferSelect;
+
+export const feeRecords = pgTable("fee_records", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  feeType: varchar("fee_type", { length: 100 }).notNull(),
+  amount: integer("amount").notNull(),
+  dueDate: date("due_date").notNull(),
+  paidDate: date("paid_date"),
+  status: varchar("status", { length: 20 }).notNull().default("Due"),
+  receiptNumber: varchar("receipt_number", { length: 50 }),
+  // invoice_number is the permanent invoice identifier (INV-0001, INV-0002 …).
+  // It is assigned at invoice creation and MUST NEVER be overwritten by a payment.
+  // receipt_number holds the payment receipt (ON-xxxx / OF-xxxx) after payment.
+  // Uniqueness is enforced at the DB level via a partial unique index:
+  //   fee_records_school_invoice_uniq ON fee_records (school_id, invoice_number)
+  //   WHERE invoice_number IS NOT NULL
+  // NULL values (un-invoiced bulk records) are exempt from the constraint.
+  invoiceNumber: varchar("invoice_number", { length: 50 }),
+  notes: text("notes"),
+  lateFeeAmount: integer("late_fee_amount").notNull().default(0),
+  academicYear: varchar("academic_year", { length: 20 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpayOrderExpiresAt: timestamp("razorpay_order_expires_at"),
+  // Immutable billing period — set at invoice creation, never changed.
+  // Determines what period the invoice covers, independently of due date / generation date.
+  feePeriodStart: date("fee_period_start"),
+  feePeriodEnd: date("fee_period_end"),
+  // Immutable snapshot of fee components at invoice-creation time.
+  // Written once when the invoice is generated; never updated afterwards.
+  // Legacy and admin-direct invoices default to [] (empty — no component table shown on receipt).
+  // Shape matches fee_structures.breakdown exactly: { name, purpose, amount }.
+  breakdownSnapshot: jsonb("breakdown_snapshot").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
+  // Manual one-student invoices retain their own fee metadata so later edits to a
+  // fee structure never alter what was originally billed.
+  feeName: varchar("fee_name", { length: 100 }),
+  frequency: varchar("frequency", { length: 20 }),
+  lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig | null>(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+}, (table) => [
+  check("fee_records_status_check", sql`${table.status} IN ('Due', 'Overdue', 'Paid')`),
+]);
+
+export const insertFeeRecordSchema = createInsertSchema(feeRecords).omit({ id: true, createdAt: true });
+export type InsertFeeRecord = z.infer<typeof insertFeeRecordSchema>;
+export type FeeRecord = typeof feeRecords.$inferSelect;
+
+export const insertHomeworkSubmissionSchema = createInsertSchema(homeworkSubmissions).omit({ id: true, submittedAt: true });
+export type InsertHomeworkSubmission = z.infer<typeof insertHomeworkSubmissionSchema>;
+export type HomeworkSubmission = typeof homeworkSubmissions.$inferSelect;
+
+export const promotionOverrides = pgTable("promotion_overrides", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  examType: text("exam_type").notNull(),
+  class: text("class").notNull(),
+  section: text("section").notNull(),
+  overrideStatus: text("override_status").notNull(),
+  nextClass: text("next_class").notNull(),
+  nextSection: text("next_section").notNull(),
+  overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("promotion_override_unique").on(table.schoolId, table.studentId, table.examType, table.class, table.section),
+]);
+
+export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });
+export type InsertPromotionOverride = z.infer<typeof insertPromotionOverrideSchema>;
+export type PromotionOverride = typeof promotionOverrides.$inferSelect;
+
+export const gradingTiers = pgTable("grading_tiers", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  classes: text("classes").array().notNull().default([]),
+  passPercentage: integer("pass_percentage").notNull().default(35),
+  gradingSystem: text("grading_system").notNull().default("percentage"),
+  passingGrades: text("passing_grades").array().notNull().default([]),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertGradingTierSchema = createInsertSchema(gradingTiers).omit({ id: true });
+export type InsertGradingTier = z.infer<typeof insertGradingTierSchema>;
+export type GradingTier = typeof gradingTiers.$inferSelect;
+
+export const gradingRules = pgTable("grading_rules", {
+  id: serial("id").primaryKey(),
+  tierId: integer("tier_id").notNull().references(() => gradingTiers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  gradeLabel: text("grade_label").notNull(),
+  minPercent: numeric("min_percent", { precision: 5, scale: 2 }).notNull(),
+  maxPercent: numeric("max_percent", { precision: 5, scale: 2 }).notNull(),
+  gradePoint: text("grade_point").notNull().default(""),
+  remarks: text("remarks").notNull().default(""),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertGradingRuleSchema = createInsertSchema(gradingRules).omit({ id: true });
+export type InsertGradingRule = z.infer<typeof insertGradingRuleSchema>;
+export type GradingRule = typeof gradingRules.$inferSelect;
+
+export const schoolAssets = pgTable("school_assets", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  assetCode: varchar("asset_code", { length: 50 }).notNull().default(""),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  quantity: integer("quantity").notNull().default(0),
+  condition: text("condition").notNull().default("Good"),
+  location: text("location").notNull().default(""),
+  purchasedDate: date("purchased_date"),
+  warrantyExpiry: date("warranty_expiry"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSchoolAssetSchema = createInsertSchema(schoolAssets).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertSchoolAsset = z.infer<typeof insertSchoolAssetSchema>;
+export type SchoolAsset = typeof schoolAssets.$inferSelect;
+
+export const assetLogs = pgTable("asset_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  assetId: integer("asset_id").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  snapshot: text("snapshot"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAssetLogSchema = createInsertSchema(assetLogs).omit({ id: true, createdAt: true });
+export type InsertAssetLog = z.infer<typeof insertAssetLogSchema>;
+export type AssetLog = typeof assetLogs.$inferSelect;
+
+export const academicHistory = pgTable("academic_history", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  fromClass: text("from_class").notNull(),
+  fromSection: text("from_section").notNull(),
+  toClass: text("to_class").notNull(),
+  toSection: text("to_section").notNull(),
+  examType: text("exam_type").notNull(),
+  totalObtained: integer("total_obtained").notNull(),
+  totalMax: integer("total_max").notNull(),
+  percentage: integer("percentage").notNull(),
+  gradeLabel: text("grade_label"),
+  gradePoint: text("grade_point"),
+  remarks: text("remarks"),
+  snapshotJson: jsonb("snapshot_json"),
+  archivedAt: timestamp("archived_at").notNull().defaultNow(),
+});
+
+export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
+export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;
+export type AcademicHistory = typeof academicHistory.$inferSelect;
+
+export const verificationLogs = pgTable("verification_logs", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+});
+
+export const insertVerificationLogSchema = createInsertSchema(verificationLogs).omit({ id: true, submittedAt: true });
+export type InsertVerificationLog = z.infer<typeof insertVerificationLogSchema>;
+export type VerificationLog = typeof verificationLogs.$inferSelect;
+
+export const timetableStructure = pgTable("timetable_structure", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  class: varchar("class", { length: 20 }).notNull(),
+  periodNumber: integer("period_number").notNull(),
+  label: text("label").notNull().default(""),
+  startTime: text("start_time").notNull().default(""),
+  endTime: text("end_time").notNull().default(""),
+  isBreak: boolean("is_break").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+}, (table) => [
+  // Break rows use period_number=0 and can occur more than once per class.
+  uniqueIndex("timetable_structure_period_unique")
+    .on(table.schoolId, table.sessionId, table.class, table.periodNumber)
+    .where(sql`NOT ${table.isBreak}`),
+]);
+
+export const insertTimetableStructureSchema = createInsertSchema(timetableStructure).omit({ id: true });
+export type InsertTimetableStructure = z.infer<typeof insertTimetableStructureSchema>;
+export type TimetableStructure = typeof timetableStructure.$inferSelect;
+
+export const nonTeachingStaff = pgTable("non_teaching_staff", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull().default(""),
+  phone: varchar("phone", { length: 20 }).notNull().default(""),
+  designation: text("designation").notNull(),
+  passwordHash: text("password_hash"),
+  allowedModules: text("allowed_modules").array().notNull().default([]),
+  isActive: boolean("is_active").notNull().default(true),
+  photoUrl: text("photo_url"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertNonTeachingStaffSchema = createInsertSchema(nonTeachingStaff).omit({ id: true, createdAt: true });
+export type InsertNonTeachingStaff = z.infer<typeof insertNonTeachingStaffSchema>;
+export type NonTeachingStaff = typeof nonTeachingStaff.$inferSelect;
+
+export const facultyMappings = pgTable("faculty_mappings", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  className: varchar("class_name", { length: 20 }).notNull(),
+  section: varchar("section", { length: 10 }).notNull(),
+  subject: text("subject"),
+});
+
+export const insertFacultyMappingSchema = createInsertSchema(facultyMappings).omit({ id: true });
+export type InsertFacultyMapping = z.infer<typeof insertFacultyMappingSchema>;
+export type FacultyMapping = typeof facultyMappings.$inferSelect;
+
+export const leavePolicies = pgTable("leave_policies", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  annualLimit: integer("annual_limit").notNull().default(12),
+  targetRoles: text("target_roles").notNull().default("all"),
+  renewalMonth: integer("renewal_month").notNull().default(1),
+  renewalDay: integer("renewal_day").notNull().default(1),
+  expiryBehavior: text("expiry_behavior").notNull().default("expire"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLeavePolicySchema = createInsertSchema(leavePolicies).omit({ id: true, createdAt: true });
+export type InsertLeavePolicy = z.infer<typeof insertLeavePolicySchema>;
+export type LeavePolicy = typeof leavePolicies.$inferSelect;
+
+export const examPolicyTiers = pgTable("exam_policy_tiers", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  tierName: text("tier_name").notNull(),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  examWeights: text("exam_weights").notNull().default("{}"),
+  promotionFailRules: text("promotion_fail_rules").notNull().default("{}"),
+  resultsConfig: text("results_config").notNull().default("{}"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertExamPolicyTierSchema = createInsertSchema(examPolicyTiers).omit({ id: true, createdAt: true });
+export type InsertExamPolicyTier = z.infer<typeof insertExamPolicyTierSchema>;
+export type ExamPolicyTier = typeof examPolicyTiers.$inferSelect;
+
+// ── TEACHER SELF ATTENDANCE ──────────────────────────────────────────────────
+export const teacherSelfAttendance = pgTable("teacher_self_attendance", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  attendanceDate: text("attendance_date").notNull(),
+  checkInTime: timestamp("check_in_time"),
+  checkOutTime: timestamp("check_out_time"),
+  status: text("status").notNull().default("Not Marked"),
+  totalWorkingMinutes: integer("total_working_minutes").notNull().default(0),
+  locationVerified: boolean("location_verified").notNull().default(false),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("uq_teacher_self_attendance").on(t.teacherId, t.sessionId, t.attendanceDate)]);
+
+export const insertTeacherSelfAttendanceSchema = createInsertSchema(teacherSelfAttendance).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertTeacherSelfAttendance = z.infer<typeof insertTeacherSelfAttendanceSchema>;
+export type TeacherSelfAttendance = typeof teacherSelfAttendance.$inferSelect;
+
+// ── ATTENDANCE CORRECTION REQUESTS ───────────────────────────────────────────
+export const attendanceCorrectionRequests = pgTable("attendance_correction_requests", {
+  id: serial("id").primaryKey(),
+  teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  attendanceDate: text("attendance_date").notNull(),
+  requestedCheckIn: text("requested_check_in").notNull(),
+  requestedCheckOut: text("requested_check_out").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("Pending"),
+  reviewedBy: integer("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertAttendanceCorrectionSchema = createInsertSchema(attendanceCorrectionRequests).omit({ id: true, createdAt: true, reviewedAt: true, reviewedBy: true });
+export type InsertAttendanceCorrection = z.infer<typeof insertAttendanceCorrectionSchema>;
+export type AttendanceCorrectionRequest = typeof attendanceCorrectionRequests.$inferSelect;
+
+// ── ATTENDANCE POLICY ENGINE ──────────────────────────────────────────────────
+export const attendancePolicies = pgTable("attendance_policies", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  targetRole: varchar("target_role", { length: 20 }).notNull(), // "TEACHER" | "STUDENT"
+  policyName: text("policy_name").notNull(),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  expectedArrivalTime: varchar("expected_arrival_time", { length: 5 }).notNull().default("09:00"),
+  gracePeriodMinutes: integer("grace_period_minutes").notNull().default(0),
+  halfDayCutoffTime: varchar("half_day_cutoff_time", { length: 5 }).notNull().default("12:00"),
+  schoolEndTime: varchar("school_end_time", { length: 5 }).notNull().default("17:00"),
+  attendanceTarget: integer("attendance_target").notNull().default(85),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAttendancePolicySchema = createInsertSchema(attendancePolicies).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAttendancePolicy = z.infer<typeof insertAttendancePolicySchema>;
+export type AttendancePolicy = typeof attendancePolicies.$inferSelect;
+
+// ── ACADEMIC SESSIONS ─────────────────────────────────────────────────────────
+// One school (tenant) can have many sessions (e.g. 2025-2026, 2026-2027).
+// Only one session per school may have isActive = true at any time;
+// the activation route enforces this via a DB transaction.
+export const academicSessions = pgTable("academic_sessions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionName: varchar("session_name", { length: 50 }).notNull(), // e.g. "2026-2027"
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  isActive: boolean("is_active").notNull().default(false),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  newAdmissionsEnabled: boolean("new_admissions_enabled").notNull().default(false),
+  promotionStrategy: varchar("promotion_strategy", { length: 20 }).notNull().default("defer"),
+  copiedFromSessionId: integer("copied_from_session_id"),
+  copiedModules: text("copied_modules"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAcademicSessionSchema = createInsertSchema(academicSessions).omit({ id: true, createdAt: true });
+export type InsertAcademicSession = z.infer<typeof insertAcademicSessionSchema>;
+export type AcademicSession = typeof academicSessions.$inferSelect;
+
+// ── ENROLLMENTS ───────────────────────────────────────────────────────────────
+// Links a student to an academic session with their class/section for that year.
+// Unique constraint on (schoolId, studentId, sessionId) prevents double-enrollment
+// in the same session. Created automatically on student add (active session is used).
+export const enrollments = pgTable("enrollments", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+  className: varchar("class_name", { length: 20 }).notNull(),
+  sectionName: varchar("section_name", { length: 10 }).notNull(),
+  rollNo: integer("roll_no"),
+  status: varchar("status", { length: 20 }).notNull().default("Active"),
+}, (table) => ({
+  uniqueStudentSession: uniqueIndex("enrollments_student_session_uidx").on(
+    table.schoolId, table.studentId, table.sessionId,
+  ),
+}));
+
+export const insertEnrollmentSchema = createInsertSchema(enrollments).omit({ id: true });
+export type InsertEnrollment = z.infer<typeof insertEnrollmentSchema>;
+export type Enrollment = typeof enrollments.$inferSelect;
+
+// ── Removed Teachers Audit Log ─────────────────────────────────────────────
+export const removedTeachersLog = pgTable("removed_teachers_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  digitalTeacherId: text("digital_teacher_id"),
+  fullName: text("full_name").notNull(),
+  email: text("email"),
+  phone: varchar("phone", { length: 20 }),
+  subject: text("subject"),
+  assignedClass: text("assigned_class"),
+  assignedSection: text("assigned_section"),
+  designation: text("designation"),
+  gender: varchar("gender", { length: 10 }),
+  dateOfBirth: text("date_of_birth"),
+  govtIdType: text("govt_id_type"),
+  govtIdNumber: text("govt_id_number"),
+  address: text("address"),
+  joiningDate: text("joining_date"),
+  qualifications: text("qualifications"),
+  removalReason: text("removal_reason").notNull(),
+  removedByEmail: text("removed_by_email"),
+  removedAt: timestamp("removed_at").notNull().defaultNow(),
+});
+
+export type RemovedTeacherLog = typeof removedTeachersLog.$inferSelect;
+
+// ── Financial Hub tables ──────────────────────────────────────────────────────
+
+export interface LateFeeConfig {
+  enabled: boolean;
+  type: "NONE" | "FLAT" | "DAILY" | "TIERED";
+  grace_period_days: number;
+  flat_amount: number;
+  daily_rate: number;
+  max_cap: number;
+  tiered_slabs: Array<{ from_day: number; to_day: number; amount: number }>;
+}
+
+export const feeStructures = pgTable("fee_structures", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  name: varchar("name", { length: 100 }).notNull(),
+  feeType: varchar("fee_type", { length: 100 }).notNull(),
+  amount: integer("amount").notNull(),
+  frequency: varchar("frequency", { length: 20 }).notNull().default("annual"),
+  applicableClasses: text("applicable_classes").array().notNull().default([]),
+  dueDayOfMonth: integer("due_day_of_month"),
+  breakdown: jsonb("breakdown").$type<Array<{ name: string; purpose: string; amount: number }>>().notNull().default([]),
+  autoGenerate: boolean("auto_generate").notNull().default(false),
+  autoGenDueDay: integer("auto_gen_due_day"),
+  lastInvoicesGeneratedAt: timestamp("last_invoices_generated_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  lateFeeConfig: jsonb("late_fee_config").$type<LateFeeConfig>().default({ enabled: false, type: "NONE", grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }),
+});
+export const insertFeeStructureSchema = createInsertSchema(feeStructures).omit({ id: true, createdAt: true });
+export type InsertFeeStructure = z.infer<typeof insertFeeStructureSchema>;
+export type FeeStructure = typeof feeStructures.$inferSelect;
+
+export const paymentRecords = pgTable("payment_records", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  feeRecordId: integer("fee_record_id").references(() => feeRecords.id, { onDelete: "set null" }),
+  studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
+  paymentMethod: varchar("payment_method", { length: 30 }).notNull(),
+  referenceNumber: varchar("reference_number", { length: 100 }),
+  receivedDate: date("received_date").notNull(),
+  amount: integer("amount").notNull(),
+  cashierNotes: text("cashier_notes"),
+  idempotencyKey: varchar("idempotency_key", { length: 64 }).unique(),
+  recordedBy: integer("recorded_by").references(() => users.id, { onDelete: "set null" }),
+  receiptNumber: varchar("receipt_number", { length: 20 }),
+  lateFeePaid: integer("late_fee_paid").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  // ── Razorpay payment metadata (populated at verify time) ─────────────────
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpaySignature: text("razorpay_signature"),
+  paymentMode: varchar("payment_mode", { length: 30 }),   // upi | card | netbanking | wallet | emi
+  bankName: varchar("bank_name", { length: 100 }),
+  cardLast4: varchar("card_last4", { length: 4 }),
+  vpa: varchar("vpa", { length: 100 }),                   // UPI VPA / handle
+  payerName: varchar("payer_name", { length: 200 }),
+  payerEmail: varchar("payer_email", { length: 255 }),
+  payerContact: varchar("payer_contact", { length: 20 }),
+  gatewayStatus: varchar("gateway_status", { length: 30 }), // captured | refunded | settled
+  // ── Offline-payment enrichment fields ─────────────────────────────────────
+  // Cash: JSON object keyed by denomination value → quantity, e.g. {"500":70,"200":2,...}
+  denominationBreakdown: jsonb("denomination_breakdown"),
+  // Date the instrument was issued (cheque date, DD date, bank transfer date)
+  chequeDate: date("cheque_date"),
+  // Branch name for cheque, DD, and bank transfer payments
+  branchName: varchar("branch_name", { length: 100 }),
+}, (table) => [
+  index("idx_payment_records_school_fee_received")
+    .on(table.schoolId, table.feeRecordId, table.receivedDate),
+]);
+export const insertPaymentRecordSchema = createInsertSchema(paymentRecords).omit({ id: true, createdAt: true });
+export type InsertPaymentRecord = z.infer<typeof insertPaymentRecordSchema>;
+export type PaymentRecord = typeof paymentRecords.$inferSelect;
+
+/**
+ * One immutable financial refund request/provider refund per row.  This is
+ * intentionally separate from payment_records: a refund never rewrites the
+ * original captured payment, its receipt, or its amount.
+ */
+export const refunds = pgTable("refunds", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id"),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  feeRecordId: integer("fee_record_id").references(() => feeRecords.id, { onDelete: "set null" }),
+  paymentRecordId: integer("payment_record_id").references(() => paymentRecords.id, { onDelete: "restrict" }),
+  paymentAttemptId: integer("payment_attempt_id"),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }).notNull(),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpayRefundId: varchar("razorpay_refund_id", { length: 100 }),
+  requestedAmountPaise: integer("requested_amount_paise").notNull(),
+  processedAmountPaise: integer("processed_amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  reasonCode: varchar("reason_code", { length: 60 }),
+  reasonText: text("reason_text"),
+  internalNote: text("internal_note"),
+  origin: varchar("origin", { length: 20 }).notNull().default("admin"),
+  localStatus: varchar("local_status", { length: 40 }).notNull().default("requested"),
+  providerStatus: varchar("provider_status", { length: 40 }),
+  idempotencyKey: varchar("idempotency_key", { length: 120 }).notNull(),
+  requestedBy: integer("requested_by").references(() => users.id, { onDelete: "set null" }),
+  requesterIp: text("requester_ip"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
+  providerProcessedAt: timestamp("provider_processed_at", { withTimezone: true }),
+  lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+  failureCode: varchar("failure_code", { length: 100 }),
+  failureMessage: text("failure_message"),
+  providerPayload: jsonb("provider_payload"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("refunds_school_idempotency_uniq").on(table.schoolId, table.idempotencyKey),
+  uniqueIndex("refunds_school_provider_refund_uniq").on(table.schoolId, table.razorpayRefundId),
+]);
+export type Refund = typeof refunds.$inferSelect;
+
+/** Append-only, reconstructable refund lifecycle events. */
+export const refundEvents = pgTable("refund_events", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  refundId: integer("refund_id").notNull().references(() => refunds.id, { onDelete: "cascade" }),
+  feeRecordId: integer("fee_record_id"),
+  paymentRecordId: integer("payment_record_id"),
+  paymentAttemptId: integer("payment_attempt_id"),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  localStatus: varchar("local_status", { length: 40 }),
+  providerStatus: varchar("provider_status", { length: 40 }),
+  razorpayPaymentId: varchar("razorpay_payment_id", { length: 100 }),
+  razorpayOrderId: varchar("razorpay_order_id", { length: 100 }),
+  razorpayRefundId: varchar("razorpay_refund_id", { length: 100 }),
+  amountPaise: integer("amount_paise"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  source: varchar("source", { length: 20 }).notNull(),
+  webhookDeliveryId: integer("webhook_delivery_id"),
+  correlationKey: varchar("correlation_key", { length: 200 }).notNull(),
+  payload: jsonb("payload"),
+  providerOccurredAt: timestamp("provider_occurred_at", { withTimezone: true }),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("refund_events_school_correlation_uniq").on(table.schoolId, table.correlationKey),
+]);
+export type RefundEvent = typeof refundEvents.$inferSelect;
+
+/**
+ * Method-specific offline accounting data intentionally lives beside the
+ * canonical payment record. Common information (amount, method, receipt,
+ * invoice/student/session links, recordedBy and timestamps) remains single-
+ * sourced on payment_records.
+ */
+export const offlinePaymentDetails = pgTable("offline_payment_details", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentRecordId: integer("payment_record_id").notNull().references(() => paymentRecords.id, { onDelete: "cascade" }),
+  transactionTime: varchar("transaction_time", { length: 5 }),
+  instrumentStatus: varchar("instrument_status", { length: 30 }),
+  transferMode: varchar("transfer_mode", { length: 40 }),
+  transactionReference: varchar("transaction_reference", { length: 100 }),
+  receivingBank: varchar("receiving_bank", { length: 100 }),
+  receiverUpiId: varchar("receiver_upi_id", { length: 100 }),
+  payeeName: varchar("payee_name", { length: 200 }),
+  payableAt: varchar("payable_at", { length: 120 }),
+  collectionLocation: varchar("collection_location", { length: 200 }),
+  depositDate: date("deposit_date"),
+  depositBank: varchar("deposit_bank", { length: 100 }),
+  depositReference: varchar("deposit_reference", { length: 100 }),
+  returnDate: date("return_date"),
+  returnReason: text("return_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("offline_payment_details_payment_record_uniq").on(table.paymentRecordId),
+  uniqueIndex("offline_payment_details_school_payment_uniq").on(table.schoolId, table.paymentRecordId),
+]);
+export type OfflinePaymentDetail = typeof offlinePaymentDetails.$inferSelect;
+
+/** Immutable before/after record for any permitted offline-detail correction. */
+export const offlinePaymentDetailRevisions = pgTable("offline_payment_detail_revisions", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  paymentRecordId: integer("payment_record_id").notNull().references(() => paymentRecords.id, { onDelete: "cascade" }),
+  changedBy: integer("changed_by").references(() => users.id, { onDelete: "set null" }),
+  reason: text("reason").notNull(),
+  previousValues: jsonb("previous_values").notNull(),
+  newValues: jsonb("new_values").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type OfflinePaymentDetailRevision = typeof offlinePaymentDetailRevisions.$inferSelect;
+
+export const feeAuditLog = pgTable("fee_audit_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  actorId: integer("actor_id").references(() => users.id, { onDelete: "set null" }),
+  actorTeacherId: integer("actor_teacher_id").references(() => teachers.id, { onDelete: "set null" }),
+  actorStaffId: integer("actor_staff_id").references(() => nonTeachingStaff.id, { onDelete: "set null" }),
+  actorType: varchar("actor_type", { length: 30 }).notNull().default("legacy"),
+  actorName: text("actor_name"),
+  actorRole: varchar("actor_role", { length: 80 }).notNull().default("Unknown"),
+  actorIdentifier: varchar("actor_identifier", { length: 100 }).notNull().default("UNKNOWN"),
+  ipAddress: text("ip_address"),
+  action: varchar("action", { length: 50 }).notNull(),
+  entityType: varchar("entity_type", { length: 50 }),
+  entityId: integer("entity_id"),
+  studentId: integer("student_id").references(() => students.id, { onDelete: "set null" }),
+  studentName: text("student_name"),
+  studentIdentifier: varchar("student_identifier", { length: 100 }),
+  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  recordLabel: text("record_label"),
+  eventKey: varchar("event_key", { length: 200 }),
+  amount: integer("amount"),
+  currency: varchar("currency", { length: 10 }).notNull().default("INR"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type FeeAuditLog = typeof feeAuditLog.$inferSelect;
+
+export const externalPaymentSettings = pgTable("external_payment_settings", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().unique().references(() => schools.id, { onDelete: "cascade" }),
+  isEnabled: boolean("is_enabled").notNull().default(false),
+  gatewayUrl: text("gateway_url"),
+  bannerMessage: text("banner_message"),
+  lastUpdatedBy: integer("last_updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // ── Razorpay gateway ──────────────────────────────────────────────────────
+  razorpayEnabled: boolean("razorpay_enabled").notNull().default(false),
+  razorpayKeyId: text("razorpay_key_id"),
+  razorpayKeySecret: text("razorpay_key_secret"),
+  razorpayWebhookSecret: text("razorpay_webhook_secret"),
+  razorpayMode: text("razorpay_mode").notNull().default("test"), // "test" | "live"
+});
+export type ExternalPaymentSettings = typeof externalPaymentSettings.$inferSelect;
+
+// Monotonically-increasing receipt sequence counters — one row per school/prefix.
+// Deletion of any ledger row NEVER decrements these counters.
+export const receiptSequences = pgTable("receipt_sequences", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  prefix: varchar("prefix", { length: 10 }).notNull(),
+  currentNumber: integer("current_number").notNull().default(0),
+});
+
+// ── Notification provider config (per school) ─────────────────────────────────
+export const notificationConfig = pgTable("notification_config", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().unique().references(() => schools.id, { onDelete: "cascade" }),
+  // SMS via MSG91
+  smsEnabled: boolean("sms_enabled").notNull().default(false),
+  msg91AuthKey: text("msg91_auth_key"),
+  msg91SenderId: text("msg91_sender_id"),
+  // WhatsApp via MSG91
+  waEnabled: boolean("wa_enabled").notNull().default(false),
+  msg91WaNumber: text("msg91_wa_number"),      // integrated number (91XXXXXXXXXX)
+  msg91WaTemplate: text("msg91_wa_template"),  // pre-approved template name
+  // Email — provider is 'sendgrid' | 'mailtrap'
+  emailEnabled: boolean("email_enabled").notNull().default(false),
+  emailProvider: text("email_provider").notNull().default("sendgrid"),
+  sendgridApiKey: text("sendgrid_api_key"),
+  sendgridFromEmail: text("sendgrid_from_email"),
+  sendgridFromName: text("sendgrid_from_name"),
+  mailtrapApiKey: text("mailtrap_api_key"),
+  mailtrapInboxId: text("mailtrap_inbox_id"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type NotificationConfig = typeof notificationConfig.$inferSelect;
+
+// ── Dunning log (one row per fee record × channel × stage) ────────────────────
+export const dunningLog = pgTable("dunning_log", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull(),
+  feeRecordId: integer("fee_record_id").notNull().references(() => feeRecords.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),    // 'sms' | 'whatsapp' | 'email'
+  stage: text("stage").notNull(),        // 'D-2' | 'D+0' | 'D+3' | 'D+7' | 'D+14' (historical D30 rows preserved as-is)
+  sentAt: timestamp("sent_at").notNull().defaultNow(),
+  status: text("status").notNull(),      // 'sent' | 'failed'
+  errorMessage: text("error_message"),
+  recipient: text("recipient"),          // phone or email address
+  studentName: text("student_name"),
+});
+export type DunningLog = typeof dunningLog.$inferSelect;
+
+// ── Dunning message templates (per school × stage × channel) ─────────────────
+export const dunningTemplates = pgTable("dunning_templates", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  stage: text("stage").notNull(),    // 'D-2' | 'D+0' | 'D+3' | 'D+7' | 'D+14' (never D30)
+  channel: text("channel").notNull(), // 'sms' | 'email'
+  bodyText: text("body_text").notNull(),
+  subjectText: text("subject_text"), // email subject only
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("dunning_templates_school_stage_channel").on(table.schoolId, table.stage, table.channel),
+]);
+export type DunningTemplate = typeof dunningTemplates.$inferSelect;
+
+// ── Dunning job status (one row per school) ───────────────────────────────────
+// Tracks whether a school's dunning pass is currently running and when it last
+// finished. schoolId remains nullable solely for compatibility with the old
+// global id=1 row; new code only reads/writes tenant-owned rows.
+export const dunningJobStatus = pgTable("dunning_job_status", {
+  id: serial("id").primaryKey(),
+  schoolId: integer("school_id").references(() => schools.id, { onDelete: "cascade" }),
+  isRunning: boolean("is_running").notNull().default(false),
+  startedAt: timestamp("started_at"),
+  lastCompletedAt: timestamp("last_completed_at"),
+}, (table) => [
+  uniqueIndex("dunning_job_status_school_id_unique").on(table.schoolId),
+]);
+export type DunningJobStatus = typeof dunningJobStatus.$inferSelect;

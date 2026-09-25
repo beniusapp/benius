@@ -1,0 +1,282 @@
+STEP 3 — FULL APPLICATION IST TIMEZONE READ-ONLY AUDIT
+
+IMPORTANT:
+Steps 1, 2A, and 2B are COMPLETE and ACCEPTED.
+
+This task is STRICTLY READ-ONLY.
+
+DO NOT modify any code.
+
+DO NOT create or modify files.
+
+DO NOT create migrations.
+
+DO NOT modify database schema.
+
+DO NOT modify database data.
+
+DO NOT modify production.
+
+DO NOT modify configuration.
+
+DO NOT install packages.
+
+DO NOT refactor anything.
+
+DO NOT fix anything.
+
+DO NOT commit changes.
+
+Your ONLY task is to inspect the current codebase and produce a detailed audit report.
+
+==================================================
+1. GLOBAL APPLICATION TIMEZONE REQUIREMENT
+==================================================
+
+This MIS is an Indian school application.
+
+The canonical application/business timezone is:
+
+Asia/Kolkata
+IST
+UTC+05:30
+
+Every application-facing business date/time must follow IST.
+
+This applies regardless of:
+
+- server timezone
+- Node process timezone
+- browser timezone
+- user's physical location
+- container timezone
+- database session timezone
+
+The browser or server's local timezone must NOT silently determine school business dates.
+
+IMPORTANT ARCHITECTURAL RULE:
+
+Absolute timestamps may continue to be persisted using the existing UTC persistence convention.
+
+Do NOT classify UTC timestamp persistence itself as a defect.
+
+The expected architecture is:
+
+1. Business calendar date
+   → IST date-only semantics
+   → YYYY-MM-DD
+
+2. Absolute timestamp
+   → existing UTC persistence convention
+
+3. Business wall-clock time
+   → Asia/Kolkata / IST
+
+4. User-facing date/time
+   → explicit Asia/Kolkata
+
+==================================================
+2. PREVIOUSLY COMPLETED WORK — DO NOT RE-AUDIT AS UNFIXED
+==================================================
+
+Step 1 established the IST foundation.
+
+Step 2A fixed Attendance backend business-date issues.
+
+Step 2B fixed Attendance frontend business-date/time issues.
+
+Do NOT propose redoing these completed fixes unless you discover a concrete regression.
+
+Known completed areas include:
+
+- Attendance backend academic-year calculation
+- Attendance backend date validation
+- Attendance correction-window calculation
+- Attendance weekday calculation
+- Attendance backend current-year/current-date fallbacks
+- Teacher My Attendance IST today
+- Attendance History IST periods
+- Attendance frontend date handling
+- Student Attendance month/year handling
+- Attendance timestamp display
+- Attendance CSV/PDF timestamp formatting
+- IST midnight rollover for Attendance
+- Shared IST date utilities
+
+Do NOT unnecessarily modify these areas.
+
+==================================================
+3. PRIMARY OBJECTIVE
+==================================================
+
+Perform a READ-ONLY audit of the REST OF THE APPLICATION for timezone/date/time correctness.
+
+The purpose is to identify remaining places where application behavior can differ depending on:
+
+- server timezone
+- browser timezone
+- UTC vs IST
+- BST/GMT
+- another timezone
+
+The audit must distinguish:
+
+A. TRUE timezone/business-date defects
+
+from:
+
+B. Correct UTC persistence
+
+from:
+
+C. Pure presentation formatting
+
+from:
+
+D. Safe code that does not require modification
+
+Do not label every use of Date as a defect.
+
+==================================================
+4. AUDIT SCOPE
+==================================================
+
+Audit all relevant application areas, especially:
+
+A. EXAMINATION
+
+B. ACADEMIC SESSION
+
+C. FEES / PAYMENTS
+
+D. CALENDAR / EVENTS
+
+E. NOTIFICATIONS
+
+F. SCHEDULED JOBS / CRON / BACKGROUND WORKERS
+
+G. REPORTS / EXPORTS
+
+H. ADMIN PORTAL
+
+I. TEACHER PORTAL
+
+J. STUDENT PORTAL
+
+K. AUTHENTICATION / SESSION EXPIRATION
+
+L. DASHBOARDS / ANALYTICS
+
+M. ANY OTHER BUSINESS DATE/TIME LOGIC
+
+Do not assume these areas are affected.
+
+Inspect the actual code.
+
+==================================================
+5. SEARCH FOR DATE/TIME PATTERNS
+==================================================
+
+Perform a systematic codebase search for timezone-sensitive patterns.
+
+At minimum inspect occurrences of:
+
+JavaScript Date:
+
+new Date()
+new Date(value)
+Date.now()
+Date.parse()
+
+Date getters:
+
+getFullYear()
+getMonth()
+getDate()
+getDay()
+getHours()
+getMinutes()
+getSeconds()
+
+UTC getters:
+
+getUTCFullYear()
+getUTCMonth()
+getUTCDate()
+getUTCDay()
+getUTCHours()
+getUTCMinutes()
+
+Date setters:
+
+setDate()
+setMonth()
+setFullYear()
+setHours()
+setMinutes()
+
+String conversion:
+
+toISOString()
+toLocaleDateString()
+toLocaleTimeString()
+toLocaleString()
+
+Timezone:
+
+timeZone
+timezone
+TZ
+Asia/Kolkata
+UTC
+GMT
+BST
+
+Date strings:
+
+YYYY-MM-DD
+T00:00:00
+T23:59:59
+86400000
+24 * 60 * 60 * 1000
+
+SQL/database:
+
+CURRENT_DATE
+CURRENT_TIME
+CURRENT_TIMESTAMP
+NOW()
+DATE_TRUNC
+AT TIME ZONE
+timezone conversions
+PostgreSQL date/timestamp comparisons
+
+Cron/scheduling:
+
+cron
+node-cron
+schedule
+setInterval
+setTimeout
+
+Also inspect custom date utilities.
+
+==================================================
+6. IMPORTANT — DO NOT ASSUME A MATCH IS A BUG
+==================================================
+
+For every suspicious occurrence determine:
+
+1. What does the value represent?
+
+2. Is it:
+   - a date-only business date?
+   - an absolute instant?
+   - a wall-clock business time?
+   - a display-only value?
+
+3. What timezone does the code currently use?
+
+4. Is the result dependent on:
+   - server timezone?
+   - browser timezone?

@@ -1,0 +1,25 @@
+Please perform an end-to-end audit, test suite generation, and fix for the Fees & Payments module (invoice generation, class scope filtering, auto-invoicing, and ledger synchronisation). 
+
+Here are the specific issues and requirements to audit and test:
+
+1. CLASS SCOPE INTEGRITY & LEAK PREVENTION:
+   - Audit the backend invoice generation service/controller.
+   - Fix the bug where fee structures assigned to specific classes (e.g., 'prepatory, Nursery, 1, 2') are generating invoices for students in unrelated classes (e.g., Class 4, 5, 6, 8).
+   - Ensure student query filters strictly check `student.class_id IN (fee_structure.assigned_classes)` before creating any invoice record.
+
+2. INVOICE GENERATION LOGIC (MANUAL & AUTOMATED):
+   - Test manual invoice generation ('Generate Invoices' button) to ensure it creates exactly 1 pending invoice per eligible student for that specific billing period.
+   - Test auto-generation ('Run Auto-Invoice Now' / cron job) specifically for monthly frequency structures. Verify it only targets active monthly structures with auto-invoice enabled, without triggering duplicate invoices if run twice in the same billing cycle.
+
+3. LEDGER & TRANSACTION DATA ACCURACY:
+   - Verify that whenever an invoice is generated, the ledger, transactions table, student balance, total revenue, outstanding total, and collection rate metrics update synchronously and accurately.
+   - Investigate why an 'Annual fee' structure set to ₹20,000 resulted in a ₹10,000 record in the ledger for student ID MIS-0023. Fix any calculation or partial mapping bugs.
+   - Ensure the Academic Year context (e.g., 2027-2028) matches the invoice billing period and due date logic.
+
+4. MULTI-TENANCY & DATA LEAK CHECK:
+   - Run a strict data isolation test across schools/tenants and student accounts to ensure no cross-tenant or cross-student data leakage occurs in SQL queries or API responses.
+
+Tasks to execute:
+1. Review the database queries, backend endpoints, and frontend state for invoice generation and ledger populating.
+2. Write unit/integration tests covering: class scope matching, duplicate prevention, auto-invoice execution for monthly fees, and ledger calculations.
+3. Apply code fixes for any failing tests or mismatches found, and provide a summary of code changes made.

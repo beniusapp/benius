@@ -1,0 +1,105 @@
+We are continuing the Attendance hardening work.
+
+Step 2K implementation is already COMPLETE and PASS.
+
+IMPORTANT:
+This step is TEST-ONLY.
+Do NOT modify production/application code.
+Do NOT modify database schema.
+Do NOT create or apply migrations.
+Do NOT change existing Attendance behavior.
+Do NOT refactor unrelated code.
+Do NOT fix unrelated issues.
+
+Project requirements that MUST remain preserved:
+- Multi-tenant school isolation is mandatory.
+- Attendance is Academic-Session-specific.
+- Teacher self-attendance is isolated by authenticated teacher + authenticated school + selected Academic Session + attendance date.
+- Browser-supplied schoolId or teacherId must never be trusted.
+- No active/latest/current Session fallback is allowed.
+- Legacy teacher self-attendance rows with NULL session_id must remain untouched and must NOT be included in new Session-scoped operations.
+- Application dates/times use IST / Asia/Kolkata.
+
+TASK:
+Add regression tests only for the remaining Step 2K self-attendance coverage gaps identified by the post-implementation review.
+
+Add tests covering ALL of these:
+
+1. DATABASE DUPLICATE PROTECTION
+   Verify that the unique identity:
+     (teacher_id, session_id, attendance_date)
+   rejects a duplicate record for the same teacher + same session + same date.
+
+   Also verify that:
+   - same teacher + different Session + same date is allowed
+   - different teacher + same Session + same date is allowed
+
+   Do not alter the production schema.
+   If the existing test infrastructure cannot safely exercise the real development database, use the existing test/database fixture mechanism rather than introducing a new persistent mutation mechanism.
+
+2. CROSS-SESSION MUTATION PROTECTION
+   Create/fixture a teacher self-attendance record that exists only in Session B.
+
+   Authenticate as the same teacher while operating with Session A.
+
+   Verify that Session A cannot:
+   - check out Session B's record
+   - update/correct Session B's record
+   - status-heal Session B's record
+   - otherwise mutate Session B's record through the Session-A route context.
+
+   The important assertion is that selected Session A can never target a Session B record.
+
+3. LEGACY NULL-SESSION ROW ISOLATION
+   Seed/fixture a legacy teacher self-attendance record with:
+     session_id = NULL
+
+   Verify that a new Session-scoped:
+   - today read
+   - history read
+   - check-in/update lookup
+   - correction lookup
+
+   does NOT return or mutate the NULL-session record.
+
+   Do NOT backfill the NULL session_id.
+   Do NOT assign it to any Session.
+
+4. CORRECTION + HISTORY SESSION CONTRACT
+   Add explicit route-level regression coverage proving:
+   - correction in Session A cannot modify a Session B record for the same teacher/date
+   - correction history in Session A does not expose Session B records
+   - detailed/paginated teacher attendance history remains Session-scoped
+   - same teacher/date records belonging to different Sessions remain isolated.
+
+TESTING REQUIREMENTS:
+- Follow the project's existing Vitest/test conventions.
+- Reuse existing authentication/session fixtures and Attendance test helpers where available.
+- Keep tests deterministic.
+- Prefer isolated fixtures/mocks/test transactions consistent with the existing repository.
+- Do not weaken assertions merely to make tests pass.
+- Do not modify production files to make the tests easier.
+- Do not add fake fallback logic.
+- Do not change existing tests unless absolutely necessary to correct a test-only issue.
+- If an existing test helper is missing something, add only test-support code under the test area; do not modify production behavior.
+
+BEFORE IMPLEMENTING:
+First inspect the existing self-attendance tests, test helpers, and current Step 2K implementation so the new tests match the repository's existing patterns.
+
+Then implement ONLY the tests.
+
+REQUIRED VERIFICATION:
+Run the focused self-attendance/Attendance regression tests.
+Run:
+  npm run check
+  git diff --check
+
+Finally report:
+1. exact test files added/changed
+2. exact scenarios covered
+3. test result counts
+4. npm run check result
+5. git diff --check result
+6. confirmation that NO production files, schema, migrations, or database structure were changed.
+
+STOP after this test-only step. Do not begin another Attendance step automatically.

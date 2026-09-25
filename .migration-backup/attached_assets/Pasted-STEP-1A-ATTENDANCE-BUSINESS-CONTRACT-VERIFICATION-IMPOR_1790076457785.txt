@@ -1,0 +1,503 @@
+STEP 1A — ATTENDANCE BUSINESS CONTRACT VERIFICATION
+
+IMPORTANT:
+READ-ONLY ONLY.
+
+Do NOT modify:
+- code
+- frontend
+- backend
+- database data
+- schema
+- migrations
+- indexes
+- constraints
+- foreign keys
+- triggers
+- configuration
+- environment
+- production
+
+Do NOT run db:push or any migration.
+
+We have completed:
+
+- STEP 0 — Attendance Database & Data Integrity Audit
+- STEP 1 — Attendance Canonical Identity & Authorization Design Audit
+
+STEP 0 found attendance_records has 0 rows in the development database.
+
+STEP 1 proposed:
+
+Student Attendance identity:
+school_id + session_id + student_id + date
+
+Potential write authority:
+authenticated Teacher
+→ authenticated school
+→ active Academic Session
+→ session enrollment
+→ enrollment class/section
+→ Teacher class/section authorization
+
+Before designing any database migration, we need to resolve the remaining BUSINESS CONTRACT questions from the existing application.
+
+Do not invent product requirements.
+
+Use repository code, existing UI behavior, existing authorization architecture, existing data models, tests, and project memory/documentation where available.
+
+For every conclusion clearly separate:
+
+CURRENT BEHAVIOR
+EVIDENCE
+RECOMMENDED CONTRACT
+REASON
+
+==================================================
+1. FACULTY MAPPING — DOES ATTENDANCE REQUIRE IT?
+==================================================
+
+Trace how Faculty Mapping is used across the existing Teacher modules.
+
+Inspect:
+
+- faculty_mappings schema
+- Faculty Mapping APIs
+- Teacher Dashboard
+- Teacher Examination
+- Teacher Attendance
+- any existing isTeacherAuthorizedForAssignment helper
+- legacy teacher assignedClass/assignedSection fields
+- Teacher role authorization
+
+Determine:
+
+A. Is Faculty Mapping currently intended to authorize Teacher access to a class/section?
+
+B. Which Teacher modules currently require Faculty Mapping?
+
+C. Which Teacher modules intentionally allow any authenticated Teacher in the school?
+
+D. Is Student Attendance currently documented or coded as:
+   - school-wide Teacher authority
+   - class/section Teacher authority
+   - homeroom Teacher authority
+   - Faculty Mapping authority
+
+E. Does the existing project architecture contain a rule that Faculty Mapping/Enrollment should NOT gate Teacher Examination or other modules?
+
+F. Would requiring Faculty Mapping for Attendance be:
+   - preserving existing intended behavior
+   - tightening an existing intended rule
+   - changing product behavior
+
+G. Is there an existing explicit project requirement for Attendance authorization?
+
+DO NOT change Faculty Mapping.
+
+FINAL RESULT:
+
+Define exactly:
+
+WHO IS ALLOWED TO MARK STUDENT ATTENDANCE?
+
+And:
+
+WHAT SERVER-SIDE FACT PROVES THAT AUTHORIZATION?
+
+==================================================
+2. ENROLLMENT STATUS — ATTENDANCE ELIGIBILITY
+==================================================
+
+Inspect:
+
+- enrollments schema
+- enrollment creation
+- enrollment update
+- promotion
+- transfer
+- withdrawal
+- inactive behavior
+- Student Registry
+- Student session/archive logic
+- any enrollment status constants/enums
+- all code that interprets enrollment.status
+
+List every known enrollment status and its meaning.
+
+Then determine:
+
+A. Which statuses mean the Student is academically enrolled for attendance?
+
+B. Can a Student be active in Student Registry but not enrolled in the active session?
+
+C. Can an enrollment become inactive while historical Attendance remains valid?
+
+D. Can a Student transfer classes/sections within one Academic Session?
+
+E. Can a Student transfer between schools?
+
+F. What should happen to Attendance after withdrawal?
+
+G. What should happen to Attendance after transfer?
+
+H. What should happen if an enrollment is corrected after Attendance already exists?
+
+Define the exact eligibility rule.
+
+Do not implement.
+
+==================================================
+3. STUDENT LEAVE VS ATTENDANCE STATUS
+==================================================
+
+Trace all uses of:
+
+- attendance_records.status = 'leave'
+- student_leave_requests
+- approved leave
+- Teacher Attendance UI
+- Admin Attendance
+- Student Attendance
+- monthly calculation
+- yearly calculation
+- percentage calculation
+
+Determine whether `leave` is currently:
+
+A. a real persisted Attendance status
+
+B. a display-only state
+
+C. an overlay from student_leave_requests
+
+D. both, creating duplicate sources of truth
+
+Find every code path that reads/writes `leave`.
+
+Then answer:
+
+A. Should future attendance_records persist `leave`?
+
+B. Or should approved Student Leave remain the authoritative leave record?
+
+C. If a Student is on approved leave and a Teacher marks them absent, which source wins?
+
+D. If a Teacher marks `leave` manually, should that be allowed?
+
+E. Should leave count as attended in percentage calculations?
+
+F. Should leave reduce the denominator?
+
+G. Should leave be visible as a distinct Student Calendar state?
+
+Do not modify anything.
+
+==================================================
+4. WHO OWNS CLASS AND SECTION?
+==================================================
+
+Trace:
+
+- Student Registry class/section
+- enrollments.class_name
+- enrollments.section_name
+- Attendance class/section
+- Teacher Attendance roster
+- Admin historical roster
+- Student historical calculations
+- promotion
+
+Determine the intended authority hierarchy.
+
+Specifically answer:
+
+A. For current active session:
+   should enrollment or Student Registry determine class/section?
+
+B. For historical session:
+   should enrollment determine class/section?
+
+C. Should attendance_records.class and attendance_records.section be:
+   - authoritative fields
+   - immutable snapshots
+   - derived display values
+   - unnecessary and removable
+
+D. If enrollment class changes after Attendance was recorded, should old Attendance change?
+
+E. If Student Registry class changes after Attendance was recorded, should old Attendance change?
+
+Do not implement.
+
+==================================================
+5. ACADEMIC SESSION DELETION — COMPLETE DEPENDENCY AUDIT
+==================================================
+
+We need to decide whether Academic Sessions can ever be deleted after historical academic data exists.
+
+Inspect all repository references to:
+
+academic_sessions.id
+session_id
+academicSessionId
+
+Build a complete table:
+
+| Table | session_id? | Delete behavior | Historical importance | Current delete protection |
+|---|---:|---|---|---|
+
+Include at minimum:
+
+- attendance_records
+- teacher_self_attendance
+- attendance_correction_requests
+- enrollments
+- exam_scores
+- promotion_decisions
+- promotion_overrides
+- academic_history
+- student_leave_requests
+- leave_requests
+- student session/history tables
+- any other session-scoped table discovered
+
+Determine:
+
+A. Which tables contain historical academic records?
+
+B. Which tables use CASCADE?
+
+C. Which use SET NULL?
+
+D. Which use RESTRICT/NO ACTION?
+
+E. Which are protected only by application code?
+
+F. Which historical data would be destroyed by deleting a session?
+
+Then determine whether the existing MIS architecture supports:
+
+1. Hard deletion of historical sessions
+2. Soft archive only
+3. Deletion only when no historical references exist
+
+Do not modify anything.
+
+==================================================
+6. STUDENT ATTENDANCE WHOLE-DAY MODEL
+==================================================
+
+Verify from UI, routes, calculations, and database model whether Attendance is definitely:
+
+ONE STUDENT
++
+ONE SESSION
++
+ONE CIVIL DATE
+=
+ONE DAILY ATTENDANCE OUTCOME
+
+Confirm whether there is any hidden requirement for:
+
+- subject
+- period
+- class-period
+- multiple Attendance records per day
+- morning/evening
+- shift
+- biometric event
+- check-in/check-out
+
+Do not invent any.
+
+If no such dimension exists, explicitly confirm that:
+
+attendance identity remains:
+
+school_id + session_id + student_id + date
+
+==================================================
+7. STUDENT ATTENDANCE STATUS CONTRACT
+==================================================
+
+From actual code determine the exact persisted statuses.
+
+For each status report:
+
+| Status | Persisted? | Written by | Read by | Used in calculation? | Intended future status? |
+
+Specifically investigate:
+
+- present
+- absent
+- late
+- halfday
+- half_day
+- leave
+- not-marked
+- none
+- holiday
+
+Determine whether `halfday` and `half_day` are accidental legacy divergence.
+
+Do not normalize anything yet.
+
+==================================================
+8. EDIT COUNT AND EDIT CAP
+==================================================
+
+Trace:
+
+- initial create
+- same-status update
+- changed-status update
+- bulk save
+- edit_count increment
+- cap enforcement
+- seven-day rule
+- concurrent updates
+
+Determine:
+
+A. What exactly does edit_count mean?
+
+B. Does initial creation count as an edit?
+
+C. Should unchanged saves increment edit_count?
+
+D. What is the actual intended maximum?
+
+E. Is the cap a business requirement or merely an implementation detail?
+
+F. What should happen when the cap is reached?
+
+G. Should an Admin have a separate correction/override path?
+
+Do not change anything.
+
+==================================================
+9. TEACHER SELF-ATTENDANCE — KEEP SEPARATE
+==================================================
+
+Do not combine Teacher Self Attendance with Student Attendance remediation.
+
+Only determine its business identity:
+
+- teacher
+- school
+- session
+- date
+
+and whether historical records must survive session archival.
+
+Also determine whether Teacher self-attendance is expected to be:
+
+- one row per teacher/session/date
+- one row per teacher/date globally
+- something else
+
+Do not modify.
+
+==================================================
+10. FINAL BUSINESS CONTRACT
+==================================================
+
+Produce a concise final contract containing:
+
+### STUDENT ATTENDANCE
+
+Identity:
+...
+
+Write authority:
+...
+
+Session authority:
+...
+
+Enrollment requirement:
+...
+
+Class/section authority:
+...
+
+Teacher authorization:
+...
+
+Persisted statuses:
+...
+
+Leave model:
+...
+
+Date model:
+...
+
+Edit rule:
+...
+
+Historical behavior:
+...
+
+### TEACHER SELF ATTENDANCE
+
+Identity:
+...
+
+Session:
+...
+
+Date:
+...
+
+Historical behavior:
+...
+
+### ACADEMIC SESSION
+
+Deletion:
+...
+
+Archival:
+...
+
+Referenced historical data:
+...
+
+==================================================
+11. OPEN QUESTIONS
+
+If any business decision cannot be determined from the existing code/project requirements, list it explicitly.
+
+Do NOT silently choose a behavior.
+
+For each unresolved item explain:
+
+- why it matters
+- what options exist
+- which existing code would be affected
+
+==================================================
+FINAL REPORT
+
+Return exactly:
+
+1. Faculty Mapping Decision
+2. Enrollment Eligibility Decision
+3. Leave vs Attendance Decision
+4. Class/Section Authority Decision
+5. Academic Session Dependency Decision
+6. Whole-Day Attendance Confirmation
+7. Status Contract Decision
+8. Edit Count Contract Decision
+9. Teacher Self-Attendance Decision
+10. Final Attendance Business Contract
+11. Open Questions
+12. Files Inspected
+13. Database Objects Inspected
+
+At the end state exactly:
+
+IMPLEMENTATION STATUS:
+NO CODE, DATABASE DATA, SCHEMA, MIGRATION, INDEX, CONSTRAINT, CONFIGURATION, OR PRODUCTION ENVIRONMENT WAS MODIFIED.

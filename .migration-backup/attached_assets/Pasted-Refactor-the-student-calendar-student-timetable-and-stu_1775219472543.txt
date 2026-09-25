@@ -1,0 +1,59 @@
+Refactor the /student/calendar, /student/timetable, and /student/leave modules into a high-performance, synchronized operations hub. Use a Modern Emerald Green (#10b981) and White professional theme, optimized for Motorola 60 Fusion and Desktop.
+
+1. THE SCHOOL CALENDAR (/student/calendar):
+
+Visual Month View: A high-end, interactive calendar strictly filtered by the student's school_id.
+
+Event Legend:
+
+Emerald Green: School Events (Sports, Fest).
+
+Soft Red: Holidays & Sundays (School Closed).
+
+Royal Blue: Examination Dates.
+
+Interaction: Tapping a date opens a Glassmorphism Modal showing Event Title, Venue, and Description.
+
+2. THE SMART TIMETABLE (/student/timetable):
+
+Weekly Navigation: A horizontal 'Day Strip' (Mon to Sat) at the top.
+
+Daily Feed: A vertical list of periods mapped to the student's class_id and section_id.
+
+Dynamic Logic:
+
+Live Highlight: Use a pulsing Emerald border for the 'Active Period' based on the system clock.
+
+Holiday Sync: If the Calendar marks a date as a 'Holiday', display a professional 'School Closed' illustration instead of the timetable for that day.
+
+3. THE MULTI-LEVEL LEAVE HUB (/student/leave):
+
+Student Dashboard: Top cards showing 'Total Leaves' and 'Current Status'.
+
+The Request Form (Drawer):
+
+Fields: Category, Start/End Date, Reason, and Attachment.
+
+Smart Routing: Attach the student's class_id and section_id to route the request directly to the Class Teacher's Dashboard.
+
+Teacher-Side Approval (/teacher/dashboard/leave):
+
+Filter: Teacher only sees their own class's requests.
+
+Actions:
+
+Approve: Mark as 'Approved' (Updates Student Attendance automatically).
+
+Reject: Add a rejection reason.
+
+Escalate: Move the request to the Principal's Dashboard for final review.
+
+4. UI/UX & Technical Guardrails:
+
+Strict Multi-Tenancy: Every fetch request must include WHERE school_id = $1.
+
+Format Standards: All dates must be in dd/mm/yyyy format.
+
+Mobile UX: Full support for touch-swipe gestures to change months or days.
+
+Icons: Use Lucide-React (CalendarDays, Clock, ShieldCheck).

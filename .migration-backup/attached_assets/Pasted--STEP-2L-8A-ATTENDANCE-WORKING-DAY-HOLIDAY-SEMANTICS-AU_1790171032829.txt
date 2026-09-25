@@ -1,0 +1,886 @@
+# STEP 2L-8A — ATTENDANCE WORKING-DAY / HOLIDAY SEMANTICS AUDIT
+
+## PHASE
+
+The application is in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **READ-ONLY AUDIT**.
+
+Do NOT modify code, schema, database, migrations, production, tests, configuration, or application behavior.
+
+The purpose is to determine the exact current Attendance working-day, Sunday, holiday, and leave semantics before deciding whether any implementation change is actually required.
+
+---
+
+# IMPORTANT PROJECT RULES
+
+These are existing project requirements and MUST remain unchanged:
+
+1. The application is **multi-tenant / multi-school**.
+2. Attendance must always be isolated by authenticated **school/tenant**.
+3. Student Registry is **GLOBAL/PERMANENT** and must not be recreated/reset per Academic Session.
+4. Attendance is strongly **Academic Session-specific**.
+5. Archived Academic Sessions are read-only.
+6. The active Session retains the existing **7-day Attendance correction window**.
+7. Sunday is NOT automatically a working day.
+8. A Sunday MAY be deliberately marked for Attendance.
+9. If a Sunday is deliberately marked, it uses the normal stored Attendance status semantics.
+10. Application/business/display timestamps use **IST / Asia/Kolkata**.
+11. Do not infer or invent product rules that the current application does not establish.
+
+---
+
+# CURRENT AUDIT CONTEXT
+
+Previous Attendance audits identified a remaining ambiguity/inconsistency around **working-day semantics**.
+
+Current implementation appears to have several different concepts:
+
+* calendar weekdays
+* Sundays
+* school holidays
+* dates with Attendance records
+* approved leave
+* class/Session Attendance evidence
+* missing Attendance
+* explicitly marked Attendance
+
+The existing calculation code appears to use Attendance evidence in some places rather than simply treating every weekday as a working day.
+
+We need to establish the exact current behavior before making any change.
+
+---
+
+# PRIMARY QUESTION
+
+Determine:
+
+> **What exactly does this MIS currently consider a "working day" for Attendance calculations and displays?**
+
+Trace the answer through the actual source code.
+
+Do not answer based on assumptions about how schools normally operate.
+
+Do not answer based on generic Attendance conventions.
+
+Use the application's existing implementation.
+
+---
+
+# PHASE A — MAP ALL WORKING-DAY SOURCES
+
+Search the entire Attendance implementation for every source used to determine whether a date is:
+
+* working
+* non-working
+* holiday
+* Sunday
+* absent/missing
+* leave
+* marked
+* applicable to percentage calculations
+
+Inspect at minimum:
+
+* `server/student-attendance-working-days.ts`
+* `server/student-attendance-calculation.ts`
+* `server/storage.ts`
+* `server/routes.ts`
+* `server/teacher-routes.ts`
+* Student Attendance UI
+* Teacher Attendance UI
+* Admin Attendance UI
+* school holiday/configuration logic
+* Academic Session date logic
+* Attendance record queries
+
+Also search for related helper functions and callers rather than assuming the above files are exhaustive.
+
+---
+
+# PHASE B — IDENTIFY THE AUTHORITATIVE WORKING-DAY LOGIC
+
+Find every helper/function/query that determines Attendance working dates.
+
+For each one, document:
+
+1. Function name.
+2. File and approximate line.
+3. Inputs.
+4. Whether it is Student-specific or class-wide.
+5. Whether it is Session-specific.
+6. Whether it is school/tenant-specific.
+7. Whether it uses:
+
+   * calendar weekdays
+   * Sundays
+   * holidays
+   * Attendance records
+   * class/section
+   * Session boundaries
+   * approved leave
+   * enrollment
+   * other evidence
+
+Determine whether there is:
+
+* ONE shared working-day definition, or
+* MULTIPLE competing definitions.
+
+This distinction is critical.
+
+---
+
+# PHASE C — STUDENT MONTHLY ATTENDANCE
+
+Trace:
+
+`GET /api/student/attendance/monthly`
+
+Determine exactly:
+
+1. Which dates are returned.
+2. Whether every calendar date is returned.
+3. How Sundays are represented.
+4. How holidays are represented.
+5. How approved leave is represented.
+6. Whether unmarked dates appear.
+7. Whether unmarked weekdays affect the monthly percentage.
+8. Whether marked Sundays affect the monthly percentage.
+9. Whether holidays affect the monthly percentage.
+10. Whether Attendance records from another Session can enter the result.
+11. Whether Attendance records from another school can enter the result.
+
+Do not modify anything.
+
+---
+
+# PHASE D — STUDENT YEARLY ATTENDANCE
+
+Trace:
+
+`GET /api/student/attendance/yearly`
+
+Determine exactly:
+
+1. How the date range is constructed.
+2. How working dates are obtained.
+3. Whether working dates come from:
+
+   * all weekdays,
+   * Attendance evidence,
+   * class-wide Attendance evidence,
+   * holidays,
+   * some combination.
+4. How missing Attendance is handled.
+5. How Absent is handled.
+6. How Leave is handled.
+7. How Half Day is handled.
+8. How Late is handled.
+9. Whether a marked Sunday enters the calculation.
+10. Whether an unmarked Sunday enters the calculation.
+11. Whether holidays enter the denominator.
+12. Whether approved leave without an Attendance row enters the denominator.
+13. Whether the Student's own Attendance is required for a date to become a working date.
+
+Document the exact calculation path.
+
+---
+
+# PHASE E — STUDENT ATTENDANCE STATISTICS
+
+Trace:
+
+`GET /api/student/attendance/stats`
+
+Determine whether its working-day definition is identical to yearly Attendance.
+
+Compare:
+
+* working-day source
+* date filtering
+* class/section filtering
+* Session filtering
+* holiday handling
+* Sunday handling
+* missing handling
+* leave handling
+* status weighting
+* percentage denominator
+
+Explicitly identify any difference between:
+
+**YEARLY**
+
+and
+
+**STATS**
+
+working-day semantics.
+
+---
+
+# PHASE F — TEACHER ATTENDANCE
+
+Trace Teacher Attendance reads and summaries.
+
+Inspect:
+
+* daily Attendance
+* historical Attendance
+* class summaries
+* cumulative Attendance
+* Attendance percentage calculations
+* correction/history views
+
+Determine:
+
+1. How Teacher views identify working days.
+2. Whether holidays are excluded.
+3. Whether Sundays are excluded.
+4. Whether deliberately marked Sundays are retained.
+5. Whether missing Attendance is distinguishable from Absent.
+6. Whether approved leave creates Attendance evidence.
+7. Whether Teacher calculations use class-wide evidence or Student-specific evidence.
+
+Do not change Teacher behavior.
+
+---
+
+# PHASE G — ADMIN ATTENDANCE
+
+Trace Admin Attendance:
+
+* overview
+* daily summary
+* class detail
+* cumulative/class calculations
+* any percentage/statistical views
+
+Determine:
+
+1. How Admin determines a working day.
+2. Whether it uses stored Attendance evidence.
+3. Whether holidays are excluded.
+4. Whether Sundays are excluded.
+5. Whether deliberately marked Sundays are retained.
+6. How Leave is represented.
+7. How unmarked dates are represented.
+8. Whether Admin and Student calculations use the same denominator.
+
+Document differences precisely.
+
+---
+
+# PHASE H — SUNDAY SEMANTICS
+
+Audit Sunday specifically.
+
+Use these four conceptual cases:
+
+### Case 1
+
+Sunday + no Attendance record.
+
+Determine:
+
+* displayed status
+* whether it is a working day
+* whether it affects percentage
+
+### Case 2
+
+Sunday + Present.
+
+Determine:
+
+* displayed status
+* whether it is counted
+* whether it affects percentage
+
+### Case 3
+
+Sunday + Absent.
+
+Determine:
+
+* displayed status
+* whether it is counted
+* whether it affects percentage
+
+### Case 4
+
+Sunday + Leave/Late/Half Day if technically possible.
+
+Determine the actual current behavior.
+
+IMPORTANT:
+
+Do not introduce a rule that Sundays are always working or always non-working.
+
+The project requirement is:
+
+> Sunday is not automatically a working day, but a deliberately marked Sunday uses normal stored Attendance semantics.
+
+Audit whether the current code already satisfies this.
+
+---
+
+# PHASE I — HOLIDAY SEMANTICS
+
+Trace the authoritative school holiday definition.
+
+Determine:
+
+1. Where holidays are stored/configured.
+2. Whether holidays are school-wide.
+3. Whether holidays are Session-specific.
+4. Whether holiday dates are compared using IST/date-only semantics.
+5. Whether holidays are excluded from Student calculations.
+6. Whether holidays are excluded from Teacher calculations.
+7. Whether holidays are excluded from Admin calculations.
+8. Whether a deliberately marked Attendance record on a holiday is retained.
+9. Whether a marked holiday affects percentage calculations.
+10. Whether approved leave can create an Attendance row on a holiday.
+11. Whether automatic leave processing respects the holiday definition.
+
+Do not change the holiday implementation.
+
+---
+
+# PHASE J — APPROVED LEAVE WITHOUT ATTENDANCE
+
+This is an important unresolved product question.
+
+Trace exactly what happens when:
+
+> A Student has an approved leave covering a date, but there is NO Attendance record for that date.
+
+Determine:
+
+1. Does Student monthly display Leave?
+2. Does Student yearly display Leave?
+3. Does Student stats display Leave?
+4. Does the date become a working day?
+5. Does it enter the percentage denominator?
+6. Does it count as 1, 0.5, or 0?
+7. Does Admin show the Student as Leave or Unmarked?
+8. Does Teacher show the Student as Leave or Unmarked?
+9. Does an approved leave automatically create an Attendance row?
+10. If it does, is that row created for every approved leave date?
+11. Does holiday status prevent such automatic creation?
+12. Does Sunday status prevent such automatic creation?
+
+Distinguish carefully between:
+
+**Leave application/approval data**
+
+and
+
+**actual Attendance records**.
+
+Do not assume one automatically implies the other.
+
+---
+
+# PHASE K — AUTOMATIC LEAVE ATTENDANCE
+
+Inspect the automatic leave-marking path.
+
+Determine:
+
+1. When it runs.
+2. Which Session it uses.
+3. Which dates it processes.
+4. Whether it skips Sundays.
+5. Whether it skips holidays.
+6. Whether it respects Session start/end.
+7. Whether it respects the active Session 7-day correction rule where applicable.
+8. Whether it creates Attendance rows.
+9. Which class/section it assigns.
+10. Which Attendance status it stores.
+11. Whether the created row becomes part of working-day calculations.
+
+This is an audit only.
+
+Do NOT modify the automatic leave process.
+
+---
+
+# PHASE L — "MISSING" VS "ABSENT"
+
+Determine whether the current application distinguishes:
+
+**No Attendance record**
+
+from:
+
+**Attendance record with Absent status**
+
+for calculation purposes.
+
+For each Student calculation path, document:
+
+* no record
+* Present
+* Late
+* Half Day
+* Absent
+* Leave
+
+and their exact contribution to:
+
+* numerator
+* denominator
+* percentage
+
+Do not invent percentages.
+
+Use the actual code.
+
+---
+
+# PHASE M — CLASS-WIDE WORKING-DAY EVIDENCE
+
+The previous audit identified that some calculations use Attendance evidence across a class/section to determine working dates.
+
+Inspect this carefully.
+
+Determine:
+
+1. Whether a working date can be established because OTHER students have Attendance records.
+2. Whether the current Student must have a record.
+3. Whether class/section is part of the query.
+4. Whether the query is constrained by school.
+5. Whether the query is constrained by Academic Session.
+6. Whether a Student who joined a class later can inherit earlier class-wide working dates.
+7. Whether a Student who left a class can still be affected by later class-wide working dates.
+
+Do NOT solve the class-transfer issue here.
+
+The same-Session class-transfer calculation issue from Step 2L-6A is explicitly **SKIPPED**.
+
+Only document any dependency you discover.
+
+---
+
+# PHASE N — ACADEMIC SESSION BOUNDARIES
+
+For every working-day calculation, verify:
+
+* school/tenant restriction
+* selected Academic Session
+* Session start date
+* Session end date
+* no Attendance dates outside Session
+* no holiday dates from another Session where Session-specific data exists
+
+Determine whether any calculation accidentally uses:
+
+* current Session
+* another Session
+* all Sessions
+* date-only filtering without Session
+
+Do not fix anything.
+
+---
+
+# PHASE O — MULTI-TENANT SAFETY
+
+For every working-day query/function, verify:
+
+> Can Attendance evidence from School A affect a Student or class in School B?
+
+Check:
+
+* `school_id`
+* Student identity
+* Session identity
+* class/section
+* holiday source
+
+Also verify:
+
+> Can Attendance evidence from Academic Session A affect Session B?
+
+Report any possibility.
+
+Do not change authorization or queries.
+
+---
+
+# PHASE P — IST / DATE-ONLY SAFETY
+
+Because Attendance uses IST / Asia/Kolkata:
+
+Inspect whether working-day and holiday comparisons use:
+
+* UTC timestamps
+* browser-local dates
+* server local timezone
+* explicit Asia/Kolkata conversion
+* date-only values
+
+Look specifically for boundary bugs around:
+
+* midnight
+* Session start
+* Session end
+* holiday date
+* Sunday
+* Attendance date
+
+Do not modify the timezone implementation.
+
+Only report findings.
+
+---
+
+# PHASE Q — BUILD A BEHAVIOR MATRIX
+
+Create a factual matrix based on actual code.
+
+Use rows such as:
+
+| Date/Event                                  | Student Monthly | Student Yearly | Student Stats | Teacher | Admin |
+| ------------------------------------------- | --------------- | -------------- | ------------- | ------- | ----- |
+| Normal weekday + Present                    |                 |                |               |         |       |
+| Normal weekday + Absent                     |                 |                |               |         |       |
+| Normal weekday + Leave                      |                 |                |               |         |       |
+| Normal weekday + no record                  |                 |                |               |         |       |
+| Sunday + no record                          |                 |                |               |         |       |
+| Sunday + Present                            |                 |                |               |         |       |
+| Sunday + Absent                             |                 |                |               |         |       |
+| Holiday + no record                         |                 |                |               |         |       |
+| Holiday + Present                           |                 |                |               |         |       |
+| Holiday + Absent                            |                 |                |               |         |       |
+| Approved Leave + no Attendance row          |                 |                |               |         |       |
+| Approved Leave + automatic Leave Attendance |                 |                |               |         |       |
+
+For each cell, describe the actual current behavior.
+
+Do not put assumptions in the matrix.
+
+---
+
+# PHASE R — CLASSIFY THE RESULT
+
+Classify the audit as exactly one of:
+
+### A — CONSISTENT
+
+Student, Teacher, and Admin use the same intended working-day semantics and no implementation inconsistency is found.
+
+### B — IMPLEMENTATION INCONSISTENCY
+
+The application has contradictory working-day behavior across modules or calculation paths.
+
+### C — PRODUCT DECISION REQUIRED
+
+The implementation is internally understandable, but the correct behavior depends on a school-policy/product decision that the code does not establish.
+
+### D — BOTH B AND C
+
+There is an implementation inconsistency AND at least one unresolved product-policy question.
+
+### E — OTHER
+
+Use only if none of the above accurately describes the result, and explain why.
+
+---
+
+# PHASE S — DO NOT MAKE PRODUCT DECISIONS
+
+Explicitly do NOT decide:
+
+* whether every weekday should count
+* whether Attendance evidence should define working days
+* whether approved leave without a row counts
+* whether holidays should ever count
+* whether Sundays should count by default
+* whether class-wide working-day evidence is correct
+* how class transfers should affect yearly/statistics
+
+Those are product decisions unless the existing application requirements already explicitly establish them.
+
+Your job is to document current behavior and identify the exact decision points.
+
+---
+
+# PHASE T — OUT OF SCOPE
+
+Do NOT modify:
+
+* Student Registry
+* enrollment schema
+* class-transfer history
+* class-transfer calculations
+* Attendance identity preservation
+* Student deletion behavior
+* Attendance mutation invariants
+* leave approval logic
+* Teacher authorization
+* Faculty Mapping
+* archived Session protection
+* 7-day correction behavior
+* IST implementation
+* Examination
+* promotion
+* production deployment
+* production database
+* migrations
+* schema
+* unrelated modules
+
+Especially:
+
+> **DO NOT FIX THE SAME-SESSION CLASS-TRANSFER ISSUE.**
+
+It was intentionally skipped.
+
+---
+
+# PHASE U — FILE CONTROL
+
+Because this is READ-ONLY:
+
+**Expected files changed: NONE**
+
+If Replit discovers that a tool, formatter, generated artifact, or other process changed a file unintentionally:
+
+* stop
+* report the exact file
+* do not continue with implementation
+* do not silently revert or modify unrelated content
+
+---
+
+# PHASE V — TESTS
+
+This is an audit, not an implementation step.
+
+Do not create new tests.
+
+You may inspect existing tests and, if useful, run existing tests without modifying them.
+
+If tests are run, report:
+
+* exact command
+* exact result
+
+Do not claim behavior was runtime-verified if only source inspection was performed.
+
+---
+
+# PHASE W — PRODUCTION STATUS
+
+Do NOT query production.
+
+Do NOT modify production.
+
+Do NOT migrate production.
+
+Do NOT deploy production.
+
+Final report must explicitly state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# FINAL REPORT
+
+Return exactly these sections:
+
+## 1. VERDICT
+
+Use exactly one:
+
+* **STEP 2L-8A AUDIT COMPLETE — CONSISTENT**
+* **STEP 2L-8A AUDIT COMPLETE — IMPLEMENTATION INCONSISTENCY**
+* **STEP 2L-8A AUDIT COMPLETE — PRODUCT DECISION REQUIRED**
+* **STEP 2L-8A AUDIT COMPLETE — BOTH IMPLEMENTATION INCONSISTENCY AND PRODUCT DECISION REQUIRED**
+* **STEP 2L-8A AUDIT COMPLETE — OTHER**
+
+---
+
+## 2. AUTHORITATIVE WORKING-DAY SOURCES
+
+List every function/query/helper that determines working dates.
+
+For each:
+
+* file
+* function
+* inputs
+* output
+* scope
+* exact logic
+
+---
+
+## 3. STUDENT MONTHLY
+
+Document exact current behavior.
+
+---
+
+## 4. STUDENT YEARLY
+
+Document exact current behavior.
+
+---
+
+## 5. STUDENT STATISTICS
+
+Document exact current behavior.
+
+---
+
+## 6. TEACHER ATTENDANCE
+
+Document exact current behavior.
+
+---
+
+## 7. ADMIN ATTENDANCE
+
+Document exact current behavior.
+
+---
+
+## 8. SUNDAY SEMANTICS
+
+Document all four cases.
+
+---
+
+## 9. HOLIDAY SEMANTICS
+
+Document the authoritative holiday source and behavior.
+
+---
+
+## 10. APPROVED LEAVE WITHOUT ATTENDANCE
+
+Document exact behavior.
+
+---
+
+## 11. AUTOMATIC LEAVE ATTENDANCE
+
+Document exact behavior.
+
+---
+
+## 12. MISSING VS ABSENT
+
+Document exact calculation differences.
+
+---
+
+## 13. CLASS-WIDE WORKING-DAY EVIDENCE
+
+Document whether and where it is used.
+
+Do not solve class transfer.
+
+---
+
+## 14. SESSION ISOLATION
+
+Document exact Session filtering.
+
+---
+
+## 15. TENANT ISOLATION
+
+Document exact school filtering.
+
+---
+
+## 16. IST / DATE-ONLY SAFETY
+
+Document timezone/date-boundary behavior.
+
+---
+
+## 17. BEHAVIOR MATRIX
+
+Provide the completed matrix requested above.
+
+---
+
+## 18. CONFIRMED ISSUES
+
+List only issues proven by source inspection.
+
+For each:
+
+* severity: LOW / MEDIUM / HIGH
+* exact file/function
+* impact
+* whether implementation fix or product decision
+
+---
+
+## 19. PRODUCT DECISIONS NOT MADE
+
+List unresolved policy questions only.
+
+---
+
+## 20. CLASS-TRANSFER ISSUE
+
+Explicitly state:
+
+> **Same-Session class-transfer calculation issue remains intentionally SKIPPED and was NOT modified.**
+
+---
+
+## 21. FILES CHANGED
+
+Expected:
+
+**NONE**
+
+---
+
+## 22. TESTS
+
+Report inspected/run tests and exact results.
+
+---
+
+## 23. PRODUCTION STATUS
+
+Explicitly state:
+
+* Production database queried: **NO**
+* Production database modified: **NO**
+* Production migration executed: **NO**
+* Production deployment performed: **NO**
+
+---
+
+# HARD STOP
+
+This is a **READ-ONLY AUDIT ONLY**.
+
+Do not implement any fix.
+
+Do not change schema.
+
+Do not create migrations.
+
+Do not modify calculations.
+
+Do not modify Attendance behavior.
+
+Do not modify production.
+
+After the report is complete, **STOP and wait for further instruction.**

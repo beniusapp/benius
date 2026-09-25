@@ -1,0 +1,239 @@
+STEP 2L-4 — READ-ONLY AUDIT: HISTORICAL ATTENDANCE POLICY CONTEXT
+
+IMPORTANT:
+This is a READ-ONLY AUDIT ONLY.
+
+DO NOT modify any production code.
+DO NOT modify any test files.
+DO NOT modify database schema.
+DO NOT create or apply migrations.
+DO NOT change data.
+DO NOT restart/reconfigure the application unless absolutely required for read-only inspection.
+DO NOT fix anything found.
+DO NOT start Step 2L-5.
+STOP after this audit and report findings.
+
+PROJECT CONTEXT / NON-NEGOTIABLE RULES:
+
+This is a strict multi-tenant school MIS.
+
+1. Every operation must remain isolated to the authenticated school/tenant.
+2. Attendance is Academic-Session-specific.
+3. Historical Attendance must remain readable when an older Academic Session is selected.
+4. Historical Attendance must use the student's historical class/section identity for that selected Session where such identity exists.
+5. Student Registry is global/current and must NOT be used to overwrite historical Attendance identity.
+6. Enrollment is NOT an Attendance prerequisite/gate.
+7. Faculty Mapping is NOT an Attendance restriction.
+8. Attendance working-day authority is already finalized by Step 2J:
+   A working Attendance day for a particular
+   SCHOOL + ACADEMIC SESSION + CLASS + SECTION
+   exists when at least one Attendance record exists for that exact
+   class/section/date and the date is within the selected Session start/end.
+9. Attendance status weights are already finalized by Step 2I.
+10. Attendance dates/business dates are IST / Asia-Kolkata date-only values.
+11. Step 2L-1 already made Student Attendance use the shared selected Academic Session as its Session authority.
+12. Step 2L-2 already fixed Student Monthly Attendance approved-leave Session isolation.
+13. Step 2L-3 already fixed archived Teacher self-attendance GET status-healing persistence.
+14. Do not undo or reinterpret any of those decisions.
+
+AUDIT QUESTION:
+
+The previous Step 2L read-only audit identified a possible Finding #4:
+
+"Student Attendance policy uses the student's current Registry class instead of the selected-Session historical identity."
+
+We now need to determine whether this is actually still present and, if so, exactly where.
+
+AUDIT THE FOLLOWING:
+
+A. STUDENT ATTENDANCE POLICY RESOLUTION
+
+Inspect all Student Attendance policy-related backend and frontend paths.
+
+Determine exactly how policy is resolved for:
+
+- Monthly Attendance
+- Yearly Attendance
+- Attendance Statistics
+- Student Attendance summary/percentage
+- Any Attendance policy/configuration endpoint
+- Any Attendance policy-engine calculation used by Student Attendance
+
+For every relevant path, identify:
+
+1. school/tenant source
+2. selected Academic Session source
+3. student identity source
+4. class identity source
+5. section identity source
+6. policy source
+7. whether class/section comes from:
+   - current Student Registry
+   - selected-Session Enrollment
+   - Attendance historical snapshot
+   - another source
+8. whether policy is Session-specific
+9. whether current Registry data can override historical Session identity.
+
+B. HISTORICAL SESSION SCENARIO
+
+Trace this concrete scenario without changing data:
+
+Student:
+  Ram
+
+Current Student Registry:
+  Class 8 / Section A
+
+Historical Session:
+  2024-25
+
+Historical identity:
+  Class 7 / Section B
+
+When the user selects Session 2024-25 and views Ram's Attendance:
+
+- Which class/section is used to resolve Attendance policy?
+- Which class/section is used to determine applicable Attendance working days?
+- Which class/section is used for Attendance aggregation?
+- Could the current Registry Class 8/A cause a Class 7/B historical Attendance policy to be replaced or misresolved?
+
+Do not assume the answer. Trace the actual code.
+
+C. ADMIN / TEACHER / STUDENT CONSISTENCY
+
+Compare policy resolution across:
+
+1. Admin Attendance
+2. Teacher Attendance
+3. Student Attendance
+
+Determine whether the same selected Session + historical class/section identity is used consistently.
+
+Explicitly identify any divergence.
+
+D. SESSION ISOLATION
+
+Verify that policy/configuration from Session A cannot affect Attendance viewed for Session B.
+
+Check for:
+
+- active-session fallback
+- current-session fallback
+- "latest session" fallback
+- registry/current-class fallback
+- unscoped policy queries
+- missing session_id predicates
+- cache/query keys missing selected Session
+- frontend requests that omit selected Session
+
+E. TENANT ISOLATION
+
+Verify policy resolution is always constrained to the authenticated school.
+
+Check for:
+
+- browser-supplied schoolId trust
+- unscoped policy queries
+- cross-school class/policy lookup
+- policy cache leakage across schools
+
+F. ATTENDANCE POLICY ENGINE
+
+Inspect `server/attendance-policy-engine.ts` and all Attendance policy helpers/callers.
+
+Determine:
+
+- exact inputs
+- exact class/section source
+- exact Session source
+- exact school source
+- whether policy evaluation is historical-session-safe
+- whether any current Registry state can influence historical Attendance policy calculations.
+
+Do NOT modify the policy engine.
+
+G. CURRENT IMPLEMENTATION VS INTENDED RULE
+
+Produce a clear matrix:
+
+| Area | Session source | Class/Section source | School source | Historical-safe? | Session-isolated? | Notes |
+|------|----------------|----------------------|---------------|------------------|-------------------|-------|
+
+Include Student, Admin, and Teacher Attendance policy paths where applicable.
+
+H. IF A DEFECT EXISTS
+
+Do NOT fix it.
+
+For each confirmed defect provide:
+
+- exact file
+- exact function/route/component
+- relevant line range if available
+- current behavior
+- why it violates the established Attendance rules
+- concrete historical example
+- minimal proposed correction direction
+- what MUST NOT be changed as part of that correction
+
+If the previous Finding #4 is no longer present, explicitly say so and explain why.
+
+I. VERIFICATION
+
+Run only read-only/static verification and existing relevant tests if safe.
+
+At minimum:
+
+- inspect relevant existing Attendance tests
+- run the smallest relevant read-only test set if appropriate
+- `npm run check`
+- `git diff --check`
+
+Do not add tests.
+
+FINAL OUTPUT FORMAT:
+
+STEP 2L-4 READ-ONLY AUDIT
+
+1. Overall result:
+   PASS
+   or
+   NEEDS CHANGES
+
+2. Finding #4 status:
+   CONFIRMED
+   NOT CONFIRMED
+   PARTIALLY CONFIRMED
+
+3. Policy-resolution matrix
+
+4. Detailed findings
+
+5. Historical Session trace
+
+6. Admin vs Teacher vs Student consistency
+
+7. Session isolation result
+
+8. Tenant isolation result
+
+9. Attendance policy-engine result
+
+10. Existing tests/check results
+
+11. Exact files inspected
+
+12. Scope confirmation:
+   - no production changes
+   - no test changes
+   - no schema changes
+   - no migrations
+   - no data changes
+   - Step 2L-5 NOT started
+
+IMPORTANT:
+Do not implement any fix.
+Do not broaden this audit into unrelated Attendance issues.
+Do not redesign Attendance policy.
+Stop after reporting the audit.

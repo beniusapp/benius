@@ -1,0 +1,101 @@
+### TIMETABLE — NULL SESSION DATA AUDIT
+
+We have decided:
+
+> The entire Timetable module will become 100% Academic Session-based.
+
+Before making any database or code changes, we need to safely understand existing timetable records where `sessionId` is currently `NULL`.
+
+### IMPORTANT
+
+**READ-ONLY AUDIT ONLY.**
+
+Do NOT:
+
+* change code
+* change database
+* update any rows
+* delete any rows
+* create migrations
+* assign any Session automatically
+* modify timetable data
+
+### Check `timetable_entries`
+
+Find all records where:
+
+```text
+sessionId IS NULL
+```
+
+Report:
+
+1. Total number of NULL-session timetable entries.
+2. Number grouped by:
+
+   * school
+   * class
+   * section
+   * teacher
+   * subject
+3. Whether each record can be safely linked to an Academic Session using existing data.
+4. Check available clues such as:
+
+   * created/updated timestamps
+   * school
+   * class
+   * section
+   * teacher
+   * subject
+   * related enrollment data
+   * related academic session dates
+5. Identify records where there is exactly one clearly matching Academic Session.
+6. Identify records where multiple Sessions could match.
+7. Identify records where no Session can be determined.
+8. Do NOT guess or recommend automatic assignment when evidence is ambiguous.
+
+### Check `timetable_structure`
+
+Also check whether `timetable_structure` currently has any Session information or timestamps that could help identify its historical Session.
+
+Report:
+
+* total structure records
+* grouping by school/class
+* whether any reliable Session can be determined
+* whether the same structure is currently shared across multiple Sessions
+
+### IMPORTANT MULTI-TENANT RULE
+
+All analysis must remain strictly inside each authenticated school/tenant.
+
+Never combine data between schools.
+
+### Final answer
+
+Give me ONLY:
+
+#### A. NULL timetable entries
+
+* Total
+* Clearly identifiable Session
+* Ambiguous
+* Cannot determine
+
+#### B. NULL/Global timetable structure
+
+* Total
+* What information exists
+* Whether Session can be determined
+
+#### C. Migration safety
+
+Tell me whether existing data can be safely migrated automatically, partially migrated, or requires manual/admin resolution.
+
+#### D. Recommended next step
+
+Give the smallest safe next step.
+
+**Do not implement anything.**
+
+Stop after the audit and wait for my approval.

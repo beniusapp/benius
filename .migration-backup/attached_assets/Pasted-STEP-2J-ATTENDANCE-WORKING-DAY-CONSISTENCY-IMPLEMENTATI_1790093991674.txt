@@ -1,0 +1,586 @@
+STEP 2J — ATTENDANCE WORKING-DAY CONSISTENCY
+IMPLEMENTATION — MINIMUM SCOPE ONLY
+
+IMPORTANT:
+Implement ONLY the working-day rule described below.
+
+Do NOT introduce a new school-calendar system.
+
+==================================================
+1. AUTHORITATIVE BUSINESS RULE
+==================================================
+
+For Student Attendance calculations, a "working Attendance day" means:
+
+For the PARTICULAR school + Academic Session + CLASS + SECTION being calculated:
+
+- At least one Attendance record exists for that class/section on that date
+- AND the Attendance date falls within the selected Academic Session startDate and endDate
+
+In simple terms:
+
+Attendance record exists for this class/section
++
+date is inside the selected Academic Session
+=
+applicable Attendance day
+
+If no Attendance record exists for that particular class/section/date,
+that date is NOT an applicable Attendance day.
+
+IMPORTANT:
+
+Attendance from another class/section MUST NOT make the date a working
+Attendance day for this class/section.
+
+Example:
+
+School A
+Session 2025-26
+Date: 10 July
+
+Class 6-A → no Attendance record
+Class 7-A → Attendance record exists
+
+Result:
+
+Class 6-A → 10 July is NOT an applicable Attendance day
+Class 7-A → 10 July IS an applicable Attendance day
+
+==================================================
+2. ACADEMIC SESSION BOUNDARY
+==================================================
+
+The selected Academic Session is mandatory.
+
+Only Attendance dates satisfying:
+
+session.startDate <= attendance.date <= session.endDate
+
+may become applicable Attendance dates.
+
+Example:
+
+Session:
+2025-04-01 → 2026-03-31
+
+Attendance on:
+2025-04-01 → included
+2026-03-31 → included
+2026-04-01 → excluded
+2025-03-31 → excluded
+
+The Attendance record's:
+
+- school_id
+- session_id
+- class
+- section
+- date
+
+must be respected.
+
+Never infer the Academic Session from the date alone.
+
+==================================================
+3. TENANT ISOLATION
+==================================================
+
+Every calculation MUST remain scoped to the authenticated school/tenant.
+
+Use:
+
+authenticated school
++
+selected validated Academic Session
++
+selected historical/current class/section
+
+Never allow Attendance from another school to influence the working-day set.
+
+Browser-supplied schoolId MUST NOT be trusted as the ownership authority.
+
+Preserve all Step 2G tenant protections.
+
+==================================================
+4. CLASS / SECTION ISOLATION
+==================================================
+
+Working dates must be determined for the PARTICULAR class/section being calculated.
+
+DO NOT use:
+
+- another class's Attendance records
+- school-wide Attendance dates
+- another section's Attendance records
+- current Student Registry placement to replace historical context
+
+Preserve Step 2H historical class/section authority:
+
+1. Selected-Session Enrollment
+2. Attendance class/section snapshot fallback
+
+Enrollment is NOT an Attendance prerequisite.
+
+Faculty Mapping is NOT an Attendance restriction.
+
+==================================================
+5. STEP 2I STATUS RULES MUST NOT CHANGE
+==================================================
+
+Keep the existing Step 2I contract exactly:
+
+Present = 1.0
+Late = 1.0
+Approved Leave = 1.0
+Half Day = 0.5
+Absent = 0
+Unknown = 0
+Missing / Not Marked = 0, tracked separately
+
+Step 2J is ONLY about determining which dates are applicable.
+
+Do NOT change status weighting.
+
+==================================================
+6. SINGLE WORKING-DATE SOURCE
+==================================================
+
+Create or reuse ONE server-side helper responsible for determining
+applicable Attendance dates.
+
+Suggested location:
+
+server/student-attendance-working-days.ts
+
+Suggested responsibility:
+
+getStudentAttendanceWorkingDates({
+  schoolId,
+  sessionId,
+  class,
+  section,
+  startDate,
+  endDate
+})
+
+The helper must:
+
+1. Validate that sessionId belongs to schoolId.
+2. Read session.startDate and session.endDate.
+3. Intersect the requested date range with the Session boundaries.
+4. Find DISTINCT Attendance dates for:
+   - school_id = authenticated school
+   - session_id = selected Session
+   - relevant class
+   - relevant section
+5. Return unique, sorted SQL date strings.
+
+The helper must NOT depend on:
+
+- calendar_events
+- Sunday/Saturday rules
+- holidays
+- school closures
+- special working-day rules
+- current Student Registry class/section
+- whether an individual Student has an Attendance record
+- Enrollment as an eligibility gate
+- Faculty Mapping
+
+The class-level Attendance dates are the working-day evidence.
+
+==================================================
+7. STUDENT ATTENDANCE
+==================================================
+
+Update the applicable Student Attendance calculations so they use the
+same working-date helper.
+
+Relevant functions include:
+
+- getStudentYearlyAttendance()
+- getStudentAttendanceStats()
+- getStudentAttendanceAggregatesForSessionClass()
+
+The calculation order must be:
+
+STEP 1:
+Determine applicable Attendance dates for the selected
+school + Session + class + section.
+
+STEP 2:
+For each applicable date, determine each Student's status:
+
+- Attendance row exists → use its status
+- Attendance row does not exist → Missing/null
+
+STEP 3:
+Pass those statuses to the existing Step 2I aggregator.
+
+IMPORTANT:
+
+A Student having no Attendance record must NOT cause the entire date
+to disappear if another Student in the SAME class/section has an
+Attendance record for that date.
+
+Example:
+
+Class 6-A has 30 students.
+
+10 July:
+20 students have Attendance records.
+10 students have no Attendance records.
+
+10 July IS an applicable Attendance day for Class 6-A.
+
+The 10 students without records are Missing/null.
+
+They must NOT make 10 July disappear.
+
+==================================================
+8. ADMIN ATTENDANCE
+==================================================
+
+Update Admin Student Attendance calculations only where necessary.
+
+Relevant surfaces:
+
+- Admin Attendance overview
+- Admin Attendance class detail
+- Admin dashboard daily Attendance summary
+- Admin Performance Analytics Attendance
+
+All Student Attendance percentage/aggregate calculations must use the
+same applicable working-date definition:
+
+school
++
+selected Academic Session
++
+relevant historical/current class/section
++
+Attendance-record date
++
+Session start/end boundary
+
+Do not create a separate Admin working-day calculation.
+
+Do not redesign the Admin UI.
+
+==================================================
+9. TEACHER STUDENT ATTENDANCE
+==================================================
+
+Update Teacher Student-Attendance summaries so they use the same
+working-date definition.
+
+Relevant surfaces:
+
+- Teacher Attendance summaries
+- Teacher Examination Attendance summaries
+- Historical class Attendance summaries
+
+Teacher Student Attendance must use the same:
+
+school
++
+Session
++
+class/section
++
+Attendance-record dates
++
+Session boundaries
+
+Do NOT modify Teacher self-attendance.
+
+Teacher self-attendance remains a separate system.
+
+==================================================
+10. MONTHLY STUDENT ATTENDANCE
+==================================================
+
+Do NOT redesign the Student monthly Attendance calendar.
+
+It may continue showing:
+
+- calendar dates
+- Attendance status
+- Sunday annotation
+- holiday annotation
+- leave annotation
+- future dates
+
+Do not make calendar_events the Attendance working-day authority.
+
+Only percentage/aggregate calculations need the canonical working-date
+definition.
+
+==================================================
+11. CALENDAR EVENTS
+==================================================
+
+DO NOT use calendar_events to determine whether an Attendance date is
+a working day.
+
+Do NOT introduce:
+
+- Saturday rules
+- Sunday exclusion
+- Holiday exclusion
+- School closure exclusion
+- Special working-day overrides
+
+If Attendance exists for the relevant class/section on a Sunday or
+holiday, that date is an applicable Attendance date.
+
+This is intentional.
+
+==================================================
+12. APPROVED LEAVE
+==================================================
+
+Do NOT change Leave behavior.
+
+If an approved Leave request has no Attendance record:
+
+- it does NOT create a working Attendance day
+- it remains Missing for Attendance calculation purposes
+
+If an Attendance record explicitly has status "leave", the existing
+Step 2I rule applies:
+
+Leave = 1.0
+
+Do not modify Leave synchronization.
+
+==================================================
+13. HISTORICAL STUDENTS
+==================================================
+
+Preserve all Step 2H behavior.
+
+Example:
+
+Student:
+Current Session 2026-27 → Class 10-B
+
+Historical Session 2025-26 → Class 9-A
+
+When viewing 2025-26:
+
+- use Class 9-A historical context
+- use Attendance records for 2025-26
+- use the 2025-26 Session boundaries
+- do not replace historical Class 9-A with current Class 10-B
+
+Also preserve:
+
+- inactive historical Students
+- Students without Enrollment
+- Attendance-only historical Students
+- Attendance snapshot fallback
+
+==================================================
+14. SESSION ISOLATION
+==================================================
+
+If two Academic Sessions contain Attendance on the same date:
+
+Session A Attendance must NOT become working-day evidence for Session B.
+
+The query MUST include:
+
+school_id = authenticated school
+AND
+session_id = selected Academic Session
+
+The Attendance record's session_id is authoritative.
+
+==================================================
+15. IST / DATE HANDLING
+==================================================
+
+Use existing IST / Asia-Kolkata date-only utilities where applicable.
+
+Attendance dates and Session boundaries are date-only values.
+
+Avoid JavaScript/UTC conversions that can shift a date by one day.
+
+==================================================
+16. TESTS REQUIRED
+==================================================
+
+Add focused tests for:
+
+1. Attendance record makes a date applicable for that class/section.
+
+2. No Attendance record for Class 6 does NOT make the date applicable
+   to Class 6.
+
+3. Attendance in Class 7 does NOT make the same date applicable to
+   Class 6.
+
+4. Multiple students in the same class:
+   some marked + some not marked:
+   the date remains applicable to the class.
+
+5. No students in a class have Attendance records:
+   the date is not applicable.
+
+6. Attendance before session.startDate is excluded.
+
+7. Attendance after session.endDate is excluded.
+
+8. Attendance exactly on session.startDate is included.
+
+9. Attendance exactly on session.endDate is included.
+
+10. Two Academic Sessions remain isolated.
+
+11. Two schools remain isolated.
+
+12. Sunday with Attendance remains applicable.
+
+13. Holiday with Attendance remains applicable.
+
+14. Approved Leave without an Attendance row does not create a working
+    Attendance day.
+
+15. Explicit Attendance status "leave" still receives Step 2I credit.
+
+16. Historical promoted Student remains in the correct historical
+    class/section.
+
+17. Historical inactive Student remains supported.
+
+18. Student without Enrollment remains supported.
+
+19. Attendance-only historical Student remains supported.
+
+20. Admin, Teacher, and Student use the same applicable working-date set.
+
+21. Missing Student Attendance remains Missing/null and does not become
+    explicit Absent.
+
+22. Step 2I status weights remain unchanged.
+
+==================================================
+17. REGRESSION TESTS
+==================================================
+
+Run all relevant existing tests from Steps 2D through 2I.
+
+Also run:
+
+npm run check
+
+and:
+
+git diff --check
+
+All must pass.
+
+==================================================
+18. STRICT SCOPE CONTROL
+==================================================
+
+DO NOT change:
+
+- Student Registry
+- Enrollment rules
+- Faculty Mapping
+- Attendance writer authorization
+- Attendance status rules
+- Step 2I calculation weights
+- Teacher self-attendance
+- Exam Controller
+- Examination architecture
+- Leave workflow
+- Forgot Password
+- Authentication
+- Academic Session creation/activation behavior
+- Calendar UI
+- Google Calendar
+- unrelated functionality
+- production
+
+No schema change should be necessary.
+
+No migration should be necessary.
+
+If an unrelated issue is discovered, report it separately.
+Do not fix it.
+
+==================================================
+19. BEFORE IMPLEMENTATION
+==================================================
+
+Before making changes:
+
+1. Inspect the existing Step 2I working-date queries/functions.
+2. Identify every place where applicable Attendance dates are derived.
+3. Identify the minimum changes required to make those surfaces use
+   one consistent class/section + Session-bounded definition.
+4. Do NOT redesign the calendar.
+5. Do NOT create a new calendar authority.
+6. Do NOT change database schema unless absolutely unavoidable.
+
+If a schema change appears necessary, STOP and report why before
+making the schema change.
+
+==================================================
+20. FINAL REPORT
+==================================================
+
+After implementation report:
+
+A. Result: PASS / BLOCKED
+
+B. Exact files changed.
+
+C. Exact working-day rule implemented.
+
+D. Confirmation that working dates are class/section-specific.
+
+E. Confirmation that Attendance in another class does NOT create a
+   working day for this class.
+
+F. Confirmation that Session startDate/endDate are enforced.
+
+G. Student surfaces updated.
+
+H. Admin surfaces updated.
+
+I. Teacher Student-Attendance surfaces updated.
+
+J. Confirmation Teacher self-attendance was NOT changed.
+
+K. Confirmation calendar_events were NOT made the working-day authority.
+
+L. Confirmation no Saturday/Sunday/holiday/closure rules were added.
+
+M. Confirmation Enrollment is NOT an Attendance gate.
+
+N. Confirmation Faculty Mapping is NOT an Attendance restriction.
+
+O. Confirmation Step 2I status weights are unchanged.
+
+P. Test results.
+
+Q. npm run check result.
+
+R. git diff --check result.
+
+S. Schema/migration changes, if any.
+
+T. Confirmation production was not accessed or modified.
+
+U. Explicit non-changes.
+
+IMPORTANT:
+Do not claim PASS unless the tests, npm run check, and git diff --check
+actually pass and no unrelated behavior was changed.
+
+Implement ONLY Step 2J as defined above.

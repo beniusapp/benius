@@ -1,0 +1,232 @@
+## STEP 2L-1 — ATTENDANCE MODULE — SERVER-AUTHORITATIVE ACADEMIC SESSION
+
+We are continuing the Attendance Module audit/fix work.
+
+### OBJECTIVE
+
+Fix the current Teacher Attendance POST behavior identified in the Step 2L-6C audit.
+
+Currently, Teacher Attendance POST depends on the browser-provided:
+
+`x-view-session-id`
+
+The server validates that ID, but it does not independently resolve the authenticated school's active Academic Session when the header is absent.
+
+For Attendance, the Academic Session must be determined authoritatively from the authenticated school context.
+
+### HARD REQUIREMENTS — DO NOT CHANGE
+
+1. Multi-tenant isolation is mandatory.
+
+   * `req.session.schoolId` is authoritative.
+   * Never trust a browser-provided school ID for ownership.
+   * Never allow cross-school Attendance access or writes.
+
+2. Student Registry remains GLOBAL/PERMANENT.
+
+   * Do not recreate students per Academic Session.
+   * Do not make Enrollment a prerequisite for Attendance marking.
+
+3. Any authenticated Teacher belonging to the same school may mark Attendance.
+
+   * Do NOT introduce Faculty Mapping restrictions.
+   * Do NOT introduce class/subject assignment restrictions.
+
+4. Keep the existing active-Session correction window exactly as it is:
+
+   * Today through today-minus-7-days inclusive.
+   * Existing future/older-date restrictions remain unchanged.
+
+5. Archived Academic Sessions remain read-only.
+
+6. A deliberately marked Sunday remains a valid Attendance day and must count.
+
+7. Do not make every Sunday automatically a working day.
+
+8. Application/business dates and timestamps remain IST / Asia/Kolkata.
+
+9. Do not redesign the Attendance module.
+
+10. Do not change unrelated modules.
+
+---
+
+## REQUIRED CHANGE
+
+Modify the Teacher Attendance POST flow so that the server resolves the Academic Session authoritatively.
+
+### Desired behavior
+
+For an authenticated Teacher:
+
+1. Read the authenticated school from:
+   `req.session.schoolId`
+
+2. Resolve that school's currently ACTIVE Academic Session on the server.
+
+3. Use that resolved `sessionId` for all Attendance records created/updated by this request.
+
+4. Do NOT require the browser to provide the session ID for normal current-session Attendance marking.
+
+5. If `x-view-session-id` is still accepted by the existing UI/read workflow, it must NOT be allowed to override the server-authoritative active Session for the Attendance write.
+
+6. The server must verify:
+
+   * Session belongs to authenticated school.
+   * Session is ACTIVE.
+   * Session is valid for Attendance writes.
+
+7. If no active Academic Session exists for the authenticated school, fail safely with a clear server error.
+
+   * Do not silently write Attendance without a Session ID.
+   * Do not fall back to another school's Session.
+   * Do not invent a Session.
+
+### IMPORTANT
+
+Do NOT simply remove the existing validation.
+
+The goal is:
+
+AUTHENTICATED SCHOOL
+→ SERVER RESOLVES ACTIVE ACADEMIC SESSION
+→ ATTENDANCE WRITE USES THAT SESSION
+
+not:
+
+BROWSER SESSION ID
+→ ATTENDANCE WRITE
+
+---
+
+## PRESERVE EXISTING READ/HISTORY BEHAVIOR
+
+Do not break historical Attendance viewing.
+
+Historical Attendance must continue to be retrieved using the explicitly selected Academic Session where the existing read/history workflow requires it.
+
+This change is specifically about the Teacher Attendance WRITE path.
+
+Do not convert historical Attendance reads to the active Session.
+
+---
+
+## INVESTIGATION BEFORE EDITING
+
+Before changing code:
+
+1. Inspect the current Teacher Attendance POST route.
+2. Inspect the existing Academic Session resolver:
+
+   * `server/attendance-read-session.ts`
+   * any existing active-session helper/storage function.
+3. Inspect how active Academic Sessions are represented in the database.
+4. Identify exactly where `x-view-session-id` is currently read.
+5. Identify every Attendance record written by this POST request.
+6. Confirm all records receive the same authoritative `sessionId`.
+
+Do not assume the existing resolver is suitable for writes without checking its behavior.
+
+---
+
+## IMPLEMENTATION RULE
+
+Make the smallest safe change necessary.
+
+Do NOT:
+
+* refactor unrelated code
+* rename unrelated functions
+* modify database schema unless absolutely required
+* create migrations
+* modify Student Registry
+* modify Enrollment behavior
+* modify Attendance policy
+* modify Sunday rules
+* modify Teacher authorization rules
+* modify Admin Attendance
+* modify Student Attendance
+* modify promotion/examination modules
+
+---
+
+## VALIDATION REQUIRED
+
+After implementation, test at minimum:
+
+### Test 1 — Normal active Session
+
+Authenticated Teacher + school has one active Academic Session.
+
+Expected:
+
+* POST succeeds.
+* Server resolves active Session.
+* Every Attendance row gets that Session ID.
+
+### Test 2 — No `x-view-session-id`
+
+Remove the browser header.
+
+Expected:
+
+* Current Attendance POST still succeeds using the server-resolved active Session.
+
+### Test 3 — Manipulated `x-view-session-id`
+
+Send a different valid Session ID belonging to the same school.
+
+Expected:
+
+* It must NOT override the server-resolved active Session.
+
+### Test 4 — Other school's Session ID
+
+Send another school's Session ID.
+
+Expected:
+
+* Must not be used.
+* Must not permit cross-school access/write.
+
+### Test 5 — Archived Session
+
+Attempt Attendance write when the intended Session is archived.
+
+Expected:
+
+* Existing archived-session protection remains intact.
+
+### Test 6 — Multiple students in one POST
+
+Submit Attendance for multiple students.
+
+Expected:
+
+* Every row uses the same server-resolved Academic Session ID.
+
+### Test 7 — Existing correction window
+
+Verify the existing today-through-7-days correction behavior remains unchanged.
+
+### Test 8 — Sunday
+
+If a Sunday is deliberately marked and otherwise valid, it remains accepted and stored under the correct active Session.
+
+---
+
+## REQUIRED OUTPUT
+
+After implementation, report:
+
+1. Exact files changed.
+2. Exact functions/routes changed.
+3. How the server now resolves the active Academic Session.
+4. Whether `x-view-session-id` can still override the Session.
+5. Test results for all cases above.
+6. `npm check` result.
+7. Any remaining Attendance issues discovered.
+
+Do not implement the other Step 2L fixes yet.
+
+This step is ONLY for making the Teacher Attendance WRITE Session selection server-authoritative.

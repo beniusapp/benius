@@ -1,0 +1,287 @@
+Step 9 — Improve Individual “Add Invoice” Flow
+
+Implement Step 9 ONLY.
+
+The Add Invoice feature is for manually creating an invoice for one specific student. Keep it simple and do not introduce any concession, original-fee, or automatic-invoice functionality.
+
+1. Add Fee Period
+
+Add a required Fee Period field to the Add Invoice form.
+
+Examples:
+
+- August 2026
+- September 2026
+- Q2 2026–27
+- Annual 2026–27
+- 01 Aug 2026 – 31 Aug 2026
+
+Use the application's existing fee-period utilities and conventions.
+
+Store the selected period in the existing:
+
+- "fee_period_start"
+- "fee_period_end"
+
+Do NOT create a new fee-period system.
+
+2. Remove Manual Status Selection
+
+Remove the Status dropdown from Add Invoice.
+
+Every newly created manual invoice must automatically start as:
+
+"Due"
+
+The existing payment system will update the status after payment.
+
+Do not allow the admin to manually create a new invoice as Paid.
+
+3. Keep the Existing Fields
+
+Keep:
+
+- Student
+- Fee Type
+- Amount (₹)
+- Due Date
+- Academic Year
+- Notes
+
+The final Amount entered by the admin is the amount charged.
+
+4. Important: Multiple Different Fees Can Have the Same Fee Period
+
+Do NOT treat the fee period itself as a duplicate.
+
+Example:
+
+Student: Rahul
+
+Existing:
+
+- Tuition Fee — August 2026 — ₹2,000
+
+Admin later creates:
+
+- Lab Fee — August 2026 — ₹200
+
+This MUST be allowed.
+
+The student can have multiple separate invoices for the same month when they represent different charges.
+
+Another example:
+
+- Tuition — August 2026 — ₹2,000 → existing
+- Lab Fee — August 2026 — ₹200 → ✅ Allow
+- Transport — August 2026 — ₹500 → ✅ Allow
+- Exam Fee — August 2026 — ₹300 → ✅ Allow
+
+5. Duplicate Prevention
+
+Duplicate prevention must be more specific.
+
+Do NOT use:
+
+"Student + Fee Period"
+
+as the only duplicate key.
+
+Instead, preserve the existing application's duplicate-prevention rules and ensure that a duplicate is prevented only when the invoice represents the same student + same fee/charge + same fee period, according to the application's existing fee identity/business rules.
+
+Example:
+
+"Rahul + Tuition + August 2026"
+
+already exists → prevent creating the same Tuition invoice again.
+
+But:
+
+"Rahul + Lab Fee + August 2026"
+
+does not exist → allow it.
+
+Do not invent an unrelated duplicate rule. First inspect the existing duplicate/idempotency logic and modify it only if necessary to support this requirement.
+
+6. Do Not Combine Invoices
+
+If an existing invoice already exists for August 2026, and the admin adds another valid charge for August 2026:
+
+Create a separate invoice.
+
+Do NOT:
+
+- modify the existing invoice
+- add ₹200 to the existing invoice
+- merge two invoices
+- change the original invoice amount
+
+Example:
+
+Existing:
+
+"INV-001 → Tuition → August 2026 → ₹2,000"
+
+New:
+
+"INV-002 → Lab Fee → August 2026 → ₹200"
+
+Both remain separate invoices.
+
+7. No Fee Structure Required
+
+The manual Add Invoice flow must remain independent from Fee Structure.
+
+Do NOT make selecting a Fee Structure mandatory.
+
+This is necessary because admins may need to create one-off charges such as:
+
+- Lab Fee
+- Examination Fee
+- ID Card Fee
+- Special Activity Fee
+- Transport Adjustment
+- Other miscellaneous charges
+
+8. No Concession / Original Fee
+
+Do NOT add or reintroduce:
+
+- Original Fee
+- Gross Fee
+- Concession Type
+- Concession %
+- Concession Amount
+- "originalAmount"
+- "original_amount"
+- "concessionSnapshot"
+- "concession_snapshot"
+- Any concession calculation
+
+The entered Amount is always the final amount charged.
+
+9. Fee Breakdown
+
+Do not add component/breakdown editing to the manual Add Invoice modal.
+
+Manual invoices may continue to have:
+
+"breakdown_snapshot = []"
+
+This is expected.
+
+10. Validation
+
+Before creating the invoice:
+
+- Student is required.
+- Fee Type is required.
+- Amount must be greater than 0.
+- Fee Period is required.
+- Due Date is required.
+- Academic Year is required.
+- Notes are optional.
+- Validate dates correctly.
+- Preserve existing authorization and school/tenant isolation.
+
+11. Invoice Number
+
+Keep the existing automatic invoice-number generation.
+
+The admin must NOT manually enter an invoice number.
+
+12. Receipt Compatibility
+
+Manual invoices must continue to work with the existing receipt system.
+
+For a manual invoice:
+
+- "fee_records.amount" = entered amount
+- "breakdown_snapshot" = "[]"
+- Initial status = "Due"
+- Fee period = selected period
+
+The existing legacy receipt format should continue to work when "breakdown_snapshot" is empty.
+
+13. UI
+
+Keep the modal simple and mobile responsive.
+
+Recommended order:
+
+Add Invoice
+
+Student
+Fee Type
+Amount (₹)
+Fee Period
+Due Date
+Academic Year
+Notes
+
+Buttons:
+
+Cancel | Create Invoice
+
+Do not add unnecessary fields.
+
+14. Scope Restrictions
+
+Do NOT modify:
+
+- Fee Structure creation
+- Bulk Generate Invoices
+- Automatic invoice generation
+- Payment processing
+- Razorpay
+- Webhooks
+- Offline payment processing
+- Receipt calculations
+- Late-fee calculation
+- "breakdown_snapshot"
+- Existing fee-period utilities
+- Authorization
+- Tenant isolation
+
+Only modify what is necessary for the individual Add Invoice flow and its duplicate handling.
+
+15. Testing
+
+After implementation:
+
+1. Run the complete existing test suite.
+2. Add focused tests for the Add Invoice changes.
+3. Test successful manual invoice creation.
+4. Test missing Fee Period.
+5. Test zero/negative amount.
+6. Test automatic "Due" status.
+7. Test fee-period persistence.
+8. Test duplicate same student + same fee + same period → blocked.
+9. Test same student + different fee + same period → allowed.
+10. Test multiple different fees for the same student and same month.
+11. Test that a new invoice does NOT modify an existing invoice.
+12. Test manual invoice has "breakdown_snapshot = []".
+13. Test existing payment and receipt behavior remains unchanged.
+
+Final Rule
+
+The system must support this:
+
+Same student + same month + different fee = ALLOWED
+
+Same student + same fee + same month = DUPLICATE / BLOCKED
+
+Do not make the fee period itself a global uniqueness constraint.
+
+At the end, provide a concise final report with:
+
+- Files changed
+- UI changes
+- Backend/API changes
+- Fee-period behavior
+- Duplicate-prevention behavior
+- Database changes, if any
+- Tests passed/failed
+- Confirmation that payment, Razorpay, receipts, Fee Structures, and bulk invoice generation were not changed.
+
+STEP 9 ONLY. Do not implement unrelated features or refactoring.

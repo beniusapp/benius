@@ -1,0 +1,24 @@
+Implement the Teacher Attendance Module with Smart Defaults and Universal Access. Follow these technical specifications precisely:
+​1. Navigation & Hierarchy
+​Main Menu Integration: Add a 'Status Badge' (Red Dot) to the Attendance icon. If today's attendance for the teacher's assigned class is not yet saved, the dot is Red. After the first successful save for today, it turns Green.
+​Level 1: Clicking 'Attendance' opens a choice: 'My Attendance' (Teacher's personal log) and 'Class Attendance'.
+​Level 2: 'Class Attendance' contains two buttons: 'Mark Today's Attendance' and 'Class Attendance History'.
+​2. The Marking Interface (Smart-Universal Logic)
+​Smart Default Landing: When 'Mark Today's Attendance' opens, the Class and Section dropdowns must automatically pre-select the teacher's assigned Class/Section from their profile (e.g., Class 9, Section A).
+​Universal Override: Dropdowns must remain interactive. The 'Class' dropdown must include L.K.G, U.K.G, and Classes 1 to 12. The 'Section' dropdown must include A to Z. Teachers can change these to mark attendance for any class.
+​Student List: Fetch and display the student list dynamically based on the selected Class/Section.
+​Real-Time Search: Add a search bar to filter the visible student list by Name or DSID as the teacher types.
+​3. Marking Rules & Conditional UI
+​Default State: All students in the list are pre-set to 'Present'.
+​Conditional Logic:
+​Options for each student: [Present, Absent, Late, Half-day].
+​If the teacher clicks 'Absent', the 'Late' and 'Half-day' buttons must be disabled and greyed out immediately.
+​'Late' and 'Half-day' can only be selected if the status is 'Present'.
+​4. Data Integrity & Audit Trail
+​The 3-Edit Rule: In the database, track edit_count. Display an 'Attempts Remaining: X/3' badge. Once 3 saves are recorded for a specific class/date, lock the 'Save' button.
+​The 7-Day Rule: Prevent selecting any future dates. History is only editable for the current day and the previous 7 days. Older records are read-only.
+​Audit Trail: Every save must record a log in the database: 'Marked by [Teacher Name] at [Timestamp]'. This log should be viewable in the 'Class Attendance History' section."
+​Why this prompt is "Solid":
+​The "L.K.G to 12" Coverage: It explicitly tells the AI the range of the school so it doesn't just build a small sample.
+​The Search + Filter: Combining the dropdowns with a search bar makes it easy to find one specific student in a class of 40.
+​The Audit Trail: It ensures accountability. Even if a teacher marks a class they aren't assigned to, their name is permanently attached to that data.

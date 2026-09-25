@@ -1,0 +1,603 @@
+ATTENDANCE — STEP 2H — HISTORICAL STUDENT IDENTITY + HISTORICAL CLASS/SECTION
+READ-ONLY AUDIT ONLY — DO NOT MODIFY ANY FILE
+
+We are continuing the Attendance hardening work.
+
+Completed and PASS:
+
+Step 2D = PASS — authoritative Academic Session on Attendance writer
+Step 2E = PASS — canonical Attendance identity
+Step 2F = PASS — all Attendance readers are Academic-Session-specific
+Step 2G = PASS — strict tenant/school isolation
+
+DO NOT implement anything in this step.
+
+DO NOT modify any source file.
+DO NOT modify database schema.
+DO NOT create migrations.
+DO NOT modify database data.
+DO NOT create or alter test fixtures in the development database.
+DO NOT deploy.
+DO NOT make production changes.
+
+This is a READ-ONLY investigation only.
+
+==================================================
+1. NON-NEGOTIABLE ATTENDANCE REQUIREMENT
+==================================================
+
+Attendance is Academic-Session-specific.
+
+Every Attendance view must represent the Attendance context of the
+SELECTED Academic Session.
+
+Historical Attendance must remain visible when a previous Academic
+Session is selected, even if the student:
+
+- is no longer active,
+- is no longer in the current Student Registry roster,
+- has changed class,
+- has changed section,
+- has been promoted,
+- or otherwise has different current Student Registry information.
+
+Student Registry is GLOBAL/CURRENT.
+
+Student Registry must NOT reset, recreate, or become session-specific
+when an Academic Session changes.
+
+Do NOT redesign Student Registry.
+
+Do NOT make Student Registry depend on the selected Academic Session.
+
+==================================================
+2. CRITICAL HISTORICAL CLASS/SECTION REQUIREMENT
+==================================================
+
+Use this exact example during the audit.
+
+Academic Session 2025-2026:
+
+    Ijaz Saikh = Class 9-A
+
+Academic Session 2026-2027:
+
+    Ijaz Saikh = Class 10-B
+
+Student Registry is GLOBAL/CURRENT.
+
+Therefore, after promotion, the current Student Registry may correctly show:
+
+    Ijaz Saikh = Class 10-B
+
+However:
+
+When the user switches Attendance to Academic Session 2025-2026:
+
+    Ijaz Saikh MUST appear in his historical Class 9-A context.
+
+His 2025-2026 Attendance must NOT:
+
+- disappear,
+- be hidden,
+- move to Class 10-B,
+- be interpreted using the current Class 10-B,
+- or become inaccessible merely because Student Registry now says Class 10-B.
+
+Likewise:
+
+    Attendance → 2025-2026 → Ijaz Saikh → Class 9-A
+    Attendance → 2026-2027 → Ijaz Saikh → Class 10-B
+
+The selected Academic Session determines the historical Attendance
+context.
+
+==================================================
+3. IMPORTANT ARCHITECTURAL PRINCIPLE
+==================================================
+
+There are two separate concepts:
+
+A. CURRENT STUDENT IDENTITY
+
+Student Registry answers:
+
+"Who is this student currently?"
+
+B. HISTORICAL SESSION CONTEXT
+
+Attendance/history answers:
+
+"What was this student's Attendance context during the selected
+Academic Session?"
+
+The current Student Registry class/section MUST NOT overwrite the
+historical Attendance context.
+
+Do NOT assume the current Student Registry is the historical roster.
+
+==================================================
+4. EXISTING ATTENDANCE FIELDS
+==================================================
+
+The existing Attendance record contains fields including:
+
+- school_id
+- session_id
+- student_id
+- date
+- class
+- section
+- status
+- teacher information
+- timestamps
+
+During this audit, determine whether the existing Attendance
+`class` and `section` fields already preserve historical
+class/section context.
+
+DO NOT add a new table or new schema fields unless the audit proves
+that the existing architecture cannot satisfy the requirement.
+
+==================================================
+5. PRIMARY AUDIT QUESTION
+==================================================
+
+Determine whether historical Attendance currently depends on the
+CURRENT Student Registry.
+
+Specifically determine whether historical Attendance is currently
+built using:
+
+    current Student Registry roster
+
+instead of:
+
+    Attendance records belonging to the selected Academic Session
+
+This distinction is critical.
+
+==================================================
+6. FILES / AREAS TO INSPECT
+==================================================
+
+Inspect all relevant Attendance code.
+
+SERVER:
+
+- server/storage.ts
+- server/routes.ts
+- server/teacher-routes.ts
+- server/attendance-read-session.ts
+- any Attendance-specific resolver/helper files
+- shared/schema.ts
+
+FRONTEND:
+
+- client/src/pages/admin-modules/attendance-overview.tsx
+- client/src/pages/admin-dashboard.tsx
+- client/src/pages/admin-modules/performance-analytics.tsx
+- client/src/pages/teacher-modules/attendance.tsx
+- client/src/pages/teacher-modules/examination.tsx
+- client/src/pages/student-attendance.tsx
+- client/src/pages/student-dashboard.tsx
+- client/src/pages/student-examination.tsx
+- client/src/pages/student-archives.tsx
+
+Also inspect every additional Attendance reader/caller discovered
+during the audit.
+
+Do not assume this list is exhaustive.
+
+==================================================
+7. ADMIN AUDIT
+==================================================
+
+Inspect:
+
+- Attendance overview
+- Attendance class detail
+- Attendance teacher summary
+- Attendance dashboard widgets
+- Performance analytics Attendance sections
+
+For each path determine:
+
+1. What Academic Session is selected?
+2. How is that Session obtained?
+3. Is the read filtered by authenticated school + selected Session?
+4. Does the path read Attendance records directly?
+5. Does it first create a roster from CURRENT Student Registry?
+6. Does it require current `isActive = true`?
+7. Does it require the current Student Registry class/section?
+8. Does it use Attendance `class`/`section`?
+9. What happens when current Student Registry class/section differs
+   from historical Attendance class/section?
+10. What happens if the student is no longer active?
+11. What happens if the student is no longer returned by the current
+    roster?
+12. What happens if the Student Registry record is missing?
+13. Can historical Attendance still be displayed?
+
+==================================================
+8. TEACHER AUDIT
+==================================================
+
+Inspect:
+
+- daily Attendance
+- Attendance history
+- Attendance completion/status
+- Attendance-related Examination summaries
+
+Determine whether historical class/section is derived from:
+
+A. historical Attendance/session context
+
+OR
+
+B. current Student Registry.
+
+Specifically test conceptually:
+
+2025-2026:
+Ijaz Saikh = Class 9-A
+
+2026-2027:
+Ijaz Saikh = Class 10-B
+
+When Teacher selects 2025-2026:
+
+Does the system still associate Ijaz with Class 9-A
+for historical Attendance?
+
+Also determine whether current `isActive`, class, or section can
+cause historical Attendance to disappear.
+
+Do NOT change the Teacher's marking authorization.
+
+Any authenticated Teacher belonging to the school remains allowed
+to mark Attendance.
+
+DO NOT introduce Enrollment or Faculty Mapping restrictions.
+
+==================================================
+9. STUDENT AUDIT
+==================================================
+
+Inspect:
+
+- monthly Attendance
+- yearly Attendance
+- Attendance statistics
+- Student dashboard Attendance
+- Student archives
+- Student Examination Attendance display where applicable
+
+Determine whether the Student's historical Attendance depends on:
+
+- current class
+- current section
+- current active status
+- current Student Registry roster
+
+or instead on:
+
+- authenticated student identity
+- selected Academic Session
+- Attendance rows belonging to that student/session
+
+Student access must remain strictly restricted to:
+
+authenticated student
++
+authenticated school
++
+selected valid Academic Session.
+
+==================================================
+10. REQUIRED HISTORICAL TRACES
+==================================================
+
+Perform the following conceptual traces against the current code.
+
+------------------------------------------
+TRACE A — STUDENT STILL CURRENT
+------------------------------------------
+
+2025-2026:
+Ijaz Saikh has Attendance in Class 9-A.
+
+Current Student Registry:
+Ijaz Saikh = Class 10-B.
+
+Question:
+
+When 2025-2026 is selected, does historical Attendance still appear
+under Class 9-A?
+
+------------------------------------------
+TRACE B — STUDENT BECOMES INACTIVE
+------------------------------------------
+
+2025-2026:
+Ijaz Saikh has Attendance.
+
+Later:
+Student Registry marks Ijaz inactive.
+
+Question:
+
+Can 2025-2026 Attendance still be displayed?
+
+------------------------------------------
+TRACE C — CLASS/SECTION CHANGES
+------------------------------------------
+
+2025-2026:
+Ijaz Saikh = Class 9-A.
+
+2026-2027:
+Ijaz Saikh = Class 10-B.
+
+Question:
+
+When 2025-2026 is selected:
+
+Does Attendance remain associated with Class 9-A?
+
+Or does the system incorrectly use current Class 10-B?
+
+------------------------------------------
+TRACE D — STUDENT NOT IN CURRENT ROSTER
+------------------------------------------
+
+2025-2026:
+Ijaz Saikh has Attendance.
+
+Later:
+Ijaz is no longer returned by the current Student Registry roster.
+
+Question:
+
+When 2025-2026 is selected, does the Attendance row still appear?
+
+------------------------------------------
+TRACE E — STUDENT REGISTRY RECORD MISSING
+------------------------------------------
+
+Historical Attendance exists for student_id X in Session A.
+
+Assume the current Student Registry lookup no longer returns
+student X.
+
+Question:
+
+Does historical Attendance remain readable?
+
+If not, identify the exact code path that removes it.
+
+------------------------------------------
+TRACE F — CROSS-SCHOOL SAFETY
+------------------------------------------
+
+School A:
+
+Ijaz Saikh has historical Attendance.
+
+School B:
+
+A user selects a corresponding Academic Session.
+
+Question:
+
+Can School B ever see School A's historical Attendance?
+
+This must remain impossible.
+
+==================================================
+11. ATTENDANCE CLASS/SECTION FIELD AUDIT
+==================================================
+
+Inspect the actual writer and reader behavior for:
+
+    attendance_records.class
+    attendance_records.section
+
+Determine:
+
+1. Are these fields populated when Attendance is written?
+2. What values are written?
+3. Are they taken from the class/section applicable when Attendance
+   was recorded?
+4. Are they later overwritten?
+5. Are historical readers actually using these stored values?
+6. Or do readers replace them with current Student Registry values?
+7. Can promotion/change of class cause old Attendance to appear under
+   the new class?
+8. Can promotion/change of class cause old Attendance to disappear?
+9. Are these fields reliable enough to preserve historical context?
+10. If reliable, can they be used without schema changes?
+11. If not reliable, identify exactly why and identify the existing
+    session-specific source that could provide the historical
+    class/section context.
+
+DO NOT implement any solution during this audit.
+
+==================================================
+12. CURRENT STUDENT REGISTRY DEPENDENCY AUDIT
+==================================================
+
+Identify every Attendance path that uses current Student Registry
+for:
+
+- roster creation
+- class/section
+- active/inactive filtering
+- student existence
+- denominator calculation
+- display identity
+- history lookup
+- historical class grouping
+
+For every dependency classify it as:
+
+SAFE
+PARTIAL
+BLOCKING
+
+Explain why.
+
+IMPORTANT:
+
+A current Student Registry lookup used only to display the student's
+current name/identity is different from using it to determine the
+historical class/section or whether the historical Attendance row
+exists.
+
+Make this distinction explicit.
+
+==================================================
+13. MINIMUM-CHANGE PRINCIPLE
+==================================================
+
+We want the SMALLEST safe change for Step 2H.
+
+Do NOT propose:
+
+- Student Registry redesign
+- making Student Registry session-specific
+- Enrollment redesign
+- Enrollment as an Attendance prerequisite
+- Faculty Mapping changes
+- Attendance calculation changes
+- working-day/calendar changes
+- Academic Session redesign
+- Attendance canonical identity changes
+- tenant isolation changes
+- Step 2F reader/session changes
+- Step 2G tenant protections
+- unrelated cleanup
+- new schema/table unless absolutely proven necessary
+
+Step 2E canonical identity is already PASS.
+
+Step 2F session-specific readers are already PASS.
+
+Step 2G tenant isolation is already PASS.
+
+Preserve all of them.
+
+==================================================
+14. WHAT THE IMPLEMENTATION SHOULD EVENTUALLY ACHIEVE
+==================================================
+
+DO NOT IMPLEMENT THIS NOW.
+
+The eventual Step 2H implementation must ensure:
+
+Example:
+
+Current Student Registry:
+
+    Ijaz Saikh → Class 10-B
+
+Historical Attendance:
+
+    2025-2026 → Ijaz Saikh → Class 9-A
+
+When 2025-2026 is selected:
+
+    Ijaz Saikh's historical Attendance remains visible
+    in Class 9-A context.
+
+When 2026-2027 is selected:
+
+    Ijaz Saikh's Attendance belongs to Class 10-B context.
+
+Changing the current Student Registry must NOT rewrite historical
+Attendance context.
+
+==================================================
+15. REQUIRED OUTPUT
+==================================================
+
+Return ONLY a READ-ONLY AUDIT REPORT.
+
+Use exactly these sections:
+
+A. Files inspected
+
+B. Admin historical Attendance trace
+
+C. Teacher historical Attendance trace
+
+D. Student historical Attendance trace
+
+E. Current Student Registry dependencies
+
+F. Attendance class/section field audit
+
+G. Historical student identity findings
+
+H. Trace A — current student
+
+I. Trace B — inactive student
+
+J. Trace C — changed class/section
+
+K. Trace D — absent from current roster
+
+L. Trace E — Student Registry record missing
+
+M. Trace F — cross-school safety
+
+N. Exact functions/files requiring change
+
+O. Smallest safe Step 2H implementation plan
+
+P. Explicit non-changes
+
+Q. Final Step 2H audit status
+
+For section Q use exactly ONE:
+
+PASS — no historical Student Registry dependency exists
+
+OR
+
+FAIL — historical Student Registry dependency exists
+
+OR
+
+PASS WITH FINDINGS — only non-blocking findings exist
+
+For EVERY FAIL or BLOCKING finding provide:
+
+- exact file
+- exact function/route/component
+- exact current behavior
+- why it breaks historical Attendance visibility
+- smallest safe correction
+
+==================================================
+FINAL SAFETY RULE
+==================================================
+
+READ-ONLY ONLY.
+
+DO NOT EDIT ANY FILE.
+
+DO NOT CREATE A MIGRATION.
+
+DO NOT CHANGE DATABASE DATA.
+
+DO NOT CHANGE DATABASE SCHEMA.
+
+DO NOT DEPLOY.
+
+DO NOT TOUCH PRODUCTION.
+
+DO NOT IMPLEMENT THE FIX.
+
+Only investigate and report.

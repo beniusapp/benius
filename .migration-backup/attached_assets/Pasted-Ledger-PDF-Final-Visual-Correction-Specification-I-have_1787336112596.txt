@@ -1,0 +1,240 @@
+Ledger PDF — Final Visual Correction Specification
+
+I have reviewed the actual generated Ledger PDF, page by page. The backend/data logic is acceptable, but the current PDF does NOT fully match the implementation report you provided.
+
+Do not change any database logic, payment calculations, selection logic, GET/POST export logic, Tx Report PDF, or Export Ledger.
+
+Only refine "server/ledger-pdf.ts" unless a change is absolutely necessary for rendering.
+
+1. Fix the actual PDF, not just the code description
+
+The uploaded PDF is the source of truth for visual verification.
+
+The following items that were claimed as implemented are NOT visible in the actual PDF:
+
+- Subtitle under "Fee Ledger Report"
+- Filter/Scope line
+- "Class" instead of "Cls"
+- "Outstanding" instead of "Outstdg."
+- "Payment Method" instead of "Method"
+- "Reference No." instead of "Reference"
+- Visible rounded status pills
+- Three-line totals summary
+
+Make sure the generated PDF actually contains these changes.
+
+2. Improve readability instead of squeezing the table
+
+The current table is too compressed horizontally while there is a large amount of unused vertical space on the page.
+
+Do NOT simply reduce font sizes or squeeze more information into the same tiny rows.
+
+Use the available page height to make the report more readable.
+
+Target readable body text around 7.5–8 pt where practical.
+
+Dynamic row height should remain enabled.
+
+If the report naturally requires 3 pages after improving readability, that is acceptable. Do NOT sacrifice readability merely to force the report into 2 pages.
+
+3. Fix word wrapping
+
+Do not break words arbitrarily.
+
+Current examples:
+
+- "DemandDra" / "ft"
+- "BankTransfe" / "r"
+
+These should render naturally as:
+
+- "Demand Draft"
+- "Bank Transfer"
+
+Use word-aware wrapping.
+
+If necessary, slightly increase the width of the Payment Method column.
+
+4. Increase important audit columns
+
+Prioritize width for:
+
+1. Student
+2. Fee Name
+3. Fee Type
+4. Fee Period
+5. Payment Method
+6. Reference No.
+
+Reduce width only from columns where values are inherently short:
+
+- Class
+- Status
+- Frequency
+- Amount
+- Paid
+- Outstanding
+- Due Date
+- Paid On
+
+Do not make Reference No. so narrow that payment IDs become difficult to read.
+
+5. Column headers must be exactly
+
+Use:
+
+- Invoice No.
+- Receipt No.
+- Student
+- DSID
+- Class
+- Fee Name
+- Fee Type
+- Fee Period
+- Frequency
+- Amount
+- Due Date
+- Status
+- Paid On
+- Paid
+- Outstanding
+- Payment Method
+- Reference No.
+
+Do not abbreviate "Class", "Outstanding", "Payment Method", or "Reference No.".
+
+6. Status must visibly render as a pill
+
+The current PDF shows plain colored text.
+
+Implement and verify an actual rounded status pill:
+
+- Paid → light green background + dark green text
+- Due → light red/amber background + dark matching text
+- Overdue → appropriate warning/red styling
+- Partial → appropriate blue/amber styling
+- Waived → neutral/grey styling
+
+The text must remain readable.
+
+7. Header hierarchy
+
+The header should contain:
+
+School information on the left.
+
+On the right:
+
+FEE LEDGER REPORT
+Invoice-wise fee ledger showing billed amount, payments received, and outstanding balance.
+Session: 2027–2028
+Generated: date/time
+29 records
+
+Then below the header:
+
+For no active filters:
+
+"Scope: All matching records for this session"
+
+For filtered exports:
+
+"Filters: Status = Overdue · Class = 6A · Fee Type = Tuition"
+
+Do not put the page number in this header.
+
+8. Page number
+
+Page number must appear ONLY in the footer.
+
+Footer:
+
+"School Name • Fee Ledger Report • Session 2027–2028" on the left
+
+"Page N of M" on the right
+
+No duplicate page number in the header.
+
+9. Totals must be fixed
+
+The current PDF has a rendering problem where:
+
+"₹2,17,100"
+
+is visually broken across lines.
+
+Never allow a total amount to wrap.
+
+The totals row must display all three financial totals cleanly:
+
+- Total Invoiced
+- Total Paid
+- Total Outstanding
+
+Then add a clean summary block below the table:
+
+Total Invoiced: ₹3,31,500
+Total Paid: ₹2,17,100
+Total Outstanding: ₹1,14,400
+
+The summary must never overlap, clip, or wrap incorrectly.
+
+If the totals block does not fit after the last record, move the entire totals block to a new continuation page.
+
+Never silently drop totals.
+
+10. Data integrity
+
+Keep exactly the existing calculations:
+
+Amount = invoice amount
+
+Paid = SUM(all payment_records.amount for that invoice)
+
+Outstanding = MAX(invoice amount − total paid, 0)
+
+Payment Method:
+
+- one method → show that method
+- multiple distinct methods → "Multiple"
+
+Reference No. = most recent payment reference
+
+Do not change these calculations.
+
+11. Multi-page behavior
+
+Every page must repeat:
+
+- School/header information
+- Report title
+- Session
+- Generated timestamp
+- Record count
+- Filter/scope line
+- Full table column headers
+
+Rows must never split between pages.
+
+Totals must appear only after the final record.
+
+12. Final visual QA is mandatory
+
+After making the changes:
+
+1. Generate the actual PDF.
+2. Open/render every page.
+3. Inspect the rendered PDF visually.
+4. Verify that no text is clipped.
+5. Verify no words are broken unnecessarily.
+6. Verify no columns overlap.
+7. Verify status pills are actually visible.
+8. Verify subtitle and scope/filter line are actually visible.
+9. Verify totals are fully readable.
+10. Verify "Class", "Outstanding", "Payment Method", and "Reference No." appear exactly as specified.
+11. Verify page numbers appear only in the footer.
+12. Verify the final PDF, not just the source code, matches this specification.
+
+Do not give me a code-level "looks correct" report only. I want the actual generated PDF visually checked before declaring it complete.
+
+Do not modify Tx Report PDF, Export Ledger, database schema, payment calculations, or selection logic.

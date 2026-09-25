@@ -1,0 +1,702 @@
+# ATTENDANCE SCOPE AUDIT — VERIFY FIXED VS REMAINING ISSUES
+
+## IMPORTANT
+
+The application is currently in the **BUILDING / DEVELOPMENT phase**.
+
+This is a **READ-ONLY AUDIT ONLY**.
+
+### DO NOT CHANGE ANYTHING.
+
+Do NOT:
+
+* modify code
+* modify database schema
+* create migrations
+* run migrations
+* modify Attendance logic
+* modify Student Registry logic
+* modify APIs
+* modify UI
+* modify tests
+* modify configuration
+* modify `.replit`
+* modify deployment configuration
+* modify production
+* run production SQL
+* perform data backfills
+* "fix" any issue discovered
+
+Your only job is to inspect the CURRENT implementation and determine what is already fixed versus what remains unresolved.
+
+Do not make assumptions from earlier reports. Inspect the actual current codebase.
+
+---
+
+# PROJECT CONTEXT
+
+This is a multi-tenant school MIS.
+
+Permanent requirements:
+
+1. Student Registry is GLOBAL/PERMANENT.
+2. Students must not be recreated/reset per Academic Session.
+3. Enrollment is Session-specific.
+4. Attendance is strongly Academic Session-specific.
+5. Tenant/school isolation is mandatory.
+6. Any same-school Teacher may mark Attendance unless an existing security requirement explicitly prevents it.
+7. Historical Attendance must remain meaningful even if a Student is physically deleted.
+8. Archived Sessions must be read-only.
+9. Active Session retains the existing 7-day correction/edit behavior.
+10. Sunday may be a valid Attendance day when deliberately marked.
+11. Application/business/display timestamps use **IST / Asia/Kolkata**.
+12. Do not introduce cross-school access or calculations.
+
+---
+
+# AUDIT SCOPE
+
+Audit ONLY the following areas.
+
+| Area                                    | Required classification                              |
+| --------------------------------------- | ---------------------------------------------------- |
+| Student Registry global                 | PASS / NOT PASS                                      |
+| Tenant isolation                        | PASS / NOT PASS                                      |
+| Any same-school Teacher can mark        | PASS / NOT PASS                                      |
+| Student Attendance Session isolation    | PASS / NOT PASS                                      |
+| Historical Attendance                   | FIXED / PARTIAL / NOT FIXED / NEEDS DECISION         |
+| Admin vs Student calculation/display    | FIXED / PARTIAL / NOT FIXED / NEEDS DECISION         |
+| Working-day/Sunday behavior             | FIXED / PARTIAL / NOT FIXED / NEEDS DECISION         |
+| IST                                     | FIXED / PARTIAL / NOT FIXED                          |
+| Archived Session editing                | PASS / NOT PASS                                      |
+| Past dates in active Session            | FIXED / PARTIAL / NOT FIXED / NEEDS DECISION         |
+| Step 2D server-authoritative Session    | FIXED / PARTIAL / NOT FIXED / NEEDS INVESTIGATION    |
+| Student identity vs historical identity | FIXED / PARTIAL / NOT FIXED / NEEDS DECISION         |
+| Legacy NULL Teacher Self-Attendance     | FIXED / PARTIAL / NOT FIXED / NEEDS CAREFUL HANDLING |
+
+---
+
+# 1. STUDENT REGISTRY GLOBAL
+
+Verify whether Student Registry is still global/permanent.
+
+Check:
+
+* Students table
+* Student CRUD
+* Student deletion/deactivation
+* Academic Session handling
+* Enrollment handling
+* Attendance dependencies
+* whether creating a new Academic Session recreates Students
+* whether Session creation resets Student identity
+
+### PASS requires:
+
+Student identity remains global/permanent and Academic Session affects enrollment/attendance context rather than creating a new Student identity.
+
+Report exact evidence.
+
+---
+
+# 2. TENANT ISOLATION
+
+Audit Attendance-related operations for school/tenant isolation.
+
+Inspect:
+
+* Teacher Attendance writes
+* Teacher Attendance reads
+* Student Attendance reads
+* Admin Attendance reads
+* Attendance summaries
+* historical Attendance
+* deleted Student historical Attendance
+* Attendance calculations
+* Attendance APIs
+* database queries
+
+Verify every school-scoped operation is constrained to the authenticated school.
+
+Test/inspect for:
+
+* Student from School A being accessible from School B
+* Attendance from School A appearing in School B
+* historical identity crossing schools
+* summary/count aggregation crossing schools
+
+### PASS requires:
+
+No cross-school Attendance access or calculation path exists.
+
+Do not modify anything.
+
+---
+
+# 3. ANY SAME-SCHOOL TEACHER CAN MARK ATTENDANCE
+
+Verify the current authorization model.
+
+The requirement is:
+
+> Any authenticated same-school Teacher may mark Attendance.
+
+Do NOT impose Faculty Mapping/class/subject restrictions unless an existing security requirement explicitly requires them.
+
+Inspect:
+
+* Teacher Attendance authorization
+* class/section authorization
+* subject authorization
+* faculty mapping checks
+* legacy teacher authorization fallbacks
+
+Determine whether a normal same-school Teacher can mark Attendance without unrelated Faculty Mapping restrictions.
+
+Report exact current behavior.
+
+---
+
+# 4. STUDENT ATTENDANCE SESSION ISOLATION
+
+Verify that Student Attendance is correctly scoped by:
+
+* authenticated school
+* Academic Session
+* Student
+* Attendance date
+
+Check:
+
+* current Session
+* previous Session
+* multiple Sessions
+* historical reads
+* monthly summaries
+* yearly summaries
+* statistics
+* daily views
+
+### PASS requires:
+
+Attendance from one Academic Session cannot appear in another Session's Attendance context.
+
+---
+
+# 5. HISTORICAL ATTENDANCE
+
+This is a key audit area.
+
+Verify the current implementation after the Step 2L-4B work.
+
+Check:
+
+* physical Student deletion
+* Attendance preservation
+* historical Student identity
+* original Student ID
+* Attendance identity key
+* Student identity key
+* Student name snapshot
+* Student code/digital ID snapshot
+* class/section historical context
+* school
+* Academic Session
+* daily summary
+* monthly summary
+* Admin views
+* Teacher historical views
+* Student views
+* live roster
+
+Determine exactly what happens when:
+
+### Scenario A
+
+Student exists and has Attendance.
+
+### Scenario B
+
+Student is physically deleted after Attendance exists.
+
+### Scenario C
+
+A replacement Student is created.
+
+### Scenario D
+
+A replacement Student attempts to reuse an old identity key/code/ID.
+
+### Scenario E
+
+Historical Attendance is viewed after deletion.
+
+### Scenario F
+
+Daily Admin/Teacher Attendance summary is viewed after deletion.
+
+### Scenario G
+
+Two schools have Students with similar IDs/codes.
+
+Do NOT fix anything.
+
+Instead classify:
+
+* fully correct
+* partially correct
+* incorrect
+* requires a product decision
+
+If a product decision is required, explain the exact decision.
+
+---
+
+# 6. ADMIN VS STUDENT CALCULATION / DISPLAY CONSISTENCY
+
+Audit whether Admin Attendance and Student Attendance calculate/display Attendance consistently.
+
+Compare:
+
+* daily status
+* present count
+* absent count
+* working-day count
+* marked-day count
+* monthly percentage
+* yearly percentage
+* historical Attendance
+* deleted Student handling
+* Sunday handling
+* Session filtering
+
+Identify any case where:
+
+> Admin sees/calculates X but Student sees/calculates Y
+
+or vice versa.
+
+For every discrepancy, determine whether it is:
+
+1. an actual bug,
+2. an intentional difference in semantics,
+3. a missing requirement,
+4. or a product decision that must be made.
+
+Do NOT fix it.
+
+---
+
+# 7. WORKING-DAY / SUNDAY BEHAVIOR
+
+Audit current behavior.
+
+Required distinction:
+
+### Unmarked Sunday
+
+Should show:
+
+* Sunday
+* no Attendance status
+* no Attendance count contribution
+
+### Deliberately marked Sunday
+
+Should behave like a normal stored Attendance record.
+
+It should:
+
+* display the stored status
+* contribute to Attendance counts according to normal stored-status semantics
+* not require Sunday-specific special business logic
+
+Verify current implementation in:
+
+* Teacher Attendance
+* Student Attendance
+* Admin Attendance
+* monthly totals
+* yearly totals
+* working-day calculations
+
+Do NOT change it.
+
+If current semantics differ, state exactly how.
+
+---
+
+# 8. IST
+
+Audit all Attendance-related application-facing timestamps.
+
+Inspect:
+
+* Attendance date display
+* created timestamps
+* updated timestamps
+* Teacher Attendance
+* Student Attendance
+* Admin Attendance
+* correction timestamps
+* audit/history timestamps
+* API serialization
+* date formatting
+
+Determine whether application/business/display timestamps use:
+
+**Asia/Kolkata / IST**
+
+Do not confuse database UTC storage with application display.
+
+If timestamps are stored in UTC but correctly converted to IST for application display, that is acceptable.
+
+Identify any actual user-visible timezone bug.
+
+Do NOT fix it.
+
+---
+
+# 9. ARCHIVED SESSION EDITING
+
+Verify archived Session Attendance mutation protection.
+
+Check:
+
+* Teacher mark
+* Teacher correction
+* Teacher update
+* Admin mutation
+* API-level mutation
+* direct endpoint behavior
+
+### PASS requires:
+
+Archived Session Attendance is read-only.
+
+Do not rely only on UI disabling.
+
+Verify server-side enforcement.
+
+---
+
+# 10. PAST DATES IN ACTIVE SESSION
+
+Audit the current rules for Attendance dates within the active Academic Session.
+
+Determine:
+
+* future date behavior
+* today's date
+* past dates
+* 7-day correction window
+* dates older than 7 days
+* Session start boundary
+* Session end boundary
+* holiday behavior
+* Sunday behavior
+
+Do NOT assume what the product requirement should be.
+
+Report the CURRENT behavior and identify where a product decision is required.
+
+Do not change anything.
+
+---
+
+# 11. STEP 2D — SERVER-AUTHORITATIVE SESSION
+
+This is especially important.
+
+Do NOT modify anything.
+
+Verify whether the earlier Step 2D requirement is genuinely implemented.
+
+For Attendance writes:
+
+> The server must determine the Academic Session from authenticated server-side context / active Session.
+
+A browser-provided Session header or parameter must NOT be able to make a Teacher write Attendance into an arbitrary Session.
+
+Inspect:
+
+* POST Attendance
+* update Attendance
+* correction
+* bulk Attendance if present
+* any Attendance mutation endpoint
+
+Verify:
+
+* authenticated school is authoritative
+* active Session is authoritative
+* browser `x-view-session-id` cannot override the write Session
+* cross-Session write is rejected
+* cross-school write is rejected
+
+Classify:
+
+* FIXED
+* PARTIAL
+* NOT FIXED
+* NEEDS INVESTIGATION
+
+Do not change anything.
+
+---
+
+# 12. STUDENT IDENTITY VS HISTORICAL IDENTITY
+
+Audit the conceptual model carefully.
+
+There are potentially different concepts:
+
+### Current Student Registry identity
+
+The current live Student.
+
+### Historical Attendance identity
+
+The identity that must remain attached to an old Attendance record even after the live Student is deleted.
+
+Verify whether the current implementation clearly separates these concepts.
+
+Check:
+
+* Student primary ID
+* Attendance original Student ID
+* Attendance identity key
+* Student attendance identity key
+* snapshots
+* deletion behavior
+* replacement Student behavior
+* historical lookup
+* live roster lookup
+
+Determine whether any current Student can accidentally inherit historical Attendance belonging to a deleted Student.
+
+Do NOT fix it.
+
+If the implementation is technically safe but the product semantics still need a decision, say so explicitly.
+
+---
+
+# 13. LEGACY NULL TEACHER SELF-ATTENDANCE
+
+Audit legacy Teacher Self-Attendance records where Session ID may be NULL.
+
+This requires careful handling.
+
+Do NOT blindly backfill NULL Session IDs.
+
+Determine:
+
+* how many NULL records exist
+* whether their dates allow reliable Session inference
+* whether their school is known
+* whether multiple Sessions overlap
+* whether the correct Session can be determined deterministically
+* whether NULL should remain historical/legacy
+* whether current reads treat NULL correctly
+* whether current writes create proper Session IDs
+
+If no safe deterministic mapping exists, say:
+
+> DO NOT BACKFILL AUTOMATICALLY.
+
+Do not modify the data.
+
+---
+
+# 14. VERIFY PREVIOUSLY COMPLETED STEPS
+
+Specifically verify the actual current implementation of:
+
+### Step 2L-1
+
+Server-authoritative active Academic Session.
+
+### Step 2L-2
+
+Active Session date boundaries.
+
+### Step 2L-3
+
+Marked Sunday display/count behavior.
+
+### Step 2L-4B
+
+Historical Attendance after physical Student deletion.
+
+Do not rely solely on previous Replit reports.
+
+Inspect the current code and tests.
+
+---
+
+# 15. TEST INSPECTION
+
+Run ONLY existing read-only/focused tests that are necessary to establish the current status.
+
+Do not create or modify tests.
+
+Do not change code to make tests pass.
+
+If existing tests can be run safely in the development/test environment, report:
+
+* exact command
+* number passed
+* number failed
+
+Do not run anything against production.
+
+If a test cannot be run, explain why.
+
+---
+
+# 16. FINAL REPORT — USE THIS EXACT STRUCTURE
+
+## A. OVERALL STATUS
+
+Give one of:
+
+**AUDIT COMPLETE — NO CHANGES REQUIRED**
+
+or
+
+**AUDIT COMPLETE — FIXES/DECISIONS REMAIN**
+
+Do not use "production ready" language.
+
+---
+
+## B. STATUS TABLE
+
+Use this exact table:
+
+| Area                                    | Status | Evidence | What remains |
+| --------------------------------------- | ------ | -------- | ------------ |
+| Student Registry global                 |        |          |              |
+| Tenant isolation                        |        |          |              |
+| Any same-school Teacher can mark        |        |          |              |
+| Student Attendance Session isolation    |        |          |              |
+| Historical Attendance                   |        |          |              |
+| Admin vs Student calculation/display    |        |          |              |
+| Working-day/Sunday behavior             |        |          |              |
+| IST                                     |        |          |              |
+| Archived Session editing                |        |          |              |
+| Past dates in active Session            |        |          |              |
+| Step 2D server-authoritative Session    |        |          |              |
+| Student identity vs historical identity |        |          |              |
+| Legacy NULL Teacher Self-Attendance     |        |          |              |
+
+---
+
+## C. FIXED ITEMS
+
+List only items that are genuinely fixed in the CURRENT codebase.
+
+For every item provide exact evidence:
+
+* file
+* endpoint/function
+* relevant test
+* observed behavior
+
+---
+
+## D. REMAINING BUGS
+
+List only actual implementation defects.
+
+Do not list product decisions as bugs.
+
+For each:
+
+* exact problem
+* affected code path
+* affected users
+* severity
+* evidence
+* whether it is isolated or systemic
+
+Do NOT fix them.
+
+---
+
+## E. PRODUCT DECISIONS REQUIRED
+
+List only questions that genuinely require a product/business decision.
+
+For example:
+
+* Should a particular historical record remain visible after deletion?
+* What should happen to a past date older than the correction window?
+* Should an ambiguous legacy NULL Session record remain NULL?
+
+Do not make the decision yourself.
+
+---
+
+## F. STEP 2D STATUS
+
+Give a dedicated conclusion:
+
+**FIXED / PARTIAL / NOT FIXED / NEEDS INVESTIGATION**
+
+Explain exactly why.
+
+---
+
+## G. LEGACY NULL SELF-ATTENDANCE STATUS
+
+Give:
+
+* number of affected records
+* whether deterministic Session inference is possible
+* whether backfill is safe
+* recommended next action
+
+Do not perform the action.
+
+---
+
+## H. TEST RESULTS
+
+Give exact results.
+
+---
+
+## I. FILES CHANGED
+
+This MUST say:
+
+**NONE**
+
+If anything was modified, stop and report it immediately.
+
+---
+
+# FINAL HARD RULE
+
+This is an **AUDIT ONLY** task.
+
+The objective is NOT to improve the system.
+
+The objective is to establish the exact current state:
+
+> **WHAT IS FIXED?**
+>
+> **WHAT IS STILL BROKEN?**
+>
+> **WHAT NEEDS A PRODUCT DECISION?**
+>
+> **WHAT NEEDS A SEPARATE IMPLEMENTATION STEP?**
+
+Do not go outside this Attendance scope.
+
+Do not start migration/deployment work.
+
+Do not redesign the application.
+
+Do not implement any fix discovered during this audit.

@@ -1,0 +1,209 @@
+# 10L-12D — Student Attendance Targeted-Holiday Display Fix
+
+We are continuing the Attendance hardening work.
+
+The following steps are already COMPLETE and must not be changed:
+
+* 10L-12B — Session display boundaries
+* 10L-12C — Teacher Self-Attendance Session write boundary
+* 10L-12C-R — Existing rate test correction
+
+Implement **ONLY 10L-12D**.
+
+## Objective
+
+Fix the Student Attendance monthly calendar so that a holiday targeted to a particular class/section is shown only to students whose selected Academic Session enrollment matches that holiday audience.
+
+### Required behavior
+
+For the currently authenticated Student:
+
+A holiday should be treated/displayed as applicable when:
+
+1. It is an `All_School` holiday for the authenticated school; OR
+2. It is a targeted holiday whose class/section matches the Student's selected Session enrollment.
+
+A targeted holiday belonging to another class/section must **not** be shown as a holiday for this Student.
+
+## Example
+
+Suppose:
+
+* Student A → Class 5, Section A
+* Student B → Class 5, Section B
+
+And the school has:
+
+```text
+Holiday:
+Date = 15 August
+Audience = Class 5 / Section A
+```
+
+Then:
+
+* Student A → holiday shown ✅
+* Student B → holiday not shown ❌
+
+An `All_School` holiday should continue to appear for both.
+
+## IMPORTANT — Preserve existing contracts
+
+Do NOT change:
+
+* Student Attendance percentage calculation;
+* Student daily/monthly/yearly calculation;
+* Working-day calculation;
+* Attendance status semantics;
+* Present/Late/Half Day/Absent/Leave weights;
+* Academic Session rules;
+* Student Registry;
+* enrollment model;
+* historical Attendance behavior;
+* Teacher Attendance;
+* Teacher Self-Attendance;
+* Admin Attendance;
+* 10L-12B;
+* 10L-12C;
+* database schema;
+* migrations.
+
+This is specifically a **holiday audience filtering/display fix**.
+
+## Relevant existing code
+
+The 10L-12A audit identified the relevant area around:
+
+```text
+server/routes.ts
+approximately lines 2019–2086
+
+server/storage.ts
+approximately lines 4882–4955
+
+client/src/pages/student-attendance.tsx
+approximately lines 102–142
+approximately lines 212–218
+approximately lines 532–587
+```
+
+These line numbers are approximate. Inspect the current code.
+
+Determine where the Student monthly Attendance calendar obtains holiday information.
+
+## Security / Session requirements
+
+Use the existing authenticated Student identity:
+
+* authenticated `studentId`;
+* authenticated `schoolId`;
+* validated selected Academic Session.
+
+Do not trust client-supplied school identity.
+
+The Student's class/section must come from the authoritative selected Academic Session enrollment/session context already used by Student Attendance.
+
+Do not use mutable current Student class/section fields if the existing Session enrollment mechanism provides the correct historical/Session-specific identity.
+
+## Required implementation
+
+Filter holiday events for the Student's selected Session/class/section before they are exposed as applicable Student Attendance holidays.
+
+The logic should distinguish:
+
+```text
+All_School
+```
+
+from targeted class/section holidays.
+
+Do not accidentally remove `All_School` holidays.
+
+Do not change stored holiday records.
+
+## Tests
+
+Add focused tests for:
+
+### All_School
+
+* An `All_School` holiday is visible/applicable to the Student.
+
+### Matching targeted holiday
+
+* A targeted holiday for the Student's selected class/section is visible/applicable.
+
+### Non-matching targeted holiday
+
+* A targeted holiday for another class/section is NOT visible/applicable.
+
+### Session isolation
+
+* A targeted holiday from another Academic Session must not be treated as the Student's current selected-Session holiday.
+
+### Tenant isolation
+
+* A holiday belonging to another school must not appear.
+
+### Existing Attendance behavior
+
+Confirm existing Attendance status and percentage tests remain unchanged.
+
+## Verification
+
+Run:
+
+1. Focused Student Attendance tests.
+2. Relevant holiday/calendar tests.
+3. Relevant existing Attendance calculation tests.
+
+Then run:
+
+```bash
+npm run check
+```
+
+and:
+
+```bash
+git diff --check
+```
+
+Inspect the final diff.
+
+Restart the development app if that is part of the existing workflow.
+
+## Strict scope
+
+Do NOT fix any other 10L-12A findings under this step.
+
+In particular, do NOT address:
+
+* Teacher marking UI over-blocking targeted holidays — that is **10L-12E**.
+* Admin profile school predicate.
+* Historical teacher assignment issue.
+* Any other Attendance defect.
+
+If another defect is discovered:
+
+**STOP and report it. Do not fix it.**
+
+## Final report
+
+Report:
+
+* exact files changed;
+* exact holiday filtering logic implemented;
+* how Student Session/class/section identity was obtained;
+* tenant isolation;
+* Session isolation;
+* tests passed;
+* `npm run check`;
+* `git diff --check`;
+* final diff;
+* confirmation that no schema/migration/data changes were made;
+* confirmation that 10L-12B and 10L-12C were not altered.
+
+If everything passes, finish with:
+
+**10L-12D COMPLETE — STUDENT TARGETED-HOLIDAY DISPLAY FIXED — NO OTHER CHANGES MADE.**

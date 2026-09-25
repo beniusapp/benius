@@ -1,0 +1,825 @@
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import {
+  ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
+  LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
+  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight, ChevronLeft, Archive,
+} from "lucide-react";
+import type { TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode } from "@/pages/teacher-dashboard";
+import AttendanceHistoryView from "./attendance-history";
+import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
+import { isSessionAttendanceDate, recentSessionAttendanceDates } from "./teacher-attendance-display-dates";
+import { useISTToday } from "@/hooks/use-ist-today";
+import {
+  addCalendarDays,
+  calendarDayDifference,
+  calendarMonthEndDate,
+  calendarWeekday,
+  dateOnlyParts,
+  formatDateOnlyWithWeekday,
+  formatMonthYearFromDateOnly,
+  formatTimeIST,
+  instantEpochMillis,
+  minutesSinceMidnightIST,
+} from "@shared/ist-time";
+
+interface AcademicSession {
+  id: number;
+  sessionName: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+}
+
+interface SelfAttRecord {
+  id: number;
+  attendanceDate: string;
+  checkInTime: string | null;
+  checkOutTime: string | null;
+  status: "Present" | "Late" | "Half Day" | "Absent" | "Not Marked" | "Leave";
+  totalWorkingMinutes: number;
+  locationVerified: boolean;
+}
+
+interface AttendancePolicyInfo {
+  policyName: string;
+  expectedArrivalTime: string;
+  gracePeriodMinutes: number;
+  halfDayCutoffTime: string;
+  schoolEndTime: string;
+  attendanceTarget: number;
+}
+
+interface CorrectionReq {
+  id: number;
+  attendanceDate: string;
+  requestedCheckIn: string;
+  requestedCheckOut: string;
+  reason: string;
+  status: "Pending" | "Approved" | "Rejected";
+  createdAt: string;
+}
+
+function fmtTime(iso: string | null | undefined): string {
+  return formatTimeIST(iso);
+}
+
+function fmtDuration(mins: number): string {
+  if (!mins || mins <= 0) return "—";
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function fmtElapsed(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function statusColors(status: string) {
+  if (status === "Present")  return { dot: "bg-emerald-400", badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30", text: "text-emerald-400" };
+  if (status === "Late")     return { dot: "bg-amber-400",   badge: "bg-amber-500/20 text-amber-300 border-amber-500/30",   text: "text-amber-400"   };
+  if (status === "Half Day") return { dot: "bg-orange-400",  badge: "bg-orange-500/20 text-orange-300 border-orange-500/30", text: "text-orange-400"  };
+  if (status === "Absent")   return { dot: "bg-red-400",     badge: "bg-red-500/20 text-red-300 border-red-500/30",         text: "text-red-400"     };
+  if (status === "Leave")    return { dot: "bg-slate-400",   badge: "bg-slate-500/20 text-slate-300 border-slate-500/30",   text: "text-slate-300"   };
+  return { dot: "bg-white/20", badge: "bg-white/10 text-white/40 border-white/10", text: "text-white/40" };
+}
+
+function correctionStatusStyle(s: string) {
+  if (s === "Approved") return "bg-emerald-500/20 text-emerald-300 border-emerald-500/30";
+  if (s === "Rejected") return "bg-red-500/20 text-red-300 border-red-500/30";
+  return "bg-amber-500/20 text-amber-300 border-amber-500/30";
+}
+
+function getDayLabel(dateStr: string): string {
+  return formatDateOnlyWithWeekday(dateStr);
+}
+
+export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
+  const { toast } = useToast();
+  const isArchiveMode = useArchiveMode();
+
+  // ── Reactive school date — updates automatically at IST midnight ──────────────
+  const today = useISTToday();
+
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
+  }, [today]);
+
+  // ── Geolocation ─────────────────────────────────────────────────────────────
+  const [geo, setGeo] = useState<{ lat: number | null; lng: number | null; verified: boolean }>({ lat: null, lng: null, verified: false });
+  const [geoLoading, setGeoLoading] = useState(false);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { setGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude, verified: true }); setGeoLoading(false); },
+      () => { setGeo({ lat: null, lng: null, verified: false }); setGeoLoading(false); },
+      { timeout: 8000 }
+    );
+  }, []);
+
+  // ── Session selector ─────────────────────────────────────────────────────────
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+
+  const { data: sessions = [] } = useQuery<AcademicSession[]>({
+    queryKey: ["/api/teacher/academic-sessions"],
+    queryFn: async () => { const r = await fetch("/api/teacher/academic-sessions", { credentials: "include" }); return r.ok ? r.json() : []; },
+    staleTime: 300000,
+  });
+
+  useEffect(() => {
+    if (sessions.length > 0 && selectedSessionId === null) {
+      setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
+    }
+  }, [sessions, selectedSessionId]);
+
+  const currentSession: AcademicSession | null =
+    sessions.find(s => s.id === selectedSessionId) ?? sessions.find(s => s.isActive) ?? sessions[0] ?? null;
+  const sessionStartDate = currentSession?.startDate ?? "";
+  const sessionEndDate   = currentSession?.endDate   ?? "";
+  const sessionName      = currentSession?.sessionName ?? "";
+  const sessionFetch = (url: string, init: RequestInit = {}) =>
+    sessionFetchForViewSession(url, selectedSessionId, init);
+  const sessionMutation = async (url: string, body: unknown) => {
+    const response = await sessionFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.message || "Attendance request failed");
+    }
+    return response.json();
+  };
+
+  // ── Queries ──────────────────────────────────────────────────────────────────
+  const { data: todayRaw, isLoading: todayLoading } = useQuery<SelfAttRecord | null>({
+    queryKey: ["/api/teacher/self-attendance/today", selectedSessionId, today],
+    queryFn: async () => { const r = await sessionFetch("/api/teacher/self-attendance/today"); return r.ok ? r.json() : null; },
+    enabled: selectedSessionId !== null,
+    staleTime: 0, refetchOnMount: "always",
+    refetchInterval: 60000, // polling fallback — catches midnight if setTimeout missed (e.g. browser was suspended)
+  });
+
+  // Date guard: only use a record if it truly belongs to today; this prevents stale
+  // cross-day data from ever rendering as the active shift after midnight
+  const todayRec = todayRaw?.attendanceDate === today ? todayRaw : null;
+
+  const { data: history = [], isLoading: historyLoading } = useQuery<SelfAttRecord[]>({
+    queryKey: ["/api/teacher/self-attendance/history", selectedSessionId, sessionStartDate, sessionEndDate],
+    queryFn: async () => {
+      if (!sessionStartDate || !sessionEndDate) return [];
+      const params = new URLSearchParams({ startDate: sessionStartDate, endDate: sessionEndDate });
+      const r = await sessionFetch(`/api/teacher/self-attendance/history?${params}`);
+      return r.ok ? r.json() : [];
+    },
+    enabled: selectedSessionId !== null && !!sessionStartDate,
+    staleTime: 60000,
+  });
+
+  const { data: rate, isError: rateError } = useQuery<TeacherSelfRate>({
+    queryKey: ["/api/teacher/self-attendance/rate", selectedSessionId, today],
+    queryFn: async () => {
+      const r = await sessionFetch("/api/teacher/self-attendance/rate");
+      if (!r.ok) throw new Error("Failed to load Attendance rate");
+      return r.json();
+    },
+    enabled: selectedSessionId !== null,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+
+  const { data: corrections = [], isLoading: correctionsLoading } = useQuery<CorrectionReq[]>({
+    queryKey: ["/api/teacher/self-attendance/corrections", selectedSessionId],
+    queryFn: async () => { const r = await sessionFetch("/api/teacher/self-attendance/corrections"); return r.ok ? r.json() : []; },
+    enabled: selectedSessionId !== null,
+  });
+
+  const { data: policy } = useQuery<AttendancePolicyInfo>({
+    queryKey: ["/api/teacher/attendance-policy"],
+    queryFn: async () => { const r = await fetch("/api/teacher/attendance-policy", { credentials: "include" }); return r.ok ? r.json() : null; },
+    staleTime: 0,
+    refetchInterval: 60000,
+    refetchOnWindowFocus: true,
+  });
+
+  // ── Mutations ────────────────────────────────────────────────────────────────
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history", selectedSessionId, sessionStartDate, sessionEndDate] });
+    queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate", selectedSessionId] });
+  };
+
+  const checkInMut = useMutation({
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/check-in", { latitude: geo.lat, longitude: geo.lng, locationVerified: geo.verified }),
+    onSuccess: (d) => {
+      if (d.status === "Leave") {
+        toast({ title: "🏫 School Day Ended", description: `Attendance recorded as Leave. School ended at ${policy?.schoolEndTime ?? "—"}.`, variant: "destructive" });
+      } else if (d.status === "Late" || d.status === "Half Day") {
+        toast({ title: "⚠️ Checked In — Late", description: `Shift started at ${fmtTime(d.checkInTime)}` });
+      } else {
+        toast({ title: "✅ Checked In!", description: `Shift started at ${fmtTime(d.checkInTime)}` });
+      }
+      invalidate();
+    },
+    onError: (e: Error) => toast({ title: "Check-in failed", description: e.message, variant: "destructive" }),
+  });
+
+  const checkOutMut = useMutation({
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/check-out", {}),
+    onSuccess: (d) => { toast({ title: "✅ Checked Out!", description: `Total: ${fmtDuration(d.totalWorkingMinutes)}` }); invalidate(); },
+    onError:   (e: Error) => toast({ title: "Check-out failed", description: e.message, variant: "destructive" }),
+  });
+
+  // ── Live timer ───────────────────────────────────────────────────────────────
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (todayRec?.checkInTime && !todayRec?.checkOutTime) {
+      const start = instantEpochMillis(todayRec.checkInTime);
+      if (start === null) return;
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+      timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [todayRec?.checkInTime, todayRec?.checkOutTime]);
+
+  // ── Derived analytics ────────────────────────────────────────────────────────
+  const kpi = useMemo(() => {
+    const workdays = history.filter(r => rate && isWorkingDate(r.attendanceDate, rate));
+    const present  = workdays.filter(r => r.status === "Present").length;
+    const late     = workdays.filter(r => r.status === "Late").length;
+    const halfDay  = workdays.filter(r => r.status === "Half Day").length;
+    const absent   = workdays.filter(r => r.status === "Absent").length;
+    const durations = history.filter(r => r.totalWorkingMinutes > 0).map(r => r.totalWorkingMinutes);
+    const avgDur   = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+
+    // Streak: consecutive Present/Late days going back from yesterday
+    const sorted = [...history].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
+    let streak = 0, longest = 0, cur = 0;
+    let prevDate: string | null = null;
+    for (const r of sorted) {
+      if (r.attendanceDate === today) continue;
+      if (!rate || !isWorkingDate(r.attendanceDate, rate)) continue;
+      const ok = r.status === "Present" || r.status === "Late" || r.status === "Half Day";
+      if (ok) {
+        cur++;
+        if (cur > longest) longest = cur;
+        if (prevDate === null || isPrevWorkday(r.attendanceDate, prevDate)) streak = cur;
+      } else { if (streak === 0) streak = 0; cur = 0; }
+      prevDate = r.attendanceDate;
+    }
+    return { present, late, halfDay, absent, avgDur, streak, longest };
+  }, [history, today, rate]);
+
+  function isPrevWorkday(earlier: string, later: string): boolean {
+    const diff = calendarDayDifference(earlier, later);
+    return diff !== null && diff <= 3;
+  }
+
+  // ── 7-day timeline data ──────────────────────────────────────────────────────
+  const timeline = useMemo(() => {
+    return recentSessionAttendanceDates(today, sessionStartDate, sessionEndDate).map(dateStr => {
+      const rec = dateStr === today ? todayRec ?? undefined : history.find(r => r.attendanceDate === dateStr);
+      return { dateStr, label: getDayLabel(dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true, isHoliday: rate?.holidayDates.includes(dateStr) ?? false, rec };
+    });
+  }, [history, todayRec, today, rate, sessionStartDate, sessionEndDate]);
+
+  // ── Navigable monthly calendar ───────────────────────────────────────────────
+  const initialTodayParts = dateOnlyParts(today)!;
+  const [calYear,  setCalYear]  = useState(initialTodayParts.year);
+  const [calMonth, setCalMonth] = useState(initialTodayParts.month - 1); // 0-indexed
+
+  // Keep calendar within session bounds when session changes
+  useEffect(() => {
+    if (!sessionStartDate) return;
+    const start = dateOnlyParts(sessionStartDate);
+    const target = today >= sessionStartDate && today <= sessionEndDate ? dateOnlyParts(today) : start;
+    // Default to today if within session, else clamp to session start
+    if (target) {
+      setCalYear(target.year);
+      setCalMonth(target.month - 1);
+    }
+  }, [sessionStartDate, sessionEndDate, today]);
+
+  const calPrevMonthDisabled = useMemo(() => {
+    if (!sessionStartDate) return false;
+    const start = dateOnlyParts(sessionStartDate);
+    return !!start && calYear * 12 + calMonth <= start.year * 12 + start.month - 1;
+  }, [calYear, calMonth, sessionStartDate]);
+
+  const calNextMonthDisabled = useMemo(() => {
+    if (!sessionEndDate) return false;
+    const end = dateOnlyParts(sessionEndDate);
+    return !!end && calYear * 12 + calMonth >= end.year * 12 + end.month - 1;
+  }, [calYear, calMonth, sessionEndDate]);
+
+  const calDays = useMemo(() => {
+    const yr = calYear, mo = calMonth;
+    const firstDate = `${yr}-${String(mo + 1).padStart(2, "0")}-01`;
+    const lastDate = calendarMonthEndDate(yr, mo + 1);
+    const firstWeekday = calendarWeekday(firstDate) ?? 0;
+    const lastDay = lastDate ? dateOnlyParts(lastDate)!.day : 0;
+    const cells: Array<{ d: number; dateStr: string; rec?: SelfAttRecord; isToday: boolean; isNonWorking: boolean } | null> = [];
+    for (let i = 0; i < firstWeekday; i++) cells.push(null);
+    for (let d = 1; d <= lastDay; d++) {
+      const dateStr = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      if (!isSessionAttendanceDate(dateStr, sessionStartDate, sessionEndDate, today)) {
+        cells.push(null);
+        continue;
+      }
+      cells.push({ d, dateStr, rec: history.find(r => r.attendanceDate === dateStr), isToday: dateStr === today, isNonWorking: rate ? !isWorkingDate(dateStr, rate) : true });
+    }
+    return cells;
+  }, [history, today, calYear, calMonth, rate, sessionStartDate, sessionEndDate]);
+
+  // ── Correction modal ─────────────────────────────────────────────────────────
+  const [showModal, setShowModal] = useState(false);
+  const [corrForm, setCorrForm] = useState({ date: "", checkIn: "", checkOut: "", reason: "" });
+  const sevenAgo = useMemo(() => addCalendarDays(today, -7), [today]);
+
+  const corrMut = useMutation({
+    mutationFn: () => sessionMutation("/api/teacher/self-attendance/correction", { date: corrForm.date, requestedCheckIn: corrForm.checkIn, requestedCheckOut: corrForm.checkOut, reason: corrForm.reason }),
+    onSuccess: () => {
+      toast({ title: "✅ Attendance Corrected", description: "Your record has been updated immediately." });
+      setShowModal(false); setCorrForm({ date: "", checkIn: "", checkOut: "", reason: "" });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/rate"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/self-attendance/corrections"] });
+    },
+    onError: (e: Error) => toast({ title: "Correction failed", description: e.message, variant: "destructive" }),
+  });
+
+  const [activeTab, setActiveTab] = useState<"timeline" | "calendar">("timeline");
+  const [showHistory, setShowHistory] = useState(false);
+
+  // ── Shift state ──────────────────────────────────────────────────────────────
+  const shiftState: "unmarked" | "active" | "done" | "leave" =
+    !todayRec || !todayRec.checkInTime ? "unmarked" :
+    todayRec.status === "Leave" ? "leave" :
+    !todayRec.checkOutTime ? "active" : "done";
+
+  // ── School-over detection (IST) ──────────────────────────────────────────────
+  const isSchoolOver = (() => {
+    if (!policy?.schoolEndTime) return false;
+    const [endHour, endMinute] = policy.schoolEndTime.split(":").map(Number);
+    return minutesSinceMidnightIST() > endHour * 60 + endMinute;
+  })();
+
+  // ── Render ───────────────────────────────────────────────────────────────────
+  if (showHistory) {
+    if (selectedSessionId === null) return null;
+    return <AttendanceHistoryView teacher={teacher} sessionId={selectedSessionId} sessionStart={sessionStartDate} sessionEnd={sessionEndDate} onBack={() => setShowHistory(false)} />;
+  }
+
+  return (
+    <div className="space-y-5 pb-24" data-testid="view-my-attendance">
+
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors" data-testid="button-back">
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        {isArchiveMode ? (
+          <span className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 bg-white/3 text-white/30 cursor-not-allowed" title="View only in archive mode">
+            <Archive className="w-3.5 h-3.5" /> View Only
+          </span>
+        ) : (
+          <button onClick={() => setShowModal(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/70 hover:bg-white/10 transition-colors" data-testid="button-request-correction">
+            <Edit3 className="w-3.5 h-3.5" /> Correct Attendance
+          </button>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-xl font-bold text-white">My Attendance</h2>
+        <p className="text-xs text-white/40 mt-0.5">{formatDateOnlyWithWeekday(today, { weekday: "long", includeYear: true })}</p>
+      </div>
+
+      {/* Location badge */}
+      <div className="flex items-center gap-2">
+        {geoLoading ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-white/40"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Detecting location…</span>
+        ) : geo.verified ? (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/25" data-testid="badge-location-verified">
+            <MapPin className="w-3.5 h-3.5" /> Location Verified
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/25" data-testid="badge-location-unavailable">
+            <AlertTriangle className="w-3.5 h-3.5" /> Location Unavailable
+          </span>
+        )}
+      </div>
+
+      {/* Policy info strip */}
+      {policy && (() => {
+        const isDefault = policy.policyName === "System Default";
+        return (
+          <div
+            className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-xl border text-xs ${
+              isDefault
+                ? "border-amber-500/25 bg-amber-500/5 text-white/50"
+                : "border-[#8b5cf6]/20 bg-[#8b5cf6]/5 text-white/50"
+            }`}
+            data-testid="banner-attendance-policy"
+          >
+            <span className={`flex items-center gap-1.5 font-semibold ${isDefault ? "text-amber-400" : "text-[#8b5cf6]"}`}>
+              <Timer className="w-3.5 h-3.5" />
+              {policy.policyName}
+              {isDefault && <span className="font-normal text-amber-400/70 text-[10px]">(no policy set by admin)</span>}
+            </span>
+            <span>Expected: <strong className="text-white/70">{policy.expectedArrivalTime}</strong></span>
+            {policy.gracePeriodMinutes > 0 && <span>· Grace: <strong className="text-white/70">{policy.gracePeriodMinutes}m</strong></span>}
+            <span>· Half-day after: <strong className="text-white/70">{policy.halfDayCutoffTime}</strong></span>
+            {policy.schoolEndTime && (
+              <span>· School ends: <strong className="text-red-400/80">{policy.schoolEndTime}</strong></span>
+            )}
+            <span>· Target: <strong className="text-white/70">{policy.attendanceTarget}%</strong></span>
+          </div>
+        );
+      })()}
+
+      {/* ── Today's Shift Card ── */}
+      <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-5 space-y-4" data-testid="card-shift">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-white/50 uppercase tracking-wider">Today's Shift</p>
+          {todayRec?.checkInTime && todayRec.status && (() => {
+            const sc = statusColors(todayRec.status);
+            return (
+              <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${sc.badge}`}>
+                <CheckCircle className="w-3 h-3" /> {todayRec.status}
+              </span>
+            );
+          })()}
+        </div>
+
+        {todayLoading ? (
+          <div className="h-24 animate-pulse rounded-xl bg-white/5" />
+        ) : shiftState === "unmarked" ? (
+          <div className="text-center py-4 space-y-3">
+            {isSchoolOver && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-left mb-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-300">
+                  School day ended at <strong>{policy?.schoolEndTime}</strong>. Checking in now will record your attendance as <strong>Leave</strong>.
+                </p>
+              </div>
+            )}
+            <p className="text-white/40 text-sm">Not Checked In</p>
+            {isArchiveMode ? (
+              <div className="flex flex-col items-center gap-2 py-2">
+                <Archive className="w-8 h-8 text-white/20" />
+                <p className="text-sm text-white/30">Viewing archive — check-in unavailable</p>
+              </div>
+            ) : (
+              <button
+                onClick={() => checkInMut.mutate()}
+                disabled={checkInMut.isPending}
+                className={`relative inline-flex items-center gap-2 px-8 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${
+                  isSchoolOver
+                    ? "bg-slate-600 hover:bg-slate-500 text-white"
+                    : "bg-emerald-500 hover:bg-emerald-400 text-white"
+                }`}
+                data-testid="button-check-in"
+              >
+                {!isSchoolOver && <span className="absolute -inset-1 rounded-xl bg-emerald-500/30 animate-ping opacity-75" />}
+                {checkInMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                {isSchoolOver ? "Record as Leave" : "Check In"}
+              </button>
+            )}
+          </div>
+        ) : shiftState === "leave" ? (
+          <div className="text-center py-4 space-y-2">
+            <div className="w-12 h-12 mx-auto rounded-full bg-slate-500/10 flex items-center justify-center">
+              <LogOut className="w-5 h-5 text-slate-400" />
+            </div>
+            <p className="text-sm font-semibold text-slate-300">Marked as Leave</p>
+            <p className="text-xs text-white/30">
+              Check-in was recorded after school end time ({policy?.schoolEndTime ?? "—"}).
+            </p>
+            {todayRec?.checkInTime && (
+              <p className="text-[11px] text-white/20">Recorded at {fmtTime(todayRec.checkInTime)}</p>
+            )}
+          </div>
+        ) : shiftState === "active" ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl bg-white/5 p-3 text-center">
+                <p className="text-xs text-white/40 mb-1">Check-In</p>
+                <p className="text-lg font-bold text-emerald-400 tabular-nums">{fmtTime(todayRec!.checkInTime)}</p>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3 text-center">
+                <p className="text-xs text-white/40 mb-1">Working</p>
+                <p className="text-lg font-bold text-sky-400 tabular-nums" data-testid="text-elapsed">{fmtElapsed(elapsed)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-emerald-400/80">
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+              Shift Active
+            </div>
+            <button
+              onClick={() => !isArchiveMode && checkOutMut.mutate()}
+              disabled={checkOutMut.isPending || isArchiveMode}
+              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 disabled:opacity-60 ${isArchiveMode ? "bg-white/5 border border-white/10 text-white/30 cursor-not-allowed" : "bg-red-500/20 border border-red-500/30 text-red-300 hover:bg-red-500/30"}`}
+              data-testid="button-check-out"
+            >
+              {checkOutMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : isArchiveMode ? <Archive className="w-4 h-4" /> : <LogOut className="w-4 h-4" />}
+              {isArchiveMode ? "View Only" : "Check Out"}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-white/5 p-3 text-center">
+                <p className="text-[10px] text-white/40 mb-1">Check-In</p>
+                <p className="text-sm font-bold text-emerald-400 tabular-nums">{fmtTime(todayRec!.checkInTime)}</p>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3 text-center">
+                <p className="text-[10px] text-white/40 mb-1">Check-Out</p>
+                <p className="text-sm font-bold text-red-400 tabular-nums">{fmtTime(todayRec!.checkOutTime)}</p>
+              </div>
+              <div className="rounded-xl bg-white/5 p-3 text-center">
+                <p className="text-[10px] text-white/40 mb-1">Duration</p>
+                <p className="text-sm font-bold text-sky-400">{fmtDuration(todayRec!.totalWorkingMinutes)}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-white/50">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> Shift completed for today
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── KPI Row ── */}
+      {rateError && <p role="alert" className="text-red-300 text-xs">Could not load the Attendance rate. Please retry later.</p>}
+      <div className="grid grid-cols-2 gap-3" data-testid="section-kpi">
+        {[
+          { label: "Attendance Rate (Session)", value: rate ? `${rate.attendanceRate.toFixed(1)}%` : "—", icon: TrendingUp, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
+          { label: "Present (Month)", value: kpi.present,              icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+          { label: "Late Arrivals",   value: kpi.late,                 icon: AlertTriangle, color: "text-amber-400",  bg: "bg-amber-500/10"  },
+          { label: "Half Day",        value: kpi.halfDay,              icon: Clock,       color: "text-orange-400", bg: "bg-orange-500/10" },
+          { label: "Absent Days",     value: kpi.absent,               icon: UserX,       color: "text-red-400",    bg: "bg-red-500/10"    },
+          { label: "Avg Duration",    value: fmtDuration(kpi.avgDur),  icon: BarChart2,   color: "text-sky-400",    bg: "bg-sky-500/10"    },
+        ].map(({ label, value, icon: Icon, color, bg }) => (
+          <div key={label} className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+            <div className={`inline-flex p-2 rounded-lg ${bg} mb-2`}>
+              <Icon className={`w-4 h-4 ${color}`} />
+            </div>
+            <p className={`text-2xl font-bold tabular-nums ${color}`}>{value}</p>
+            <p className="text-white/40 text-xs mt-0.5 leading-tight">{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Streak Card */}
+      <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4 flex items-center gap-4" data-testid="card-streak">
+        <div className="p-2.5 rounded-xl bg-orange-500/15">
+          <Flame className="w-5 h-5 text-orange-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-white/40">Attendance Streak</p>
+          <p className="font-bold text-white"><span className="text-orange-400 text-lg">{kpi.streak}</span> <span className="text-white/50 text-sm">current</span> &nbsp; <span className="text-[#D4AF37] text-lg">{kpi.longest}</span> <span className="text-white/50 text-sm">longest</span></p>
+        </div>
+        <p className="text-[10px] text-white/30 text-right leading-tight">Consecutive<br/>workdays</p>
+      </div>
+
+      {/* ── Session selector ── */}
+      {sessions.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-white/40 uppercase tracking-wider shrink-0">Session</span>
+          <select
+            value={selectedSessionId ?? ""}
+            onChange={e => setSelectedSessionId(Number(e.target.value))}
+            className="flex-1 bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 min-h-[40px]"
+            data-testid="select-session"
+          >
+            {sessions.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.sessionName}{s.isActive ? " (Active)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* ── Timeline / Calendar toggle ── */}
+      <div className="flex rounded-xl overflow-hidden border border-white/10 bg-white/5 p-0.5 gap-0.5" data-testid="tab-toggle">
+        {(["timeline", "calendar"] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${activeTab === tab ? "bg-[#D4AF37] text-[#0A1628]" : "text-white/50 hover:text-white"}`}
+            data-testid={`tab-${tab}`}
+          >
+            {tab === "timeline" ? <Clock className="w-3.5 h-3.5" /> : <Calendar className="w-3.5 h-3.5" />}
+            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {/* ── 7-Day Timeline ── */}
+      {activeTab === "timeline" && (
+        <div className="space-y-2" data-testid="section-timeline">
+          <p className="text-xs font-semibold text-white/40 uppercase tracking-wider px-1">Last 7 Days</p>
+          {(historyLoading && !history.length) ? (
+            Array.from({ length: 7 }).map((_, i) => <div key={i} className="h-14 animate-pulse rounded-xl bg-white/5" />)
+          ) : (
+            timeline.map(({ dateStr, label, isToday, isNonWorking: wk, isHoliday, rec }) => {
+              const s = rec ? statusColors(rec.status) : statusColors("Not Marked");
+              return (
+                <div
+                  key={dateStr}
+                  className={`flex items-center gap-3 rounded-xl px-4 py-3 border transition-colors ${isToday ? "border-[#D4AF37]/30 bg-[#D4AF37]/5" : "border-white/5 bg-white/3"}`}
+                  data-testid={`timeline-day-${dateStr}`}
+                >
+                  <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${wk ? "bg-white/15" : s.dot}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium ${isToday ? "text-[#D4AF37]" : "text-white"}`}>
+                      {label}{isToday && <span className="ml-1.5 text-[10px] text-[#D4AF37]/70">Today</span>}
+                    </p>
+                     {wk ? (
+                       <p className="text-xs text-white/30">{isHoliday ? "School holiday" : "Non-working day"}{rec && ` · Stored: ${rec.status}`}</p>
+                    ) : rec?.checkInTime ? (
+                      <p className="text-xs text-white/40 tabular-nums">{fmtTime(rec.checkInTime)}{rec.checkOutTime ? ` – ${fmtTime(rec.checkOutTime)}` : " (active)"} · {fmtDuration(rec.totalWorkingMinutes)}</p>
+                    ) : (
+                      <p className="text-xs text-white/25">—</p>
+                    )}
+                  </div>
+                   {!wk && (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${s.badge} flex-shrink-0`}>
+                      {rec?.status ?? "—"}
+                    </span>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* ── Monthly Calendar ── */}
+      {activeTab === "calendar" && (
+        <div className="rounded-2xl border border-white/10 bg-[#1A2942] p-4 space-y-3" data-testid="section-calendar">
+          {/* Month navigation */}
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}
+              disabled={calPrevMonthDisabled}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <p className="text-sm font-semibold text-white text-center">
+              {formatMonthYearFromDateOnly(`${calYear}-${String(calMonth + 1).padStart(2, "0")}-01`)}
+            </p>
+            <button
+              onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}
+              disabled={calNextMonthDisabled}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-7 gap-px">
+            {["S","M","T","W","T","F","S"].map((d, i) => (
+              <div key={i} className="text-center text-[10px] font-bold text-white/30 py-1">{d}</div>
+            ))}
+            {calDays.map((cell, i) => {
+              if (!cell) return <div key={`e-${i}`} />;
+              const s = cell.rec ? statusColors(cell.rec.status) : null;
+              return (
+                <div key={cell.dateStr} className={`flex flex-col items-center py-1.5 rounded-lg ${cell.isToday ? "bg-[#D4AF37]/15 ring-1 ring-[#D4AF37]/40" : ""}`}>
+                   <span className={`text-xs font-medium ${cell.isToday ? "text-[#D4AF37]" : cell.isNonWorking ? "text-white/25" : "text-white/70"}`}>{cell.d}</span>
+                   {s && !cell.isNonWorking && (
+                    <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${s.dot}`} />
+                  )}
+                   {!s && !cell.isNonWorking && cell.dateStr < today && cell.dateStr >= sessionStartDate && cell.dateStr <= sessionEndDate && (
+                    <div className="w-1.5 h-1.5 rounded-full mt-0.5 bg-white/10" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-3 pt-1 justify-center">
+            {[["Present","bg-emerald-400"],["Late","bg-amber-400"],["Half Day","bg-orange-400"],["Leave","bg-slate-400"],["Absent","bg-red-400"]].map(([label, cls]) => (
+              <div key={label} className="flex items-center gap-1.5 text-[10px] text-white/50">
+                <div className={`w-2 h-2 rounded-full ${cls}`} /> {label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Corrections ── */}
+      <div className="space-y-3" data-testid="section-corrections">
+        <p className="text-xs font-semibold text-white/40 uppercase tracking-wider px-1">Correction Requests</p>
+        {correctionsLoading ? (
+          <div className="h-16 animate-pulse rounded-xl bg-white/5" />
+        ) : corrections.length === 0 ? (
+          <div className="rounded-xl border border-white/5 bg-white/3 py-8 text-center">
+            <p className="text-sm text-white/30">No correction requests yet</p>
+          </div>
+        ) : (
+          corrections.slice(0, 5).map(c => (
+            <div key={c.id} className="rounded-xl border border-white/10 bg-[#1A2942] px-4 py-3" data-testid={`correction-${c.id}`}>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <p className="text-sm font-medium text-white">{getDayLabel(c.attendanceDate)}</p>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${correctionStatusStyle(c.status)}`}>{c.status}</span>
+              </div>
+              <p className="text-xs text-white/50">{c.requestedCheckIn} – {c.requestedCheckOut}</p>
+              <p className="text-xs text-white/30 mt-0.5 truncate">{c.reason}</p>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* ── Full Attendance History Entry Card ── */}
+      <button
+        onClick={() => setShowHistory(true)}
+        className="w-full rounded-2xl border border-indigo-500/25 bg-gradient-to-br from-indigo-500/10 to-violet-500/10 p-5 text-left transition-all hover:border-indigo-500/45 hover:shadow-lg hover:shadow-indigo-500/10 hover:-translate-y-0.5 active:scale-[0.98] group"
+        data-testid="card-view-full-history"
+      >
+        <div className="flex items-center gap-4">
+          <div className="rounded-2xl bg-indigo-500/20 p-3 group-hover:bg-indigo-500/30 transition-colors">
+            <History className="w-6 h-6 text-indigo-300" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white text-sm">Full Attendance History</p>
+            <p className="text-xs text-white/50 mt-0.5">Daily · Weekly · Monthly views with export</p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-white/30 group-hover:text-white/60 transition-colors flex-shrink-0" />
+        </div>
+      </button>
+
+      {/* ── Correction Request Modal ── */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm px-4 pb-4" data-testid="modal-correction">
+          <div className="w-full max-w-md rounded-2xl bg-[#0A1628] border border-white/15 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white">Correct Attendance</h3>
+              <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-xs text-white/40">Changes apply immediately. Allowed within the last 7 days only.</p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Attendance Date</label>
+                <input type="date" value={corrForm.date} min={sevenAgo} max={today}
+                  onChange={e => setCorrForm(f => ({ ...f, date: e.target.value }))}
+                  className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30"
+                  style={{ colorScheme: "dark" }} data-testid="input-correction-date" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">Check-In Time</label>
+                  <input type="time" value={corrForm.checkIn}
+                    onChange={e => setCorrForm(f => ({ ...f, checkIn: e.target.value }))}
+                    className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30"
+                    style={{ colorScheme: "dark" }} data-testid="input-correction-checkin" />
+                </div>
+                <div>
+                  <label className="text-xs text-white/60 mb-1 block">Check-Out Time</label>
+                  <input type="time" value={corrForm.checkOut}
+                    onChange={e => setCorrForm(f => ({ ...f, checkOut: e.target.value }))}
+                    className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30"
+                    style={{ colorScheme: "dark" }} data-testid="input-correction-checkout" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-white/60 mb-1 block">Reason</label>
+                <textarea rows={3} value={corrForm.reason} placeholder="Explain why you need this correction…"
+                  onChange={e => setCorrForm(f => ({ ...f, reason: e.target.value }))}
+                  className="w-full rounded-xl bg-white/5 border border-white/15 text-white text-sm px-3 py-2 focus:outline-none focus:border-white/30 placeholder:text-white/25 resize-none"
+                  data-testid="input-correction-reason" />
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setShowModal(false)} className="flex-1 py-2.5 rounded-xl border border-white/15 text-white/60 text-sm hover:bg-white/5 transition-colors">Cancel</button>
+              <button
+                onClick={() => corrMut.mutate()}
+                disabled={corrMut.isPending || !corrForm.date || !corrForm.checkIn || !corrForm.checkOut || !corrForm.reason.trim()}
+                className="flex-1 py-2.5 rounded-xl bg-[#D4AF37] text-[#0A1628] font-bold text-sm hover:bg-[#c49f2e] transition-colors disabled:opacity-50"
+                data-testid="button-submit-correction"
+              >
+                {corrMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Apply Correction"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

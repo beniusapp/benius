@@ -1,0 +1,66 @@
+Remove the Monthly Report Schedule feature from Financial Analytics completely.
+
+I have decided that automatic monthly email delivery is not required at this stage, so I do not want to maintain the additional email-provider, scheduler, recipient, and notification complexity.
+
+Remove completely
+
+Remove the Monthly Report Schedule section from the Financial Analytics UI, including:
+
+- Enable/Disable toggle
+- Day of month
+- Scheduled time
+- Recipient input
+- Add recipient
+- Save schedule
+- Send Now
+- Latest automatic delivery
+- Scheduled delivery status/messages
+- Any related UI, API endpoints, database fields, background jobs, cron/scheduler logic, and email-delivery logic that exists solely for this feature
+
+Keep unchanged
+
+Do NOT modify or remove:
+
+- Financial Analytics calculations
+- Financial Analytics PDF generation/export
+- All existing date filters
+- Today
+- This Week
+- This Month
+- Academic Session
+- Custom date range
+- Payment Channel Split
+- Class Performance
+- Fee Categories
+- Receivables Aging
+- Cash Denomination Coverage
+- Fees & Payments
+- Ledger & Transactions
+- Student Fees
+- Payment history
+- IST/timezone authority
+- Any notification/email functionality used by other parts of the application
+
+Important cleanup rule
+
+Before deleting backend code, identify whether any email service, notification service, scheduler, database table/column, or API is shared by another module.
+
+Only remove components that are exclusively required by Financial Analytics Monthly Report Schedule.
+
+Do not break or remove shared notification infrastructure.
+
+After removal:
+
+1. Run typecheck.
+2. Run the relevant Financial Analytics tests.
+3. Run the relevant Fees & Payments tests.
+4. Verify the Financial Analytics page loads correctly.
+5. Verify PDF export still works.
+6. Verify all existing analytics filters still work.
+7. Verify there are no console errors.
+8. Verify there are no broken API calls caused by the removal.
+9. Verify no unrelated module has been affected.
+
+Do not redesign the Financial Analytics page.
+
+This is a feature removal and cleanup task only. Make the minimum necessary changes and do not modify anything unnecessarily.

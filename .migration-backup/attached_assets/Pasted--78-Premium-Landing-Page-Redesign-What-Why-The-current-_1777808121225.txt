@@ -1,0 +1,33 @@
+#78 - Premium Landing Page Redesign
+What & Why
+The current landing page (/) has a solid foundation (dark navy, basic aura orbs, glassmorphism cards) but needs a significant visual upgrade to match the "Silicon Valley premium EdTech" bar — think Stripe, Duolingo, or Masterclass. The goal is to make the first impression breathtaking while keeping all three portal links (Admin, Teacher, Student) fully functional.
+
+Done looks like
+Background: A deep animated mesh gradient (indigo → cyan → purple) with slow-drifting aura orbs and a subtle dot-grid overlay — significantly more vivid than the current flat orbs
+Navbar: Fixed, fully blurred glass bar that stays at the top while scrolling; contains the BENIUS logo on the left and a "System Status: Operational" pill on the right
+Hero headline: A massive, bold gradient-text headline (min 5xl on desktop, 3xl on mobile) with a clean sub-headline in white/60 and high line-height
+CTA button: A glowing, pulsing "Get Started" button below the headline with a soft emerald/blue glow ring animation
+Portal cards: Three deep glassmorphism cards (backdrop-blur-2xl, thin inner-glow border) each with its own accent color — Indigo (Admin), Teal (Teacher), Violet (Student). On hover: card visually lifts with scale + shadow. A unique-per-card radial glow follows the mouse cursor inside the card
+Portal icons: Large, vibrant icon containers styled as "3D-ish" gradient orbs (CSS gradient + shadow, no external assets required) — Shield for Admin, BookOpen for Teacher, GraduationCap for Student
+Scroll-reveal animations: All major sections (hero, portal grid, footer) use framer-motion whileInView with a spring transition so they animate in as the user scrolls
+Floating geometric shapes: 2–3 subtly rotating/drifting translucent geometric shapes (circles or rounded squares) in the background for depth
+Magnetic button effect: The primary CTA and each portal card's "Enter Portal" link subtly translate toward the cursor when hovered (implemented via mouse-position tracking, no external library)
+Mobile layout: On screens <640px, the three portal cards stack vertically as full-width tappable rows with larger icon areas and left-aligned text — no horizontal cramping
+Footer: Minimal one-line footer with a glowing green dot + "All Systems Operational" status and the copyright line
+Out of scope
+Changing any backend routes, API endpoints, or authentication flows
+Adding new pages beyond home.tsx
+Dark mode toggle (separate task #72)
+Any changes to the Admin, Teacher, or Student dashboards
+Steps
+Rewrite the background layer — Replace the current aura orbs with a richer animated mesh gradient (CSS keyframes + multiple blurred radial-gradient divs in indigo, cyan, purple tones). Add a subtle rotating dot-grid overlay and 2–3 slow-floating translucent geometric shapes.
+Upgrade the navbar — Make it position: fixed with a stronger backdrop-blur and bg-white/5 glass surface. Add a glowing green "All Systems Operational" status pill on the right (visible on sm+ screens only).
+Redesign the hero section — Increase headline size (text-5xl sm:text-6xl lg:text-7xl), sharpen the gradient-text effect using a richer indigo-to-cyan gradient, and increase sub-headline contrast. Add a glowing pulsing "Explore Portals" CTA button with an animated ring.
+Upgrade portal cards — Deep glassmorphism (bg-white/5 backdrop-blur-2xl), vivid inner-glow border effect per accent color, and a large 3D-style gradient icon orb (CSS only, no image assets). Add whileHover scale + box-shadow lift in Framer Motion. Implement magnetic cursor-tracking glow inside each card.
+Add scroll-reveal — Wrap the hero block and the portal card grid in motion.div with whileInView + viewport={{ once: true }} + spring transition so they animate on scroll.
+Add floating geometric elements — 2–3 slow-rotating, very low-opacity translucent shapes (CSS border-radius pill/circle) positioned in the background using absolute positioning and CSS keyframe animations.
+Mobile polish — Ensure portal cards stack to full-width vertical rows on mobile with comfortable padding, a larger icon area, and left-aligned text. The navbar should remain functional on all screen sizes.
+Upgrade the footer — Replace the current minimal footer with a slightly richer bar: glowing green status dot + "All Systems Operational" on the left, copyright on the right.
+Relevant files
+client/src/pages/home.tsx
+client/src/App.tsx

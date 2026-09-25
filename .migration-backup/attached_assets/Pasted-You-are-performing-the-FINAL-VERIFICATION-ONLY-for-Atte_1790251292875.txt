@@ -1,0 +1,131 @@
+You are performing the FINAL VERIFICATION ONLY for Attendance hardening step 10L-12E.
+
+Do NOT implement, refactor, redesign, or modify production code.
+
+## Objective
+
+Verify that the completed 10L-12E change correctly aligns the Teacher → Student Attendance UI holiday-lock behavior with the existing server contract:
+
+1. `All_School` holiday → Save/marking must be blocked.
+2. Targeted holiday for another class/section → Save must remain allowed.
+3. Targeted holiday for the currently selected class/section → the targeted holiday itself must NOT block Save, because the existing server write contract only locks `All_School`.
+4. Existing authentication, Academic Session validation, working-day behavior, roster rules, correction rules, and other Attendance restrictions must remain unchanged.
+
+## Mandatory scope
+
+Verify only the existing 10L-12E implementation and its tests.
+
+Relevant implementation:
+
+* `client/src/pages/teacher-modules/attendance.tsx`
+* `client/src/pages/teacher-modules/attendance-holiday-lock.ts` if present
+
+Relevant tests:
+
+* The 10L-12E holiday-lock helper/UI test file
+* `server/__tests__/teacher-attendance-session-route.test.ts`
+* Other directly relevant Teacher Attendance tests needed to establish regression safety
+
+Also verify that the 10L-12E-R fixture repair is present only in:
+
+* `server/__tests__/teacher-attendance-session-route.test.ts`
+
+## Verification requirements
+
+### 1. Holiday-lock behavior
+
+Confirm tests cover and pass:
+
+* All_School holiday blocks Save.
+* Targeted holiday belonging to another class/section does NOT block Save.
+* Targeted holiday matching the current class/section does NOT itself block Save.
+* No other holiday audience is accidentally treated as All_School.
+
+### 2. Regression protection
+
+Confirm existing Teacher Student Attendance behavior remains intact:
+
+* authenticated school/tenant isolation
+* selected Academic Session validation
+* active Session requirement for marking
+* Session date boundaries
+* existing 7-day correction/edit window
+* roster validation
+* existing server-side All_School holiday lock
+* existing Attendance status behavior
+* no cross-school access
+
+Do NOT change these behaviors.
+
+### 3. 10L-12B compatibility
+
+Confirm the two previously failing tests in:
+
+`server/__tests__/teacher-attendance-session-route.test.ts`
+
+now pass with the repaired Session fixtures containing valid `startDate` and `endDate`.
+
+Do NOT weaken or bypass the Session date-boundary contract.
+
+### 4. Test execution
+
+Run the relevant Teacher Attendance test files, including:
+
+* `server/__tests__/teacher-attendance-session-route.test.ts`
+* the 10L-12E holiday-lock tests
+* other directly relevant Teacher Attendance tests required for regression verification
+
+Then run:
+
+`npm run check`
+
+and:
+
+`git diff --check`
+
+### 5. Final diff inspection
+
+Inspect `git diff` after all tests complete.
+
+Expected result:
+
+* The 10L-12E implementation changes remain present.
+* The 10L-12E-R change consists only of the four Session date fields added to the two existing test fixtures.
+* No unrelated production files changed.
+* No schema changes.
+* No migrations.
+* No database/data changes.
+* No changes to 10L-12B behavior.
+* No changes to Attendance calculation logic.
+* No changes to holiday storage or holiday audience semantics.
+
+## Critical stop rule
+
+This is verification only.
+
+If any test fails because of an issue unrelated to the already-identified 10L-12E-R fixture problem:
+
+STOP.
+
+Do not modify code or tests to make the verification pass.
+
+Report:
+
+* exact failing test
+* expected vs actual
+* file
+* whether it is related to 10L-12E
+* whether any files were changed
+
+If all verification passes, report:
+
+`10L-12E COMPLETE — TEACHER STUDENT ATTENDANCE HOLIDAY-LOCK UI ALIGNMENT VERIFIED — NO CODE CHANGES MADE DURING FINAL VERIFICATION.`
+
+Also provide:
+
+* total tests passed
+* files/tests executed
+* `npm run check` result
+* `git diff --check` result
+* final diff summary
+* confirmation that no unrelated changes were made

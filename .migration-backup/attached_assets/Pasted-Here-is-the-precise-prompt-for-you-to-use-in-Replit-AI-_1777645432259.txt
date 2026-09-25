@@ -1,0 +1,26 @@
+Here is the precise prompt for you to use in Replit AI to ensure the mapping data flows through your entire multi-tenant system:
+
+The Replit AI Prompt
+"Implement Real-Time Data Synchronization for Teacher Mappings across the following routes: /admin-dashboard/faculty-mapping, /teacher-dashboard, /teacher-dashboard/profile, /teacher-dashboard/faculty-info, and /student/faculty.
+
+1. Data Linkage Requirement:
+
+Ensure that whenever a teacher is mapped to a Class, Section, or Subject in the /admin-dashboard/faculty-mapping section, the data is instantly reflected in all teacher and student views without requiring a page refresh.
+
+This must follow the Multi-tenant architecture; data must be filtered by tenant_id to ensure teachers only see their own assignments and students only see faculty assigned to their specific school and class.
+
+2. Route-Specific Updates:
+
+Teacher Dashboard (Main): Below the 'Welcome [Name]' header, display a concise summary of the assigned classes and subjects (e.g., 'Assigned to: Class 5A - Math, Class 6B - Science').
+
+Teacher Profile & Faculty Info: Display a detailed list or table of all mapped Classes, Sections, and Subjects associated with that teacher's ID.
+
+Student Dashboard (/student/faculty): This view must dynamically fetch and display the names and subjects of all teachers mapped to that specific student's current Class and Section.
+
+3. Technical Implementation:
+
+Global State/Cache: Use a global state management solution (like React Context, Redux, or SWR/TanStack Query) to ensure that updates made by the Admin are pushed to the Teacher and Student dashboards immediately.
+
+Database Query: Optimize the faculty_mappings query to join with classes, sections, and subjects tables so that human-readable names (instead of just IDs) are displayed in all dashboards.
+
+Refactor: If the current dashboards use hardcoded or static data, refactor them to pull live data from the faculty_mappings table based on the logged-in user's tenant_id and user_id.
