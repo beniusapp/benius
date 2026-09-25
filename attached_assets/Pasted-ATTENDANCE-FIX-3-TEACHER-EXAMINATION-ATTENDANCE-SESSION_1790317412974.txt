@@ -1,0 +1,144 @@
+ATTENDANCE FIX #3 — TEACHER EXAMINATION ATTENDANCE SESSION TRANSPORT
+
+Fix ONLY the remaining confirmed Attendance issue.
+
+Problem
+
+File:
+
+"client/src/pages/teacher-modules/examination.tsx"
+
+The Teacher Examination page contains an Attendance widget.
+
+That widget currently uses a normal/raw "fetch()" request and does not send the selected Academic Session ID.
+
+The Attendance API requires a selected Academic Session.
+
+Therefore the widget can fail with:
+
+"ATTENDANCE_SESSION_REQUIRED"
+
+Required behavior
+
+The Teacher Examination Attendance widget must send the currently selected Academic Session ID using the project's existing session-aware request mechanism.
+
+Use the existing:
+
+"sessionFetchForViewSession"
+
+or the exact existing session-aware helper already used by the Teacher Attendance module.
+
+Do NOT create a new session mechanism.
+
+The request must use the same selected Session that the Teacher Examination page is currently displaying.
+
+Important
+
+Do NOT change the Attendance API.
+
+Do NOT change Attendance calculations.
+
+Do NOT change the database.
+
+Do NOT change Academic Session logic.
+
+Do NOT change Teacher Examination logic except for the Attendance widget's session-aware request.
+
+The goal is simply:
+
+Teacher selects Session A
+        ↓
+Examination Attendance widget
+        ↓
+sends Session A
+        ↓
+Attendance API
+        ↓
+returns Session A Attendance
+
+And:
+
+Teacher selects Session B
+        ↓
+Examination Attendance widget
+        ↓
+sends Session B
+        ↓
+Attendance API
+        ↓
+returns Session B Attendance
+
+Session isolation
+
+Verify that the widget cannot accidentally display Attendance from another Session.
+
+Do not add any client-side security assumption. The server remains authoritative.
+
+Tests
+
+Add or update focused tests to verify:
+
+1. Attendance request sends selected Session ID.
+2. Changing selected Session changes the Session sent to the API.
+3. Missing selected Session does not silently fall back to another Session.
+4. Existing Examination functionality remains unchanged.
+
+Scope
+
+Only change what is necessary for this issue.
+
+Do NOT modify:
+
+- Admin Attendance
+- Teacher Attendance
+- Student Attendance
+- Attendance calculations
+- Attendance schema
+- database
+- Leave
+- Timetable
+- Academic Session implementation
+- unrelated Examination functionality
+- unrelated files
+
+Verification
+
+After implementation run:
+
+"npm run check"
+
+and:
+
+"git diff --check"
+
+Also inspect the final diff.
+
+Confirm:
+
+- only intended files changed;
+- no schema/migration changes;
+- no unrelated module changes;
+- no Attendance calculation changes.
+
+Restart the application if required.
+
+Final response
+
+Return:
+
+1. Files changed
+2. What changed
+3. Selected Session transport — PASS/FAIL
+4. Session switching — PASS/FAIL
+5. No fallback to another Session — PASS/FAIL
+6. Tests — exact count/result
+7. "npm run check" — PASS/FAIL
+8. "git diff --check" — PASS/FAIL
+9. Final diff scope
+10. Final verdict
+
+If everything passes, state:
+
+ATTENDANCE FIX #3 — PASS
+
+STOP after this fix and verification.
