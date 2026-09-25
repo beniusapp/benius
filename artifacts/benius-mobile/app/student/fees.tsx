@@ -1,0 +1,1 @@
+export { StudentFeesScreen as default } from '@/components/StudentAdditionalScreens';

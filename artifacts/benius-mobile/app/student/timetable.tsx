@@ -1,0 +1,1 @@
+export { StudentTimetableScreen as default } from '@/components/StudentAdditionalScreens';

@@ -1,0 +1,1 @@
+export { StudentCalendarScreen as default } from '@/components/StudentAdditionalScreens';

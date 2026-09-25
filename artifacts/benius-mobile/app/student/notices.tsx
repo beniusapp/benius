@@ -1,0 +1,1 @@
+export { StudentNoticeboardScreen as default } from '@/components/StudentAdditionalScreens';

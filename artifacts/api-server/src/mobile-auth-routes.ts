@@ -40,6 +40,13 @@ import { registerMobileStudentAttendanceRoutes } from "./mobile-student-attendan
 import { registerMobileStudentHomeworkRoutes } from "./mobile-student-homework-routes";
 import { registerMobileTeacherRoutes } from "./mobile-teacher-routes";
 import { registerMobileAdminOverviewRoutes } from "./mobile-admin-overview-routes";
+import { registerMobileStudentAdditionalRoutes } from "./mobile-student-additional-routes";
+import { registerMobileTeacherModuleRoutes } from "./mobile-teacher-module-routes";
+import { registerMobileAdminModuleRoutes } from "./mobile-admin-module-routes";
+import { registerMobileAccountRoutes } from "./mobile-account-routes";
+import { registerMobileAdminAcademicRoutes } from "./mobile-admin-academic-routes";
+import { registerMobileAdminWorkflowRoutes } from "./mobile-admin-workflow-routes";
+import { registerMobileAdminFinanceRoutes } from "./mobile-admin-finance-routes";
 
 type MobileRole = "admin" | "teacher" | "student" | "support_staff";
 type MobilePrincipal = {
@@ -434,6 +441,25 @@ export function registerMobileAuthRoutes(app: Express): void {
   registerMobileStudentHomeworkRoutes(
     app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
   );
+  registerMobileStudentAdditionalRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileTeacherModuleRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileAdminModuleRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileAdminAcademicRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileAdminWorkflowRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileAdminFinanceRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileAccountRoutes(app, requireHttps, requireMobileBearer);
 
   app.get("/api/mobile/academic-sessions", requireMobileBearer, async (req, res) => {
     const principal = (req as MobileAuthenticatedRequest).mobileAuth!.principal;

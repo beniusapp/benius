@@ -149,9 +149,9 @@ export default function TeacherDashboard() {
       {(['Classroom', 'School Life', 'Administration'] as const).map(zone => {
         const color = zone === 'Classroom' ? teacherColors.violet : zone === 'School Life' ? teacherColors.teal : teacherColors.coral;
         return <View key={zone} style={{ marginBottom: 34 }}><View style={s.zoneHead}><Text style={[s.zoneName, { color }]}>{zone.toUpperCase()}</Text><View style={[s.rule, { backgroundColor: color + '42' }]} /></View>
-          <View style={s.grid}>{tiles.filter(t => t.zone === zone).map(t => <Pressable key={t.id} testID={`teacher-tile-${t.id}`} accessibilityRole="button" accessibilityState={{ disabled: t.id !== 'profile' }} accessibilityLabel={`${t.name}${t.id !== 'profile' ? ', not yet available on mobile' : ''}`} onPress={() => t.id === 'profile' && router.push('/teacher/profile')} style={[s.tile, { borderTopColor: color }]}>
+          <View style={s.grid}>{tiles.filter(t => t.zone === zone).map(t => <Pressable key={t.id} testID={`teacher-tile-${t.id}`} accessibilityRole="button" accessibilityLabel={`Open ${t.name}`} onPress={() => t.id === 'profile' ? router.push('/teacher/profile') : router.push({ pathname: '/teacher/[module]', params: { module: t.id } })} style={[s.tile, { borderTopColor: color }]}>
             {t.id === 'student-profiles' && !!pending.data && <View style={s.badge}><Text style={{ color: teacherColors.white, fontSize: 10, fontWeight: '700' }}>{pending.data > 9 ? '9+' : pending.data}</Text></View>}
-            <View style={[s.iconBox, { backgroundColor: color + '13' }]}><Feather name={t.icon} size={28} color={color} /></View><Text style={s.tileName}>{t.name}</Text><Text style={s.tileDescription}>{t.description}</Text><Text style={[s.tileAction, { color: t.id === 'profile' ? color : teacherColors.faint }]}>{t.id === 'profile' ? 'Open  →' : 'Coming to mobile'}</Text>
+            <View style={[s.iconBox, { backgroundColor: color + '13' }]}><Feather name={t.icon} size={28} color={color} /></View><Text style={s.tileName}>{t.name}</Text><Text style={s.tileDescription}>{t.description}</Text><Text style={[s.tileAction, { color }]}>Open  →</Text>
           </Pressable>)}</View>
         </View>;
       })}

@@ -14,6 +14,22 @@ import { resolveStudentPhotoUrl, studentGreetingAt, studentYearAt } from '@/lib/
 import { studentDashboardColors as C, studentDashboardTiles as TILES } from '@/constants/student-dashboard';
 
 const HAND = 'ArchitectsDaughter_400Regular';
+const studentTilePaths = {
+  profile: '/student-profile',
+  attendance: '/student/attendance',
+  homework: '/student/homework',
+  classwork: '/student/classwork',
+  noticeboard: '/student/notices',
+  fees: '/student/fees',
+  examination: '/student/examination',
+  complaints: '/student/complaints',
+  gallery: '/student/gallery',
+  'faculty-info': '/student/faculty',
+  'school-calendar': '/student/calendar',
+  leave: '/student/leave',
+  timetable: '/student/timetable',
+  'e-library': '/student/library',
+} as const;
 
 function currentDashboardClock() {
   const now = new Date();
@@ -210,8 +226,8 @@ export default function StudentDashboard() {
           </View>
           <View style={s.grid}>
             {TILES.map((tile, index) => <Pressable key={tile.id} testID={`tile-${tile.id}`} accessibilityRole="button"
-                accessibilityLabel={tile.id === 'profile' ? `${tile.label}. Open student profile` : tile.id === 'attendance' ? `${tile.label}. Open student attendance` : tile.id === 'homework' ? `${tile.label}. Open student homework` : tile.id === 'classwork' ? `${tile.label}. Open student classwork` : `${tile.label}. Not available in BENIUS Mobile yet.`}
-                onPress={() => tile.id === 'profile' ? router.push('/student-profile') : tile.id === 'attendance' ? router.push('/student/attendance') : tile.id === 'homework' ? router.push('/student/homework') : tile.id === 'classwork' ? router.push('/student/classwork') : Alert.alert(tile.label, `${tile.label} is not available in BENIUS Mobile yet.`)}
+                accessibilityLabel={`${tile.label}. Open ${tile.label}`}
+                onPress={() => router.push(studentTilePaths[tile.id])}
               style={({ pressed }) => [s.tile, { borderTopColor: tile.accent, opacity: pressed ? .75 : 1 }]}>
               {(tile.id === 'noticeboard' && data.unreadNoticeCount > 0 || tile.id === 'fees' && data.feesOutstanding) &&
                 <PulseDot testID={`badge-${tile.id}-pulse`} label={tile.id === 'fees' ? 'Fees outstanding' : `${data.unreadNoticeCount} unread notices`} />}

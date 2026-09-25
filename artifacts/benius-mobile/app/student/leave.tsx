@@ -1,0 +1,1 @@
+export { StudentLeaveScreen as default } from '@/components/StudentAdditionalScreens';

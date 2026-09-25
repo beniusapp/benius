@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
 import { useNetwork } from '@/contexts/NetworkContext';
 import { adminGroups, visibleAdminTiles, visibleMetrics } from '@/lib/admin-dashboard-pure.mjs';
+import AdminAccountActions from '@/components/AdminAccountActions';
 
 type IconName = React.ComponentProps<typeof Feather>['name'];
 type Overview = {
@@ -189,7 +190,7 @@ export default function AdminDashboard() {
         </View>
       </View>
     </Modal>
-    {admin && overview.data && <AdminProfile visible={profileOpen} close={() => setProfileOpen(false)} overview={overview.data} />}
+    {admin && overview.data && <AdminAccountActions visible={profileOpen} close={() => setProfileOpen(false)} displayName={overview.data.displayName} schoolName={overview.data.schoolName} schoolCode={overview.data.schoolCode} />}
     {!!actionError && !sessionOpen && <Pressable style={s.bottomError} onPress={() => setActionError('')}><Text style={{ color: c.ink }}>{actionError} · Dismiss</Text></Pressable>}
   </View>;
 }

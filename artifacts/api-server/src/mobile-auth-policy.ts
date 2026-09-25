@@ -25,6 +25,54 @@ const MOBILE_TEACHER_PROFILE_PHOTO_PATH = "/api/mobile/teacher/profile-photo";
 const MOBILE_TEACHER_CHANGE_PASSWORD_PATH = "/api/mobile/teacher/change-password";
 const MOBILE_ADMIN_OVERVIEW_PATH = "/api/mobile/admin/overview";
 const MOBILE_ADMIN_PROFILE_PATH = "/api/mobile/admin/profile";
+const ADDITIONAL_STUDENT_GET = new Set([
+  "notices", "fees", "fees/summary", "fees/payment-attempts",
+  "fees/notification-history", "fees/portal-info",
+  "examination/classes", "examination/types", "examination/scores",
+  "examination/all-scores", "examination/journey", "examination/policy",
+  "timetable", "leave", "complaints/inbox", "complaints/filed",
+  "complaints/teachers", "complaints/peers", "calendar", "faculty",
+  "gallery/tags", "gallery", "library",
+]);
+const ADDITIONAL_STUDENT_POST = new Set([
+  "notices/mark-read", "leave", "leave/delete",
+  "complaints/staff-grievance", "complaints/peer-report",
+]);
+const PRIVATE_LEAVE_FILE_ROUTE = /^\/api\/mobile\/student\/leave-files\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|jpeg|png|gif|webp|pdf|doc|docx)$/;
+const TEACHER_MODULES = new Set([
+  "attendance", "homework", "classwork", "noticeboard", "complaint",
+  "examination", "gallery", "faculty-info", "calendar", "library",
+  "leave", "timetable", "student-profiles",
+]);
+const TEACHER_MODULE_ACTIONS: Record<string, Set<string>> = {
+  attendance: new Set(["submit"]),
+  homework: new Set(["create"]),
+  classwork: new Set(["create"]),
+  noticeboard: new Set(["create"]),
+  complaint: new Set(["create", "resolve-peer", "add-note", "edit", "delete", "self-resolve"]),
+  examination: new Set(["save-scores", "publish-scores"]),
+  library: new Set(["borrow", "return"]),
+  leave: new Set(["apply", "approve-student", "forward-student", "reject-student"]),
+  "student-profiles": new Set(["approve", "reject", "approve-all"]),
+};
+
+function isAdditionalStudentRequest(method: string, path: string): boolean {
+  const prefix = "/api/mobile/student/";
+  if (!path.startsWith(prefix)) return false;
+  const relative = path.slice(prefix.length);
+  if (method === "GET" && ADDITIONAL_STUDENT_GET.has(relative)) return true;
+  if (method === "POST" && ADDITIONAL_STUDENT_POST.has(relative)) return true;
+  if (method === "GET" && PRIVATE_LEAVE_FILE_ROUTE.test(path)) return true;
+  return (method === "GET" || method === "POST")
+    && /^complaints\/[1-9]\d*\/notes$/.test(relative);
+}
+
+function isTeacherModuleRequest(method: string, path: string): boolean {
+  const match = /^\/api\/mobile\/teacher\/modules\/([a-z-]+)(?:\/([a-z-]+))?$/.exec(path);
+  if (!match || !TEACHER_MODULES.has(match[1])) return false;
+  if (method === "GET") return match[2] === undefined;
+  return method === "POST" && !!match[2] && !!TEACHER_MODULE_ACTIONS[match[1]]?.has(match[2]);
+}
 
 export type RefreshPolicyInput = {
   now: number;
@@ -165,7 +213,9 @@ export function rejectBearerOutsideMobileAuth(
     || isTeacherPhotoRequest
     || isTeacherPasswordRequest
     || isAdminOverviewRequest
-    || isAdminProfileRequest;
+    || isAdminProfileRequest
+    || isAdditionalStudentRequest(req.method, req.path)
+    || isTeacherModuleRequest(req.method, req.path);
   const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
   if (isApiRequest && !approvedMobileRequest && /^\s*Bearer\s/i.test(authorization)) {
     res.status(401).json({ message: "Bearer credentials are accepted only by mobile authentication endpoints." });
@@ -175,6 +225,7 @@ export function rejectBearerOutsideMobileAuth(
 }
 
 export function shouldLogJsonResponseBody(path: string): boolean {
+  if (path.startsWith("/api/mobile/")) return false;
   if (MOBILE_STUDENT_ATTENDANCE_PATHS.has(path)) return false;
   if (path === MOBILE_STUDENT_HOMEWORK_PATH
     || path === `${MOBILE_STUDENT_HOMEWORK_PATH}/pending-dates`

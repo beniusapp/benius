@@ -24,6 +24,7 @@ export function AccountGate({ children }: { children: React.ReactNode }) {
 
 export function Login() {
   const c = useColors();
+  const router = useRouter();
   const auth = useAuth();
   const isWebPreview = Platform.OS === 'web';
   const [role, setRole] = useState<Role>('student');
@@ -120,6 +121,9 @@ export function Login() {
         <Field label={identityLabel} value={identifier} onChangeText={setIdentifier} keyboardType={role === 'student' ? 'default' : 'email-address'} disabled={busy} />
         <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry disabled={busy} />
         <Button label={isWebPreview ? 'Sign in on Android or iOS' : busy ? 'Signing in…' : 'Continue'} icon="arrow-right" disabled={busy || isWebPreview} onPress={() => { void submitLogin(); }} />
+        {(role === 'student' || role === 'teacher' || role === 'admin') && <Pressable accessibilityRole="link" onPress={() => router.push(role === 'student' ? '/recovery/student' : role === 'teacher' ? '/recovery/teacher' : '/recovery/admin')} style={{ alignSelf: 'center', padding: 12 }}>
+          <Text style={{ color: c.primary, textDecorationLine: 'underline' }}>Forgot your password?</Text>
+        </Pressable>}
       </Card>
     </>}
     {stage === 'pin' && <Card>

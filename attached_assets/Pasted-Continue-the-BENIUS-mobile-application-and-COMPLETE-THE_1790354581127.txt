@@ -1,0 +1,281 @@
+Continue the BENIUS mobile application and COMPLETE THE ENTIRE REPLICATION.
+
+The previous pass is NOT complete.
+
+I do NOT want a status report, workstreams, documentation, unavailable tiles, placeholders, or a list of remaining work.
+
+I want you to FINISH THE APPLICATION.
+
+The requirement is extremely simple:
+
+# EXISTING BENIUS WEB APPLICATION
+
+# NATIVE BENIUS MOBILE APPLICATION
+
+ANDROID + iOS
+
+Use the existing BENIUS WEB APPLICATION as the ONLY SOURCE OF TRUTH.
+
+Replicate EVERYTHING that exists in the web application.
+
+Do not redesign anything.
+
+Do not simplify anything.
+
+Do not create a new mobile UX.
+
+Do not use WebView.
+
+Do not use fake data.
+
+Do not create placeholder screens.
+
+Do not mark existing modules as "Unavailable".
+
+If a web module exists, implement its native mobile equivalent.
+
+==================================================
+COMPLETE ALL REMAINING MODULES
+==============================
+
+The previous report says these remain incomplete:
+
+* 10 Student destinations
+* 13 Teacher modules
+* 19 Admin modules
+
+IMPLEMENT ALL OF THEM.
+
+Also inspect the complete web application yourself because the numbers above may not represent every route.
+
+Do not rely only on the previous status document.
+
+Scan the actual web application source code, routing, pages, components, API calls and responsive layouts.
+
+Create the native equivalent of EVERY existing usable web screen.
+
+==================================================
+EXACT REPLICATION
+=================
+
+For every existing web screen, reproduce:
+
+* same screen
+* same navigation
+* same layout
+* same UI
+* same colors
+* same typography
+* same labels
+* same buttons
+* same forms
+* same fields
+* same cards
+* same tables
+* same tabs
+* same filters
+* same search
+* same dropdowns
+* same dialogs
+* same confirmation flows
+* same validation
+* same loading state
+* same empty state
+* same error state
+* same success state
+* same calculations
+* same permissions
+* same API behavior
+* same data behavior
+* same workflow
+
+The responsive/mobile version of the existing web application should be used as the visual reference.
+
+Do not invent a different design.
+
+==================================================
+ALL ROLES
+=========
+
+Complete:
+
+STUDENT
+
+TEACHER
+
+ADMIN
+
+SUPPORT STAFF
+
+Every role must have the same functionality that exists for that role in the web application.
+
+==================================================
+BACKEND
+=======
+
+Reuse the existing BENIUS backend and database.
+
+Do not create fake APIs.
+
+Do not create fake data.
+
+Do not duplicate existing business logic unnecessarily.
+
+Where a mobile-specific API is genuinely required, implement it using the SAME existing backend business rules and authorization.
+
+The mobile application must never connect directly to PostgreSQL.
+
+Preserve:
+
+* authentication
+* authorization
+* school/tenant isolation
+* user identity isolation
+* Academic Session isolation
+* existing calculations
+* existing permissions
+
+==================================================
+ACADEMIC SESSION
+================
+
+Every session-sensitive mobile screen must use the selected Academic Session exactly as the web application does.
+
+Never mix data between academic sessions.
+
+Admin Exam Controller MUST remain explicitly scoped to:
+
+authenticated school/tenant
++
+selected Academic Session ID
+
+for every read, write, lookup, override, decision, execution and history operation.
+
+==================================================
+ANDROID + iOS
+=============
+
+Use ONE React Native + Expo + TypeScript codebase.
+
+The application must target:
+
+Android
+AND
+iOS
+
+Do not create separate applications.
+
+Do not make Android-only implementations.
+
+Use React Native native components.
+
+Do not use WebView.
+
+==================================================
+DO NOT STOP
+===========
+
+Do not stop after Student.
+
+Do not stop after Teacher.
+
+Do not stop after Admin.
+
+Do not stop after dashboards.
+
+Do not stop after a few modules.
+
+Do not ask me to approve screens.
+
+Do not give me another "remaining work" report before implementing the remaining screens.
+
+Continue implementing until the existing BENIUS web application's functionality has been replicated as completely as possible.
+
+If there are many screens, work through them systematically and keep going.
+
+==================================================
+WEB APPLICATION MUST REMAIN WORKING
+===================================
+
+Do not break the existing web application.
+
+The mobile application is an additional client.
+
+Do not remove or change existing web functionality just to make mobile implementation easier.
+
+==================================================
+TIME / IST
+==========
+
+Preserve BENIUS application time behavior:
+
+Asia/Kolkata / IST.
+
+Do not introduce device-local business-time calculations.
+
+==================================================
+PERFORMANCE
+===========
+
+Keep the application usable under normal school-sized data loads.
+
+Use appropriate:
+
+* React Native lists
+* pagination where the backend supports/needs it
+* TanStack Query
+* caching
+* debounced search
+* efficient rendering
+
+But DO NOT spend excessive time building new infrastructure.
+
+The priority is COMPLETE FUNCTIONAL REPLICATION.
+
+==================================================
+FINAL VALIDATION
+================
+
+After implementation:
+
+* run TypeScript validation
+* run Expo validation
+* verify Android export/build
+* verify iOS-compatible export/build
+* verify application startup
+* verify navigation
+* verify API connectivity
+* verify authentication
+* verify existing web production build
+
+Do not claim physical Android/iOS testing unless an actual device or simulator is available.
+
+But lack of a physical device is NOT a reason to leave modules unimplemented.
+
+==================================================
+MOST IMPORTANT
+==============
+
+I AM NOT ASKING FOR A MOBILE VERSION INSPIRED BY THE WEB APPLICATION.
+
+I AM ASKING FOR THE WEB APPLICATION TO BE REPLICATED.
+
+WEB APPLICATION
+↓
+SAME FUNCTIONALITY
+↓
+SAME UI/UX
+↓
+SAME DATA/BACKEND
+↓
+NATIVE REACT NATIVE IMPLEMENTATION
+↓
+ANDROID + iOS
+
+FINISH THE COMPLETE BENIUS REPLICA NOW.
+
+DO NOT STOP WITH UNAVAILABLE TILES.
+
+DO NOT RETURN A PARTIAL IMPLEMENTATION.
+
+IMPLEMENT THE REMAINING MODULES AND SCREENS UNTIL THE WEB APPLICATION HAS BEEN REPLICATED.

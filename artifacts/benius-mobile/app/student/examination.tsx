@@ -1,0 +1,1 @@
+export { StudentExaminationScreen as default } from '@/components/StudentAdditionalScreens';
