@@ -56,7 +56,7 @@ import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST,
 import { isAttendanceDateInSession } from "@shared/attendance-session-date";
 import { db } from "./db";
 import { pool } from "./db";
-import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, type SQL } from "drizzle-orm";
+import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -764,6 +764,14 @@ export class DatabaseStorage {
     return result.map(r => ({ ...r.teachers, email: r.users.email }));
   }
 
+  async getTeacherCountBySchool(schoolId: number): Promise<number> {
+    const [result] = await db
+      .select({ value: count() })
+      .from(teachers)
+      .where(eq(teachers.schoolId, schoolId));
+    return result?.value ?? 0;
+  }
+
   async getTeacherByUserId(userId: number): Promise<Teacher | undefined> {
     const [teacher] = await db.select().from(teachers).where(eq(teachers.userId, userId));
     return teacher || undefined;
@@ -1430,6 +1438,87 @@ export class DatabaseStorage {
       and(eq(homeworkSubmissions.homeworkId, homeworkId), eq(homeworkSubmissions.studentId, studentId))
     );
     return sub;
+  }
+
+  async getHomeworkSubmissionByFileUrl(fileUrl: string): Promise<{
+    submission: HomeworkSubmission;
+    homework: Homework;
+  } | undefined> {
+    const [row] = await db.select({
+      submission: homeworkSubmissions,
+      homework,
+    }).from(homeworkSubmissions)
+      .innerJoin(homework, eq(homeworkSubmissions.homeworkId, homework.id))
+      .where(eq(homeworkSubmissions.fileUrl, fileUrl));
+    return row;
+  }
+
+  async upsertMobileHomeworkSubmission(data: {
+    homeworkId: number;
+    studentId: number;
+    schoolId: number;
+    fileUrl?: string | null;
+    textAnswer?: string | null;
+  }): Promise<{ submission: HomeworkSubmission; replacedFileUrl: string | null }> {
+    return db.transaction(async (tx) => {
+      // Serialize mobile submissions for this student/homework pair. The guarded
+      // update below also prevents a concurrent reviewer approval being reset.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${data.homeworkId}, ${data.studentId})`);
+      const [authorizedHomework] = await tx.select({ id: homework.id })
+        .from(homework)
+        .where(and(
+          eq(homework.id, data.homeworkId),
+          eq(homework.schoolId, data.schoolId),
+        ))
+        .limit(1)
+        .for("update");
+      const [authorizedStudent] = await tx.select({
+        id: students.id,
+      }).from(students)
+        .where(and(
+          eq(students.id, data.studentId),
+          eq(students.schoolId, data.schoolId),
+          eq(students.isActive, true),
+          eq(students.isActivated, true),
+        ))
+        .limit(1)
+        .for("update");
+      if (!authorizedHomework || !authorizedStudent) {
+        throw new Error("HOMEWORK_SUBMISSION_NOT_AUTHORIZED");
+      }
+      const [existing] = await tx.select().from(homeworkSubmissions).where(and(
+        eq(homeworkSubmissions.homeworkId, data.homeworkId),
+        eq(homeworkSubmissions.studentId, data.studentId),
+      ));
+      if (existing?.status === "approved") {
+        throw new Error("HOMEWORK_SUBMISSION_APPROVED");
+      }
+      if (existing) {
+        const [updated] = await tx.update(homeworkSubmissions)
+          .set({
+            fileUrl: data.fileUrl !== undefined ? data.fileUrl : existing.fileUrl,
+            textAnswer: data.textAnswer !== undefined ? data.textAnswer : existing.textAnswer,
+            status: "submitted",
+            submittedAt: new Date(),
+          })
+          .where(and(
+            eq(homeworkSubmissions.id, existing.id),
+            ne(homeworkSubmissions.status, "approved"),
+          ))
+          .returning();
+        if (!updated) throw new Error("HOMEWORK_SUBMISSION_APPROVED");
+        return { submission: updated, replacedFileUrl: existing.fileUrl };
+      }
+      const [created] = await tx.insert(homeworkSubmissions).values({
+        homeworkId: data.homeworkId,
+        studentId: data.studentId,
+        schoolId: data.schoolId,
+        fileUrl: data.fileUrl ?? null,
+        textAnswer: data.textAnswer ?? null,
+        status: "submitted",
+      }).returning();
+      return { submission: created, replacedFileUrl: null };
+    });
   }
 
   async upsertHomeworkSubmission(data: { homeworkId: number; studentId: number; schoolId: number; fileUrl?: string | null; textAnswer?: string | null }): Promise<HomeworkSubmission> {

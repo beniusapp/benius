@@ -209,9 +209,9 @@ export default function StudentDashboard() {
             <Text style={s.sectionSub}>Tap a card to access your portal</Text>
           </View>
           <View style={s.grid}>
-            {TILES.map(tile => <Pressable key={tile.id} testID={`tile-${tile.id}`} accessibilityRole="button"
-              accessibilityLabel={`${tile.label}. Not available in BENIUS Mobile yet.`}
-              onPress={() => Alert.alert(tile.label, `${tile.label} is not available in BENIUS Mobile yet.`)}
+            {TILES.map((tile, index) => <Pressable key={tile.id} testID={`tile-${tile.id}`} accessibilityRole="button"
+                accessibilityLabel={tile.id === 'profile' ? `${tile.label}. Open student profile` : tile.id === 'attendance' ? `${tile.label}. Open student attendance` : tile.id === 'homework' ? `${tile.label}. Open student homework` : tile.id === 'classwork' ? `${tile.label}. Open student classwork` : `${tile.label}. Not available in BENIUS Mobile yet.`}
+                onPress={() => tile.id === 'profile' ? router.push('/student-profile') : tile.id === 'attendance' ? router.push('/student/attendance') : tile.id === 'homework' ? router.push('/student/homework') : tile.id === 'classwork' ? router.push('/student/classwork') : Alert.alert(tile.label, `${tile.label} is not available in BENIUS Mobile yet.`)}
               style={({ pressed }) => [s.tile, { borderTopColor: tile.accent, opacity: pressed ? .75 : 1 }]}>
               {(tile.id === 'noticeboard' && data.unreadNoticeCount > 0 || tile.id === 'fees' && data.feesOutstanding) &&
                 <PulseDot testID={`badge-${tile.id}-pulse`} label={tile.id === 'fees' ? 'Fees outstanding' : `${data.unreadNoticeCount} unread notices`} />}

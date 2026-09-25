@@ -60,7 +60,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     await AsyncStorage.setItem(key, String(id));
     setStoredId(id);
-    await queryClient.invalidateQueries({ predicate: cached => cached.queryKey[0] !== 'sessions' });
+    await queryClient.invalidateQueries({ predicate: cached => cached.queryKey[0] !== 'sessions' && cached.queryKey[0] !== 'mobile/student/profile' && cached.queryKey[0] !== 'mobile/teacher/me' && cached.queryKey[0] !== 'mobile/teacher/pending-profiles/count' });
   };
   return <Context.Provider value={{ sessions, selectedId, loading: !!user && user.role !== 'support_staff' && (!hydrated || query.isPending), error: query.error, refresh: async () => { await query.refetch(); }, select }}>{children}</Context.Provider>;
 }

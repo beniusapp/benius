@@ -1,5 +1,6 @@
 import { clearApprovedSession, readApprovedSession, saveApprovedSession } from '@/lib/secure-session';
 import { createRefreshCoordinator, RefreshIdentityChangedError } from '@/lib/refresh-coordinator.mjs';
+import { binaryWithRefresh, MAX_HOMEWORK_DOWNLOAD_BYTES, validDownload, validPrivateHomeworkApiPath } from '@/lib/private-homework-download.mjs';
 
 export type Role = 'admin' | 'teacher' | 'student' | 'support_staff';
 export type MobileUser = {
@@ -22,7 +23,7 @@ export type LoginResult =
   | { state: 'initialize_required'; challengeToken: string }
   | { state: 'password_change_required' }
   | AuthenticatedSession;
-export type AcademicSession = { id: number; schoolId: number; sessionName: string; isActive: boolean };
+export type AcademicSession = { id: number; schoolId: number; sessionName: string; isActive: boolean; startDate?: string; endDate?: string };
 export type AcademicSessionsResponse = { sessions: AcademicSession[]; activeSessionId: number | null };
 export type AcademicSessionSelectionResponse = { session: AcademicSession };
 type PersistedSession = AuthenticatedSession;
@@ -69,11 +70,11 @@ async function send<T>(path: string, method: 'GET' | 'POST', body?: unknown, tok
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
-        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(body === undefined || body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.sessionId === undefined ? {} : { 'x-view-session-id': String(options.sessionId) }),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: body instanceof FormData ? body : JSON.stringify(body) }),
     });
     return { response, payload: await readPayload(response) as T | null };
   } catch (error) {
@@ -110,6 +111,8 @@ function validatedUser(value: unknown): MobileUser {
 }
 
 let sessionCache: PersistedSession | null | undefined;
+let authGeneration = 0;
+export function isCurrentAuthGeneration(value: number): boolean { return value === authGeneration; }
 
 async function readSession(): Promise<PersistedSession | null> {
   if (sessionCache !== undefined) return sessionCache;
@@ -132,7 +135,7 @@ async function readSession(): Promise<PersistedSession | null> {
   }
 }
 
-async function saveSession(session: AuthenticatedSession): Promise<PersistedSession> {
+async function saveSession(session: AuthenticatedSession, isRefresh = false): Promise<PersistedSession> {
   const user = validatedUser(session.user);
   if (typeof session.accessToken !== 'string' || !session.accessToken || typeof session.refreshToken !== 'string' || !session.refreshToken
     || typeof session.accessExpiresAt !== 'string' || !Number.isFinite(Date.parse(session.accessExpiresAt))) {
@@ -145,6 +148,7 @@ async function saveSession(session: AuthenticatedSession): Promise<PersistedSess
     throw new ApiError('Secure device storage is unavailable. Mobile sign-in cannot be saved on this device.', 'auth_unavailable');
   }
   sessionCache = validated;
+  if (!isRefresh) authGeneration++;
   return validated;
 }
 
@@ -182,6 +186,7 @@ const coordinatedRefresh = createRefreshCoordinator<PersistedSession>(
           return current;
         }
         sessionCache = null;
+        authGeneration++;
         await clearApprovedSession();
         onUnauthorized?.();
       }
@@ -202,7 +207,7 @@ const coordinatedRefresh = createRefreshCoordinator<PersistedSession>(
       onUnauthorized?.();
       throw new ApiError('The refreshed account did not match this mobile session.', 'unauthorized', 401);
     }
-    return saveSession({ ...payload, user: refreshedUser });
+    return saveSession({ ...payload, user: refreshedUser }, true);
   },
   samePrincipal,
 );
@@ -236,6 +241,7 @@ async function clearRejectedSession(expected: PersistedSession): Promise<void> {
   const current = await readSession();
   if (!current || current.accessToken !== expected.accessToken || !samePrincipal(current, expected)) return;
   sessionCache = null;
+  authGeneration++;
   await clearApprovedSession();
   onUnauthorized?.();
 }
@@ -308,6 +314,7 @@ export const authTransport = {
     }
     if (!response.ok) throwResponseError(response, payload);
     sessionCache = null;
+    authGeneration++;
     await clearApprovedSession();
     return 'revoked';
   },
@@ -316,12 +323,18 @@ export const authTransport = {
   },
   async clear(): Promise<void> {
     sessionCache = null;
+    authGeneration++;
     await clearApprovedSession();
   },
 };
 
 export async function apiGet<T>(path: string, options: RequestOptions = {}): Promise<T> {
   return authorized<T>(path, 'GET', undefined, options);
+}
+
+/** Identity-scoped mobile mutations; no academic-session header. */
+export async function apiPost<T>(path: string, body?: unknown, options: Pick<RequestOptions, 'signal'> = {}): Promise<T> {
+  return authorized<T>(path, 'POST', body, options);
 }
 
 type SessionRequestOptions = Pick<RequestOptions, 'signal'>;
@@ -341,4 +354,99 @@ export async function apiPostForSession<T>(
   options: SessionRequestOptions = {},
 ): Promise<T> {
   return authorized<T>(path, 'POST', body, { ...options, sessionId });
+}
+
+async function readBoundedHomeworkBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
+  const length = Number(response.headers.get('content-length'));
+  if (Number.isFinite(length) && length > MAX_HOMEWORK_DOWNLOAD_BYTES)
+    throw new ApiError('The file is too large to open on this device.', 'server');
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > MAX_HOMEWORK_DOWNLOAD_BYTES) throw new ApiError('The file is too large to open on this device.', 'server');
+    return bytes;
+  }
+  let timedOut = false;
+  const abort = () => { void reader.cancel(); };
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(() => { timedOut = true; abort(); }, 20_000);
+  try {
+    let total = 0;
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (signal?.aborted) throw new ApiError('Download cancelled.', 'cancelled');
+      if (timedOut) throw new ApiError('Download timed out. Try again.', 'timeout');
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_HOMEWORK_DOWNLOAD_BYTES) throw new ApiError('The file is too large to open on this device.', 'server');
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+    try { await reader.cancel(); } catch { /* Reader may already be closed. */ }
+  }
+}
+
+/** GET-only, bounded binary download. Tokens stay exclusively in the Authorization header. */
+export async function apiGetPrivateHomeworkFile(
+  path: string,
+  sessionId: number,
+  options: { signal?: AbortSignal } = {},
+): Promise<{ bytes: Uint8Array; generation: number }> {
+  if (!validPrivateHomeworkApiPath(path))
+    throw new ApiError('Invalid private homework file address.', 'server');
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new ApiError('Academic session required.', 'auth_unavailable');
+  const initial = await accessSession();
+  if (!initial) throw new ApiError('A verified mobile session is required.', 'auth_unavailable');
+  const generation = authGeneration;
+  const current = () => isCurrentAuthGeneration(generation) && !options.signal?.aborted;
+  const sendBinary = async (session: PersistedSession): Promise<Response> => {
+    if (!current() || !samePrincipal(initial, session)) throw new ApiError('Account changed during download.', 'cancelled');
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) abort();
+    else options.signal?.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 20_000);
+    try {
+      if (!API_BASE_URL) throw new ApiError('Backend address is not configured.', 'network');
+      return await fetch(`${API_BASE_URL}${path}`, {
+        method: 'GET', signal: controller.signal,
+        headers: { Accept: 'image/jpeg, image/png, image/webp, application/pdf',
+          Authorization: `Bearer ${session.accessToken}`, 'x-view-session-id': String(sessionId) },
+      });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (options.signal?.aborted || !current()) throw new ApiError('Download cancelled.', 'cancelled');
+      if (controller.signal.aborted) throw new ApiError('Download timed out. Try again.', 'timeout');
+      throw new ApiError('Could not download the file. Check your connection.', 'network');
+    } finally {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abort);
+    }
+  };
+  let response: Response;
+  try {
+    response = await binaryWithRefresh(initial, sendBinary, refreshSession, current);
+  } catch (error) {
+    if (!current()) throw new ApiError('Download cancelled after account change.', 'cancelled');
+    throw error;
+  }
+  if (response.status === 401) await clearRejectedSession((await readSession()) ?? initial);
+  if (!response.ok) throwResponseError(response, await readPayload(response));
+  const liveSession = await readSession();
+  if (!current() || !liveSession || !samePrincipal(initial, liveSession))
+    throw new ApiError('Account changed during download.', 'cancelled');
+  const bytes = await readBoundedHomeworkBytes(response, options.signal);
+  const extension = path.split('.').pop()!.toLowerCase();
+  if (!current()) throw new ApiError('Download cancelled after account change.', 'cancelled');
+  if (!validDownload(bytes, extension, response.headers.get('content-type')))
+    throw new ApiError('The server returned an unsupported or invalid file.', 'server');
+  return { bytes, generation };
 }

@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiError, authTransport, AuthenticatedSession, LoginResult, MobileUser, Role, setUnauthorizedHandler } from '@/lib/api';
 import { academicSessionStorageKey } from '@/lib/session-storage';
+import { clearPrivateHomeworkFiles } from '@/lib/homework-private-files';
 
 type AuthState = {
   user: MobileUser | null;
@@ -12,6 +13,7 @@ type AuthState = {
   verifyPin(challengeToken: string, pin: string): Promise<void>;
   initialize(input: { challengeToken: string; newPassword: string; confirmPassword: string; pin: string; confirmPin: string; recoveryEmail: string; recoveryPhone: string }): Promise<void>;
   logout(): Promise<void>;
+  clearAfterPasswordChange(): Promise<void>;
 };
 const Context = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -23,6 +25,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const clear = useCallback(async () => {
     const previousUser = userRef.current;
+    clearPrivateHomeworkFiles();
     setUser(null);
     setRestoreError(null);
     queryClient.clear();
@@ -33,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
   useEffect(() => {
     let active = true;
+    clearPrivateHomeworkFiles();
     setUnauthorizedHandler(() => { void clear(); });
     void authTransport.restore().then(async result => {
       if (!result) return;
@@ -53,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false; setUnauthorizedHandler(undefined); };
   }, [clear]);
   const accept = (session: AuthenticatedSession) => {
+    clearPrivateHomeworkFiles();
     queryClient.clear();
     setUser(session.user);
   };
@@ -72,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await authTransport.logout();
     await clear();
   };
-  return <Context.Provider value={{ user, loading, restoreError, login, verifyPin, initialize, logout }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ user, loading, restoreError, login, verifyPin, initialize, logout, clearAfterPasswordChange: clear }}>{children}</Context.Provider>;
 }
 export function useAuth() {
   const context = useContext(Context);

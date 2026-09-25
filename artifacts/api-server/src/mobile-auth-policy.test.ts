@@ -62,8 +62,62 @@ test("mobile bearer is accepted only inside the mobile auth route namespace", ()
   assert.equal(call("/api/mobile/auth/me").continued, true);
   assert.equal(call("/api/mobile/auth/login").continued, true);
   assert.equal(call("/api/mobile/student/dashboard").continued, true);
+  for (const [path, method] of [
+    ["/api/mobile/student/homework", "GET"],
+    ["/api/mobile/student/homework/pending-dates", "GET"],
+    ["/api/mobile/student/homework/14", "GET"],
+    ["/api/mobile/student/homework/14/submit", "POST"],
+    ["/api/mobile/student/classwork", "GET"],
+  ]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, true);
+  }
+  for (const [path, method] of [
+    ["/api/mobile/student/homework/14/", "GET"],
+    ["/api/mobile/student/homework/14abc", "GET"],
+    ["/api/mobile/student/homework/14/submit/", "POST"],
+    ["/api/mobile/student/homework/14/submit", "GET"],
+    ["/api/mobile/student/homework", "POST"],
+    ["/api/mobile/student/classwork/", "GET"],
+  ]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, false);
+  }
+  const privateHomeworkFile = "/api/mobile/homework-submission-files/123e4567-e89b-42d3-a456-426614174000.pdf";
+  assert.equal(call(privateHomeworkFile, "Bearer opaque-mobile-token", "GET").continued, true);
+  assert.equal(call(privateHomeworkFile, "Bearer opaque-mobile-token", "POST").continued, false);
+  assert.equal(call(`${privateHomeworkFile}/`, "Bearer opaque-mobile-token", "GET").continued, false);
+  assert.equal(call("/api/mobile/homework-submission-files/not-a-uuid.pdf", "Bearer opaque-mobile-token", "GET").continued, false);
   assert.equal(call("/api/mobile/student/dashboard/", "Bearer opaque-mobile-token").continued, false);
   assert.equal(call("/api/mobile/student/dashboard", "Bearer opaque-mobile-token", "POST").continued, false);
+  assert.equal(call("/api/mobile/student/profile", "Bearer opaque-mobile-token", "GET").continued, true);
+  assert.equal(call("/api/mobile/student/profile", "Bearer opaque-mobile-token", "POST").continued, true);
+  assert.equal(call("/api/mobile/student/profile/submit", "Bearer opaque-mobile-token", "POST").continued, true);
+  assert.equal(call("/api/mobile/student/profile/photo", "Bearer opaque-mobile-token", "POST").continued, true);
+  assert.equal(call("/api/mobile/student/profile/change-password", "Bearer opaque-mobile-token", "POST").continued, true);
+  assert.equal(call("/api/mobile/student/profile", "Bearer opaque-mobile-token", "DELETE").continued, false);
+  assert.equal(call("/api/mobile/student/profile/", "Bearer opaque-mobile-token", "GET").continued, false);
+  assert.equal(call("/api/mobile/student/profile/submit", "Bearer opaque-mobile-token", "GET").continued, false);
+  assert.equal(call("/api/mobile/student/profile/unrelated", "Bearer opaque-mobile-token", "POST").continued, false);
+  for (const [path, method] of [
+    ["/api/mobile/teacher/me", "GET"],
+    ["/api/mobile/teacher/pending-profiles/count", "GET"],
+    ["/api/mobile/teacher/profile-photo", "POST"],
+    ["/api/mobile/teacher/change-password", "POST"],
+  ]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, true);
+    assert.equal(call(`${path}/`, "Bearer opaque-mobile-token", method).continued, false);
+    assert.equal(call(path, "Bearer opaque-mobile-token", method === "GET" ? "POST" : "GET").continued, false);
+  }
+  for (const path of ["/api/mobile/admin/overview", "/api/mobile/admin/profile"]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", "GET").continued, true);
+    assert.equal(call(`${path}/`, "Bearer opaque-mobile-token", "GET").continued, false);
+    assert.equal(call(path, "Bearer opaque-mobile-token", "POST").continued, false);
+  }
+  for (const endpoint of ["monthly", "yearly", "stats", "policy"]) {
+    assert.equal(call(`/api/mobile/student/attendance/${endpoint}`).continued, true);
+    assert.equal(call(`/api/mobile/student/attendance/${endpoint}`, "Bearer opaque-mobile-token", "POST").continued, false);
+    assert.equal(call(`/api/mobile/student/attendance/${endpoint}/`).continued, false);
+  }
+  assert.equal(call("/api/mobile/student/attendance/unrelated").continued, false);
   const webResult = call("/api/admin/profile");
   assert.equal(webResult.statusCode, 401);
   assert.equal(webResult.continued, false);
@@ -72,13 +126,51 @@ test("mobile bearer is accepted only inside the mobile auth route namespace", ()
   });
   assert.equal(call("/dashboard", "Bearer opaque-mobile-token").continued, true);
   assert.equal(call("/api/admin/profile", "").continued, true);
+  assert.equal(call("/api/teacher-me").statusCode, 401);
 });
 
-test("student dashboard JSON bodies are excluded from response logging only at its exact path", () => {
+test("private student dashboard and profile JSON bodies are excluded from response logging", () => {
   assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard"), false);
+  for (const path of [
+    "/api/mobile/student/homework",
+    "/api/mobile/student/homework/pending-dates",
+    "/api/mobile/student/homework/14",
+    "/api/mobile/student/homework/14/submit",
+    "/api/mobile/student/classwork",
+    "/api/mobile/homework-submission-files/123e4567-e89b-42d3-a456-426614174000.pdf",
+  ]) {
+    assert.equal(shouldLogJsonResponseBody(path), false);
+  }
   assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/"), true);
   assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/extra"), true);
+  for (const path of [
+    "/api/mobile/student/profile",
+    "/api/mobile/student/profile/submit",
+    "/api/mobile/student/profile/photo",
+    "/api/mobile/student/profile/change-password",
+  ]) {
+    assert.equal(shouldLogJsonResponseBody(path), false);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+  }
   assert.equal(shouldLogJsonResponseBody("/api/mobile/auth/me"), true);
+  for (const path of [
+    "/api/mobile/teacher/me",
+    "/api/mobile/teacher/pending-profiles/count",
+    "/api/mobile/teacher/profile-photo",
+    "/api/mobile/teacher/change-password",
+  ]) {
+    assert.equal(shouldLogJsonResponseBody(path), false);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+  }
+  for (const path of ["/api/mobile/admin/overview", "/api/mobile/admin/profile"]) {
+    assert.equal(shouldLogJsonResponseBody(path), false);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+  }
+  for (const endpoint of ["monthly", "yearly", "stats", "policy"]) {
+    const path = `/api/mobile/student/attendance/${endpoint}`;
+    assert.equal(shouldLogJsonResponseBody(path), false);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+  }
 });
 
 test("forwarded HTTPS is trusted only from local proxy sockets, while native TLS is accepted", () => {

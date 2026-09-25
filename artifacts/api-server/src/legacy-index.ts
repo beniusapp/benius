@@ -63,6 +63,10 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const isPrivateHomeworkFileRequest = path.startsWith("/api/mobile/homework-submission-files/");
+  const loggedPath = isPrivateHomeworkFileRequest
+    ? "/api/mobile/homework-submission-files/[private]"
+    : path;
   const isMobileAuthResponse = path.startsWith("/api/mobile/auth/");
   const mayLogResponseBody = shouldLogJsonResponseBody(path);
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
@@ -76,7 +80,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${loggedPath} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }

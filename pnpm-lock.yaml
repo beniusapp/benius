@@ -276,6 +276,22 @@ importers:
         version: 3.1.0
 
   artifacts/benius-mobile:
+    dependencies:
+      expo-document-picker:
+        specifier: ~57.0.2
+        version: 57.0.2(expo@57.0.25)
+      expo-file-system:
+        specifier: ~57.0.7
+        version: 57.0.7(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))
+      expo-print:
+        specifier: ~57.0.2
+        version: 57.0.2(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))
+      expo-sharing:
+        specifier: ~57.0.22
+        version: 57.0.22(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+      expo-video:
+        specifier: ~57.0.5
+        version: 57.0.5(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
     devDependencies:
       '@babel/core':
         specifier: ^7.25.2
@@ -813,7 +829,7 @@ importers:
     devDependencies:
       orval:
         specifier: ^8.30.0
-        version: 8.30.0(prettier@3.9.6)(typescript@6.0.3)
+        version: 8.30.0(prettier@3.9.6)(typescript@5.9.3)
 
   lib/api-zod:
     dependencies:
@@ -3717,6 +3733,11 @@ packages:
       expo: '*'
       react-native: '*'
 
+  expo-document-picker@57.0.2:
+    resolution: {integrity: sha512-vVBbBNg0piMJUIxjB+DR6JaZZpcSl90ZUoywLA/EgNHTfRkZW+9axP97UxM2a0Zm0W6WfH3cLzzGAEfP9OKGwg==}
+    peerDependencies:
+      expo: '*'
+
   expo-file-system@57.0.7:
     resolution: {integrity: sha512-1vkZRadOsIputFDBcclqBa1pO3iXOO6iIsdqJipQWw4V5TSnWgmRTuOF7ro8IzrVue+PHbum++KCG3Tawem4cg==}
     peerDependencies:
@@ -3806,6 +3827,12 @@ packages:
     peerDependencies:
       react-native: '*'
 
+  expo-print@57.0.2:
+    resolution: {integrity: sha512-jEbUqtH59xT42dCrmVVrg9Ct1ofD5GAHdQmUiu0EkHdzvqop7G6dt7rCXpq0iUYbu8ow6HH8yLRPbd3VMdTUug==}
+    peerDependencies:
+      expo: '*'
+      react-native: '*'
+
   expo-router@57.0.23:
     resolution: {integrity: sha512-u/iWSdQovEma/owymgz8etxGAif5ZrC8YdXYeGQhDRZwXpAvraordYV0SWej1QWWbYoIkgXcoqHVkgsAff8P4w==}
     peerDependencies:
@@ -3845,6 +3872,13 @@ packages:
     resolution: {integrity: sha512-aK+LdKzauHSGmsOStZtyxdzv0zWssCkxTw3m4QuOhfDSJsZaMRTd9O41d8ixU/QfELTbaJ0oRNcF7JFV/7O9YQ==}
     engines: {node: '>=20.16.0'}
 
+  expo-sharing@57.0.22:
+    resolution: {integrity: sha512-IWmiz0Dnjd7ifsZ2Gg5XODxb6DQoJ4/H6FofW9bTL9gDjfX2+va8SV1BYVkFvJ8vKQoKR4HgkMCKDCZlrrbKkg==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
+
   expo-splash-screen@57.0.9:
     resolution: {integrity: sha512-7cKDn7uBwg0RkcmY015/5j9st4msWJ4zQiPmQdVZoppW3cFSbv05n7xhM6CjUU466Tx4VRTqDF21HuIHkmnEtA==}
     peerDependencies:
@@ -3874,6 +3908,13 @@ packages:
     peerDependenciesMeta:
       react-native-web:
         optional: true
+
+  expo-video@57.0.5:
+    resolution: {integrity: sha512-VK2o+d6rb+tVeL2DI6d0F58pRV8d8bctLpOrMJEHRYtMIK5iwvjjrRx2mciYN8/d04SgWC8TkI+wuZ8Sbp/yuA==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
 
   expo-web-browser@57.0.3:
     resolution: {integrity: sha512-+ecvhyS/PdWkpv4ai6FF1Trd6Y/4kn/eQ3O86mie2ecU3w+I8bKZh13kppY/jw1uSL7yikt03L5W/iiHojrFwQ==}
@@ -7342,23 +7383,23 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@orval/angular@8.30.0(typescript@6.0.3)':
+  '@orval/angular@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/axios@8.30.0(typescript@6.0.3)':
+  '@orval/axios@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/core@8.30.0(typescript@6.0.3)':
+  '@orval/core@8.30.0(typescript@5.9.3)':
     dependencies:
       '@scalar/openapi-types': 0.9.4
       acorn: 8.18.0
@@ -7371,88 +7412,88 @@ snapshots:
       jsesc: 3.1.0
       remeda: 2.48.0
       tinyglobby: 0.2.17
-      typedoc: 0.28.20(typescript@6.0.3)
+      typedoc: 0.28.20(typescript@5.9.3)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  '@orval/effect@8.30.0(typescript@6.0.3)':
+  '@orval/effect@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
       remeda: 2.48.0
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/fetch@8.30.0(typescript@6.0.3)':
+  '@orval/fetch@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/hono@8.30.0(typescript@6.0.3)':
+  '@orval/hono@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
-      '@orval/zod': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
+      '@orval/zod': 8.30.0(typescript@5.9.3)
       fs-extra: 11.4.0
     optionalDependencies:
-      typescript: 6.0.3
+      typescript: 5.9.3
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
 
-  '@orval/mcp@8.30.0(typescript@6.0.3)':
+  '@orval/mcp@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
-      '@orval/fetch': 8.30.0(typescript@6.0.3)
-      '@orval/zod': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
+      '@orval/fetch': 8.30.0(typescript@5.9.3)
+      '@orval/zod': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/mock@8.30.0(typescript@6.0.3)':
+  '@orval/mock@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
       remeda: 2.48.0
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/query@8.30.0(typescript@6.0.3)':
+  '@orval/query@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
-      '@orval/fetch': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
+      '@orval/fetch': 8.30.0(typescript@5.9.3)
       remeda: 2.48.0
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/solid-start@8.30.0(typescript@6.0.3)':
+  '@orval/solid-start@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/swr@8.30.0(typescript@6.0.3)':
+  '@orval/swr@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
-      '@orval/fetch': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
+      '@orval/fetch': 8.30.0(typescript@5.9.3)
     transitivePeerDependencies:
       - '@faker-js/faker'
       - supports-color
       - typescript
 
-  '@orval/zod@8.30.0(typescript@6.0.3)':
+  '@orval/zod@8.30.0(typescript@5.9.3)':
     dependencies:
-      '@orval/core': 8.30.0(typescript@6.0.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
       jsesc: 3.1.0
       remeda: 2.48.0
     transitivePeerDependencies:
@@ -9674,6 +9715,10 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  expo-document-picker@57.0.2(expo@57.0.25):
+    dependencies:
+      expo: 57.0.25(@babel/core@7.29.7)(@expo/metro-runtime@57.0.16)(expo-router@57.0.23)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+
   expo-file-system@57.0.7(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)):
     dependencies:
       expo: 57.0.25(@babel/core@7.29.7)(@expo/metro-runtime@57.0.16)(expo-router@57.0.23)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
@@ -9767,6 +9812,11 @@ snapshots:
     dependencies:
       react-native: 0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)
 
+  expo-print@57.0.2(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)):
+    dependencies:
+      expo: 57.0.25(@babel/core@7.29.7)(@expo/metro-runtime@57.0.16)(expo-router@57.0.23)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+      react-native: 0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)
+
   expo-router@57.0.23(50518cf89fbc3de7350652b353ef979e):
     dependencies:
       '@expo/log-box': 57.0.4(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
@@ -9821,6 +9871,18 @@ snapshots:
 
   expo-server@57.0.3: {}
 
+  expo-sharing@57.0.22(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3):
+    dependencies:
+      '@expo/config-plugins': 57.0.9(typescript@6.0.3)
+      '@expo/config-types': 57.0.2
+      '@expo/plist': 0.8.1
+      expo: 57.0.25(@babel/core@7.29.7)(@expo/metro-runtime@57.0.16)(expo-router@57.0.23)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+      react: 19.2.3
+      react-native: 0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
+
   expo-splash-screen@57.0.9(expo@57.0.25)(typescript@6.0.3):
     dependencies:
       '@expo/config-plugins': 57.0.9(typescript@6.0.3)
@@ -9856,6 +9918,12 @@ snapshots:
       react-native-web: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
     transitivePeerDependencies:
       - supports-color
+
+  expo-video@57.0.5(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
+    dependencies:
+      expo: 57.0.25(@babel/core@7.29.7)(@expo/metro-runtime@57.0.16)(expo-router@57.0.23)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)
+      react: 19.2.3
+      react-native: 0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)
 
   expo-web-browser@57.0.3(expo@57.0.25)(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3)):
     dependencies:
@@ -11068,21 +11136,21 @@ snapshots:
       strip-ansi: 5.2.0
       wcwidth: 1.0.1
 
-  orval@8.30.0(prettier@3.9.6)(typescript@6.0.3):
+  orval@8.30.0(prettier@3.9.6)(typescript@5.9.3):
     dependencies:
       '@commander-js/extra-typings': 15.0.0(commander@15.0.0)
-      '@orval/angular': 8.30.0(typescript@6.0.3)
-      '@orval/axios': 8.30.0(typescript@6.0.3)
-      '@orval/core': 8.30.0(typescript@6.0.3)
-      '@orval/effect': 8.30.0(typescript@6.0.3)
-      '@orval/fetch': 8.30.0(typescript@6.0.3)
-      '@orval/hono': 8.30.0(typescript@6.0.3)
-      '@orval/mcp': 8.30.0(typescript@6.0.3)
-      '@orval/mock': 8.30.0(typescript@6.0.3)
-      '@orval/query': 8.30.0(typescript@6.0.3)
-      '@orval/solid-start': 8.30.0(typescript@6.0.3)
-      '@orval/swr': 8.30.0(typescript@6.0.3)
-      '@orval/zod': 8.30.0(typescript@6.0.3)
+      '@orval/angular': 8.30.0(typescript@5.9.3)
+      '@orval/axios': 8.30.0(typescript@5.9.3)
+      '@orval/core': 8.30.0(typescript@5.9.3)
+      '@orval/effect': 8.30.0(typescript@5.9.3)
+      '@orval/fetch': 8.30.0(typescript@5.9.3)
+      '@orval/hono': 8.30.0(typescript@5.9.3)
+      '@orval/mcp': 8.30.0(typescript@5.9.3)
+      '@orval/mock': 8.30.0(typescript@5.9.3)
+      '@orval/query': 8.30.0(typescript@5.9.3)
+      '@orval/solid-start': 8.30.0(typescript@5.9.3)
+      '@orval/swr': 8.30.0(typescript@5.9.3)
+      '@orval/zod': 8.30.0(typescript@5.9.3)
       '@scalar/json-magic': 0.12.20
       '@scalar/openapi-parser': 0.28.16
       '@scalar/openapi-types': 0.9.4
@@ -11096,9 +11164,9 @@ snapshots:
       js-yaml: 4.3.2
       remeda: 2.48.0
       string-argv: 0.3.2
-      typedoc: 0.28.20(typescript@6.0.3)
-      typedoc-plugin-coverage: 4.0.3(typedoc@0.28.20(typescript@6.0.3))
-      typedoc-plugin-markdown: 4.13.0(typedoc@0.28.20(typescript@6.0.3))
+      typedoc: 0.28.20(typescript@5.9.3)
+      typedoc-plugin-coverage: 4.0.3(typedoc@0.28.20(typescript@5.9.3))
+      typedoc-plugin-markdown: 4.13.0(typedoc@0.28.20(typescript@5.9.3))
     optionalDependencies:
       prettier: 3.9.6
     transitivePeerDependencies:
@@ -12238,21 +12306,21 @@ snapshots:
       media-typer: 1.1.1
       mime-types: 3.0.2
 
-  typedoc-plugin-coverage@4.0.3(typedoc@0.28.20(typescript@6.0.3)):
+  typedoc-plugin-coverage@4.0.3(typedoc@0.28.20(typescript@5.9.3)):
     dependencies:
-      typedoc: 0.28.20(typescript@6.0.3)
+      typedoc: 0.28.20(typescript@5.9.3)
 
-  typedoc-plugin-markdown@4.13.0(typedoc@0.28.20(typescript@6.0.3)):
+  typedoc-plugin-markdown@4.13.0(typedoc@0.28.20(typescript@5.9.3)):
     dependencies:
-      typedoc: 0.28.20(typescript@6.0.3)
+      typedoc: 0.28.20(typescript@5.9.3)
 
-  typedoc@0.28.20(typescript@6.0.3):
+  typedoc@0.28.20(typescript@5.9.3):
     dependencies:
       '@gerrit0/mini-shiki': 3.23.0
       lunr: 2.3.9
       markdown-it: 14.3.1
       minimatch: 10.2.6
-      typescript: 6.0.3
+      typescript: 5.9.3
       yaml: 2.9.0
 
   typescript@5.9.3: {}

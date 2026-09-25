@@ -1,0 +1,552 @@
+BENIUS Mobile Step 5 is COMPLETE and CLOSED.
+
+Do NOT repeat Step 4, Step 4B, or Step 5.
+
+Step 5 established:
+
+* native Student Home/Dashboard
+* real mobile authentication
+* authenticated Student identity
+* tenant isolation
+* Academic Session scoping
+* session-aware TanStack Query caching
+* loading/error/offline states
+* native dashboard implementation based on the actual responsive web Student dashboard
+* Android bundle export
+* web production build
+* documented native-device limitation
+
+Now begin:
+
+# BENIUS MOBILE STEP 6
+
+## STUDENT NAVIGATION + FIRST REAL DESTINATION
+
+This remains an incremental implementation.
+
+DO NOT build the entire Student application.
+
+DO NOT build Teacher or Admin.
+
+DO NOT redesign BENIUS.
+
+==================================================
+
+1. PRIMARY OBJECTIVE
+   ==================================================
+
+Establish the real native Student navigation hierarchy and implement the FIRST genuine Student destination reachable from the existing BENIUS Student Home/navigation.
+
+The existing BENIUS WEB APPLICATION remains the source of truth.
+
+The objective is:
+
+Existing BENIUS Student responsive/mobile navigation
+↓
+faithful native React Native navigation
+↓
+same backend
+↓
+same database
+↓
+same business rules
+↓
+same permissions
+↓
+same Academic Session behavior
+
+Do not invent navigation simply because this is a mobile application.
+
+==================================================
+2. READ-ONLY AUDIT FIRST
+========================
+
+Before changing code, inspect the existing web application.
+
+Identify:
+
+A. Student web routes.
+
+B. Student dashboard navigation.
+
+C. Student mobile/responsive navigation behavior.
+
+D. Header/menu/navigation components.
+
+E. Bottom navigation, drawer, tabs, menus, or other navigation mechanisms if present.
+
+F. Every destination directly reachable from Student Home.
+
+G. Which destination the web application presents as the primary/first destination.
+
+H. API calls used by that destination.
+
+I. Existing React Query hooks.
+
+J. Existing reusable components.
+
+K. Responsive behavior at approximately:
+
+390 × 844
+
+L. Authentication requirements.
+
+M. Academic Session requirements.
+
+Do not guess.
+
+Use the actual web implementation.
+
+==================================================
+3. CHOOSE THE FIRST DESTINATION
+===============================
+
+After inspecting the web application, select the first destination according to this rule:
+
+1. Prefer the first Student destination directly reachable from the actual responsive/mobile navigation.
+2. Prefer a destination whose web implementation is sufficiently self-contained to reproduce safely.
+3. If Student Profile is directly exposed and is the first appropriate destination, use Student Profile.
+4. If another destination is clearly first in the existing navigation, use that destination instead.
+
+Document why that destination was selected.
+
+Do NOT start Student Examination merely because it is a major module.
+
+==================================================
+4. NO FAKE DESTINATIONS
+=======================
+
+Do not create fake working screens.
+
+For destinations that are not implemented yet:
+
+* preserve their navigation presence if the real web UI exposes them
+* make unavailable destinations clearly indicate that implementation is pending
+* do not display fake data
+* do not create fake APIs
+
+The user must never believe an unfinished module is fully implemented.
+
+==================================================
+5. NATIVE NAVIGATION
+====================
+
+Use the existing Expo Router architecture.
+
+Use native navigation patterns appropriate to the existing web navigation hierarchy.
+
+Do not use WebView.
+
+Do not embed the entire web application inside the native app.
+
+Preserve:
+
+* screen hierarchy
+* back behavior
+* active destination indication
+* header behavior
+* menu behavior
+* session controls
+* logout behavior
+
+Where the web uses an interaction that has no exact native equivalent, use the closest native interaction while preserving the same user flow.
+
+==================================================
+6. UI SOURCE OF TRUTH
+=====================
+
+Inspect the actual web screen at a mobile viewport before implementing it.
+
+Match as closely as technically possible:
+
+* layout
+* ordering
+* header
+* navigation
+* typography
+* labels
+* wording
+* cards
+* buttons
+* icons
+* colors
+* spacing
+* borders
+* radius
+* shadows
+* badges
+* tabs
+* menus
+* dialogs
+* modals
+* empty states
+* loading states
+* error states
+* retry behavior
+
+Do NOT redesign.
+
+Do NOT introduce arbitrary modern mobile patterns.
+
+Do NOT make assumptions about what "looks better."
+
+The existing BENIUS responsive web UI is the visual and interaction source of truth.
+
+==================================================
+7. AUTHENTICATION
+=================
+
+Reuse the existing mobile authentication system.
+
+Do not create another login/session system.
+
+Use:
+
+* AuthContext
+* SecureStore
+* mobile access credential
+* mobile refresh credential
+* /api/mobile/auth/me
+* existing generation-aware refresh coordinator
+* existing logout/revocation behavior
+
+Do not store passwords or PINs.
+
+The server remains authoritative for identity.
+
+==================================================
+8. TENANT ISOLATION
+===================
+
+This is mandatory.
+
+Every request must remain constrained to the authenticated Student's school.
+
+Never accept a client-supplied schoolId as authority.
+
+Never allow:
+
+Student A / School A
+↓
+Student B / School B
+
+data access.
+
+If the selected destination exposes Student-specific information, the server must derive the Student identity from the authenticated mobile credential.
+
+==================================================
+9. ACADEMIC SESSION
+===================
+
+Reuse the existing Step 4/5 Academic Session foundation.
+
+Keep separate:
+
+* authentication
+* school/tenant
+* Student identity
+* Academic Session
+
+If the destination is session-sensitive:
+
+* include the selected Academic Session
+* use the existing session-scoped API helpers
+* include session identity in query keys
+* refetch when session changes
+* prevent stale previous-session data
+
+If the destination is not session-sensitive, do not artificially make it session-sensitive.
+
+Follow the existing web behavior.
+
+==================================================
+10. API IMPLEMENTATION
+======================
+
+Prefer existing backend endpoints.
+
+Do not duplicate backend business logic in React Native.
+
+If an existing endpoint cannot safely serve the mobile screen, create the smallest possible:
+
+GET /api/mobile/student/...
+
+endpoint.
+
+Any new endpoint must:
+
+* authenticate the mobile bearer credential
+* derive school from authenticated principal
+* derive Student identity from authenticated principal
+* enforce Academic Session where required
+* reject cross-school access
+* reject cross-student access
+* reuse existing domain/business logic
+* return only the data needed by the screen
+
+Do not perform unrelated backend refactoring.
+
+==================================================
+11. TANSTACK QUERY
+==================
+
+Follow the Step 4B and Step 5 cache-key rules.
+
+For session-sensitive data, the query key must distinguish:
+
+resource
+school
+Student/principal
+role
+Academic Session
+
+Avoid duplicate requests.
+
+Invalidate/refetch correctly when:
+
+* Academic Session changes
+* Student logs out
+* authenticated identity changes
+
+Do not allow previous Student/session data to survive an identity change.
+
+==================================================
+12. LOADING / EMPTY / ERROR / OFFLINE
+=====================================
+
+Reproduce the web application's actual behavior where possible.
+
+Implement:
+
+* loading
+* loaded
+* empty
+* API error
+* retry
+* offline
+* authentication failure
+* failed image/photo fallback where applicable
+
+Do not use fake values.
+
+==================================================
+13. PERFORMANCE
+===============
+
+Keep the screen smooth.
+
+Avoid:
+
+* duplicate API requests
+* unnecessary rerenders
+* fetching unrelated Student modules
+* loading entire school datasets
+* unnecessary polling
+
+Use virtualization where a long list exists.
+
+Use the existing API/cache architecture.
+
+==================================================
+14. IST
+=======
+
+All BENIUS business/display dates and times must use:
+
+Asia/Kolkata / IST
+
+Do not use device-local timezone for application business logic.
+
+Use the existing shared date helpers.
+
+==================================================
+15. WEB REGRESSION
+==================
+
+The existing web application must remain unchanged functionally.
+
+Do not modify web UI merely to simplify mobile development.
+
+After implementation:
+
+* run web production build
+* verify web startup/health
+* verify existing public Student routes still render
+* verify no mobile-only changes break web behavior
+
+==================================================
+16. TESTING
+===========
+
+Run all feasible tests.
+
+At minimum:
+
+A. Mobile TypeScript.
+
+B. Expo Doctor.
+
+C. Android bundle/build validation.
+
+D. Web production build.
+
+E. Existing mobile authentication tests.
+
+F. New destination API tests.
+
+G. Navigation tests where practical.
+
+H. Tenant isolation.
+
+I. Student isolation.
+
+J. Academic Session isolation where applicable.
+
+K. Invalid credential behavior.
+
+L. Refresh behavior.
+
+M. Logout behavior.
+
+N. Query/cache-key inspection.
+
+O. Loading state.
+
+P. Empty state.
+
+Q. Error/retry state.
+
+R. Offline state.
+
+S. Web regression.
+
+If native Android/iOS device/emulator is unavailable:
+
+explicitly report that native runtime interaction could not be verified.
+
+Never fabricate native runtime results.
+
+==================================================
+17. UI VALIDATION
+=================
+
+Inspect the existing web screen at:
+
+approximately 390 × 844
+
+and compare the native implementation against it.
+
+Document:
+
+* what matches
+* what is approximated
+* any unavoidable native differences
+
+Do NOT claim pixel-perfect parity without actual validation.
+
+==================================================
+18. DOCUMENTATION
+=================
+
+Create:
+
+artifacts/benius-mobile/docs/student-navigation-step6.md
+
+Document:
+
+1. Web navigation source
+2. Mobile navigation structure
+3. First destination selected
+4. Reason for selection
+5. Web route
+6. API endpoints
+7. Authentication
+8. Tenant isolation
+9. Student isolation
+10. Academic Session behavior
+11. Query/cache keys
+12. UI fidelity
+13. Loading/error/empty/offline states
+14. Performance considerations
+15. Tests
+16. Native-device limitation
+17. Known deviations
+18. Destinations intentionally not implemented
+
+Update the UI fidelity map with any reusable navigation/screen patterns discovered.
+
+==================================================
+19. STRICT SCOPE LIMIT
+======================
+
+Do NOT implement:
+
+* Student Examination
+* Student Attendance
+* Student Fees
+* Student Timetable
+* Student Notices
+* Teacher modules
+* Admin modules
+
+unless the actual first destination selected by the audit is one of these.
+
+Even then, implement ONLY that one destination, not the whole module.
+
+Do not continue to another Student destination after the selected first destination is complete.
+
+==================================================
+20. FINAL REPORT
+================
+
+At completion provide:
+
+1. Files created
+2. Files changed
+3. Web navigation source inspected
+4. Native navigation implemented
+5. First destination selected
+6. Why it was selected
+7. APIs reused
+8. New APIs
+9. Authentication result
+10. Tenant isolation result
+11. Student isolation result
+12. Academic Session result
+13. Cache result
+14. UI fidelity result
+15. Loading/error/empty/offline result
+16. IST result
+17. Performance result
+18. Tests passed
+19. Tests failed
+20. Tests not possible
+21. Native device limitation
+22. Known deviations
+23. Confirmation that unrelated modules were not started
+
+Do not report PASS for anything that was not actually tested.
+
+==================================================
+FINAL STOP CONDITION
+====================
+
+After completing the selected first Student destination:
+
+STOP.
+
+Do not automatically continue to Step 7.
+
+Do not start another module.
+
+Wait for review.
+
+The purpose of Step 6 is to establish a correct, reusable native navigation pattern and one complete Student destination while maintaining:
+
+same BENIUS backend
+same database
+same business logic
+same permissions
+same tenant isolation
+same Academic Session behavior
+same responsive-web visual/interaction source of truth.

@@ -1,0 +1,139 @@
+I WANT YOU TO BUILD AN EXACT MOBILE REPLICA OF THE EXISTING BENIUS WEB APPLICATION.
+
+THAT IS THE ENTIRE REQUIREMENT.
+
+Take the EXISTING BENIUS WEB APPLICATION in this Replit project and reproduce it as a NATIVE REACT NATIVE + EXPO + TYPESCRIPT application that runs on BOTH ANDROID AND iOS.
+
+DO NOT REDESIGN IT.
+DO NOT SIMPLIFY IT.
+DO NOT CREATE A DIFFERENT MOBILE UX.
+DO NOT MAKE A DEMO.
+DO NOT USE WEBVIEW.
+
+The EXISTING WEB APPLICATION is the SINGLE SOURCE OF TRUTH.
+
+Replicate the complete application as closely as technically possible:
+
+* Same frontend functionality
+* Same backend/API behavior
+* Same screens
+* Same navigation
+* Same UI
+* Same colors
+* Same fonts
+* Same layouts
+* Same buttons
+* Same forms
+* Same tables
+* Same cards
+* Same tabs
+* Same menus
+* Same filters
+* Same search
+* Same dialogs/modals
+* Same labels and wording
+* Same validation
+* Same loading states
+* Same empty states
+* Same error states
+* Same workflows
+* Same calculations
+* Same permissions
+* Same Student functionality
+* Same Teacher functionality
+* Same Admin functionality
+* Same Support Staff functionality
+* Same authentication
+* Same Academic Session behavior
+* Same school/tenant isolation
+* Same examination functionality
+* Same attendance functionality
+* Same timetable functionality
+* Same fees functionality
+* Same notices functionality
+* Same dashboards
+* Same profile/settings functionality
+* Same existing modules and routes
+
+Inspect the EXISTING WEB APPLICATION source code and its responsive/mobile appearance and reproduce it in React Native.
+
+Reuse the EXISTING BENIUS backend, APIs, database, business logic, validation, authorization and calculations wherever possible.
+
+Do NOT create a second backend just for mobile unless something is absolutely required for native operation.
+
+Do NOT connect the mobile application directly to PostgreSQL.
+
+The architecture must be:
+
+BENIUS React Native Mobile App
+↓
+Existing BENIUS Backend/API
+↓
+Existing BENIUS Database
+
+The SAME React Native codebase must run on:
+
+ANDROID
+AND
+iOS
+
+Do not create separate Android and iOS applications.
+
+Use native React Native components instead of WebView.
+
+The mobile application must behave like the existing web application, while using native equivalents where browser HTML/CSS functionality cannot exist directly.
+
+Preserve all existing security requirements:
+
+* authenticated school/tenant isolation
+* role permissions
+* Student isolation
+* Teacher isolation
+* Admin isolation
+* Support Staff permissions
+* Academic Session isolation
+* Exam Controller Academic Session ID scoping
+* existing authentication rules
+* existing backend authorization
+* IST / Asia/Kolkata application time handling
+
+Do not weaken or bypass any existing security or tenant/session rules.
+
+Do not invent functionality or fake data.
+
+Do not remove or break anything from the existing web application.
+
+The web application must continue working exactly as it does today.
+
+Build the mobile application by systematically inspecting the existing web application and reproducing EVERYTHING that exists.
+
+Prioritize FUNCTIONAL AND VISUAL REPLICATION over creating new architecture.
+
+Use the existing mobile foundation where it already exists, but extend it to cover the complete web application.
+
+Do not stop after one module or dashboard.
+
+Continue implementing the complete application.
+
+At the end, make sure:
+
+1. The React Native application compiles.
+2. Android build/export works.
+3. The project is configured correctly for iOS.
+4. The same codebase targets Android and iOS.
+5. Existing backend integration works.
+6. Existing web application still works.
+7. No fake data has been introduced.
+8. No WebView has been used.
+
+IMPORTANT:
+
+I DO NOT WANT A NEW DESIGN.
+
+I DO NOT WANT A "MOBILE-FRIENDLY VERSION".
+
+I WANT THE EXISTING BENIUS WEB APPLICATION REPLICATED AS A NATIVE MOBILE APPLICATION.
+
+WEB APPLICATION → EXACT NATIVE REACT NATIVE REPLICA → ANDROID + iOS.
+
+START NOW AND IMPLEMENT THE COMPLETE REPLICA WITHOUT STOPPING TO ASK ME FOR APPROVAL SCREEN BY SCREEN.

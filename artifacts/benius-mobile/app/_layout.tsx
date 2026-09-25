@@ -20,6 +20,11 @@ function Navigation() {
     <Stack.Screen name="index" options={{ headerShown: false }} />
     <Stack.Screen name="sessions" options={{ title: 'Academic session', headerShown: false }} />
     <Stack.Screen name="profile" options={{ title: 'Account', headerShown: false }} />
+    <Stack.Screen name="student-profile" options={{ title: 'My Profile', headerShown: false, gestureEnabled: false }} />
+    <Stack.Screen name="student/attendance" options={{ title: 'Attendance', headerShown: false, gestureEnabled: true }} />
+    <Stack.Screen name="student/homework" options={{ title: 'Homework', headerShown: false, gestureEnabled: true }} />
+    <Stack.Screen name="student/classwork" options={{ title: 'Classwork', headerShown: false, gestureEnabled: true }} />
+    <Stack.Screen name="teacher/profile" options={{ title: 'Teacher Profile', headerShown: false, gestureEnabled: true }} />
     <Stack.Screen name="settings" options={{ title: 'Settings', headerShown: false }} />
     <Stack.Screen name="network-error" options={{ title: 'Connection', headerShown: false }} />
     <Stack.Screen name="error" options={{ title: 'Error', headerShown: false }} />

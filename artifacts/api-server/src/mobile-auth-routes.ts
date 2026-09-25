@@ -35,6 +35,11 @@ import {
   MOBILE_CHALLENGE_TTL_MS,
   MOBILE_REFRESH_TTL_MS,
 } from "./mobile-auth-crypto";
+import { registerMobileStudentProfileRoutes } from "./mobile-student-profile-routes";
+import { registerMobileStudentAttendanceRoutes } from "./mobile-student-attendance-routes";
+import { registerMobileStudentHomeworkRoutes } from "./mobile-student-homework-routes";
+import { registerMobileTeacherRoutes } from "./mobile-teacher-routes";
+import { registerMobileAdminOverviewRoutes } from "./mobile-admin-overview-routes";
 
 type MobileRole = "admin" | "teacher" | "student" | "support_staff";
 type MobilePrincipal = {
@@ -417,6 +422,18 @@ async function makeAdminChallengeResponse(
 export function registerMobileAuthRoutes(app: Express): void {
   app.use("/api/mobile/auth", requireHttps);
   app.use("/api/mobile/academic-sessions", requireHttps);
+  app.use("/api/mobile/student/profile", requireHttps);
+  app.use("/api/mobile/teacher", requireHttps);
+  app.use("/api/mobile/admin", requireHttps);
+  registerMobileAdminOverviewRoutes(app, requireHttps, requireMobileBearer);
+  registerMobileStudentProfileRoutes(app, requireMobileBearer);
+  registerMobileTeacherRoutes(app, requireHttps, requireMobileBearer);
+  registerMobileStudentAttendanceRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileStudentHomeworkRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
 
   app.get("/api/mobile/academic-sessions", requireMobileBearer, async (req, res) => {
     const principal = (req as MobileAuthenticatedRequest).mobileAuth!.principal;
