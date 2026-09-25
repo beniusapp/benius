@@ -517,9 +517,9 @@ export const timetableEntries = pgTable("timetable_entries", {
   endTime: text("end_time"),
   status: text("status").notNull().default("draft"),
   room: text("room"),
-  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
 }, (table) => [
-  uniqueIndex("timetable_class_slot_unique").on(table.schoolId, table.class, table.section, table.dayOfWeek, table.period),
+  uniqueIndex("timetable_class_slot_unique").on(table.schoolId, table.sessionId, table.class, table.section, table.dayOfWeek, table.period),
 ]);
 
 export const teacherAllocations = pgTable("teacher_allocations", {
@@ -924,6 +924,7 @@ export type VerificationLog = typeof verificationLogs.$inferSelect;
 export const timetableStructure = pgTable("timetable_structure", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
   class: varchar("class", { length: 20 }).notNull(),
   periodNumber: integer("period_number").notNull(),
   label: text("label").notNull().default(""),
@@ -931,7 +932,12 @@ export const timetableStructure = pgTable("timetable_structure", {
   endTime: text("end_time").notNull().default(""),
   isBreak: boolean("is_break").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),
-});
+}, (table) => [
+  // Break rows use period_number=0 and can occur more than once per class.
+  uniqueIndex("timetable_structure_period_unique")
+    .on(table.schoolId, table.sessionId, table.class, table.periodNumber)
+    .where(sql`NOT ${table.isBreak}`),
+]);
 
 export const insertTimetableStructureSchema = createInsertSchema(timetableStructure).omit({ id: true });
 export type InsertTimetableStructure = z.infer<typeof insertTimetableStructureSchema>;

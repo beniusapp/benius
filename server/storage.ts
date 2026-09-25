@@ -2776,59 +2776,79 @@ export class DatabaseStorage {
   }
 
   // ===== TIMETABLE METHODS =====
+  private async requireTimetableSession(schoolId: number, sessionId: number, writable = false): Promise<void> {
+    if (!Number.isInteger(schoolId) || schoolId <= 0 || !Number.isInteger(sessionId) || sessionId <= 0) {
+      throw new Error("A valid school and academic session are required for Timetable");
+    }
+    const [session] = await db.select({ isActive: academicSessions.isActive })
+      .from(academicSessions)
+      .where(and(eq(academicSessions.id, sessionId), eq(academicSessions.schoolId, schoolId)));
+    if (!session) throw new Error("Academic session does not belong to this school");
+    if (writable && !session.isActive) throw new Error("Archived academic sessions are read-only");
+  }
+
   async createTimetableEntry(data: InsertTimetableEntry): Promise<TimetableEntry> {
+    await this.requireTimetableSession(data.schoolId, data.sessionId, true);
+    const [teacher] = await db.select({ id: teachers.id }).from(teachers)
+      .where(and(eq(teachers.id, data.teacherId), eq(teachers.schoolId, data.schoolId)));
+    if (!teacher) throw new Error("Teacher does not belong to this school");
     const [entry] = await db.insert(timetableEntries).values(data).returning();
     return entry;
   }
 
-  async getTimetableByTeacher(teacherId: number, sessionId?: number | null): Promise<TimetableEntry[]> {
-    const conditions: any[] = [eq(timetableEntries.teacherId, teacherId)];
-    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
-    return await db.select().from(timetableEntries).where(and(...conditions));
+  async getTimetableByTeacher(schoolId: number, sessionId: number, teacherId: number): Promise<TimetableEntry[]> {
+    await this.requireTimetableSession(schoolId, sessionId);
+    return await db.select().from(timetableEntries).where(and(
+      eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId),
+      eq(timetableEntries.teacherId, teacherId),
+    ));
   }
 
-  async getTimetableBySchool(schoolId: number, sessionId?: number | null): Promise<(TimetableEntry & { teacherName: string })[]> {
-    const conditions: any[] = [eq(timetableEntries.schoolId, schoolId)];
-    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
+  async getTimetableBySchool(schoolId: number, sessionId: number): Promise<(TimetableEntry & { teacherName: string })[]> {
+    await this.requireTimetableSession(schoolId, sessionId);
     const result = await db.select().from(timetableEntries)
       .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
-      .where(and(...conditions));
+      .where(and(eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId)));
     return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
   }
 
-  async deleteTimetableEntry(id: number, schoolId?: number): Promise<boolean> {
-    const conditions = schoolId !== undefined
-      ? and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId))
-      : eq(timetableEntries.id, id);
-    const result = await db.delete(timetableEntries).where(conditions).returning();
+  async deleteTimetableEntry(id: number, schoolId: number, sessionId: number): Promise<boolean> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
+    const result = await db.delete(timetableEntries).where(and(
+      eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId),
+    )).returning();
     return result.length > 0;
   }
 
-  async getTimetableEntryById(id: number, schoolId?: number): Promise<TimetableEntry | null> {
-    const conditions = schoolId !== undefined
-      ? and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId))
-      : eq(timetableEntries.id, id);
-    const [entry] = await db.select().from(timetableEntries).where(conditions);
+  async getTimetableEntryById(id: number, schoolId: number, sessionId: number): Promise<TimetableEntry | null> {
+    await this.requireTimetableSession(schoolId, sessionId);
+    const [entry] = await db.select().from(timetableEntries).where(and(
+      eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId),
+    ));
     return entry || null;
   }
 
   async updateTimetableEntry(
     id: number,
     schoolId: number,
+    sessionId: number,
     data: Partial<Pick<TimetableEntry, "dayOfWeek" | "period" | "class" | "section" | "subject" | "room" | "startTime" | "endTime" | "status">>
   ): Promise<TimetableEntry | null> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     const updateData: Record<string, unknown> = { ...data };
     const [entry] = await db.update(timetableEntries)
       .set(updateData)
-      .where(and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId)))
+      .where(and(eq(timetableEntries.id, id), eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId)))
       .returning();
     return entry || null;
   }
 
-  async updateTimetableEntryStatus(schoolId: number, cls: string, section: string, status: string): Promise<number> {
+  async updateTimetableEntryStatus(schoolId: number, sessionId: number, cls: string, section: string, status: string): Promise<number> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     // When publishing, only promote draft entries (not already-published ones)
     const whereConditions = and(
       eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.sessionId, sessionId),
       eq(timetableEntries.class, cls),
       eq(timetableEntries.section, section),
       status === "published" ? eq(timetableEntries.status, "draft") : undefined,
@@ -2840,8 +2860,9 @@ export class DatabaseStorage {
     return result.length;
   }
 
-  async getClassSectionStatus(schoolId: number): Promise<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]> {
-    const entries = await db.select().from(timetableEntries).where(eq(timetableEntries.schoolId, schoolId));
+  async getClassSectionStatus(schoolId: number, sessionId: number): Promise<{ class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }[]> {
+    await this.requireTimetableSession(schoolId, sessionId);
+    const entries = await db.select().from(timetableEntries).where(and(eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId)));
     const map: Record<string, { class: string; section: string; totalCount: number; draftCount: number; publishedCount: number }> = {};
     for (const e of entries) {
       const key = `${e.class}-${e.section}`;
@@ -2855,6 +2876,7 @@ export class DatabaseStorage {
 
   async validateTimetableEntry(opts: {
     schoolId: number;
+    sessionId: number;
     teacherId: number;
     dayOfWeek: number;
     period: number;
@@ -2865,7 +2887,11 @@ export class DatabaseStorage {
     excludeId?: number;
     requireAllocation?: boolean; // When true: teacher must have an allocation for (subject, class, section)
   }): Promise<{ valid: boolean; error?: string }> {
-    const { schoolId, teacherId, dayOfWeek, period, excludeId } = opts;
+    const { schoolId, sessionId, teacherId, dayOfWeek, period, excludeId } = opts;
+    await this.requireTimetableSession(schoolId, sessionId, true);
+    const [teacher] = await db.select({ id: teachers.id }).from(teachers)
+      .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)));
+    if (!teacher) return { valid: false, error: "Teacher does not belong to this school" };
 
     // 1. Allocation boundary check (for teacher self-management)
     if (opts.requireAllocation) {
@@ -2886,6 +2912,7 @@ export class DatabaseStorage {
     const existing = await db.select().from(timetableEntries).where(
       and(
         eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.sessionId, sessionId),
         eq(timetableEntries.dayOfWeek, dayOfWeek),
         eq(timetableEntries.period, period),
       )
@@ -2929,6 +2956,7 @@ export class DatabaseStorage {
       const weeklyEntries = await db.select().from(timetableEntries).where(
         and(
           eq(timetableEntries.schoolId, schoolId),
+          eq(timetableEntries.sessionId, sessionId),
           eq(timetableEntries.teacherId, teacherId),
           eq(timetableEntries.class, opts.class),
           eq(timetableEntries.section, opts.section),
@@ -2944,13 +2972,14 @@ export class DatabaseStorage {
     return { valid: true };
   }
 
-  async getTimetableByClassSection(schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<(TimetableEntry & { teacherName: string })[]> {
+  async getTimetableByClassSection(schoolId: number, sessionId: number, cls: string, section: string): Promise<(TimetableEntry & { teacherName: string })[]> {
+    await this.requireTimetableSession(schoolId, sessionId);
     const conditions: any[] = [
       eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.sessionId, sessionId),
       eq(timetableEntries.class, cls),
       eq(timetableEntries.section, section),
     ];
-    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
     const result = await db.select().from(timetableEntries)
       .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
       .where(and(...conditions));
@@ -2959,12 +2988,18 @@ export class DatabaseStorage {
 
   async upsertTimetableSlot(
     schoolId: number,
+    sessionId: number,
     opts: { dayOfWeek: number; period: number; class: string; section: string; teacherId: number; subject: string }
   ): Promise<TimetableEntry> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
+    const [teacher] = await db.select({ id: teachers.id }).from(teachers)
+      .where(and(eq(teachers.id, opts.teacherId), eq(teachers.schoolId, schoolId)));
+    if (!teacher) throw new Error("Teacher does not belong to this school");
     // Use ON CONFLICT DO UPDATE so the insert is atomic against the unique index
-    // timetable_class_slot_unique (school_id, class, section, day_of_week, period)
+    // timetable_class_slot_unique (school_id, session_id, class, section, day_of_week, period)
     const [result] = await db.insert(timetableEntries).values({
       schoolId,
+      sessionId,
       teacherId: opts.teacherId,
       dayOfWeek: opts.dayOfWeek,
       period: opts.period,
@@ -2976,6 +3011,7 @@ export class DatabaseStorage {
     .onConflictDoUpdate({
       target: [
         timetableEntries.schoolId,
+        timetableEntries.sessionId,
         timetableEntries.class,
         timetableEntries.section,
         timetableEntries.dayOfWeek,
@@ -2991,10 +3027,12 @@ export class DatabaseStorage {
     return result;
   }
 
-  async deleteTimetableSlot(schoolId: number, cls: string, section: string, dayOfWeek: number, period: number): Promise<boolean> {
+  async deleteTimetableSlot(schoolId: number, sessionId: number, cls: string, section: string, dayOfWeek: number, period: number): Promise<boolean> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     const result = await db.delete(timetableEntries).where(
       and(
         eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.sessionId, sessionId),
         eq(timetableEntries.class, cls),
         eq(timetableEntries.section, section),
         eq(timetableEntries.dayOfWeek, dayOfWeek),
@@ -3004,11 +3042,13 @@ export class DatabaseStorage {
     return result.length > 0;
   }
 
-  async checkSlotOccupancy(schoolId: number, cls: string, section: string, dayOfWeek: number, period: number, excludeTeacherId?: number): Promise<{ occupied: boolean; teacherName: string; teacherId: number; subject: string } | null> {
+  async checkSlotOccupancy(schoolId: number, sessionId: number, cls: string, section: string, dayOfWeek: number, period: number, excludeTeacherId?: number): Promise<{ occupied: boolean; teacherName: string; teacherId: number; subject: string } | null> {
+    await this.requireTimetableSession(schoolId, sessionId);
     const rows = await db.select().from(timetableEntries)
       .innerJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
       .where(and(
         eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.sessionId, sessionId),
         eq(timetableEntries.class, cls),
         eq(timetableEntries.section, section),
         eq(timetableEntries.dayOfWeek, dayOfWeek),
@@ -3027,22 +3067,26 @@ export class DatabaseStorage {
 
   async upsertTeacherTimetableSlot(
     schoolId: number,
+    sessionId: number,
     teacherId: number,
     opts: { dayOfWeek: number; period: number; class: string; section: string; subject: string; room?: string | null },
-    sessionId?: number | null
   ): Promise<TimetableEntry> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
+    const [teacher] = await db.select({ id: teachers.id }).from(teachers)
+      .where(and(eq(teachers.id, teacherId), eq(teachers.schoolId, schoolId)));
+    if (!teacher) throw new Error("Teacher does not belong to this school");
     const conditions: any[] = [
       eq(timetableEntries.schoolId, schoolId),
+      eq(timetableEntries.sessionId, sessionId),
       eq(timetableEntries.teacherId, teacherId),
       eq(timetableEntries.dayOfWeek, opts.dayOfWeek),
       eq(timetableEntries.period, opts.period),
     ];
-    if (sessionId != null) conditions.push(eq(timetableEntries.sessionId, sessionId));
     const existing = await db.select().from(timetableEntries).where(and(...conditions));
     if (existing.length > 0) {
       const [updated] = await db.update(timetableEntries)
         .set({ class: opts.class, section: opts.section, subject: opts.subject, room: opts.room ?? null, status: "draft" })
-        .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId)))
+        .where(and(eq(timetableEntries.id, existing[0].id), eq(timetableEntries.schoolId, schoolId), eq(timetableEntries.sessionId, sessionId)))
         .returning();
       return updated;
     }
@@ -3056,15 +3100,17 @@ export class DatabaseStorage {
       subject: opts.subject,
       room: opts.room ?? null,
       status: "draft",
-      sessionId: sessionId ?? null,
+      sessionId,
     }).returning();
     return created;
   }
 
-  async deleteTeacherTimetableSlot(schoolId: number, teacherId: number, dayOfWeek: number, period: number): Promise<boolean> {
+  async deleteTeacherTimetableSlot(schoolId: number, sessionId: number, teacherId: number, dayOfWeek: number, period: number): Promise<boolean> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     const result = await db.delete(timetableEntries).where(
       and(
         eq(timetableEntries.schoolId, schoolId),
+        eq(timetableEntries.sessionId, sessionId),
         eq(timetableEntries.teacherId, teacherId),
         eq(timetableEntries.dayOfWeek, dayOfWeek),
         eq(timetableEntries.period, period),
@@ -5669,31 +5715,37 @@ export class DatabaseStorage {
   }
 
   // ===== TIMETABLE STRUCTURE METHODS =====
-  async getTimetableStructure(schoolId: number, cls: string): Promise<TimetableStructure[]> {
+  async getTimetableStructure(schoolId: number, sessionId: number, cls: string): Promise<TimetableStructure[]> {
+    await this.requireTimetableSession(schoolId, sessionId);
     return await db
       .select()
       .from(timetableStructure)
-      .where(and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.class, cls)))
+      .where(and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.sessionId, sessionId), eq(timetableStructure.class, cls)))
       .orderBy(timetableStructure.sortOrder, timetableStructure.periodNumber);
   }
 
-  async saveTimetableStructure(schoolId: number, cls: string, rows: Omit<InsertTimetableStructure, "schoolId" | "class">[]): Promise<TimetableStructure[]> {
-    await db.delete(timetableStructure).where(
-      and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.class, cls))
-    );
-    if (rows.length === 0) return [];
+  async saveTimetableStructure(schoolId: number, sessionId: number, cls: string, rows: Omit<InsertTimetableStructure, "schoolId" | "sessionId" | "class">[]): Promise<TimetableStructure[]> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     const toInsert = rows.map((r, idx) => ({
       ...r,
       schoolId,
+      sessionId,
       class: cls,
       sortOrder: r.sortOrder ?? idx,
     }));
-    return await db.insert(timetableStructure).values(toInsert).returning();
+    return await db.transaction(async (tx) => {
+      await tx.delete(timetableStructure).where(
+        and(eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.sessionId, sessionId), eq(timetableStructure.class, cls))
+      );
+      if (toInsert.length === 0) return [];
+      return await tx.insert(timetableStructure).values(toInsert).returning();
+    });
   }
 
-  async deleteTimetableStructureById(id: number, schoolId: number): Promise<boolean> {
+  async deleteTimetableStructureById(id: number, schoolId: number, sessionId: number): Promise<boolean> {
+    await this.requireTimetableSession(schoolId, sessionId, true);
     const result = await db.delete(timetableStructure)
-      .where(and(eq(timetableStructure.id, id), eq(timetableStructure.schoolId, schoolId)))
+      .where(and(eq(timetableStructure.id, id), eq(timetableStructure.schoolId, schoolId), eq(timetableStructure.sessionId, sessionId)))
       .returning();
     return result.length > 0;
   }
