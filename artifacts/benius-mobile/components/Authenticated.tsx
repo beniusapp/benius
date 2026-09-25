@@ -3,6 +3,7 @@ import { Alert, Platform, Pressable, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAcademicSession } from '@/contexts/SessionContext';
 import { ApiError, Role } from '@/lib/api';
 import { useColors } from '@/hooks/useColors';
 import { AppHeader, Button, Card, Field, Screen, State, styles } from './Foundation';
@@ -160,9 +161,11 @@ export function Login() {
 
 export function Home() {
   const { user } = useAuth();
+  const { sessions, selectedId, loading: sessionsLoading, error: sessionsError } = useAcademicSession();
   const router = useRouter();
   const c = useColors();
   if (!user) return null;
+  const selectedSession = sessions.find(session => session.id === selectedId);
   const title = user.role === 'support_staff' ? 'Support staff workspace' : `${user.role.charAt(0).toUpperCase()}${user.role.slice(1)} workspace`;
   return <Screen>
     <AppHeader subtitle={title} />
@@ -175,8 +178,27 @@ export function Home() {
         <Feather name="shield" size={20} color={c.primary} />
         <Text style={[styles.title, { color: c.foreground, flex: 1 }]}>Mobile sign-in is active</Text>
       </View>
-      <Text style={{ color: c.mutedForeground, lineHeight: 23 }}>Your identity and school were verified by BENIUS. Academic sessions and school modules are deferred to a later mobile release; this app will not use browser-only session endpoints.</Text>
+      <Text style={{ color: c.mutedForeground, lineHeight: 23 }}>Your identity and school were verified by BENIUS. School modules are not yet available in the mobile app.</Text>
     </Card>
+    {user.role !== 'support_staff' && <Pressable
+      testID="home-session-selector"
+      accessibilityRole="button"
+      accessibilityLabel={`Academic sessions. ${selectedSession ? `${selectedSession.sessionName}, ${selectedSession.isActive ? 'Active' : 'Archive'}` : sessionsLoading ? 'Loading' : sessionsError ? 'Unavailable' : 'No session selected'}. Open session selector`}
+      onPress={() => router.push('/sessions')}
+      style={({ pressed }) => ({
+        marginTop: 14, marginBottom: 18, minHeight: 58, paddingHorizontal: 16,
+        flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 8,
+        borderColor: c.border, backgroundColor: c.card, opacity: pressed ? 0.72 : 1,
+      })}>
+      <Feather name={selectedSession && !selectedSession.isActive ? 'clock' : 'calendar'} size={19} color={c.primary} />
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: c.mutedForeground, fontSize: 12 }}>ACADEMIC SESSION</Text>
+        <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 15, marginTop: 3 }}>
+          {selectedSession ? `${selectedSession.sessionName} · ${selectedSession.isActive ? 'Active' : 'Archive'}` : sessionsLoading ? 'Loading sessions…' : sessionsError ? 'Sessions unavailable' : 'Choose a session'}
+        </Text>
+      </View>
+      <Feather name="chevron-right" size={18} color={c.mutedForeground} />
+    </Pressable>}
     {user.role === 'support_staff' && <Card>
       <Text style={[styles.title, { color: c.foreground }]}>Support staff navigation</Text>
       {user.allowedModules?.length
@@ -189,13 +211,86 @@ export function Home() {
 
 export function Sessions() {
   const c = useColors();
+  const router = useRouter();
+  const { user } = useAuth();
+  const { sessions, selectedId, loading, error, refresh, select } = useAcademicSession();
+  const [switchingId, setSwitchingId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const selected = sessions.find(session => session.id === selectedId);
+  const reload = async () => {
+    setActionError('');
+    setRefreshing(true);
+    try { await refresh(); }
+    catch (reason) { setActionError(reason instanceof Error ? reason.message : 'Could not refresh academic sessions.'); }
+    finally { setRefreshing(false); }
+  };
+  const switchTo = async (id: number) => {
+    if (switchingId !== null || id === selectedId) return;
+    setActionError('');
+    setSwitchingId(id);
+    try { await select(id); }
+    catch (reason) { setActionError(reason instanceof Error ? reason.message : 'Could not switch academic session. Your previous selection is still in use.'); }
+    finally { setSwitchingId(null); }
+  };
   return <Screen>
     <AppHeader subtitle="Academic sessions" />
-    <View style={{ height: 30 }} />
-    <Card>
-      <Text style={[styles.title, { color: c.foreground }]}>Academic sessions are deferred</Text>
-      <Text style={{ color: c.mutedForeground, lineHeight: 23 }}>The existing Academic Session endpoints use browser cookies and are not part of mobile authentication. BENIUS Mobile will not call them or treat their cookie-auth failure as a sign-out.</Text>
-    </Card>
+    <View style={{ height: 25 }} />
+    <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44, alignSelf: 'flex-start' }}>
+      <Feather name="arrow-left" size={17} color={c.primary} /><Text style={{ color: c.primary }}>Back</Text>
+    </Pressable>
+    <Text style={[styles.title, { color: c.foreground, marginTop: 12, marginBottom: 8 }]}>Academic Sessions</Text>
+    <Text style={{ color: c.mutedForeground, lineHeight: 22, marginBottom: 20 }}>Choose the school year you want to view. Archived sessions are for looking back; this does not change the school's active session.</Text>
+    {user?.role === 'support_staff' ? <Card>
+      <Feather name="info" size={22} color={c.primary} />
+      <Text style={[styles.title, { color: c.foreground }]}>Sessions unavailable</Text>
+      <Text style={{ color: c.mutedForeground, lineHeight: 22 }}>Academic-session switching is not available for support staff accounts in BENIUS Mobile. Contact your school administrator if you need access to a school year.</Text>
+    </Card> : <>
+      {selected && <View style={{ paddingVertical: 12, paddingHorizontal: 15, borderRadius: 8, borderWidth: 1, borderColor: selected.isActive ? '#86c8a0' : '#dfba77', backgroundColor: selected.isActive ? '#e9f6ee' : '#fff4dc', marginBottom: 20 }}>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: selected.isActive ? '#15803d' : '#9a5709' }}>CURRENT VIEW · {selected.isActive ? 'ACTIVE SESSION' : 'ARCHIVE'}</Text>
+        <Text style={{ fontSize: 16, fontWeight: '600', color: '#263449', marginTop: 4 }}>{selected.sessionName}</Text>
+      </View>}
+      {actionError ? <View accessibilityRole="alert" style={{ backgroundColor: c.card, borderColor: c.destructive, borderWidth: 1, borderRadius: 8, padding: 13, marginBottom: 14 }}>
+        <Text style={{ color: c.destructive, lineHeight: 21 }}>{actionError}</Text>
+        <Text style={{ color: c.mutedForeground, marginTop: 5 }}>Your previous session remains selected. Try again when connected.</Text>
+      </View> : null}
+      {error && <View accessibilityRole="alert" style={{ backgroundColor: c.card, borderColor: c.destructive, borderWidth: 1, borderRadius: 8, padding: 14, marginBottom: 14 }}>
+        <Text style={{ color: c.destructive, lineHeight: 21 }}>Could not load academic sessions. {error.message}</Text>
+        <Pressable testID="sessions-retry" accessibilityRole="button" accessibilityLabel="Try again" disabled={refreshing} onPress={() => { void reload(); }} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}>
+          <Text style={{ color: c.primary, fontWeight: '600' }}>{refreshing ? 'Retrying…' : 'Try again'}</Text>
+        </Pressable>
+      </View>}
+      {loading && sessions.length === 0 ? <View accessibilityLabel="Loading academic sessions" style={{ gap: 10 }}>
+        <Text style={{ color: c.mutedForeground }}>Loading academic sessions…</Text>
+        {[0, 1, 2].map(index => <View key={index} style={{ height: 64, backgroundColor: c.muted, borderRadius: 8, opacity: 1 - index * 0.2 }} />)}
+      </View> : sessions.length === 0 && !error ? <Card>
+        <Feather name="calendar" size={24} color={c.primary} />
+        <Text style={[styles.title, { color: c.foreground }]}>No sessions found</Text>
+        <Text style={{ color: c.mutedForeground, lineHeight: 22 }}>There are no academic sessions available for your school account yet.</Text>
+        <Button label="Refresh sessions" secondary icon="refresh-cw" disabled={refreshing} onPress={() => { void reload(); }} />
+      </Card> : sessions.length > 0 ? <View style={{ borderRadius: 8, borderWidth: 1, borderColor: c.border, overflow: 'hidden', backgroundColor: c.card }}>
+        <Text style={{ color: c.mutedForeground, fontSize: 11, fontWeight: '700', letterSpacing: 1.2, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.border }}>SWITCH VIEW SESSION</Text>
+        {sessions.map((session, index) => {
+          const isSelected = session.id === selectedId;
+          return <Pressable key={session.id} testID={`session-option-${session.id}`} accessibilityRole="button"
+            accessibilityLabel={`${session.sessionName}, ${session.isActive ? 'Active session' : 'Archived'}${isSelected ? ', currently viewing' : ', switch view'}`}
+            accessibilityState={{ selected: isSelected, disabled: switchingId !== null || isSelected }}
+            disabled={switchingId !== null || isSelected} onPress={() => { void switchTo(session.id); }}
+            style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, minHeight: 64,
+              borderBottomWidth: index === sessions.length - 1 ? 0 : 1, borderBottomColor: c.border, opacity: pressed ? 0.68 : 1,
+              backgroundColor: isSelected ? c.accent : c.card })}>
+            <View style={{ height: 8, width: 8, borderRadius: 4, backgroundColor: session.isActive ? '#14b8a6' : c.mutedForeground }} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.foreground, fontSize: 15, fontWeight: isSelected ? '700' : '500' }}>{session.sessionName}</Text>
+              <Text style={{ color: session.isActive ? '#15803d' : '#b45309', fontSize: 12, marginTop: 3 }}>{session.isActive ? 'Active session' : isSelected ? 'Viewing archive' : 'Archived'}</Text>
+            </View>
+            {isSelected ? <Feather name="check" size={18} color={c.primary} /> : switchingId === session.id
+              ? <Text style={{ color: c.mutedForeground, fontSize: 12 }}>Switching…</Text>
+              : <Feather name="chevron-right" size={17} color={c.mutedForeground} />}
+          </Pressable>;
+        })}
+      </View> : null}
+    </>}
   </Screen>;
 }
 
@@ -243,6 +338,6 @@ export function Settings() {
   return <AccountGate><Screen><AppHeader subtitle="Settings" /><View style={{ height: 36 }} />
     <Card><Text style={[styles.title, { color: c.foreground }]}>Appearance</Text><Text style={{ color: c.mutedForeground }}>Follows your device's light or dark mode.</Text></Card>
     <View style={{ height: 14 }} />
-    <Card><Text style={[styles.title, { color: c.foreground }]}>About BENIUS Mobile</Text><Text style={{ color: c.mutedForeground, lineHeight: 22 }}>Secure native authentication is enabled. School modules and academic-session support will be introduced in later phases.</Text></Card>
+    <Card><Text style={[styles.title, { color: c.foreground }]}>About BENIUS Mobile</Text><Text style={{ color: c.mutedForeground, lineHeight: 22 }}>Secure native authentication and academic-session selection are available. School modules will be introduced in later phases.</Text></Card>
   </Screen></AccountGate>;
 }

@@ -1,0 +1,1001 @@
+# BENIUS MOBILE — STEP 4
+
+## Authentication Verification + Academic Session Foundation + Exact Web UI Fidelity
+
+We are continuing development of the native BENIUS mobile application.
+
+IMPORTANT: This is STEP 4 ONLY.
+
+Do not start implementing Student, Teacher, Admin, Attendance, Examination, Timetable, Fees, Reports, Dashboard, or other full application modules yet.
+
+The purpose of this step is to make the authentication and Academic Session foundation production-quality and to formally establish the UI/UX fidelity architecture that all future mobile modules MUST follow.
+
+---
+
+# 1. PERMANENT BENIUS MOBILE PRODUCT REQUIREMENT
+
+The native mobile application must be a functional replica of the existing BENIUS web application.
+
+The existing BENIUS web application's actual responsive/mobile appearance must be treated as the PRIMARY VISUAL AND INTERACTION SOURCE OF TRUTH.
+
+I do NOT want an independently redesigned mobile application.
+
+I want the native Android/iOS application to reproduce the existing BENIUS web application's interface as closely as technically possible.
+
+This means future mobile screens must reproduce, as applicable:
+
+* Same screen structure
+* Same navigation hierarchy
+* Same menus
+* Same buttons
+* Same labels
+* Same wording
+* Same forms
+* Same fields
+* Same cards
+* Same tables
+* Same filters
+* Same search controls
+* Same dialogs/modals
+* Same tabs
+* Same icons
+* Same visual hierarchy
+* Same colors
+* Same typography hierarchy
+* Same spacing principles
+* Same validation messages
+* Same loading states
+* Same empty states
+* Same error states
+* Same confirmation flows
+* Same user workflows
+* Same permissions
+* Same calculations
+* Same business behavior
+
+The mobile implementation will naturally use React Native components rather than HTML/CSS because it is a native application.
+
+Therefore:
+
+DO NOT interpret "same UI" as requiring identical source code.
+
+Instead:
+
+EXISTING WEB UI
+↓
+VISUAL + INTERACTION SOURCE OF TRUTH
+↓
+NATIVE REACT NATIVE IMPLEMENTATION
+↓
+ANDROID + iOS
+
+The native implementation must reproduce the web application's appearance and behavior rather than inventing a new mobile design.
+
+Do NOT introduce a new "mobile-first redesign", "simplified mobile UX", "modernized mobile UI", or independent design language.
+
+If a native platform constraint makes an exact reproduction technically impossible, use the closest possible native equivalent and document the specific deviation.
+
+Do NOT use a WebView merely to achieve visual similarity.
+
+The mobile application must remain a genuine native React Native / Expo application.
+
+---
+
+# 2. EXISTING ARCHITECTURE — DO NOT BREAK IT
+
+The existing BENIUS project contains:
+
+* Existing web frontend
+* Existing backend
+* Existing PostgreSQL database
+* Existing authentication
+* Existing business logic
+* Existing academic-session system
+* Existing Admin / Teacher / Student roles
+
+The native mobile application currently exists under:
+
+artifacts/benius-mobile/
+
+The existing web application MUST continue working exactly as before.
+
+Do not replace the web application.
+
+Do not migrate the web application into React Native.
+
+Do not remove or rewrite working web modules.
+
+Do not change existing web authentication.
+
+Do not make destructive database changes.
+
+Do not perform a destructive schema push.
+
+---
+
+# 3. PERMANENT MULTI-TENANT REQUIREMENT
+
+BENIUS is a multi-tenant / multi-school application.
+
+This requirement is permanent.
+
+Every mobile operation must remain strictly scoped to the authenticated school/tenant.
+
+Never allow:
+
+* Cross-school student access
+* Cross-school teacher access
+* Cross-school admin access
+* Cross-school attendance
+* Cross-school examination data
+* Cross-school timetable data
+* Cross-school fee data
+* Cross-school academic sessions
+* Cross-school reports
+* Cross-school calculations
+* Cross-school configuration
+
+Never trust a school ID supplied by the mobile client when the server can derive the authenticated school from the authenticated mobile principal.
+
+The server remains the source of truth.
+
+---
+
+# 4. PERMANENT ACADEMIC SESSION REQUIREMENT
+
+Academic Session is NOT authentication identity.
+
+Authentication identifies the:
+
+* User
+* Role
+* School/Tenant
+
+Academic Session identifies the academic context in which the user is operating.
+
+The selected Academic Session must therefore remain separate from authentication.
+
+Future session-sensitive operations must explicitly use:
+
+Authenticated School/Tenant
++
+Authenticated Principal
++
+Selected Academic Session ID
+
+Do not merge these concepts.
+
+---
+
+# 5. VERIFY STEP 3 MOBILE AUTHENTICATION
+
+Before implementing anything new, inspect the existing Step 3 implementation.
+
+Verify the following:
+
+## Backend
+
+Confirm that the following mobile authentication endpoints are correctly registered and reachable:
+
+POST /api/mobile/auth/login
+
+POST /api/mobile/auth/verify-pin
+
+POST /api/mobile/auth/initialize
+
+POST /api/mobile/auth/refresh
+
+GET /api/mobile/auth/me
+
+POST /api/mobile/auth/logout
+
+Verify the actual route registration path rather than assuming it.
+
+Verify that the mobile bearer credential is actually accepted by the mobile authentication middleware.
+
+Verify:
+
+* Access credential expiration
+* Refresh credential expiration
+* Refresh token rotation
+* Refresh token hashing
+* Session binding
+* Principal binding
+* School binding
+* Role binding
+* Revocation
+* Refresh-token reuse detection
+* Challenge handling
+
+Do not weaken any of these controls for convenience.
+
+Do not create fake credentials.
+
+Do not create fake users.
+
+Do not hardcode login credentials.
+
+Do not bypass authentication.
+
+---
+
+# 6. VERIFY MOBILE CLIENT AUTHENTICATION
+
+Inspect:
+
+artifacts/benius-mobile/lib/api.ts
+
+artifacts/benius-mobile/lib/secure-session.ts
+
+artifacts/benius-mobile/contexts/AuthContext.tsx
+
+Verify that the mobile client:
+
+1. Sends the correct bearer credential.
+2. Stores credentials only in secure native storage.
+3. Never stores passwords in persistent storage.
+4. Never stores PINs in persistent storage.
+5. Restores authentication after application restart.
+6. Calls /api/mobile/auth/me to validate the restored identity.
+7. Clears invalid credentials safely.
+8. Handles expired access credentials.
+9. Uses the refresh endpoint when appropriate.
+10. Stores the newly rotated refresh credential.
+11. Handles logout correctly.
+12. Clears all mobile authentication state on logout.
+
+---
+
+# 7. CONCURRENT 401 / REFRESH HANDLING
+
+Inspect the API client carefully.
+
+Multiple API requests may receive 401 simultaneously when an access credential expires.
+
+Do NOT allow every request to independently perform a refresh.
+
+Implement or verify a single-flight refresh mechanism.
+
+Desired behavior:
+
+Request A → 401
+Request B → 401
+Request C → 401
+
+```
+    ↓
+```
+
+ONE refresh operation
+
+```
+    ↓
+```
+
+new access credential
+new rotated refresh credential
+
+```
+    ↓
+```
+
+retry eligible requests
+
+Do not create refresh storms.
+
+Do not accidentally reuse an already-rotated refresh credential.
+
+If refresh fails:
+
+* Clear the mobile credential state.
+* Clear authenticated user state.
+* Clear selected Academic Session state.
+* Return the user to the appropriate authentication screen.
+
+---
+
+# 8. ACADEMIC SESSION BACKEND DISCOVERY
+
+Inspect the existing BENIUS backend and identify the authoritative Academic Session APIs.
+
+Known existing routes from the previous audit include:
+
+GET /api/admin/academic-sessions
+
+GET /api/teacher/academic-sessions
+
+GET /api/student/academic-sessions
+
+Do NOT assume these routes are identical.
+
+Inspect their actual:
+
+* Authentication requirements
+* Response structures
+* School/tenant filtering
+* Role behavior
+* Active session rules
+* Archived session rules
+* Future session rules
+* Date fields
+* Status fields
+* Editability rules
+
+Determine which route is authoritative for each role.
+
+If an existing endpoint is sufficient, reuse it.
+
+Do not duplicate Academic Session logic in the mobile application.
+
+---
+
+# 9. SERVER-SIDE ACADEMIC SESSION OWNERSHIP
+
+For every Academic Session returned to mobile:
+
+Verify that the session belongs to the authenticated school/tenant.
+
+The mobile application must never be able to select:
+
+school A's Academic Session
+
+while authenticated into:
+
+school B.
+
+Do not rely solely on the mobile client to enforce this.
+
+The backend must enforce ownership.
+
+If the existing APIs do not adequately enforce this, implement the smallest safe additive backend correction required for the mobile flow.
+
+Do not redesign unrelated web functionality.
+
+---
+
+# 10. SELECTED ACADEMIC SESSION PERSISTENCE
+
+Inspect:
+
+artifacts/benius-mobile/contexts/SessionContext.tsx
+
+There was a previously identified issue where cleanup could remove saved session selection during ordinary component remounting.
+
+Fix this correctly.
+
+The selected Academic Session ID must:
+
+* Persist across normal app navigation.
+* Persist across component remounts.
+* Persist across app restarts where appropriate.
+* Be cleared on logout.
+* Be validated against the authenticated user's available sessions.
+* Never be blindly trusted merely because it was stored locally.
+
+Recommended lifecycle:
+
+APP START
+↓
+Restore authentication
+↓
+Validate authenticated principal
+↓
+Fetch available Academic Sessions
+↓
+Validate saved Academic Session ID
+↓
+Restore it only if still authorized
+↓
+Otherwise select the correct backend-authoritative default according to existing BENIUS rules
+
+Do NOT select a session based solely on stale local state.
+
+---
+
+# 11. ACADEMIC SESSION SELECTOR
+
+Implement the reusable native Academic Session selector foundation.
+
+This is NOT a full application module.
+
+It is a reusable global/session-context component that future modules can consume.
+
+The selector must:
+
+* Display the current selected Academic Session.
+* Allow the user to view sessions they are authorized to access.
+* Respect existing role-specific session rules.
+* Respect active/archived/future states.
+* Prevent unauthorized session selection.
+* Clearly indicate the selected session.
+* Persist the selected session.
+* Update the SessionContext.
+* Trigger appropriate cache invalidation when changed.
+
+Do not invent session states.
+
+Use the actual backend data model and rules.
+
+---
+
+# 12. SESSION SWITCHING
+
+When the user changes Academic Session:
+
+1. Update the selected Academic Session ID.
+2. Validate it against the authenticated user's authorized sessions.
+3. Persist the selection.
+4. Update the API session context/header.
+5. Invalidate/refetch session-sensitive queries.
+6. Prevent stale data from the previous session being displayed as if it belonged to the newly selected session.
+
+Do not reload the entire application unnecessarily if TanStack Query can safely handle invalidation/refetching.
+
+---
+
+# 13. QUERY KEY REQUIREMENT
+
+Inspect the existing mobile TanStack Query setup.
+
+Session-sensitive query keys must include the selected Academic Session ID.
+
+For example, conceptually:
+
+[
+"some-resource",
+authenticatedPrincipal,
+selectedAcademicSessionId
+]
+
+Do NOT blindly copy this example.
+
+Inspect the actual application and establish a consistent reusable convention.
+
+The important requirement is:
+
+A query belonging to Academic Session A must never accidentally reuse cached data for Academic Session B.
+
+Also ensure school/tenant identity cannot be crossed through cache reuse.
+
+---
+
+# 14. ACADEMIC SESSION API CONTEXT
+
+Inspect how the existing web application currently communicates Academic Session context.
+
+The previous audit identified:
+
+x-view-session-id
+
+as an existing web request convention.
+
+Determine whether this is safe and appropriate for mobile.
+
+Prefer reusing the existing backend contract where it is already correct.
+
+If mobile requires a dedicated header, establish it only after inspecting the existing backend behavior.
+
+Do NOT invent a header that the backend does not understand.
+
+Do NOT assume that:
+
+X-Academic-Session-Id
+
+works merely because the mobile foundation previously mentioned it.
+
+Verify the actual backend implementation.
+
+Document the final decision:
+
+* Header name
+* Where it is attached
+* Which requests use it
+* Which backend middleware/handlers consume it
+* How school ownership is validated
+* What happens when the session is missing
+* What happens when the session is invalid
+
+---
+
+# 15. AUTHENTICATION VS TENANT VS ACADEMIC SESSION
+
+Document and enforce this separation:
+
+AUTHENTICATION
+Who is the user?
+
+TENANT
+Which school does the authenticated user belong to?
+
+ACADEMIC SESSION
+Which academic year/session is the user currently operating within?
+
+These three must not be confused.
+
+Example:
+
+Authenticated user:
+Teacher X
+
+Authenticated school:
+School A
+
+Selected session:
+2026–2027
+
+Every session-sensitive mobile request must operate within that context.
+
+---
+
+# 16. EXAM CONTROLLER — PERMANENT SESSION RULE
+
+Do not implement Exam Controller in Step 4.
+
+However, ensure the foundation does NOT make future implementation difficult.
+
+The permanent BENIUS requirement is:
+
+Admin → Exam Controller is strongly Academic Session ID focused.
+
+Every future Exam Controller:
+
+* Read
+* Write
+* Lookup
+* State
+* Override
+* Promotion operation
+* Promotion execution
+* Ledger
+* History linkage
+* Review
+* Locking
+* Calculation
+
+must explicitly be scoped to:
+
+Authenticated School/Tenant
++
+Selected Academic Session ID
+
+A new Academic Session must have a fresh and isolated Exam Controller context.
+
+Previous-session operational data must never carry over or leak into a new session.
+
+Do not implement this module now.
+
+Only ensure the session foundation supports this requirement.
+
+---
+
+# 17. IST REQUIREMENT
+
+All BENIUS application/business/display timestamps must use:
+
+Asia/Kolkata
+
+IST
+
+Do not introduce:
+
+* BST
+* Browser-local timezone
+* Device-local timezone
+* Server-local timezone
+
+for BENIUS business/display time behavior.
+
+Inspect the existing:
+
+shared/ist-time.ts
+
+and existing date utilities.
+
+Reuse the established BENIUS approach where appropriate.
+
+Do not introduce a second competing timezone system.
+
+---
+
+# 18. WEB UI FIDELITY FOUNDATION
+
+Do not redesign the mobile UI.
+
+Inspect the existing web application UI architecture and identify:
+
+* Shared layout components
+* Navigation components
+* Button styles
+* Input styles
+* Cards
+* Tables
+* Tabs
+* Dialogs
+* Toasts
+* Alerts
+* Badges
+* Loading states
+* Empty states
+* Error states
+* Typography
+* Spacing
+* Colors
+* Icons
+
+The goal is to establish a reusable mobile component strategy that future screens can use to reproduce the existing web interface.
+
+DO NOT build every component in this step.
+
+Instead:
+
+1. Identify the existing web design patterns.
+2. Identify which patterns need native equivalents.
+3. Document the mapping.
+4. Create only the minimal foundation required for future faithful reproduction.
+
+Example concept:
+
+Existing Web Button
+↓
+Native BENIUS Button equivalent
+
+Existing Web Card
+↓
+Native BENIUS Card equivalent
+
+Existing Web Dialog
+↓
+Native BENIUS Dialog equivalent
+
+Existing Web Table
+↓
+Native BENIUS mobile table/list equivalent
+
+The mobile equivalents must preserve the same visual hierarchy and interaction semantics.
+
+Do not create an unrelated design system.
+
+---
+
+# 19. RESPONSIVE WEB VIEW IS THE VISUAL REFERENCE
+
+Where practical, inspect the existing BENIUS web application at mobile viewport dimensions.
+
+The target is:
+
+Existing BENIUS Web
+opened at mobile viewport
+↓
+actual appearance
+↓
+visual reference
+↓
+native React Native implementation
+
+Do not assume what the web application looks like.
+
+Inspect the actual code and existing styles.
+
+Future mobile implementation must be based on the actual BENIUS UI rather than generic assumptions about what a school-management application should look like.
+
+---
+
+# 20. NO WEBVIEW SHORTCUT
+
+Do NOT solve visual similarity by embedding the existing web application inside a WebView.
+
+The target remains:
+
+REAL NATIVE REACT NATIVE UI
+
+with:
+
+* Native navigation
+* Native inputs
+* Native scrolling
+* Native lists
+* Native dialogs where appropriate
+* Native touch interaction
+* Native secure storage
+* Native platform behavior
+
+while reproducing the BENIUS web application's UI/UX.
+
+---
+
+# 21. ROLE ISOLATION
+
+Verify mobile authentication and session behavior for:
+
+* Admin
+* Teacher
+* Student
+* Support Staff if supported by the existing backend/mobile auth design
+
+Do not expose another role's routes or data.
+
+Do not allow a mobile client to claim a different role simply by modifying request payloads.
+
+Role must come from authenticated server-side identity.
+
+---
+
+# 22. LOGOUT BEHAVIOR
+
+When mobile logout occurs:
+
+* Revoke the mobile authentication session according to Step 3 implementation.
+* Clear access credential.
+* Clear refresh credential.
+* Clear authenticated user state.
+* Clear selected Academic Session.
+* Clear session-sensitive TanStack Query cache.
+* Return to authentication flow.
+
+No previous user's school/session data may remain visible after logout.
+
+---
+
+# 23. OFFLINE BEHAVIOR
+
+Do not implement offline writes.
+
+Do not queue marks, attendance, fees, promotions, or other business mutations offline.
+
+For this step:
+
+* Read-only caching is acceptable where already supported.
+* Authentication credentials must remain secure.
+* Session selection must not bypass server validation.
+* No unconfirmed mutation should be stored for later replay.
+
+---
+
+# 24. DATABASE SAFETY
+
+Only make database changes if genuinely required.
+
+If a migration is required:
+
+* Additive only.
+* No destructive migration.
+* No dropping tables.
+* No dropping columns.
+* No deleting existing application data.
+* No production schema modification without explicit confirmation.
+
+The Step 3 mobile authentication tables already exist in development.
+
+Do not recreate them.
+
+Do not duplicate them.
+
+---
+
+# 25. TESTING
+
+Add or update automated tests for the Step 4 foundation.
+
+At minimum test:
+
+## Authentication
+
+* Valid mobile authentication
+* Invalid authentication
+* Expired access credential
+* Refresh
+* Refresh rotation
+* Refresh reuse/replay handling
+* Logout
+* Invalid/revoked credential
+
+## Academic Session
+
+* Authorized session retrieval
+* Session selection
+* Session persistence
+* Invalid saved session
+* Unauthorized session rejection
+* School/tenant isolation
+* Role-specific session behavior
+* Session switching
+* Cache isolation between sessions
+
+## Security
+
+Test that:
+
+School A user
+cannot access
+School B Academic Session.
+
+Test that:
+
+Role A
+cannot impersonate
+Role B.
+
+Test that:
+
+Session A data
+cannot appear under
+Session B cache/context.
+
+## Regression
+
+Verify that existing web functionality remains unchanged.
+
+---
+
+# 26. BUILD / TYPE CHECK
+
+Run appropriate checks for:
+
+* Mobile TypeScript
+* Mobile Expo build/validation
+* Backend TypeScript for changed files
+* Existing mobile-auth tests
+* New Step 4 tests
+* Web TypeScript/build as appropriate
+
+Do not "fix" unrelated legacy errors merely to make the report look clean.
+
+Clearly distinguish:
+
+* Existing errors
+* New errors
+* Errors caused by Step 4
+
+---
+
+# 27. DO NOT IMPLEMENT FULL MOBILE MODULES YET
+
+STOP after completing the Step 4 foundation.
+
+Do NOT start:
+
+* Student Dashboard
+* Teacher Dashboard
+* Admin Dashboard
+* Attendance
+* Examination
+* Exam Controller
+* Timetable
+* Fees
+* Reports
+* School Setup
+* Student Management
+* Teacher Management
+* Notifications
+* Other full modules
+
+Those will be separate future steps.
+
+---
+
+# 28. FINAL VERIFICATION REPORT
+
+At the end, provide a detailed report containing:
+
+## A. Authentication
+
+* Exact mobile routes verified
+* Exact middleware verified
+* Access credential behavior
+* Refresh behavior
+* Rotation behavior
+* Logout behavior
+* Secure storage behavior
+* Concurrent 401 handling
+
+## B. Academic Session
+
+* Exact backend endpoints used
+* Response structure
+* Role-specific behavior
+* Session ownership validation
+* Selected session persistence
+* Default session behavior
+* Session switching behavior
+* Cache invalidation
+* Query-key strategy
+* Final session header/context mechanism
+
+## C. Tenant Isolation
+
+Explain exactly how school/tenant isolation is enforced.
+
+## D. Role Isolation
+
+Explain Admin / Teacher / Student / Support Staff behavior.
+
+## E. UI Fidelity Foundation
+
+List:
+
+* Existing web UI patterns inspected
+* Native equivalents established
+* Files created/changed
+* Any unavoidable differences
+
+Explicitly confirm:
+
+"The existing BENIUS web application's mobile/responsive UI is the visual and interaction source of truth for future native mobile implementation."
+
+## F. IST
+
+Explain how mobile application/business/display time remains Asia/Kolkata.
+
+## G. Database
+
+List every database change, if any.
+
+## H. Tests
+
+Provide exact test results.
+
+## I. Web Regression
+
+Confirm whether the existing web application still builds and functions.
+
+## J. Mobile Validation
+
+Confirm:
+
+* Expo render
+* TypeScript
+* Build/validation
+* Any device testing performed
+* Any limitations
+
+## K. Known Issues
+
+List only real known issues.
+
+---
+
+# 29. ABSOLUTE STOP CONDITION
+
+After Step 4 is complete:
+
+STOP.
+
+Do not automatically proceed to Step 5.
+
+Do not start implementing application modules.
+
+Do not redesign the UI.
+
+Do not modify unrelated web functionality.
+
+Do not make speculative backend changes.
+
+Wait for my next instruction.
+
+# FINAL OBJECTIVE
+
+At the end of Step 4, BENIUS must have:
+
+1. Verified native mobile authentication.
+2. Correct secure credential lifecycle.
+3. Correct concurrent refresh handling.
+4. A reusable Academic Session foundation.
+5. Server-validated session ownership.
+6. Correct session persistence.
+7. Correct session switching.
+8. Session-safe TanStack Query caching.
+9. Correct tenant isolation.
+10. Correct role isolation.
+11. IST-compatible time foundation.
+12. A documented native UI-fidelity strategy where the EXISTING BENIUS WEB APPLICATION is the visual/interaction source of truth.
+13. No WebView shortcut.
+14. No full application modules implemented yet.
+15. Existing web application preserved and working.
+
+Again:
+
+THE MOBILE APP IS NOT A NEWLY DESIGNED PRODUCT.
+
+IT IS THE NATIVE MOBILE VERSION OF THE EXISTING BENIUS WEB APPLICATION.
+
+The existing BENIUS web application's actual UI/UX is the reference that future mobile implementation must reproduce.

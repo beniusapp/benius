@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { hashMobileCredential } from "./mobile-auth-crypto";
 
 const MOBILE_AUTH_PATH = "/api/mobile/auth";
+const MOBILE_ACADEMIC_SESSIONS_PATH = "/api/mobile/academic-sessions";
 
 export type RefreshPolicyInput = {
   now: number;
@@ -88,16 +89,19 @@ export function mobileRequestUsesTrustedHttps(
     && (host === "localhost" || host === "127.0.0.1" || host === "::1");
 }
 
-/** Bearer tokens authenticate only the native-mobile auth namespace. */
+/** Bearer tokens authenticate only approved native-mobile API namespaces. */
 export function rejectBearerOutsideMobileAuth(
   req: Request,
   res: Response,
   next: NextFunction,
 ): void {
   const authorization = req.get("authorization") || "";
-  const isMobileAuthRequest = req.path === MOBILE_AUTH_PATH || req.path.startsWith(`${MOBILE_AUTH_PATH}/`);
+  const isApprovedMobileRequest = req.path === MOBILE_AUTH_PATH
+    || req.path.startsWith(`${MOBILE_AUTH_PATH}/`)
+    || req.path === MOBILE_ACADEMIC_SESSIONS_PATH
+    || req.path.startsWith(`${MOBILE_ACADEMIC_SESSIONS_PATH}/`);
   const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
-  if (isApiRequest && !isMobileAuthRequest && /^\s*Bearer\s/i.test(authorization)) {
+  if (isApiRequest && !isApprovedMobileRequest && /^\s*Bearer\s/i.test(authorization)) {
     res.status(401).json({ message: "Bearer credentials are accepted only by mobile authentication endpoints." });
     return;
   }

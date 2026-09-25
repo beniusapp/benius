@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
+  type AcademicSession,
   mobileAuthChallenges,
   schools,
   students,
@@ -82,6 +83,7 @@ type DbSession = {
 };
 type MobileAuthenticatedRequest = Request & {
   mobileAuth?: { session: DbSession; principal: MobilePrincipal };
+  mobileAcademicSession?: AcademicSession;
 };
 
 function reject(res: Response, status: number, message: string) {
@@ -341,7 +343,7 @@ async function authenticateBearer(req: Request, res: Response): Promise<{
   return { session, principal };
 }
 
-async function requireMobileBearer(
+export async function requireMobileBearer(
   req: Request,
   res: Response,
   next: NextFunction,
@@ -353,6 +355,43 @@ async function requireMobileBearer(
     next();
   } catch {
     reject(res, 503, "Unable to verify mobile session.");
+  }
+}
+
+/**
+ * Enforces a school-scoped academic-session selection after requireMobileBearer.
+ * Exported for future mobile routes whose operations depend on the selected session.
+ */
+export async function requireMobileAcademicSession(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const auth = (req as MobileAuthenticatedRequest).mobileAuth;
+  if (!auth) {
+    reject(res, 401, "Not authenticated.");
+    return;
+  }
+  const header = req.get("x-view-session-id");
+  if (!header || !/^[1-9]\d*$/.test(header)) {
+    reject(res, 400, "A valid x-view-session-id header is required.");
+    return;
+  }
+  const sessionId = Number(header);
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+    reject(res, 400, "A valid x-view-session-id header is required.");
+    return;
+  }
+  try {
+    const session = await storage.getAcademicSessionForSchool(sessionId, auth.principal.schoolId);
+    if (!session) {
+      reject(res, 403, "The selected academic session is not available.");
+      return;
+    }
+    (req as MobileAuthenticatedRequest).mobileAcademicSession = session;
+    next();
+  } catch {
+    reject(res, 503, "Unable to verify the selected academic session.");
   }
 }
 
@@ -373,6 +412,32 @@ async function makeAdminChallengeResponse(
 
 export function registerMobileAuthRoutes(app: Express): void {
   app.use("/api/mobile/auth", requireHttps);
+  app.use("/api/mobile/academic-sessions", requireHttps);
+
+  app.get("/api/mobile/academic-sessions", requireMobileBearer, async (req, res) => {
+    const principal = (req as MobileAuthenticatedRequest).mobileAuth!.principal;
+    if (principal.role === "support_staff") {
+      return reject(res, 403, "This account is not permitted to view academic sessions.");
+    }
+    try {
+      const [sessions, activeSession] = await Promise.all([
+        storage.getAcademicSessions(principal.schoolId),
+        storage.getActiveSession(principal.schoolId),
+      ]);
+      return res.json({ sessions, activeSessionId: activeSession?.id ?? null });
+    } catch {
+      return reject(res, 503, "Unable to load academic sessions.");
+    }
+  });
+
+  app.get(
+    "/api/mobile/academic-sessions/selection",
+    requireMobileBearer,
+    requireMobileAcademicSession,
+    (req, res) => res.json({
+      session: (req as MobileAuthenticatedRequest).mobileAcademicSession!,
+    }),
+  );
 
   app.post("/api/mobile/auth/login", async (req, res) => {
     try {
