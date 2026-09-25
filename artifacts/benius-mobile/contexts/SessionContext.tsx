@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AcademicSession, AcademicSessionsResponse, AcademicSessionSelectionResponse, apiGet } from '@/lib/api';
+import { AcademicSession, AcademicSessionsResponse, AcademicSessionSelectionResponse, apiGet, apiGetForSession } from '@/lib/api';
 import { academicSessionStorageKey } from '@/lib/session-storage';
 import { useAuth } from './AuthContext';
 
@@ -54,7 +54,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [key, hydrated, query.isSuccess, selectedId, storedId]);
   const select = async (id: number) => {
     if (!key || !user || !sessions.some(s => s.id === id)) throw new Error('Session is not available to this account.');
-    const result = await apiGet<AcademicSessionSelectionResponse>('/mobile/academic-sessions/selection', { sessionId: id });
+    const result = await apiGetForSession<AcademicSessionSelectionResponse>('/mobile/academic-sessions/selection', id);
     if (result?.session?.id !== id || result.session.schoolId !== user.schoolId) {
       throw new Error('The server did not confirm this academic session for your school.');
     }

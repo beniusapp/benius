@@ -1,4 +1,5 @@
 import { clearApprovedSession, readApprovedSession, saveApprovedSession } from '@/lib/secure-session';
+import { createRefreshCoordinator, RefreshIdentityChangedError } from '@/lib/refresh-coordinator.mjs';
 
 export type Role = 'admin' | 'teacher' | 'student' | 'support_staff';
 export type MobileUser = {
@@ -109,7 +110,6 @@ function validatedUser(value: unknown): MobileUser {
 }
 
 let sessionCache: PersistedSession | null | undefined;
-let refreshFlight: Promise<PersistedSession> | null = null;
 
 async function readSession(): Promise<PersistedSession | null> {
   if (sessionCache !== undefined) return sessionCache;
@@ -148,9 +148,15 @@ async function saveSession(session: AuthenticatedSession): Promise<PersistedSess
   return validated;
 }
 
-async function refreshSession(): Promise<PersistedSession> {
-  if (refreshFlight) return refreshFlight;
-  refreshFlight = (async () => {
+function samePrincipal(left: PersistedSession, right: PersistedSession): boolean {
+  return left.user.id === right.user.id
+    && left.user.schoolId === right.user.schoolId
+    && left.user.role === right.user.role;
+}
+
+const coordinatedRefresh = createRefreshCoordinator<PersistedSession>(
+  readSession,
+  async (expected) => {
     const previous = await readSession();
     if (!previous?.refreshToken) {
       sessionCache = null;
@@ -158,9 +164,23 @@ async function refreshSession(): Promise<PersistedSession> {
       onUnauthorized?.();
       throw new ApiError('Your session has expired. Sign in again.', 'unauthorized', 401);
     }
+    if (!samePrincipal(previous, expected)) {
+      throw new ApiError('The authenticated account changed; this request was not retried.', 'cancelled');
+    }
+    if (previous.accessToken !== expected.accessToken || previous.refreshToken !== expected.refreshToken) {
+      return previous;
+    }
     const { response, payload } = await send<AuthenticatedSession>('/mobile/auth/refresh', 'POST', { refreshToken: previous.refreshToken });
     if (!response.ok) {
       if (response.status === 401) {
+        const current = await readSession();
+        if (current && !samePrincipal(current, previous)) {
+          throw new ApiError('The authenticated account changed; this request was not retried.', 'cancelled');
+        }
+        if (current && samePrincipal(current, previous)
+          && (current.accessToken !== previous.accessToken || current.refreshToken !== previous.refreshToken)) {
+          return current;
+        }
         sessionCache = null;
         await clearApprovedSession();
         onUnauthorized?.();
@@ -169,6 +189,13 @@ async function refreshSession(): Promise<PersistedSession> {
     }
     if (!payload || payload.state !== 'authenticated') throw new ApiError('The server returned an invalid refresh response.', 'server');
     const refreshedUser = validatedUser(payload.user);
+    const current = await readSession();
+    if (!current || !samePrincipal(current, previous)) {
+      throw new ApiError('The authenticated account changed; this request was not retried.', 'cancelled');
+    }
+    if (current.accessToken !== previous.accessToken || current.refreshToken !== previous.refreshToken) {
+      return current;
+    }
     if (refreshedUser.id !== previous.user.id || refreshedUser.schoolId !== previous.user.schoolId || refreshedUser.role !== previous.user.role) {
       sessionCache = null;
       await clearApprovedSession();
@@ -176,31 +203,52 @@ async function refreshSession(): Promise<PersistedSession> {
       throw new ApiError('The refreshed account did not match this mobile session.', 'unauthorized', 401);
     }
     return saveSession({ ...payload, user: refreshedUser });
-  })().finally(() => { refreshFlight = null; });
-  return refreshFlight;
+  },
+  samePrincipal,
+);
+
+async function refreshSession(expected: PersistedSession): Promise<PersistedSession> {
+  try {
+    return await coordinatedRefresh(expected);
+  } catch (error) {
+    if (error instanceof RefreshIdentityChangedError) {
+      throw new ApiError('The authenticated account changed; this request was not retried.', 'cancelled');
+    }
+    throw error;
+  }
 }
 
-async function accessToken(): Promise<string | null> {
+async function accessSession(): Promise<PersistedSession | null> {
   const session = await readSession();
   if (!session) return null;
   const expires = Date.parse(session.accessExpiresAt);
   if (!Number.isFinite(expires) || expires <= Date.now() + 30000) {
-    return (await refreshSession()).accessToken;
+    return refreshSession(session);
   }
-  return session.accessToken;
+  return session;
+}
+
+async function accessToken(): Promise<string | null> {
+  return (await accessSession())?.accessToken ?? null;
+}
+
+async function clearRejectedSession(expected: PersistedSession): Promise<void> {
+  const current = await readSession();
+  if (!current || current.accessToken !== expected.accessToken || !samePrincipal(current, expected)) return;
+  sessionCache = null;
+  await clearApprovedSession();
+  onUnauthorized?.();
 }
 
 async function authorized<T>(path: string, method: 'GET' | 'POST', body?: unknown, options: RequestOptions = {}): Promise<T> {
-  const token = await accessToken();
-  if (!token) throw new ApiError('A verified mobile session is required.', 'auth_unavailable');
-  let { response, payload } = await send<T>(path, method, body, token, options);
+  const session = await accessSession();
+  if (!session) throw new ApiError('A verified mobile session is required.', 'auth_unavailable');
+  let { response, payload } = await send<T>(path, method, body, session.accessToken, options);
   if (response.status === 401) {
-    try {
-      const refreshed = await refreshSession();
-      ({ response, payload } = await send<T>(path, method, body, refreshed.accessToken, options));
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'unauthorized') onUnauthorized?.();
-      throw error;
+    const refreshed = await refreshSession(session);
+    ({ response, payload } = await send<T>(path, method, body, refreshed.accessToken, options));
+    if (response.status === 401) {
+      await clearRejectedSession(refreshed);
     }
   }
   if (!response.ok) throwResponseError(response, payload);
@@ -238,20 +286,20 @@ export const authTransport = {
     return validatedUser(await authorized<MobileUser>('/mobile/auth/me', 'GET'));
   },
   async logout(): Promise<'revoked' | 'invalid'> {
-    let token: string | null;
+    let session: PersistedSession | null;
     try {
-      token = await accessToken();
+      session = await accessSession();
     } catch (error) {
       if (error instanceof ApiError && error.code === 'unauthorized') return 'invalid';
       throw error;
     }
-    if (!token) return 'invalid';
+    if (!session) return 'invalid';
 
-    let { response, payload } = await send<{ message?: string }>('/mobile/auth/logout', 'POST', {}, token);
+    let { response, payload } = await send<{ message?: string }>('/mobile/auth/logout', 'POST', {}, session.accessToken);
     if (response.status === 401) {
       let refreshed: PersistedSession;
       try {
-        refreshed = await refreshSession();
+        refreshed = await refreshSession(session);
       } catch (error) {
         if (error instanceof ApiError && error.code === 'unauthorized') return 'invalid';
         throw error;
@@ -274,4 +322,23 @@ export const authTransport = {
 
 export async function apiGet<T>(path: string, options: RequestOptions = {}): Promise<T> {
   return authorized<T>(path, 'GET', undefined, options);
+}
+
+type SessionRequestOptions = Pick<RequestOptions, 'signal'>;
+
+export async function apiGetForSession<T>(
+  path: string,
+  sessionId: number,
+  options: SessionRequestOptions = {},
+): Promise<T> {
+  return authorized<T>(path, 'GET', undefined, { ...options, sessionId });
+}
+
+export async function apiPostForSession<T>(
+  path: string,
+  sessionId: number,
+  body: unknown,
+  options: SessionRequestOptions = {},
+): Promise<T> {
+  return authorized<T>(path, 'POST', body, { ...options, sessionId });
 }
