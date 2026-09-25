@@ -1,0 +1,209 @@
+Proceed with **TIMETABLE STAGE 2 — API/SERVER IMPLEMENTATION** based on the completed read-only audit.
+
+### Core rule
+
+Every Timetable API operation must resolve exactly ONE Academic Session:
+
+1. If a valid selected `x-view-session-id` (`H`) is supplied, use that Session.
+2. Otherwise resolve the authenticated school's active Session (`A`).
+3. If neither exists, reject the request.
+4. Never pass `null`.
+5. Never use an all-Sessions fallback.
+
+For Teacher Timetable specifically:
+
+**Selected Session H takes priority over active Session A for BOTH reads and writes.**
+
+Do not use active Session A merely because an older Teacher batch route previously did so.
+
+### Scope
+
+Change ONLY the server/API callers identified in the Stage 2 audit:
+
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+
+Do NOT change:
+
+* `shared/schema.ts`
+* migrations
+* `server/storage.ts`
+* UI files
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated code
+
+### Required implementation
+
+Update all 27 failing Timetable Storage calls so they receive the correct resolved Session.
+
+Cover all audited operations:
+
+#### Admin
+
+* create
+* reads
+* pre-delete lookup
+* delete
+* publish
+* status
+* class/section view
+* structure read
+* slot/collision check
+* batch delete
+* batch save
+* structure replacement
+* structure-row delete
+
+#### Teacher
+
+* timetable read
+* class timetable read
+* structure read
+* slot/collision check
+* create
+* update
+* delete
+* batch save
+* batch delete
+
+#### Student
+
+* timetable read
+* structure read
+
+### Session resolution
+
+Where a route performs multiple related Storage calls, resolve the Session ONCE and reuse the exact same Session ID.
+
+Examples:
+
+* lookup → delete
+* lookup → update
+* validation → save
+* class entries → structure
+* batch collision check → batch save/delete
+* student entries → structure
+
+Do not resolve different Sessions between calls in the same request.
+
+### School isolation
+
+Preserve and strengthen the existing authenticated-school checks.
+
+For every request:
+
+* authenticated school must be used
+* selected Session must belong to that school
+* Storage ownership validation must remain active
+* never trust a client-provided school ID to select another school's Session
+
+Pay particular attention to:
+
+* `/api/timetable/teacher/:teacherId`
+* shared timetable/structure routes
+
+Do not weaken their existing authorization while adding Session handling.
+
+### Archived Sessions
+
+For mutations:
+
+* selected archived/inactive Session → reject
+* active Session → allow subject to existing authorization
+* no selected Session → use active Session
+* no valid Session → reject
+
+Do not rely only on the middleware header check. Storage's inactive-session protection must remain the final server-side protection.
+
+### Reads
+
+Reads must also be Session-specific.
+
+They must never return Timetable data from multiple Sessions.
+
+This applies to:
+
+* Admin
+* Teacher
+* Student
+* class view
+* teacher view
+* structure
+* slot/collision checks
+* status
+
+### Important
+
+Do NOT modify UI transport yet.
+
+Do NOT modify React query keys yet.
+
+Do NOT modify the Timetable database/storage implementation again.
+
+This stage is only making the existing server/API callers compatible with the Stage 1 Session-owned Storage contract.
+
+### Tests
+
+Add/update focused server tests for:
+
+1. selected Session is used
+2. no selected Session falls back to active Session
+3. no Session is rejected
+4. wrong-school Session is rejected
+5. archived Session mutation is rejected
+6. different Sessions can contain the same timetable slot
+7. reads never cross Sessions
+8. structure reads/writes are Session-specific
+9. Admin publish is Session-specific
+10. Teacher create/update/delete uses selected Session
+11. Teacher batch operations use selected Session
+12. Student timetable uses selected Session
+
+Do not create unnecessary broad test rewrites.
+
+### Verification
+
+Run:
+
+* focused Timetable API tests
+* all relevant existing Timetable tests
+* `npm run check`
+* `git diff --check`
+
+Then inspect the final diff carefully.
+
+Confirm:
+
+* no schema/migration changes
+* no Storage changes
+* no UI changes
+* no Attendance/Leave/Examination changes
+* no unrelated refactor
+
+### Final report
+
+Provide:
+
+1. Files changed
+2. Session-resolution logic
+3. Admin API changes
+4. Teacher API changes
+5. Student API changes
+6. School-isolation result
+7. Archived-session result
+8. Tests passed/failed
+9. `npm run check`
+10. `git diff --check`
+11. Final diff scope
+12. Any remaining runtime/API concerns
+
+End with exactly one verdict:
+
+**TIMETABLE STAGE 2 — API/SERVER — PASS**
+
+or
+
+**TIMETABLE STAGE 2 — API/SERVER — INCOMPLETE**

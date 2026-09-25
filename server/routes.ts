@@ -22,7 +22,7 @@ import { z } from "zod";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import * as XLSX from "xlsx";
-import { registerTeacherRoutes } from "./teacher-routes";
+import { registerTeacherRoutes, resolveTimetableSessionId } from "./teacher-routes";
 import { registerStudentPasswordRecoveryRoutes } from "./student-password-recovery-routes";
 import { studentAuthenticationAttemptIsRevoked } from "./session-revocation";
 import { registerFeesRoutes } from "./fees-routes";
@@ -2621,14 +2621,15 @@ export async function registerRoutes(
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const all = await storage.getTimetableBySchool(student.schoolId, viewSessionId);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, student.schoolId);
+    if (timetableSessionId === null) return;
+    const all = await storage.getTimetableBySchool(student.schoolId, timetableSessionId);
     // Show all configured entries (draft + published) — students should see
     // their schedule as soon as it is set up, regardless of publish status.
     const entries = all.filter(e =>
       e.class === student.class && e.section === student.section
     );
-    const structure = await storage.getTimetableStructure(student.schoolId, student.class || "");
+    const structure = await storage.getTimetableStructure(student.schoolId, timetableSessionId, student.class || "");
     res.json({ entries, structure });
   });
 

@@ -49,3 +49,4 @@
 - [Teacher self-attendance Session identity](teacher-self-attendance-session-identity.md) — new records are Session-scoped; legacy nullable rows stay isolated, and uniqueness migrations must handle constraint-backed indexes.
 - [Teacher self-attendance working days](teacher-self-attendance-working-days.md) — current school-wide weekdays determine rate eligibility across Sessions; only All_School holidays override them.
 - [Attendance mutation test isolation](attendance-mutation-test-isolation.md) — shared Student/date fixtures and multiple active Sessions can mask or falsely fail guarded leave-approval regressions.
+- [Timetable session selection](timetable-session-selection.md) — selected Academic Session takes priority over active for Teacher reads and writes; never silently fall back from an invalid selection.

@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { storage, evaluatePromotion, AttendanceLeaveMutationError } from "./storage";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -27,6 +27,42 @@ import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
 import { authenticationAttemptIsRevoked } from "./session-revocation";
+
+/** Select one school-owned Timetable session for the entire request. */
+export async function resolveTimetableSessionId(
+  req: Request,
+  res: Response,
+  schoolId: number,
+  writable = false,
+): Promise<number | null> {
+  if (!Number.isInteger(schoolId) || schoolId <= 0) {
+    res.status(401).json({ message: "Authenticated school is required" });
+    return null;
+  }
+  const raw = req.headers["x-view-session-id"];
+  if (raw !== undefined) {
+    if (typeof raw !== "string" || !/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      res.status(400).json({ message: "Invalid selected academic session" });
+      return null;
+    }
+    const selected = await storage.getAcademicSessionForSchool(Number(raw), schoolId);
+    if (!selected) {
+      res.status(403).json({ message: "Academic session does not belong to this school" });
+      return null;
+    }
+    if (writable && !selected.isActive) {
+      res.status(403).json({ message: "Archived academic sessions are read-only" });
+      return null;
+    }
+    return selected.id;
+  }
+  const active = await storage.getActiveSession(schoolId);
+  if (!active) {
+    res.status(409).json({ message: "No active academic session is available for Timetable" });
+    return null;
+  }
+  return active.id;
+}
 
 const diskUpload = multer({
   storage: multer.diskStorage({
@@ -2046,8 +2082,10 @@ export function registerTeacherRoutes(app: Express) {
     const tid = parseInt(teacherId);
     const teacher = await storage.getTeacherById(tid);
     if (!teacher || teacher.schoolId !== sessionSchoolId) return res.status(403).json({ message: "Teacher does not belong to your school" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, sessionSchoolId, true);
+    if (timetableSessionId === null) return;
     const entry = await storage.createTimetableEntry({
-      teacherId: tid, schoolId: sessionSchoolId,
+      teacherId: tid, schoolId: sessionSchoolId, sessionId: timetableSessionId,
       dayOfWeek: parseInt(dayOfWeek), period: parseInt(period), class: cls, section, subject,
     });
     res.status(201).json(entry);
@@ -2059,14 +2097,12 @@ export function registerTeacherRoutes(app: Express) {
     // Teachers can only view their own timetable
     if (req.session.teacherId && req.session.teacherId !== tid)
       return res.status(403).json({ message: "Not authorized" });
-    // Admins can only view teachers in their own school
-    if (req.session.userId) {
-      const teacher = await storage.getTeacherById(tid);
-      if (!teacher || teacher.schoolId !== req.session.schoolId)
-        return res.status(403).json({ message: "Not authorized" });
-    }
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getTimetableByTeacher(tid, viewSessionId);
+    const teacher = await storage.getTeacherById(tid);
+    if (!teacher || teacher.schoolId !== req.session.schoolId)
+      return res.status(403).json({ message: "Not authorized" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableByTeacher(teacher.schoolId, timetableSessionId, tid);
     res.json(list);
   });
 
@@ -2075,18 +2111,20 @@ export function registerTeacherRoutes(app: Express) {
     const requestedSchoolId = parseInt(req.params.schoolId);
     if (requestedSchoolId !== req.session.schoolId)
       return res.status(403).json({ message: "Not authorized" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
-    const list = await storage.getTimetableBySchool(req.session.schoolId!, sessionFilter);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableBySchool(req.session.schoolId!, timetableSessionId);
     res.json(list);
   });
 
   app.delete("/api/timetable/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
+    if (timetableSessionId === null) return;
     // Pass schoolId to enforce tenant isolation at storage query level
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), req.session.schoolId!);
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), req.session.schoolId!, timetableSessionId);
     if (!entry) return res.status(404).json({ message: "Entry not found" });
-    await storage.deleteTimetableEntry(entry.id, req.session.schoolId!);
+    await storage.deleteTimetableEntry(entry.id, req.session.schoolId!, timetableSessionId);
     res.json({ message: "Entry deleted" });
   });
 
@@ -2144,12 +2182,15 @@ export function registerTeacherRoutes(app: Express) {
   app.post("/api/timetable/teacher-slot", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
     const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
     if (dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
       return res.status(400).json({ message: "dayOfWeek, period, class, section, subject required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
     const validation = await storage.validateTimetableEntry({
       schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
       teacherId: teacher.id,
       dayOfWeek: parseInt(dayOfWeek),
       period: parseInt(period),
@@ -2162,6 +2203,7 @@ export function registerTeacherRoutes(app: Express) {
     if (!validation.valid) return res.status(409).json({ message: validation.error });
     const entry = await storage.createTimetableEntry({
       schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
       teacherId: teacher.id,
       dayOfWeek: parseInt(dayOfWeek),
       period: parseInt(period),
@@ -2179,9 +2221,11 @@ export function registerTeacherRoutes(app: Express) {
   app.patch("/api/timetable/:id/teacher", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
     // Pass teacher.schoolId and teacher.id for school+ownership isolation at query level
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId);
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
     if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
     const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
@@ -2192,6 +2236,7 @@ export function registerTeacherRoutes(app: Express) {
     const newSubject = subject || entry.subject;
     const validation = await storage.validateTimetableEntry({
       schoolId: teacher.schoolId,
+      sessionId: timetableSessionId,
       teacherId: teacher.id,
       dayOfWeek: newDay,
       period: newPeriod,
@@ -2203,7 +2248,7 @@ export function registerTeacherRoutes(app: Express) {
       requireAllocation: true,
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
-    const updated = await storage.updateTimetableEntry(entry.id, teacher.schoolId, {
+    const updated = await storage.updateTimetableEntry(entry.id, teacher.schoolId, timetableSessionId, {
       dayOfWeek: newDay,
       period: newPeriod,
       class: newClass,
@@ -2221,12 +2266,14 @@ export function registerTeacherRoutes(app: Express) {
   app.delete("/api/timetable/:id/teacher", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
     // School-scoped query at storage level: null returned if ID belongs to another school
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId);
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
     if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteTimetableEntry(entry.id, teacher.schoolId);
+    await storage.deleteTimetableEntry(entry.id, teacher.schoolId, timetableSessionId);
     res.json({ message: "Entry deleted" });
   });
 
@@ -2236,13 +2283,17 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const { class: cls, section } = req.body;
     if (!cls || !section) return res.status(400).json({ message: "class and section required" });
-    const count = await storage.updateTimetableEntryStatus(req.session.schoolId!, cls, section, "published");
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
+    if (timetableSessionId === null) return;
+    const count = await storage.updateTimetableEntryStatus(req.session.schoolId!, timetableSessionId, cls, section, "published");
     res.json({ message: `Published ${count} entries for Class ${cls}-${section}`, count });
   });
 
   app.get("/api/timetable/class-status", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
-    const statuses = await storage.getClassSectionStatus(req.session.schoolId!);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!);
+    if (timetableSessionId === null) return;
+    const statuses = await storage.getClassSectionStatus(req.session.schoolId!, timetableSessionId);
     res.json(statuses);
   });
 
@@ -2254,14 +2305,15 @@ export function registerTeacherRoutes(app: Express) {
     let schoolId: number;
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
       schoolId = teacher.schoolId;
     } else {
       schoolId = req.session.schoolId!;
     }
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getTimetableByClassSection(schoolId, cls, section, viewSessionId);
-    const structure = await storage.getTimetableStructure(schoolId, cls);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const list = await storage.getTimetableByClassSection(schoolId, timetableSessionId, cls, section);
+    const structure = await storage.getTimetableStructure(schoolId, timetableSessionId, cls);
     res.json({ entries: list, structure });
   });
 
@@ -2276,13 +2328,15 @@ export function registerTeacherRoutes(app: Express) {
     let excludeTeacherId: number | undefined;
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
       schoolId = teacher.schoolId;
       excludeTeacherId = teacher.id;
     } else {
       schoolId = req.session.schoolId!;
     }
-    const occupancy = await storage.checkSlotOccupancy(schoolId, cls, section, parseInt(dayOfWeek), parseInt(period), excludeTeacherId);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const occupancy = await storage.checkSlotOccupancy(schoolId, timetableSessionId, cls, section, parseInt(dayOfWeek), parseInt(period), excludeTeacherId);
     if (!occupancy) {
       return res.json({ taken: false });
     }
@@ -2306,13 +2360,15 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
     const saved: unknown[] = [];
     const errors: string[] = [];
     for (const change of changes) {
       const { dayOfWeek, period, class: cls, section, teacherId, subject } = change;
       try {
         if (change._delete) {
-          await storage.deleteTimetableSlot(schoolId, cls, section, dayOfWeek, period);
+          await storage.deleteTimetableSlot(schoolId, timetableSessionId, cls, section, dayOfWeek, period);
           continue;
         }
         // Guard: teacherId must be a valid integer
@@ -2329,7 +2385,7 @@ export function registerTeacherRoutes(app: Express) {
           errors.push(`Slot Day${dayOfWeek} P${period}: teacher not found in your school`);
           continue;
         }
-        const entry = await storage.upsertTimetableSlot(schoolId, { dayOfWeek, period, class: cls, section, teacherId, subject });
+        const entry = await storage.upsertTimetableSlot(schoolId, timetableSessionId, { dayOfWeek, period, class: cls, section, teacherId, subject });
         saved.push(entry);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -2348,7 +2404,7 @@ export function registerTeacherRoutes(app: Express) {
   app.post("/api/timetable/teacher/save-batch", async (req, res) => {
     if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
     const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
     const { changes } = req.body as {
       changes: Array<{
         dayOfWeek: number;
@@ -2361,25 +2417,23 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
-
-    // Tag new timetable entries with the school's active session
-    const activeSessionForTimetable = await storage.getActiveSession(teacher.schoolId);
-    const timetableSessionId = activeSessionForTimetable?.id ?? null;
+    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
+    if (timetableSessionId === null) return;
 
     const saved: unknown[] = [];
     const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
     for (const change of changes) {
       const { dayOfWeek, period, class: cls, section, subject, room } = change;
       if (change._delete) {
-        await storage.deleteTeacherTimetableSlot(teacher.schoolId, teacher.id, dayOfWeek, period);
+        await storage.deleteTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, dayOfWeek, period);
         continue;
       }
-      const occupancy = await storage.checkSlotOccupancy(teacher.schoolId, cls, section, dayOfWeek, period, teacher.id);
+      const occupancy = await storage.checkSlotOccupancy(teacher.schoolId, timetableSessionId, cls, section, dayOfWeek, period, teacher.id);
       if (occupancy) {
         conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
         continue;
       }
-      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null }, timetableSessionId);
+      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
       saved.push(entry);
     }
     res.json({ saved, conflicts });
@@ -2389,21 +2443,25 @@ export function registerTeacherRoutes(app: Express) {
   app.get("/api/timetable/structure", async (req, res) => {
     // Allow admin, teacher, and student sessions
     let schoolId: number | undefined;
-    if (req.session.userId) {
-      schoolId = req.session.schoolId;
-    } else if (req.session.teacherId) {
-      schoolId = req.session.schoolId;
+    if (req.session.teacherId) {
+      const teacher = await storage.getTeacherById(req.session.teacherId);
+      if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+      schoolId = teacher.schoolId;
     } else if (req.session.studentId) {
       const student = await storage.getStudentById(req.session.studentId);
       if (!student) return res.status(401).json({ message: "Student not found" });
       schoolId = student.schoolId;
+    } else if (req.session.userId && req.session.userRole !== "teacher") {
+      schoolId = req.session.schoolId;
     } else {
       return res.status(401).json({ message: "Not authenticated" });
     }
     if (!schoolId) return res.status(401).json({ message: "School not found" });
     const cls = req.query.class as string;
     if (!cls) return res.status(400).json({ message: "class query param required" });
-    const rows = await storage.getTimetableStructure(schoolId, cls);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId);
+    if (timetableSessionId === null) return;
+    const rows = await storage.getTimetableStructure(schoolId, timetableSessionId, cls);
     res.json(rows);
   });
 
@@ -2423,8 +2481,10 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!cls || !Array.isArray(rows)) return res.status(400).json({ message: "class and rows required" });
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
     try {
-      const saved = await storage.saveTimetableStructure(schoolId, cls, rows);
+      const saved = await storage.saveTimetableStructure(schoolId, timetableSessionId, cls, rows);
       res.json({ saved });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -2438,7 +2498,9 @@ export function registerTeacherRoutes(app: Express) {
     const schoolId = req.session.schoolId!;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const deleted = await storage.deleteTimetableStructureById(id, schoolId);
+    const timetableSessionId = await resolveTimetableSessionId(req, res, schoolId, true);
+    if (timetableSessionId === null) return;
+    const deleted = await storage.deleteTimetableStructureById(id, schoolId, timetableSessionId);
     if (!deleted) return res.status(404).json({ message: "Structure row not found" });
     res.json({ deleted: true });
   });
