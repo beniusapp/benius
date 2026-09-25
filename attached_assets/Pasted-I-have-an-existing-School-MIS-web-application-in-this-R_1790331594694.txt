@@ -1,0 +1,66 @@
+I have an existing School MIS web application in this Replit project.
+
+I am not technically knowledgeable, so DO NOT make changes yet.
+
+I want to eventually build a proper Android + iOS mobile application for this same MIS, while keeping the existing web application fully working.
+
+For now, ONLY perform a READ-ONLY architecture audit.
+
+Do NOT:
+
+* modify files
+* install packages
+* create a mobile application
+* change the database
+* change APIs
+* change authentication
+* change routing
+* change UI
+* migrate anything
+* delete anything
+* refactor anything
+
+First inspect the entire existing project and report:
+
+1. Frontend technology/framework
+2. Backend technology/framework
+3. Database technology
+4. Authentication/session mechanism
+5. API architecture
+6. Current project folder structure
+7. Whether frontend and backend are in the same Replit project
+8. How the web frontend communicates with the backend
+9. How school/tenant isolation is currently enforced
+10. How Academic Session ID is currently handled
+11. Whether the current APIs can safely support a mobile client
+12. Which existing APIs can be reused by a mobile application
+13. Which APIs need changes before mobile development
+14. Whether there are browser-only dependencies that cannot be directly reused in React Native
+15. Current build/start commands
+16. Environment variables/secrets that the mobile app would need, without exposing secret values
+17. Any security concerns relevant to creating a mobile client
+18. Any performance/scalability concerns relevant to heavy concurrent usage
+19. Recommended approach for building Android + iOS while preserving the existing web application
+
+VERY IMPORTANT PROJECT REQUIREMENTS:
+
+* This is a multi-tenant / multi-school MIS.
+* Never allow cross-school access.
+* Every school-scoped operation must remain constrained to the authenticated school/tenant.
+* Examination and promotion operations must remain explicitly scoped to the authenticated school/tenant AND selected Academic Session ID.
+* A new Academic Session must have isolated/fresh Exam Controller context.
+* Do not allow previous-session operational data to leak into another session.
+* Application/business/display timestamps must use IST / Asia/Kolkata.
+* These requirements must not be weakened during mobile development.
+
+At the end, provide:
+
+A. Current architecture
+B. Mobile-readiness assessment
+C. Reusable components/APIs
+D. Required changes
+E. Recommended mobile architecture
+F. Risks
+G. A proposed step-by-step implementation plan
+
+Again: READ ONLY. Do not modify anything.
