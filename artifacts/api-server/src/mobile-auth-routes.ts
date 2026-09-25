@@ -372,6 +372,10 @@ export async function requireMobileAcademicSession(
     reject(res, 401, "Not authenticated.");
     return;
   }
+  if (auth.principal.role === "support_staff") {
+    reject(res, 403, "This account is not permitted to select academic sessions.");
+    return;
+  }
   const header = req.get("x-view-session-id");
   if (!header || !/^[1-9]\d*$/.test(header)) {
     reject(res, 400, "A valid x-view-session-id header is required.");

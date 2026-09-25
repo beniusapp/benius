@@ -1,6 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiError, authTransport, AuthenticatedSession, LoginResult, MobileUser, Role, setUnauthorizedHandler } from '@/lib/api';
+import { academicSessionStorageKey } from '@/lib/session-storage';
 
 type AuthState = {
   user: MobileUser | null;
@@ -16,12 +18,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<MobileUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const userRef = useRef<MobileUser | null>(user);
+  userRef.current = user;
   const queryClient = useQueryClient();
   const clear = useCallback(async () => {
+    const previousUser = userRef.current;
     setUser(null);
     setRestoreError(null);
     queryClient.clear();
-    await authTransport.clear();
+    const selectionCleanup = previousUser
+      ? AsyncStorage.removeItem(academicSessionStorageKey(previousUser))
+      : Promise.resolve();
+    await Promise.all([authTransport.clear(), selectionCleanup]);
   }, [queryClient]);
   useEffect(() => {
     let active = true;

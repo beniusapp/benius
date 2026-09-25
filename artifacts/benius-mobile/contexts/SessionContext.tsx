@@ -1,17 +1,18 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AcademicSession, apiGet, sessionsPath } from '@/lib/api';
+import { AcademicSession, AcademicSessionsResponse, AcademicSessionSelectionResponse, apiGet } from '@/lib/api';
+import { academicSessionStorageKey } from '@/lib/session-storage';
 import { useAuth } from './AuthContext';
 
 type SessionState = { sessions: AcademicSession[]; selectedId: number | null; loading: boolean; error: Error | null; refresh(): Promise<void>; select(id: number): Promise<void> };
 const Context = createContext<SessionState | null>(null);
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const currentRole = user?.role;
+  const queryClient = useQueryClient();
   const [storedId, setStoredId] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const key = user ? `benius.session.${user.schoolId}.${user.role}.${user.id}` : null;
+  const key = user ? academicSessionStorageKey(user) : null;
   useEffect(() => {
     let active = true;
     setStoredId(null);
@@ -20,22 +21,30 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     void AsyncStorage.getItem(key).then(value => {
       if (active) setStoredId(value && /^\d+$/.test(value) ? Number(value) : null);
     }).finally(() => { if (active) setHydrated(true); });
-    return () => { active = false; void AsyncStorage.removeItem(key); };
+    // A key change or provider unmount is not a logout. Preserve this identity's
+    // choice; AuthContext explicitly removes it when the verified account ends.
+    return () => { active = false; };
   }, [key]);
   const query = useQuery({
     queryKey: ['sessions', user?.schoolId, user?.role, user?.id],
-    queryFn: ({ signal }) => {
-      if (!currentRole || currentRole === 'support_staff') throw new Error('Academic sessions are not available in mobile authentication.');
-      return apiGet<AcademicSession[]>(sessionsPath[currentRole], { signal });
+    queryFn: async ({ signal }) => {
+      const result = await apiGet<AcademicSessionsResponse>('/mobile/academic-sessions', { signal });
+      if (!result || !Array.isArray(result.sessions)
+        || (result.activeSessionId !== null && (!Number.isSafeInteger(result.activeSessionId) || result.activeSessionId <= 0))
+        || result.sessions.some(session => !Number.isSafeInteger(session.id) || !Number.isSafeInteger(session.schoolId)
+          || typeof session.sessionName !== 'string' || typeof session.isActive !== 'boolean')) {
+        throw new Error('The server returned an invalid academic-session list.');
+      }
+      return result;
     },
-    // These legacy endpoints are cookie-only. Keep mobile authentication separate
-    // until native academic-session endpoints are explicitly approved.
-    enabled: false,
+    enabled: !!user && user.role !== 'support_staff',
     staleTime: 60_000,
   });
-  const sessions = (query.data ?? []).filter(s => s.schoolId === user?.schoolId);
+  const sessions = (query.data?.sessions ?? []).filter(s => s.schoolId === user?.schoolId);
   const valid = storedId !== null && sessions.some(s => s.id === storedId);
-  const selectedId = !user || !hydrated || !query.isSuccess ? null : valid ? storedId : (sessions.find(s => s.isActive)?.id ?? sessions[0]?.id ?? null);
+  const activeSession = sessions.find(s => s.id === query.data?.activeSessionId)
+    ?? sessions.find(s => s.isActive);
+  const selectedId = !user || !hydrated || !query.isSuccess ? null : valid ? storedId : (activeSession?.id ?? sessions[0]?.id ?? null);
   useEffect(() => {
     if (!key || !hydrated || !query.isSuccess) return;
     if (selectedId !== storedId) {
@@ -44,11 +53,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [key, hydrated, query.isSuccess, selectedId, storedId]);
   const select = async (id: number) => {
-    if (!key || !sessions.some(s => s.id === id)) throw new Error('Session is not available to this account.');
-    setStoredId(id);
+    if (!key || !user || !sessions.some(s => s.id === id)) throw new Error('Session is not available to this account.');
+    const result = await apiGet<AcademicSessionSelectionResponse>('/mobile/academic-sessions/selection', { sessionId: id });
+    if (result?.session?.id !== id || result.session.schoolId !== user.schoolId) {
+      throw new Error('The server did not confirm this academic session for your school.');
+    }
     await AsyncStorage.setItem(key, String(id));
+    setStoredId(id);
+    await queryClient.invalidateQueries({ predicate: cached => cached.queryKey[0] !== 'sessions' });
   };
-  return <Context.Provider value={{ sessions, selectedId, loading: !!user && (!hydrated || query.isPending), error: query.error, refresh: async () => { await query.refetch(); }, select }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ sessions, selectedId, loading: !!user && user.role !== 'support_staff' && (!hydrated || query.isPending), error: query.error, refresh: async () => { await query.refetch(); }, select }}>{children}</Context.Provider>;
 }
 export function useAcademicSession() {
   const value = useContext(Context);

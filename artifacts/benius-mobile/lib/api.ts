@@ -22,7 +22,10 @@ export type LoginResult =
   | { state: 'password_change_required' }
   | AuthenticatedSession;
 export type AcademicSession = { id: number; schoolId: number; sessionName: string; isActive: boolean };
+export type AcademicSessionsResponse = { sessions: AcademicSession[]; activeSessionId: number | null };
+export type AcademicSessionSelectionResponse = { session: AcademicSession };
 type PersistedSession = AuthenticatedSession;
+type RequestOptions = { signal?: AbortSignal; sessionId?: number };
 
 export class ApiError extends Error {
   constructor(message: string, public code: 'auth_unavailable' | 'unauthorized' | 'network' | 'timeout' | 'server' | 'cancelled', public status?: number) {
@@ -48,10 +51,16 @@ async function readPayload(response: Response): Promise<unknown> {
   try { return await response.json(); } catch { return null; }
 }
 
-async function send<T>(path: string, method: 'GET' | 'POST', body?: unknown, token?: string): Promise<{ response: Response; payload: T | null }> {
+async function send<T>(path: string, method: 'GET' | 'POST', body?: unknown, token?: string, options: RequestOptions = {}): Promise<{ response: Response; payload: T | null }> {
   if (!API_BASE_URL) throw new ApiError('Backend address is not configured.', 'network');
   if (!path.startsWith('/') || path.startsWith('//')) throw new Error('API path must be local');
+  if (options.sessionId !== undefined && (!Number.isSafeInteger(options.sessionId) || options.sessionId <= 0)) {
+    throw new Error('Academic session id must be a positive integer.');
+  }
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  if (options.signal?.aborted) abortFromCaller();
+  else options.signal?.addEventListener('abort', abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -61,16 +70,19 @@ async function send<T>(path: string, method: 'GET' | 'POST', body?: unknown, tok
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.sessionId === undefined ? {} : { 'x-view-session-id': String(options.sessionId) }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     return { response, payload: await readPayload(response) as T | null };
   } catch (error) {
     if (error instanceof ApiError) throw error;
+    if (options.signal?.aborted) throw new ApiError('Request was cancelled.', 'cancelled');
     if (controller.signal.aborted) throw new ApiError('Request timed out. Try again.', 'timeout');
     throw new ApiError('Could not reach BENIUS. Check your connection.', 'network');
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -178,14 +190,14 @@ async function accessToken(): Promise<string | null> {
   return session.accessToken;
 }
 
-async function authorized<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+async function authorized<T>(path: string, method: 'GET' | 'POST', body?: unknown, options: RequestOptions = {}): Promise<T> {
   const token = await accessToken();
   if (!token) throw new ApiError('A verified mobile session is required.', 'auth_unavailable');
-  let { response, payload } = await send<T>(path, method, body, token);
+  let { response, payload } = await send<T>(path, method, body, token, options);
   if (response.status === 401) {
     try {
       const refreshed = await refreshSession();
-      ({ response, payload } = await send<T>(path, method, body, refreshed.accessToken));
+      ({ response, payload } = await send<T>(path, method, body, refreshed.accessToken, options));
     } catch (error) {
       if (error instanceof ApiError && error.code === 'unauthorized') onUnauthorized?.();
       throw error;
@@ -260,14 +272,6 @@ export const authTransport = {
   },
 };
 
-export async function apiGet<T>(path: string, options: { signal?: AbortSignal; sessionId?: number } = {}): Promise<T> {
-  // Session selection is deliberately not sent: existing Academic Session APIs are cookie-only.
-  void options;
-  return authorized<T>(path, 'GET');
+export async function apiGet<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  return authorized<T>(path, 'GET', undefined, options);
 }
-
-export const sessionsPath: Record<Exclude<Role, 'support_staff'>, string> = {
-  student: '/student/academic-sessions',
-  teacher: '/teacher/academic-sessions',
-  admin: '/admin/academic-sessions',
-};

@@ -99,6 +99,11 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   const refreshTokens = new Map<string, RefreshFixture>();
   const challenges = new Map<string, ChallengeFixture>();
   const attemptCounts = new Map<string, number>();
+  const academicSessionRows = [
+    { id: 501, schoolId: school.id, sessionName: "2025-2026", startDate: "2025-04-01", endDate: "2026-03-31", isActive: true },
+    { id: 502, schoolId: school.id, sessionName: "2024-2025", startDate: "2024-04-01", endDate: "2025-03-31", isActive: false },
+    { id: 601, schoolId: 2, sessionName: "2025-2026", startDate: "2025-04-01", endDate: "2026-03-31", isActive: true },
+  ];
 
   const hashedPassword = await bcrypt.hash("Correct-Horse-77", 4);
   const hashedPin = await bcrypt.hash("123456", 4);
@@ -145,6 +150,9 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     "getNonTeachingStaffByEmail",
     "getNonTeachingStaffById",
     "authenticateStudentByDsidForLogin",
+    "getAcademicSessions",
+    "getActiveSession",
+    "getAcademicSessionForSchool",
   ] as const;
   const originalStorageMethods = new Map<string, unknown>();
   for (const method of storageMethods) originalStorageMethods.set(method, (storage as any)[method]);
@@ -175,6 +183,15 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
       if (!row.isActivated) return { status: "not_activated" as const };
       if (!await bcrypt.compare(password, row.passwordHash)) return { status: "invalid" as const };
       return { status: "success" as const, student: row, authIssuedAt: Date.now() };
+    },
+    async getAcademicSessions(schoolId: number) {
+      return academicSessionRows.filter((session) => session.schoolId === schoolId);
+    },
+    async getActiveSession(schoolId: number) {
+      return academicSessionRows.find((session) => session.schoolId === schoolId && session.isActive);
+    },
+    async getAcademicSessionForSchool(id: number, schoolId: number) {
+      return academicSessionRows.find((session) => session.id === id && session.schoolId === schoolId);
     },
   };
   Object.assign(storage, storageFakes);
@@ -478,6 +495,18 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     }
     return { response, body: await jsonResponse(response) as Record<string, any> };
   }
+  async function requestAcademicSessions(path: string, accessToken?: string, sessionId?: number | string) {
+    ipSerial += 1;
+    const response = await fetch(`${baseUrl}/api/mobile/academic-sessions${path}`, {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-for": `198.51.100.${ipSerial}`,
+        ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        ...(sessionId === undefined ? {} : { "x-view-session-id": String(sessionId) }),
+      },
+    });
+    return { response, body: await jsonResponse(response) as Record<string, any> };
+  }
 
   const adminLogin = await request("login", {
     role: "admin", identifier: admin.email, password: "Correct-Horse-77",
@@ -502,6 +531,17 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.equal(teacherLogin.response.status, 200);
   assert.equal(teacherLogin.body.user.role, "teacher");
   assert.equal(teacherLogin.body.user.id, teacher.id);
+  const listedSessions = await requestAcademicSessions("", teacherLogin.body.accessToken);
+  assert.equal(listedSessions.response.status, 200);
+  assert.deepEqual(listedSessions.body.sessions.map((session: { id: number }) => session.id), [501, 502]);
+  assert.equal(listedSessions.body.activeSessionId, 501);
+  const selectedSession = await requestAcademicSessions("/selection", teacherLogin.body.accessToken, 502);
+  assert.equal(selectedSession.response.status, 200);
+  assert.equal(selectedSession.body.session.id, 502);
+  assert.equal(selectedSession.body.session.schoolId, school.id);
+  assert.equal((await requestAcademicSessions("/selection", teacherLogin.body.accessToken)).response.status, 400);
+  assert.equal((await requestAcademicSessions("/selection", teacherLogin.body.accessToken, "1e3")).response.status, 400);
+  assert.equal((await requestAcademicSessions("/selection", teacherLogin.body.accessToken, 601)).response.status, 403);
   const firstTeacherAccess = teacherLogin.body.accessToken as string;
   const firstTeacherRefresh = teacherLogin.body.refreshToken as string;
   const teacherRefresh = await request("refresh", { refreshToken: firstTeacherRefresh });
@@ -534,6 +574,8 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.equal(supportLogin.response.status, 200);
   assert.equal(supportLogin.body.user.role, "support_staff");
   assert.deepEqual(supportLogin.body.user.allowedModules, ["attendance"]);
+  assert.equal((await requestAcademicSessions("", supportLogin.body.accessToken)).response.status, 403);
+  assert.equal((await requestAcademicSessions("/selection", supportLogin.body.accessToken, 501)).response.status, 403);
   staffRows.set(staff.id, { ...staff, email: teacherUser.email });
   const supportCollision = await request("login", {
     role: "support_staff", identifier: teacherUser.email, password: "Correct-Horse-77",
