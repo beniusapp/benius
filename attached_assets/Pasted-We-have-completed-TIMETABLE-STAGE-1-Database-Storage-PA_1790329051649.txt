@@ -1,0 +1,380 @@
+We have completed:
+
+* TIMETABLE STAGE 1 — Database + Storage — PASS
+* TIMETABLE STAGE 2 — API/Server — PASS
+
+Now perform **TIMETABLE STAGE 3A — ADMIN TIMETABLE UI — READ-ONLY AUDIT ONLY**.
+
+## VERY IMPORTANT
+
+**Do NOT change any code.**
+
+Do NOT modify:
+
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* `server/storage.ts`
+* `shared/schema.ts`
+* migrations
+* Teacher Timetable UI
+* Student Timetable UI
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated files
+
+This is an audit only.
+
+---
+
+# Objective
+
+Verify that:
+
+**Admin Timetable Master UI is completely Academic Session-based.**
+
+The selected Academic Session must control:
+
+* timetable reads
+* timetable writes
+* structure reads
+* structure writes
+* delete
+* publish
+* status
+* slot/collision checks
+* cached/query data
+* unsaved draft state
+
+The Admin UI must never accidentally display or modify another Academic Session's Timetable.
+
+---
+
+# Files to inspect
+
+Start with:
+
+`client/src/pages/admin-modules/timetable-master.tsx`
+
+Also inspect only the directly related:
+
+* Academic Session selection/provider/hooks used by this page
+* Timetable-specific hooks/utilities used by this page
+* relevant request helpers if the page uses them
+
+Do not make changes.
+
+---
+
+# Audit 1 — Selected Session source
+
+Identify exactly:
+
+1. Where Admin Timetable gets the currently selected Academic Session ID.
+2. Whether it uses the application's canonical selected-session mechanism.
+3. Whether the selected Session ID can be `null`/undefined.
+4. What happens when no Session is selected.
+5. Whether the page accidentally uses the current/active Session instead of the selected Session.
+
+Report the exact file and line references.
+
+---
+
+# Audit 2 — Every Timetable API request
+
+Find EVERY request made by the Admin Timetable page.
+
+Create a table:
+
+| Request | Method | Purpose | Selected Session sent? | Header/transport | Correct? |
+| ------- | ------ | ------- | ---------------------- | ---------------- | -------- |
+
+Include all:
+
+* class-view
+* structure
+* save/batch
+* delete
+* publish
+* status
+* slot/collision
+* any other Timetable request
+
+For every request determine whether the selected Session ID is actually transmitted to the Stage 2 API.
+
+Pay special attention to native `fetch()` calls.
+
+Do not assume a request is session-aware merely because the page has a selected Session variable.
+
+---
+
+# Audit 3 — React Query / cache identity
+
+Inspect every `useQuery`, `useMutation`, query key, invalidation, refetch, and cache-related operation.
+
+Determine whether the selected Academic Session ID is part of the query/cache identity wherever necessary.
+
+Check specifically:
+
+* class-view query
+* structure query
+* status query
+* any slot/collision query
+* mutation invalidations
+* manual refetches
+
+Test conceptually:
+
+Session A → Session B
+
+Could cached Session A data remain visible under Session B?
+
+Report each risk.
+
+---
+
+# Audit 4 — Session switching
+
+Trace what happens when the Admin changes Academic Session.
+
+Check:
+
+1. Does the page immediately use the new Session ID?
+2. Are queries refreshed using the new Session?
+3. Are old queries invalidated/refetched correctly?
+4. Can old Session data remain displayed temporarily or permanently?
+5. Are unsaved timetable grid changes cleared?
+6. Are unsaved structure/period changes cleared?
+7. Can a draft created under Session A accidentally be saved into Session B?
+8. Does the page preserve stale selected class/section state in a dangerous way?
+
+Do not modify anything.
+
+---
+
+# Audit 5 — Admin Timetable reads
+
+Verify that these reads are Session-specific:
+
+* timetable class/section grid
+* timetable structure
+* class status
+* slot/collision information
+* any teacher/subject timetable information displayed by Admin
+
+Confirm that the UI sends the selected Session to the Stage 2 API.
+
+---
+
+# Audit 6 — Admin Timetable writes
+
+Trace the complete UI → API path for:
+
+* create
+* update
+* batch save
+* delete
+* publish
+* structure save/replace
+* structure row delete
+
+For each determine:
+
+1. Selected Session available?
+2. Selected Session transmitted?
+3. Correct API called?
+4. Mutation invalidates the Session-specific cache?
+5. Could a mutation use a stale Session?
+6. Could a mutation occur after Session switching using old draft state?
+
+Do not change code.
+
+---
+
+# Audit 7 — Archived Session UI
+
+Determine whether Admin Timetable UI knows whether the selected Academic Session is:
+
+* active/writable
+* archived/inactive
+
+Check whether editing controls are disabled for archived Sessions:
+
+* Add/edit slot
+* Delete
+* Batch save
+* Structure editing
+* Structure delete
+* Publish
+* Any other mutation
+
+Important:
+
+Server-side protection already exists and MUST remain the final authority.
+
+The UI should still prevent users from attempting edits to an archived Session.
+
+Report any UI-only gap.
+
+---
+
+# Audit 8 — Fresh Academic Session
+
+Verify the Admin UI behavior when switching to a newly created Session that has no Timetable data.
+
+Expected:
+
+* empty timetable
+* no previous Session entries
+* no previous Session structure
+* no previous Session publish/status state
+* no stale cached data
+* no copied draft data
+
+Do not create data or modify anything.
+
+Audit the code path only.
+
+---
+
+# Audit 9 — Session A → Session B isolation scenario
+
+Trace this exact scenario:
+
+### Session A
+
+* Open Admin Timetable
+* Load class/section
+* Make timetable edits
+* Load structure
+* Have unsaved changes
+
+### Switch to Session B
+
+* Session B has different timetable/structure
+
+Verify whether:
+
+* Session B data is fetched
+* Session A data disappears
+* Session A draft does not remain in the editor
+* Session B save uses Session B
+* Session A publish/status cannot be accidentally triggered
+* cache cannot mix A and B
+
+Again: audit only.
+
+---
+
+# Audit 10 — Multi-tenant boundary
+
+Confirm the Admin UI does not construct or send a client-controlled school ID that could override the authenticated school/session relationship.
+
+The server remains authoritative.
+
+Check whether any request contains:
+
+* `schoolId`
+* route school ID
+* session ID from an unsafe source
+
+Report only actual findings.
+
+---
+
+# Audit 11 — Final architecture check
+
+Determine whether the Admin UI currently follows:
+
+**Authenticated School**
+→ **Selected Academic Session**
+→ **Session-specific Timetable Structure**
+→ **Session-specific Timetable Entries**
+
+Mark each layer:
+
+* PASS
+* FAIL
+* PARTIAL
+
+---
+
+# Required final report
+
+Return:
+
+### 1. Files inspected
+
+Exact files.
+
+### 2. Selected Session source
+
+Exact source and line references.
+
+### 3. Complete API request table
+
+Every Admin Timetable request and whether Session is transmitted.
+
+### 4. React Query/cache audit
+
+All relevant query keys and invalidations.
+
+### 5. Session-switch audit
+
+What happens when Session changes.
+
+### 6. Draft-state audit
+
+Whether unsaved entries/structure edits can cross Sessions.
+
+### 7. Archived Session UI audit
+
+Which controls are disabled/enabled.
+
+### 8. Fresh Session audit
+
+Whether a new Session starts empty from the UI perspective.
+
+### 9. Session A → B isolation
+
+PASS/FAIL/PARTIAL with exact evidence.
+
+### 10. Multi-tenant audit
+
+PASS/FAIL/PARTIAL.
+
+### 11. Exact defects found
+
+List only real defects. Do not speculate.
+
+For every defect provide:
+
+* severity: High / Medium / Low
+* file
+* line
+* current behavior
+* expected behavior
+* smallest safe fix
+
+### 12. Scope confirmation
+
+Confirm:
+
+* No code changed
+* No database changes
+* No Storage changes
+* No API/server changes
+* No Teacher UI changes
+* No Student UI changes
+* No Attendance/Leave/Examination changes
+
+End with exactly one:
+
+**TIMETABLE STAGE 3A — ADMIN UI AUDIT — READY FOR FIX**
+
+or
+
+**TIMETABLE STAGE 3A — ADMIN UI AUDIT — NOT READY**
+
+Do not implement any fixes until I review the audit.
