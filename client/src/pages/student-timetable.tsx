@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 import { ArrowLeft, Clock, Loader2, School, Coffee } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
 import { useISTToday } from "@/hooks/use-ist-today";
@@ -91,7 +91,9 @@ function getSubjectColor(subject: string): string {
 
 export default function StudentTimetable() {
   const [, setLocation] = useLocation();
-  const { isArchiveMode, selectedSession } = useSessionView();
+  const { isArchiveMode, selectedSession, isSessionsLoading } = useSessionView();
+  // The provider restores a deliberate selection before falling back to the active session.
+  const sessionId = selectedSession?.id ?? null;
   const today = useISTToday();
   const previousToday = useRef(today);
   const [selectedDay, setSelectedDay] = useState<number>(() => timetableDayForDate(today));
@@ -126,14 +128,15 @@ export default function StudentTimetable() {
     if (!studentLoading && !student) setLocation("/student-login");
   }, [studentLoading, student, setLocation]);
 
-  const { data: ttData, isLoading: ttLoading } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
-    queryKey: ["/api/student/timetable"],
-    queryFn: async () => {
-      const r = await fetch("/api/student/timetable", { credentials: "include" });
-      if (!r.ok) return { entries: [], structure: [] };
+  const { data: ttData, isLoading: ttLoading, isError: ttError, error: ttFailure } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
+    queryKey: ["/api/student/timetable", sessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const querySessionId = queryKey[1] as number;
+      const r = await sessionFetchForViewSession("/api/student/timetable", querySessionId, { signal });
+      if (!r.ok) throw new Error(`Unable to load timetable (${r.status}).`);
       return r.json();
     },
-    enabled: !!student,
+    enabled: !!student && sessionId !== null,
   });
   const entries: TimetableEntry[] = ttData?.entries ?? [];
   const structure: StructureRow[] = ttData?.structure ?? [];
@@ -264,14 +267,26 @@ export default function StudentTimetable() {
       >
 
         {/* ── Loading ── */}
-        {ttLoading && (
+        {(ttLoading || isSessionsLoading) && (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="w-8 h-8 animate-spin text-[#10b981]" />
           </div>
         )}
 
+        {!isSessionsLoading && sessionId === null && (
+          <p role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-800">
+            No academic session available for timetable.
+          </p>
+        )}
+
+        {!isSessionsLoading && sessionId !== null && ttError && (
+          <p role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700">
+            {ttFailure?.message ?? "Unable to load timetable."}
+          </p>
+        )}
+
         {/* ── Holiday State ── */}
-        {!ttLoading && isHolidayDay && (
+        {!ttLoading && !isSessionsLoading && sessionId !== null && !ttError && isHolidayDay && (
           <div className="rounded-2xl border border-red-100 p-8 flex flex-col items-center text-center gap-4 mt-2 bg-white shadow-sm">
             <div className="w-20 h-20 rounded-3xl flex items-center justify-center bg-red-50">
               <School className="w-10 h-10 text-red-300" />
@@ -287,7 +302,7 @@ export default function StudentTimetable() {
         )}
 
         {/* ── Empty Timetable (no structure, no entries) ── */}
-        {!ttLoading && !isHolidayDay && structureForDay.length === 0 && dayEntries.length === 0 && (
+        {!ttLoading && !isSessionsLoading && sessionId !== null && !ttError && !isHolidayDay && structureForDay.length === 0 && dayEntries.length === 0 && (
           <div className="rounded-2xl border border-slate-100 p-8 flex flex-col items-center text-center gap-3 mt-2 bg-white shadow-sm">
             <Clock className="w-12 h-12 text-slate-200" />
             <div>
@@ -298,7 +313,7 @@ export default function StudentTimetable() {
         )}
 
         {/* ── Full Schedule with Breaks ── */}
-        {!ttLoading && !isHolidayDay && (structureForDay.length > 0 || dayEntries.length > 0) && (
+        {!ttLoading && !isSessionsLoading && sessionId !== null && !ttError && !isHolidayDay && (structureForDay.length > 0 || dayEntries.length > 0) && (
           <div className="space-y-2 pt-1">
             {/* If structure exists, merge breaks with periods */}
             {structureForDay.length > 0 ? (

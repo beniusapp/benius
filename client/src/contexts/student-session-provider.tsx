@@ -62,8 +62,8 @@ export function StudentSessionProvider({ children }: { children: React.ReactNode
       const persistedSession = Number.isInteger(persistedId)
         ? sessions.find((session) => session.id === persistedId)
         : undefined;
-      const nextSession = persistedSession ?? sessions.find((session) => session.isActive) ?? sessions[0];
-      handleSetSelectedSession(nextSession);
+      const nextSession = persistedSession ?? sessions.find((session) => session.isActive) ?? null;
+      if (nextSession) handleSetSelectedSession(nextSession);
     }
   }, [sessions, selectedSession, handleSetSelectedSession]);
 
