@@ -40,3 +40,21 @@ shared component-library screens and bespoke student/teacher surfaces). The
 current Expo foundation shares core brand tokens and interaction primitives,
 but is not pixel parity with every web screen. Native tabs, rich dialogs,
 toasts, badges, selects, module tables, search, and filters remain unimplemented.
+
+## Step 5: Student Home
+
+The responsive `/student-dashboard` is the first authenticated web screen
+translated into a native module surface. Its compact header, session control,
+profile hero, conditional badges, archive notice, and all 14 emoji module
+tiles are mapped to native components in the same order and two-column
+mobile hierarchy. Web-only backdrop blur and radial lighting are approximated
+with native translucency/gradients/shadows. Unbuilt tile destinations give an
+explicit unavailable message instead of claiming those modules exist.
+
+A 390 × 844 source-derived render of the actual web markup/styles was
+inspected; direct access to the authenticated web route redirected to login.
+The browser Expo preview likewise stops at the intentionally native-only
+sign-in boundary. Native visual parity cannot be confirmed without an
+authenticated Android/iOS device or emulator. See
+`docs/student-dashboard-step5.md` for the endpoint, identity/session rules,
+tests, and precise limitations.

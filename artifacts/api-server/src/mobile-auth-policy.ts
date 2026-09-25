@@ -3,6 +3,7 @@ import { hashMobileCredential } from "./mobile-auth-crypto";
 
 const MOBILE_AUTH_PATH = "/api/mobile/auth";
 const MOBILE_ACADEMIC_SESSIONS_PATH = "/api/mobile/academic-sessions";
+const MOBILE_STUDENT_DASHBOARD_PATH = "/api/mobile/student/dashboard";
 
 export type RefreshPolicyInput = {
   now: number;
@@ -96,14 +97,21 @@ export function rejectBearerOutsideMobileAuth(
   next: NextFunction,
 ): void {
   const authorization = req.get("authorization") || "";
+  const isStudentDashboardRequest = req.method === "GET"
+    && req.path === MOBILE_STUDENT_DASHBOARD_PATH;
   const isApprovedMobileRequest = req.path === MOBILE_AUTH_PATH
     || req.path.startsWith(`${MOBILE_AUTH_PATH}/`)
     || req.path === MOBILE_ACADEMIC_SESSIONS_PATH
-    || req.path.startsWith(`${MOBILE_ACADEMIC_SESSIONS_PATH}/`);
+    || req.path.startsWith(`${MOBILE_ACADEMIC_SESSIONS_PATH}/`)
+    || isStudentDashboardRequest;
   const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
   if (isApiRequest && !isApprovedMobileRequest && /^\s*Bearer\s/i.test(authorization)) {
     res.status(401).json({ message: "Bearer credentials are accepted only by mobile authentication endpoints." });
     return;
   }
   next();
+}
+
+export function shouldLogJsonResponseBody(path: string): boolean {
+  return path !== MOBILE_STUDENT_DASHBOARD_PATH;
 }

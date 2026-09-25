@@ -14,7 +14,7 @@ import { appendFeeAudit, SYSTEM_FEE_AUDIT_ACTOR } from "./fee-audit";
 import { sql } from "drizzle-orm";
 import { enforceSessionRevocation } from "./session-revocation";
 import { StudentRecoverySafePgStore } from "./student-recovery-session-store";
-import { rejectBearerOutsideMobileAuth } from "./mobile-auth-policy";
+import { rejectBearerOutsideMobileAuth, shouldLogJsonResponseBody } from "./mobile-auth-policy";
 import { ensureMobileAuthSchema } from "./mobile-auth-schema";
 
 const app = express();
@@ -64,11 +64,12 @@ app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
   const isMobileAuthResponse = path.startsWith("/api/mobile/auth/");
+  const mayLogResponseBody = shouldLogJsonResponseBody(path);
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
   res.json = function (bodyJson, ...args) {
-    if (!isMobileAuthResponse) capturedJsonResponse = bodyJson;
+    if (!isMobileAuthResponse && mayLogResponseBody) capturedJsonResponse = bodyJson;
     return originalResJson.apply(res, [bodyJson, ...args]);
   };
 

@@ -435,6 +435,83 @@ export function registerMobileAuthRoutes(app: Express): void {
   });
 
   app.get(
+    "/api/mobile/student/dashboard",
+    requireHttps,
+    requireMobileBearer,
+    (req, res, next) => {
+      const principal = (req as MobileAuthenticatedRequest).mobileAuth!.principal;
+      if (principal.role !== "student") {
+        reject(res, 403, "Student access is required.");
+        return;
+      }
+      next();
+    },
+    requireMobileAcademicSession,
+    async (req, res) => {
+      const { principal } = (req as MobileAuthenticatedRequest).mobileAuth!;
+      const session = (req as MobileAuthenticatedRequest).mobileAcademicSession!;
+      try {
+        const data = await storage.getStudentWithSchool(principal.entityId ?? principal.principalId);
+        if (!data || data.student.id !== principal.id || data.student.schoolId !== principal.schoolId
+          || data.school.id !== principal.schoolId) {
+          return reject(res, 401, "Student account is no longer authorized.");
+        }
+
+        const historicalClassSection = await storage.resolveAttendanceClassSectionForStudent(
+          principal.schoolId, session.id, principal.id,
+        );
+        const [attendance, unreadNoticeCount, feeRecords] = await Promise.all([
+          storage.getStudentAttendanceStats(
+            principal.id,
+            principal.schoolId,
+            session.id,
+            historicalClassSection?.class ?? null,
+            historicalClassSection?.section ?? null,
+            session.startDate,
+            session.endDate,
+          ),
+          storage.getUnreadNoticeCount(
+            principal.id,
+            principal.schoolId,
+            data.student.class || "",
+            data.student.section || "",
+            session.id,
+          ),
+          storage.getFeeRecordsByStudent(principal.id, principal.schoolId, session.id),
+        ]);
+
+        // Homework and fee portal settings are deliberately omitted: neither
+        // affects the dashboard's visible read-only student profile or badges.
+        const feesOutstanding = feeRecords.reduce((total, fee) => {
+          if (fee.status === "Paid") return total;
+          const amount = Number(fee.amount);
+          return total + (Number.isFinite(amount) ? amount : 0);
+        }, 0) > 0;
+
+        return res.json({
+          student: {
+            id: data.student.id,
+            schoolId: data.student.schoolId,
+            name: data.student.name,
+            digitalStudentId: data.student.digitalStudentId,
+            class: data.student.class,
+            section: data.student.section,
+            photoUrl: data.student.photoUrl,
+            schoolName: data.school.name,
+            schoolCode: data.school.code,
+          },
+          sessionId: session.id,
+          attendancePercent: attendance.overallPercent,
+          unreadNoticeCount,
+          feesOutstanding,
+        });
+      } catch {
+        return reject(res, 503, "Unable to load the student dashboard.");
+      }
+    },
+  );
+
+  app.get(
     "/api/mobile/academic-sessions/selection",
     requireMobileBearer,
     requireMobileAcademicSession,

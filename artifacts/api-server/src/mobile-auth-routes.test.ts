@@ -5,6 +5,7 @@ import { getTableName } from "drizzle-orm";
 import test from "node:test";
 import { db, pool } from "./db";
 import { hashMobileCredential } from "./mobile-auth-crypto";
+import { rejectBearerOutsideMobileAuth } from "./mobile-auth-policy";
 import { registerMobileAuthRoutes } from "./mobile-auth-routes";
 import { storage } from "./storage";
 
@@ -33,6 +34,9 @@ type FixtureStudent = {
   schoolId: number;
   digitalStudentId: string;
   name: string;
+  class: string;
+  section: string;
+  photoUrl: string | null;
   passwordHash: string;
   isActive: boolean;
   isActivated: boolean;
@@ -91,6 +95,8 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.notEqual(process.env.NODE_ENV, "production", "route tests must never run in production mode");
 
   const school = { id: 1, name: "Isolated Test School", code: "AUTH-TEST" };
+  const foreignSchool = { id: 2, name: "Foreign Test School", code: "FOREIGN" };
+  const schoolsById = new Map([[school.id, school], [foreignSchool.id, foreignSchool]]);
   const userRows = new Map<number, FixtureUser>();
   const teacherRows = new Map<number, FixtureTeacher>();
   const studentRows = new Map<number, FixtureStudent>();
@@ -129,9 +135,22 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   teacherRows.set(teacher.id, teacher);
   const student: FixtureStudent = {
     id: 301, schoolId: school.id, digitalStudentId: "AUTH-STUDENT-301",
-    name: "Test Student", passwordHash: hashedPassword, isActive: true, isActivated: true,
+    name: "Test Student", class: "Current 9", section: "A", photoUrl: "/student-301.jpg",
+    passwordHash: hashedPassword, isActive: true, isActivated: true,
   };
   studentRows.set(student.id, student);
+  const otherStudent: FixtureStudent = {
+    id: 302, schoolId: school.id, digitalStudentId: "AUTH-STUDENT-302",
+    name: "Other Student", class: "Current 8", section: "B", photoUrl: null,
+    passwordHash: hashedPassword, isActive: true, isActivated: true,
+  };
+  studentRows.set(otherStudent.id, otherStudent);
+  const foreignStudent: FixtureStudent = {
+    id: 303, schoolId: foreignSchool.id, digitalStudentId: "AUTH-STUDENT-303",
+    name: "Foreign Student", class: "Current 7", section: "C", photoUrl: null,
+    passwordHash: hashedPassword, isActive: true, isActivated: true,
+  };
+  studentRows.set(foreignStudent.id, foreignStudent);
   const staff: FixtureStaff = {
     id: 401, schoolId: school.id, email: "staff-auth-test@example.test",
     fullName: "Test Support Staff", passwordHash: hashedPassword, isActive: true,
@@ -153,9 +172,19 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     "getAcademicSessions",
     "getActiveSession",
     "getAcademicSessionForSchool",
+    "getStudentWithSchool",
+    "resolveAttendanceClassSectionForStudent",
+    "getStudentAttendanceStats",
+    "getUnreadNoticeCount",
+    "getFeeRecordsByStudent",
   ] as const;
   const originalStorageMethods = new Map<string, unknown>();
   for (const method of storageMethods) originalStorageMethods.set(method, (storage as any)[method]);
+  const dashboardMetrics: Record<string, unknown> = {};
+  const feeRowsByStudent = new Map<number, Array<{ status: string; amount: number }>>([
+    [student.id, [{ status: "Outstanding", amount: 75 }, { status: "Paid", amount: 500 }]],
+    [otherStudent.id, [{ status: "Unpaid", amount: 0 }]],
+  ]);
 
   const storageFakes = {
     async getUserByEmail(email: string) {
@@ -193,6 +222,30 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     async getAcademicSessionForSchool(id: number, schoolId: number) {
       return academicSessionRows.find((session) => session.id === id && session.schoolId === schoolId);
     },
+    async getStudentWithSchool(studentId: number) {
+      const row = studentRows.get(studentId);
+      const studentSchool = row && schoolsById.get(row.schoolId);
+      return row && studentSchool ? { student: row, school: studentSchool } : undefined;
+    },
+    async resolveAttendanceClassSectionForStudent(schoolId: number, sessionId: number, studentId: number) {
+      dashboardMetrics.historicalContext = [schoolId, sessionId, studentId];
+      return studentId === student.id ? { class: "Historical 8", section: "C" } : { class: "Historical 7", section: "D" };
+    },
+    async getStudentAttendanceStats(
+      studentId: number, schoolId: number, sessionId: number, cls: string | null, section: string | null,
+      startDate: string, endDate: string,
+    ) {
+      dashboardMetrics.attendanceArguments = [studentId, schoolId, sessionId, cls, section, startDate, endDate];
+      return { overallPercent: 91.5, workingDays: 10, daysPresent: 9 };
+    },
+    async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string, sessionId: number) {
+      dashboardMetrics.noticeArguments = [studentId, schoolId, cls, section, sessionId];
+      return studentId === student.id ? 3 : 7;
+    },
+    async getFeeRecordsByStudent(studentId: number, schoolId: number, sessionId: number) {
+      dashboardMetrics.feeArguments = [studentId, schoolId, sessionId];
+      return feeRowsByStudent.get(studentId) ?? [];
+    },
   };
   Object.assign(storage, storageFakes);
 
@@ -210,7 +263,11 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     return output;
   };
   const returnSelectRows = (tableName: string, joins: string[], whereClause: unknown) => {
-    if (tableName === "schools") return [school];
+    if (tableName === "schools") {
+      const schoolId = sqlNumberParams(whereClause)[0];
+      const match = schoolsById.get(schoolId);
+      return match ? [match] : [];
+    }
     if (tableName === "users" && joins.length === 0) {
       const id = sqlNumberParams(whereClause)[0];
       return userRows.has(id) ? [userRows.get(id)] : [];
@@ -236,9 +293,12 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
       return [{ teachers: row, users: user, schools: school }];
     }
     if (tableName === "students") {
-      const row = [...studentRows.values()][0];
-      if (!row || !row.isActive || !row.isActivated || row.schoolId !== school.id) return [];
-      return [{ students: row, schools: school }];
+      const params = sqlNumberParams(whereClause);
+      const row = [...studentRows.values()].find((candidate) =>
+        candidate.id === params[0] && candidate.schoolId === params[1]);
+      const studentSchool = row && schoolsById.get(row.schoolId);
+      if (!row || !studentSchool || !row.isActive || !row.isActivated) return [];
+      return [{ students: row, schools: studentSchool }];
     }
     return [];
   };
@@ -463,6 +523,7 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   const app = express();
   app.set("trust proxy", true);
   app.use(express.json());
+  app.use(rejectBearerOutsideMobileAuth);
   registerMobileAuthRoutes(app);
   const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -502,6 +563,23 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
         "x-forwarded-proto": "https",
         "x-forwarded-for": `198.51.100.${ipSerial}`,
         ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        ...(sessionId === undefined ? {} : { "x-view-session-id": String(sessionId) }),
+      },
+    });
+    return { response, body: await jsonResponse(response) as Record<string, any> };
+  }
+  async function requestStudentDashboard(
+    accessToken?: string,
+    sessionId?: number | string,
+    query = "",
+    authorization?: string,
+  ) {
+    ipSerial += 1;
+    const response = await fetch(`${baseUrl}/api/mobile/student/dashboard${query}`, {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-for": `198.51.100.${ipSerial}`,
+        ...(authorization ? { authorization } : accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         ...(sessionId === undefined ? {} : { "x-view-session-id": String(sessionId) }),
       },
     });
@@ -568,12 +646,131 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.equal(studentMe.response.status, 200);
   assert.equal(studentMe.body.schoolId, school.id);
 
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    ipSerial += 1;
+    const nonHttpsDashboard = await fetch(`${baseUrl}/api/mobile/student/dashboard`, {
+      headers: {
+        authorization: "Bearer malformed",
+        "x-forwarded-for": `198.51.100.${ipSerial}`,
+        "x-forwarded-proto": "http",
+      },
+    });
+    assert.equal(nonHttpsDashboard.status, 426);
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+  }
+  ipSerial += 1;
+  const unrelatedBearerPath = await fetch(`${baseUrl}/api/student/dashboard`, {
+    headers: {
+      authorization: `Bearer ${studentLogin.body.accessToken}`,
+      "x-forwarded-for": `198.51.100.${ipSerial}`,
+      "x-forwarded-proto": "https",
+    },
+  });
+  assert.equal(unrelatedBearerPath.status, 401);
+
+  assert.equal((await requestStudentDashboard()).response.status, 401);
+  assert.equal((await requestStudentDashboard(undefined, 501, "", "Bearer malformed")).response.status, 401);
+  assert.equal((await requestStudentDashboard(studentLogin.body.accessToken)).response.status, 400);
+  assert.equal((await requestStudentDashboard(studentLogin.body.accessToken, "1e3")).response.status, 400);
+  assert.equal((await requestStudentDashboard(studentLogin.body.accessToken, 601)).response.status, 403);
+
+  const studentDashboard = await requestStudentDashboard(
+    studentLogin.body.accessToken, 502, "?studentId=302&schoolId=2",
+  );
+  assert.equal(studentDashboard.response.status, 200);
+  assert.deepEqual(studentDashboard.body, {
+    student: {
+      id: student.id,
+      schoolId: school.id,
+      name: student.name,
+      digitalStudentId: student.digitalStudentId,
+      class: student.class,
+      section: student.section,
+      photoUrl: student.photoUrl,
+      schoolName: school.name,
+      schoolCode: school.code,
+    },
+    sessionId: 502,
+    attendancePercent: 91.5,
+    unreadNoticeCount: 3,
+    feesOutstanding: true,
+  });
+  assert.deepEqual(dashboardMetrics.historicalContext, [school.id, 502, student.id]);
+  assert.deepEqual(dashboardMetrics.attendanceArguments, [
+    student.id, school.id, 502, "Historical 8", "C",
+    academicSessionRows[1].startDate, academicSessionRows[1].endDate,
+  ]);
+  assert.deepEqual(dashboardMetrics.noticeArguments, [
+    student.id, school.id, student.class, student.section, 502,
+  ]);
+  assert.deepEqual(dashboardMetrics.feeArguments, [student.id, school.id, 502]);
+  const malformedDashboardOverrides = await requestStudentDashboard(
+    studentLogin.body.accessToken, 502, "?studentId=not-a-number&schoolId=bogus",
+  );
+  assert.equal(malformedDashboardOverrides.response.status, 200);
+  assert.equal(malformedDashboardOverrides.body.student.id, student.id);
+  assert.equal(malformedDashboardOverrides.body.student.schoolId, school.id);
+
+  const otherStudentLogin = await request("login", {
+    role: "student", identifier: otherStudent.digitalStudentId, password: "Correct-Horse-77",
+  });
+  assert.equal(otherStudentLogin.response.status, 200);
+  const isolatedOtherStudent = await requestStudentDashboard(
+    otherStudentLogin.body.accessToken, 501, "?studentId=301&schoolId=2",
+  );
+  assert.equal(isolatedOtherStudent.response.status, 200);
+  assert.equal(isolatedOtherStudent.body.student.id, otherStudent.id);
+  assert.equal(isolatedOtherStudent.body.student.schoolId, school.id);
+  assert.equal(isolatedOtherStudent.body.unreadNoticeCount, 7);
+  assert.equal(isolatedOtherStudent.body.feesOutstanding, false);
+
+  const foreignStudentLogin = await request("login", {
+    role: "student", identifier: foreignStudent.digitalStudentId, password: "Correct-Horse-77",
+  });
+  assert.equal(foreignStudentLogin.response.status, 200);
+  const foreignStudentDashboard = await requestStudentDashboard(
+    foreignStudentLogin.body.accessToken, 601,
+  );
+  assert.equal(foreignStudentDashboard.response.status, 200);
+  assert.equal(foreignStudentDashboard.body.student.id, foreignStudent.id);
+  assert.equal(foreignStudentDashboard.body.student.schoolId, foreignSchool.id);
+  assert.equal(foreignStudentDashboard.body.student.schoolName, foreignSchool.name);
+
+  const expiredAccessToken = "expired-dashboard-access-token-1234567890";
+  const expiredSessionId = "expired-dashboard-session";
+  sessions.set(expiredSessionId, {
+    id: expiredSessionId,
+    principal_id: student.id,
+    principal_entity_id: student.id,
+    role: "student",
+    school_id: school.id,
+    principal_password_version: hashMobileCredential(student.passwordHash),
+    access_token_hash: hashMobileCredential(expiredAccessToken),
+    access_expires_at: new Date(Date.now() - 1000),
+    auth_issued_at: new Date(),
+    expires_at: new Date(Date.now() + 60_000),
+    revoked_at: null,
+  });
+  assert.equal((await requestStudentDashboard(expiredAccessToken, 501)).response.status, 401);
+  sessions.delete(expiredSessionId);
+
+  assert.equal((await requestStudentDashboard(adminSession.body.accessToken, 501)).response.status, 403);
+  feeRowsByStudent.set(student.id, [{ status: "Unpaid", amount: 0 }, { status: "Paid", amount: 100 }]);
+  const noPositiveOutstanding = await requestStudentDashboard(studentLogin.body.accessToken, 501);
+  assert.equal(noPositiveOutstanding.response.status, 200);
+  assert.equal(noPositiveOutstanding.body.feesOutstanding, false);
+
   const supportLogin = await request("login", {
     role: "support_staff", identifier: staff.email, password: "Correct-Horse-77",
   });
   assert.equal(supportLogin.response.status, 200);
   assert.equal(supportLogin.body.user.role, "support_staff");
   assert.deepEqual(supportLogin.body.user.allowedModules, ["attendance"]);
+  assert.equal((await requestStudentDashboard(supportLogin.body.accessToken, 501)).response.status, 403);
   assert.equal((await requestAcademicSessions("", supportLogin.body.accessToken)).response.status, 403);
   assert.equal((await requestAcademicSessions("/selection", supportLogin.body.accessToken, 501)).response.status, 403);
   staffRows.set(staff.id, { ...staff, email: teacherUser.email });

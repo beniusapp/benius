@@ -1,0 +1,626 @@
+We are now starting **BENIUS Mobile Step 5**.
+
+IMPORTANT: Step 4 / Step 4B is CLOSED and should NOT be repeated.
+
+Treat Step 4 as:
+**COMPLETE WITH DOCUMENTED NATIVE-DEVICE LIMITATION**
+
+Do not restart, redesign, or re-audit the Step 4 foundation unless a concrete Step 5 implementation issue requires it.
+
+==================================================
+STEP 5 — STUDENT MOBILE DASHBOARD
+=================================
+
+Build the first real BENIUS mobile application module:
+
+**Student → Home / Dashboard**
+
+This is an incremental implementation.
+
+DO NOT build the entire Student module.
+DO NOT build Student Examination yet.
+DO NOT build Teacher or Admin modules yet.
+DO NOT redesign the application.
+
+The objective is to establish the first complete end-to-end Student mobile screen using the real BENIUS backend and the existing BENIUS web application's actual responsive/mobile UI as the source of truth.
+
+==================================================
+
+1. ABSOLUTE PRODUCT REQUIREMENTS
+   ==================================================
+
+BENIUS is a multi-tenant / multi-school application.
+
+This requirement is permanent.
+
+Every Student API request, database query, calculation, cache entry, navigation decision, Academic Session operation, and displayed record must remain constrained to:
+
+1. authenticated school/tenant
+2. authenticated student
+3. selected Academic Session where the existing backend functionality is session-sensitive
+
+NEVER trust schoolId, studentId, role, or similar identity values supplied by the mobile client when the server can derive them from the authenticated mobile credential.
+
+NEVER allow a Student from School A to retrieve or display School B data.
+
+NEVER allow one Student to retrieve another Student's private data.
+
+Do not weaken existing authorization.
+
+==================================================
+2. EXISTING WEB APPLICATION IS THE UI SOURCE OF TRUTH
+=====================================================
+
+This is extremely important.
+
+The existing BENIUS WEB application's actual responsive/mobile appearance is the visual and interaction source of truth.
+
+We are NOT creating a newly designed mobile dashboard.
+
+We are reproducing the existing BENIUS web application's Student experience in native React Native.
+
+Before writing the screen:
+
+1. Locate the existing Student dashboard/home page.
+2. Locate the relevant Student routes.
+3. Locate all components used by that page.
+4. Inspect the responsive/mobile behavior.
+5. Inspect:
+
+   * layout
+   * navigation
+   * header
+   * cards
+   * buttons
+   * icons
+   * typography
+   * spacing
+   * colors
+   * labels
+   * wording
+   * badges
+   * loading states
+   * empty states
+   * error states
+   * dialogs/modals if present
+   * menus
+   * session indicator
+   * logout behavior
+6. Render the existing web Student dashboard at a mobile viewport and inspect it.
+7. Use that actual screen as the reference.
+
+Do NOT invent a new dashboard layout.
+
+Do NOT replace existing cards with arbitrary mobile cards.
+
+Do NOT simplify functionality merely because the target is mobile.
+
+Do NOT use WebView.
+
+Use native React Native components.
+
+Where exact HTML/CSS behavior cannot be reproduced, use the closest native equivalent while preserving the same visual hierarchy and interaction behavior.
+
+Document any unavoidable deviation.
+
+==================================================
+3. FIRST AUDIT BEFORE CODING
+============================
+
+Before changing code, perform a READ-ONLY audit.
+
+Identify and report:
+
+A. Existing Student web entry route.
+
+B. Existing Student dashboard/home page.
+
+C. All API endpoints called by that page.
+
+D. All React Query hooks used by that page.
+
+E. All shared components used by that page.
+
+F. All Student-specific navigation destinations visible from that page.
+
+G. Which dashboard data is:
+
+* school scoped
+* student scoped
+* Academic Session scoped
+* not session scoped
+
+H. Which data already has a mobile-compatible backend endpoint.
+
+I. Which endpoint, if any, needs a minimal mobile integration wrapper.
+
+J. Existing responsive/mobile appearance.
+
+K. Exact mobile viewport used for the inspection.
+
+Do not modify code during this audit phase.
+
+After the audit, continue with implementation in the same task.
+
+==================================================
+4. AUTHENTICATION
+=================
+
+Use the Step 3/4 mobile authentication foundation already implemented.
+
+DO NOT create a second authentication system.
+
+Use:
+
+* mobile access credential
+* mobile refresh credential
+* SecureStore
+* AuthContext
+* existing mobile /me validation
+* existing generation-aware refresh coordinator
+
+Do not store:
+
+* password
+* PIN
+* sensitive authentication secrets in AsyncStorage
+
+The Student dashboard must only render after the authenticated Student identity has been verified.
+
+Server identity remains authoritative.
+
+==================================================
+5. STUDENT IDENTITY
+===================
+
+The mobile app must obtain Student identity from the authenticated server principal.
+
+Do NOT allow the dashboard to accept arbitrary:
+
+studentId
+schoolId
+role
+userId
+
+from navigation parameters or ordinary client-controlled state.
+
+If an API requires the Student ID, derive/use it only through the authenticated server context or an already-authorized existing endpoint.
+
+A user must never be able to alter a route parameter and view another Student's dashboard.
+
+==================================================
+6. ACADEMIC SESSION
+===================
+
+Use the existing Step 4 Academic Session foundation.
+
+The dashboard must use the selected Academic Session when the underlying web functionality is session-sensitive.
+
+Do NOT invent a second session selector.
+
+Do NOT treat Academic Session as authentication.
+
+Keep these concepts separate:
+
+Authentication
+Tenant / School
+Student identity
+Academic Session
+
+If the existing web Student dashboard displays the current Academic Session or depends on it, reproduce that behavior.
+
+If the user changes Academic Session, invalidate/refetch session-sensitive dashboard queries.
+
+Do not display stale data from the previous session.
+
+==================================================
+7. API IMPLEMENTATION
+=====================
+
+Reuse existing backend endpoints wherever possible.
+
+Do NOT duplicate business logic in the mobile application.
+
+Do NOT calculate academic results, attendance summaries, fees, timetable information, etc. in the mobile client if the web/backend already calculates them.
+
+The backend remains the source of truth.
+
+If an existing endpoint is suitable:
+
+reuse it.
+
+If the existing endpoint needs a minimal mobile wrapper:
+
+create the smallest safe wrapper possible.
+
+Any new mobile endpoint must:
+
+* authenticate the mobile credential
+* derive school/tenant from the authenticated principal
+* derive Student identity from the authenticated principal
+* enforce Academic Session where applicable
+* never trust client-supplied school identity
+* never expose cross-school data
+* never expose another student's data
+* use existing domain/business logic where possible
+
+Do not perform unrelated backend hardening.
+
+==================================================
+8. TANSTACK QUERY
+=================
+
+Use the existing TanStack Query foundation.
+
+Every session-sensitive Student dashboard query must have a cache key that distinguishes at least:
+
+resource
+school
+student/principal
+role
+Academic Session
+
+Do not allow School A / Student A / Session A cached data to appear under School B / Student B / Session B.
+
+When Academic Session changes:
+
+* invalidate appropriate session-sensitive queries
+* refetch
+* avoid stale previous-session dashboard information
+
+Follow the cache-key rules established in Step 4B.
+
+==================================================
+9. NATIVE NAVIGATION
+====================
+
+Use the existing Expo Router structure.
+
+Reproduce the existing web Student navigation hierarchy.
+
+Do NOT invent a new navigation architecture merely because this is mobile.
+
+The mobile navigation should feel like the existing BENIUS responsive web application.
+
+Only implement navigation destinations required for the Student dashboard in this step.
+
+Do not implement the destination modules yet unless a minimal placeholder is necessary to preserve navigation behavior.
+
+If a destination is not implemented yet, make the behavior explicit and safe rather than pretending the module is complete.
+
+==================================================
+10. UI FIDELITY
+===============
+
+Reproduce the actual web Student dashboard as closely as technically possible.
+
+Match:
+
+* page structure
+* header
+* navigation
+* section ordering
+* card arrangement
+* card hierarchy
+* labels
+* text
+* button wording
+* icon placement
+* typography hierarchy
+* spacing
+* border radius
+* shadows
+* backgrounds
+* colors
+* badges
+* dividers
+* loading indicators
+* empty states
+* error states
+* retry behavior
+* session controls
+* logout behavior
+
+Do NOT arbitrarily modernize the UI.
+
+Do NOT introduce a new design system.
+
+Use existing BENIUS colors/constants/components where appropriate.
+
+If an existing mobile design token already exists, reuse it.
+
+If a web component has no direct native equivalent, reproduce its appearance and interaction using native React Native components.
+
+==================================================
+11. RESPONSIVE WEB REFERENCE
+============================
+
+Inspect the web dashboard at a mobile viewport.
+
+Use at least:
+
+approximately 390px wide
+approximately 844px high
+
+If the existing application uses a different breakpoint, document the relevant breakpoint.
+
+The native screen should be visually compared against the web mobile reference.
+
+Do not claim pixel-perfect parity unless actually verified.
+
+==================================================
+12. LOADING / ERROR / EMPTY STATES
+==================================
+
+Reproduce the web application's actual behavior.
+
+The screen must distinguish:
+
+* initial loading
+* successful loaded state
+* empty state
+* recoverable API failure
+* authentication failure
+* network/offline state
+
+Do not show fake dashboard information.
+
+Do not silently substitute hardcoded values.
+
+If no data exists, show the appropriate real empty state.
+
+==================================================
+13. NETWORK BEHAVIOR
+====================
+
+Use the existing NetworkContext and API layer.
+
+Do not implement offline writes.
+
+For dashboard reads, safe cached display may be used only where the existing query architecture permits it.
+
+Never make an unconfirmed mutation while offline.
+
+If the access credential expires:
+
+use the existing generation-aware refresh coordinator.
+
+Do not implement another refresh mechanism inside the dashboard.
+
+==================================================
+14. IST
+=======
+
+All BENIUS application/business/display timestamps must remain:
+
+Asia/Kolkata
+IST
+
+Do not use device-local timezone for business dates.
+
+Do not introduce UTC/local timezone conversion bugs.
+
+Use existing shared date utilities.
+
+==================================================
+15. PERFORMANCE
+===============
+
+The dashboard must remain smooth under realistic data.
+
+Avoid:
+
+* unnecessary API calls
+* duplicate queries
+* repeated identity fetches
+* unnecessary re-renders
+* loading the entire school dataset
+* loading unrelated Student modules
+
+Do not fetch information that the dashboard does not need.
+
+==================================================
+16. WEB APPLICATION SAFETY
+==========================
+
+The existing web application must continue working.
+
+Do not replace web authentication.
+
+Do not change existing web routes unless a concrete shared backend compatibility requirement exists.
+
+Do not modify existing web UI simply to make the mobile implementation easier.
+
+Do not migrate the web app to React Native.
+
+Mobile is an additional client.
+
+==================================================
+17. TESTING
+===========
+
+After implementation, perform all tests possible in the Replit environment.
+
+At minimum:
+
+A. Mobile TypeScript check.
+
+B. Expo dependency/doctor check.
+
+C. Mobile build/bundle validation.
+
+D. Web production build.
+
+E. Existing mobile authentication route tests.
+
+F. Student dashboard API tests.
+
+G. Tenant isolation test.
+
+H. Student identity isolation test.
+
+I. Academic Session isolation test where applicable.
+
+J. Invalid/expired credential test.
+
+K. Refresh behavior test.
+
+L. Logout test.
+
+M. Query/cache-key inspection.
+
+N. Web regression check.
+
+O. Render the mobile web reference and native Student dashboard preview if possible.
+
+IMPORTANT:
+
+If native Android/iOS hardware or emulator is unavailable, explicitly state that native runtime validation could not be performed.
+
+Do not fabricate native test results.
+
+==================================================
+18. SECURITY TESTS
+==================
+
+Explicitly test that:
+
+1. Student from School A cannot access School B.
+
+2. Student A cannot access Student B.
+
+3. A malformed student/session identifier cannot bypass authorization.
+
+4. Client-supplied schoolId does not override authenticated school identity.
+
+5. Client-supplied studentId does not override authenticated Student identity.
+
+6. Wrong role cannot access Student endpoints.
+
+7. Expired access credential is rejected or refreshed through the existing mechanism.
+
+8. Refresh-token reuse protection remains intact.
+
+9. Logout invalidates the mobile session.
+
+10. Academic Session selection cannot select a session belonging to another school.
+
+==================================================
+19. NO FAKE DATA
+================
+
+Do not create permanent fake Student dashboard data.
+
+Temporary test fixtures are allowed only if:
+
+* clearly marked development-only
+* isolated
+* automatically cleaned up
+* never committed as production data
+
+Do not seed fake dashboard information into the real application.
+
+==================================================
+20. DOCUMENTATION
+=================
+
+Create/update:
+
+artifacts/benius-mobile/docs/student-dashboard-step5.md
+
+Document:
+
+* web source screen
+* web route
+* API endpoints reused
+* any new mobile endpoint
+* Academic Session behavior
+* authentication behavior
+* tenant isolation
+* Student identity isolation
+* cache keys
+* UI mapping
+* known deviations
+* tests performed
+* tests not possible
+* native-device limitation if applicable
+
+Also update the UI fidelity documentation if the new screen establishes reusable patterns.
+
+==================================================
+21. IMPORTANT STOP CONDITION
+============================
+
+Do NOT continue into:
+
+Student Examination
+Student Attendance
+Student Fees
+Student Timetable
+Student Notices
+Student Profile
+Teacher modules
+Admin modules
+
+after completing this step.
+
+Only implement the Student Home/Dashboard and the minimum navigation/foundation required for it.
+
+==================================================
+22. FINAL REPORT FORMAT
+=======================
+
+At the end provide a concise implementation report containing:
+
+1. Files created
+2. Files changed
+3. Web Student screen used as source of truth
+4. API endpoints reused
+5. New API endpoints, if any
+6. Authentication behavior
+7. Academic Session behavior
+8. Tenant isolation result
+9. Student isolation result
+10. UI fidelity result
+11. Loading/error/empty state result
+12. Cache/query-key result
+13. IST result
+14. Performance considerations
+15. Tests passed
+16. Tests failed
+17. Tests not possible
+18. Native device/emulator limitation
+19. Any known deviations from the web UI
+20. Confirmation that no Teacher/Admin/other Student modules were started
+
+Do not mark something PASS if it was not actually tested.
+
+Do not claim visual parity without inspecting the actual web reference.
+
+==================================================
+FINAL RULE
+==========
+
+This is a production-quality foundation exercise.
+
+Prefer:
+
+existing BENIUS behavior
+existing backend
+existing business rules
+existing APIs
+existing components
+existing authentication
+existing Academic Session architecture
+
+over creating parallel systems.
+
+The goal is:
+
+**BENIUS Web Student Dashboard → faithful native React Native implementation**
+
+while preserving:
+
+**same backend + same database + same business rules + same permissions + same tenant isolation + same Academic Session behavior.**
+
+Start with the read-only audit, then implement Step 5, test it, document it, and STOP.

@@ -7,6 +7,7 @@ import {
   mobileRequestUsesTrustedHttps,
   refreshCredentialDecision,
   rejectBearerOutsideMobileAuth,
+  shouldLogJsonResponseBody,
   shouldFallbackToSupportStaff,
 } from "./mobile-auth-policy";
 import { hashMobileCredential } from "./mobile-auth-crypto";
@@ -31,12 +32,17 @@ const validPrincipal = {
 };
 
 test("mobile bearer is accepted only inside the mobile auth route namespace", () => {
-  const call = (path: string, authorization = "Bearer opaque-mobile-token") => {
+  const call = (
+    path: string,
+    authorization = "Bearer opaque-mobile-token",
+    method = "GET",
+  ) => {
     let statusCode = 200;
     let responseBody: unknown;
     let continued = false;
     const req = {
       path,
+      method,
       get: () => authorization,
     } as unknown as Request;
     const res = {
@@ -55,6 +61,9 @@ test("mobile bearer is accepted only inside the mobile auth route namespace", ()
 
   assert.equal(call("/api/mobile/auth/me").continued, true);
   assert.equal(call("/api/mobile/auth/login").continued, true);
+  assert.equal(call("/api/mobile/student/dashboard").continued, true);
+  assert.equal(call("/api/mobile/student/dashboard/", "Bearer opaque-mobile-token").continued, false);
+  assert.equal(call("/api/mobile/student/dashboard", "Bearer opaque-mobile-token", "POST").continued, false);
   const webResult = call("/api/admin/profile");
   assert.equal(webResult.statusCode, 401);
   assert.equal(webResult.continued, false);
@@ -63,6 +72,13 @@ test("mobile bearer is accepted only inside the mobile auth route namespace", ()
   });
   assert.equal(call("/dashboard", "Bearer opaque-mobile-token").continued, true);
   assert.equal(call("/api/admin/profile", "").continued, true);
+});
+
+test("student dashboard JSON bodies are excluded from response logging only at its exact path", () => {
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard"), false);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/"), true);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/extra"), true);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/auth/me"), true);
 });
 
 test("forwarded HTTPS is trusted only from local proxy sockets, while native TLS is accepted", () => {
