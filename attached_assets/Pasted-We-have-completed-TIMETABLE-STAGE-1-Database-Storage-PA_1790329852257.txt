@@ -1,0 +1,451 @@
+We have completed:
+
+* TIMETABLE STAGE 1 — Database + Storage — PASS
+* TIMETABLE STAGE 2 — API/Server — PASS
+* TIMETABLE STAGE 3A — Admin Timetable UI — PASS
+
+Now perform:
+
+# TIMETABLE STAGE 3B — TEACHER TIMETABLE UI — READ-ONLY AUDIT
+
+## CRITICAL
+
+**DO NOT CHANGE ANY CODE.**
+
+This is an audit only.
+
+Do NOT modify:
+
+* `shared/schema.ts`
+* migrations
+* `server/storage.ts`
+* `server/teacher-routes.ts`
+* `server/routes.ts`
+* Admin Timetable UI
+* Student Timetable UI
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated modules
+
+Do not create test data.
+
+---
+
+# Objective
+
+Verify that the **Teacher Timetable UI is completely Academic Session-based**.
+
+The selected Academic Session must control:
+
+* timetable reads
+* class timetable reads
+* structure reads
+* slot/collision checks
+* single-slot create/update/delete
+* batch save/delete
+* query/cache identity
+* session switching
+* draft state
+* archived-session editing
+
+Expected architecture:
+
+**Authenticated School → Selected Academic Session → Teacher Timetable → Session-specific API → Session-specific Storage**
+
+---
+
+# Files to inspect
+
+Start with:
+
+`client/src/pages/teacher-modules/timetable.tsx`
+
+Also inspect only directly related client-side code used by this page:
+
+* selected Academic Session provider/context
+* session transport/request helpers
+* Timetable-specific hooks/utilities
+* relevant query helpers
+
+Read the relevant server endpoints only when necessary to verify what the UI request actually reaches.
+
+Do not change anything.
+
+---
+
+# AUDIT 1 — Selected Academic Session
+
+Identify exactly:
+
+1. Where Teacher Timetable gets the selected Academic Session ID.
+2. Whether it uses the canonical session-selection mechanism.
+3. Whether the selected Session can be null/undefined.
+4. What happens when no Session is selected.
+5. Whether the page uses selected Session or accidentally uses active Session.
+6. Whether selected Session is available for BOTH reads and writes.
+
+Important:
+
+**Selected Session must take priority over active Session.**
+
+Do not assume the active Session is correct simply because it is the school's current session.
+
+Report exact files and line references.
+
+---
+
+# AUDIT 2 — Every Teacher Timetable API request
+
+Find EVERY request made by:
+
+`client/src/pages/teacher-modules/timetable.tsx`
+
+Create a table:
+
+| Request | Method | Purpose | Session sent? | Transport | Correct? |
+| ------- | ------ | ------- | ------------- | --------- | -------- |
+
+Include all requests for:
+
+* teacher timetable
+* class timetable
+* structure
+* slot/collision
+* single-slot create
+* single-slot update
+* single-slot delete
+* batch save
+* batch delete
+* any status/publish-related request if present
+* any other Timetable request
+
+Pay special attention to:
+
+* native `fetch()`
+* `apiRequest()`
+* `sessionFetch()`
+* custom helpers
+
+Do not assume a request is Session-aware merely because another request on the page is.
+
+---
+
+# AUDIT 3 — Query keys and cache identity
+
+Inspect:
+
+* `useQuery`
+* `useMutation`
+* query keys
+* invalidations
+* refetches
+* cache updates
+* query cancellation
+
+Determine whether the selected Session ID is included wherever the data is Session-owned.
+
+At minimum check:
+
+* Teacher timetable query
+* class-view query
+* structure query
+* slot/collision queries
+* any related timetable query
+
+Test conceptually:
+
+```text
+Session A → Session B
+```
+
+Could Session A cached data remain visible under Session B?
+
+Could Session A mutation invalidate or update Session B cache?
+
+Report exact findings.
+
+---
+
+# AUDIT 4 — Session switching
+
+Trace what happens when the Teacher changes Academic Session.
+
+Check:
+
+1. Does the request immediately use the new Session?
+2. Are old queries cancelled/refreshed?
+3. Are query keys Session-specific?
+4. Can Session A data remain visible after switching to B?
+5. Can a request started for A populate the B screen?
+6. Are local timetable drafts cleared?
+7. Are pending deletes cleared?
+8. Are selected class/section/subject values safely handled?
+9. Can an A-origin draft be saved into B?
+
+Do not modify anything.
+
+---
+
+# AUDIT 5 — Teacher timetable reads
+
+Verify all reads are Session-specific:
+
+* teacher timetable
+* class timetable
+* structure / bell periods
+* slot/collision information
+
+Expected:
+
+```text
+Selected Session B
+        ↓
+Teacher UI
+        ↓
+API request contains B
+        ↓
+Storage reads only B
+```
+
+No request should intentionally omit the selected Session and rely on a server fallback when the Teacher has explicitly selected another Session.
+
+---
+
+# AUDIT 6 — Teacher timetable writes
+
+Trace the complete UI → API path for:
+
+### Single slot
+
+* create
+* update
+* delete
+
+### Batch
+
+* save
+* delete
+
+For each determine:
+
+1. Which Session ID is used?
+2. Is it selected Session or active Session?
+3. Is the same Session used throughout the operation?
+4. Could the selected Session change between validation and save?
+5. Could a stale draft be saved into another Session?
+6. Does the mutation invalidate/refetch the correct Session-specific queries?
+
+Important:
+
+**Teacher writes must use the selected Session when one is selected.**
+
+---
+
+# AUDIT 7 — Archived Session UI
+
+Determine whether the Teacher Timetable UI knows whether the selected Session is archived/inactive.
+
+Check whether all mutation controls are disabled for archived Sessions:
+
+* add slot
+* edit slot
+* delete slot
+* save
+* batch save
+* batch delete
+* structure editing
+* any other Timetable mutation
+
+Expected:
+
+* archived Session → readable
+* archived Session → not editable
+
+Server-side Storage protection already exists and must remain the final authority.
+
+Report UI-only gaps.
+
+---
+
+# AUDIT 8 — Fresh Academic Session
+
+Audit the UI behavior when the selected Session has no timetable data.
+
+Expected:
+
+* empty Teacher timetable
+* no previous Session timetable
+* no previous Session structure
+* no stale cache
+* no stale draft
+* no previous Session collision information
+
+Do not create data.
+
+Trace the code path only.
+
+---
+
+# AUDIT 9 — Session A → B isolation scenario
+
+Trace this exact scenario:
+
+### Session A
+
+Teacher opens timetable.
+
+Teacher sees A timetable.
+
+Teacher makes an unsaved timetable change, if the UI supports local drafts.
+
+### Switch to Session B
+
+Verify whether:
+
+* B timetable is requested
+* A data disappears
+* A draft disappears or is safely isolated
+* B structure is requested
+* B collision data is used
+* B save uses B
+* A cannot be modified accidentally
+
+Mark:
+
+PASS / FAIL / PARTIAL
+
+with exact evidence.
+
+---
+
+# AUDIT 10 — Multi-tenant isolation
+
+Confirm that the Teacher UI cannot override the authenticated school.
+
+Check:
+
+* teacher ID
+* school ID
+* class
+* section
+* subject
+* session ID
+
+Determine whether any client-controlled school ID is sent to Timetable APIs.
+
+The server remains authoritative.
+
+Report only actual findings.
+
+---
+
+# AUDIT 11 — Teacher authorization interaction
+
+Because Teacher Timetable has teacher-specific authorization, verify that Session handling does not bypass existing authorization.
+
+Check:
+
+* Teacher identity
+* teacher-school relationship
+* timetable entry ownership
+* class/section authorization
+* subject authorization where applicable
+
+Do NOT redesign authorization.
+
+Only report whether adding/using Session could accidentally bypass an existing check.
+
+---
+
+# AUDIT 12 — Final architecture check
+
+Mark each:
+
+| Layer                     | Result                |
+| ------------------------- | --------------------- |
+| Authenticated School      | PASS / PARTIAL / FAIL |
+| Selected Academic Session | PASS / PARTIAL / FAIL |
+| Teacher timetable reads   | PASS / PARTIAL / FAIL |
+| Teacher timetable writes  | PASS / PARTIAL / FAIL |
+| Structure                 | PASS / PARTIAL / FAIL |
+| Collision checks          | PASS / PARTIAL / FAIL |
+| Query/cache identity      | PASS / PARTIAL / FAIL |
+| Session switching         | PASS / PARTIAL / FAIL |
+| Draft isolation           | PASS / PARTIAL / FAIL |
+| Archived Session UI       | PASS / PARTIAL / FAIL |
+
+---
+
+# AUDIT 13 — Exact defects
+
+List ONLY verified defects.
+
+For every defect provide:
+
+* Severity: High / Medium / Low
+* File
+* Line
+* Current behavior
+* Expected behavior
+* Smallest safe fix
+
+Do not speculate.
+
+Do not implement fixes.
+
+---
+
+# Required final report
+
+Return:
+
+### 1. Files inspected
+
+### 2. Selected Session source
+
+### 3. Complete API request table
+
+### 4. Query/cache audit
+
+### 5. Session-switch audit
+
+### 6. Draft-state audit
+
+### 7. Archived Session UI audit
+
+### 8. Fresh Session audit
+
+### 9. Session A → B isolation result
+
+### 10. Multi-tenant audit
+
+### 11. Teacher authorization interaction
+
+### 12. Exact defects found
+
+### 13. Scope confirmation
+
+Confirm:
+
+* No code changed
+* No database changes
+* No migrations
+* No Storage changes
+* No server/API changes
+* No Admin UI changes
+* No Student UI changes
+* No Attendance changes
+* No Leave changes
+* No Examination changes
+
+End with exactly one:
+
+**TIMETABLE STAGE 3B — TEACHER UI AUDIT — READY FOR FIX**
+
+or
+
+**TIMETABLE STAGE 3B — TEACHER UI AUDIT — NOT READY**
+
+Do not implement any fixes until I review the audit.
