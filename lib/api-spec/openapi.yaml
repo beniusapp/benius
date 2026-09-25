@@ -24,6 +24,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /mobile/auth/teacher/change-password:
+    post:
+      operationId: mobileTeacherFirstLoginChangePassword
+      tags: [mobile-auth]
+      summary: Complete a teacher's required first-login password change
+      description: Uses a short-lived single-purpose challenge and returns no authenticated session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MobileTeacherFirstLoginPasswordChange"
+      responses:
+        "200":
+          description: Password changed; the teacher must sign in again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MobileTeacherFirstLoginPasswordChanged"
+        "400":
+          description: Invalid request or password confirmation.
+        "401":
+          description: Challenge expired or invalid.
+        "429":
+          description: Too many attempts.
+        "503":
+          description: Password change temporarily unavailable.
 components:
   schemas:
     HealthStatus:
@@ -33,4 +60,26 @@ components:
           type: string
       required:
         - status
+    MobileTeacherFirstLoginPasswordChange:
+      type: object
+      additionalProperties: false
+      properties:
+        challengeToken:
+          type: string
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 6
+        confirmPassword:
+          type: string
+          minLength: 6
+      required: [challengeToken, currentPassword, newPassword, confirmPassword]
+    MobileTeacherFirstLoginPasswordChanged:
+      type: object
+      properties:
+        state:
+          type: string
+          const: password_changed
+      required: [state]
 

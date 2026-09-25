@@ -12,6 +12,7 @@ type AuthState = {
   login(credentials: { identifier: string; password: string; role: Role }): Promise<LoginResult>;
   verifyPin(challengeToken: string, pin: string): Promise<void>;
   initialize(input: { challengeToken: string; newPassword: string; confirmPassword: string; pin: string; confirmPin: string; recoveryEmail: string; recoveryPhone: string }): Promise<void>;
+  changeTeacherFirstLoginPassword(input: { challengeToken: string; currentPassword: string; newPassword: string; confirmPassword: string }): Promise<void>;
   logout(): Promise<void>;
   clearAfterPasswordChange(): Promise<void>;
 };
@@ -73,11 +74,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const initialize = async (input: { challengeToken: string; newPassword: string; confirmPassword: string; pin: string; confirmPin: string; recoveryEmail: string; recoveryPhone: string }) => {
     accept(await authTransport.initialize(input));
   };
+  const changeTeacherFirstLoginPassword = async (input: { challengeToken: string; currentPassword: string; newPassword: string; confirmPassword: string }) => {
+    await authTransport.changeTeacherFirstLoginPassword(input);
+  };
   const logout = async () => {
     await authTransport.logout();
     await clear();
   };
-  return <Context.Provider value={{ user, loading, restoreError, login, verifyPin, initialize, logout, clearAfterPasswordChange: clear }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ user, loading, restoreError, login, verifyPin, initialize, changeTeacherFirstLoginPassword, logout, clearAfterPasswordChange: clear }}>{children}</Context.Provider>;
 }
 export function useAuth() {
   const context = useContext(Context);

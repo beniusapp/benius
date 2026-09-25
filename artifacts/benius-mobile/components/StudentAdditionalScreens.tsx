@@ -556,7 +556,7 @@ export function StudentFeesScreen() {
         : <Button label={documentLoading === record.id ? 'Loading invoice…' : 'View invoice'} icon="file-text" secondary
             disabled={documentLoading !== null} onPress={() => { void loadDocument(record, 'invoice'); }} />}
       {record.status.toLowerCase() !== 'paid' && session?.isActive && portal.data?.isRazorpayEnabled
-        && <StudentPaymentCheckout feeRecordId={record.id} onPaid={receipt => {
+        && <StudentPaymentCheckout feeRecordId={record.id} sessionId={session.id} onPaid={receipt => {
           Alert.alert('Payment confirmed', `Your payment was verified. Receipt ${receipt}.`);
           void query.refetch(); void summary.refetch(); void attempts.refetch();
         }} />}

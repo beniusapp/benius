@@ -5,21 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
-
-export interface MobileTeacherFirstLoginPasswordChange {
-  challengeToken: string;
-  currentPassword: string;
-  /** @minLength 6 */
-  newPassword: string;
-  /** @minLength 6 */
-  confirmPassword: string;
-}
 
 export const MobileTeacherFirstLoginPasswordChangedValue = {
   state: 'password_changed',
 } as const;
 export type MobileTeacherFirstLoginPasswordChanged = typeof MobileTeacherFirstLoginPasswordChangedValue;
-

@@ -18,6 +18,9 @@ function Navigation() {
   const c = useColors();
   return <Stack screenOptions={{ headerStyle: { backgroundColor: c.background }, headerTintColor: c.foreground, contentStyle: { backgroundColor: c.background } }}>
     <Stack.Screen name="index" options={{ headerShown: false }} />
+    <Stack.Screen name="login" options={{ headerShown: false }} />
+    <Stack.Screen name="teacher-login" options={{ headerShown: false }} />
+    <Stack.Screen name="student-login" options={{ headerShown: false }} />
     <Stack.Screen name="sessions" options={{ title: 'Academic session', headerShown: false }} />
     <Stack.Screen name="profile" options={{ title: 'Account', headerShown: false }} />
     <Stack.Screen name="student-profile" options={{ title: 'My Profile', headerShown: false, gestureEnabled: false }} />

@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
 import { ApiError, Role } from '@/lib/api';
 import { useColors } from '@/hooks/useColors';
+import { PortalLanding } from './EntryScreens';
 import { AppHeader, Button, Card, Field, Screen, State, styles } from './Foundation';
 
 const roles: { value: Role; label: string }[] = [
@@ -18,7 +19,7 @@ const roles: { value: Role; label: string }[] = [
 export function AccountGate({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <Screen><State loading title="Checking your account" detail="Restoring and verifying your mobile session…" /></Screen>;
-  if (!user) return <Login />;
+  if (!user) return <PortalLanding />;
   return <>{children}</>;
 }
 

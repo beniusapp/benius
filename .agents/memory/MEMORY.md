@@ -2,3 +2,4 @@
 - [Native mobile auth boundary](native-mobile-auth-boundary.md) — keep mobile bearer auth separate from web cookies; browser preview is not a sign-in client.
 - [Student content boundaries](student-content-boundaries.md) — historical cohort controls session reads; new Student uploads need owner/reviewer-gated downloads.
 - [Expo preview font loading](expo-preview-font-loading.md) — keep optional custom fonts from blocking the first visible Expo screen.
+- [API TypeScript test runner](api-server-test-runner.md) — bundle API tests as CommonJS with esbuild before Node’s test runner.

@@ -21,7 +21,7 @@ export type AuthenticatedSession = {
 export type LoginResult =
   | { state: 'pin_required'; challengeToken: string }
   | { state: 'initialize_required'; challengeToken: string }
-  | { state: 'password_change_required' }
+  | { state: 'password_change_required'; challengeToken: string }
   | AuthenticatedSession;
 export type AcademicSession = { id: number; schoolId: number; sessionName: string; isActive: boolean; startDate?: string; endDate?: string };
 export type AcademicSessionsResponse = { sessions: AcademicSession[]; activeSessionId: number | null };
@@ -273,7 +273,9 @@ export const authTransport = {
     if (payload.state === 'authenticated') await saveSession(payload);
     else if (payload.state === 'pin_required' || payload.state === 'initialize_required') {
       if (typeof payload.challengeToken !== 'string' || !payload.challengeToken) throw new ApiError('The server returned an invalid sign-in challenge.', 'server');
-    } else if (payload.state !== 'password_change_required') throw new ApiError('The server returned an unsupported sign-in state.', 'server');
+    } else if (payload.state === 'password_change_required') {
+      if (typeof payload.challengeToken !== 'string' || !payload.challengeToken) throw new ApiError('The server returned an invalid password-change challenge.', 'server');
+    } else throw new ApiError('The server returned an unsupported sign-in state.', 'server');
     return payload;
   },
   async verifyPin(challengeToken: string, pin: string): Promise<AuthenticatedSession> {
@@ -287,6 +289,11 @@ export const authTransport = {
     if (!response.ok) throwResponseError(response, payload);
     if (!payload || payload.state !== 'authenticated') throw new ApiError('The server returned an invalid initialization response.', 'server');
     return saveSession(payload);
+  },
+  async changeTeacherFirstLoginPassword(input: { challengeToken: string; currentPassword: string; newPassword: string; confirmPassword: string }): Promise<void> {
+    const { response, payload } = await send<{ state?: string }>('/mobile/auth/teacher/change-password', 'POST', input);
+    if (!response.ok) throwResponseError(response, payload);
+    if (!payload || payload.state !== 'password_changed') throw new ApiError('The server returned an invalid password-change response.', 'server');
   },
   async currentUser(): Promise<MobileUser> {
     return validatedUser(await authorized<MobileUser>('/mobile/auth/me', 'GET'));

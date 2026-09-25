@@ -372,6 +372,8 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
         || teacherRows.get(teacherId)?.userId !== userId
         || !await bcrypt.compare(currentPassword, user.passwordHash)) return false;
       user.passwordHash = passwordHash;
+      const teacher = teacherRows.get(teacherId);
+      if (teacher) teacher.mustChangePassword = false;
       return true;
     },
     async invalidateUserSessionsStrict(userId: number) {
@@ -1909,6 +1911,16 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.equal(changedRole.response.status, 401);
   teacherUser.role = "teacher";
 
+  const adminPortalStaffLogin = await request("login", {
+    role: "admin", identifier: staff.email, password: "Correct-Horse-77",
+  });
+  assert.equal(adminPortalStaffLogin.response.status, 200);
+  assert.equal(adminPortalStaffLogin.body.state, "authenticated");
+  assert.equal(adminPortalStaffLogin.body.user.role, "support_staff");
+  assert.deepEqual(adminPortalStaffLogin.body.user.allowedModules, [
+    "attendance", "attendance:student-leave", "approval-center",
+  ]);
+
   const logoutLogin = await request("login", {
     role: "support_staff", identifier: staff.email, password: "Correct-Horse-77",
   });
@@ -1931,6 +1943,60 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   });
   assert.equal(teacherMetrics.invalidatedUserId, teacherUser.id);
   assert.equal((await requestTeacherRoute("me", "GET", finalTeacherLogin.body.accessToken)).response.status, 401);
+
+  const priorChallengeSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = "test-only-secret-for-teacher-first-login";
+  try {
+    teacher.mustChangePassword = true;
+    teacherMetrics.invalidatedUserId = null;
+    const forcedTeacherLogin = await request("login", {
+      role: "teacher", identifier: teacherUser.email, password: "New-Teacher-Password-98",
+    });
+    assert.equal(forcedTeacherLogin.response.status, 200);
+    assert.equal(forcedTeacherLogin.body.state, "password_change_required");
+    assert.equal(typeof forcedTeacherLogin.body.challengeToken, "string");
+    assert.equal(forcedTeacherLogin.body.accessToken, undefined);
+    assert.equal(forcedTeacherLogin.body.refreshToken, undefined);
+
+    const incorrectCurrentPassword = await request("teacher/change-password", {
+      challengeToken: forcedTeacherLogin.body.challengeToken,
+      currentPassword: "wrong-current-password",
+      newPassword: "New-Teacher-Password-99",
+      confirmPassword: "New-Teacher-Password-99",
+    });
+    assert.equal(incorrectCurrentPassword.response.status, 400);
+    assert.equal(teacher.mustChangePassword, true);
+    assert.equal(teacherMetrics.invalidatedUserId, null);
+
+    const completedFirstLoginChange = await request("teacher/change-password", {
+      challengeToken: forcedTeacherLogin.body.challengeToken,
+      currentPassword: "New-Teacher-Password-98",
+      newPassword: "New-Teacher-Password-99",
+      confirmPassword: "New-Teacher-Password-99",
+    });
+    assert.equal(completedFirstLoginChange.response.status, 200);
+    assert.deepEqual(completedFirstLoginChange.body, { state: "password_changed" });
+    assert.equal(teacher.mustChangePassword, false);
+    assert.equal(teacherMetrics.invalidatedUserId, teacherUser.id);
+
+    const replayedChallenge = await request("teacher/change-password", {
+      challengeToken: forcedTeacherLogin.body.challengeToken,
+      currentPassword: "New-Teacher-Password-98",
+      newPassword: "Another-Teacher-Password-10",
+      confirmPassword: "Another-Teacher-Password-10",
+    });
+    assert.equal(replayedChallenge.response.status, 401);
+
+    const teacherAfterChange = await request("login", {
+      role: "teacher", identifier: teacherUser.email, password: "New-Teacher-Password-99",
+    });
+    assert.equal(teacherAfterChange.response.status, 200);
+    assert.equal(teacherAfterChange.body.state, "authenticated");
+    assert.equal(teacherAfterChange.body.user.role, "teacher");
+  } finally {
+    if (priorChallengeSecret === undefined) delete process.env.SESSION_SECRET;
+    else process.env.SESSION_SECRET = priorChallengeSecret;
+  }
 
   const throttledIp = "198.51.100.250";
   for (let index = 0; index < 20; index += 1) {

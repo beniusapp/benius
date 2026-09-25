@@ -29,11 +29,13 @@ import {
   reserveMobileAuthAttempt,
 } from "./mobile-auth-rate-limit";
 import {
+  createTeacherPasswordChangeChallenge,
   createMobileCredential,
   hashMobileCredential,
   MOBILE_ACCESS_TTL_MS,
   MOBILE_CHALLENGE_TTL_MS,
   MOBILE_REFRESH_TTL_MS,
+  verifyTeacherPasswordChangeChallenge,
 } from "./mobile-auth-crypto";
 import { registerMobileStudentProfileRoutes } from "./mobile-student-profile-routes";
 import { registerMobileStudentAttendanceRoutes } from "./mobile-student-attendance-routes";
@@ -79,6 +81,12 @@ const initializeSchema = z.object({
 const verifyPinSchema = z.object({
   challengeToken: z.string().min(20).max(200),
   pin: z.string().regex(/^\d{6}$/),
+});
+const teacherPasswordChangeSchema = z.object({
+  challengeToken: z.string().min(40).max(2048),
+  currentPassword: z.string().min(1).max(1024),
+  newPassword: z.string().min(6).max(1024),
+  confirmPassword: z.string().min(6).max(1024),
 });
 const refreshSchema = z.object({ refreshToken: z.string().min(30).max(200) });
 
@@ -621,46 +629,75 @@ export function registerMobileAuthRoutes(app: Express): void {
         };
       } else {
         const user = await storage.getUserByEmail(identifier);
-        if (!user || user.role !== role) return reject(res, 401, "Invalid identifier or password.");
-        if (!user.isActive) return reject(res, 403, "This account has been deactivated.");
-        if (!await bcrypt.compare(password, user.passwordHash)) {
-          return reject(res, 401, "Invalid identifier or password.");
-        }
-        if (await authenticationAttemptIsRevoked(user.id, startedAt.getTime())) {
-          return reject(res, 401, "This account is no longer authorized.");
-        }
-        if (role === "admin") {
-          const [school] = await db.select().from(schools).where(eq(schools.id, user.schoolId));
+        if (!user && role === "admin" && shouldFallbackToSupportStaff(false)) {
+          const staff = await storage.getNonTeachingStaffByEmail(identifier);
+          if (!staff || !staff.passwordHash || !await bcrypt.compare(password, staff.passwordHash)) {
+            return reject(res, 401, "Invalid identifier or password.");
+          }
+          const [school] = await db.select().from(schools).where(eq(schools.id, staff.schoolId));
           if (!school) return reject(res, 401, "This account is no longer authorized.");
-          if (!user.isInitialized) {
+          principal = {
+            id: staff.id,
+            principalId: staff.id,
+            entityId: staff.id,
+            role: "support_staff",
+            schoolId: school.id,
+            schoolName: school.name,
+            name: staff.fullName,
+            passwordVersion: hashMobileCredential(staff.passwordHash),
+            allowedModules: staff.allowedModules,
+          };
+        } else {
+          if (!user || user.role !== role) return reject(res, 401, "Invalid identifier or password.");
+          if (!user.isActive) return reject(res, 403, "This account has been deactivated.");
+          if (!await bcrypt.compare(password, user.passwordHash)) {
+            return reject(res, 401, "Invalid identifier or password.");
+          }
+          if (await authenticationAttemptIsRevoked(user.id, startedAt.getTime())) {
+            return reject(res, 401, "This account is no longer authorized.");
+          }
+          if (role === "admin") {
+            const [school] = await db.select().from(schools).where(eq(schools.id, user.schoolId));
+            if (!school) return reject(res, 401, "This account is no longer authorized.");
+            if (!user.isInitialized) {
+              return res.json(await makeAdminChallengeResponse(
+                user.id, school.id, true, startedAt, hashMobileCredential(user.passwordHash),
+              ));
+            }
+            if (!user.pinHash) return reject(res, 403, "Administrator PIN setup is required.");
             return res.json(await makeAdminChallengeResponse(
-              user.id, school.id, true, startedAt, hashMobileCredential(user.passwordHash),
+              user.id, school.id, false, startedAt, hashMobileCredential(user.passwordHash),
             ));
           }
-          if (!user.pinHash) return reject(res, 403, "Administrator PIN setup is required.");
-          return res.json(await makeAdminChallengeResponse(
-            user.id, school.id, false, startedAt, hashMobileCredential(user.passwordHash),
-          ));
+          const teacher = await storage.getTeacherByUserId(user.id);
+          if (!teacher || !teacher.isActive || teacher.schoolId !== user.schoolId) {
+            return reject(res, 403, "This teacher account is not active for sign-in.");
+          }
+          if (teacher.mustChangePassword) {
+            const challengeToken = createTeacherPasswordChangeChallenge({
+              userId: user.id,
+              teacherId: teacher.id,
+              schoolId: teacher.schoolId,
+              authIssuedAt: startedAt.getTime(),
+              passwordVersion: hashMobileCredential(user.passwordHash),
+            });
+            return res.json({ state: "password_change_required", challengeToken });
+          }
+          const data = await storage.getTeacherWithSchool(teacher.id);
+          if (!data || data.user.id !== user.id || data.school.id !== user.schoolId) {
+            return reject(res, 401, "This account is no longer authorized.");
+          }
+          principal = {
+            id: teacher.id,
+            principalId: user.id,
+            entityId: teacher.id,
+            role,
+            schoolId: data.school.id,
+            schoolName: data.school.name,
+            name: teacher.fullName,
+            passwordVersion: hashMobileCredential(data.user.passwordHash),
+          };
         }
-        const teacher = await storage.getTeacherByUserId(user.id);
-        if (!teacher || !teacher.isActive || teacher.schoolId !== user.schoolId) {
-          return reject(res, 403, "This teacher account is not active for sign-in.");
-        }
-        if (teacher.mustChangePassword) return res.json({ state: "password_change_required" });
-        const data = await storage.getTeacherWithSchool(teacher.id);
-        if (!data || data.user.id !== user.id || data.school.id !== user.schoolId) {
-          return reject(res, 401, "This account is no longer authorized.");
-        }
-        principal = {
-          id: teacher.id,
-          principalId: user.id,
-          entityId: teacher.id,
-          role,
-          schoolId: data.school.id,
-          schoolName: data.school.name,
-          name: teacher.fullName,
-          passwordVersion: hashMobileCredential(data.user.passwordHash),
-        };
       }
 
       if (!principal) return reject(res, 401, "Invalid identifier or password.");
@@ -673,6 +710,62 @@ export function registerMobileAuthRoutes(app: Express): void {
       ));
     } catch {
       return reject(res, 503, "Mobile sign-in is temporarily unavailable.");
+    }
+  });
+
+  app.post("/api/mobile/auth/teacher/change-password", async (req, res) => {
+    const parsed = teacherPasswordChangeSchema.safeParse(req.body);
+    if (!parsed.success) return reject(res, 400, "Invalid teacher password-change request.");
+    if (parsed.data.newPassword !== parsed.data.confirmPassword) {
+      return reject(res, 400, "Passwords do not match.");
+    }
+    try {
+      if (!await reserveMobileAuthAttempt(req)) return rejectRateLimited(res);
+      const challenge = verifyTeacherPasswordChangeChallenge(parsed.data.challengeToken);
+      if (!challenge) return reject(res, 401, "Invalid or expired password-change challenge.");
+
+      const [user] = await db.select().from(users).where(and(
+        eq(users.id, challenge.userId),
+        eq(users.schoolId, challenge.schoolId),
+        eq(users.role, "teacher"),
+      ));
+      if (
+        !user
+        || !user.isActive
+        || hashMobileCredential(user.passwordHash) !== challenge.passwordVersion
+        || await authenticationAttemptIsRevoked(user.id, challenge.authIssuedAt)
+      ) {
+        return reject(res, 401, "Invalid or expired password-change challenge.");
+      }
+      const teacher = await storage.getTeacherByUserId(user.id);
+      if (
+        !teacher
+        || teacher.id !== challenge.teacherId
+        || teacher.schoolId !== challenge.schoolId
+        || !teacher.isActive
+        || !teacher.mustChangePassword
+      ) {
+        return reject(res, 401, "Invalid or expired password-change challenge.");
+      }
+
+      const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+      const changed = await storage.changeTeacherPasswordAtomically(
+        user.id,
+        teacher.id,
+        teacher.schoolId,
+        parsed.data.currentPassword,
+        passwordHash,
+      );
+      if (!changed) return reject(res, 400, "Incorrect Current Password");
+      try {
+        await storage.invalidateUserSessionsStrict(user.id);
+      } catch {
+        console.error("Teacher first-login password change session invalidation failed");
+        return reject(res, 503, "Unable to complete password change securely. Please contact support.");
+      }
+      return res.json({ state: "password_changed" });
+    } catch {
+      return reject(res, 503, "Teacher password change is temporarily unavailable.");
     }
   });
 
