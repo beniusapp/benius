@@ -1,0 +1,395 @@
+We are continuing the Timetable Academic Session migration.
+
+## CURRENT STATUS
+
+Completed and PASS:
+
+* Stage 1 — Database + Storage
+* Stage 2 — API/Server
+* Stage 3A — Admin Timetable UI
+* Stage 3B — Teacher Timetable UI
+
+Now perform:
+
+# TIMETABLE STAGE 3C — STUDENT TIMETABLE UI AUDIT
+
+## IMPORTANT
+
+This is a **READ-ONLY AUDIT**.
+
+**DO NOT CHANGE ANY CODE.**
+
+Do not modify:
+
+* database
+* schema
+* migrations
+* Storage
+* server/API routes
+* Admin Timetable
+* Teacher Timetable
+* Attendance
+* Leave
+* Examination
+* Academic Session architecture
+* unrelated modules
+
+Only inspect and report.
+
+---
+
+# 1. STUDENT SESSION SOURCE
+
+Inspect:
+
+* `client/src/pages/student-timetable.tsx`
+* Student Session Provider/context
+* Student Dashboard/session selector
+* any existing shared session transport/helper
+* relevant query utilities
+
+Determine exactly:
+
+1. Where the Student's selected Academic Session is stored.
+2. What happens when the Student selects an archived/historical Session.
+3. Whether the selected Session is different from the active Session.
+4. Whether selected Session correctly takes priority over active Session.
+5. What happens when there is no selected Session and no active Session.
+
+Report exact file/line references.
+
+---
+
+# 2. STUDENT TIMETABLE API REQUESTS
+
+Trace every request made by Student Timetable.
+
+At minimum inspect:
+
+* `GET /api/student/timetable`
+* any structure/bell/period request used by Student Timetable
+* any other Timetable request made by the Student page
+
+For every request determine:
+
+* Does it send the selected Academic Session ID?
+* Which header/transport is used?
+* Does it use native `fetch`?
+* Does it rely on a mutable global session header?
+* Is the Session captured at request time?
+* Can the request accidentally fall back to the active Session?
+* Can the request return data from multiple Sessions?
+
+Important:
+
+The canonical Student behavior must be:
+
+`selected Session → selected Session ID`
+
+and only when no Session is selected:
+
+`active Session → active Session ID`
+
+If neither exists:
+
+`NO TIMETABLE REQUEST`
+
+Do not assume this is implemented. Verify it.
+
+---
+
+# 3. QUERY / CACHE ISOLATION
+
+Inspect every React Query/query key used by Student Timetable.
+
+Determine whether the Academic Session ID is part of the key.
+
+Example:
+
+BAD:
+`["/api/student/timetable"]`
+
+GOOD:
+`["/api/student/timetable", sessionId]`
+
+Check:
+
+* timetable entries
+* structure/bell data
+* any related Timetable data
+
+Determine whether Session A data can remain cached and appear when Student switches to Session B.
+
+Also inspect invalidation after session switching or Timetable changes.
+
+---
+
+# 4. SESSION SWITCHING
+
+Audit this exact scenario:
+
+### Scenario A → B
+
+1. Student opens Session A.
+2. Student Timetable loads.
+3. Student switches to Session B.
+4. Timetable must immediately stop representing A.
+5. B must load using B's Session ID.
+6. A's response must not populate B's UI/cache.
+7. No A data may remain visible as B data.
+8. Any in-progress A request must not corrupt B.
+
+Also test conceptually:
+
+### B → A
+
+The same protections must work in reverse.
+
+Report PASS/FAIL with exact evidence.
+
+---
+
+# 5. FRESH ACADEMIC SESSION
+
+Audit:
+
+1. Create/select a brand-new Academic Session.
+2. It has no Timetable data.
+3. Student Timetable must show an empty/new timetable.
+4. It must NOT show the previous Session's timetable.
+5. No previous Session structure/bell data may appear.
+6. No previous Session cache may leak into the new Session.
+
+Because this project is in BUILDING/DEVELOPMENT phase, do not suggest recreating old data merely to hide a Session isolation problem.
+
+---
+
+# 6. ARCHIVED SESSION
+
+Verify:
+
+* Archived Student Timetable is readable.
+* Archived Session timetable belongs only to that Session.
+* Archived Session does not accidentally fall back to active Session.
+* Student cannot modify Timetable through this UI.
+* No mutation control exists that could write Timetable data.
+
+If the page is read-only by design, explicitly state that.
+
+---
+
+# 7. SCHOOL / TENANT ISOLATION
+
+Verify that Student Timetable continues to use:
+
+`authenticated school/tenant + authenticated student + selected Academic Session`
+
+It must never allow:
+
+* another school's timetable
+* another school's structure
+* another student's timetable
+* another Session's timetable
+
+Do not modify anything.
+
+---
+
+# 8. SERVER CONTRACT CHECK
+
+Read the already-completed Stage 2 Timetable API implementation.
+
+Confirm whether Student Timetable's current request pattern satisfies the server contract:
+
+* selected Session ID accepted
+* selected Session must belong to authenticated school
+* archived Session can be read
+* mutation of archived Session is blocked server-side
+* no-session requests are rejected rather than silently returning all Sessions
+
+If the Student UI does not satisfy the contract, record it as a UI defect.
+
+Do not fix it in this audit.
+
+---
+
+# 9. ERROR HANDLING
+
+Check what happens when:
+
+* no Session exists
+* selected Session is invalid
+* selected Session does not belong to the school
+* server returns `409`
+* server returns `403`
+* server returns `404`
+* network/API request fails
+
+Important:
+
+A failed Timetable request must NOT be rendered as:
+
+* empty timetable
+* free/available slot
+* successful no-data state
+
+Determine whether the UI distinguishes:
+
+`No Timetable Data`
+
+from
+
+`Timetable Request Failed`
+
+---
+
+# 10. SESSION TRANSPORT + QUERY KEY CONSISTENCY
+
+For every Student Timetable request verify:
+
+`Session ID in query key == Session ID sent to server`
+
+There must be no situation like:
+
+Query key = Session B
+
+but request header = Session A
+
+or:
+
+Query key = Session B
+
+but request uses active Session A.
+
+---
+
+# 11. STALE RESPONSE / RACE CONDITION
+
+Audit for:
+
+* React Query stale data
+* native fetch race conditions
+* late responses
+* session switching while request is pending
+* component remount behavior
+* query cancellation
+* cache replacement
+
+Determine whether:
+
+`A request finishes after switching to B`
+
+can display A data under B.
+
+---
+
+# 12. DO NOT CHANGE CODE
+
+Again:
+
+**NO CODE CHANGES.**
+
+Do not fix any issue discovered.
+
+Do not modify tests.
+
+Do not refactor.
+
+Do not install packages.
+
+Do not change configuration.
+
+---
+
+# 13. OUTPUT FORMAT
+
+Return exactly this structure:
+
+## TIMETABLE STAGE 3C — STUDENT UI AUDIT
+
+### 1. Session Source
+
+PASS/FAIL/PARTIAL
+
+Evidence:
+
+* files
+* relevant functions
+* line references
+
+### 2. API Transport
+
+PASS/FAIL/PARTIAL
+
+List every Student Timetable request and its Session behavior.
+
+### 3. Query / Cache Isolation
+
+PASS/FAIL/PARTIAL
+
+### 4. Session Switching A → B
+
+PASS/FAIL/PARTIAL
+
+### 5. Fresh Session
+
+PASS/FAIL/PARTIAL
+
+### 6. Archived Session
+
+PASS/FAIL/PARTIAL
+
+### 7. School/Tenant Isolation
+
+PASS/FAIL/PARTIAL
+
+### 8. Server Contract
+
+PASS/FAIL/PARTIAL
+
+### 9. Error Handling
+
+PASS/FAIL/PARTIAL
+
+### 10. Session Key vs Transport
+
+PASS/FAIL/PARTIAL
+
+### 11. Race/Stale Response
+
+PASS/FAIL/PARTIAL
+
+## EXACT DEFECTS
+
+For every defect provide:
+
+* Severity: HIGH / MEDIUM / LOW
+* File
+* Line/function
+* Current behavior
+* Why it violates Student Timetable Session isolation
+* Minimal safe fix
+
+## FILES CHANGED
+
+Must say:
+
+`NONE`
+
+## CODE CHANGES
+
+Must say:
+
+`NONE`
+
+## FINAL VERDICT
+
+Use exactly one:
+
+`TIMETABLE STAGE 3C — STUDENT UI AUDIT — READY FOR FIX`
+
+or
+
+`TIMETABLE STAGE 3C — STUDENT UI AUDIT — PASS`
+
+Do not implement any fix during this stage.
