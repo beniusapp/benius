@@ -1759,6 +1759,13 @@ export function registerTeacherRoutes(app: Express) {
       if (!leaveSession || leaveSession.schoolId !== leave.schoolId) {
         return res.status(403).json({ message: "Leave request Session is not valid for this school" });
       }
+      const activeSession = await storage.getActiveSession(leave.schoolId);
+      if (!leaveSession.isActive || activeSession?.id !== leaveSession.id) {
+        return res.status(403).json({
+          error: "Security Restriction: Write operations are strictly blocked for archived school years.",
+          code: "ARCHIVE_READ_ONLY",
+        });
+      }
     }
     const updated = await storage.updateLeaveStatusWithApprover(
       leave.id,
