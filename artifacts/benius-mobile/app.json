@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "BENIUS Mobile",
+    "slug": "benius-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "benius-mobile",
+    "userInterfaceStyle": "automatic",
+    "splash": { "backgroundColor": "#f7f7f8", "image": "./assets/images/icon.png", "resizeMode": "contain" },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {},
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

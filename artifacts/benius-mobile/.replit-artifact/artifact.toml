@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/benius-mobile/"
+title = "BENIUS Mobile"
+description = "Native Android and iOS foundation for the BENIUS school platform."
+version = "1.0.0"
+id = "artifacts/benius-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/benius-mobile/" ]
+localPort = 24204
+
+[services.development]
+run = "pnpm --filter @workspace/benius-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/benius-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/benius-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "24204"
+BASE_PATH = "/benius-mobile/"
