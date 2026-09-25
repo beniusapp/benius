@@ -6,7 +6,6 @@ import { useRouter } from 'expo-router';
 import { Button, Card, Field, Screen, State } from '@/components/Foundation';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
-import * as Print from 'expo-print';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
@@ -159,9 +158,6 @@ function QueryState({ loading, error, empty, retry }: {
 }
 
 const amount = (value: number) => `₹${Number.isFinite(value) ? value.toLocaleString('en-IN') : '0'}`;
-const htmlText = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-}[character] ?? character));
 const safeDate = (value: string | null | undefined) => value ? formatSchoolDate(value.slice(0, 10)) : '—';
 
 export function StudentNoticeboardScreen() {
@@ -463,7 +459,6 @@ export function StudentFeesScreen() {
   const [tab, setTab] = useState<'fees' | 'history' | 'reminders'>('fees');
   const [document, setDocument] = useState<FeeDocument | null>(null);
   const [documentLoading, setDocumentLoading] = useState<number | null>(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
   const query = useQuery({
     queryKey: ['mobile/student/fees', ...identity, selectedId],
     enabled: selectedId !== null,
@@ -516,53 +511,6 @@ export function StudentFeesScreen() {
       setDocumentLoading(null);
     }
   };
-  const shareDocumentPdf = async () => {
-    if (!document || pdfLoading) return;
-    setPdfLoading(true);
-    try {
-      const fee = document.fee;
-      const breakdown = (fee.breakdownSnapshot ?? []).map(item =>
-        `<tr><td>${htmlText(item.name)}${item.purpose ? ` <small>${htmlText(item.purpose)}</small>` : ''}</td><td>${htmlText(amount(item.amount))}</td></tr>`,
-      ).join('');
-      const payment = document.payment
-        ? Object.entries(document.payment).filter(([, value]) => value != null && value !== '').map(([key, value]) =>
-          `<div class="meta"><b>${htmlText(key.replace(/[A-Z]/g, letter => ` ${letter}`).replace(/^./, letter => letter.toUpperCase()))}</b><span>${htmlText(value)}</span></div>`,
-        ).join('')
-        : '';
-      const total = fee.amount + (fee.lateFeeAmount ?? 0);
-      const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-        @page { margin: 28px; } * { box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #172033; margin: 0; }
-        .brand { border-bottom: 4px solid #2563eb; padding-bottom: 16px; margin-bottom: 22px; }
-        .brand h1 { color: #2563eb; letter-spacing: 2px; margin: 0; font-size: 24px; }
-        .brand p { color: #64748b; margin: 6px 0 0; font-size: 12px; }
-        h2 { margin: 0 0 18px; font-size: 20px; } .meta { display:flex; justify-content:space-between; gap:20px; border-bottom:1px solid #e2e8f0; padding:8px 0; font-size:12px; }
-        .meta span { text-align:right; } table { width:100%; border-collapse:collapse; margin-top:20px; } th,td { padding:10px 0; border-bottom:1px solid #e2e8f0; text-align:left; font-size:12px; } th:last-child,td:last-child { text-align:right; }
-        .total { display:flex; justify-content:space-between; margin-top:18px; font-size:18px; font-weight:700; } .foot { color:#64748b; font-size:10px; margin-top:28px; }
-      </style></head><body>
-        <div class="brand"><h1>BENIUS</h1><p>${htmlText(document.schoolName)} · ${htmlText(document.sessionName)}</p></div>
-        <h2>${document.documentType === 'receipt' ? 'Payment Receipt' : 'Fee Invoice'}</h2>
-        <div class="meta"><b>Student</b><span>${htmlText(document.studentName)}</span></div>
-        <div class="meta"><b>Fee</b><span>${htmlText(fee.feeType)}</span></div>
-        ${fee.invoiceNumber ? `<div class="meta"><b>Invoice number</b><span>${htmlText(fee.invoiceNumber)}</span></div>` : ''}
-        ${fee.receiptNumber ? `<div class="meta"><b>Receipt number</b><span>${htmlText(fee.receiptNumber)}</span></div>` : ''}
-        <div class="meta"><b>Due date</b><span>${htmlText(safeDate(fee.dueDate))}</span></div>
-        ${fee.paidDate ? `<div class="meta"><b>Paid date</b><span>${htmlText(safeDate(fee.paidDate))}</span></div>` : ''}
-        ${breakdown ? `<table><thead><tr><th>Charge</th><th>Amount</th></tr></thead><tbody>${breakdown}</tbody></table>` : ''}
-        <div class="total"><span>Total</span><span>${htmlText(amount(total))}</span></div>
-        ${payment ? `<h3>Payment details</h3>${payment}` : ''}
-        ${fee.notes ? `<p class="foot">${htmlText(fee.notes)}</p>` : ''}
-        <p class="foot">Generated in BENIUS from the authoritative ${htmlText(document.sessionName)} student record. This document does not represent a payment unless the payment status and receipt details above confirm it.</p>
-      </body></html>`;
-      const printed = await Print.printToFileAsync({ html });
-      if (!await Sharing.isAvailableAsync()) throw new Error('PDF sharing is unavailable on this device.');
-      await Sharing.shareAsync(printed.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: 'Share fee document' });
-    } catch (error) {
-      Alert.alert('PDF unavailable', error instanceof Error ? error.message : 'Could not generate the fee document.');
-    } finally {
-      setPdfLoading(false);
-    }
-  };
   return <ModuleFrame title="Fees & Payments" subtitle={session?.sessionName ?? 'Student fee records'}>
     <View style={{ flexDirection: 'row', gap: 10 }}>
       <View style={{ flex: 1 }}><Card><Text style={{ color: c.mutedForeground }}>Total Due</Text><Text style={{ color: c.destructive, fontSize: 20, fontWeight: '700' }}>{amount(summary.data?.totalOutstanding ?? dueTotal)}</Text></Card></View>
@@ -608,13 +556,11 @@ export function StudentFeesScreen() {
         : <Button label={documentLoading === record.id ? 'Loading invoice…' : 'View invoice'} icon="file-text" secondary
             disabled={documentLoading !== null} onPress={() => { void loadDocument(record, 'invoice'); }} />}
       {record.status.toLowerCase() !== 'paid' && session?.isActive && portal.data?.isRazorpayEnabled
-        && <StudentPaymentCheckout feeRecordId={record.id} sessionId={selectedId!} onPaid={receipt => {
+        && <StudentPaymentCheckout feeRecordId={record.id} onPaid={receipt => {
           Alert.alert('Payment confirmed', `Your payment was verified. Receipt ${receipt}.`);
           void query.refetch(); void summary.refetch(); void attempts.refetch();
         }} />}
-      {record.status.toLowerCase() !== 'paid'
-        && (portal.isError || (portal.isSuccess && !portal.data.gatewayUrl && !portal.data.isRazorpayEnabled))
-        && <Text style={{ color: c.destructive, fontSize: 12 }}>Please contact the school office for payment options.</Text>}
+      {record.status.toLowerCase() !== 'paid' && !portal.data?.gatewayUrl && <Text style={{ color: c.destructive, fontSize: 12 }}>Please contact the school office for payment options.</Text>}
       </Card>)}
       {!!query.error && <Button label="Refresh fee status" onPress={() => { void query.refetch(); }} secondary />}
       {!!summary.error && <State title="Fee summary unavailable" detail={summary.error.message} retry={() => { void summary.refetch(); }} />}
@@ -654,10 +600,8 @@ export function StudentFeesScreen() {
             <Text key={key} style={{ color: c.mutedForeground }}>{key.replace(/[A-Z]/g, letter => ` ${letter}`).replace(/^./, letter => letter.toUpperCase())}: {String(value)}</Text>
           )}
           <Text style={{ color: c.mutedForeground, fontSize: 12 }}>
-            This branded PDF is generated on-device from the authoritative document data for the selected academic session.
+            This is the authoritative document data for the selected academic session. For a printable school-branded document, use the school portal.
           </Text>
-          <Button label={pdfLoading ? 'Generating PDF…' : 'Save / share branded PDF'} icon="download"
-            disabled={pdfLoading} onPress={() => { void shareDocumentPdf(); }} />
           <Button label="Close" secondary onPress={() => setDocument(null)} />
         </Pressable>}
       </Pressable>

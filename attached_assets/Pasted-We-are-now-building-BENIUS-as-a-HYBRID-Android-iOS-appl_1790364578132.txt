@@ -1,0 +1,244 @@
+We are now building BENIUS as a HYBRID Android + iOS application.
+
+For this step, implement ONLY the following as fully NATIVE React Native screens:
+
+1. BENIUS opening/landing page
+2. Principal/Admin Login
+3. Teacher Login
+4. Student Login
+
+The EXISTING BENIUS WEB APPLICATION is the absolute source of truth.
+
+==================================================
+IMPORTANT — EXACT REPLICATION
+
+Inspect the ACTUAL existing BENIUS web application before making changes.
+
+The native screens must reproduce the existing web application's:
+
+- UI
+- UX
+- layout
+- colors
+- fonts
+- typography
+- spacing
+- logos
+- buttons
+- fields
+- labels
+- wording
+- icons
+- cards
+- navigation
+- validation
+- loading states
+- error states
+- messages
+- login flow
+
+Do NOT redesign anything.
+
+Do NOT make a "better mobile version".
+
+Do NOT add new buttons or features.
+
+Do NOT remove existing behavior.
+
+If something is present in the web application, reproduce it.
+
+If something is NOT present in the web application's opening/login experience, do NOT add it.
+
+The web application is the master.
+
+==================================================
+OPENING PAGE
+
+Recreate the existing BENIUS web application's opening/landing page as a native React Native screen.
+
+The screen must look and behave as close to the existing web version as technically possible.
+
+Use the same:
+
+- BENIUS branding
+- logo
+- background
+- role selection
+- text
+- buttons/cards
+- navigation
+- visual hierarchy
+
+IMPORTANT:
+
+Only expose the same roles that the EXISTING WEB APPLICATION exposes on its opening/login page.
+
+Do NOT independently add Support Staff or any other role just because the backend contains that role.
+
+==================================================
+PRINCIPAL / ADMIN LOGIN
+
+Recreate the existing web Principal/Admin login exactly.
+
+Use the existing BENIUS authentication flow.
+
+Do NOT create fake authentication.
+
+Preserve:
+
+- existing login fields
+- validation
+- password behavior
+- Principal/Admin authentication
+- existing PIN/initialization flow if the web application uses it
+- error messages
+- loading behavior
+- session handling
+
+After successful login, continue into the existing BENIUS authenticated application.
+
+==================================================
+TEACHER LOGIN
+
+Recreate the existing Teacher login exactly.
+
+Use the existing BENIUS Teacher authentication/API.
+
+Preserve the existing:
+
+- fields
+- labels
+- validation
+- authentication
+- errors
+- loading
+- session behavior
+- navigation after login
+
+==================================================
+STUDENT LOGIN
+
+Recreate the existing Student login exactly.
+
+Use the existing BENIUS Student authentication/API.
+
+Preserve the existing:
+
+- fields
+- labels
+- validation
+- authentication
+- errors
+- loading
+- session behavior
+- navigation after login
+
+==================================================
+AUTHENTICATION ARCHITECTURE
+
+Use the existing mobile authentication foundation where it already exists.
+
+Do NOT create a second authentication system.
+
+Do NOT store passwords or PINs in the mobile application.
+
+Preserve the existing:
+
+- school/tenant isolation
+- role isolation
+- authenticated identity
+- secure credential storage
+- refresh behavior
+- logout behavior
+
+==================================================
+HYBRID APPLICATION
+
+After login, this application will eventually use:
+
+NATIVE:
+
+- Opening page
+- Principal/Admin login
+- Teacher login
+- Student login
+- Teacher Attendance
+- Student Attendance
+
+WEB:
+
+- Other existing BENIUS modules through the hybrid WebView layer
+
+Do NOT convert other modules to native in this step.
+
+Do NOT rebuild dashboards or other modules yet.
+
+==================================================
+WEB APPLICATION MUST NOT CHANGE
+
+Do not modify the existing BENIUS web application's UI or behavior.
+
+Do not fix bugs in the web application.
+
+Do not redesign it.
+
+The mobile application must replicate what currently exists.
+
+==================================================
+ANDROID + iOS
+
+The native screens must use the same React Native + Expo codebase for:
+
+Android
+and
+iOS.
+
+Do not create separate implementations.
+
+==================================================
+VALIDATION
+
+After implementation verify:
+
+- opening page loads
+- Principal/Admin login works
+- Teacher login works
+- Student login works
+- authentication errors display correctly
+- successful authentication reaches the correct role
+- school isolation remains intact
+- TypeScript passes
+- Expo validation passes
+- Android export works
+- iOS-compatible configuration remains valid
+
+Do not claim physical-device testing unless an actual device/simulator is available.
+
+==================================================
+CRITICAL RULE
+
+DO NOT IMPROVE THE WEB APPLICATION.
+
+DO NOT REDESIGN THE WEB APPLICATION.
+
+DO NOT ADD SUPPORT STAFF TO THE OPENING PAGE UNLESS THE EXISTING WEB APPLICATION ACTUALLY SHOWS IT.
+
+COPY THE EXISTING BENIUS WEB APPLICATION.
+
+The goal of this step is:
+
+WEB OPENING PAGE
+→ NATIVE REACT NATIVE OPENING PAGE
+
+WEB PRINCIPAL LOGIN
+→ NATIVE REACT NATIVE PRINCIPAL LOGIN
+
+WEB TEACHER LOGIN
+→ NATIVE REACT NATIVE TEACHER LOGIN
+
+WEB STUDENT LOGIN
+→ NATIVE REACT NATIVE STUDENT LOGIN
+
+SAME UI + SAME UX + SAME FRONTEND BEHAVIOR.
+
+START BY INSPECTING THE EXISTING WEB IMPLEMENTATION, THEN BUILD THE NATIVE REPLICA.
