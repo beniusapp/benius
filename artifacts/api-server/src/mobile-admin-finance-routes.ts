@@ -2,11 +2,14 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import {
-  academicSessions, feeAuditLog, feeRecords, feeStructures, paymentRecords, students,
+  academicSessions, dunningJobStatus, dunningLog, dunningTemplates, externalPaymentSettings,
+  feeAuditLog, feeRecords, feeStructures, notificationConfig, paymentRecords, schools, students,
 } from "@workspace/db";
 import { db } from "./db";
 import { storage } from "./storage";
 import { calculateLateFee, DEFAULT_LATE_FEE_CONFIG } from "./late-fee-engine";
+import { buildFinancialAnalytics, type FinancialPreset } from "./financial-analytics-data";
+import { renderFinancialAnalyticsPdf, type ReportSection } from "./financial-analytics-pdf";
 
 type Principal = {
   id: number;
@@ -47,6 +50,23 @@ const invoiceSchema = z.object({
   amount: z.number().int().positive(),
   dueDate: z.string().date(),
   notes: z.string().max(500).nullable().optional(),
+  status: z.enum(["Due", "Overdue", "Paid"]).optional(),
+  paidDate: z.string().date().nullable().optional(),
+  lateFeeAmount: z.number().int().min(0).optional(),
+  lateFeeConfig: z.record(z.string(), z.unknown()).nullable().optional(),
+  structureId: z.number().int().positive().nullable().optional(),
+});
+const lateFeeConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  type: z.enum(["NONE", "FLAT", "DAILY", "TIERED"]).default("NONE"),
+  grace_period_days: z.number().int().min(0).default(0),
+  flat_amount: z.number().int().min(0).default(0),
+  daily_rate: z.number().min(0).default(0),
+  max_cap: z.number().int().min(0).default(0),
+  tiered_slabs: z.array(z.object({
+    from_day: z.number().int().min(1), to_day: z.number().int().min(1),
+    amount: z.number().int().min(0),
+  })).default([]),
 });
 const structureSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -60,6 +80,7 @@ const structureSchema = z.object({
     purpose: z.string().trim().max(200).default(""),
     amount: z.number().int().min(0),
   })).max(50).default([]),
+  lateFeeConfig: lateFeeConfigSchema.optional(),
 });
 const paymentSchema = z.object({
   feeRecordId: z.number().int().positive(),
@@ -109,6 +130,20 @@ function requirePermission(moduleId: string, action: string): RequestHandler {
 function selectedSession(req: Request, schoolId: number) {
   const session = (req as MobileRequest).mobileAcademicSession;
   return session && session.schoolId === schoolId ? session : null;
+}
+
+function requireFinanceSession(requireAcademicSession: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    const user = principal(req);
+    if (!user) return reject(res, 403, "Administrator or permitted support staff access is required.");
+    if (user.role !== "support_staff") return requireAcademicSession(req, res, next);
+    if (req.get("x-view-session-id")) return reject(res, 403, "Support staff cannot select an academic session.");
+    return void storage.getActiveSession(user.schoolId).then((session) => {
+      if (!session) return reject(res, 404, "No active academic session is configured for this school.");
+      (req as MobileRequest).mobileAcademicSession = session;
+      next();
+    }).catch(() => reject(res, 503, "Unable to load the active academic session."));
+  };
 }
 
 function archivedWriteBlocked(session: typeof academicSessions.$inferSelect, res: Response): boolean {
@@ -230,7 +265,7 @@ export function registerMobileAdminFinanceRoutes(
     "/api/mobile/admin/modules/fees",
     ...protect,
     requirePermission("fees-manager", "view"),
-    requireAcademicSession,
+    requireFinanceSession(requireAcademicSession),
     async (req, res) => {
       const user = principal(req)!;
       const session = selectedSession(req, user.schoolId);
@@ -260,7 +295,7 @@ export function registerMobileAdminFinanceRoutes(
     "/api/mobile/admin/modules/fees/invoices",
     ...protect,
     requirePermission("fees-manager", "record"),
-    requireAcademicSession,
+    requireFinanceSession(requireAcademicSession),
     async (req, res) => {
       const user = principal(req)!;
       const session = selectedSession(req, user.schoolId);
@@ -268,6 +303,13 @@ export function registerMobileAdminFinanceRoutes(
       if (archivedWriteBlocked(session, res)) return;
       const parsed = invoiceSchema.safeParse(req.body);
       if (!parsed.success) return reject(res, 400, parsed.error.issues[0]?.message ?? "Invoice details are invalid.");
+      const structure = parsed.data.structureId ? (await db.select().from(feeStructures).where(and(
+        eq(feeStructures.id, parsed.data.structureId), eq(feeStructures.schoolId, user.schoolId),
+      )))[0] : null;
+      if (parsed.data.structureId && !structure) return reject(res, 404, "Fee structure not found.");
+      const effectiveAmount = structure?.amount ?? parsed.data.amount;
+      const effectiveFeeName = structure?.name ?? parsed.data.feeName;
+      const effectiveFeeType = structure?.feeType ?? parsed.data.feeType;
       const [student] = await db.select({ id: students.id, name: students.name, isActive: students.isActive })
         .from(students).where(and(eq(students.id, parsed.data.studentId), eq(students.schoolId, user.schoolId)));
       if (!student || !student.isActive) return reject(res, 400, "Choose an active student from this school.");
@@ -281,17 +323,20 @@ export function registerMobileAdminFinanceRoutes(
           periodStart,
           data: {
             schoolId: user.schoolId, sessionId: session.id, studentId: student.id,
-            feeName: parsed.data.feeName, feeType: parsed.data.feeType, amount: parsed.data.amount,
+            feeName: effectiveFeeName, feeType: effectiveFeeType, amount: effectiveAmount,
             dueDate: parsed.data.dueDate, status: "Due", paidDate: null, receiptNumber: null,
             notes: parsed.data.notes?.trim() || null, feePeriodStart: periodStart, feePeriodEnd: periodEnd,
-            frequency: "one-time", breakdownSnapshot: [], createdBy: user.role === "admin" ? user.principalId : null,
+            frequency: structure?.frequency ?? "one-time",
+            breakdownSnapshot: structure?.breakdown ?? [],
+            lateFeeConfig: structure?.lateFeeConfig ?? parsed.data.lateFeeConfig ?? null,
+            createdBy: user.role === "admin" ? user.principalId : null,
           },
           afterCreate: async (tx, record) => {
             await feeAuditEntry({
               schoolId: user.schoolId, actor: user, sessionId: session.id, action: "create",
               entityType: "fee_record", entityId: record.id, studentId: student.id, studentName: student.name,
               recordLabel: record.invoiceNumber, amount: record.amount,
-              description: `Created invoice ${record.invoiceNumber ?? ""} for ${student.name}: ${parsed.data.feeName}, ₹${parsed.data.amount}, due ${parsed.data.dueDate}.`,
+              description: `Created invoice ${record.invoiceNumber ?? ""} for ${student.name}: ${effectiveFeeName}, ₹${effectiveAmount}, due ${parsed.data.dueDate}.`,
             }, tx);
           },
         });
@@ -307,7 +352,7 @@ export function registerMobileAdminFinanceRoutes(
     "/api/mobile/admin/modules/fees/payments",
     ...protect,
     requirePermission("fees-manager", "record"),
-    requireAcademicSession,
+    requireFinanceSession(requireAcademicSession),
     async (req, res) => {
       const user = principal(req)!;
       const session = selectedSession(req, user.schoolId);
@@ -392,7 +437,7 @@ export function registerMobileAdminFinanceRoutes(
     "/api/mobile/admin/modules/fees/structures",
     ...protect,
     requirePermission("fees-manager", "record"),
-    requireAcademicSession,
+    requireFinanceSession(requireAcademicSession),
     async (req, res) => {
       const user = principal(req)!;
       const session = selectedSession(req, user.schoolId);
@@ -415,7 +460,7 @@ export function registerMobileAdminFinanceRoutes(
           schoolId: user.schoolId, createdBy: user.role === "admin" ? user.principalId : null, ...parsed.data,
           applicableClasses: [...new Set(parsed.data.applicableClasses)],
           dueDayOfMonth: parsed.data.dueDayOfMonth ?? null,
-          lateFeeConfig: DEFAULT_LATE_FEE_CONFIG,
+          lateFeeConfig: parsed.data.lateFeeConfig ?? DEFAULT_LATE_FEE_CONFIG,
         };
         if (action === "update") {
           if (!id) return reject(res, 400, "A valid fee structure ID is required.");
@@ -430,4 +475,243 @@ export function registerMobileAdminFinanceRoutes(
       }
     },
   );
+
+  // Invoice editing is deliberately separate from invoice creation.  It
+  // preserves invoice numbers and refuses edits to settled invoices.
+  app.patch(
+    "/api/mobile/admin/modules/fees/invoices/:id",
+    ...protect,
+    requirePermission("fees-manager", "record"),
+    requireFinanceSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = selectedSession(req, user.schoolId);
+      const id = parseId(req.params.id);
+      if (!session || !id) return reject(res, 400, !id ? "A valid invoice ID is required." : "Select an academic session.");
+      if (archivedWriteBlocked(session, res)) return;
+      const parsed = invoiceSchema.partial().safeParse(req.body);
+      if (!parsed.success) return reject(res, 400, parsed.error.issues[0]?.message ?? "Invoice changes are invalid.");
+      const [before] = await db.select().from(feeRecords).where(and(
+        eq(feeRecords.id, id), eq(feeRecords.schoolId, user.schoolId), eq(feeRecords.sessionId, session.id),
+      ));
+      if (!before) return reject(res, 404, "Invoice not found in the selected academic session.");
+      if (before.status === "Paid") return reject(res, 403, "Settled invoices are immutable.");
+      const { studentId: _studentId, feeName: _feeName, feeType: _feeType, amount: _amount,
+        status: _status, paidDate: _paidDate, lateFeeAmount, lateFeeConfig, ...safeFields } = parsed.data;
+      if (parsed.data.studentId && parsed.data.studentId !== before.studentId) {
+        return reject(res, 400, "Invoice student cannot be changed.");
+      }
+      try {
+        const updated = await storage.updateFeeRecord(id, user.schoolId, {
+          ...safeFields,
+          ...(parsed.data.feeName !== undefined ? { feeName: parsed.data.feeName } : {}),
+          ...(parsed.data.feeType !== undefined ? { feeType: parsed.data.feeType } : {}),
+          ...(parsed.data.amount !== undefined ? { amount: parsed.data.amount } : {}),
+          ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+          ...(parsed.data.paidDate !== undefined ? { paidDate: parsed.data.paidDate } : {}),
+          ...(lateFeeAmount !== undefined ? { lateFeeAmount } : {}),
+          ...(lateFeeConfig !== undefined ? { lateFeeConfig } : {}),
+        } as any);
+        if (!updated) return reject(res, 404, "Invoice not found.");
+        await feeAuditEntry({
+          schoolId: user.schoolId, actor: user, sessionId: session.id, action: "update",
+          entityType: "fee_record", entityId: id, studentId: updated.studentId,
+          recordLabel: updated.invoiceNumber, amount: updated.amount,
+          description: `Updated invoice ${updated.invoiceNumber ?? id}.`,
+        });
+        res.json(updated);
+      } catch {
+        reject(res, 503, "Unable to update the invoice.");
+      }
+    },
+  );
+
+  app.get(
+    "/api/mobile/admin/modules/fees/invoices/:id/receipt",
+    ...protect,
+    requirePermission("fees-manager", "view"),
+    requireFinanceSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = selectedSession(req, user.schoolId);
+      const id = parseId(req.params.id);
+      if (!session || !id) return reject(res, 400, "A valid invoice and academic session are required.");
+      const [invoice] = await db.select().from(feeRecords).where(and(
+        eq(feeRecords.id, id), eq(feeRecords.schoolId, user.schoolId), eq(feeRecords.sessionId, session.id),
+      ));
+      if (!invoice) return reject(res, 404, "Invoice not found.");
+      const payments = await storage.getPaymentRecordsBySchool(user.schoolId, { feeRecordId: id, sessionId: session.id });
+      res.json({ invoice, payments, receiptNumber: invoice.receiptNumber ?? null });
+    },
+  );
+
+  // Read-only transaction details used by the native receipt/detail drawer.
+  app.get(
+    "/api/mobile/admin/modules/fees/transactions/:id",
+    ...protect,
+    requirePermission("fees-manager", "view"),
+    requireFinanceSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = selectedSession(req, user.schoolId);
+      const id = parseId(req.params.id);
+      if (!session || !id) return reject(res, 400, "A valid payment ID and academic session are required.");
+      const [payment] = await db.select().from(paymentRecords).where(and(
+        eq(paymentRecords.id, id), eq(paymentRecords.schoolId, user.schoolId), eq(paymentRecords.sessionId, session.id),
+      ));
+      if (!payment) return reject(res, 404, "Payment not found.");
+      const [invoice] = payment.feeRecordId ? await db.select().from(feeRecords).where(and(
+        eq(feeRecords.id, payment.feeRecordId), eq(feeRecords.schoolId, user.schoolId),
+      )) : [];
+      res.json({ payment, invoice: invoice ?? null });
+    },
+  );
+  app.get(
+    "/api/mobile/admin/modules/fees/transactions/:id/receipt",
+    ...protect,
+    requirePermission("fees-manager", "view"),
+    requireFinanceSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = selectedSession(req, user.schoolId);
+      const id = parseId(req.params.id);
+      if (!session || !id) return reject(res, 400, "A valid payment ID and academic session are required.");
+      const [payment] = await db.select().from(paymentRecords).where(and(
+        eq(paymentRecords.id, id), eq(paymentRecords.schoolId, user.schoolId), eq(paymentRecords.sessionId, session.id),
+      ));
+      if (!payment) return reject(res, 404, "Payment not found.");
+      const [invoice] = payment.feeRecordId ? await db.select().from(feeRecords).where(and(
+        eq(feeRecords.id, payment.feeRecordId), eq(feeRecords.schoolId, user.schoolId),
+      )) : [];
+      const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+      }[char] ?? char));
+      res.type("html").send(`<html><head><meta charset="utf-8"><title>Receipt ${esc(payment.receiptNumber ?? payment.id)}</title></head><body><h1>Payment Receipt</h1><p>Receipt: ${esc(payment.receiptNumber ?? "—")}</p><p>Invoice: ${esc(invoice?.invoiceNumber ?? "—")}</p><p>Amount: ₹${esc(payment.amount)}</p><p>Method: ${esc(payment.paymentMethod)}</p><p>Received: ${esc(payment.receivedDate)}</p><p>Reference: ${esc(payment.referenceNumber ?? "—")}</p></body></html>`);
+    },
+  );
+
+  // External portal settings are admin-only. Support staff can never view or
+  // mutate gateway credentials, and secrets are always returned masked.
+  app.get("/api/mobile/admin/modules/fees/external-settings", ...protect, async (req, res) => {
+    const user = principal(req);
+    if (!user || user.role !== "admin" || !hasPermission(user, "fees-manager", "view"))
+      return reject(res, 403, "Administrator access is required for external payment settings.");
+    const settings = await storage.getExternalPaymentSettings(user.schoolId);
+    res.json(settings ? {
+      ...settings,
+      razorpayKeySecret: settings.razorpayKeySecret ? "••••••••" : null,
+      razorpayWebhookSecret: settings.razorpayWebhookSecret ? "••••••••" : null,
+    } : {
+      isEnabled: false, gatewayUrl: null, bannerMessage: null, razorpayEnabled: false,
+      razorpayKeyId: null, razorpayKeySecret: null, razorpayWebhookSecret: null,
+    });
+  });
+  app.post("/api/mobile/admin/modules/fees/external-settings", ...protect, async (req, res) => {
+    const user = principal(req);
+    if (!user || user.role !== "admin" || !hasPermission(user, "fees-manager", "record"))
+      return reject(res, 403, "Administrator access is required for external payment settings.");
+    const schema = z.object({
+      isEnabled: z.boolean(), gatewayUrl: z.string().max(500).nullable().optional(),
+      bannerMessage: z.string().max(500).nullable().optional(), razorpayEnabled: z.boolean(),
+      razorpayKeyId: z.string().max(200).nullable().optional(),
+      razorpayKeySecret: z.string().max(500).nullable().optional(),
+      razorpayWebhookSecret: z.string().max(500).nullable().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return reject(res, 400, "External portal settings are invalid.");
+    const previous = await storage.getExternalPaymentSettings(user.schoolId);
+    if (parsed.data.razorpayEnabled && !(parsed.data.razorpayKeyId || previous?.razorpayKeyId))
+      return reject(res, 400, "Razorpay Key ID is required before enabling online payments.");
+    const secret = parsed.data.razorpayKeySecret === "••••••••" ? previous?.razorpayKeySecret : parsed.data.razorpayKeySecret ?? null;
+    const webhook = parsed.data.razorpayWebhookSecret === "••••••••" ? previous?.razorpayWebhookSecret : parsed.data.razorpayWebhookSecret ?? null;
+    if (parsed.data.razorpayEnabled && !webhook) return reject(res, 400, "Razorpay Webhook Secret is required.");
+    const updated = await storage.upsertExternalPaymentSettings(user.schoolId, {
+      isEnabled: parsed.data.isEnabled, gatewayUrl: parsed.data.gatewayUrl ?? null,
+      bannerMessage: parsed.data.bannerMessage ?? null, lastUpdatedBy: user.principalId,
+      razorpayEnabled: parsed.data.razorpayEnabled, razorpayKeyId: parsed.data.razorpayKeyId ?? previous?.razorpayKeyId ?? null,
+      razorpayKeySecret: secret, razorpayWebhookSecret: webhook, razorpayMode: "live",
+    });
+    res.json({ ...updated, razorpayKeySecret: updated.razorpayKeySecret ? "••••••••" : null, razorpayWebhookSecret: updated.razorpayWebhookSecret ? "••••••••" : null });
+  });
+
+  app.get("/api/mobile/admin/modules/fees/reminders", ...protect, requirePermission("fees-manager", "view"), requireFinanceSession(requireAcademicSession), async (req, res) => {
+    const user = principal(req)!;
+    const session = selectedSession(req, user.schoolId);
+    if (!session) return reject(res, 409, "Select an academic session.");
+    const [config, templates, job, log] = await Promise.all([
+      storage.getNotificationConfig(user.schoolId),
+      db.select().from(dunningTemplates).where(eq(dunningTemplates.schoolId, user.schoolId)),
+      db.select().from(dunningJobStatus).where(eq(dunningJobStatus.schoolId, user.schoolId)).limit(1),
+      storage.getDunningLog(user.schoolId, 100),
+    ]);
+    res.json({
+      config: config ? {
+        ...config, msg91AuthKey: config.msg91AuthKey ? "••••••••" : null,
+        sendgridApiKey: config.sendgridApiKey ? "••••••••" : null, mailtrapApiKey: config.mailtrapApiKey ? "••••••••" : null,
+      } : null, templates, job: job[0] ?? { isRunning: false, startedAt: null, lastCompletedAt: null }, log,
+    });
+  });
+  app.post("/api/mobile/admin/modules/fees/reminders", ...protect, requirePermission("fees-manager", "record"), requireFinanceSession(requireAcademicSession), async (req, res) => {
+    const user = principal(req)!;
+    const session = selectedSession(req, user.schoolId);
+    if (!session) return reject(res, 409, "Select an academic session.");
+    if (archivedWriteBlocked(session, res)) return;
+    const body = z.object({
+      config: z.object({
+        smsEnabled: z.boolean().default(false), msg91AuthKey: z.string().nullable().optional(), msg91SenderId: z.string().nullable().optional(),
+        waEnabled: z.boolean().default(false), msg91WaNumber: z.string().nullable().optional(), msg91WaTemplate: z.string().nullable().optional(),
+        emailEnabled: z.boolean().default(false), emailProvider: z.enum(["sendgrid", "mailtrap"]).default("sendgrid"),
+        sendgridApiKey: z.string().nullable().optional(), sendgridFromEmail: z.string().email().nullable().optional(),
+        sendgridFromName: z.string().nullable().optional(), mailtrapApiKey: z.string().nullable().optional(), mailtrapInboxId: z.string().nullable().optional(),
+      }).optional(),
+      templates: z.array(z.object({ stage: z.enum(["D-2", "D+0", "D+3", "D+7", "D+14"]), channel: z.enum(["sms", "email"]), bodyText: z.string().min(1), subjectText: z.string().nullable().optional() })).optional(),
+      simulate: z.boolean().optional(),
+    }).safeParse(req.body);
+    if (!body.success) return reject(res, 400, "Reminder settings are invalid.");
+    try {
+      if (body.data.config) {
+        const existing = await storage.getNotificationConfig(user.schoolId);
+        const c = body.data.config;
+        const keep = (value: string | null | undefined, old: string | null | undefined) => !value || value === "••••••••" ? old ?? null : value;
+        await storage.upsertNotificationConfig(user.schoolId, {
+          ...c, msg91AuthKey: keep(c.msg91AuthKey, existing?.msg91AuthKey), sendgridApiKey: keep(c.sendgridApiKey, existing?.sendgridApiKey), mailtrapApiKey: keep(c.mailtrapApiKey, existing?.mailtrapApiKey),
+        });
+      }
+      if (body.data.templates) {
+        for (const template of body.data.templates) await db.insert(dunningTemplates).values({
+          schoolId: user.schoolId, ...template, subjectText: template.subjectText ?? null, updatedAt: new Date(),
+        }).onConflictDoUpdate({ target: [dunningTemplates.schoolId, dunningTemplates.stage, dunningTemplates.channel], set: { bodyText: template.bodyText, subjectText: template.subjectText ?? null, updatedAt: new Date() } });
+      }
+      if (body.data.simulate) {
+        const { runDunningSimulation } = await import("./dunning");
+        return res.json({ ...(await runDunningSimulation(user.schoolId, session.id)) });
+      }
+      res.json({ ok: true });
+    } catch {
+      reject(res, 503, "Unable to save reminder settings.");
+    }
+  });
+
+  app.get("/api/mobile/admin/modules/fees/analytics", ...protect, requirePermission("fees-manager", "view"), requireFinanceSession(requireAcademicSession), async (req, res) => {
+    const user = principal(req)!;
+    const session = selectedSession(req, user.schoolId);
+    if (!session) return reject(res, 409, "Select an academic session.");
+    const preset = (typeof req.query.preset === "string" ? req.query.preset : "academic_year") as FinancialPreset;
+    if (!["today", "this_week", "this_month", "academic_year", "custom"].includes(preset)) return reject(res, 400, "Invalid analytics range.");
+    const data = await buildFinancialAnalytics({ schoolId: user.schoolId, sessionId: session.id, preset,
+      customStart: typeof req.query.startDate === "string" ? req.query.startDate : undefined,
+      customEnd: typeof req.query.endDate === "string" ? req.query.endDate : undefined });
+    res.json(data);
+  });
+  app.get("/api/mobile/admin/modules/fees/analytics/pdf", ...protect, requirePermission("fees-manager", "export"), requireFinanceSession(requireAcademicSession), async (req, res) => {
+    const user = principal(req)!;
+    const session = selectedSession(req, user.schoolId);
+    if (!session) return reject(res, 409, "Select an academic session.");
+    const preset = (typeof req.query.preset === "string" ? req.query.preset : "academic_year") as FinancialPreset;
+    const data = await buildFinancialAnalytics({ schoolId: user.schoolId, sessionId: session.id, preset });
+    const section = (typeof req.query.section === "string" ? req.query.section : "complete") as ReportSection;
+    const [school] = await db.select({ name: schools.name }).from(schools).where(eq(schools.id, user.schoolId));
+    const pdf = await renderFinancialAnalyticsPdf({ data, school: { name: school?.name ?? "School" }, section });
+    res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Disposition", `attachment; filename="financial-analytics-${session.id}.pdf"`); res.send(pdf);
+  });
 }

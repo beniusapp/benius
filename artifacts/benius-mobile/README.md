@@ -4,7 +4,16 @@ This is a separate Expo Router / React Native / TypeScript artifact, not a WebVi
 
 ## Run
 
-From the workspace root, use the managed `artifacts/benius-mobile: expo` workflow, or `pnpm --filter @workspace/benius-mobile run typecheck` for static checks. Open the Replit mobile preview and use its Expo Go phone option for Android/iOS development. A development build is only necessary when a future native dependency requires it. The Expo workflow supplies `EXPO_PUBLIC_DOMAIN` at bundle time; on a different host configure it to the reachable backend domain **without** a scheme. Do not put credentials or secrets in `EXPO_PUBLIC_*`.
+From the workspace root, use the managed `artifacts/benius-mobile: expo` workflow for the JavaScript preview, or `pnpm --filter @workspace/benius-mobile run typecheck` for static checks. **Razorpay Standard Checkout is a native module and is not available in Expo Go or the browser preview.** Build a development/production client after installing dependencies:
+
+```sh
+cd artifacts/benius-mobile
+pnpm exec expo prebuild
+pnpm exec expo run:android --device   # Android
+pnpm exec expo run:ios --device       # macOS/Xcode required
+```
+
+`expo prebuild` generates the native projects and React Native autolinking includes `react-native-razorpay`; iOS also runs its Razorpay CocoaPod during `pod install`. Do not remove the generated native projects after prebuild without repeating it. The Expo workflow supplies `EXPO_PUBLIC_DOMAIN` at bundle time; on a different host configure it to the reachable backend domain **without** a scheme. Do not put credentials or secrets in `EXPO_PUBLIC_*`.
 
 ## Structure and boundaries
 
@@ -24,3 +33,5 @@ Add authorized role modules and API contracts incrementally; do not present the 
 ## Verification
 
 Run `pnpm --filter @workspace/benius-mobile run typecheck` and `pnpm --filter @workspace/benius-mobile test`. The Node unit tests exercise refresh coordination only; they do not replace Android/iOS SecureStore, login, or app-restart testing.
+
+Payment verification additionally requires a native build and a real/test Razorpay device flow. Returning from the SDK, cancelling, or losing connectivity is never payment confirmation; the app only displays success after the bearer-authenticated server verify call succeeds.

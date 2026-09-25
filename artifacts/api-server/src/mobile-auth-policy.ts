@@ -45,16 +45,91 @@ const TEACHER_MODULES = new Set([
   "leave", "timetable", "student-profiles",
 ]);
 const TEACHER_MODULE_ACTIONS: Record<string, Set<string>> = {
-  attendance: new Set(["submit"]),
-  homework: new Set(["create"]),
-  classwork: new Set(["create"]),
-  noticeboard: new Set(["create"]),
+  attendance: new Set(["submit", "self-check-in", "self-check-out", "self-correction"]),
+  homework: new Set(["create", "edit", "delete"]),
+  classwork: new Set(["create", "edit", "delete"]),
+  noticeboard: new Set(["create", "edit", "delete"]),
   complaint: new Set(["create", "resolve-peer", "add-note", "edit", "delete", "self-resolve"]),
-  examination: new Set(["save-scores", "publish-scores"]),
-  library: new Set(["borrow", "return"]),
+  examination: new Set(["save-scores", "publish-scores", "toggle-promotion-lock"]),
+  gallery: new Set(["upload"]),
+  library: new Set(["borrow", "return", "upload-ebook"]),
+  timetable: new Set(["save", "delete"]),
   leave: new Set(["apply", "approve-student", "forward-student", "reject-student"]),
   "student-profiles": new Set(["approve", "reject", "approve-all"]),
 };
+const ADMIN_MODULE_GET = new Set([
+  "/api/mobile/admin/modules/school-setup",
+  "/api/mobile/admin/modules/student-registry",
+  "/api/mobile/admin/modules/student-registry/stats",
+  "/api/mobile/admin/modules/student-registry/export.xlsx",
+  "/api/mobile/admin/modules/student-registry/deactivated/export.xlsx",
+  "/api/mobile/admin/modules/attendance-overview",
+  "/api/mobile/admin/modules/exam-controller",
+  "/api/mobile/admin/modules/exam-controller/ledger",
+  "/api/mobile/admin/modules/exam-controller/cohort",
+  "/api/mobile/admin/modules/exam-controller/history",
+  "/api/mobile/admin/modules/audit-logs",
+  "/api/mobile/admin/modules/visitor-log",
+  "/api/mobile/admin/modules/school-calendar",
+  "/api/mobile/admin/modules/timetable/context",
+  "/api/mobile/admin/modules/timetable/teachers",
+  "/api/mobile/admin/modules/timetable/class-view",
+  "/api/mobile/admin/modules/timetable/status",
+  "/api/mobile/admin/modules/timetable/structure",
+  "/api/mobile/admin/modules/faculty-mapping",
+  "/api/mobile/admin/modules/analytics/context",
+  "/api/mobile/admin/modules/analytics/view",
+  "/api/mobile/admin/modules/analytics/results",
+  "/api/mobile/admin/modules/id-card-gen/context",
+  "/api/mobile/admin/modules/id-card-gen/roster",
+  "/api/mobile/admin/modules/assets",
+  "/api/mobile/admin/modules/fees",
+  "/api/mobile/admin/modules/fees/external-settings",
+  "/api/mobile/admin/modules/fees/reminders",
+  "/api/mobile/admin/modules/fees/analytics",
+  "/api/mobile/admin/modules/fees/analytics/pdf",
+]);
+const ADMIN_MODULE_POST = new Set([
+  "/api/mobile/admin/modules/school-setup/metadata",
+  "/api/mobile/admin/modules/school-setup/sessions",
+  "/api/mobile/admin/modules/school-setup/grading-tiers",
+  "/api/mobile/admin/modules/school-setup/exam-policy-tiers",
+  "/api/mobile/admin/modules/school-setup/leave-policies",
+  "/api/mobile/admin/modules/school-setup/attendance-policies",
+  "/api/mobile/admin/modules/student-registry/auto-assign-roll",
+  "/api/mobile/admin/modules/student-registry/bulk-deactivate",
+  "/api/mobile/admin/modules/student-registry/students",
+  "/api/mobile/admin/modules/student-registry/import.xlsx",
+  "/api/mobile/admin/modules/exam-controller/decision",
+  "/api/mobile/admin/modules/exam-controller/decision/clear",
+  "/api/mobile/admin/modules/exam-controller/execute",
+  "/api/mobile/admin/modules/exam-controller/reminder-all",
+  "/api/mobile/admin/modules/exam-controller/ledger/delete",
+  "/api/mobile/admin/modules/visitor-log/check-in",
+  "/api/mobile/admin/modules/school-calendar",
+  "/api/mobile/admin/modules/timetable/save",
+  "/api/mobile/admin/modules/timetable/structure",
+  "/api/mobile/admin/modules/timetable/publish",
+  "/api/mobile/admin/modules/faculty-mapping/save",
+  "/api/mobile/admin/modules/faculty-mapping/clear",
+  "/api/mobile/admin/modules/assets/create",
+  "/api/mobile/admin/modules/assets/update",
+  "/api/mobile/admin/modules/assets/delete",
+  "/api/mobile/admin/modules/fees/invoices",
+  "/api/mobile/admin/modules/fees/payments",
+  "/api/mobile/admin/modules/fees/structures",
+  "/api/mobile/admin/modules/fees/external-settings",
+  "/api/mobile/admin/modules/fees/reminders",
+]);
+const ADMIN_DYNAMIC_GET = /^\/api\/mobile\/admin\/modules\/fees\/(?:invoices\/[1-9]\d*\/receipt|transactions\/[1-9]\d*(?:\/receipt)?)$/;
+const ADMIN_DYNAMIC_POST = /^\/api\/mobile\/admin\/modules\/(?:school-setup\/sessions\/[1-9]\d*\/(?:copy-modules|activate|delete)|school-setup\/(?:grading-tiers|exam-policy-tiers|leave-policies|attendance-policies)\/[1-9]\d*\/delete|student-registry\/students\/[1-9]\d*\/(?:update|deactivate)|visitor-log\/[1-9]\d*\/check-out|school-calendar\/[1-9]\d*\/(?:update|delete))$/;
+const ADMIN_DYNAMIC_PATCH = /^\/api\/mobile\/admin\/modules\/fees\/invoices\/[1-9]\d*$/;
+const ADMIN_WORKFLOW_MODULES = new Set([
+  "complaint-hub", "noticeboard", "approval-center", "leave-requests",
+  "teacher-registry", "non-teaching-staff",
+]);
+const PRIVATE_ADMIN_NOTICE_FILE_ROUTE = /^\/api\/mobile\/admin\/workflow\/private-notices\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|jpeg|png|webp|pdf)$/;
+const PRIVATE_TEACHER_FILE_ROUTE = /^\/api\/mobile\/teacher\/modules\/(homework|classwork|noticeboard|complaint|gallery|library)\/private-files\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|jpeg|png|webp|pdf)$/;
 
 function isAdditionalStudentRequest(method: string, path: string): boolean {
   const prefix = "/api/mobile/student/";
@@ -62,6 +137,8 @@ function isAdditionalStudentRequest(method: string, path: string): boolean {
   const relative = path.slice(prefix.length);
   if (method === "GET" && ADDITIONAL_STUDENT_GET.has(relative)) return true;
   if (method === "POST" && ADDITIONAL_STUDENT_POST.has(relative)) return true;
+  if (method === "GET" && /^fees\/[1-9]\d*\/(?:invoice|receipt)$/.test(relative)) return true;
+  if (method === "POST" && /^payments\/(?:create-order|verify)$/.test(relative)) return true;
   if (method === "GET" && PRIVATE_LEAVE_FILE_ROUTE.test(path)) return true;
   return (method === "GET" || method === "POST")
     && /^complaints\/[1-9]\d*\/notes$/.test(relative);
@@ -72,6 +149,22 @@ function isTeacherModuleRequest(method: string, path: string): boolean {
   if (!match || !TEACHER_MODULES.has(match[1])) return false;
   if (method === "GET") return match[2] === undefined;
   return method === "POST" && !!match[2] && !!TEACHER_MODULE_ACTIONS[match[1]]?.has(match[2]);
+}
+
+function isAdditionalAdminRequest(method: string, path: string): boolean {
+  if (method === "GET" && PRIVATE_ADMIN_NOTICE_FILE_ROUTE.test(path)) return true;
+  if (method === "GET" && (ADMIN_MODULE_GET.has(path) || ADMIN_DYNAMIC_GET.test(path))) return true;
+  if (method === "POST" && (ADMIN_MODULE_POST.has(path) || ADMIN_DYNAMIC_POST.test(path))) return true;
+  if (method === "PATCH" && ADMIN_DYNAMIC_PATCH.test(path)) return true;
+  if (method === "GET" && path.startsWith("/api/mobile/admin/workflow/")) {
+    const match = /^\/api\/mobile\/admin\/workflow\/([a-z-]+)$/.exec(path);
+    return !!match && ADMIN_WORKFLOW_MODULES.has(match[1]);
+  }
+  if (method === "POST" && path.startsWith("/api/mobile/admin/workflow/")) {
+    const match = /^\/api\/mobile\/admin\/workflow\/([a-z-]+)\/actions$/.exec(path);
+    return !!match && ADMIN_WORKFLOW_MODULES.has(match[1]);
+  }
+  return false;
 }
 
 export type RefreshPolicyInput = {
@@ -215,7 +308,9 @@ export function rejectBearerOutsideMobileAuth(
     || isAdminOverviewRequest
     || isAdminProfileRequest
     || isAdditionalStudentRequest(req.method, req.path)
-    || isTeacherModuleRequest(req.method, req.path);
+    || isTeacherModuleRequest(req.method, req.path)
+    || isAdditionalAdminRequest(req.method, req.path)
+    || (req.method === "GET" && PRIVATE_TEACHER_FILE_ROUTE.test(req.path));
   const isApiRequest = req.path === "/api" || req.path.startsWith("/api/");
   if (isApiRequest && !approvedMobileRequest && /^\s*Bearer\s/i.test(authorization)) {
     res.status(401).json({ message: "Bearer credentials are accepted only by mobile authentication endpoints." });

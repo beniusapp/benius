@@ -29,6 +29,7 @@ type Structure = {
   id: number; name: string; feeType: string; amount: number; frequency: string;
   applicableClasses: string[]; dueDayOfMonth: number | null;
   breakdown: Array<{ name: string; purpose: string; amount: number }>;
+  lateFeeConfig?: Record<string, unknown> | null;
 };
 type FinanceData = {
   session: { id: number; name: string; isActive: boolean };
@@ -259,7 +260,7 @@ function FeesPaymentsMobile() {
   const sessions = useAcademicSession();
   const sessionId = sessions.selectedId;
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'ledger' | 'structures' | 'analytics' | 'audit'>('ledger');
+  const [tab, setTab] = useState<'ledger' | 'structures' | 'reminders' | 'external' | 'analytics' | 'audit'>('ledger');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('All');
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -270,6 +271,7 @@ function FeesPaymentsMobile() {
   const [amount, setAmount] = useState('');
   const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10));
   const [invoiceNotes, setInvoiceNotes] = useState('');
+  const [invoiceStructureId, setInvoiceStructureId] = useState('');
   const [paying, setPaying] = useState<FeeRecord | null>(null);
   const [paymentMethod, setPaymentMethod] = useState('Cheque');
   const [paymentReference, setPaymentReference] = useState('');
@@ -281,6 +283,10 @@ function FeesPaymentsMobile() {
   const [structureType, setStructureType] = useState('');
   const [structureAmount, setStructureAmount] = useState('');
   const [structureFrequency, setStructureFrequency] = useState('annual');
+  const [lateFeeJson, setLateFeeJson] = useState('{"enabled":false,"type":"NONE","grace_period_days":0,"flat_amount":0,"daily_rate":0,"max_cap":0,"tiered_slabs":[]}');
+  const [analyticsPreset, setAnalyticsPreset] = useState('academic_year');
+  const [analyticsStart, setAnalyticsStart] = useState('');
+  const [analyticsEnd, setAnalyticsEnd] = useState('');
 
   const query = useQuery({
     queryKey: ['mobile/admin/fees', sessionId],
@@ -291,6 +297,21 @@ function FeesPaymentsMobile() {
   const data = query.data;
   const canRecord = data?.allowedSubs.includes('record') ?? false;
   const canExport = data?.allowedSubs.includes('export') ?? false;
+  const reminderQuery = useQuery({
+    queryKey: ['mobile/admin/fees/reminders', sessionId],
+    queryFn: ({ signal }) => apiGetForSession<any>('/mobile/admin/modules/fees/reminders', sessionId!, { signal }),
+    enabled: !!sessionId && tab === 'reminders',
+  });
+  const externalQuery = useQuery({
+    queryKey: ['mobile/admin/fees/external-settings'],
+    queryFn: ({ signal }) => apiGet<any>('/mobile/admin/modules/fees/external-settings', { signal }),
+    enabled: tab === 'external',
+  });
+  const analyticsQuery = useQuery({
+    queryKey: ['mobile/admin/fees/analytics', sessionId, analyticsPreset, analyticsStart, analyticsEnd],
+    queryFn: ({ signal }) => apiGetForSession<any>(`/mobile/admin/modules/fees/analytics?preset=${analyticsPreset}${analyticsPreset === 'custom' && analyticsStart ? `&startDate=${analyticsStart}&endDate=${analyticsEnd}` : ''}`, sessionId!, { signal }),
+    enabled: !!sessionId && tab === 'analytics',
+  });
   const students = data?.students ?? [];
   const studentMap = useMemo(() => new Map(students.map((student) => [student.id, student])), [students]);
   const filteredRecords = useMemo(() => {
@@ -326,13 +347,25 @@ function FeesPaymentsMobile() {
     onSuccess: () => { void refresh(); closeStructureForm(); },
     onError: (error) => Alert.alert('Fee structure not saved', errorText(error, 'Try again.')),
   });
+  const reminderMutation = useMutation({
+    mutationFn: (payload: object) => apiPostForSession('/mobile/admin/modules/fees/reminders', sessionId!, payload),
+    onSuccess: () => { void reminderQuery.refetch(); Alert.alert('Reminder workflow', 'The server completed the requested reminder operation.'); },
+    onError: (error) => Alert.alert('Reminder workflow failed', errorText(error, 'Try again.')),
+  });
+  const externalMutation = useMutation({
+    mutationFn: (payload: object) => apiPost('/mobile/admin/modules/fees/external-settings', payload),
+    onSuccess: () => { void externalQuery.refetch(); Alert.alert('External portal', 'Settings saved.'); },
+    onError: (error) => Alert.alert('External portal not saved', errorText(error, 'Try again.')),
+  });
   function closeStructureForm() {
     setStructureForm(false); setEditingStructure(null); setStructureName('');
     setStructureType(''); setStructureAmount(''); setStructureFrequency('annual');
+    setLateFeeJson(JSON.stringify(editingStructure?.lateFeeConfig ?? { enabled: false, type: 'NONE', grace_period_days: 0, flat_amount: 0, daily_rate: 0, max_cap: 0, tiered_slabs: [] }));
   }
   function startStructureEdit(structure: Structure) {
     setEditingStructure(structure); setStructureName(structure.name); setStructureType(structure.feeType);
-    setStructureAmount(String(structure.amount)); setStructureFrequency(structure.frequency); setStructureForm(true);
+    setStructureAmount(String(structure.amount)); setStructureFrequency(structure.frequency);
+    setLateFeeJson(JSON.stringify(structure.lateFeeConfig ?? {})); setStructureForm(true);
   }
   function submitInvoice() {
     const numericAmount = Number(amount);
@@ -340,7 +373,7 @@ function FeesPaymentsMobile() {
       Alert.alert('Complete invoice details', 'Choose a student, enter the fee name, fee type, a whole-rupee amount and a due date.');
       return;
     }
-    invoiceMutation.mutate({ studentId, feeName: feeName.trim(), feeType: feeType.trim(), amount: numericAmount, dueDate, notes: invoiceNotes.trim() || null });
+    invoiceMutation.mutate({ studentId, feeName: feeName.trim(), feeType: feeType.trim(), amount: numericAmount, dueDate, notes: invoiceNotes.trim() || null, structureId: invoiceStructureId ? Number(invoiceStructureId) : null });
   }
   function submitPayment() {
     if (!paying) return;
@@ -375,11 +408,13 @@ function FeesPaymentsMobile() {
       Alert.alert('Complete fee structure', 'Enter a name, fee type and positive whole-rupee amount.');
       return;
     }
+    let lateFeeConfig: unknown;
+    try { lateFeeConfig = JSON.parse(lateFeeJson); } catch { Alert.alert('Invalid late-fee rules', 'Enter valid JSON for the late-fee configuration.'); return; }
     structureMutation.mutate({
       action: editingStructure ? 'update' : 'create', ...(editingStructure ? { id: editingStructure.id } : {}),
       structure: {
         name: structureName.trim(), feeType: structureType.trim(), amount: numericAmount,
-        frequency: structureFrequency, applicableClasses: editingStructure?.applicableClasses ?? [],
+        frequency: structureFrequency, applicableClasses: editingStructure?.applicableClasses ?? [], lateFeeConfig,
         dueDayOfMonth: editingStructure?.dueDayOfMonth ?? null, breakdown: editingStructure?.breakdown ?? [],
       },
     });
@@ -418,7 +453,7 @@ function FeesPaymentsMobile() {
           : <>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabStrip}>
               {([
-                ['ledger', 'Ledger', 'list'], ['structures', 'Structures', 'book-open'],
+                ['ledger', 'Ledger', 'list'], ['structures', 'Structures', 'book-open'], ['reminders', 'Reminders', 'bell'], ['external', 'External', 'external-link'],
                 ['analytics', 'Analytics', 'bar-chart-2'], ['audit', 'Audit log', 'shield'],
               ] as const).map(([id, label, icon]) => <Pressable key={id} onPress={() => setTab(id)} style={[styles.tab, tab === id && styles.tabActive]}>
                 <Feather name={icon} size={14} color={tab === id ? palette.background : palette.subdued} />
@@ -451,6 +486,8 @@ function FeesPaymentsMobile() {
                     <Field label="Fee name" value={feeName} onChangeText={setFeeName} />
                     <Field label="Fee type" value={feeType} onChangeText={setFeeType} />
                     <Field label="Amount (₹)" value={amount} onChangeText={setAmount} keyboardType="number-pad" />
+                    <Text style={styles.fieldLabel}>Create from configured structure (optional)</Text>
+                    <Choice values={['None', ...data.structures.map((item) => `${item.id}:${item.name}`)]} value={invoiceStructureId ? `${invoiceStructureId}:${data.structures.find((item) => item.id === Number(invoiceStructureId))?.name ?? ''}` : 'None'} onChange={(value) => setInvoiceStructureId(value === 'None' ? '' : value.split(':')[0])} />
                     <Field label="Due date (YYYY-MM-DD)" value={dueDate} onChangeText={setDueDate} />
                     <Field label="Notes" value={invoiceNotes} onChangeText={setInvoiceNotes} multiline />
                     <View style={styles.actions}>
@@ -499,6 +536,7 @@ function FeesPaymentsMobile() {
                   <Field label="Structure name" value={structureName} onChangeText={setStructureName} />
                   <Field label="Fee type" value={structureType} onChangeText={setStructureType} />
                   <Field label="Amount (₹)" value={structureAmount} onChangeText={setStructureAmount} keyboardType="number-pad" />
+                   <Field label="Late-fee rules JSON (supports FLAT, DAILY and TIERED slabs)" value={lateFeeJson} onChangeText={setLateFeeJson} multiline />
                   <Text style={styles.fieldLabel}>Frequency</Text>
                   <Choice values={['monthly', 'quarterly', 'annual', 'one-time']} value={structureFrequency} onChange={setStructureFrequency} />
                   <View style={styles.actions}><Button label="Cancel" kind="secondary" onPress={closeStructureForm} /><Button label={editingStructure ? 'Save structure' : 'Create structure'} icon="check" onPress={submitStructure} disabled={structureMutation.isPending} /></View>
@@ -514,13 +552,42 @@ function FeesPaymentsMobile() {
                     </View> : null}
                   </View>)}
               </Panel> : null}
+              {tab === 'reminders' ? <Panel>
+                <SectionHeading title="Reminders & dunning" detail="Delivery is performed by the server's configured notification providers." />
+                {reminderQuery.isPending ? <LoadingState label="Loading reminder settings…" /> : reminderQuery.isError ? <ErrorState message={errorText(reminderQuery.error, 'Reminder settings unavailable.')} onRetry={() => void reminderQuery.refetch()} /> : <>
+                  <View style={styles.summaryLine}><Text style={styles.body}>SMS</Text><Text style={styles.body}>{reminderQuery.data?.config?.smsEnabled ? 'Enabled' : 'Disabled'}</Text></View>
+                  <View style={styles.summaryLine}><Text style={styles.body}>WhatsApp</Text><Text style={styles.body}>{reminderQuery.data?.config?.waEnabled ? 'Enabled' : 'Disabled'}</Text></View>
+                  <View style={styles.summaryLine}><Text style={styles.body}>Email</Text><Text style={styles.body}>{reminderQuery.data?.config?.emailEnabled ? 'Enabled' : 'Disabled'}</Text></View>
+                  <Text style={styles.muted}>{reminderQuery.data?.templates?.length ?? 0} templates · {reminderQuery.data?.log?.length ?? 0} recent delivery attempts</Text>
+                  {canRecord && data.session.isActive ? <Button label="Run dunning simulation" icon="play" onPress={() => reminderMutation.mutate({ simulate: true })} disabled={reminderMutation.isPending} /> : null}
+                </>}
+              </Panel> : null}
+              {tab === 'external' ? <Panel>
+                <SectionHeading title="External payment portal" detail="Credentials are masked. Enabling the portal does not claim payment completion; verified provider webhooks remain authoritative." />
+                {externalQuery.isPending ? <LoadingState label="Loading portal settings…" /> : externalQuery.isError ? <ErrorState message={errorText(externalQuery.error, 'External settings unavailable.')} onRetry={() => void externalQuery.refetch()} /> : <>
+                  <View style={styles.summaryLine}><Text style={styles.body}>Portal</Text><Text style={styles.body}>{externalQuery.data?.isEnabled ? 'Enabled' : 'Disabled'}</Text></View>
+                  <View style={styles.summaryLine}><Text style={styles.body}>Razorpay</Text><Text style={styles.body}>{externalQuery.data?.razorpayEnabled ? 'Enabled' : 'Disabled'}</Text></View>
+                  <Text style={styles.muted}>Gateway: {externalQuery.data?.gatewayUrl || 'Not configured'}</Text>
+                  <Text style={styles.muted}>Key ID: {externalQuery.data?.razorpayKeyId || 'Not configured'} · secrets remain masked</Text>
+                  {data.session.isActive && externalQuery.data ? <Button label={externalQuery.data.isEnabled ? 'Disable portal' : 'Enable portal'} icon="power" kind="secondary" onPress={() => externalMutation.mutate({ ...externalQuery.data, isEnabled: !externalQuery.data.isEnabled })} disabled={externalMutation.isPending} /> : null}
+                </>}
+              </Panel> : null}
               {tab === 'analytics' ? <>
                 <SectionHeading title="Financial analytics" detail={`${data.session.name} · live ledger totals`} />
+                <Choice values={['today', 'this_week', 'this_month', 'academic_year', 'custom']} value={analyticsPreset} onChange={setAnalyticsPreset} />
+                {analyticsPreset === 'custom' ? <View style={styles.actions}>
+                  <Field label="Start date (YYYY-MM-DD)" value={analyticsStart} onChangeText={setAnalyticsStart} />
+                  <Field label="End date (YYYY-MM-DD)" value={analyticsEnd} onChangeText={setAnalyticsEnd} />
+                </View> : null}
                 <View style={styles.metrics}>
                   <Metric label="Collected revenue" value={money(data.summary.totalRevenue)} icon="trending-up" />
                   <Metric label="Outstanding balance" value={money(data.summary.outstanding)} icon="clock" />
                   <Metric label="Collection rate" value={`${data.summary.collectionRate}%`} icon="bar-chart-2" />
                 </View>
+                {analyticsQuery.isPending ? <LoadingState label="Loading detailed analytics…" /> : analyticsQuery.isError ? <ErrorState message={errorText(analyticsQuery.error, 'Detailed analytics unavailable.')} onRetry={() => void analyticsQuery.refetch()} /> : analyticsQuery.data ? <Panel>
+                  <SectionHeading title="Detailed collection analysis" detail="Server-calculated figures for the selected academic session." />
+                  {Object.entries(analyticsQuery.data.summary ?? {}).slice(0, 8).map(([label, value]) => <View key={label} style={styles.summaryLine}><Text style={styles.body}>{label.replaceAll('_', ' ')}</Text><Text style={styles.amount}>{typeof value === 'number' ? money(value) : String(value ?? '—')}</Text></View>)}
+                </Panel> : null}
                 <Panel>
                   <SectionHeading title="Payment methods" />
                   {Object.entries(data.payments.reduce<Record<string, number>>((counts, payment) => {

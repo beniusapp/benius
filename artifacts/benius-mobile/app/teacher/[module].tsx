@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
+import * as Location from 'expo-location';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -29,6 +30,8 @@ type TeacherModuleData = {
   studentHistory?: Item[];
   subjects?: string[];
   examTypes?: string[];
+  promotionTerms?: string[];
+  promotionDecisions?: Item[];
   date?: string;
   className?: string;
   section?: string;
@@ -38,6 +41,7 @@ type TeacherModuleData = {
   myBooks?: Item[];
   myEbooks?: Item[];
   myUploads?: Item[];
+  selfAttendance?: { today?: Item; policy?: Item; rate?: Item; history?: Item[]; corrections?: Item[] };
 };
 
 const definitions: Record<ModuleId, { title: string; subtitle: string; icon: React.ComponentProps<typeof Feather>['name'] }> = {
@@ -157,6 +161,8 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
   const [dueDate, setDueDate] = useState('');
   const [noticeType, setNoticeType] = useState('Routine');
   const [noticeTarget, setNoticeTarget] = useState<'student' | 'whole_school'>('student');
+  const [noticeEditingId, setNoticeEditingId] = useState<number | null>(null);
+  const [noticeEditContent, setNoticeEditContent] = useState('');
   const [startDate, setStartDate] = useState(istToday());
   const [endDate, setEndDate] = useState(istToday());
   const [leaveType, setLeaveType] = useState('');
@@ -174,19 +180,31 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
   const [examMarks, setExamMarks] = useState<Record<number, string>>({});
   const [examAbsentees, setExamAbsentees] = useState<Record<number, boolean>>({});
   const [pickedFile, setPickedFile] = useState<{ uri: string; name: string; mimeType: string; size: number } | null>(null);
+  const [pickedFiles, setPickedFiles] = useState<{ uri: string; name: string; mimeType: string; size: number }[]>([]);
   const [galleryTitle, setGalleryTitle] = useState('');
   const [galleryEvent, setGalleryEvent] = useState('');
   const [ebookTitle, setEbookTitle] = useState('');
   const [ebookAuthor, setEbookAuthor] = useState('');
   const [ebookTargetClass, setEbookTargetClass] = useState('');
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [timetableDay, setTimetableDay] = useState('1');
+  const [timetablePeriod, setTimetablePeriod] = useState('1');
+  const [timetableRoom, setTimetableRoom] = useState('');
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
+  const [profileReviewId, setProfileReviewId] = useState<number | null>(null);
+  const [profileEdits, setProfileEdits] = useState<Record<string, string>>({});
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
   const [month, setMonth] = useState(istToday().slice(0, 7));
+  const [calendarView, setCalendarView] = useState<'month' | 'week' | 'year'>('month');
+  const [calendarCursor, setCalendarCursor] = useState(istToday());
+  const [calendarDay, setCalendarDay] = useState<string | null>(null);
 
   const scopeParts = selectedScopeKey.split('\u0000');
   const queryClass = scopeParts[0] ?? '';
   const querySection = scopeParts[1] ?? '';
   const queryKey = ['mobile', 'teacher', user.schoolId, user.id, selectedId, module, selectedScopeKey,
-    attendanceDate, examSubject, examType, examTerm, month] as const;
+    attendanceDate, examSubject, examType, examTerm, month, calendarView, calendarCursor] as const;
   const query = useQuery({
     queryKey,
     enabled: !!selectedId && !!selectedSession && user.role === 'teacher',
@@ -198,7 +216,16 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         : module === 'examination'
           ? `${scopeQuery ? '&' : '?'}subject=${encodeURIComponent(examSubject)}&examType=${encodeURIComponent(examType)}&term=${encodeURIComponent(examTerm)}`
           : module === 'calendar'
-            ? `${scopeQuery ? '&' : '?'}month=${encodeURIComponent(month)}`
+            ? (() => {
+              const base = new Date(`${calendarCursor}T12:00:00Z`);
+              if (calendarView === 'year') return `${scopeQuery ? '&' : '?'}year=${base.getUTCFullYear()}`;
+              if (calendarView === 'week') {
+                const day = base.getUTCDay(); const start = new Date(base); start.setUTCDate(base.getUTCDate() - day);
+                const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
+                return `${scopeQuery ? '&' : '?'}start=${start.toISOString().slice(0, 10)}&end=${end.toISOString().slice(0, 10)}`;
+              }
+              return `${scopeQuery ? '&' : '?'}month=${encodeURIComponent(month)}`;
+            })()
             : '';
       const result = await apiGetForSession<TeacherModuleData>(
         `/mobile/teacher/modules/${module}${scopeQuery}${extras}`, selectedId!, { signal },
@@ -276,14 +303,23 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         ? ['image/jpeg', 'image/png', 'image/webp']
         : kind === 'ebook' ? ['application/pdf']
           : ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-      const result = await DocumentPicker.getDocumentAsync({ type: types, multiple: false, copyToCacheDirectory: true });
+      const result = await DocumentPicker.getDocumentAsync({ type: types, multiple: kind === 'image', copyToCacheDirectory: true });
       if (result.canceled) return;
-      const asset = result.assets[0];
-      const extension = asset.name.split('.').pop()?.toLowerCase() ?? '';
-      if (!['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(extension)
-        || (kind === 'image' && extension === 'pdf')
-        || (kind === 'ebook' && extension !== 'pdf')
-        || (asset.size != null && asset.size > 10 * 1024 * 1024)) {
+      const assets = result.assets;
+      const chosen = assets.map((asset) => ({
+        uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? '', size: asset.size ?? 0,
+      }));
+      if (kind === 'image' && chosen.length > 10) { Alert.alert('Too many files', 'Choose up to 10 images.'); return; }
+      if (kind === 'image') setPickedFiles(chosen);
+      const asset = assets[0];
+      const valid = assets.every((candidate) => {
+        const extension = candidate.name.split('.').pop()?.toLowerCase() ?? '';
+        return ['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(extension)
+          && !(kind === 'image' && extension === 'pdf')
+          && !(kind === 'ebook' && extension !== 'pdf')
+          && (candidate.size == null || candidate.size <= 10 * 1024 * 1024);
+      });
+      if (!valid) {
         Alert.alert('Unsupported file', 'Choose a matching JPG, PNG, WebP, or PDF file up to 10 MiB.');
         return;
       }
@@ -306,8 +342,18 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
       if (pickedFile) {
         form.append('file', { uri: pickedFile.uri, name: pickedFile.name, type: pickedFile.mimeType } as unknown as Blob);
       }
-      await apiPostForSession(`/mobile/teacher/modules/${module}/${action}`, selectedId, form);
+      if (module === 'gallery' && action === 'upload' && pickedFiles.length > 1) {
+        for (const selected of pickedFiles) {
+          const batchForm = new FormData();
+          Object.entries(fields).forEach(([key, value]) => batchForm.append(key, String(value)));
+          batchForm.append('file', { uri: selected.uri, name: selected.name, type: selected.mimeType } as unknown as Blob);
+          await apiPostForSession(`/mobile/teacher/modules/${module}/${action}`, selectedId, batchForm);
+        }
+      } else {
+        await apiPostForSession(`/mobile/teacher/modules/${module}/${action}`, selectedId, form);
+      }
       setPickedFile(null);
+      setPickedFiles([]);
       setContent('');
       setDueDate('');
       setGalleryTitle('');
@@ -327,11 +373,11 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
     }
   };
 
-  const openPrivateFile = async (raw: string) => {
-    const match = raw.match(/^\/api\/mobile\/teacher\/modules\/(homework|classwork|gallery|library)\/private-files\/([0-9a-f-]+\.(?:jpg|jpeg|png|webp|pdf))$/i);
+  const openPrivateFile = async (raw: string, preview = false): Promise<string | null> => {
+    const match = raw.match(/^\/api\/mobile\/teacher\/modules\/(homework|classwork|gallery|library|noticeboard|complaint)\/private-files\/([0-9a-f-]+\.(?:jpg|jpeg|png|webp|pdf))$/i);
     if (!match || Platform.OS === 'web') {
       Alert.alert('Private attachment', Platform.OS === 'web' ? 'Open private attachments in BENIUS Mobile on a device.' : 'This attachment address is invalid.');
-      return;
+      return null;
     }
     const fileModule = match[1];
     const filename = match[2];
@@ -340,11 +386,11 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
     try { before = await authTransport.restore(); }
     catch {
       Alert.alert('Unable to open attachment', 'Secure sign-in data is unavailable. Sign in again.');
-      return;
+      return null;
     }
     if (!before || before.user.id !== user.id || before.user.schoolId !== user.schoolId) {
       Alert.alert('Account changed', 'Sign in again before opening this private attachment.');
-      return;
+      return null;
     }
     try {
       await apiGetForSession(`${apiPath}?check=1`, selectedId!);
@@ -374,19 +420,21 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
       try {
         localFile.write(bytes);
         if (!await Sharing.isAvailableAsync()) throw new Error('No document viewer is available on this device.');
-        await Sharing.shareAsync(localFile.uri, { dialogTitle: 'Open BENIUS attachment' });
+         if (!preview) await Sharing.shareAsync(localFile.uri, { dialogTitle: 'Open BENIUS attachment' });
+         return localFile.uri;
       } finally {
-        if (localFile.exists) localFile.delete();
+         if (localFile.exists && !preview) localFile.delete();
       }
     } catch (error) {
       Alert.alert('Unable to open attachment', error instanceof Error ? error.message : 'Private attachment download failed.');
+      return null;
     }
   };
 
   const openAttachment = async (raw: string) => {
     if (raw.startsWith('/api/mobile/teacher/modules/')) {
-      await openPrivateFile(raw);
-      return;
+       await openPrivateFile(raw);
+       return;
     }
     try {
       const origin = API_BASE_URL.replace(/\/api\/?$/, '');
@@ -402,6 +450,67 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
     }
   };
 
+  const galleryItems = data?.items ?? [];
+  const showGalleryItem = async (index: number) => {
+    const item = galleryItems[index];
+    if (!item || typeof item.imageUrl !== 'string') return;
+    setLightboxIndex(index);
+    setLightboxUri(null);
+    const uri = await openPrivateFile(item.imageUrl, true);
+    setLightboxUri(uri);
+  };
+
+  const exportResultsCsv = async () => {
+    if (module !== 'examination' || !selectedScope || !examTerm) return;
+    const rows = data?.promotionDecisions ?? [];
+    const scoreRows = items;
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const studentName = (id: unknown) => String(data?.students?.find((student) => Number(student.studentId ?? student.id) === Number(id))?.name ?? '');
+    const lines = [
+      ['Class', selectedScope.className, 'Section', selectedScope.section, 'Term', examTerm, 'Subject', examSubject, 'Examination', examType],
+      [],
+      ['Student ID', 'Student', 'Marks', 'Total Marks', 'Absent', 'Published'],
+      ...scoreRows.map((score) => [
+        score.studentId, studentName(score.studentId), score.marks, score.totalMarks, score.isAbsent ? 'Yes' : 'No',
+        score.published ? 'Yes' : 'No',
+      ]),
+      [],
+      ['Promotion ledger'],
+      ['Student ID', 'Student', 'Decision', 'Locked'],
+      ...rows.map((entry) => [entry.studentId, studentName(entry.studentId), entry.decision ?? entry.status, entry.locked ? 'Yes' : 'No']),
+    ];
+    const csv = lines.map((line) => line.map(quote).join(',')).join('\r\n');
+    try {
+      const directory = new Directory(Paths.cache, 'benius-teacher-exports');
+      directory.create({ idempotent: true, intermediates: true });
+      const file = new File(directory, `results_${selectedScope.className}${selectedScope.section}_${examTerm.replace(/[^a-z0-9]+/gi, '-')}.csv`);
+      file.create();
+      file.write(csv);
+      if (!await Sharing.isAvailableAsync()) throw new Error('No file sharing is available on this device.');
+      await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export Results CSV' });
+      if (file.exists) file.delete();
+    } catch (error) {
+      Alert.alert('Export failed', error instanceof Error ? error.message : 'Unable to export the selected results.');
+    }
+  };
+
+  const selfAttendanceAction = async (action: 'self-check-in' | 'self-check-out') => {
+    if (!selectedId || !canWrite) return;
+    const body: Record<string, unknown> = {};
+    if (action === 'self-check-in') {
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.granted) {
+          const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          body.latitude = location.coords.latitude;
+          body.longitude = location.coords.longitude;
+        }
+      } catch { /* Location is optional; server never trusts client verification. */ }
+      body.locationVerified = false;
+    }
+    await submit(action, body, action === 'self-check-in' ? 'Checked in.' : 'Checked out.', false);
+  };
+
   const setStudentStatus = (studentId: number, displayedStatus?: string) => {
     const order = ['present', 'absent', 'late', 'halfday'];
     setAttendanceStatuses((current) => {
@@ -412,6 +521,8 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
   };
   const statusLabel = (value?: string) => value ? value.replace('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Not marked';
   const items = getRows(data);
+  const calendarItems = module === 'calendar' && calendarDay
+    ? items.filter((item) => String(item.date ?? '').slice(0, 10) === calendarDay) : items;
   const bottomInset = insets.bottom + 30;
 
   if (!selectedId || !selectedSession) {
@@ -468,6 +579,16 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         <ChoiceRow options={data?.promotionTerms ?? []} selected={examTerm} onSelect={setExamTerm} />
       </>}
       {module === 'calendar' && <DarkInput label="Calendar month (YYYY-MM)" value={month} onChangeText={setMonth} />}
+      {module === 'timetable' && <View style={styles.formCard}>
+        <Text style={styles.sectionTitle}>Edit your timetable</Text>
+        <DarkInput label="Day (0 Sunday – 6 Saturday)" value={timetableDay} onChangeText={setTimetableDay} keyboardType="number-pad" />
+        <DarkInput label="Period" value={timetablePeriod} onChangeText={setTimetablePeriod} keyboardType="number-pad" />
+        <DarkInput label="Room (optional)" value={timetableRoom} onChangeText={setTimetableRoom} />
+        <ActionButton label="Save timetable slot" icon="save" disabled={!canWrite || !selectedScope || !subject.trim()}
+          onPress={() => { void submit('save', { dayOfWeek: Number(timetableDay), period: Number(timetablePeriod),
+            className: selectedScope?.className, section: selectedScope?.section, subject: subject.trim(), room: timetableRoom.trim() || null,
+          }, 'Timetable slot saved.', false); }} />
+      </View>}
 
       {module === 'attendance' && <View style={styles.formCard}>
         <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Class register</Text>
@@ -492,6 +613,21 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         {!!data?.entries?.length && <ActionButton label={busyAction === 'submit' ? 'Saving…' : 'Save attendance'} icon="check-circle"
           disabled={!canWrite || busyAction === 'submit' || !Object.keys(attendanceStatuses).length}
           onPress={() => { void submit('submit', { className: selectedScope?.className, section: selectedScope?.section, date: attendanceDate, records: Object.entries(attendanceStatuses).map(([studentId, status]) => ({ studentId: Number(studentId), status })) }, 'Attendance saved.', false); }} />}
+      </View>}
+      {module === 'attendance' && data?.selfAttendance && <View style={styles.formCard}>
+        <Text style={styles.sectionTitle}>Your attendance today</Text>
+        <Text style={styles.muted}>{data.selfAttendance.today?.status ?? 'Not checked in'} ·
+          {data.selfAttendance.today?.checkInTime ? ` In ${formatSchoolInstant(String(data.selfAttendance.today.checkInTime))}` : ''}</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1 }}><ActionButton label="Check in" icon="log-in" disabled={!canWrite || !!data.selfAttendance.today?.checkInTime}
+            onPress={() => { void selfAttendanceAction('self-check-in'); }} /></View>
+          <View style={{ flex: 1 }}><ActionButton label="Check out" icon="log-out" secondary disabled={!canWrite || !data.selfAttendance.today?.checkInTime || !!data.selfAttendance.today?.checkOutTime}
+            onPress={() => { void selfAttendanceAction('self-check-out'); }} /></View>
+        </View>
+        <Text style={styles.muted}>Rate: {String(data.selfAttendance.rate?.attendanceRate ?? 0)}% · {String(data.selfAttendance.rate?.applicableDays ?? 0)} applicable days</Text>
+        {(data.selfAttendance.history ?? []).slice(0, 10).map((entry: Item) => <Text key={entry.id} style={styles.muted}>
+          {String(entry.attendanceDate)} · {String(entry.status)}
+        </Text>)}
       </View>}
 
       {(module === 'homework' || module === 'classwork') && <View style={styles.formCard}>
@@ -540,11 +676,12 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         {noticeTarget === 'student' && selectedScope && <Text style={styles.muted}>Student audience · Class {selectedScope.className}{selectedScope.section}</Text>}
         <DarkInput label="Notice type" value={noticeType} onChangeText={setNoticeType} />
         <DarkInput label="Notice content" value={content} onChangeText={setContent} multiline />
+        <ActionButton label={pickedFile ? `Attachment · ${pickedFile.name}` : 'Choose private attachment'} icon="paperclip" secondary
+          disabled={!canWrite} onPress={() => { void chooseAttachment('document'); }} />
         <ActionButton label={busyAction ? 'Posting…' : 'Post notice'} icon="send" disabled={!canWrite || !content.trim()}
-          onPress={() => { void submit('create', { content: content.trim(), targetType: noticeTarget,
+          onPress={() => { void submitWithAttachment('create', { content: content.trim(), targetType: noticeTarget,
             ...(noticeTarget === 'student' && selectedScope ? { className: selectedScope.className, section: selectedScope.section } : {}),
-            noticeType: noticeType.trim() || 'Routine' }, 'Notice posted.'); }} />
-        <Text style={styles.muted}>Notice attachments are not supported by this mobile form.</Text>
+            noticeType: noticeType.trim() || 'Routine' }, 'Notice posted.', false); }} />
       </View>}
 
       {module === 'complaint' && <View style={styles.formCard}>
@@ -563,13 +700,14 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
           </ScrollView>
         </View>}
         <DarkInput label="Complaint details" value={content} onChangeText={setContent} multiline />
+        <ActionButton label={pickedFile ? `Attachment · ${pickedFile.name}` : 'Choose private attachment'} icon="paperclip" secondary
+          disabled={!canWrite} onPress={() => { void chooseAttachment('document'); }} />
         <ActionButton label={busyAction ? 'Submitting…' : 'Submit complaint'} icon="send"
           disabled={!canWrite || !content.trim() || (complaintType === 'teacher-to-student' && !selectedStudentId)}
-          onPress={() => { void submit('create', { complaintType, content: content.trim(),
+          onPress={() => { void submitWithAttachment('create', { complaintType, content: content.trim(),
             ...(complaintType === 'teacher-to-student' && selectedStudentId ? {
               studentId: selectedStudentId, className: selectedScope?.className, section: selectedScope?.section,
-            } : {}) }, 'Complaint submitted.'); }} />
-        <Text style={styles.muted}>Complaint file attachments are not supported by this mobile form.</Text>
+            } : {}) }, 'Complaint submitted.', false); }} />
       </View>}
 
       {module === 'leave' && <View style={styles.formCard}>
@@ -621,9 +759,33 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         <Text style={styles.sectionTitle}>Pending student profiles</Text>
         <DarkInput label="Review note (optional)" value={reviewNote} onChangeText={setReviewNote} />
         {data?.items?.length
-          ? data.items.map((item, index) => <RecordCard key={item.studentId ?? index} item={item} index={index}
-            onAction={() => { void submit('approve', { studentId: Number(item.studentId) }, 'Student profile approved.', false); }}
-            actionLabel="Approve profile" actionIcon="check" actionDisabled={!canWrite} />)
+          ? data.items.map((item, index) => <View key={item.studentId ?? index} style={styles.studentLeaveCard}>
+            <RecordCard item={item} index={index} />
+            {profileReviewId === Number(item.studentId) && <>
+              <Text style={styles.sectionLabel}>Current vs requested</Text>
+              {['fullName', 'rollNo', 'phone', 'class', 'section', 'presentAddress'].map((field) => <View key={field}>
+                <Text style={styles.muted}>{field} · current: {String(item.currentVerifiedProfile ? (() => {
+                  try { return JSON.parse(String(item.currentVerifiedProfile))[field]; } catch { return ''; }
+                })() : '')}</Text>
+                <DarkInput label={`Requested ${field}`} value={profileEdits[field] ?? String(item[field] ?? '')}
+                  onChangeText={(value) => setProfileEdits((current) => ({ ...current, [field]: value }))} />
+              </View>)}
+              <Text style={styles.muted}>Photo status · current: {String(item.photoStatus ?? 'unknown')} · requested: {item.photoUrl ? 'pending' : 'none'}</Text>
+            </>}
+            <ActionButton label={profileReviewId === Number(item.studentId) ? 'Approve edited profile' : 'Review details'} icon={profileReviewId === Number(item.studentId) ? 'check' : 'eye'}
+              disabled={!canWrite} onPress={() => {
+                if (profileReviewId === Number(item.studentId)) {
+                  void submit('approve', { studentId: Number(item.studentId), corrections: profileEdits }, 'Student profile approved.', false);
+                  setProfileReviewId(null); setProfileEdits({});
+                } else {
+                  let current: Item = {};
+                  try { current = item.currentVerifiedProfile ? JSON.parse(String(item.currentVerifiedProfile)) : {}; } catch { current = {}; }
+                  const fields = ['fullName', 'rollNo', 'phone', 'class', 'section', 'presentAddress'];
+                  setProfileReviewId(Number(item.studentId));
+                  setProfileEdits(Object.fromEntries(fields.map((field) => [field, String(item[field] ?? current[field] ?? '')])));
+                }
+              }} />
+          </View>)
           : <Text style={styles.muted}>No student profile changes are awaiting review for your assigned classes.</Text>}
         {data?.items?.length ? <View style={{ gap: 9 }}>{data.items.map((item, index) => <ActionButton key={`reject-${item.studentId ?? index}`}
           label={`Return profile ${String(item.studentName ?? index + 1)}`} icon="corner-up-left" secondary
@@ -705,11 +867,38 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
               }} />
           </>
           : <Text style={styles.muted}>There are no saved promotion decisions for this term and session. Create the decisions in Results before locking or unlocking the ledger.</Text>}
+        <ActionButton label="Export results CSV" icon="download" secondary
+          disabled={!online || !examTerm || !(items.length || (data?.promotionDecisions ?? []).length)}
+          onPress={() => { void exportResultsCsv(); }} />
       </View>}
 
       {module === 'calendar' && <View style={styles.card}>
-        <Text style={styles.sectionTitle}>School events · {month}</Text>
-        {items.length ? items.map((item, index) => <RecordCard key={item.id ?? index} item={item} index={index} />)
+        <Text style={styles.sectionTitle}>School events · {calendarView === 'year' ? calendarCursor.slice(0, 4) : calendarView}</Text>
+        <ChoiceRow options={['month', 'week', 'year']} selected={calendarView} onSelect={(value) => {
+          setCalendarView(value as typeof calendarView); setCalendarDay(null);
+        }} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1 }}><ActionButton label="Previous" icon="chevron-left" secondary onPress={() => {
+            const date = new Date(`${calendarCursor}T12:00:00Z`);
+            date.setUTCDate(date.getUTCDate() - (calendarView === 'year' ? 365 : calendarView === 'week' ? 7 : 30));
+            setCalendarCursor(date.toISOString().slice(0, 10)); setMonth(date.toISOString().slice(0, 7));
+          }} /></View>
+          <View style={{ flex: 1 }}><ActionButton label="Today" icon="calendar" secondary onPress={() => {
+            const today = istToday(); setCalendarCursor(today); setMonth(today.slice(0, 7)); setCalendarDay(today);
+          }} /></View>
+          <View style={{ flex: 1 }}><ActionButton label="Next" icon="chevron-right" secondary onPress={() => {
+            const date = new Date(`${calendarCursor}T12:00:00Z`);
+            date.setUTCDate(date.getUTCDate() + (calendarView === 'year' ? 365 : calendarView === 'week' ? 7 : 30));
+            setCalendarCursor(date.toISOString().slice(0, 10)); setMonth(date.toISOString().slice(0, 7));
+          }} /></View>
+        </View>
+        <DarkInput label="Calendar month/date (YYYY-MM-DD)" value={calendarCursor} onChangeText={(value) => {
+          setCalendarCursor(value); if (/^\d{4}-\d{2}-\d{2}$/.test(value)) setMonth(value.slice(0, 7));
+        }} />
+        {calendarDay && <Text style={styles.muted}>Day details · {calendarDay}</Text>}
+        {calendarItems.length ? calendarItems.map((item, index) => <Pressable key={item.id ?? index} onPress={() => setCalendarDay(String(item.date).slice(0, 10))}>
+          <RecordCard item={item} index={index} />
+        </Pressable>)
           : <Text style={styles.muted}>No school calendar events are listed for this month.</Text>}
       </View>}
 
@@ -717,12 +906,43 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         || module === 'leave'
         || module === 'faculty-info' || module === 'timetable') && <View style={styles.listBlock}>
         <Text style={styles.sectionTitle}>{module === 'leave' ? 'Leave requests'
-            : module === 'gallery' ? 'School gallery'
-              : module === 'faculty-info' ? 'Faculty directory'
+            : module === 'faculty-info' ? 'Faculty directory'
                 : module === 'timetable' ? 'Your timetable'
                     : module === 'noticeboard' ? 'School notices'
                       : `Assigned ${module}`}</Text>
-        {items.length ? items.map((item, index) => <RecordCard key={item.id ?? index} item={item} index={index} />)
+        {items.length ? items.map((item, index) => <View key={item.id ?? index}>
+          <RecordCard item={item} index={index} />
+          {module === 'timetable' && <ActionButton label="Delete slot" icon="trash-2" secondary disabled={!canWrite}
+            onPress={() => Alert.alert('Delete timetable slot?', 'Remove this selected-session slot?', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete', style: 'destructive', onPress: () => { void submit('delete', {
+                dayOfWeek: Number(item.dayOfWeek), period: Number(item.period),
+                className: String(item.class), section: String(item.section),
+              }, 'Timetable slot deleted.', false); } },
+            ])} />}
+          {module === 'noticeboard' && item.createdById === user.id && item.creatorRole === 'teacher' && <>
+            {typeof item.fileUrl === 'string' && <ActionButton label="Open private attachment" icon="download" secondary
+              onPress={() => { void openAttachment(item.fileUrl); }} />}
+            {noticeEditingId === Number(item.id) && <DarkInput label="Edit notice content" value={noticeEditContent} onChangeText={setNoticeEditContent} multiline />}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}><ActionButton label={noticeEditingId === Number(item.id) ? 'Save notice' : 'Edit notice'} icon={noticeEditingId === Number(item.id) ? 'save' : 'edit-2'} secondary
+                disabled={!canWrite || (noticeEditingId === Number(item.id) && !noticeEditContent.trim())}
+                onPress={() => {
+                  if (noticeEditingId === Number(item.id)) {
+                    void submit('edit', { noticeId: Number(item.id), content: noticeEditContent.trim() }, 'Notice updated.', false);
+                    setNoticeEditingId(null);
+                  } else {
+                    setNoticeEditingId(Number(item.id)); setNoticeEditContent(String(item.content ?? ''));
+                  }
+                }} /></View>
+              <View style={{ flex: 1 }}><ActionButton label="Delete notice" icon="trash-2" secondary disabled={!canWrite}
+                onPress={() => Alert.alert('Delete notice?', 'This teacher-owned notice will be removed.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => { void submit('delete', { noticeId: Number(item.id) }, 'Notice deleted.', false); } },
+                ])} /></View>
+            </View>
+          </>}
+        </View>)
           : !query.isPending && <EmptyCard title={`No ${definition.title.toLowerCase()} records`} detail="There are no matching records in the selected Academic Session." />}
       </View>}
 
@@ -752,16 +972,44 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
           {(data?.items ?? []).length ? (data?.items ?? []).map((item, index) => <View key={item.id ?? index} style={styles.studentLeaveCard}>
             <RecordCard item={item} index={index} />
             {typeof item.imageUrl === 'string'
-              ? <ActionButton label="Open photo" icon="download" secondary onPress={() => { void openAttachment(item.imageUrl); }} /> : null}
+              ? <ActionButton label="View photo" icon="image" secondary onPress={() => { void showGalleryItem(index); }} /> : null}
           </View>) : <Text style={styles.muted}>No approved school photos are available.</Text>}
         </View>
       </>}
+
+      <Modal visible={module === 'gallery' && lightboxIndex !== null} transparent animationType="fade"
+        onRequestClose={() => { setLightboxIndex(null); setLightboxUri(null); }}>
+        <View style={styles.lightboxBackdrop}>
+          <View style={styles.lightboxPanel}>
+            <View style={styles.lightboxHeader}>
+              <Text style={styles.sectionTitle}>Gallery detail</Text>
+              <Pressable accessibilityLabel="Close gallery detail" onPress={() => { setLightboxIndex(null); setLightboxUri(null); }}>
+                <Feather name="x" size={24} color="#fff" />
+              </Pressable>
+            </View>
+            {lightboxIndex !== null && galleryItems[lightboxIndex] && <>
+              {lightboxUri ? <Image source={{ uri: lightboxUri }} style={styles.lightboxImage} resizeMode="contain" />
+                : <View style={styles.lightboxLoading}><ActivityIndicator color="#fff" /><Text style={styles.muted}>Loading private photo…</Text></View>}
+              <Text style={styles.cardTitle}>{String(galleryItems[lightboxIndex].title ?? 'School gallery')}</Text>
+              <Text style={styles.muted}>{String(galleryItems[lightboxIndex].date ?? galleryItems[lightboxIndex].createdAt ?? '')}</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={{ flex: 1 }}><ActionButton label="Previous" icon="chevron-left" secondary disabled={lightboxIndex <= 0}
+                  onPress={() => { void showGalleryItem(lightboxIndex - 1); }} /></View>
+                <View style={{ flex: 1 }}><ActionButton label="Next" icon="chevron-right" secondary disabled={lightboxIndex >= galleryItems.length - 1}
+                  onPress={() => { void showGalleryItem(lightboxIndex + 1); }} /></View>
+              </View>
+            </>}
+          </View>
+        </View>
+      </Modal>
 
       {module === 'complaint' && <View style={styles.formCard}>
         <Text style={styles.sectionTitle}>Your complaints and discussion</Text>
         <DarkInput label="Complaint update / resolution note" value={reviewNote} onChangeText={setReviewNote} multiline />
         {(data?.items ?? []).length ? (data?.items ?? []).map((item, index) => <View key={item.id ?? index} style={styles.studentLeaveCard}>
           <RecordCard item={item} index={index} />
+          {typeof item.fileUrl === 'string' && <ActionButton label="Open private attachment" icon="download" secondary
+            onPress={() => { void openAttachment(item.fileUrl); }} />}
           {(item.notes ?? []).map((note: Item, noteIndex: number) => <Text key={note.id ?? noteIndex} style={styles.muted}>
             {String(note.authorName ?? 'Staff')} · {formatSchoolInstant(String(note.createdAt ?? ''))}: {String(note.content ?? '')}
           </Text>)}
@@ -818,7 +1066,14 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         </View>
         <View style={styles.listBlock}>
           <Text style={styles.sectionTitle}>Approved library collection</Text>
-          {(data?.items ?? []).length ? (data?.items ?? []).map((book, index) => <View key={book.id ?? index} style={styles.studentLeaveCard}>
+          <DarkInput label="Search title, author, or category" value={librarySearch} onChangeText={setLibrarySearch} />
+          {(data?.items ?? []).filter((book) => {
+            const q = librarySearch.trim().toLocaleLowerCase();
+            return !q || [book.title, book.author, book.category].some((value) => String(value ?? '').toLocaleLowerCase().includes(q));
+          }).length ? (data?.items ?? []).filter((book) => {
+            const q = librarySearch.trim().toLocaleLowerCase();
+            return !q || [book.title, book.author, book.category].some((value) => String(value ?? '').toLocaleLowerCase().includes(q));
+          }).map((book, index) => <View key={book.id ?? index} style={styles.studentLeaveCard}>
             <RecordCard item={book} index={index} />
             <Text style={styles.muted}>{Number(book.availableCopies ?? 0)} copies available</Text>
             {typeof book.fileUrl === 'string'
@@ -826,7 +1081,7 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
             <ActionButton label="Borrow book" icon="book-open" disabled={!canWrite || Number(book.availableCopies ?? 0) < 1
               || (data?.myBooks ?? []).some((borrow) => Number(borrow.bookId) === Number(book.id))}
               onPress={() => { void submit('borrow', { bookId: Number(book.id) }, 'Book checked out.', false); }} />
-          </View>) : !query.isPending && <EmptyCard title="No library books available" detail="There are no approved books for your school and assigned classes." />}
+          </View>) : !query.isPending && <EmptyCard title="No library books available" detail="There are no approved books matching the search and assigned-class visibility." />}
         </View>
       </>}
 
@@ -907,6 +1162,11 @@ const styles = StyleSheet.create({
   scopeChipText: { color: teacherColors.faint, fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   scopeChipTextSelected: { color: teacherColors.teal },
   card: { gap: 9, padding: 14, backgroundColor: teacherColors.surface, borderColor: teacherColors.edge, borderWidth: 1, borderRadius: 12 },
+  lightboxBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', padding: 14 },
+  lightboxPanel: { gap: 12, backgroundColor: teacherColors.surface, borderRadius: 14, padding: 14, maxHeight: '92%' },
+  lightboxHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  lightboxImage: { width: '100%', height: 420, backgroundColor: '#000' },
+  lightboxLoading: { height: 420, alignItems: 'center', justifyContent: 'center', gap: 10 },
   formCard: { gap: 12, padding: 15, backgroundColor: teacherColors.surface, borderColor: teacherColors.edge, borderWidth: 1, borderRadius: 12 },
   listBlock: { gap: 10 },
   cardTitle: { color: teacherColors.white, fontSize: 15, fontWeight: '700', flex: 1 },

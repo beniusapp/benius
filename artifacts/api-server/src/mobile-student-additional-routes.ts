@@ -376,13 +376,76 @@ export function registerMobileStudentAdditionalRoutes(
       const context = await sessionStudentContext(req, res);
       if (!context) return;
       const settings = await storage.getExternalPaymentSettings(context.student.schoolId);
+      const razorpayKeyId = settings?.razorpayKeyId ?? process.env.RAZORPAY_KEY_ID;
+      const razorpayKeySecret = settings?.razorpayKeySecret ?? process.env.RAZORPAY_KEY_SECRET;
       res.json({
         isEnabled: settings?.isEnabled ?? false,
         gatewayUrl: settings?.gatewayUrl ?? null,
         bannerMessage: settings?.bannerMessage ?? null,
+        isRazorpayEnabled: settings?.razorpayEnabled !== false && !!razorpayKeyId && !!razorpayKeySecret,
       });
     } catch {
       sendFailure(res, "Unable to load school payment portal settings.");
+    }
+  });
+
+  app.get("/api/mobile/student/fees/:id/invoice", ...sessionRoutes, async (req, res) => {
+    try {
+      const context = await sessionStudentContext(req, res);
+      if (!context) return;
+      const id = validIntegerParam(req.params.id);
+      if (id === null) { fail(res, 400, "Invalid fee record ID."); return; }
+      const records = await storage.getFeeRecordsByStudent(context.student.id, context.student.schoolId, context.session.id);
+      const record = records.find(item => item.id === id);
+      if (!record) { fail(res, 404, "Invoice not found."); return; }
+      if (record.status === "Paid") { fail(res, 409, "This invoice is already paid. Use the payment receipt."); return; }
+      const studentWithSchool = await storage.getStudentWithSchool(context.student.id);
+      res.json({
+        documentType: "invoice",
+        fee: record,
+        studentName: context.student.name,
+        schoolName: studentWithSchool?.school.name ?? "School",
+        sessionName: context.session.sessionName,
+      });
+    } catch {
+      sendFailure(res, "Unable to load the Student invoice.");
+    }
+  });
+
+  app.get("/api/mobile/student/fees/:id/receipt", ...sessionRoutes, async (req, res) => {
+    try {
+      const context = await sessionStudentContext(req, res);
+      if (!context) return;
+      const id = validIntegerParam(req.params.id);
+      if (id === null) { fail(res, 400, "Invalid fee record ID."); return; }
+      const records = await storage.getFeeRecordsByStudent(context.student.id, context.student.schoolId, context.session.id);
+      const record = records.find(item => item.id === id);
+      if (!record) { fail(res, 404, "Fee record not found."); return; }
+      if (record.status !== "Paid") { fail(res, 409, "Receipt is available only for paid records."); return; }
+      const studentWithSchool = await storage.getStudentWithSchool(context.student.id);
+      const payment = await db.execute(sql`
+        SELECT pr.amount, pr.payment_method AS "paymentMethod", pr.reference_number AS "referenceNumber",
+          pr.payer_name AS "payerName", pr.received_date AS "receivedDate",
+          pa.razorpay_payment_id AS "razorpayPaymentId", pa.razorpay_order_id AS "razorpayOrderId",
+          pa.payment_method AS "gatewayMethod", pa.bank_rrn AS "bankRrn",
+          COALESCE(pa.rzp_captured_at, pa.created_at) AS "paidAt"
+        FROM payment_records pr
+        LEFT JOIN payment_attempts pa ON pa.fee_record_id = pr.fee_record_id
+          AND pa.school_id = pr.school_id AND pa.outcome = 'captured'
+        WHERE pr.fee_record_id = ${id} AND pr.school_id = ${context.student.schoolId}
+        ORDER BY pa.created_at DESC NULLS LAST, pr.id DESC
+        LIMIT 1
+      `);
+      res.json({
+        documentType: "receipt",
+        fee: record,
+        payment: (payment.rows[0] as Record<string, unknown> | undefined) ?? null,
+        studentName: context.student.name,
+        schoolName: studentWithSchool?.school.name ?? "School",
+        sessionName: context.session.sessionName,
+      });
+    } catch {
+      sendFailure(res, "Unable to load the Student receipt.");
     }
   });
 

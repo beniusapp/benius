@@ -47,6 +47,7 @@ import { registerMobileAccountRoutes } from "./mobile-account-routes";
 import { registerMobileAdminAcademicRoutes } from "./mobile-admin-academic-routes";
 import { registerMobileAdminWorkflowRoutes } from "./mobile-admin-workflow-routes";
 import { registerMobileAdminFinanceRoutes } from "./mobile-admin-finance-routes";
+import { registerMobileStudentPaymentRoutes } from "./mobile-student-payment-routes";
 
 type MobileRole = "admin" | "teacher" | "student" | "support_staff";
 type MobilePrincipal = {
@@ -442,6 +443,9 @@ export function registerMobileAuthRoutes(app: Express): void {
     app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
   );
   registerMobileStudentAdditionalRoutes(
+    app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
+  );
+  registerMobileStudentPaymentRoutes(
     app, requireHttps, requireMobileBearer, requireMobileAcademicSession,
   );
   registerMobileTeacherModuleRoutes(

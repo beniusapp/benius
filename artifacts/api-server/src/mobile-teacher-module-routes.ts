@@ -1,7 +1,7 @@
 import type { AcademicSession } from "@workspace/db";
 import type { Express, Request, RequestHandler, Response } from "express";
-import { classwork, homework, promotionDecisions } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { attendanceCorrectionRequests, attendancePolicies, classwork, homework, promotionDecisions, studentProfiles, teacherSelfAttendance } from "@workspace/db";
+import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,6 +11,8 @@ import sharp, { type Metadata } from "sharp";
 import { z } from "zod/v4";
 import { calendarDayDifference, formatDateTimeIST, getAcademicYearForISTDate, todayInIST } from "@shared/ist-time";
 import { AttendanceLeaveMutationError, storage } from "./storage";
+import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
+import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 
 type Teacher = NonNullable<Awaited<ReturnType<typeof storage.getTeacherWithSchool>>>;
 type TeacherScope = { className: string; section: string; subject: string | null };
@@ -85,6 +87,7 @@ const leaveSchema = z.object({
 const profileReviewSchema = z.object({
   studentId: z.number().int().positive(),
   note: z.string().trim().min(1).max(500).optional(),
+  corrections: z.record(z.string(), z.string().max(500)).optional(),
 }).strict();
 const studentLeaveReviewSchema = z.object({
   leaveId: z.number().int().positive(),
@@ -340,17 +343,33 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
   try {
     switch (params.data.module) {
       case "attendance": {
-        if (!classScope) { res.json({ scopes, entries: [], date: todayInIST() }); return; }
         if (req.query.date !== undefined && (typeof req.query.date !== "string" || !validDate(req.query.date))) {
           fail(res, 400, "date must be a valid YYYY-MM-DD calendar date.");
           return;
         }
         const date = typeof req.query.date === "string" ? req.query.date : todayInIST();
-        const [roster, records] = await Promise.all([
+        const [roster, records] = classScope ? await Promise.all([
           storage.getAttendanceRosterForSessionClass(account.school.id, session.id, classScope.className, classScope.section),
           storage.getAttendanceHistory(account.school.id, session.id, classScope.className, classScope.section, date, date),
-        ]);
+        ]) : [[], []];
         const recordByIdentity = new Map(records.map((record) => [record.identityKey, record]));
+        const [selfRecord] = await db.select().from(teacherSelfAttendance).where(and(
+          eq(teacherSelfAttendance.teacherId, teacher.id), eq(teacherSelfAttendance.schoolId, account.school.id),
+          eq(teacherSelfAttendance.sessionId, session.id), eq(teacherSelfAttendance.attendanceDate, todayInIST()),
+        ));
+        const policyRows = await db.select().from(attendancePolicies).where(and(
+          eq(attendancePolicies.schoolId, account.school.id), eq(attendancePolicies.isActive, true),
+        ));
+        const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "") ?? DEFAULT_POLICY;
+        const selfRate = await getTeacherSelfRate(account.school.id, teacher.id, session);
+        const selfHistory = await db.select().from(teacherSelfAttendance).where(and(
+          eq(teacherSelfAttendance.teacherId, teacher.id), eq(teacherSelfAttendance.schoolId, account.school.id),
+          eq(teacherSelfAttendance.sessionId, session.id),
+        )).orderBy(desc(teacherSelfAttendance.attendanceDate)).limit(90);
+        const corrections = await db.select().from(attendanceCorrectionRequests).where(and(
+          eq(attendanceCorrectionRequests.teacherId, teacher.id), eq(attendanceCorrectionRequests.schoolId, account.school.id),
+          eq(attendanceCorrectionRequests.sessionId, session.id),
+        )).orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
         res.json({
           scopes,
           date,
@@ -358,6 +377,7 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
             const record = recordByIdentity.get(student.attendanceIdentityKey);
             return { studentId: student.id, name: student.name, dsid: student.digitalStudentId, status: record?.status ?? null, editCount: record?.editCount ?? 0 };
           }),
+          selfAttendance: { today: selfRecord ?? null, policy, rate: selfRate, history: selfHistory, corrections },
         });
         return;
       }
@@ -475,6 +495,30 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
         res.json({ items: await storage.getFacultyBySchoolWithMappings(account.school.id) });
         return;
       case "calendar": {
+        if (req.query.start !== undefined || req.query.end !== undefined) {
+          if (typeof req.query.start !== "string" || typeof req.query.end !== "string"
+            || !validDate(req.query.start) || !validDate(req.query.end) || req.query.start > req.query.end) {
+            fail(res, 400, "Calendar range must use ordered YYYY-MM-DD dates.");
+            return;
+          }
+          const span = Math.round((Date.parse(`${req.query.end}T00:00:00Z`) - Date.parse(`${req.query.start}T00:00:00Z`)) / 86400000) + 1;
+          if (span > 370) { fail(res, 400, "Calendar range cannot exceed one year."); return; }
+          const filters = scopes.map((scope) => ({ cls: scope.className, sec: scope.section }));
+          res.json({ start: req.query.start, end: req.query.end,
+            items: await storage.getCalendarEventsByRange(account.school.id, req.query.start, req.query.end, filters) });
+          return;
+        }
+        if (req.query.year !== undefined && (typeof req.query.year !== "string" || !/^\d{4}$/.test(req.query.year))) {
+          fail(res, 400, "year must use YYYY format.");
+          return;
+        }
+        if (req.query.year !== undefined) {
+          const year = Number(req.query.year);
+          if (year < 2000 || year > 2200) { fail(res, 400, "year is outside the supported calendar range."); return; }
+          const filters = scopes.map((scope) => ({ cls: scope.className, sec: scope.section }));
+          res.json({ year, items: await storage.getCalendarEventsByRange(account.school.id, `${year}-01-01`, `${year}-12-31`, filters) });
+          return;
+        }
         if (req.query.month !== undefined && (typeof req.query.month !== "string" || !/^\d{4}-\d{2}$/.test(req.query.month))) {
           fail(res, 400, "month must use YYYY-MM format.");
           return;
@@ -520,7 +564,23 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
           storage.getPendingProfilesForTeacher(account.school.id, teacher.id, undefined, session.id),
           storage.getTeacherApprovalHistory(teacher.id, account.school.id, session.id),
         ]);
-        res.json({ items, history });
+        const scrubPhoto = (profile: any) => {
+          if (profile && typeof profile === "object") {
+            const copy = { ...profile };
+            if (typeof copy.photoUrl === "string" && !copy.photoUrl.includes("/private-files/")) delete copy.photoUrl;
+            if (typeof copy.currentVerifiedProfile === "string") {
+              try {
+                const verified = JSON.parse(copy.currentVerifiedProfile);
+                if (verified && typeof verified === "object" && typeof verified.photoUrl === "string"
+                  && !verified.photoUrl.includes("/private-files/")) delete verified.photoUrl;
+                copy.currentVerifiedProfile = JSON.stringify(verified);
+              } catch { /* preserve opaque verified profile without exposing a URL */ copy.currentVerifiedProfile = null; }
+            }
+            return copy;
+          }
+          return profile;
+        };
+        res.json({ items: items.map(scrubPhoto), history: history.map(scrubPhoto) });
         return;
       }
       default:
@@ -549,6 +609,101 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
 
   try {
     const { module, action } = params.data;
+    if (module === "timetable" && (action === "save" || action === "delete")) {
+      const body = z.object({
+        dayOfWeek: z.coerce.number().int().min(0).max(6),
+        period: z.coerce.number().int().positive().max(30),
+        className: z.string().trim().min(1).max(20),
+        section: z.string().trim().min(1).max(10),
+        subject: z.string().trim().min(1).max(100).optional(),
+        room: z.string().trim().max(100).nullable().optional(),
+      }).strict().safeParse(req.body);
+      if (!body.success) { fail(res, 400, "Invalid timetable slot."); return; }
+      if (!await resolveScope(account, body.data.className, body.data.section)) {
+        fail(res, 403, "This class and section are not assigned to the teacher."); return;
+      }
+      if (action === "delete") {
+        res.json({ deleted: await storage.deleteTeacherTimetableSlot(account.school.id, session.id, teacher.id, body.data.dayOfWeek, body.data.period) });
+        return;
+      }
+      if (!body.data.subject) { fail(res, 400, "Subject is required."); return; }
+      const valid = await storage.validateTimetableEntry({
+        schoolId: account.school.id, sessionId: session.id, teacherId: teacher.id,
+        dayOfWeek: body.data.dayOfWeek, period: body.data.period, class: body.data.className,
+        section: body.data.section, subject: body.data.subject, room: body.data.room ?? null,
+        requireAllocation: true,
+      });
+      if (!valid.valid) { fail(res, 409, valid.error ?? "Timetable collision."); return; }
+      res.json({ item: await storage.upsertTeacherTimetableSlot(account.school.id, session.id, teacher.id, {
+        dayOfWeek: body.data.dayOfWeek, period: body.data.period, class: body.data.className,
+        section: body.data.section, subject: body.data.subject, room: body.data.room ?? null,
+      }) });
+      return;
+    }
+    if (module === "attendance" && ["self-check-in", "self-check-out", "self-correction"].includes(action)) {
+      if (!session.startDate || !session.endDate || todayInIST() < session.startDate || todayInIST() > session.endDate) {
+        fail(res, 403, "Self attendance is unavailable outside the selected academic session.");
+        return;
+      }
+      const today = todayInIST();
+      if (action === "self-correction") {
+        const body = z.object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          requestedCheckIn: z.string().regex(/^\d{2}:\d{2}$/),
+          requestedCheckOut: z.string().regex(/^\d{2}:\d{2}$/),
+          reason: z.string().trim().min(1).max(1000),
+        }).strict().safeParse(req.body);
+        const correctionMinimum = new Date(`${today}T00:00:00.000Z`);
+        correctionMinimum.setUTCDate(correctionMinimum.getUTCDate() - 6);
+        if (!body.success || body.data.date < session.startDate || body.data.date > session.endDate
+          || body.data.date > today || body.data.date < correctionMinimum.toISOString().slice(0, 10)) {
+          fail(res, 400, "Correction date or details are invalid.");
+          return;
+        }
+        const [record] = await db.insert(attendanceCorrectionRequests).values({
+          teacherId: teacher.id, schoolId: account.school.id, sessionId: session.id,
+          attendanceDate: body.data.date, requestedCheckIn: body.data.requestedCheckIn,
+          requestedCheckOut: body.data.requestedCheckOut,
+          reason: body.data.reason, status: "Pending",
+        }).returning();
+        res.json({ correction: record });
+        return;
+      }
+      const [existing] = await db.select().from(teacherSelfAttendance).where(and(
+        eq(teacherSelfAttendance.teacherId, teacher.id), eq(teacherSelfAttendance.schoolId, account.school.id),
+        eq(teacherSelfAttendance.sessionId, session.id), eq(teacherSelfAttendance.attendanceDate, today),
+      ));
+      if (action === "self-check-in") {
+        if (existing?.checkInTime) { fail(res, 409, "Already checked in for today."); return; }
+        const rows = await db.select().from(attendancePolicies).where(and(
+          eq(attendancePolicies.schoolId, account.school.id), eq(attendancePolicies.isActive, true),
+        ));
+        const policy = resolvePolicy(rows, "TEACHER", teacher.assignedClass ?? "") ?? DEFAULT_POLICY;
+        const now = new Date();
+        const evaluated = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
+        const [record] = existing
+          ? await db.update(teacherSelfAttendance).set({
+            checkInTime: now, status: evaluated.displayStatus, locationVerified: false, updatedAt: now,
+          }).where(and(eq(teacherSelfAttendance.id, existing.id), eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, account.school.id), eq(teacherSelfAttendance.sessionId, session.id))).returning()
+          : await db.insert(teacherSelfAttendance).values({
+            teacherId: teacher.id, schoolId: account.school.id, sessionId: session.id,
+            attendanceDate: today, checkInTime: now, status: evaluated.displayStatus, locationVerified: false,
+          }).returning();
+        res.json({ record });
+        return;
+      }
+      if (!existing?.checkInTime) { fail(res, 409, "Check in before checking out."); return; }
+      if (existing.checkOutTime) { fail(res, 409, "Already checked out for today."); return; }
+      const now = new Date();
+      const [record] = await db.update(teacherSelfAttendance).set({
+        checkOutTime: now, totalWorkingMinutes: Math.max(0, Math.floor((now.getTime() - new Date(existing.checkInTime).getTime()) / 60000)),
+        updatedAt: now,
+      }).where(and(eq(teacherSelfAttendance.id, existing.id), eq(teacherSelfAttendance.teacherId, teacher.id),
+        eq(teacherSelfAttendance.schoolId, account.school.id), eq(teacherSelfAttendance.sessionId, session.id))).returning();
+      res.json({ record });
+      return;
+    }
     if (module === "attendance" && action === "submit") {
       const body = attendanceSchema.safeParse(req.body);
       if (!body.success) {
@@ -648,11 +803,11 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
     }
     if ((module === "homework" || module === "classwork") && action === "edit") {
       const body = z.object({
-        itemId: z.number().int().positive(),
+        itemId: z.coerce.number().int().positive(),
         content: z.string().trim().min(1).max(20000).optional(),
         subject: z.string().trim().min(1).max(100).optional(),
         dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-        removeAttachment: z.boolean().optional(),
+        removeAttachment: z.preprocess((value) => value === true || value === "true", z.boolean()).optional(),
       }).strict().safeParse(req.body);
       if (!body.success || (!body.data.content && !body.data.subject && body.data.dueDate === undefined && !body.data.removeAttachment && !(req as MobileTeacherRequest).file)) {
         fail(res, 400, "Provide at least one change to the assignment.");
@@ -700,7 +855,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       return;
     }
     if ((module === "homework" || module === "classwork") && action === "delete") {
-      const body = z.object({ itemId: z.number().int().positive() }).strict().safeParse(req.body);
+      const body = z.object({ itemId: z.coerce.number().int().positive() }).strict().safeParse(req.body);
       if (!body.success) { fail(res, 400, "Invalid assignment."); return; }
       if (module === "homework") {
         const item = await storage.getHomeworkById(body.data.itemId);
@@ -982,9 +1137,34 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         targetClass: body.data.targetType === "student" ? body.data.className ?? null : null,
         targetSection: body.data.targetType === "student" ? body.data.section ?? null : null,
         targetTeacherId: null, noticeType: body.data.noticeType, content: body.data.content,
-        fileUrl: null, sessionId: session.id,
+         fileUrl: await validatePrivateUpload(req, module), sessionId: session.id,
       });
+      if ((req as MobileTeacherRequest).file) (req as MobileTeacherRequest).teacherUploadRetained = true;
       res.json({ item });
+      return;
+    }
+    if (module === "noticeboard" && (action === "edit" || action === "delete")) {
+      const body = z.object({
+        noticeId: z.coerce.number().int().positive(),
+        content: z.string().trim().min(1).max(20000).optional(),
+      }).strict().safeParse(req.body);
+      if (!body.success || (action === "edit" && !body.data.content)) {
+        fail(res, 400, "A notice id and valid content are required.");
+        return;
+      }
+      const notice = await storage.getNoticeById(body.data.noticeId);
+      if (!notice || notice.schoolId !== account.school.id || notice.sessionId !== session.id
+        || notice.createdById !== teacher.id || notice.creatorRole !== "teacher") {
+        fail(res, 403, "Only your notice in the selected academic session can be changed.");
+        return;
+      }
+      if (action === "delete") {
+        await storage.deleteNotice(notice.id, account.school.id);
+        res.json({ deleted: true });
+      } else {
+        const updated = await storage.updateNotice(notice.id, account.school.id, body.data.content!);
+        res.json({ item: updated });
+      }
       return;
     }
     if (module === "complaint" && action === "create") {
@@ -1005,7 +1185,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         item = await storage.createComplaintWithStudents({
           ticketId, teacherId: teacher.id, studentId: null, schoolId: account.school.id,
           complaintType: body.data.complaintType, status: "Pending", content: body.data.content,
-          reportedStudentName: student.name, fileUrl: null, escalatedToPrincipal: false,
+           reportedStudentName: student.name, fileUrl: await validatePrivateUpload(req, module), escalatedToPrincipal: false,
           notifyAdmin: false, sessionId: session.id,
         }, [student.id]);
       } else {
@@ -1013,12 +1193,13 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         item = await storage.createComplaint({
           ticketId, teacherId: teacher.id, studentId: null, schoolId: account.school.id,
           complaintType: body.data.complaintType, status: "Pending", content: body.data.content,
-          reportedStudentName: null, fileUrl: null, isDeleted: false,
+           reportedStudentName: null, fileUrl: await validatePrivateUpload(req, module), isDeleted: false,
           escalatedToPrincipal: false, notifyAdmin: false,
           incidentDate: body.data.incidentDate ? new Date(body.data.incidentDate) : null,
           sessionId: session.id,
         });
       }
+      if ((req as MobileTeacherRequest).file) (req as MobileTeacherRequest).teacherUploadRetained = true;
       res.json({ item });
       return;
     }
@@ -1129,6 +1310,28 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         return;
       }
       if (action === "approve") {
+        const corrections = body.data.corrections ?? {};
+        const allowed = new Set(["fullName", "rollNo", "fatherName", "motherName", "guardianName",
+          "presentAddress", "aadharNumber", "gender", "phone", "email", "dob", "enrollmentDate",
+          "bloodGroup", "class", "section"]);
+        if (Object.keys(corrections).some((key) => !allowed.has(key))) {
+          fail(res, 400, "Profile correction contains an unsupported field.");
+          return;
+        }
+        const pendingProfile = pending.find((profile) => profile.studentId === body.data.studentId)!;
+        const correctedClass = corrections.class ?? pendingProfile.class;
+        const correctedSection = corrections.section ?? pendingProfile.section;
+        if (!await resolveScope(account, correctedClass, correctedSection)) {
+          fail(res, 403, "Corrected class and section must remain assigned to this teacher.");
+          return;
+        }
+        if (Object.keys(corrections).length) {
+          await db.update(studentProfiles).set(corrections).where(and(
+            eq(studentProfiles.studentId, body.data.studentId),
+            eq(studentProfiles.schoolId, account.school.id),
+            eq(studentProfiles.status, "pending"),
+          ));
+        }
         res.json({ item: await storage.approveStudentProfile(body.data.studentId, teacher.id) });
       } else {
         res.json({ item: await storage.rejectStudentProfile(body.data.studentId, teacher.id, body.data.note ?? "Returned for correction.") });
@@ -1198,7 +1401,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
 }
 
 async function getPrivateFile(req: Request, res: Response): Promise<void> {
-  const params = z.object({ module: z.string().refine((value) => ["homework", "classwork", "gallery", "library"].includes(value)),
+  const params = z.object({ module: z.string().refine((value) => ["homework", "classwork", "gallery", "library", "noticeboard", "complaint"].includes(value)),
     filename: z.string().regex(privateFilenamePattern) }).safeParse(req.params);
   if (!params.success) { fail(res, 404, "Private attachment not found."); return; }
   const context = getContext(req, res);
@@ -1223,6 +1426,17 @@ async function getPrivateFile(req: Request, res: Response): Promise<void> {
       )).limit(1);
       authorized = !!item && (item.teacherId === context.account.teacher.id
         || scopes.some((scope) => scope.className === item.class && scope.section === item.section));
+    } else if (params.data.module === "complaint") {
+      const complaints = await storage.getComplaintsByTeacher(context.account.teacher.id, context.account.teacher.assignedClass,
+        context.account.teacher.assignedSection, account.school.id, session.id);
+      const classFeed = await storage.getClassFeedComplaints(account.school.id,
+        scopes.map(({ className, section }) => ({ className, section })), undefined, undefined, session.id);
+      authorized = complaints.some((item) => item.fileUrl === expectedUrl && item.teacherId === context.account.teacher.id)
+        || classFeed.some((item) => item.fileUrl === expectedUrl && item.schoolId === account.school.id && item.status !== "Deleted");
+    } else if (params.data.module === "noticeboard") {
+      const notices = await storage.getNoticesByTeacher(context.account.teacher.id, 500);
+      authorized = notices.some((item) => item.fileUrl === expectedUrl && item.schoolId === account.school.id
+        && item.sessionId === session.id && item.createdById === context.account.teacher.id && item.creatorRole === "teacher");
     } else if (params.data.module === "gallery") {
       const items = await storage.getGalleryItems(account.school.id, false);
       authorized = items.some((item) => item.imageUrl === expectedUrl && item.schoolId === account.school.id

@@ -3,8 +3,10 @@ import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, Text, 
 import { Feather } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { API_BASE_URL, apiGet, apiGetForSession, apiPost, apiPostForSession } from '@/lib/api';
+import { API_BASE_URL, apiGet, apiGetForSession, apiPost, apiPostForSession, authTransport } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useColors } from '@/hooks/useColors';
 import { Button, Card, State } from '@/components/Foundation';
@@ -16,7 +18,8 @@ export type AdminWorkflowModuleId =
 type WorkflowProps = {
   moduleId: AdminWorkflowModuleId;
   schoolId: number;
-  sessionId: number;
+  /** Admins provide a selected session; support staff intentionally use the server's active session. */
+  sessionId?: number;
   archived?: boolean;
   allowedSubs?: string[];
   classes?: string[];
@@ -42,18 +45,18 @@ const label: Record<AdminWorkflowModuleId, string> = {
 };
 const ageOptions = [30, 60, 90, 180, 0];
 
-function useWorkflow(moduleId: AdminWorkflowModuleId, sessionId: number, supportStaff: boolean) {
+function useWorkflow(moduleId: AdminWorkflowModuleId, sessionId: number | undefined, supportStaff: boolean, queryParams = '') {
   const client = useQueryClient();
   const query = useQuery<Result>({
-    queryKey: ['mobile-admin-workflow', moduleId, sessionId],
-    queryFn: () => supportStaff ? apiGet<Result>(`${API}/${moduleId}`) : apiGetForSession<Result>(`${API}/${moduleId}`, sessionId),
-    enabled: supportStaff || (Number.isSafeInteger(sessionId) && sessionId > 0),
+    queryKey: ['mobile-admin-workflow', moduleId, supportStaff ? 'active' : sessionId, queryParams],
+    queryFn: () => supportStaff ? apiGet<Result>(`${API}/${moduleId}${queryParams}`) : apiGetForSession<Result>(`${API}/${moduleId}${queryParams}`, sessionId!),
+    enabled: supportStaff || (Number.isSafeInteger(sessionId) && sessionId! > 0),
   });
   const mutation = useMutation({
     mutationFn: (payload: Row | FormData) => supportStaff
       ? apiPost<Result>(`${API}/${moduleId}/actions`, payload)
-      : apiPostForSession<Result>(`${API}/${moduleId}/actions`, sessionId, payload),
-    onSuccess: () => client.invalidateQueries({ queryKey: ['mobile-admin-workflow', moduleId, sessionId] }),
+      : apiPostForSession<Result>(`${API}/${moduleId}/actions`, sessionId!, payload),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['mobile-admin-workflow', moduleId, supportStaff ? 'active' : sessionId] }),
   });
   return { ...query, mutation };
 }
@@ -104,7 +107,7 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
   const { user } = useAuth();
   const { moduleId, schoolId, sessionId, archived = false } = props;
   const allowed = props.allowedSubs ?? subDefaults[moduleId];
-  const { data, isLoading, error, refetch, mutation } = useWorkflow(moduleId, sessionId, user?.role === 'support_staff');
+  const supportStaff = user?.role === 'support_staff';
   const [form, setForm] = useState<Row>({});
   const [complaintTab, setComplaintTab] = useState('private');
   const [complaintStatus, setComplaintStatus] = useState('all');
@@ -112,9 +115,18 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
   const [approvalTab, setApprovalTab] = useState('gallery');
   const [ebookView, setEbookView] = useState('verification');
   const [ebookFile, setEbookFile] = useState<{ uri: string; name: string; type: string } | null>(null);
+  const [noticeFile, setNoticeFile] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [leaveTab, setLeaveTab] = useState('teacher-leave');
   const [teacherView, setTeacherView] = useState('registry');
-  const writable = !archived && !mutation.isPending;
+  const [teacherPage, setTeacherPage] = useState(1);
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const workflowQuery = moduleId === 'teacher-registry' ? `?page=${teacherPage}&q=${encodeURIComponent(teacherSearch)}` : '';
+  const { data, isLoading, error, refetch, mutation } = useWorkflow(moduleId, sessionId, supportStaff, workflowQuery);
+  // Support staff never receive an archived-session view: the API resolves them to
+  // the school's active session and rejects any session header. Admins retain the
+  // selected-session archive state supplied by the session picker.
+  const effectiveArchived = supportStaff ? false : archived || data?.sessionActive === false;
+  const writable = !effectiveArchived && !mutation.isPending;
   const set = (key: string, value: any) => setForm(current => ({ ...current, [key]: value }));
   const perform = (payload: Row, confirm?: string, onSuccess?: () => void) => {
     const send = () => mutation.mutate(payload, {
@@ -130,10 +142,41 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
   const sectionGate = (sub: string) => allowed.includes(sub);
   const lists = (key: string): Row[] => Array.isArray(data?.[key]) ? data![key] as Row[] : [];
   const empty = (name: string) => <Body>No {name} to show.</Body>;
-  const openFile = (fileUrl: string) => {
+  const openFile = async (fileUrl: string) => {
     const origin = API_BASE_URL.replace(/\/api\/?$/, '');
     const url = /^https?:\/\//i.test(fileUrl) ? fileUrl : `${origin}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    if (fileUrl.startsWith('/api/mobile/admin/workflow/private-notices/')) {
+      try {
+        const token = await authTransport.token();
+        if (!token) throw new Error('Your session has expired.');
+        const target = `${FileSystem.cacheDirectory ?? ''}notice-${Date.now()}.${fileUrl.split('.').pop() ?? 'bin'}`;
+        const result = await FileSystem.downloadAsync(url, target, { headers: { Authorization: `Bearer ${token}` } });
+        if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
+        await Sharing.shareAsync(result.uri);
+      } catch (error) {
+        Alert.alert('Unable to open file', error instanceof Error ? error.message : 'Try opening the file again.');
+      }
+      return;
+    }
     void Linking.openURL(url).catch(error => Alert.alert('Unable to open file', error instanceof Error ? error.message : 'Try opening the file again.'));
+  };
+  const exportCsv = async (rows: Row[], name: string) => {
+    if (!rows.length) {
+      Alert.alert('Nothing to export', 'There are no records in this view.');
+      return;
+    }
+    const keys = Array.from(new Set(rows.flatMap(row => Object.keys(row).filter(key => !['passwordHash'].includes(key)))));
+    const quote = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""').replace(/\r?\n/g, ' ')}"`;
+    const csv = [keys.map(quote).join(','), ...rows.map(row => keys.map(key => quote(row[key])).join(','))].join('\n');
+    try {
+      const uri = `${FileSystem.cacheDirectory ?? ''}${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+      if (!uri) throw new Error('Temporary storage is unavailable.');
+      await FileSystem.writeAsStringAsync(uri, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
+      await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: `Export ${name}` });
+    } catch (error) {
+      Alert.alert('Export failed', error instanceof Error ? error.message : 'Unable to create the export.');
+    }
   };
 
   const complaintHub = () => {
@@ -177,8 +220,28 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
         {form.targetType === 'class' && <Input label="Section" value={form.targetSection ?? ''} onChangeText={v => set('targetSection', v)} />}
         <Tabs values={['Routine', 'Academic', 'Event', 'Urgent'].map(v => ({ id: v, title: v }))} selected={form.noticeType ?? 'Routine'} onSelect={v => set('noticeType', v)} />
         <Input label="Notice text" value={form.content ?? ''} onChangeText={v => set('content', v)} multiline />
+        <Button label={noticeFile ? `Attachment: ${noticeFile.name}` : 'Add attachment (PDF or image)'} icon="paperclip" disabled={!writable} onPress={() => {
+          void DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], copyToCacheDirectory: true }).then(result => {
+            if (!result.canceled && result.assets[0]) {
+              const asset = result.assets[0];
+              setNoticeFile({ uri: asset.uri, name: asset.name, type: asset.mimeType ?? 'application/pdf' });
+            }
+          }).catch(error => Alert.alert('File selection failed', error instanceof Error ? error.message : 'Select the file again.'));
+        }} />
         <Button label={form.editId ? 'Save changes' : 'Post notice'} disabled={!writable || !form.content?.trim() || ((form.targetType === 'class' || form.targetType === 'class_only') && !form.targetClass) || (form.targetType === 'class' && !form.targetSection)}
-          onPress={() => perform({ action: form.editId ? 'notice-edit' : 'notice-create', ...form, targetType: form.targetType ?? 'whole_school', noticeType: form.noticeType ?? 'Routine', schoolId }, undefined, () => setForm({}))} />
+          onPress={() => {
+            if (noticeFile) {
+              const body = new FormData();
+              body.append('action', form.editId ? 'notice-edit' : 'notice-create');
+              Object.entries({ ...form, targetType: form.targetType ?? 'whole_school', noticeType: form.noticeType ?? 'Routine', schoolId }).forEach(([key, value]) => {
+                if (value !== undefined && value !== null) body.append(key, String(value));
+              });
+              body.append('attachment', { uri: noticeFile.uri, name: noticeFile.name, type: noticeFile.type } as any);
+              perform(body, undefined, () => { setForm({}); setNoticeFile(null); });
+            } else {
+              perform({ action: form.editId ? 'notice-edit' : 'notice-create', ...form, targetType: form.targetType ?? 'whole_school', noticeType: form.noticeType ?? 'Routine', schoolId }, undefined, () => setForm({}));
+            }
+          }} />
       </Card>}
       <Tabs values={[{ id: 'all', title: 'All', count: notices.length }, { id: 'admin', title: 'Admin', count: notices.filter(n => n.creatorRole === 'admin').length }, { id: 'teacher', title: 'Teacher', count: notices.filter(n => n.creatorRole === 'teacher').length }]} selected={noticeFilter} onSelect={setNoticeFilter} />
       {loadingState ?? (shown.length ? shown.map(row => <RowCard key={row.id}>
@@ -269,6 +332,14 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
     return <>
       {user?.role === 'admin' && <Tabs values={[{ id: 'registry', title: 'Registry' }, { id: 'history', title: 'Removed history' }]} selected={teacherView} onSelect={setTeacherView} />}
       {teacherView === 'registry' && sectionGate('add') && <Button label="Add teacher" icon="user-plus" disabled={!writable} onPress={() => setForm({ teacherForm: true })} />}
+      {teacherView === 'registry' && <Card>
+        <Input label="Search teachers" value={teacherSearch} onChangeText={value => { setTeacherSearch(value); setTeacherPage(1); }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Action title="Previous" icon="chevron-left" disabled={teacherPage <= 1 || isLoading} onPress={() => setTeacherPage(page => Math.max(1, page - 1))} />
+          <Body>Page {teacherPage}{data?.total ? ` · ${data.total} teachers` : ''}</Body>
+          <Action title="Next" icon="chevron-right" disabled={isLoading || !data?.total || teacherPage * 100 >= data.total} onPress={() => setTeacherPage(page => page + 1)} />
+        </View>
+      </Card>}
       {teacherView === 'history' && user?.role === 'admin' ? (removedHistory.length
         ? removedHistory.map(row => <RowCard key={row.id}><Heading>{row.fullName}</Heading><Body>{row.email ?? ''} · {row.digitalTeacherId ?? ''}</Body><Body>{row.removalReason ?? ''} · {row.removedAt ? new Date(row.removedAt).toLocaleDateString() : ''}</Body></RowCard>)
         : empty('removed teachers')) : null}
@@ -384,15 +455,22 @@ export default function AdminWorkflowModules(props: WorkflowProps) {
     'complaint-hub': complaintHub, noticeboard, 'approval-center': approvalCenter,
     'leave-requests': leaveRequests, 'teacher-registry': teacherRegistry, 'non-teaching-staff': staffManagement,
   };
+  const exportRows = moduleId === 'complaint-hub' ? lists('complaints')
+    : moduleId === 'noticeboard' ? lists('notices')
+      : moduleId === 'approval-center' ? [...lists('gallery'), ...lists('books')]
+        : moduleId === 'leave-requests' ? [...lists('teacherLeaves'), ...lists('studentLeaves'), ...lists('teacherLeaveHistory'), ...lists('studentLeaveHistory')]
+          : moduleId === 'teacher-registry' ? lists('teachers')
+            : lists('staff');
 
-  if (!schoolId || (!sessionId && user?.role !== 'support_staff')) return <State title="School session required" detail="Choose an academic session before loading this workflow." />;
+  if (!schoolId || (!sessionId && !supportStaff)) return <State title="School session required" detail="Choose an academic session before loading this workflow." />;
   return <ScrollView contentContainerStyle={{ padding: 18, gap: 14, backgroundColor: c.background }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <View style={{ width: 38, height: 38, borderRadius: 10, backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' }}><Feather name="layers" size={18} color={c.primaryForeground} /></View>
       <View style={{ flex: 1 }}><Text style={{ color: c.foreground, fontSize: 22, fontWeight: '800' }}>{label[moduleId]}</Text><Text style={{ color: c.mutedForeground, fontSize: 12 }}>{archived ? 'Archived session · Read only' : 'School workflow'}</Text></View>
       {mutation.isPending ? <ActivityIndicator color={c.primary} /> : null}
     </View>
-    {archived && <Body color={c.destructive}>Changes are disabled for archived academic sessions.</Body>}
+    {effectiveArchived && <Body color={c.destructive}>Changes are disabled for archived academic sessions.</Body>}
+    <Action title="Export CSV" icon="download" disabled={isLoading || !exportRows.length} onPress={() => { void exportCsv(exportRows, moduleId); }} />
     {renderer[moduleId]()}
   </ScrollView>;
 }

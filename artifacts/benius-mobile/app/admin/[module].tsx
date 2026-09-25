@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -394,6 +397,9 @@ type GradeDraft = {
   passingGrades: string;
   rules: Array<{ gradeLabel: string; minPercent: string; maxPercent: string; gradePoint: string; remarks: string }>;
 };
+type PolicyTargetTerm = { name: string; components: Array<{ exam: string; weight: string }> };
+type PolicyRule = { term: string; value: string };
+type PolicyColumns = { profile: boolean; weighted: boolean; grade: boolean; fails: boolean; attendance: boolean; gate: boolean; report: boolean; cumulative: boolean; final: boolean };
 
 const setupTabs = [
   { id: 'academic-sessions', label: 'Sessions' },
@@ -433,6 +439,10 @@ function SchoolSetupModule({ user, onBack, online }: {
   });
   const [selectedGradeTier, setSelectedGradeTier] = useState<number | null>(null);
   const [policyDraft, setPolicyDraft] = useState({ id: undefined as number | undefined, tierName: '', applicableClasses: [] as string[], examWeights: '{}', promotionFailRules: '{}', resultsConfig: '{}' });
+  const [policyTerms, setPolicyTerms] = useState<PolicyTargetTerm[]>([{ name: '', components: [{ exam: '', weight: '' }] }]);
+  const [policyFailRules, setPolicyFailRules] = useState<PolicyRule[]>([{ term: '', value: '3' }]);
+  const [policyAttendanceRules, setPolicyAttendanceRules] = useState<PolicyRule[]>([{ term: '', value: '75' }]);
+  const [policyColumns, setPolicyColumns] = useState<PolicyColumns>({ profile: true, weighted: true, grade: true, fails: true, attendance: true, gate: true, report: true, cumulative: false, final: false });
   const [leaveDraft, setLeaveDraft] = useState({ id: undefined as number | undefined, name: '', annualLimit: '12', targetRoles: 'all', renewalMonth: '1', renewalDay: '1', expiryBehavior: 'expire', isActive: true });
   const [attendanceDraft, setAttendanceDraft] = useState({ id: undefined as number | undefined, targetRole: 'TEACHER', policyName: '', applicableClasses: [] as string[], expectedArrivalTime: '09:00', gracePeriodMinutes: '0', halfDayCutoffTime: '12:00', schoolEndTime: '17:00', attendanceTarget: '85', isActive: true });
   const basePath = '/mobile/admin/modules/school-setup';
@@ -472,6 +482,22 @@ function SchoolSetupModule({ user, onBack, online }: {
   const subjectNames = Array.isArray(metadata.subjects) ? metadata.subjects.filter((x): x is string => typeof x === 'string') : [];
   const examNames = Array.isArray(metadata.exam_types) ? metadata.exam_types.filter((x): x is string => typeof x === 'string') : [];
   const saved = (path: string, body: unknown) => save.mutate({ path, body });
+  const loadPolicy = (tier: SetupData['examPolicyTiers'][number]) => {
+    let weights: Record<string, Array<{ source_exam?: string; weight?: number }>> = {};
+    let fails: { rule1?: { rules?: Array<{ term?: string; fail_count?: number }> }; rule_attendance?: { rules?: Array<{ term?: string; min_pct?: number }> } } = {};
+    let columns: Record<string, any> = {};
+    try { weights = JSON.parse(tier.examWeights || '{}'); } catch { /* invalid legacy data is shown as a fresh structured draft */ }
+    try { fails = JSON.parse(tier.promotionFailRules || '{}'); } catch { /* noop */ }
+    try { const result = JSON.parse(tier.resultsConfig || '{}'); columns = result.termConfigs || {}; } catch { /* noop */ }
+    const terms = Object.entries(weights).map(([name, parts]) => ({ name, components: (parts || []).map(part => ({ exam: part.source_exam || '', weight: String(part.weight ?? '') })) }));
+    setPolicyDraft({ ...tier });
+    setPolicyTerms(terms.length ? terms : [{ name: '', components: [{ exam: '', weight: '' }] }]);
+    setPolicyFailRules(fails.rule1?.rules?.map(rule => ({ term: rule.term || '', value: String(rule.fail_count ?? '') })) || [{ term: '', value: '3' }]);
+    setPolicyAttendanceRules(fails.rule_attendance?.rules?.map(rule => ({ term: rule.term || '', value: String(rule.min_pct ?? '') })) || [{ term: '', value: '75' }]);
+    const first = Object.values(columns)[0];
+    if (first) setPolicyColumns({ profile: first.studentProfile !== false, weighted: first.weightedAvg !== false, grade: first.termGrade !== false, fails: first.subjectFails !== false, attendance: first.attendance !== false, gate: first.promotionGate !== false, report: first.reportCard !== false, cumulative: first.cumulativeTotal === true, final: first.finalGrade === true });
+  };
+  const resetPolicy = () => { setPolicyDraft({ id: undefined, tierName: '', applicableClasses: [], examWeights: '{}', promotionFailRules: '{}', resultsConfig: '{}' }); setPolicyTerms([{ name: '', components: [{ exam: '', weight: '' }] }]); setPolicyFailRules([{ term: '', value: '3' }]); setPolicyAttendanceRules([{ term: '', value: '75' }]); };
   const mutationError = save.error instanceof Error ? save.error.message : '';
   const listTab = tab === 'classes' || tab === 'sections' || tab === 'subjects' || tab === 'exam-types';
   const listKey = tab === 'exam-types' ? 'exam_types' : tab;
@@ -511,9 +537,15 @@ function SchoolSetupModule({ user, onBack, online }: {
     passingGrades: gradeDraft.passingGrades.split(',').map(value => value.trim()).filter(Boolean),
     rules: gradeDraft.rules.map(rule => ({ ...rule, minPercent: Number(rule.minPercent), maxPercent: Number(rule.maxPercent) })),
   });
-  const saveExamPolicy = () => saved(`${basePath}/exam-policy-tiers`, {
-    ...policyDraft, examWeights: policyDraft.examWeights, promotionFailRules: policyDraft.promotionFailRules, resultsConfig: policyDraft.resultsConfig,
-  });
+  const saveExamPolicy = () => {
+    const examWeights = Object.fromEntries(policyTerms.filter(term => term.name.trim()).map(term => [term.name.trim(), term.components.filter(component => component.exam.trim()).map(component => ({ source_exam: component.exam.trim(), weight: Number(component.weight) || 0 }))]));
+    const promotionFailRules = { rule1: { enabled: true, rules: policyFailRules.filter(rule => rule.term.trim()).map(rule => ({ term: rule.term.trim(), fail_count: Number(rule.value) || 0 })) }, rule_attendance: { enabled: true, rules: policyAttendanceRules.filter(rule => rule.term.trim()).map(rule => ({ term: rule.term.trim(), min_pct: Number(rule.value) || 0 })) } };
+    const termConfigs = Object.fromEntries(policyTerms.filter(term => term.name.trim()).map(term => [term.name.trim(), {
+      studentProfile: policyColumns.profile, weightedAvg: policyColumns.weighted, termGrade: policyColumns.grade, subjectFails: policyColumns.fails,
+      attendance: policyColumns.attendance, promotionGate: policyColumns.gate, reportCard: policyColumns.report, cumulativeTotal: policyColumns.cumulative, finalGrade: policyColumns.final,
+    }]));
+    saved(`${basePath}/exam-policy-tiers`, { ...policyDraft, examWeights: JSON.stringify(examWeights), promotionFailRules: JSON.stringify(promotionFailRules), resultsConfig: JSON.stringify({ termConfigs }) });
+  };
   const saveLeave = () => saved(`${basePath}/leave-policies`, {
     ...leaveDraft, annualLimit: Number(leaveDraft.annualLimit), renewalMonth: Number(leaveDraft.renewalMonth), renewalDay: Number(leaveDraft.renewalDay),
   });
@@ -628,9 +660,9 @@ function SchoolSetupModule({ user, onBack, online }: {
         </ModuleCard>}
         {tab === 'exam-policy' && <ModuleCard>
           <Text style={styles.cardTitle}>Exam and promotion policy tiers</Text>
-          <Text style={styles.muted}>Edit the stored JSON configuration used by the results and advancement rules. JSON is validated before save.</Text>
+          <Text style={styles.muted}>Configure weighted target terms, promotion failure and attendance gates, and the result columns used by advancement rules.</Text>
           {data.examPolicyTiers.map(tier => <View key={tier.id} style={styles.rowWrap}>
-            <Pill label={`${tier.tierName} · ${tier.applicableClasses.join(', ')}`} active={policyDraft.id === tier.id} onPress={() => setPolicyDraft({ ...tier })} />
+            <Pill label={`${tier.tierName} · ${tier.applicableClasses.join(', ')}`} active={policyDraft.id === tier.id} onPress={() => loadPolicy(tier)} />
             <Pill label="Delete policy" onPress={() => Alert.alert('Delete exam policy?', `Delete ${tier.tierName}?`, [
               { text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => saved(`${basePath}/exam-policy-tiers/${tier.id}/delete`, {}) },
             ])} disabled={!canEdit('exam-policy') || save.isPending} />
@@ -638,17 +670,30 @@ function SchoolSetupModule({ user, onBack, online }: {
           <ModuleField label="Policy tier name" value={policyDraft.tierName} onChangeText={value => setPolicyDraft({ ...policyDraft, tierName: value })} />
           <Text style={styles.fieldLabel}>Applicable classes</Text>
           <View style={styles.rowWrap}>{classNames.map(value => <Pill key={value} label={value} active={policyDraft.applicableClasses.includes(value)} onPress={() => setPolicyDraft({ ...policyDraft, applicableClasses: toggleString(policyDraft.applicableClasses, value) })} />)}</View>
-          {([
-            ['Exam weights JSON', 'examWeights'], ['Promotion fail rules JSON', 'promotionFailRules'], ['Result column and cumulative settings JSON', 'resultsConfig'],
-          ] as const).map(([label, field]) => <View key={field} style={{ gap: 6 }}>
-            <Text style={styles.fieldLabel}>{label}</Text>
-            <TextInput value={policyDraft[field]} onChangeText={value => setPolicyDraft({ ...policyDraft, [field]: value })}
-              multiline autoCapitalize="none" autoCorrect={false} placeholder={label} placeholderTextColor={workspace.faint}
-              style={[styles.textInput, { minHeight: 95, textAlignVertical: 'top' }]} />
+          <Text style={styles.fieldLabel}>Target terms and weighted source exams</Text>
+          {policyTerms.map((target, termIndex) => <View key={`term-${termIndex}`} style={styles.adminCard}>
+            <ModuleField label="Target term name" value={target.name} onChangeText={value => setPolicyTerms(items => items.map((item, index) => index === termIndex ? { ...item, name: value } : item))} />
+            {target.components.map((component, componentIndex) => <View key={`component-${componentIndex}`} style={styles.rowWrap}>
+              <TextInput value={component.exam} onChangeText={value => setPolicyTerms(items => items.map((item, index) => index === termIndex ? { ...item, components: item.components.map((entry, child) => child === componentIndex ? { ...entry, exam: value } : entry) } : item))} placeholder="Source exam" placeholderTextColor={workspace.faint} style={[styles.textInput, { flex: 2 }]} />
+              <TextInput value={component.weight} onChangeText={value => setPolicyTerms(items => items.map((item, index) => index === termIndex ? { ...item, components: item.components.map((entry, child) => child === componentIndex ? { ...entry, weight: value } : entry) } : item))} placeholder="Weight %" keyboardType="numeric" placeholderTextColor={workspace.faint} style={[styles.textInput, { flex: 1 }]} />
+              <Button label="−" icon="x" onPress={() => setPolicyTerms(items => items.map((item, index) => index === termIndex ? { ...item, components: item.components.filter((_, child) => child !== componentIndex) } : item))} />
+            </View>)}
+            <View style={styles.rowWrap}><Button label="Add source exam" icon="plus" onPress={() => setPolicyTerms(items => items.map((item, index) => index === termIndex ? { ...item, components: [...item.components, { exam: '', weight: '' }] } : item))} /><Button label="Remove term" icon="trash-2" onPress={() => setPolicyTerms(items => items.filter((_, index) => index !== termIndex))} /></View>
           </View>)}
+          <Button label="Add target term" icon="plus" onPress={() => setPolicyTerms(items => [...items, { name: '', components: [{ exam: '', weight: '' }] }])} />
+          <Text style={styles.fieldLabel}>Promotion failure rules</Text>
+          {policyFailRules.map((rule, index) => <View key={`fail-${index}`} style={styles.rowWrap}><ModuleField label="Term" value={rule.term} onChangeText={value => setPolicyFailRules(items => items.map((item, child) => child === index ? { ...item, term: value } : item))} /><ModuleField label="Maximum failed subjects" value={rule.value} keyboardType="numeric" onChangeText={value => setPolicyFailRules(items => items.map((item, child) => child === index ? { ...item, value } : item))} /></View>)}
+          <Button label="Add failure rule" icon="plus" onPress={() => setPolicyFailRules(items => [...items, { term: '', value: '3' }])} />
+          <Text style={styles.fieldLabel}>Minimum attendance rules</Text>
+          {policyAttendanceRules.map((rule, index) => <View key={`attendance-${index}`} style={styles.rowWrap}><ModuleField label="Term" value={rule.term} onChangeText={value => setPolicyAttendanceRules(items => items.map((item, child) => child === index ? { ...item, term: value } : item))} /><ModuleField label="Minimum %" value={rule.value} keyboardType="numeric" onChangeText={value => setPolicyAttendanceRules(items => items.map((item, child) => child === index ? { ...item, value } : item))} /></View>)}
+          <Button label="Add attendance rule" icon="plus" onPress={() => setPolicyAttendanceRules(items => [...items, { term: '', value: '75' }])} />
+          <Text style={styles.fieldLabel}>Result columns (applied to every target term)</Text>
+          <View style={styles.rowWrap}>{([
+            ['profile', 'Student profile'], ['weighted', 'Weighted average'], ['grade', 'Term grade'], ['fails', 'Subject fails'], ['attendance', 'Attendance'], ['gate', 'Promotion gate'], ['report', 'Report card'], ['cumulative', 'Cumulative total'], ['final', 'Final grade'],
+          ] as const).map(([key, label]) => <Pill key={key} label={label} active={policyColumns[key]} onPress={() => setPolicyColumns(columns => ({ ...columns, [key]: !columns[key] }))} />)}</View>
           <View style={styles.rowWrap}>
             <Button label={policyDraft.id ? 'Save exam policy' : 'Create exam policy'} icon="save" disabled={!canEdit('exam-policy') || save.isPending || !policyDraft.tierName.trim() || !policyDraft.applicableClasses.length} onPress={saveExamPolicy} />
-            {policyDraft.id && <Button label="New policy" icon="x" onPress={() => setPolicyDraft({ id: undefined, tierName: '', applicableClasses: [], examWeights: '{}', promotionFailRules: '{}', resultsConfig: '{}' })} />}
+            {policyDraft.id && <Button label="New policy" icon="x" onPress={resetPolicy} />}
           </View>
         </ModuleCard>}
         {tab === 'leave-policy' && <ModuleCard>
@@ -724,6 +769,7 @@ function AttendanceOverviewModule({ user, onBack, online, selectedSessionId, sel
   const [studentSearch, setStudentSearch] = useState('');
   const [teacherSearch, setTeacherSearch] = useState('');
   const [teacherStatus, setTeacherStatus] = useState('all');
+  const [profileStudentId, setProfileStudentId] = useState<number | null>(null);
   const queryKey = ['mobile-attendance-overview', user.schoolId, user.id, selectedSessionId ?? 'active', date, cls, section];
   const query = useQuery({
     queryKey,
@@ -736,6 +782,16 @@ function AttendanceOverviewModule({ user, onBack, online, selectedSessionId, sel
         : apiGet<AttendanceModuleData>(path, { signal });
     },
     enabled: online && !!date,
+  });
+  const profileQuery = useQuery({
+    queryKey: ['mobile-attendance-student-profile', user.schoolId, user.id, selectedSessionId, profileStudentId],
+    queryFn: ({ signal }) => {
+      type Profile = { student: { name: string; digitalStudentId: string; class: string; section: string; phone: string; fatherName: string | null; presentAddress: string | null; rollNo: string | null }; attendance: Array<{ date: string; status: string }> };
+      return selectedSessionId
+        ? apiGetForSession<Profile>(`/mobile/admin/modules/attendance-overview/student/${profileStudentId}`, selectedSessionId, { signal })
+        : apiGet<Profile>(`/mobile/admin/modules/attendance-overview/student/${profileStudentId}`, { signal });
+    },
+    enabled: online && !!profileStudentId && !!selectedSessionId,
   });
   const data = query.data;
   const students = (data?.classDetail?.students || []).filter(student =>
@@ -790,13 +846,25 @@ function AttendanceOverviewModule({ user, onBack, online, selectedSessionId, sel
               {data.classDetail.meta.lastModifiedAt && <Line label="Last modified" value={formatIST(data.classDetail.meta.lastModifiedAt)} />}
               <ModuleField label="Search student name, ID or roll" value={studentSearch} onChangeText={setStudentSearch} />
             </ModuleCard>
-            {students.map(student => <View key={`${student.studentId}-${student.digitalStudentId}`} style={styles.adminCard}>
+            {students.map(student => <Pressable key={`${student.studentId}-${student.digitalStudentId}`} onPress={() => setProfileStudentId(student.studentId)} style={styles.adminCard}>
               <Text style={styles.cardTitle}>{student.name}</Text>
               <Line label="Student ID / Roll" value={`${student.digitalStudentId} · ${student.rollNo || '—'}`} />
               <Line label="Attendance" value={statusName(student.status)} />
-            </View>)}
+              <Text style={styles.muted}>Tap for profile and session attendance history</Text>
+            </Pressable>)}
             {!students.length && <View style={styles.empty}><Text style={styles.emptyText}>No students match this class, section, and search.</Text></View>}
           </>}
+          {profileStudentId && <ModuleCard>
+            <View style={styles.visitorHead}><Text style={styles.cardTitle}>Student attendance profile</Text><Button label="Close" icon="x" onPress={() => setProfileStudentId(null)} /></View>
+            {profileQuery.isPending ? <Text style={styles.muted}>Loading profile…</Text> : profileQuery.data && <>
+              <Line label="Student" value={profileQuery.data.student.name} />
+              <Line label="Class / section / roll" value={`${profileQuery.data.student.class} · ${profileQuery.data.student.section} · ${profileQuery.data.student.rollNo || '—'}`} />
+              <Line label="Phone" value={profileQuery.data.student.phone || '—'} />
+              <Line label="Father" value={profileQuery.data.student.fatherName || '—'} />
+              <Line label="Attendance entries" value={String(profileQuery.data.attendance.length)} />
+              {profileQuery.data.attendance.slice(-10).reverse().map(record => <Line key={`${record.date}-${record.status}`} label={record.date} value={statusName(record.status)} />)}
+            </>}
+          </ModuleCard>}
           <SectionTitle title="Faculty attendance" detail={`${data.teacherSummary.summary.present} present · ${data.teacherSummary.summary.lateArrivals} late · ${data.teacherSummary.summary.notMarked} not marked`} />
           <ModuleCard>
             <ModuleField label="Search teacher or subject" value={teacherSearch} onChangeText={setTeacherSearch} />
@@ -836,6 +904,7 @@ type RegistryStudent = {
   aadharNumber: string | null;
   email: string | null;
   isActive: boolean;
+  deactivationReason?: string | null;
 };
 
 type RegistryResponse = { data: RegistryStudent[]; total: number; page: number; pageSize: number; classes: string[]; sections: string[]; classSections: Record<string, string[]> };
@@ -871,6 +940,55 @@ function StudentRegistryModule({ user, onBack, online }: {
   const [bulkComments, setBulkComments] = useState('');
   const [bulkPassword, setBulkPassword] = useState('');
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [importText, setImportText] = useState('');
+  const deactivatedQuery = useQuery({
+    queryKey: ['mobile-student-registry-deactivated', user.schoolId, user.id],
+    queryFn: ({ signal }) => apiGet<{ count: number; data: RegistryStudent[] }>('/mobile/admin/modules/student-registry/deactivated', { signal }),
+    enabled: online && showDeactivated,
+  });
+  const exportRegistry = useMutation({
+    mutationFn: () => apiGet<{ count: number; data: RegistryStudent[] }>(`/mobile/admin/modules/student-registry/export?${params.toString()}`),
+    onSuccess: result => Alert.alert('Private export ready', `${result.count} student records were prepared. Use the secure app share/download flow to save this JSON export.`),
+  });
+  const exportRegistryXlsx = useMutation({
+    mutationFn: () => apiGet<{ filename: string; count: number; contentBase64: string }>(`/mobile/admin/modules/student-registry/export.xlsx?${params.toString()}&encoding=base64`),
+    onSuccess: async result => {
+      const target = `${(FileSystem as unknown as { cacheDirectory?: string }).cacheDirectory || ''}${result.filename}`;
+      await FileSystem.writeAsStringAsync(target, result.contentBase64, { encoding: FileSystem.EncodingType.Base64 });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(target, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'Share private student XLSX' });
+      else Alert.alert('XLSX export ready', `${result.count} records were generated as ${result.filename}.`);
+    },
+  });
+  const exportDeactivatedXlsx = useMutation({
+    mutationFn: () => apiGet<{ filename: string; count: number; contentBase64: string }>('/mobile/admin/modules/student-registry/deactivated/export.xlsx?encoding=base64'),
+    onSuccess: async result => {
+      const target = `${(FileSystem as unknown as { cacheDirectory?: string }).cacheDirectory || ''}${result.filename}`;
+      await FileSystem.writeAsStringAsync(target, result.contentBase64, { encoding: FileSystem.EncodingType.Base64 });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(target, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'Share deactivated student XLSX' });
+      else Alert.alert('Deactivated XLSX ready', `${result.count} records were generated as ${result.filename}.`);
+    },
+  });
+  const importRegistry = useMutation({
+    mutationFn: () => {
+      let rows: unknown;
+      try { rows = JSON.parse(importText); } catch { throw new Error('Import must be a JSON array of student records.'); }
+      return apiPost<{ imported: number }>('/mobile/admin/modules/student-registry/import', { rows: Array.isArray(rows) ? rows : (rows as { rows?: unknown[] })?.rows });
+    },
+    onSuccess: result => { setImportText(''); Alert.alert('Private import complete', `${result.imported} student records imported.`); void queryClient.invalidateQueries({ queryKey: ['mobile-student-registry', user.schoolId, user.id] }); },
+  });
+  const importWorkbook = useMutation({
+    mutationFn: async () => {
+      const picked = await DocumentPicker.getDocumentAsync({ type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', copyToCacheDirectory: true });
+      if (picked.canceled || !picked.assets?.[0]) throw new Error('Workbook selection was cancelled.');
+      const file = picked.assets[0];
+      if (!file.name.toLowerCase().endsWith('.xlsx')) throw new Error('Choose an .xlsx workbook.');
+      if (!file.size || file.size > 10 * 1024 * 1024) throw new Error('Workbook must be 10 MB or smaller.');
+      const fileBase64 = await FileSystem.readAsStringAsync(file.uri, { encoding: FileSystem.EncodingType.Base64 });
+      return apiPost<{ imported: number; skipped: number; warnings: string[] }>('/mobile/admin/modules/student-registry/import.xlsx', { filename: file.name, fileBase64 });
+    },
+    onSuccess: result => { Alert.alert('XLSX import complete', `${result.imported} imported, ${result.skipped} skipped.${result.warnings.length ? `\n${result.warnings.slice(0, 3).join('\n')}` : ''}`); void queryClient.invalidateQueries({ queryKey: ['mobile-student-registry', user.schoolId, user.id] }); },
+  });
   const params = new URLSearchParams({ page: String(page) });
   if (search.trim()) params.set('q', search.trim());
   if (cls) params.set('class', cls);
@@ -1003,8 +1121,27 @@ function StudentRegistryModule({ user, onBack, online }: {
               }} />}
               {!!selectedIds.length && <Button label="Clear selection" icon="x" onPress={() => setSelectedIds([])} />}
               <Button label="Refresh" icon="refresh-cw" onPress={() => { void query.refetch(); }} />
+              {canEdit('export') && <Button label={exportRegistry.isPending ? 'Preparing…' : 'Export private JSON'} icon="download" disabled={exportRegistry.isPending} onPress={() => exportRegistry.mutate()} />}
+              {canEdit('export') && <Button label={exportRegistryXlsx.isPending ? 'Preparing XLSX…' : 'Export private XLSX'} icon="file" disabled={exportRegistryXlsx.isPending} onPress={() => exportRegistryXlsx.mutate()} />}
+              {user.role === 'admin' && <Button label={showDeactivated ? 'Hide deactivated' : 'Show deactivated'} icon="archive" onPress={() => setShowDeactivated(value => !value)} />}
             </View>
           </ModuleCard>
+          {user.role === 'admin' && <ModuleCard>
+            <Text style={styles.cardTitle}>Private safe import</Text>
+            <Text style={styles.muted}>Paste a JSON array of validated student records. Password hashes and credentials are generated server-side and never accepted from imports.</Text>
+            <TextInput value={importText} onChangeText={setImportText} multiline autoCapitalize="none" autoCorrect={false} placeholder='[{"name":"…","class":"…","section":"…","phone":"…","dob":"YYYY-MM-DD"}]' placeholderTextColor={workspace.faint} style={[styles.textInput, { minHeight: 86, textAlignVertical: 'top' }]} />
+            <Button label={importRegistry.isPending ? 'Importing…' : 'Import JSON records'} icon="upload" disabled={importRegistry.isPending || !importText.trim()} onPress={() => importRegistry.mutate()} />
+            <Button label={importWorkbook.isPending ? 'Importing XLSX…' : 'Import XLSX workbook'} icon="file" disabled={importWorkbook.isPending} onPress={() => importWorkbook.mutate()} />
+            {importRegistry.isError && <Text style={styles.error}>{importRegistry.error instanceof Error ? importRegistry.error.message : 'Unable to import records.'}</Text>}
+            {importWorkbook.isError && <Text style={styles.error}>{importWorkbook.error instanceof Error ? importWorkbook.error.message : 'Unable to import workbook.'}</Text>}
+          </ModuleCard>}
+          {showDeactivated && <ModuleCard>
+            <View style={styles.visitorHead}><Text style={styles.cardTitle}>Deactivated roster ({deactivatedQuery.data?.count ?? '…'})</Text><Button label="Export XLSX" icon="download" disabled={exportDeactivatedXlsx.isPending} onPress={() => exportDeactivatedXlsx.mutate()} /></View>
+            {deactivatedQuery.isPending ? <Text style={styles.muted}>Loading deactivated records…</Text> : deactivatedQuery.data?.data.map(student => <View key={student.id} style={styles.adminCard}>
+              <Text style={styles.cardTitle}>{student.name}</Text><Line label="Student ID" value={student.digitalStudentId} /><Line label="Class / section" value={`${student.class} · ${student.section}`} /><Line label="Reason" value={student.deactivationReason || '—'} />
+            </View>)}
+            {!deactivatedQuery.isPending && !deactivatedQuery.data?.data.length && <Text style={styles.muted}>No deactivated records.</Text>}
+          </ModuleCard>}
           {showForm && <ModuleCard>
             <Text style={styles.cardTitle}>{editing ? `Edit ${editing.name}` : 'Add student'}</Text>
             <Text style={styles.muted}>A unique student ID and initial sign-in credential are generated by the school registry service.</Text>
@@ -1118,6 +1255,7 @@ function ExamControllerModule({ user, onBack, online, selectedSessionId, selecte
   const [term, setTerm] = useState('');
   const [cohortKey, setCohortKey] = useState<{ class: string; section: string } | null>(null);
   const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
+  const [selectedReminderKeys, setSelectedReminderKeys] = useState<string[]>([]);
   const [destinationDrafts, setDestinationDrafts] = useState<Record<number, { targetClass: string; targetSection: string }>>({});
   const [historyStudentId, setHistoryStudentId] = useState('');
   const basePath = '/mobile/admin/modules/exam-controller';
@@ -1195,6 +1333,27 @@ function ExamControllerModule({ user, onBack, online, selectedSessionId, selecte
       }) },
     ]);
   };
+  const sendReminder = (row: ExamLedgerRow) => write.mutate({ path: `${basePath}/reminder`, body: { class: row.class, section: row.section, term: activeTerm } });
+  const sendReminderAll = () => {
+    const cohorts = (ledgerQuery.data?.rows || []).filter(row => selectedReminderKeys.includes(`${row.class}|${row.section}`)).map(row => ({ class: row.class, section: row.section }));
+    if (!cohorts.length) return;
+    Alert.alert('Remind selected teachers', `Dispatch ${cohorts.length} reminders for ${selectedSessionName}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Dispatch', onPress: () => write.mutate({ path: `${basePath}/reminder-all`, body: { term: activeTerm, cohorts } }) },
+    ]);
+  };
+  const clearCohort = (cohort: ExamCohort) => Alert.alert('Clear unsent decisions', `Clear all unexecuted decisions for ${cohort.class}-${cohort.section}?`, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Clear', style: 'destructive', onPress: () => write.mutate({ path: `${basePath}/decision/clear-cohort`, body: { class: cohort.class, section: cohort.section, term: activeTerm } }) },
+  ]);
+  const bulkPromote = (cohort: ExamCohort) => {
+    const items = selectedStudents.map(studentId => {
+      const student = cohort.students.find(item => item.studentId === studentId)!;
+      const targetClass = destinationDrafts[studentId]?.targetClass || (student.percentage >= cohort.passThreshold ? cohort.nextClass : cohort.class);
+      return { studentId, decision: 'promote' as const, targetClass, targetSection: destinationDrafts[studentId]?.targetSection || configQuery.data?.classSections[targetClass]?.[0] || cohort.section };
+    });
+    write.mutate({ path: `${basePath}/decision/bulk`, body: { class: cohort.class, section: cohort.section, term: activeTerm, items } });
+  };
   const error = [configQuery.error, ledgerQuery.error, cohortQuery.error, historyQuery.error, write.error]
     .find(item => item instanceof Error) as Error | undefined;
 
@@ -1242,7 +1401,19 @@ function ExamControllerModule({ user, onBack, online, selectedSessionId, selecte
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Delete', style: 'destructive', onPress: () => write.mutate({ path: `${basePath}/ledger/delete`, body: { term: activeTerm } }) },
                   ])} />}
-                  {ledgerQuery.data.rows.map(row => <Pressable key={`${row.class}|${row.section}`} onPress={() => openCohort(row)} style={styles.adminCard}>
+                   {canLedger && <View style={styles.adminCard}>
+                     <Text style={styles.cardTitle}>Bulk teacher reminders</Text>
+                     <Text style={styles.muted}>Select class-sections below. Only this session and selected exam term are included; each notice is pinned to its school-mapped teacher.</Text>
+                     <View style={styles.rowWrap}>
+                       <Button label="Select all cohorts" icon="check-square" disabled={isArchive} onPress={() => setSelectedReminderKeys(ledgerQuery.data!.rows.map(row => `${row.class}|${row.section}`))} />
+                       <Button label="Clear" icon="x" onPress={() => setSelectedReminderKeys([])} />
+                       <Button label={`Remind selected (${selectedReminderKeys.length})`} icon="bell" disabled={isArchive || write.isPending || !selectedReminderKeys.length} onPress={sendReminderAll} />
+                     </View>
+                   </View>}
+                   {ledgerQuery.data.rows.map(row => <View key={`${row.class}|${row.section}`} style={styles.adminCard}><Pressable onPress={() => openCohort(row)}>
+                     <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selectedReminderKeys.includes(`${row.class}|${row.section}`) }} onPress={() => setSelectedReminderKeys(current => current.includes(`${row.class}|${row.section}`) ? current.filter(key => key !== `${row.class}|${row.section}`) : [...current, `${row.class}|${row.section}`])} style={styles.checkRow}>
+                       <View style={[styles.checkbox, selectedReminderKeys.includes(`${row.class}|${row.section}`) && styles.checked]}>{selectedReminderKeys.includes(`${row.class}|${row.section}`) && <Feather name="check" size={13} color={workspace.background} />}</View><Text style={styles.lineValue}>Select for bulk reminder</Text>
+                     </Pressable>
                     <View style={styles.visitorHead}><View style={{ flex: 1 }}><Text style={styles.cardTitle}>{row.class} · Section {row.section}</Text><Text style={styles.muted}>{row.totalStudents} saved decisions · {row.manualInterventionCount} manual interventions</Text></View><Feather name="chevron-right" color={workspace.subdued} size={18} /></View>
                     <View style={styles.rowWrap}>
                       <Pill label={`${row.executedCount || 0} executed`} active={row.adminExecuted} />
@@ -1250,7 +1421,7 @@ function ExamControllerModule({ user, onBack, online, selectedSessionId, selecte
                       <Pill label={`${row.pendingCount ?? Math.max(0, row.totalStudents - row.lockedCount)} pending`} />
                     </View>
                     {row.teacherName && <Line label="Submitted by" value={row.teacherName} />}
-                  </Pressable>)}
+                   </Pressable><Button label="Remind teacher" icon="bell" disabled={isArchive || write.isPending} onPress={() => sendReminder(row)} /></View>)}
                   {!ledgerQuery.data.rows.length && <View style={styles.empty}><Text style={styles.emptyText}>No promotion ledger records have been saved for this exam type in this session.</Text></View>}
                 </>}
           </>}
@@ -1270,6 +1441,8 @@ function ExamControllerModule({ user, onBack, online, selectedSessionId, selecte
                         <Button label="Clear selection" icon="x" onPress={() => setSelectedStudents([])} />
                         <Button label="Execute all" icon="play" disabled={isArchive || !canWizard || write.isPending || !cohortQuery.data.students.length} onPress={() => runExecution(cohortQuery.data!)} />
                         {!!selectedStudents.length && <Button label={`Execute selected (${selectedStudents.length})`} icon="play" disabled={isArchive || !canWizard || write.isPending} onPress={() => runExecution(cohortQuery.data!, selectedStudents)} />}
+                        {!!selectedStudents.length && <Button label={`Promote selected (${selectedStudents.length})`} icon="check" disabled={isArchive || !canWizard || write.isPending} onPress={() => bulkPromote(cohortQuery.data!)} />}
+                        <Button label="Clear unsent decisions" icon="trash-2" disabled={isArchive || !canWizard || write.isPending} onPress={() => clearCohort(cohortQuery.data!)} />
                       </View>
                     </ModuleCard>
                     {cohortQuery.data.students.map(student => {

@@ -3,6 +3,7 @@ import { Alert, Modal, Platform, Pressable, ScrollView, StatusBar, StyleSheet, T
 import { Feather } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { apiGet } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
@@ -82,6 +83,7 @@ function AdminProfile({ visible, close, overview }: { visible: boolean; close: (
 }
 
 export default function AdminDashboard() {
+  const router = useRouter();
   const { user, logout } = useAuth();
   const { online } = useNetwork();
   const insets = useSafeAreaInsets();
@@ -161,10 +163,10 @@ export default function AdminDashboard() {
                   const groupTiles = tiles.filter(t => t.group === group);
                   if (!groupTiles.length) return null;
                   return <View key={group} style={s.group}><View style={s.groupHeading}><Text style={[s.groupTitle, { color: zones[group] }]}>{group.toUpperCase()}</Text><View style={[s.rule, { backgroundColor: zones[group] + '55' }]} /></View>
-                    <View style={s.grid}>{groupTiles.map(tile => <View key={tile.id} testID={`admin-tile-${tile.id}`} accessibilityLabel={`${tile.label}, coming to mobile`} style={[s.tile, { borderTopColor: tile.color }]}>
+                    <View style={s.grid}>{groupTiles.map(tile => <Pressable key={tile.id} testID={`admin-tile-${tile.id}`} accessibilityRole="button" accessibilityLabel={`Open ${tile.label}`} onPress={() => { setDrawer(false); router.push({ pathname: '/admin/[module]', params: { module: tile.id } }); }} style={[s.tile, { borderTopColor: tile.color }]}>
                       <View style={[s.tileIcon, { backgroundColor: tile.color + '17' }]}><Feather name={tile.icon as IconName} size={27} color={tile.color} /></View>
-                      <Text style={s.tileTitle}>{tile.label}</Text><Text style={s.tileDesc}>{tile.desc}</Text><Text style={s.pending}>Coming to mobile</Text>
-                    </View>)}</View>
+                      <Text style={s.tileTitle}>{tile.label}</Text><Text style={s.tileDesc}>{tile.desc}</Text><Text style={s.pending}>Open  →</Text>
+                    </Pressable>)}</View>
                   </View>;
                 })}
               </View>
@@ -182,7 +184,7 @@ export default function AdminDashboard() {
             {overview.data && adminGroups.map(group => {
               const items = visibleAdminTiles(overview.data.role, overview.data.allowedModuleIds).filter(t => t.group === group);
               if (!items.length) return null;
-              return <View key={group}><Text style={[s.drawerGroup, { color: zones[group] }]}>{group.toUpperCase()}</Text>{items.map(item => <View key={item.id} style={s.drawerRow}><Feather name={item.icon as IconName} size={15} color={c.faint} /><Text style={s.drawerRowText}>{item.label}</Text><Feather name="lock" size={12} color={c.faint} /></View>)}</View>;
+              return <View key={group}><Text style={[s.drawerGroup, { color: zones[group] }]}>{group.toUpperCase()}</Text>{items.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Open ${item.label}`} onPress={() => { setDrawer(false); router.push({ pathname: '/admin/[module]', params: { module: item.id } }); }} style={s.drawerRow}><Feather name={item.icon as IconName} size={15} color={c.faint} /><Text style={s.drawerRowText}>{item.label}</Text><Feather name="chevron-right" size={12} color={c.faint} /></Pressable>)}</View>;
             })}
           </ScrollView>
           {admin && <Pressable testID="admin-drawer-profile" onPress={() => { setDrawer(false); setProfileOpen(true); }} style={s.drawerAction}><Feather name="user" size={17} color={c.ink} /><Text style={s.drawerActionText}>Admin profile</Text></Pressable>}

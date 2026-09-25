@@ -483,6 +483,103 @@ export async function acquireRazorpayOrder(
   return result!;
 }
 
+/**
+ * Native checkout settlement.  This is deliberately kept next to the web
+ * checkout implementation so mobile cannot grow a weaker payment projection.
+ * The caller must have already authenticated the principal and resolved the
+ * tenant; no client supplied fee or school data is trusted here.
+ */
+export async function settleRazorpayPaymentForFee(input: {
+  feeRecordId: number;
+  schoolId: number;
+  paymentId: string;
+  orderId: string;
+  credentials: { keyId: string; keySecret: string };
+}): Promise<{ ok: true; receiptNumber: string; idempotent?: boolean } | { ok: false; status: number; message: string }> {
+  const feeResult = await db.execute(sql`
+    SELECT fr.*, s.school_id
+    FROM fee_records fr JOIN students s ON s.id = fr.student_id
+    WHERE fr.id = ${input.feeRecordId} AND fr.school_id = ${input.schoolId}
+    LIMIT 1
+  `);
+  const fee = feeResult.rows[0] as any;
+  if (!fee || Number(fee.school_id) !== input.schoolId) return { ok: false, status: 404, message: "Fee record not found" };
+  // A retry after this process (or the webhook) already committed is safe only
+  // when the exact provider payment is the persisted projection for this fee.
+  // Do not treat an arbitrary payment ID as an idempotent success.
+  if (fee.status === "Paid") {
+    const prior = await db.execute(sql`
+      SELECT receipt_number FROM payment_records
+      WHERE school_id = ${input.schoolId} AND fee_record_id = ${input.feeRecordId}
+        AND razorpay_payment_id = ${input.paymentId}
+      ORDER BY id DESC LIMIT 1
+    `);
+    const priorReceipt = (prior.rows[0] as any)?.receipt_number;
+    if (priorReceipt) return { ok: true, receiptNumber: String(priorReceipt), idempotent: true };
+    return { ok: false, status: 409, message: "This invoice has already been paid." };
+  }
+  const rzp = new Razorpay({ key_id: input.credentials.keyId, key_secret: input.credentials.keySecret });
+  let payment: any;
+  let order: any;
+  try {
+    [payment, order] = await Promise.all([
+      (rzp.payments as any).fetch(input.paymentId),
+      (rzp.orders as any).fetch(input.orderId),
+    ]);
+  } catch {
+    return { ok: false, status: 503, message: "Unable to confirm the payment with Razorpay. Please try again." };
+  }
+  const verified = validateCapturedRazorpayPayment({
+    feeRecordId: input.feeRecordId, schoolId: input.schoolId, feeAmount: Number(fee.amount),
+    expectedOrderId: fee.razorpay_order_id, payment, order,
+  });
+  if (!verified.ok) return { ok: false, status: 409, message: verified.message };
+  const receiptNumber = await storage.nextReceiptNumber(input.schoolId, "ON");
+  let alreadyPaid = false;
+  try {
+    await db.transaction(async tx => {
+      const locked = await tx.execute(sql`
+        SELECT fr.status, fr.student_id, fr.session_id, fr.receipt_number, fr.invoice_number
+        FROM fee_records fr
+        JOIN academic_sessions acs
+          ON acs.id = fr.session_id AND acs.school_id = fr.school_id AND acs.is_active = true
+        WHERE fr.id = ${input.feeRecordId} AND fr.school_id = ${input.schoolId} FOR UPDATE OF fr
+      `);
+      const current = locked.rows[0] as any;
+      if (!current) throw Object.assign(new Error("Fee record not found"), { status: 404 });
+      if (current.status === "Paid") {
+        alreadyPaid = true;
+        return;
+      }
+      if (!["Due", "Overdue"].includes(current.status))
+        throw Object.assign(new Error(`Fee is not payable (status: ${current.status})`), { status: 409 });
+      await tx.execute(sql`
+        UPDATE fee_records SET status = 'Paid', paid_date = ${todayInIST(new Date())},
+          receipt_number = ${receiptNumber}, razorpay_order_id = NULL, razorpay_order_expires_at = NULL
+        WHERE id = ${input.feeRecordId} AND school_id = ${input.schoolId}
+      `);
+      await tx.insert(paymentRecords).values({
+        schoolId: input.schoolId, sessionId: current.session_id, feeRecordId: input.feeRecordId,
+        studentId: Number(current.student_id), paymentMethod: "Portal Payment",
+        paymentMode: payment.method ?? null, referenceNumber: input.paymentId,
+        receivedDate: todayInIST(new Date()), amount: verified.amountPaise / 100,
+        lateFeePaid: verified.lateFeeAmount, cashierNotes: `Razorpay payment ID: ${input.paymentId} (mobile-verified)`,
+        recordedBy: null, receiptNumber, idempotencyKey: `rzp_${input.paymentId}`,
+        razorpayPaymentId: input.paymentId, razorpayOrderId: input.orderId,
+        razorpaySignature: null, payerName: null, payerEmail: payment.email ?? null,
+        payerContact: payment.contact ?? null, gatewayStatus: "captured",
+      } as any);
+    });
+  } catch (error: any) {
+    if (error?.code === "23505" || error?.message === "already-paid") {
+      return { ok: true, receiptNumber, idempotent: true };
+    }
+    if (error?.status) return { ok: false, status: error.status, message: error.message };
+    return { ok: false, status: 409, message: "Payment could not be recorded. Please refresh and check the invoice status." };
+  }
+  return { ok: true, receiptNumber, ...(alreadyPaid ? { idempotent: true as const } : {}) };
+}
+
 export function registerFeesRoutes(app: Express) {
 
   // ── Razorpay credential resolver ─────────────────────────────────────────────

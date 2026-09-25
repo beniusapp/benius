@@ -513,7 +513,13 @@ export function registerMobileAdminAcademicRoutes(
           })),
           attendance: attendanceByStudent.get(student.id) ?? null,
         })));
-        res.json({ students: data, policyTier, passPercentage: gradeTier?.passPercentage ?? null, gradingRules });
+        res.json({
+          students: data,
+          policyTier,
+          passPercentage: gradeTier?.passPercentage ?? null,
+          gradingRules,
+          session: { id: session.id, sessionName: session.sessionName },
+        });
       } catch {
         reject(res, 503, "Unable to load class results.");
       }

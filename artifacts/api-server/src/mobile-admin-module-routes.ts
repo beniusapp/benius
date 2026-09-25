@@ -1,6 +1,7 @@
 import type { Express, NextFunction, Request, RequestHandler, Response } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import multer from "multer";
 import { z } from "zod/v4";
 import {
   academicHistory, attendanceCorrectionRequests, attendancePolicies, attendanceRecords,
@@ -50,6 +51,11 @@ const calendarInput = z.object({
   targetClass: z.string().max(60).optional().nullable(),
   targetSection: z.string().max(60).optional().nullable(),
 }).refine((value) => value.date || value.startDate, "Event date is required");
+const studentWorkbookUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => callback(null, /\.xlsx$/i.test(file.originalname)),
+});
 
 function reject(res: Response, status: number, message: string): void {
   res.status(status).json({ message });
@@ -863,6 +869,296 @@ export function registerMobileAdminModuleRoutes(
     },
   );
 
+  app.get(
+    "/api/mobile/admin/modules/student-registry/export",
+    ...protect,
+    requireModule("student-registry", "export"),
+    async (req, res) => {
+      const user = principal(req)!;
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const cls = typeof req.query.class === "string" ? req.query.class : undefined;
+      const section = typeof req.query.section === "string" ? req.query.section : undefined;
+      try {
+        const first = await storage.getStudentsPaginated(user.schoolId, { q, cls, section, page: 1, sessionId: null });
+        const pages = [first];
+        for (let page = 2; page <= Math.ceil(first.total / 50) && page <= 2000; page++) {
+          pages.push(await storage.getStudentsPaginated(user.schoolId, { q, cls, section, page, sessionId: null }));
+        }
+        const rows = pages.flatMap(page => page.data);
+        res.json({ exportedAt: new Date().toISOString(), count: rows.length, data: rows.map(publicStudent) });
+      } catch {
+        reject(res, 503, "Unable to export the private student registry.");
+      }
+    },
+  );
+
+  app.get(
+    "/api/mobile/admin/modules/student-registry/export.xlsx",
+    ...protect,
+    requireModule("student-registry", "export"),
+    async (req, res) => {
+      const user = principal(req)!;
+      try {
+        const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+        const cls = typeof req.query.class === "string" ? req.query.class : undefined;
+        const section = typeof req.query.section === "string" ? req.query.section : undefined;
+        const first = await storage.getStudentsPaginated(user.schoolId, { q, cls, section, page: 1, sessionId: null });
+        const pages = [first];
+        for (let page = 2; page <= Math.ceil(first.total / 50) && page <= 2000; page++) pages.push(await storage.getStudentsPaginated(user.schoolId, { q, cls, section, page, sessionId: null }));
+        const ExcelJS = (await import("exceljs")).default;
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet("Student Registry");
+        sheet.columns = [
+          { header: "Student ID", key: "digitalStudentId", width: 20 }, { header: "Full Name", key: "name", width: 28 },
+          { header: "Class", key: "class", width: 10 }, { header: "Section", key: "section", width: 10 },
+          { header: "Roll Number", key: "rollNumber", width: 14 }, { header: "Gender", key: "gender", width: 12 },
+          { header: "Phone", key: "phone", width: 18 }, { header: "Email", key: "email", width: 30 },
+          { header: "Guardian Name", key: "guardianName", width: 26 }, { header: "Father's Name", key: "fatherName", width: 26 },
+          { header: "Mother's Name", key: "motherName", width: 26 }, { header: "Date of Birth", key: "dob", width: 16 },
+          { header: "Date of Admission", key: "enrollmentDate", width: 20 }, { header: "Blood Group", key: "bloodGroup", width: 14 },
+          { header: "Aadhaar Number", key: "aadharNumber", width: 18 }, { header: "Address", key: "address", width: 36 },
+        ];
+        sheet.getRow(1).font = { bold: true, color: { argb: "FF0A1628" } };
+        sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD4AF37" } };
+        pages.flatMap(page => page.data).forEach(student => sheet.addRow({
+          digitalStudentId: student.digitalStudentId, name: student.name, class: student.class, section: student.section,
+          rollNumber: student.rollNumber ?? "", gender: student.gender ?? "", phone: student.phone, email: student.email ?? "",
+          guardianName: student.guardianName ?? "", fatherName: student.fatherName ?? "", motherName: student.motherName ?? "",
+          dob: student.dob ?? "", enrollmentDate: student.enrollmentDate ?? "", bloodGroup: student.bloodGroup ?? "",
+          aadharNumber: student.aadharNumber ?? "", address: student.address ?? "",
+        }));
+        const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+        if (req.query.encoding === "base64") {
+          res.json({ filename: `Student_Registry_${new Date().toISOString().slice(0, 10)}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", contentBase64: buffer.toString("base64"), count: pages.flatMap(page => page.data).length });
+          return;
+        }
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename="Student_Registry_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+        res.end(buffer);
+      } catch { reject(res, 503, "Unable to generate the private student XLSX export."); }
+    },
+  );
+
+  app.get(
+    "/api/mobile/admin/modules/student-registry/deactivated",
+    ...protect,
+    requireModule("student-registry"),
+    async (req, res) => {
+      try {
+        const rows = await storage.getDeactivatedStudents(principal(req)!.schoolId);
+        res.json({ count: rows.length, data: rows });
+      } catch {
+        reject(res, 503, "Unable to load deactivated student records.");
+      }
+    },
+  );
+
+  app.get(
+    "/api/mobile/admin/modules/student-registry/deactivated/export.xlsx",
+    ...protect,
+    requireModule("student-registry", "export"),
+    async (req, res) => {
+      try {
+        const user = principal(req)!;
+        const rows = await storage.getDeactivatedStudents(user.schoolId);
+        const ExcelJS = (await import("exceljs")).default;
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet("Deactivated Students");
+        sheet.columns = [
+          { header: "Student ID", key: "digitalStudentId", width: 20 }, { header: "Full Name", key: "name", width: 28 },
+          { header: "Class", key: "class", width: 10 }, { header: "Section", key: "section", width: 10 },
+          { header: "Roll Number", key: "rollNumber", width: 14 }, { header: "Gender", key: "gender", width: 12 },
+          { header: "Guardian Name", key: "guardianName", width: 26 }, { header: "Phone", key: "phone", width: 18 },
+          { header: "Email", key: "email", width: 30 }, { header: "Date of Birth", key: "dob", width: 16 },
+          { header: "Date of Admission", key: "enrollmentDate", width: 20 }, { header: "Blood Group", key: "bloodGroup", width: 14 },
+          { header: "Deactivated On", key: "deactivatedAt", width: 22 }, { header: "Reason", key: "reason", width: 40 },
+          { header: "Status", key: "status", width: 14 },
+        ];
+        sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+        sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB91C1C" } };
+        rows.forEach(row => sheet.addRow({
+          digitalStudentId: row.digitalStudentId, name: row.name, class: row.class, section: row.section,
+          rollNumber: row.rollNumber ?? "", gender: row.gender ?? "", guardianName: row.guardianName ?? "",
+          phone: row.phone, email: row.email ?? "", dob: row.dob ?? "", enrollmentDate: row.enrollmentDate ?? "",
+          bloodGroup: row.bloodGroup ?? "", deactivatedAt: row.deactivatedAt?.toISOString() ?? "",
+          reason: row.deactivationReason ?? "", status: "Deactive",
+        }));
+        const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+        if (req.query.encoding === "base64") {
+          res.json({ filename: `Deactivated_Students_${new Date().toISOString().slice(0, 10)}.xlsx`, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", contentBase64: buffer.toString("base64"), count: rows.length });
+          return;
+        }
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader("Content-Disposition", `attachment; filename="Deactivated_Students_${new Date().toISOString().slice(0, 10)}.xlsx"`);
+        res.end(buffer);
+      } catch { reject(res, 503, "Unable to generate the deactivated student XLSX export."); }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/student-registry/import",
+    ...protect,
+    requireModule("student-registry", "add"),
+    async (req, res) => {
+      const user = principal(req)!;
+      if (user.role !== "admin") {
+        reject(res, 403, "Only an administrator can import student records.");
+        return;
+      }
+      const parsed = z.object({
+        rows: z.array(z.object({
+          name: z.string().trim().min(1).max(150),
+          class: z.string().trim().min(1).max(40),
+          section: z.string().trim().min(1).max(20),
+          phone: z.string().regex(/^\d{10}$/),
+          dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          enrollmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          gender: z.enum(["Boy", "Girl"]).optional(),
+          rollNumber: z.number().int().positive().optional().nullable(),
+          guardianName: z.string().max(150).optional(),
+          fatherName: z.string().max(150).optional(),
+          motherName: z.string().max(150).optional(),
+          address: z.string().max(1000).optional(),
+          bloodGroup: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
+          aadharNumber: z.string().regex(/^\d{12}$/).optional(),
+          email: z.string().email().max(255).optional().or(z.literal("")),
+        })).min(1).max(500),
+      }).safeParse(req.body);
+      if (!parsed.success) {
+        reject(res, 400, "Import rows must contain valid names, configured placement, 10-digit phones, and dates.");
+        return;
+      }
+      try {
+        const [school, classes, classSections] = await Promise.all([
+          storage.getSchool(user.schoolId),
+          storage.getSchoolMetadata(user.schoolId, "classes"),
+          storage.getClassSectionsMap(user.schoolId),
+        ]);
+        if (!school) { reject(res, 403, "School identity could not be verified."); return; }
+        const created = [];
+        for (const row of parsed.data.rows) {
+          if (!classes.includes(row.class) || !(classSections[row.class] || []).includes(row.section)) {
+            reject(res, 400, `Class ${row.class} and section ${row.section} are not configured.`);
+            return;
+          }
+          const serial = await storage.issueNextIdSerial(user.schoolId, "dsid");
+          const dsid = `${school.code}-${String(serial).padStart(4, "0")}`;
+          created.push(await storage.createStudent({
+            schoolId: user.schoolId, digitalStudentId: dsid, name: row.name, class: row.class, section: row.section,
+            phone: row.phone, dob: row.dob, passwordHash: await bcrypt.hash(dsid, 10), isActivated: false,
+            enrollmentDate: row.enrollmentDate, gender: row.gender, rollNumber: row.rollNumber,
+            guardianName: row.guardianName, fatherName: row.fatherName, motherName: row.motherName,
+            address: row.address, bloodGroup: row.bloodGroup, aadharNumber: row.aadharNumber, email: row.email || null,
+          }));
+        }
+        res.status(201).json({ imported: created.length, data: created.map(publicStudent) });
+      } catch {
+        reject(res, 503, "Unable to import the private student registry.");
+      }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/student-registry/import.xlsx",
+    ...protect,
+    studentWorkbookUpload.single("file"),
+    requireModule("student-registry", "add"),
+    async (req, res) => {
+      const user = principal(req)!;
+      if (user.role !== "admin") { reject(res, 403, "Only an administrator can import student workbooks."); return; }
+      if (!req.file && typeof req.body?.fileBase64 === "string" && req.body.fileBase64.length <= 15_000_000) {
+        req.file = { buffer: Buffer.from(req.body.fileBase64, "base64"), originalname: String(req.body.filename || "student-import.xlsx") } as Express.Multer.File;
+      }
+      if (!req.file) { reject(res, 400, "Attach one .xlsx workbook."); return; }
+      if (!/\.xlsx$/i.test(req.file.originalname)) { reject(res, 400, "Only .xlsx workbooks are supported by mobile import."); return; }
+      try {
+        const ExcelJS = (await import("exceljs")).default;
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(req.file.buffer as any);
+        const sheet = workbook.worksheets[0];
+        if (!sheet) { reject(res, 400, "The workbook contains no worksheet."); return; }
+        const normalize = (value: unknown) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const cellText = (value: unknown): string => {
+          if (value instanceof Date) return value.toISOString().slice(0, 10);
+          if (typeof value === "object" && value && "text" in value) return String((value as { text?: unknown }).text ?? "").trim();
+          return String(value ?? "").trim();
+        };
+        const dateText = (value: unknown): string | null => {
+          if (value instanceof Date && !isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+          const raw = cellText(value);
+          const serial = Number(raw);
+          if (Number.isFinite(serial) && serial > 10_000 && serial < 100_000) {
+            const date = new Date(Date.UTC(1899, 11, 30) + serial * 86_400_000);
+            return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+          }
+          if (/^\d{4}-\d{2}-\d{2}$/.test(raw) && isDate(raw)) return raw;
+          const match = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+          if (!match) return null;
+          const year = Number(match[3]) < 100 ? Number(match[3]) + 2000 : Number(match[3]);
+          const normalized = `${year}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[1])).padStart(2, "0")}`;
+          return isDate(normalized) ? normalized : null;
+        };
+        const headerRow = sheet.getRow(1);
+        const headers: Record<number, string> = {};
+        headerRow.eachCell((cell, index) => { headers[index] = normalize(cell.value); });
+        const aliases = (row: any, names: string[]) => {
+          for (const name of names) {
+            const index = Object.entries(headers).find(([, header]) => header === name)?.[0];
+            if (index) return cellText(row.getCell(Number(index)).value);
+          }
+          return "";
+        };
+        const rows: Array<{
+          name: string; class: string; section: string; phone: string; email: string; dob: string;
+          enrollmentDate?: string; gender?: "Boy" | "Girl"; rollNumber?: number | null; guardianName?: string;
+          fatherName?: string; motherName?: string; address?: string; bloodGroup?: string; aadharNumber?: string;
+        }> = [];
+        const warnings: string[] = [];
+        if (sheet.rowCount > 501) { reject(res, 400, "Workbook limit is 500 data rows."); return; }
+        for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
+          const row = sheet.getRow(rowNumber);
+          if (!row.hasValues) continue;
+          const name = aliases(row, ["name", "fullname"]);
+          const cls = aliases(row, ["class"]);
+          const section = aliases(row, ["section"]);
+          const phone = aliases(row, ["phone", "phonenumber", "mobile", "contact"]).replace(/[\s\-()+]/g, "");
+          const email = aliases(row, ["email", "studentemail", "emailaddress"]);
+          const dob = dateText(row.getCell(Object.entries(headers).find(([, header]) => ["dob", "dateofbirth", "birthdate"].includes(header))?.[0] ? Number(Object.entries(headers).find(([, header]) => ["dob", "dateofbirth", "birthdate"].includes(header))![0]) : 0).value);
+          if (!name && !phone && !email) continue;
+          if (!name || !cls || !section || !/^\d{10}$/.test(phone) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !dob) {
+            warnings.push(`Row ${rowNumber}: skipped; required name, class, section, valid 10-digit phone, email, and date of birth are missing or invalid.`);
+            continue;
+          }
+          const rollRaw = aliases(row, ["rollnumber", "rollno"]);
+          rows.push({
+            name, class: cls, section, phone, email, dob,
+            enrollmentDate: dateText(row.getCell(Object.entries(headers).find(([, header]) => ["enrollmentdate", "dateofadmission"].includes(header))?.[0] ? Number(Object.entries(headers).find(([, header]) => ["enrollmentdate", "dateofadmission"].includes(header))![0]) : 0).value) || undefined,
+            gender: (["Boy", "Girl"] as const).includes(aliases(row, ["gender"]) as "Boy" | "Girl") ? aliases(row, ["gender"]) as "Boy" | "Girl" : undefined,
+            rollNumber: rollRaw ? Number(rollRaw) || null : null,
+            guardianName: aliases(row, ["guardianname"]) || undefined, fatherName: aliases(row, ["fathername"]) || undefined,
+            motherName: aliases(row, ["mothername"]) || undefined, address: aliases(row, ["address"]) || undefined,
+            bloodGroup: aliases(row, ["bloodgroup"]) || undefined, aadharNumber: aliases(row, ["aadharnumber", "aadhaar"]) || undefined,
+          });
+        }
+        if (!rows.length) { reject(res, 400, "The workbook contains no valid student rows."); return; }
+        const [school, classes, classSections] = await Promise.all([storage.getSchool(user.schoolId), storage.getSchoolMetadata(user.schoolId, "classes"), storage.getClassSectionsMap(user.schoolId)]);
+        if (!school) { reject(res, 403, "School identity could not be verified."); return; }
+        const valid: any[] = [];
+        for (const row of rows) {
+          if (!classes.includes(row.class) || !(classSections[row.class] || []).includes(row.section)) {
+            warnings.push(`Skipped ${row.name}: ${row.class}-${row.section} is not configured.`);
+            continue;
+          }
+          const serial = await storage.issueNextIdSerial(user.schoolId, "dsid");
+          const digitalStudentId = `${school.code}-${String(serial).padStart(4, "0")}`;
+          valid.push({ ...row, schoolId: user.schoolId, digitalStudentId, passwordHash: await bcrypt.hash(digitalStudentId, 10), isActivated: false });
+        }
+        if (valid.length) await storage.bulkCreateStudents(valid);
+        res.status(201).json({ imported: valid.length, skipped: rows.length - valid.length, warnings, message: "Student IDs and initial credentials were generated server-side." });
+      } catch { reject(res, 400, "Unable to parse the student workbook. Use the first worksheet with a header row."); }
+    },
+  );
+
   app.post(
     "/api/mobile/admin/modules/student-registry/auto-assign-roll",
     ...protect,
@@ -1325,6 +1621,35 @@ export function registerMobileAdminModuleRoutes(
   );
 
   app.get(
+    "/api/mobile/admin/modules/attendance-overview/student/:studentId",
+    ...protect,
+    requireModule("attendance-overview"),
+    requireExamSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = examSession(req, user.schoolId);
+      const studentId = parseId(req.params.studentId);
+      if (!session || !studentId) { reject(res, 400, "A valid student and academic session are required."); return; }
+      try {
+        const [student] = await db.select({
+          id: students.id, name: students.name, class: students.class, section: students.section,
+          digitalStudentId: students.digitalStudentId, phone: students.phone, photoUrl: students.photoUrl,
+          rollNo: studentProfiles.rollNo, fatherName: studentProfiles.fatherName, presentAddress: studentProfiles.presentAddress,
+        }).from(students).leftJoin(studentProfiles, eq(studentProfiles.studentId, students.id)).where(and(
+          eq(students.id, studentId), eq(students.schoolId, user.schoolId),
+        ));
+        if (!student) { reject(res, 404, "Student not found for this school."); return; }
+        const attendance = await db.select().from(attendanceRecords).where(and(
+          eq(attendanceRecords.schoolId, user.schoolId), eq(attendanceRecords.studentId, studentId), eq(attendanceRecords.sessionId, session.id),
+        ));
+        res.json({ student, session: { id: session.id, sessionName: session.sessionName }, attendance: attendance.map(record => ({
+          date: record.date, status: record.status, markedAt: record.markedAt,
+        })) });
+      } catch { reject(res, 503, "Unable to load the selected student attendance profile."); }
+    },
+  );
+
+  app.get(
     "/api/mobile/admin/modules/exam-controller",
     ...protect,
     requireModule("exam-controller"),
@@ -1602,6 +1927,131 @@ export function registerMobileAdminModuleRoutes(
       } catch {
         reject(res, 503, "Unable to clear the exam decision.");
       }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/exam-controller/decision/bulk",
+    ...protect,
+    requireModule("exam-controller", "wizard"),
+    requireExamSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = examSession(req, user.schoolId);
+      if (!session?.isActive) { reject(res, 403, "Bulk decisions require an active academic session."); return; }
+      const parsed = z.object({
+        class: z.string().trim().min(1), section: z.string().trim().min(1), term: z.string().trim().min(1),
+        items: z.array(z.object({ studentId: z.number().int().positive(), decision: z.enum(["promote", "retain", "grace_pass"]), targetClass: z.string().trim().min(1), targetSection: z.string().trim().min(1) })).min(1).max(500),
+      }).safeParse(req.body);
+      if (!parsed.success) { reject(res, 400, "Provide valid selected-session cohort decisions."); return; }
+      try {
+        const [cohort, classes, mapping, prior] = await Promise.all([
+          storage.getExamAggregated(user.schoolId, parsed.data.class, parsed.data.section, parsed.data.term, session.id),
+          storage.getSchoolMetadata(user.schoolId, "classes"),
+          storage.getClassSectionsMap(user.schoolId),
+          storage.getPromotionDecisions(user.schoolId, parsed.data.class, parsed.data.section, isolatedTerm(session.id, parsed.data.term), session.id),
+        ]);
+        if (!classes.includes(parsed.data.class) || !(mapping[parsed.data.class] || []).includes(parsed.data.section)
+          || parsed.data.items.some(item => !cohort.some(student => student.studentId === item.studentId)
+            || !classes.includes(item.targetClass) || !(mapping[item.targetClass] || []).includes(item.targetSection))) {
+          reject(res, 400, "Every selected student and destination must belong to this school session cohort.");
+          return;
+        }
+        await storage.savePromotionDecisions(user.schoolId, parsed.data.class, parsed.data.section, isolatedTerm(session.id, parsed.data.term), user.id, true,
+          parsed.data.items.map(item => ({
+            ...item,
+            decision: item.decision === "retain" ? "retained" : item.decision === "grace_pass" ? "grace_pass" : "promoted",
+            editCount: (prior.find(existing => existing.studentId === item.studentId)?.editCount ?? 0) + 1,
+            autoSuggestion: cohort.find(student => student.studentId === item.studentId)!.percentage >= 35 ? "promoted" : "retained",
+          })), session.id);
+        res.json({ saved: parsed.data.items.length, sessionId: session.id });
+      } catch { reject(res, 503, "Unable to save the selected session-scoped decisions."); }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/exam-controller/decision/clear-cohort",
+    ...protect,
+    requireModule("exam-controller", "wizard"),
+    requireExamSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = examSession(req, user.schoolId);
+      if (!session?.isActive) { reject(res, 403, "Cohort decisions can only be cleared in an active session."); return; }
+      const parsed = z.object({ class: z.string().min(1), section: z.string().min(1), term: z.string().min(1) }).safeParse(req.body);
+      if (!parsed.success) { reject(res, 400, "Provide a class, section, and exam term."); return; }
+      try {
+        const deleted = await db.delete(promotionDecisions).where(and(
+          eq(promotionDecisions.schoolId, user.schoolId), eq(promotionDecisions.sessionId, session.id),
+          eq(promotionDecisions.class, parsed.data.class), eq(promotionDecisions.section, parsed.data.section),
+          eq(promotionDecisions.term, isolatedTerm(session.id, parsed.data.term)),
+          eq(promotionDecisions.adminExecuted, false),
+        )).returning({ id: promotionDecisions.id });
+        res.json({ cleared: deleted.length, sessionId: session.id });
+      } catch { reject(res, 503, "Unable to clear this session-scoped cohort."); }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/exam-controller/reminder",
+    ...protect,
+    requireModule("exam-controller", "ledger"),
+    requireExamSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = examSession(req, user.schoolId);
+      const parsed = z.object({ class: z.string().trim().min(1), section: z.string().trim().min(1), term: z.string().trim().min(1) }).safeParse(req.body);
+      if (!session || !parsed.success) { reject(res, 400, "Provide a class, section, and exam term for this session."); return; }
+      try {
+        const teacher = await storage.getTeacherByClassSection(user.schoolId, parsed.data.class, parsed.data.section);
+        await storage.createNotice({
+          schoolId: user.schoolId, createdById: user.id, creatorRole: "admin", targetType: "teacher",
+          targetClass: parsed.data.class, targetSection: parsed.data.section, targetTeacherId: teacher?.id ?? null,
+          noticeType: "Urgent", content: `Reminder: complete the ${parsed.data.term} promotion ledger for ${parsed.data.class}-${parsed.data.section} in ${session.sessionName}.`,
+        });
+        res.json({ message: "Session-scoped ledger reminder dispatched.", teacher: teacher?.fullName ?? null, sessionId: session.id });
+      } catch { reject(res, 503, "Unable to dispatch the ledger reminder."); }
+    },
+  );
+
+  app.post(
+    "/api/mobile/admin/modules/exam-controller/reminder-all",
+    ...protect,
+    requireModule("exam-controller", "ledger"),
+    requireExamSession(requireAcademicSession),
+    async (req, res) => {
+      const user = principal(req)!;
+      const session = examSession(req, user.schoolId);
+      if (!session) { reject(res, 403, "A school-scoped academic session is required."); return; }
+      const parsed = z.object({
+        term: z.string().trim().min(1).max(80),
+        cohorts: z.array(z.object({ class: z.string().trim().min(1).max(80), section: z.string().trim().min(1).max(40) })).min(1).max(500),
+      }).safeParse(req.body);
+      if (!parsed.success) { reject(res, 400, "Choose at least one class-section and exam term."); return; }
+      try {
+        const [terms, classes, mapping] = await Promise.all([
+          storage.getSchoolMetadata(user.schoolId, "exam_types"),
+          storage.getSchoolMetadata(user.schoolId, "classes"),
+          storage.getClassSectionsMap(user.schoolId),
+        ]);
+        if (!terms.includes(parsed.data.term) || parsed.data.cohorts.some(cohort => !classes.includes(cohort.class) || !(mapping[cohort.class] || []).includes(cohort.section))) {
+          reject(res, 400, "Every selected class-section and term must be configured for this school.");
+          return;
+        }
+        const unique = [...new Map(parsed.data.cohorts.map(cohort => [`${cohort.class}\u0000${cohort.section}`, cohort])).values()];
+        const results = [];
+        for (const cohort of unique) {
+          const teacher = await storage.getTeacherByClassSection(user.schoolId, cohort.class, cohort.section);
+          if (teacher && teacher.schoolId !== user.schoolId) continue;
+          await storage.createNotice({
+            schoolId: user.schoolId, createdById: user.id, creatorRole: "admin", targetType: "teacher",
+            targetClass: cohort.class, targetSection: cohort.section, targetTeacherId: teacher?.id ?? null,
+            noticeType: "Urgent", content: `Reminder: complete the ${parsed.data.term} promotion ledger for ${cohort.class}-${cohort.section} in ${session.sessionName}.`,
+          });
+          results.push({ class: cohort.class, section: cohort.section, teacherId: teacher?.id ?? null });
+        }
+        res.json({ dispatched: results.length, sessionId: session.id, results, message: `Dispatched ${results.length} session-scoped ledger reminder${results.length === 1 ? "" : "s"}.` });
+      } catch { reject(res, 503, "Unable to dispatch the selected session-scoped reminders."); }
     },
   );
 

@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import multer from "multer";
 import { academicSessions, auditLogs, complaints, facultyMappings, libraryBooks, notices, users } from "@workspace/db";
 import { db } from "./db";
@@ -49,6 +50,25 @@ const staffPhotoUpload = multer({
     else callback(new Error("Choose an image file."));
   },
 });
+const noticeAttachmentUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      const directory = path.join(process.cwd(), "uploads", "private-notices");
+      if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true });
+      callback(null, directory);
+    },
+    filename: (_req, file, callback) => {
+      const extension = path.extname(file.originalname).toLowerCase().slice(0, 8) || ".bin";
+      callback(null, `${crypto.randomUUID()}${extension}`);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    if (["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) callback(null, true);
+    else callback(new Error("Choose a PDF or image attachment."));
+  },
+});
+const PRIVATE_NOTICE_FILE = /^([0-9a-f-]{36})\.(pdf|jpg|jpeg|png|webp)$/i;
 const ids = (input: unknown): number[] => Array.isArray(input)
   ? input.filter((id): id is number => Number.isSafeInteger(id) && (id as number) > 0)
   : [];
@@ -120,14 +140,19 @@ const parseWorkflowUpload: RequestHandler = (req, res, next) => {
   const canManageStaffPhotos = req.params.moduleId === "non-teaching-staff" && user
     && hasModule(user, "non-teaching-staff")
     && (hasSub(user, "non-teaching-staff", "add") || hasSub(user, "non-teaching-staff", "edit"));
-  if (!isEbookUpload && !canManageStaffPhotos) return reject(res, 403, "Permission to upload this file is required.");
-  const upload = isEbookUpload ? workflowUpload.single("file") : staffPhotoUpload.single("photo");
+  const isNoticeAttachment = req.params.moduleId === "noticeboard" && user
+    && hasModule(user, "noticeboard") && hasSub(user, "noticeboard", "create");
+  if (!isEbookUpload && !canManageStaffPhotos && !isNoticeAttachment) return reject(res, 403, "Permission to upload this file is required.");
+  const upload = isEbookUpload ? workflowUpload.single("file") : isNoticeAttachment ? noticeAttachmentUpload.single("attachment") : staffPhotoUpload.single("photo");
   upload(req, res, error => {
     if (error) return next(error);
     const file = (req as Request & { file?: Express.Multer.File }).file;
     const validUpload = isEbookUpload
       ? req.body?.action === "ebook-upload" && file
-      : req.body?.action === "staff-photo-upload" && file;
+      : isNoticeAttachment
+        ? (req.body?.action === "notice-create" || req.body?.action === "notice-edit")
+          && (!file || "path" in file)
+        : req.body?.action === "staff-photo-upload" && file;
     if (!validUpload) {
       if (file && "path" in file) fs.unlinkSync(file.path);
       return reject(res, 400, "A valid workflow file upload is required.");
@@ -183,6 +208,22 @@ export function registerMobileAdminWorkflowRoutes(
   const protect = [requireHttps, requireBearer] as const;
   const protectSession = [...protect, requireLiveSession(requireAcademicSession)] as const;
 
+  app.get(`${base}/private-notices/:filename`, ...protectSession, async (req, res) => {
+    const user = principal(req)!;
+    const filename = typeof req.params.filename === "string" ? req.params.filename : "";
+    const match = PRIVATE_NOTICE_FILE.exec(filename);
+    const session = selectedSession(req)!;
+    if (!match || !hasModule(user, "noticeboard")) return reject(res, 404, "Attachment not found.");
+    const [notice] = await db.select({ schoolId: notices.schoolId, sessionId: notices.sessionId, createdById: notices.createdById, fileUrl: notices.fileUrl })
+      .from(notices).where(and(eq(notices.schoolId, user.schoolId), eq(notices.fileUrl, `/api/mobile/admin/workflow/private-notices/${filename}`)));
+    const reviewer = hasSub(user, "noticeboard", "view");
+    const owner = notice?.createdById === (user.role === "admin" ? user.principalId : user.id);
+    if (!notice || notice.sessionId !== session.id || !notice.fileUrl || (!reviewer && !owner)) return reject(res, 404, "Attachment not found.");
+    const filePath = path.join(process.cwd(), "uploads", "private-notices", filename);
+    if (!fs.existsSync(filePath)) return reject(res, 404, "Attachment not found.");
+    return res.sendFile(filePath);
+  });
+
   app.get(`${base}/:moduleId`, ...protectSession, async (req, res) => {
     const user = principal(req)!;
     const rawModuleId = req.params.moduleId;
@@ -200,7 +241,7 @@ export function registerMobileAdminWorkflowRoutes(
           ...(hasSub(user, moduleId, "grievances") ? ["student-to-staff"] : []),
           ...(hasSub(user, moduleId, "escalated") ? ["student-peer-report", "teacher-to-student"] : []),
         ]);
-        return res.json({ complaints: complaints.filter(c => visibleTypes.has(c.complaintType)
+        return res.json({ sessionId: session.id, sessionActive: session.isActive, complaints: complaints.filter(c => visibleTypes.has(c.complaintType)
           && (c.complaintType !== "student-peer-report" || c.escalatedToPrincipal)
           && (c.complaintType !== "teacher-to-student" || c.notifyAdmin)) });
       }
@@ -209,14 +250,14 @@ export function registerMobileAdminWorkflowRoutes(
           return reject(res, 403, "Noticeboard view permission is required.");
         }
         const notices = await storage.getAllSchoolNotices(user.schoolId, 500, session.id);
-        return res.json({ notices });
+        return res.json({ sessionId: session.id, sessionActive: session.isActive, notices });
       }
       if (moduleId === "approval-center") {
         const [gallery, books] = await Promise.all([
           hasSub(user, moduleId, "gallery-hub") ? storage.getAdminGalleryItems(user.schoolId) : [],
           hasSub(user, moduleId, "ebook") ? storage.getLibraryBooksWithUploaderNames(user.schoolId) : [],
         ]);
-        return res.json({ gallery, books });
+        return res.json({ sessionId: session.id, sessionActive: session.isActive, gallery, books });
       }
       if (moduleId === "leave-requests") {
         const [teacherLeaves, studentLeaves, history] = await Promise.all([
@@ -225,6 +266,7 @@ export function registerMobileAdminWorkflowRoutes(
           hasSub(user, moduleId, "leave-history") ? storage.getApprovalHistory(user.schoolId, session.id) : {},
         ]);
         return res.json({
+          sessionId: session.id, sessionActive: session.isActive,
           teacherLeaves, studentLeaves,
           teacherLeaveHistory: (history as any).teacherLeaves ?? [],
           studentLeaveHistory: (history as any).studentLeaves ?? [],
@@ -232,16 +274,20 @@ export function registerMobileAdminWorkflowRoutes(
       }
       if (moduleId === "teacher-registry") {
         if (!hasSub(user, moduleId, "view") && user.role !== "admin") return reject(res, 403, "Teacher registry view permission is required.");
+        const page = Math.max(1, Number.parseInt(String(req.query.page ?? "1"), 10) || 1);
+        const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
+        const filterClass = typeof req.query.class === "string" ? req.query.class.trim().slice(0, 50) : undefined;
+        const filterSection = typeof req.query.section === "string" ? req.query.section.trim().slice(0, 50) : undefined;
         const [teachersResult, removedHistory] = await Promise.all([
-          storage.getTeachersBySchoolPaginated(user.schoolId, "", 1, 100),
+          storage.getTeachersBySchoolPaginated(user.schoolId, query, page, 100, filterClass, filterSection),
           user.role === "admin" ? storage.getRemovedTeachersLog(user.schoolId, { page: 1, limit: 50 }) : Promise.resolve({ data: [] }),
         ]);
-        return res.json({ teachers: teachersResult.data, total: teachersResult.total, removedHistory: removedHistory.data });
+        return res.json({ sessionId: session.id, sessionActive: session.isActive, teachers: teachersResult.data, total: teachersResult.total, removedHistory: removedHistory.data });
       }
       if (moduleId === "non-teaching-staff") {
         if (!hasSub(user, moduleId, "view") && user.role !== "admin") return reject(res, 403, "Support staff view permission is required.");
         const staff = await storage.getNonTeachingStaffBySchool(user.schoolId);
-        return res.json({ staff: staff.map(({ passwordHash: _hash, ...safe }) => safe) });
+        return res.json({ sessionId: session.id, sessionActive: session.isActive, staff: staff.map(({ passwordHash: _hash, ...safe }) => safe) });
       }
       return reject(res, 404, "Workflow not found.");
     } catch (error) {
@@ -347,11 +393,13 @@ export function registerMobileAdminWorkflowRoutes(
           const classTarget = targetType === "class" || targetType === "class_only";
           if (classTarget && !targetClass?.trim()) return reject(res, 400, "Choose a class for this notice.");
           if (targetType === "class" && !targetSection?.trim()) return reject(res, 400, "Choose a section for this notice.");
+          const uploaded = (req as Request & { file?: Express.Multer.File }).file;
+          const fileUrl = uploaded ? `${base}/private-notices/${uploaded.filename}` : null;
           const notice = await storage.createNotice({
             schoolId: user.schoolId, sessionId: session.id, createdById: adminId, creatorRole: "admin",
             targetType: classTarget ? "class" : targetType, targetClass: classTarget ? targetClass!.trim() : null,
             targetSection: targetType === "class" ? targetSection!.trim() : null,
-            targetTeacherId: null, noticeType, content, fileUrl: null,
+            targetTeacherId: null, noticeType, content, fileUrl,
           });
           return res.status(201).json(notice);
         }
@@ -362,7 +410,13 @@ export function registerMobileAdminWorkflowRoutes(
           const notice = id ? await storage.getNoticeById(id) : null;
           if (!notice || notice.schoolId !== user.schoolId || notice.sessionId !== session.id || notice.creatorRole !== "admin" || notice.createdById !== adminId) return reject(res, 404, "Notice not found.");
           if (!content || content.length > 10_000) return reject(res, 400, "Notice text is required.");
+          const uploaded = (req as Request & { file?: Express.Multer.File }).file;
+          const fileUrl = uploaded ? `${base}/private-notices/${uploaded.filename}` : notice.fileUrl;
           const updated = await storage.updateNotice(id!, user.schoolId, content);
+          if (uploaded && updated) {
+            const [withAttachment] = await db.update(notices).set({ fileUrl }).where(and(eq(notices.id, id!), eq(notices.schoolId, user.schoolId))).returning();
+            return res.json(withAttachment);
+          }
           return res.json(updated);
         }
         if (action === "notice-delete") {

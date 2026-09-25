@@ -6,12 +6,14 @@ import { useRouter } from 'expo-router';
 import { Button, Card, Field, Screen, State } from '@/components/Foundation';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
 import { Directory, File, Paths } from 'expo-file-system';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
 import { apiGet, apiGetForSession, apiPostForSession, API_BASE_URL } from '@/lib/api';
 import { formatSchoolDate, formatSchoolInstant } from '@/lib/date';
 import { useColors } from '@/hooks/useColors';
+import { StudentPaymentCheckout } from '@/components/StudentPaymentCheckout';
 
 const LEAVE_CATEGORIES = [
   'Medical Leave',
@@ -50,6 +52,7 @@ type Fee = {
   id: number; feeType: string; amount: number; dueDate: string; paidDate: string | null;
   status: string; receiptNumber: string | null; invoiceNumber: string | null;
   lateFeeAmount: number; notes: string | null; academicYear: string | null;
+  breakdownSnapshot?: { name: string; purpose: string; amount: number }[];
 };
 type FeeSummary = {
   previousArrears: number; currentMonthCharges: number;
@@ -64,6 +67,14 @@ type PaymentAttempt = {
 type FeeReminder = {
   id: number; feeRecordId: number | null; channel: string; stage: string;
   sentAt: string | null; status: string; recipient: string | null;
+};
+type FeeDocument = {
+  documentType: 'invoice' | 'receipt';
+  fee: Fee & { breakdown?: unknown };
+  payment?: Record<string, unknown> | null;
+  studentName: string;
+  schoolName: string;
+  sessionName: string;
 };
 type ExamScore = {
   id: number; subject: string; examType: string; marks: number; totalMarks: number;
@@ -148,6 +159,9 @@ function QueryState({ loading, error, empty, retry }: {
 }
 
 const amount = (value: number) => `₹${Number.isFinite(value) ? value.toLocaleString('en-IN') : '0'}`;
+const htmlText = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, character => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[character] ?? character));
 const safeDate = (value: string | null | undefined) => value ? formatSchoolDate(value.slice(0, 10)) : '—';
 
 export function StudentNoticeboardScreen() {
@@ -315,6 +329,7 @@ export function StudentGalleryScreen() {
   const identity = useIdentityKey();
   const [tag, setTag] = useState<string | null>(null);
   const [selected, setSelected] = useState<GalleryItem | null>(null);
+  const [saving, setSaving] = useState(false);
   const tags = useQuery({
     queryKey: ['mobile/student/gallery/tags', ...identity],
     queryFn: ({ signal }) => apiGet<string[]>('/mobile/student/gallery/tags', { signal }),
@@ -355,6 +370,26 @@ export function StudentGalleryScreen() {
           {!!selected.description && <Text style={{ color: c.foreground }}>{selected.description}</Text>}
           {!!selected.location && <Text style={{ color: c.mutedForeground }}>{selected.location}</Text>}
           {!!selected.capturedDate && <Text style={{ color: c.mutedForeground }}>{safeDate(selected.capturedDate)}</Text>}
+          {!!selected.imageUrl && <Button label={saving ? 'Preparing image…' : 'Save / share image'} icon="download" secondary
+            disabled={saving} onPress={async () => {
+              const url = backendAsset(selected.imageUrl);
+              if (!url) { Alert.alert('Image unavailable', 'This image does not have a secure BENIUS address.'); return; }
+              setSaving(true);
+              let file: File | null = null;
+              try {
+                const folder = new Directory(Paths.cache, 'beni-gallery');
+                folder.create({ idempotent: true, intermediates: true });
+                const name = selected.title.replace(/[^a-z0-9_-]/gi, '_').slice(0, 48) || `gallery-${selected.id}`;
+                file = await File.downloadFileAsync(url, new File(folder, `${name}.jpg`), { idempotent: true });
+                if (!await Sharing.isAvailableAsync()) throw new Error('Secure file sharing is unavailable on this device.');
+                await Sharing.shareAsync(file.uri, { mimeType: 'image/jpeg', dialogTitle: selected.title });
+              } catch (error) {
+                Alert.alert('Image unavailable', error instanceof Error ? error.message : 'Could not save this image.');
+              } finally {
+                if (file?.exists) file.delete();
+                setSaving(false);
+              }
+            }} />}
           <Button label="Close" onPress={() => setSelected(null)} secondary />
         </Pressable>}
       </Pressable>
@@ -426,6 +461,9 @@ export function StudentFeesScreen() {
   const identity = useIdentityKey();
   const session = sessions.find(item => item.id === selectedId);
   const [tab, setTab] = useState<'fees' | 'history' | 'reminders'>('fees');
+  const [document, setDocument] = useState<FeeDocument | null>(null);
+  const [documentLoading, setDocumentLoading] = useState<number | null>(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const query = useQuery({
     queryKey: ['mobile/student/fees', ...identity, selectedId],
     enabled: selectedId !== null,
@@ -455,7 +493,7 @@ export function StudentFeesScreen() {
   const portal = useQuery({
     queryKey: ['mobile/student/fees/portal-info', ...identity, selectedId],
     enabled: selectedId !== null && session?.isActive === true,
-    queryFn: ({ signal }) => apiGetForSession<{ isEnabled: boolean; gatewayUrl: string | null; bannerMessage: string | null }>(
+    queryFn: ({ signal }) => apiGetForSession<{ isEnabled: boolean; gatewayUrl: string | null; bannerMessage: string | null; isRazorpayEnabled: boolean }>(
       '/mobile/student/fees/portal-info', selectedId!, { signal }),
     staleTime: 60_000,
   });
@@ -463,6 +501,68 @@ export function StudentFeesScreen() {
   const outstanding = records.filter(record => record.status.toLowerCase() !== 'paid');
   const paidTotal = records.filter(record => record.status.toLowerCase() === 'paid').reduce((sum, record) => sum + record.amount, 0);
   const dueTotal = outstanding.reduce((sum, record) => sum + record.amount + (record.lateFeeAmount ?? 0), 0);
+  const loadDocument = async (record: Fee, documentType: 'invoice' | 'receipt') => {
+    if (selectedId === null || documentLoading !== null) return;
+    setDocumentLoading(record.id);
+    try {
+      const result = await apiGetForSession<FeeDocument>(
+        `/mobile/student/fees/${record.id}/${documentType}`, selectedId,
+      );
+      setDocument(result);
+    } catch (error) {
+      Alert.alert(`${documentType === 'receipt' ? 'Receipt' : 'Invoice'} unavailable`,
+        error instanceof Error ? error.message : 'The document could not be loaded.');
+    } finally {
+      setDocumentLoading(null);
+    }
+  };
+  const shareDocumentPdf = async () => {
+    if (!document || pdfLoading) return;
+    setPdfLoading(true);
+    try {
+      const fee = document.fee;
+      const breakdown = (fee.breakdownSnapshot ?? []).map(item =>
+        `<tr><td>${htmlText(item.name)}${item.purpose ? ` <small>${htmlText(item.purpose)}</small>` : ''}</td><td>${htmlText(amount(item.amount))}</td></tr>`,
+      ).join('');
+      const payment = document.payment
+        ? Object.entries(document.payment).filter(([, value]) => value != null && value !== '').map(([key, value]) =>
+          `<div class="meta"><b>${htmlText(key.replace(/[A-Z]/g, letter => ` ${letter}`).replace(/^./, letter => letter.toUpperCase()))}</b><span>${htmlText(value)}</span></div>`,
+        ).join('')
+        : '';
+      const total = fee.amount + (fee.lateFeeAmount ?? 0);
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+        @page { margin: 28px; } * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color: #172033; margin: 0; }
+        .brand { border-bottom: 4px solid #2563eb; padding-bottom: 16px; margin-bottom: 22px; }
+        .brand h1 { color: #2563eb; letter-spacing: 2px; margin: 0; font-size: 24px; }
+        .brand p { color: #64748b; margin: 6px 0 0; font-size: 12px; }
+        h2 { margin: 0 0 18px; font-size: 20px; } .meta { display:flex; justify-content:space-between; gap:20px; border-bottom:1px solid #e2e8f0; padding:8px 0; font-size:12px; }
+        .meta span { text-align:right; } table { width:100%; border-collapse:collapse; margin-top:20px; } th,td { padding:10px 0; border-bottom:1px solid #e2e8f0; text-align:left; font-size:12px; } th:last-child,td:last-child { text-align:right; }
+        .total { display:flex; justify-content:space-between; margin-top:18px; font-size:18px; font-weight:700; } .foot { color:#64748b; font-size:10px; margin-top:28px; }
+      </style></head><body>
+        <div class="brand"><h1>BENIUS</h1><p>${htmlText(document.schoolName)} · ${htmlText(document.sessionName)}</p></div>
+        <h2>${document.documentType === 'receipt' ? 'Payment Receipt' : 'Fee Invoice'}</h2>
+        <div class="meta"><b>Student</b><span>${htmlText(document.studentName)}</span></div>
+        <div class="meta"><b>Fee</b><span>${htmlText(fee.feeType)}</span></div>
+        ${fee.invoiceNumber ? `<div class="meta"><b>Invoice number</b><span>${htmlText(fee.invoiceNumber)}</span></div>` : ''}
+        ${fee.receiptNumber ? `<div class="meta"><b>Receipt number</b><span>${htmlText(fee.receiptNumber)}</span></div>` : ''}
+        <div class="meta"><b>Due date</b><span>${htmlText(safeDate(fee.dueDate))}</span></div>
+        ${fee.paidDate ? `<div class="meta"><b>Paid date</b><span>${htmlText(safeDate(fee.paidDate))}</span></div>` : ''}
+        ${breakdown ? `<table><thead><tr><th>Charge</th><th>Amount</th></tr></thead><tbody>${breakdown}</tbody></table>` : ''}
+        <div class="total"><span>Total</span><span>${htmlText(amount(total))}</span></div>
+        ${payment ? `<h3>Payment details</h3>${payment}` : ''}
+        ${fee.notes ? `<p class="foot">${htmlText(fee.notes)}</p>` : ''}
+        <p class="foot">Generated in BENIUS from the authoritative ${htmlText(document.sessionName)} student record. This document does not represent a payment unless the payment status and receipt details above confirm it.</p>
+      </body></html>`;
+      const printed = await Print.printToFileAsync({ html });
+      if (!await Sharing.isAvailableAsync()) throw new Error('PDF sharing is unavailable on this device.');
+      await Sharing.shareAsync(printed.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: 'Share fee document' });
+    } catch (error) {
+      Alert.alert('PDF unavailable', error instanceof Error ? error.message : 'Could not generate the fee document.');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
   return <ModuleFrame title="Fees & Payments" subtitle={session?.sessionName ?? 'Student fee records'}>
     <View style={{ flexDirection: 'row', gap: 10 }}>
       <View style={{ flex: 1 }}><Card><Text style={{ color: c.mutedForeground }}>Total Due</Text><Text style={{ color: c.destructive, fontSize: 20, fontWeight: '700' }}>{amount(summary.data?.totalOutstanding ?? dueTotal)}</Text></Card></View>
@@ -489,11 +589,6 @@ export function StudentFeesScreen() {
           }
         }} />
       </>}
-      {session?.isActive && <Card>
-        <Text style={{ color: c.mutedForeground, fontSize: 12 }}>
-          Mobile Razorpay checkout is not available in this build. No payment will be marked complete here unless the school payment service confirms it. Use the configured school portal above or contact the school office.
-        </Text>
-      </Card>}
       <QueryState loading={query.isPending} error={query.error} empty={!query.isPending && !query.error && records.length === 0} retry={() => { void query.refetch(); }} />
       {records.map(record => <Card key={record.id}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 12 }}>
@@ -501,10 +596,25 @@ export function StudentFeesScreen() {
       </View>
       <Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700' }}>{amount(record.amount + (record.lateFeeAmount ?? 0))}</Text>
       <Text style={{ color: c.mutedForeground }}>Due {safeDate(record.dueDate)}{record.paidDate ? ` · Paid ${safeDate(record.paidDate)}` : ''}</Text>
+      {(record.breakdownSnapshot ?? []).map((item, index) => <Text key={`${record.id}-breakdown-${index}`} style={{ color: c.mutedForeground, fontSize: 12 }}>
+        {item.name}{item.purpose ? ` · ${item.purpose}` : ''}: {amount(item.amount)}
+      </Text>)}
       {!!record.invoiceNumber && <Text style={{ color: c.mutedForeground }}>Invoice {record.invoiceNumber}</Text>}
       {!!record.receiptNumber && <Text style={{ color: c.mutedForeground }}>Receipt {record.receiptNumber}</Text>}
       {!!record.notes && <Text style={{ color: c.mutedForeground }}>{record.notes}</Text>}
-      {record.status.toLowerCase() !== 'paid' && !portal.data?.gatewayUrl && <Text style={{ color: c.destructive, fontSize: 12 }}>Please contact the school office for payment options.</Text>}
+      {record.status.toLowerCase() === 'paid'
+        ? <Button label={documentLoading === record.id ? 'Loading receipt…' : 'View receipt'} icon="file-text" secondary
+            disabled={documentLoading !== null} onPress={() => { void loadDocument(record, 'receipt'); }} />
+        : <Button label={documentLoading === record.id ? 'Loading invoice…' : 'View invoice'} icon="file-text" secondary
+            disabled={documentLoading !== null} onPress={() => { void loadDocument(record, 'invoice'); }} />}
+      {record.status.toLowerCase() !== 'paid' && session?.isActive && portal.data?.isRazorpayEnabled
+        && <StudentPaymentCheckout feeRecordId={record.id} sessionId={selectedId!} onPaid={receipt => {
+          Alert.alert('Payment confirmed', `Your payment was verified. Receipt ${receipt}.`);
+          void query.refetch(); void summary.refetch(); void attempts.refetch();
+        }} />}
+      {record.status.toLowerCase() !== 'paid'
+        && (portal.isError || (portal.isSuccess && !portal.data.gatewayUrl && !portal.data.isRazorpayEnabled))
+        && <Text style={{ color: c.destructive, fontSize: 12 }}>Please contact the school office for payment options.</Text>}
       </Card>)}
       {!!query.error && <Button label="Refresh fee status" onPress={() => { void query.refetch(); }} secondary />}
       {!!summary.error && <State title="Fee summary unavailable" detail={summary.error.message} retry={() => { void summary.refetch(); }} />}
@@ -530,6 +640,28 @@ export function StudentFeesScreen() {
         {!!reminder.recipient && <Text style={{ color: c.mutedForeground }}>{reminder.recipient}</Text>}
       </Card>)}
     </>}
+    <Modal visible={!!document} transparent animationType="slide" onRequestClose={() => setDocument(null)}>
+      <Pressable onPress={() => setDocument(null)} style={{ flex: 1, justifyContent: 'center', backgroundColor: '#0008', padding: 18 }}>
+        {document && <Pressable onPress={() => undefined} style={{ backgroundColor: c.card, borderRadius: 14, padding: 18, gap: 9 }}>
+          <CardTitle title={document.documentType === 'receipt' ? 'Payment receipt' : 'Fee invoice'}
+            trailing={document.sessionName} />
+          <Text style={{ color: c.foreground, fontSize: 18, fontWeight: '700' }}>{document.fee.feeType}</Text>
+          <Text style={{ color: c.foreground }}>Amount: {amount(document.fee.amount + (document.fee.lateFeeAmount ?? 0))}</Text>
+          <Text style={{ color: c.mutedForeground }}>Due: {safeDate(document.fee.dueDate)}</Text>
+          {!!document.fee.invoiceNumber && <Text style={{ color: c.mutedForeground }}>Invoice: {document.fee.invoiceNumber}</Text>}
+          {!!document.fee.receiptNumber && <Text style={{ color: c.mutedForeground }}>Receipt: {document.fee.receiptNumber}</Text>}
+          {document.payment && Object.entries(document.payment).filter(([, value]) => value != null && value !== '').map(([key, value]) =>
+            <Text key={key} style={{ color: c.mutedForeground }}>{key.replace(/[A-Z]/g, letter => ` ${letter}`).replace(/^./, letter => letter.toUpperCase())}: {String(value)}</Text>
+          )}
+          <Text style={{ color: c.mutedForeground, fontSize: 12 }}>
+            This branded PDF is generated on-device from the authoritative document data for the selected academic session.
+          </Text>
+          <Button label={pdfLoading ? 'Generating PDF…' : 'Save / share branded PDF'} icon="download"
+            disabled={pdfLoading} onPress={() => { void shareDocumentPdf(); }} />
+          <Button label="Close" secondary onPress={() => setDocument(null)} />
+        </Pressable>}
+      </Pressable>
+    </Modal>
   </ModuleFrame>;
 }
 

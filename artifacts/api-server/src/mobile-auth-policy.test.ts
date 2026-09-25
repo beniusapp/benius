@@ -72,6 +72,54 @@ test("mobile bearer is accepted only inside the mobile auth route namespace", ()
     assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, true);
   }
   for (const [path, method] of [
+    ["/api/mobile/student/notices", "GET"],
+    ["/api/mobile/student/notices/mark-read", "POST"],
+    ["/api/mobile/student/fees/17/invoice", "GET"],
+    ["/api/mobile/student/fees/17/receipt", "GET"],
+    ["/api/mobile/student/payments/create-order", "POST"],
+    ["/api/mobile/student/payments/verify", "POST"],
+    ["/api/mobile/student/complaints/17/notes", "GET"],
+    ["/api/mobile/student/leave-files/123e4567-e89b-42d3-a456-426614174000.pdf", "GET"],
+    ["/api/mobile/teacher/modules/examination/save-scores", "POST"],
+    ["/api/mobile/teacher/modules/attendance/self-check-in", "POST"],
+    ["/api/mobile/teacher/modules/attendance/self-check-out", "POST"],
+    ["/api/mobile/teacher/modules/attendance/self-correction", "POST"],
+    ["/api/mobile/teacher/modules/calendar", "GET"],
+    ["/api/mobile/teacher/modules/timetable/save", "POST"],
+    ["/api/mobile/teacher/modules/timetable/delete", "POST"],
+    ["/api/mobile/teacher/modules/homework/private-files/123e4567-e89b-42d3-a456-426614174000.pdf", "GET"],
+    ["/api/mobile/teacher/modules/noticeboard/edit", "POST"],
+    ["/api/mobile/teacher/modules/noticeboard/delete", "POST"],
+    ["/api/mobile/teacher/modules/noticeboard/private-files/123e4567-e89b-42d3-a456-426614174000.pdf", "GET"],
+    ["/api/mobile/teacher/modules/complaint/create", "POST"],
+    ["/api/mobile/teacher/modules/complaint/private-files/123e4567-e89b-42d3-a456-426614174000.pdf", "GET"],
+    ["/api/mobile/admin/modules/exam-controller/decision", "POST"],
+    ["/api/mobile/admin/modules/fees/analytics", "GET"],
+    ["/api/mobile/admin/modules/fees/invoices/17", "PATCH"],
+    ["/api/mobile/admin/modules/fees/transactions/17/receipt", "GET"],
+    ["/api/mobile/admin/modules/student-registry/export.xlsx", "GET"],
+    ["/api/mobile/admin/modules/student-registry/deactivated/export.xlsx", "GET"],
+    ["/api/mobile/admin/modules/student-registry/import.xlsx", "POST"],
+    ["/api/mobile/admin/modules/exam-controller/reminder-all", "POST"],
+    ["/api/mobile/admin/workflow/noticeboard/actions", "POST"],
+    ["/api/mobile/admin/workflow/private-notices/123e4567-e89b-42d3-a456-426614174000.pdf", "GET"],
+  ]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, true, `${method} ${path}`);
+  }
+  for (const [path, method] of [
+    ["/api/mobile/student/payments/verify/", "POST"],
+    ["/api/mobile/teacher/modules/examination/private-files/not-a-uuid.pdf", "GET"],
+    ["/api/mobile/teacher/modules/unknown-module", "GET"],
+    ["/api/mobile/teacher/modules/noticeboard/delete/", "POST"],
+    ["/api/mobile/teacher/modules/attendance/self-check-in", "GET"],
+    ["/api/mobile/teacher/modules/timetable/publish", "POST"],
+    ["/api/mobile/admin/modules/fees/invoices/17", "POST"],
+    ["/api/mobile/admin/workflow/unknown-module/actions", "POST"],
+    ["/api/mobile/admin/modules/school-setup/sessions/17/activate", "GET"],
+  ]) {
+    assert.equal(call(path, "Bearer opaque-mobile-token", method).continued, false, `${method} ${path}`);
+  }
+  for (const [path, method] of [
     ["/api/mobile/student/homework/14/", "GET"],
     ["/api/mobile/student/homework/14abc", "GET"],
     ["/api/mobile/student/homework/14/submit/", "POST"],
@@ -141,8 +189,8 @@ test("private student dashboard and profile JSON bodies are excluded from respon
   ]) {
     assert.equal(shouldLogJsonResponseBody(path), false);
   }
-  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/"), true);
-  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/extra"), true);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/"), false);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/student/dashboard/extra"), false);
   for (const path of [
     "/api/mobile/student/profile",
     "/api/mobile/student/profile/submit",
@@ -150,9 +198,11 @@ test("private student dashboard and profile JSON bodies are excluded from respon
     "/api/mobile/student/profile/change-password",
   ]) {
     assert.equal(shouldLogJsonResponseBody(path), false);
-    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), false);
   }
-  assert.equal(shouldLogJsonResponseBody("/api/mobile/auth/me"), true);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/auth/me"), false);
+  assert.equal(shouldLogJsonResponseBody("/api/mobile/unknown/private-route"), false);
+  assert.equal(shouldLogJsonResponseBody("/api/admin/profile"), true);
   for (const path of [
     "/api/mobile/teacher/me",
     "/api/mobile/teacher/pending-profiles/count",
@@ -160,16 +210,16 @@ test("private student dashboard and profile JSON bodies are excluded from respon
     "/api/mobile/teacher/change-password",
   ]) {
     assert.equal(shouldLogJsonResponseBody(path), false);
-    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), false);
   }
   for (const path of ["/api/mobile/admin/overview", "/api/mobile/admin/profile"]) {
     assert.equal(shouldLogJsonResponseBody(path), false);
-    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), false);
   }
   for (const endpoint of ["monthly", "yearly", "stats", "policy"]) {
     const path = `/api/mobile/student/attendance/${endpoint}`;
     assert.equal(shouldLogJsonResponseBody(path), false);
-    assert.equal(shouldLogJsonResponseBody(`${path}/`), true);
+    assert.equal(shouldLogJsonResponseBody(`${path}/`), false);
   }
 });
 

@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -68,10 +69,54 @@ type ResultData = {
     scores: Array<{ subject: string; examType: string; marks: number; totalMarks: number; isAbsent: boolean }>;
     attendance: { attendancePct: number | null; presentDays: number; totalDays: number } | null;
   }>;
-  policyTier: { examWeights: string } | null;
+  policyTier: { examWeights: string; promotionFailRules?: string | null; resultsConfig?: string | null } | null;
   passPercentage: number | null;
   gradingRules: Array<{ id: number; gradeLabel: string; minPercent: number; maxPercent: number; remarks?: string | null }>;
 };
+
+type WeightedTerm = { name: string; percentage: number | null; failed: number; subjects: number };
+
+function calculateWeightedTerms(student: ResultData['students'][number], policy: ResultData['policyTier'], passPercentage: number | null): WeightedTerm[] {
+  if (!policy) return [];
+  let weights: Record<string, Array<{ source_exam: string; weight: number }>> = {};
+  try { weights = JSON.parse(policy.examWeights || '{}'); } catch { return []; }
+  return Object.entries(weights).map(([name, components]) => {
+    const bySubject = new Map<string, typeof student.scores>();
+    student.scores.forEach(score => bySubject.set(score.subject, [...(bySubject.get(score.subject) ?? []), score]));
+    const percentages: number[] = [];
+    let failed = 0;
+    bySubject.forEach(scores => {
+      let weighted = 0; let weightTotal = 0; let absent = false;
+      components.forEach(component => {
+        const score = scores.find(item => item.examType === component.source_exam);
+        if (!score) return;
+        if (score.isAbsent) { absent = true; return; }
+        if (score.totalMarks > 0) {
+          weighted += (score.marks / score.totalMarks) * 100 * component.weight;
+          weightTotal += component.weight;
+        }
+      });
+      if (absent) { failed += 1; percentages.push(0); }
+      else if (weightTotal > 0) {
+        const percentage = weighted / weightTotal;
+        percentages.push(percentage);
+        if (passPercentage !== null && percentage < passPercentage) failed += 1;
+      }
+    });
+    return { name, percentage: percentages.length ? percentages.reduce((a, b) => a + b, 0) / percentages.length : null, failed, subjects: percentages.length };
+  });
+}
+
+function calculateCumulative(terms: WeightedTerm[], policy: ResultData['policyTier']): number | null {
+  if (!policy?.resultsConfig) return null;
+  try {
+    const config = JSON.parse(policy.resultsConfig).cumulative;
+    if (!config?.enabled || !config.promotionEnabled) return null;
+    const entries = Object.entries(config.termWeights ?? {}) as Array<[string, number]>;
+    if (!entries.length || entries.some(([name]) => terms.find(term => term.name.trim() === name.trim())?.percentage == null)) return null;
+    return entries.reduce((sum, [name, weight]) => sum + (terms.find(term => term.name.trim() === name.trim())?.percentage ?? 0) * (Number(weight) / 100), 0);
+  } catch { return null; }
+}
 type CardRecord = {
   id: number;
   name: string;
@@ -85,6 +130,21 @@ type CardRecord = {
   role?: string | null;
 };
 type CardGroup = 'student' | 'teacher' | 'support-staff';
+type CardTemplate = {
+  version: 1;
+  activeFields: string[];
+  orientation: 'portrait' | 'landscape';
+  theme: 'modern-dark' | 'clean-light' | 'school-blue';
+  printFormat: 'pvc-cr80' | 'a4-grid';
+  savedAt?: string;
+};
+type CardGeneration = { id: string; group: CardGroup; recordIds: number[]; count: number; createdAt: string; sessionName: string };
+const DEFAULT_CARD_TEMPLATE: CardTemplate = { version: 1, activeFields: ['phone'], orientation: 'portrait', theme: 'modern-dark', printFormat: 'pvc-cr80' };
+const CARD_FIELD_OPTIONS: Record<CardGroup, Array<{ key: string; label: string }>> = {
+  student: [{ key: 'rollNumber', label: 'Roll number' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }, { key: 'gender', label: 'Gender' }, { key: 'fatherName', label: 'Father name' }, { key: 'address', label: 'Address' }],
+  teacher: [{ key: 'subject', label: 'Subject' }, { key: 'email', label: 'Email' }],
+  'support-staff': [{ key: 'role', label: 'Designation' }, { key: 'email', label: 'Email' }],
+};
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY_NUMBERS = [1, 2, 3, 4, 5, 6];
@@ -551,6 +611,34 @@ function AnalyticsModule({ user, sessionId, sessionName, isArchive }: Omit<Props
   const viewExams = viewClass ? data.classExamTypes[viewClass] ?? data.examTypes : data.examTypes;
   const resultSections = resultClass ? data.classSections[resultClass]?.length ? data.classSections[resultClass] : data.sections : [];
   const visibleResults = (results.data?.students ?? []).filter(item => `${item.name} ${item.digitalStudentId} ${item.rollNumber ?? ''}`.toLowerCase().includes(search.toLowerCase()));
+  const policy = results.data?.policyTier ?? null;
+  const passPercentage = results.data?.passPercentage ?? null;
+  const promotionLimit = (student: ResultData['students'][number]) => {
+    if (!policy?.promotionFailRules) return null;
+    try {
+      const rules = JSON.parse(policy.promotionFailRules);
+      const rule = rules.rule1;
+      const termData = calculateWeightedTerms(student, policy, passPercentage);
+      const applicable = rule?.enabled !== false && Array.isArray(rule?.rules)
+        ? rule.rules.find((item: { term?: string; fail_count?: number }) => termData.some(term => term.name.trim() === String(item.term ?? '').trim()))
+        : null;
+      const failed = applicable ? (termData.find(term => term.name.trim() === String(applicable.term ?? '').trim())?.failed ?? 0) : 0;
+      const attendanceRule = rules.rule_attendance;
+      const attendanceRequired = attendanceRule?.enabled === true && Array.isArray(attendanceRule.rules)
+        ? attendanceRule.rules.find((item: { term?: string }) => termData.some(term => term.name.trim() === String(item.term ?? '').trim()))
+        : null;
+      const attendanceOkay = !attendanceRequired || student.attendance?.attendancePct == null
+        || student.attendance.attendancePct >= Number(attendanceRequired.min_pct);
+      const termAverageRule = rules.rule_term_avg;
+      const averageTerms = termData.filter(term => term.percentage != null);
+      const averageOkay = termAverageRule?.enabled !== true || !averageTerms.length
+        || averageTerms.every(term => (term.percentage ?? 0) >= Number(termAverageRule.minPct));
+      const cumulative = calculateCumulative(termData, policy);
+      const cumulativeOkay = cumulative == null || !rules.rule_cumulative
+        || rules.rule_cumulative.enabled !== true || cumulative >= Number(rules.rule_cumulative.minPct);
+      return { promoted: (!applicable || failed <= Number(applicable.fail_count)) && attendanceOkay && averageOkay && cumulativeOkay, failed, limit: applicable ? Number(applicable.fail_count) : 0, attendanceOkay, averageOkay, cumulativeOkay };
+    } catch { return null; }
+  };
   return <View style={styles.module}>
     <SessionBanner name={sessionName} archived={isArchive} />
     <Heading>Performance Analytics</Heading>
@@ -579,14 +667,24 @@ function AnalyticsModule({ user, sessionId, sessionName, isArchive }: Omit<Props
         <TextInput value={search} onChangeText={setSearch} placeholder="Search students" placeholderTextColor={c.mutedForeground} style={[styles.input, { color: c.foreground, borderColor: c.border }]} />
         {results.isPending ? <ActivityIndicator color={c.primary} /> : results.isError ? <Label color={c.destructive}>{(results.error as Error).message}</Label>
           : visibleResults.length === 0 ? <Label>{EMPTY_NOTICE}</Label>
-              : visibleResults.map(student => <View key={student.studentId} style={[styles.resultCard, { borderColor: c.border }]}>
+               : visibleResults.map(student => {
+                 const terms = calculateWeightedTerms(student, policy, passPercentage);
+                 const promotion = promotionLimit(student);
+                 return <View key={student.studentId} style={[styles.resultCard, { borderColor: c.border }]}>
                 <View style={styles.rowBetween}><View style={{ flex: 1 }}><Label style={{ fontWeight: '700' }}>{student.name}</Label><Text style={{ color: c.mutedForeground, fontSize: 11 }}>{student.digitalStudentId}{student.rollNumber ? ` · Roll ${student.rollNumber}` : ''}</Text></View>
                   <Text style={{ color: c.primary, fontSize: 12, fontWeight: '700' }}>{student.attendance?.attendancePct == null ? 'Attendance —' : `Attendance ${Math.round(student.attendance.attendancePct)}%`}</Text></View>
+                {terms.map(term => <View key={term.name} style={styles.rowBetween}>
+                  <Label>{term.name}: {term.percentage == null ? 'Incomplete' : `${term.percentage.toFixed(1)}%`}</Label>
+                  <Label color={term.failed ? c.destructive : c.primary}>{term.failed ? `${term.failed} failed subject${term.failed === 1 ? '' : 's'}` : 'Passed'}</Label>
+                </View>)}
+                {calculateCumulative(terms, policy) != null && <Label>Cumulative weighted result: {calculateCumulative(terms, policy)!.toFixed(1)}%</Label>}
+                {promotion && <Label color={promotion.promoted ? c.primary : c.destructive}>{promotion.promoted ? 'Promotion rule: eligible' : 'Promotion rule: detained'} · {promotion.failed}/{promotion.limit} allowed failed subjects{promotion.attendanceOkay ? '' : ' · attendance below policy'}{promotion.averageOkay ? '' : ' · term average below policy'}{promotion.cumulativeOkay ? '' : ' · cumulative result below policy'}</Label>}
                 {!student.scores.length ? <Text style={{ color: c.mutedForeground, fontSize: 12 }}>No recorded marks in this session.</Text>
                   : student.scores.map((score, index) => <Text key={`${score.subject}-${score.examType}-${index}`} style={{ color: c.mutedForeground, fontSize: 11 }}>
                     {score.subject} · {score.examType}: {score.isAbsent ? 'Absent' : `${score.marks}/${score.totalMarks}`}
                   </Text>)}
-              </View>)}
+              </View>;
+               })}
       </>}
     </Card>}
   </View>;
@@ -601,6 +699,7 @@ function escapeHtml(value: unknown): string {
 function IdCardModule({ user, sessionId, sessionName, isArchive }: Omit<Props, 'moduleId'> & { schoolName: string }) {
   const c = useColors();
   const get = useSessionGet(user, sessionId);
+  const storagePrefix = `benius:id-cards:v1:${user.schoolId}:${user.id}`;
   const groups: Array<{ id: CardGroup; label: string }> = [
     { id: 'student', label: 'Students' }, { id: 'teacher', label: 'Teachers' }, { id: 'support-staff', label: 'Support staff' },
   ].filter((item): item is { id: CardGroup; label: string } => hasSubmodulePermission(user, 'id-card-gen', item.id));
@@ -610,6 +709,41 @@ function IdCardModule({ user, sessionId, sessionName, isArchive }: Omit<Props, '
   const [search, setSearch] = useState('');
   const [searched, setSearched] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
+  const [template, setTemplate] = useState<CardTemplate>(DEFAULT_CARD_TEMPLATE);
+  const [history, setHistory] = useState<CardGeneration[]>([]);
+  const [configure, setConfigure] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [pendingRepeat, setPendingRepeat] = useState<number[] | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    void Promise.all([
+      AsyncStorage.getItem(`${storagePrefix}:template:${group}`),
+      AsyncStorage.getItem(`${storagePrefix}:history`),
+    ]).then(([savedTemplate, savedHistory]) => {
+      if (!mounted) return;
+      try {
+        if (savedTemplate) {
+          const parsed = JSON.parse(savedTemplate) as Partial<CardTemplate>;
+          if (parsed.version === 1) setTemplate({ ...DEFAULT_CARD_TEMPLATE, ...parsed });
+        }
+        if (savedHistory) setHistory(JSON.parse(savedHistory) as CardGeneration[]);
+      } catch { /* corrupted local preferences are safely ignored */ }
+    });
+    return () => { mounted = false; };
+  }, [storagePrefix, group]);
+  const saveTemplate = async (next: CardTemplate) => {
+    const saved = { ...next, savedAt: new Date().toISOString() };
+    setTemplate(saved);
+    await AsyncStorage.setItem(`${storagePrefix}:template:${group}`, JSON.stringify(saved));
+    setConfigure(false);
+  };
+  const addHistory = async (recordIds: number[]) => {
+    const entry: CardGeneration = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, group, recordIds, count: recordIds.length, createdAt: new Date().toISOString(), sessionName };
+    const next = [entry, ...history].slice(0, 25);
+    setHistory(next);
+    await AsyncStorage.setItem(`${storagePrefix}:history`, JSON.stringify(next));
+  };
   const context = useQuery({
     queryKey: ['mobile-admin-academic', 'id-card-context', user.schoolId, sessionId],
     queryFn: ({ signal }) => get('/mobile/admin/modules/id-card-gen/context', sessionId, signal) as Promise<Pick<AcademicContext, 'classes' | 'sections'>>,
@@ -621,6 +755,12 @@ function IdCardModule({ user, sessionId, sessionName, isArchive }: Omit<Props, '
     enabled: searched && groups.length > 0,
   });
   const records = roster.data?.roster ?? [];
+  useEffect(() => {
+    if (pendingRepeat && records.length) {
+      setSelected(records.filter(record => pendingRepeat.includes(record.id)).map(record => record.id));
+      setPendingRepeat(null);
+    }
+  }, [pendingRepeat, records]);
   const toggle = (id: number) => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
   const selectAll = () => setSelected(selected.length === records.length ? [] : records.map(item => item.id));
   const createPdf = async () => {
@@ -631,25 +771,31 @@ function IdCardModule({ user, sessionId, sessionName, isArchive }: Omit<Props, '
         ? `${item.className ? `Class ${escapeHtml(item.className)}` : ''}${item.section ? ` · ${escapeHtml(item.section)}` : ''}`
         : escapeHtml(item.role ?? item.subject ?? (group === 'teacher' ? 'Faculty' : 'Staff'));
       const identity = group === 'student' ? item.digitalStudentId : group === 'teacher' ? item.digitalTeacherId : item.email;
-      return `<article class="card"><div class="brand">${escapeHtml(user.schoolName)}</div><div class="rule"></div><h2>${escapeHtml(item.name)}</h2><p class="subtitle">${subtitle}</p><p class="id">${escapeHtml(identity || `Record ${item.id}`)}</p><footer>${escapeHtml(sessionName || roster.data?.session.sessionName || 'Academic session')}</footer></article>`;
+      const optional = template.activeFields.map(field => {
+        const value = (item as Record<string, unknown>)[field];
+        return value ? `<p class="field"><b>${escapeHtml(CARD_FIELD_OPTIONS[group].find(option => option.key === field)?.label ?? field)}:</b> ${escapeHtml(value)}</p>` : '';
+      }).join('');
+      return `<article class="card"><div class="brand">${escapeHtml(user.schoolName)}</div><div class="rule"></div><h2>${escapeHtml(item.name)}</h2><p class="subtitle">${subtitle}</p><p class="id">${escapeHtml(identity || `Record ${item.id}`)}</p>${optional}<footer>${escapeHtml(sessionName || roster.data?.session.sessionName || 'Academic session')}</footer></article>`;
     }).join('');
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
       *{box-sizing:border-box}body{margin:0;background:#eef2f6;font-family:Arial,sans-serif;color:#12233d;padding:20px}
-      .grid{display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:14px}
-      .card{position:relative;height:170px;background:#fff;border:1px solid #cfdae7;border-radius:12px;padding:16px;break-inside:avoid;overflow:hidden}
-      .brand{font-size:12px;font-weight:bold;color:#0b60ea;text-transform:uppercase;letter-spacing:1px}
+      .grid{display:grid;grid-template-columns:repeat(${template.printFormat === 'a4-grid' ? 2 : 1},minmax(240px,1fr));gap:14px}
+      .card{position:relative;height:${template.orientation === 'landscape' ? 125 : 170}px;background:${template.theme === 'modern-dark' ? '#12233d' : template.theme === 'school-blue' ? '#eff6ff' : '#fff'};color:${template.theme === 'modern-dark' ? '#fff' : '#12233d'};border:1px solid #cfdae7;border-radius:12px;padding:16px;break-inside:avoid;overflow:hidden}
+      .brand{font-size:12px;font-weight:bold;color:${template.theme === 'modern-dark' ? '#7dd3fc' : '#0b60ea'};text-transform:uppercase;letter-spacing:1px}
       .rule{height:2px;background:#0b60ea;margin:10px 0}
       h2{font-size:17px;margin:0 0 5px}.subtitle{font-size:12px;color:#46566b;margin:0 0 11px}
-      .id{font-size:12px;font-weight:bold;margin:0}.extra{font-size:10px;color:#46566b;margin:8px 0}
+      .id{font-size:12px;font-weight:bold;margin:0}.field{font-size:10px;color:#46566b;margin:4px 0}
       footer{position:absolute;bottom:12px;font-size:9px;color:#66758a}
       @media print{body{padding:8px;background:#fff}.grid{gap:8px}.card{border-radius:6px}}
     </style></head><body><main class="grid">${cards}</main></body></html>`;
     const file = await Print.printToFileAsync({ html });
     if (!await Sharing.isAvailableAsync()) {
+      await addHistory(printable.map(item => item.id));
       Alert.alert('PDF created', `The cards PDF is ready at ${file.uri}, but sharing is unavailable on this device.`);
       return;
     }
     await Sharing.shareAsync(file.uri, { mimeType: 'application/pdf', dialogTitle: 'Share ID cards' });
+    await addHistory(printable.map(item => item.id));
   };
   if (!groups.length) return <Status title="No ID card groups available" detail="Your account has no permitted ID card submodule." />;
   return <View style={styles.module}>
@@ -657,6 +803,49 @@ function IdCardModule({ user, sessionId, sessionName, isArchive }: Omit<Props, '
     <Heading>ID Card Generator</Heading>
     <Text style={{ color: c.mutedForeground, fontSize: 13, lineHeight: 20 }}>Prepare printable cards from the school’s actual roster records.</Text>
     <View style={styles.wrapRow}>{groups.map(item => <Chip key={item.id} label={item.label} selected={group === item.id} onPress={() => { setGroup(item.id); setSearched(false); setSelected([]); }} />)}</View>
+    <View style={styles.wrapRow}>
+      <Action label="Edit template" icon="sliders" tone="neutral" onPress={() => setConfigure(true)} />
+      <Action label="Preview" icon="eye" tone="neutral" onPress={() => setShowPreview(true)} />
+      <Action label={`History (${history.length})`} icon="clock" tone="neutral" onPress={() => setShowHistory(true)} />
+    </View>
+    <Modal visible={configure} animationType="slide" transparent onRequestClose={() => setConfigure(false)}>
+      <View style={styles.modalBackdrop}><View style={[styles.modalCard, { backgroundColor: c.background, borderColor: c.border }]}>
+        <View style={styles.rowBetween}><Heading>Edit {group === 'student' ? 'student' : group === 'teacher' ? 'teacher' : 'staff'} template</Heading><Pressable onPress={() => setConfigure(false)}><Feather name="x" size={22} color={c.foreground} /></Pressable></View>
+        <TextLabel>Fields shown on generated cards</TextLabel>
+        <View style={styles.wrapRow}>{CARD_FIELD_OPTIONS[group].map(field => <Chip key={field.key} label={field.label} selected={template.activeFields.includes(field.key)}
+          onPress={() => setTemplate(current => ({ ...current, activeFields: current.activeFields.includes(field.key) ? current.activeFields.filter(item => item !== field.key) : [...current.activeFields, field.key] }))} />)}</View>
+        <TextLabel>Orientation</TextLabel><View style={styles.wrapRow}>
+          <Chip label="Portrait" selected={template.orientation === 'portrait'} onPress={() => setTemplate(current => ({ ...current, orientation: 'portrait' }))} />
+          <Chip label="Landscape" selected={template.orientation === 'landscape'} onPress={() => setTemplate(current => ({ ...current, orientation: 'landscape' }))} />
+        </View>
+        <TextLabel>Format and theme</TextLabel><View style={styles.wrapRow}>
+          <Chip label="PVC / single card" selected={template.printFormat === 'pvc-cr80'} onPress={() => setTemplate(current => ({ ...current, printFormat: 'pvc-cr80' }))} />
+          <Chip label="A4 grid" selected={template.printFormat === 'a4-grid'} onPress={() => setTemplate(current => ({ ...current, printFormat: 'a4-grid' }))} />
+          {(['modern-dark', 'clean-light', 'school-blue'] as const).map(theme => <Chip key={theme} label={theme.replace('-', ' ')} selected={template.theme === theme} onPress={() => setTemplate(current => ({ ...current, theme }))} />)}
+        </View>
+        <Action label="Save template" icon="save" onPress={() => { void saveTemplate(template); }} />
+      </View></View>
+    </Modal>
+    <Modal visible={showPreview} animationType="slide" transparent onRequestClose={() => setShowPreview(false)}>
+      <View style={styles.modalBackdrop}><View style={[styles.modalCard, { backgroundColor: c.background, borderColor: c.border }]}>
+        <View style={styles.rowBetween}><Heading>Template preview</Heading><Pressable onPress={() => setShowPreview(false)}><Feather name="x" size={22} color={c.foreground} /></Pressable></View>
+        <View style={[styles.previewCard, { backgroundColor: template.theme === 'modern-dark' ? '#12233d' : template.theme === 'school-blue' ? '#eff6ff' : '#fff', borderColor: c.border }]}>
+          <Text style={{ color: template.theme === 'modern-dark' ? '#7dd3fc' : '#0b60ea', fontWeight: '800' }}>{user.schoolName}</Text>
+          <View style={{ height: 2, backgroundColor: '#0b60ea', marginVertical: 10 }} /><Text style={{ color: template.theme === 'modern-dark' ? '#fff' : '#12233d', fontSize: 18, fontWeight: '800' }}>{group === 'student' ? 'Aarav Sharma' : group === 'teacher' ? 'Teacher 1 MIS' : 'Ravi Kumar'}</Text>
+          <Text style={{ color: c.mutedForeground, marginTop: 6 }}>{template.activeFields.map(field => CARD_FIELD_OPTIONS[group].find(option => option.key === field)?.label ?? field).join(' · ') || 'Name and identity only'}</Text>
+        </View>
+        <Label>{template.orientation} · {template.printFormat} · {template.savedAt ? `saved ${new Date(template.savedAt).toLocaleString()}` : 'unsaved changes'}</Label>
+      </View></View>
+    </Modal>
+    <Modal visible={showHistory} animationType="slide" transparent onRequestClose={() => setShowHistory(false)}>
+      <View style={styles.modalBackdrop}><View style={[styles.modalCard, { backgroundColor: c.background, borderColor: c.border }]}>
+        <View style={styles.rowBetween}><Heading>Generated history</Heading><Pressable onPress={() => setShowHistory(false)}><Feather name="x" size={22} color={c.foreground} /></Pressable></View>
+        {!history.length ? <Label>No local generation history for this school account.</Label> : history.filter(item => item.group === group).map(item => <View key={item.id} style={[styles.rowBetween, { borderBottomWidth: StyleSheet.hairlineWidth, borderColor: c.border, paddingVertical: 9 }]}>
+          <View style={{ flex: 1 }}><Label>{item.count} {item.group} cards</Label><Text style={{ color: c.mutedForeground, fontSize: 11 }}>{new Date(item.createdAt).toLocaleString()} · {item.sessionName || 'Academic session'}</Text></View>
+          <Action label="Repeat" icon="rotate-cw" tone="neutral" onPress={() => { setPendingRepeat(item.recordIds); setSelected([]); setSearched(true); setShowHistory(false); }} />
+        </View>)}
+      </View></View>
+    </Modal>
     <Card>
       <TextInput value={search} onChangeText={setSearch} placeholder={group === 'student' ? 'Search name or student ID' : 'Search name, email or role'}
         placeholderTextColor={c.mutedForeground} style={[styles.input, { color: c.foreground, borderColor: c.border }]} />
@@ -747,4 +936,5 @@ const styles = StyleSheet.create({
   mapCell: { alignItems: 'center', borderRadius: 10, borderWidth: 1, flexDirection: 'row', gap: 6, justifyContent: 'space-between', minHeight: 38, paddingHorizontal: 10 },
   resultLine: { borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 10 },
   resultCard: { borderRadius: 11, borderWidth: 1, gap: 8, padding: 12 },
+  previewCard: { borderRadius: 12, borderWidth: 1, minHeight: 150, padding: 16 },
 });

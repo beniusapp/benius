@@ -31,9 +31,8 @@ function Navigation() {
   </Stack>;
 }
 export default function RootLayout() {
-  const [loaded, error] = useFonts({ ArchitectsDaughter_400Regular });
-  useEffect(() => { if (loaded || error) void SplashScreen.hideAsync(); }, [loaded, error]);
-  if (!loaded && !error) return null;
+  useFonts({ ArchitectsDaughter_400Regular });
+  useEffect(() => { void SplashScreen.hideAsync(); }, []);
   return <SafeAreaProvider><ErrorBoundary><QueryClientProvider client={queryClient}>
     <GestureHandlerRootView style={{ flex: 1 }}><KeyboardProvider><NetworkProvider>
       <AuthProvider><SessionProvider><Navigation /></SessionProvider></AuthProvider>
