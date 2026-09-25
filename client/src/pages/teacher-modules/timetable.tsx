@@ -11,8 +11,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { apiRequestForViewSession, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 
 /* ─────────────────── Types ─────────────────── */
@@ -42,6 +42,7 @@ interface ModalState {
   day: number;
   period: number;
   existing: TimetableEntry | null;
+  originSessionId: number;
 }
 
 interface SlotCheckResult {
@@ -131,7 +132,7 @@ function structureIsDefault(rows: StructureRow[]) {
 function SlotModal({
   modal, structure, explorerClass, explorerSection,
   subjectList, teacherId, myEntries,
-  onClose, onSaved, isArchiveMode,
+  onClose, onSaved, isArchiveMode, sessionId,
 }: {
   modal: ModalState;
   structure: StructureRow[];
@@ -143,6 +144,7 @@ function SlotModal({
   onClose: () => void;
   onSaved: () => void;
   isArchiveMode: boolean;
+  sessionId: number;
 }) {
   const { toast } = useToast();
   const [subject, setSubject] = useState(modal.existing?.subject ?? "");
@@ -160,45 +162,38 @@ function SlotModal({
   ) ?? null;
 
   /* ── Slot-occupancy collision ── */
-  const { data: collision, isFetching: collisionChecking } = useQuery<SlotCheckResult>({
-    queryKey: ["/api/timetable/slot-check", explorerClass, explorerSection, modal.day, modal.period],
-    queryFn: async () => {
-      const r = await fetch(
-        `/api/timetable/slot-check?class=${encodeURIComponent(explorerClass)}&section=${encodeURIComponent(explorerSection)}&dayOfWeek=${modal.day}&period=${modal.period}`,
-        { credentials: "include" }
+  const { data: collision, isFetching: collisionChecking, isError: collisionError, error: collisionFailure } = useQuery<SlotCheckResult>({
+    queryKey: ["/api/timetable/slot-check", sessionId, explorerClass, explorerSection, modal.day, modal.period],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, cls, section, day, period] = queryKey as [string, number, string, string, number, number];
+      const r = await sessionFetchForViewSession(
+        `/api/timetable/slot-check?class=${encodeURIComponent(cls)}&section=${encodeURIComponent(section)}&dayOfWeek=${day}&period=${period}`,
+        querySessionId, { signal }
       );
-      return r.ok ? r.json() : { taken: false };
+      if (!r.ok) throw new Error(`Slot availability could not be checked (${r.status})`);
+      return r.json();
     },
     enabled: !!explorerClass && !!explorerSection,
     staleTime: 0,
   });
 
   const isSlotTaken = collision?.taken === true;
-  const isBlocked = isSlotTaken || !!selfConflict;
+  const isBlocked = isSlotTaken || !!selfConflict || !collision || collisionError;
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", {
-        changes: [{
-          dayOfWeek: modal.day,
-          period: modal.period,
-          class: explorerClass,
-          section: explorerSection,
-          subject,
-          room: room || undefined,
-        }],
-      });
-      return (res as Response).json() as Promise<{ saved: unknown[]; conflicts: Array<{ teacherName: string; subject: string }> }>;
+    mutationFn: async ({ targetSessionId, change }: { targetSessionId: number; change: Record<string, unknown> }) => {
+      const res = await apiRequestForViewSession("POST", "/api/timetable/teacher/save-batch", {
+        changes: [change],
+      }, targetSessionId);
+      return res.json() as Promise<{ saved: unknown[]; conflicts: Array<{ teacherName: string; subject: string }> }>;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, { targetSessionId }) => {
       if (data.conflicts?.length > 0 && data.saved?.length === 0) {
         const c = data.conflicts[0];
         toast({ title: "Slot conflict — not saved", description: `${c.teacherName} is already teaching ${c.subject} here.`, variant: "destructive" });
         return;
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacherId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", explorerClass, explorerSection] });
-      queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
+      invalidateTimetable(targetSessionId);
       toast({ title: "Slot saved", description: `${dayLabel} · Period ${modal.period} → ${subject}` });
       onSaved();
     },
@@ -208,20 +203,14 @@ function SlotModal({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/timetable/teacher/save-batch", {
-        changes: [{
-          dayOfWeek: modal.day, period: modal.period,
-          class: explorerClass, section: explorerSection,
-          subject: "", _delete: true,
-        }],
-      });
-      return (res as Response).json();
+    mutationFn: async ({ targetSessionId, change }: { targetSessionId: number; change: Record<string, unknown> }) => {
+      const res = await apiRequestForViewSession("POST", "/api/timetable/teacher/save-batch", {
+        changes: [change],
+      }, targetSessionId);
+      return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", teacherId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", explorerClass, explorerSection] });
-      queryClient.invalidateQueries({ queryKey: ["/api/student/timetable"] });
+    onSuccess: (_data, { targetSessionId }) => {
+      invalidateTimetable(targetSessionId);
       toast({ title: "Slot cleared" });
       onSaved();
     },
@@ -230,10 +219,36 @@ function SlotModal({
     },
   });
 
+  function invalidateTimetable(targetSessionId: number) {
+    queryClient.invalidateQueries({ queryKey: ["/api/timetable/teacher", targetSessionId, teacherId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/timetable/class-view", targetSessionId, explorerClass, explorerSection] });
+    queryClient.invalidateQueries({ queryKey: ["/api/timetable/slot-check", targetSessionId, explorerClass, explorerSection] });
+  }
+
+  function canSubmit() {
+    if (isArchiveMode || modal.originSessionId !== sessionId) {
+      onClose();
+      return false;
+    }
+    return true;
+  }
+
   function handleSave() {
+    if (!canSubmit()) return;
     if (!subject) { setSubjectErr(true); return; }
     if (isBlocked) return;
-    saveMutation.mutate();
+    saveMutation.mutate({ targetSessionId: sessionId, change: {
+      dayOfWeek: modal.day, period: modal.period, class: explorerClass,
+      section: explorerSection, subject, room: room || undefined,
+    } });
+  }
+
+  function handleDelete() {
+    if (!canSubmit() || !modal.existing) return;
+    deleteMutation.mutate({ targetSessionId: sessionId, change: {
+      dayOfWeek: modal.day, period: modal.period, class: explorerClass,
+      section: explorerSection, subject: "", _delete: true,
+    } });
   }
 
   return (
@@ -300,6 +315,9 @@ function SlotModal({
               </div>
             </div>
           )}
+          {collisionError && (
+            <p role="alert" className="text-xs text-red-700">{collisionFailure?.message ?? "Slot availability could not be checked."} Saving is disabled.</p>
+          )}
 
           {/* Subject */}
           <div>
@@ -307,6 +325,7 @@ function SlotModal({
               Subject {subjectErr && <span className="text-red-500">*</span>}
             </label>
             <select
+              disabled={isArchiveMode}
               value={subject}
               onChange={e => { setSubject(e.target.value); setSubjectErr(false); }}
               className={`w-full h-12 px-3 rounded-xl text-base font-medium bg-white border focus:outline-none focus:ring-2 focus:ring-emerald-500 ${subjectErr ? "border-red-400" : "border-gray-300"}`}
@@ -324,6 +343,7 @@ function SlotModal({
             </label>
             <input
               type="text"
+              disabled={isArchiveMode}
               value={room}
               onChange={e => setRoom(e.target.value)}
               placeholder="e.g. Lab 2, Room 104"
@@ -344,7 +364,7 @@ function SlotModal({
             {modal.existing && (
               <Button
                 variant="outline"
-                onClick={() => deleteMutation.mutate()}
+                onClick={handleDelete}
                 disabled={isArchiveMode || deleteMutation.isPending}
                 className="h-12 px-4 text-red-600 border-red-200 hover:bg-red-50"
                 data-testid="button-modal-delete"
@@ -371,7 +391,15 @@ function SlotModal({
 
 /* ─────────────────── Main Component ─────────────────── */
 export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
-  const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  if (!selectedSession) {
+    return <p role="alert" className="text-sm text-amber-700">No academic session available for Timetable.</p>;
+  }
+  // Reset the slot editor and its unsaved fields synchronously when the session changes.
+  return <TimetableSessionEditor key={selectedSession.id} teacher={teacher} sessionId={selectedSession.id} isArchiveMode={!selectedSession.isActive} />;
+}
+
+function TimetableSessionEditor({ teacher, sessionId, isArchiveMode }: { teacher: TeacherMe; sessionId: number; isArchiveMode: boolean }) {
   const [activeTab, setActiveTab] = useState<"explorer" | "schedule">("explorer");
 
   const {
@@ -389,31 +417,35 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
   const [selectedDay, setSelectedDay] = useState<number>(todayDayIndex());
 
   /* ── Queries ── */
-  const { data: myEntries = [], isLoading: myEntriesLoading } = useQuery<TimetableEntry[]>({
-    queryKey: ["/api/timetable/teacher", teacher.id],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/teacher/${teacher.id}`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed");
+  const { data: myEntries = [], isLoading: myEntriesLoading, isError: myEntriesError, error: myEntriesFailure } = useQuery<TimetableEntry[]>({
+    queryKey: ["/api/timetable/teacher", sessionId, teacher.id],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, teacherId] = queryKey as [string, number, number];
+      const r = await sessionFetchForViewSession(`/api/timetable/teacher/${teacherId}`, querySessionId, { signal });
+      if (!r.ok) throw new Error(`Teacher timetable could not be loaded (${r.status})`);
       return r.json();
     },
   });
 
-  const { data: explorerData, isLoading: explorerLoading } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
-    queryKey: ["/api/timetable/class-view", explorerClass, explorerSection],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/class-view?class=${explorerClass}&section=${explorerSection}`, { credentials: "include" });
-      if (!r.ok) return { entries: [], structure: [] };
+  const { data: explorerData, isLoading: explorerLoading, isError: explorerError, error: explorerFailure } = useQuery<{ entries: TimetableEntry[]; structure: StructureRow[] }>({
+    queryKey: ["/api/timetable/class-view", sessionId, explorerClass, explorerSection],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, cls, section] = queryKey as [string, number, string, string];
+      const r = await sessionFetchForViewSession(`/api/timetable/class-view?class=${encodeURIComponent(cls)}&section=${encodeURIComponent(section)}`, querySessionId, { signal });
+      if (!r.ok) throw new Error(`Class timetable could not be loaded (${r.status})`);
       return r.json();
     },
     enabled: !!explorerClass && !!explorerSection,
   });
 
   const scheduleClass = teacher.assignedClass || (myEntries[0]?.class ?? "");
-  const { data: scheduleStructure = [] } = useQuery<StructureRow[]>({
-    queryKey: ["/api/timetable/structure", scheduleClass],
-    queryFn: async () => {
-      const r = await fetch(`/api/timetable/structure?class=${encodeURIComponent(scheduleClass)}`, { credentials: "include" });
-      return r.ok ? r.json() : [];
+  const { data: scheduleStructure = [], isLoading: structureLoading, isError: structureError, error: structureFailure } = useQuery<StructureRow[]>({
+    queryKey: ["/api/timetable/structure", sessionId, scheduleClass],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, cls] = queryKey as [string, number, string];
+      const r = await sessionFetchForViewSession(`/api/timetable/structure?class=${encodeURIComponent(cls)}`, querySessionId, { signal });
+      if (!r.ok) throw new Error(`Bell schedule could not be loaded (${r.status})`);
+      return r.json();
     },
     enabled: !!scheduleClass,
   });
@@ -429,6 +461,10 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
         <Loader2 className="w-7 h-7 animate-spin text-emerald-600" />
       </div>
     );
+  }
+
+  if (myEntriesError) {
+    return <p role="alert" className="text-sm text-red-700">{myEntriesFailure?.message ?? "Teacher timetable could not be loaded."}</p>;
   }
 
   if (!isFullyConfigured) {
@@ -519,11 +555,17 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           explorerEntries={explorerEntries}
           explorerStructure={explorerStructure}
           explorerLoading={explorerLoading}
+          explorerError={explorerError ? explorerFailure?.message ?? "Class timetable could not be loaded." : null}
           classList={CLASS_LIST}
           sectionList={SECTION_LIST}
-          setModal={setModal}
+          setModal={slot => setModal(slot ? { ...slot, originSessionId: sessionId } : null)}
           teacherId={teacher.id}
+          isArchiveMode={isArchiveMode}
         />
+      ) : structureError ? (
+        <p role="alert" className="text-sm text-red-700">{structureFailure?.message ?? "Bell schedule could not be loaded."}</p>
+      ) : structureLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-emerald-600" /></div>
       ) : (
         <MyScheduleTab
           myEntries={myEntries}
@@ -547,6 +589,7 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
           onClose={() => setModal(null)}
           onSaved={() => setModal(null)}
           isArchiveMode={isArchiveMode}
+          sessionId={sessionId}
         />
       )}
     </div>
@@ -556,15 +599,17 @@ export default function TimetableModule({ teacher }: { teacher: TeacherMe }) {
 /* ─────────────────── Class Explorer Tab ─────────────────── */
 function ClassExplorerTab({
   explorerClass, explorerSection, setExplorerClass, setExplorerSection,
-  explorerEntries, explorerStructure, explorerLoading,
-  classList, sectionList, setModal, teacherId,
+  explorerEntries, explorerStructure, explorerLoading, explorerError,
+  classList, sectionList, setModal, teacherId, isArchiveMode,
 }: {
   explorerClass: string; explorerSection: string;
   setExplorerClass: (v: string) => void; setExplorerSection: (v: string) => void;
   explorerEntries: TimetableEntry[]; explorerStructure: StructureRow[];
   explorerLoading: boolean;
+  explorerError: string | null;
   classList: string[]; sectionList: string[];
-  setModal: (m: ModalState | null) => void; teacherId: number;
+  setModal: (m: Omit<ModalState, "originSessionId"> | null) => void; teacherId: number;
+  isArchiveMode: boolean;
 }) {
   const hasSelection = !!explorerClass && !!explorerSection;
 
@@ -617,9 +662,12 @@ function ClassExplorerTab({
           <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
         </div>
       )}
+      {hasSelection && explorerError && !explorerLoading && (
+        <p role="alert" className="text-sm text-red-700">{explorerError}</p>
+      )}
 
       {/* Grid */}
-      {hasSelection && !explorerLoading && (
+      {hasSelection && !explorerLoading && !explorerError && (
         <>
           {structureIsDefault(explorerStructure) && (
             <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-200" data-testid="banner-no-structure">
@@ -704,6 +752,7 @@ function ClassExplorerTab({
                                 entry.teacherId === teacherId ? (
                                   /* Own slot — editable */
                                   <button
+                                    disabled={isArchiveMode}
                                     className={`w-full rounded-lg p-2 text-left transition-all group ${col?.bg} ${isActive ? `ring-2 ring-emerald-500 ring-offset-1` : ""}`}
                                     onClick={() => setModal({ day: dayIdx, period: p, existing: entry })}
                                     data-testid={`slot-own-${dayIdx}-${p}`}
@@ -727,6 +776,7 @@ function ClassExplorerTab({
                               ) : (
                                 /* Empty slot */
                                 <button
+                                  disabled={isArchiveMode}
                                   className="w-full min-h-[52px] rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center hover:border-emerald-400 hover:bg-emerald-50 transition-all group"
                                   onClick={() => setModal({ day: dayIdx, period: p, existing: null })}
                                   data-testid={`button-add-slot-${dayIdx}-${p}`}
