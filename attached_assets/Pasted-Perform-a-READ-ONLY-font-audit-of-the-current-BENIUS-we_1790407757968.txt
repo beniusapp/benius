@@ -1,0 +1,107 @@
+Perform a READ-ONLY font audit of the current BENIUS web application.
+
+Do NOT change any code.
+Do NOT install packages.
+Do NOT change CSS.
+Do NOT change the UI.
+Do NOT make any formatting or styling improvements.
+
+I only want you to FIND and REPORT the current font configuration.
+
+Please inspect the actual BENIUS web application codebase and determine:
+
+1. EXACTLY where the current global font is defined.
+
+   * CSS files
+   * Tailwind configuration
+   * theme configuration
+   * Google Fonts or other font imports
+   * `font-family` declarations
+   * component-level/global typography configuration
+   * any other place that can affect the application's default font
+
+2. Identify the EXACT current font family being used by BENIUS.
+
+3. Identify whether multiple fonts are being used for:
+
+   * body text
+   * headings
+   * buttons
+   * inputs
+   * navigation
+   * tables
+   * cards
+   * dialogs/modals
+
+4. Find out when/how the current curly/rounded/new font was introduced, if this can be determined from the available code, git history, or recent changes.
+
+5. Determine whether the previous/old BENIUS font can be identified from:
+
+   * git history
+   * previous CSS
+   * previous commits
+   * older configuration
+   * existing unused font declarations
+   * other evidence in the project
+
+6. If the previous font can be determined, report:
+
+   * Previous/expected font family
+   * Current font family
+   * Exact file(s) responsible for the change
+   * Relevant line numbers
+
+7. If the previous font CANNOT be determined with confidence, explicitly say:
+   "Previous font could not be reliably determined from the available project history."
+   Do NOT guess a font.
+
+8. Check whether the current font is also referenced by the mobile application under:
+   `artifacts/benius-mobile/`
+
+9. Explain whether changing the global web font would affect the existing BENIUS Web application only, the Mobile native screens only, or both.
+
+10. Give me a final concise report in this exact structure:
+
+CURRENT FONT
+
+* Font family:
+* Where defined:
+* Import/source:
+* Applied globally?:
+
+OTHER FONTS
+
+* Headings:
+* Buttons:
+* Inputs:
+* Other:
+
+PREVIOUS FONT
+
+* Font family:
+* Evidence:
+* Confidence:
+
+CHANGE LOCATION
+
+* File:
+* Line(s):
+* What introduced the current font:
+
+MOBILE IMPACT
+
+* Current mobile font:
+* Does it match Web?:
+* What would need to change later?:
+
+RECOMMENDATION
+
+* State only what should be changed to restore the old font, if the old font can be identified.
+* Do NOT make the change now.
+
+MOST IMPORTANT:
+This is an AUDIT ONLY.
+Do not modify any file or configuration.
+Do not commit changes.
+Do not install anything.
+Do not restart or alter the application configuration.
