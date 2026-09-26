@@ -1,0 +1,689 @@
+Perform a **READ-ONLY SECURITY AUDIT** of BENIUS document/file/upload/download authorization.
+
+# BENIUS STEP 8A — STUDENT DOCUMENT AUTHORIZATION AUDIT
+
+## ABSOLUTE RULE
+
+This is an **AUDIT ONLY**.
+
+Do NOT:
+
+- modify code
+- create code
+- delete code
+- change routes
+- change `/uploads`
+- change authentication
+- change database schema
+- run migrations
+- move files
+- rename files
+- change Web UI
+- change Mobile UI
+- install packages
+- fix vulnerabilities yet
+- change Admin/Teacher/Student behavior
+
+I want evidence and a recommended minimal fix plan only.
+
+The existing BENIUS web application must remain untouched.
+
+---
+
+# CONTEXT
+
+BENIUS is a multi-school / multi-tenant School MIS.
+
+Permanent security requirement:
+
+**School A users must never access School B private data or private documents.**
+
+The Student Portal Academic Session correction work Steps 1–7 is already complete.
+
+Student Profile behavior has also been intentionally confirmed:
+
+**Student Profile continues showing current information and is NOT historical-session based.**
+
+Do not revisit those decisions.
+
+This audit is specifically about **files/documents/uploads/download authorization**.
+
+---
+
+# PRIMARY QUESTION
+
+Determine whether a logged-in Student can access a private file that they should not be authorized to access simply by:
+
+- knowing its URL
+- copying another user's URL
+- changing the filename/path
+- changing an ID
+- directly requesting `/uploads/...`
+- bypassing the normal Student UI
+
+Pay particular attention to cross-school access.
+
+Example risk:
+
+School A Student obtains a URL belonging to School B Student.
+
+Could they directly request that URL and receive the file?
+
+I need the answer from the actual BENIUS code.
+
+---
+
+# 1. MAP THE FILE ARCHITECTURE
+
+Inspect the actual codebase and identify:
+
+- where uploaded files are physically stored
+- how Express exposes files
+- whether `/uploads` is static
+- every static-file middleware involved
+- protected download endpoints
+- upload endpoints
+- download endpoints
+- file metadata stored in PostgreSQL
+- URL/path fields stored in database records
+- local filesystem usage
+- any external/cloud storage if present
+
+Identify exact relevant files and routes.
+
+Do not assume architecture.
+
+---
+
+# 2. INSPECT `/uploads`
+
+Find exactly how `/uploads` is configured.
+
+Determine:
+
+- Is it publicly/static served?
+- Does it require authentication?
+- Does it check user role?
+- Does it check school/tenant?
+- Does it check Student ownership?
+- Does it check Academic Session?
+- Does it check whether the requester is actually entitled to the parent record?
+
+Answer with exact code evidence.
+
+---
+
+# 3. INVENTORY EVERY `/uploads` CONSUMER
+
+Search the entire BENIUS project for:
+
+- `/uploads`
+- upload URL construction
+- stored file paths
+- attachment URLs
+- image URLs
+- document URLs
+- download links
+- `window.open`
+- `<a href>`
+- React Native download/open behavior
+- Express static serving
+- filesystem reads
+- `res.sendFile`
+- `res.download`
+- relevant multer/upload middleware
+
+Build an inventory.
+
+For each file/document category, report:
+
+**Module**
+**User role**
+**Upload route**
+**Read/download mechanism**
+**Stored path/URL**
+**Authentication**
+**School authorization**
+**Ownership/record authorization**
+**Academic Session relevance**
+**Public or private by intended product behavior**
+**Current security status**
+
+---
+
+# 4. STUDENT PORTAL — CHECK ALL FILE TYPES
+
+Inspect every Student-facing module that can display/download/upload files.
+
+At minimum investigate where applicable:
+
+- Student Profile photo
+- School logo
+- Homework attachments
+- Homework Student submissions
+- Classwork attachments
+- Noticeboard attachments
+- Complaint attachments/evidence
+- Complaint notes/reply attachments if present
+- Leave attachments
+- Examination/report cards
+- Fee receipts/invoices
+- Gallery images
+- E-Library documents/books
+- Timetable files if any
+- Attendance documents if any
+- any other Student-accessible file discovered
+
+Do not assume all of these actually use `/uploads`.
+
+Report actual behavior.
+
+---
+
+# 5. CLASSIFY FILES
+
+For every discovered file category classify it as:
+
+### PUBLIC
+Intentionally accessible without private-record authorization.
+
+Possible examples might be school branding/public gallery assets, but do NOT assume.
+
+### AUTHENTICATED SHARED
+Requires login but can legitimately be shared among an authorized school/cohort.
+
+### PRIVATE USER/RECORD FILE
+Must require authorization against a specific Student/record.
+
+### UNCLEAR
+Current product intent cannot be safely determined from code.
+
+Do NOT automatically classify everything as private.
+
+---
+
+# 6. HOMEWORK SECURITY
+
+Step 2 already corrected Student Homework Academic Session behavior.
+
+Inspect Homework documents separately.
+
+Determine:
+
+- how Teacher Homework attachments are downloaded
+- how Student Homework submissions are downloaded
+- whether protected Student Homework download endpoints already exist
+- whether direct `/uploads/...` can bypass those protections
+- Student ownership/cohort checks
+- school checks
+- session checks
+
+Do NOT modify Step 2.
+
+---
+
+# 7. LEAVE SECURITY
+
+Step 6 confirmed:
+
+Mobile private Leave attachment downloads verify Student + school + selected session before serving.
+
+But the existing Web upload and `/uploads` behavior was deliberately left unchanged.
+
+Audit the Web path carefully.
+
+Determine whether:
+
+Student A can obtain Student B's Leave attachment by directly requesting its `/uploads/...` path.
+
+Also test/analyze cross-school access.
+
+Do not fix it yet.
+
+---
+
+# 8. COMPLAINT FILE SECURITY
+
+Inspect whether complaints/peer reports/staff grievances contain:
+
+- evidence
+- images
+- attachments
+- note/reply attachments
+
+If yes, determine whether direct file access bypasses the Step 5 complaint authorization.
+
+Remember:
+
+Step 5 protects complaint records using Student + school + Academic Session + filer/recipient authorization.
+
+The file itself must be audited separately.
+
+---
+
+# 9. NOTICE / CLASSWORK SECURITY
+
+For Teacher-provided files intended for Students:
+
+determine whether access should logically be:
+
+- school-wide
+- class/section
+- selected Academic Session
+- specific audience
+
+Compare the actual protected record visibility against direct file URL visibility.
+
+Example:
+
+If a Notice is only visible to Class 8A in Session A, can a Class 9B Student directly open its attachment URL?
+
+Report it.
+
+Do NOT decide a new product policy unless existing code makes the intended audience clear.
+
+---
+
+# 10. GALLERY / SCHOOL ASSETS
+
+Be especially careful here.
+
+Some files may legitimately need to remain publicly accessible.
+
+Inspect:
+
+- gallery
+- school logo
+- Student/Teacher profile images
+- other school branding/assets
+
+Do NOT recommend globally blocking `/uploads` unless the evidence proves that is safe.
+
+Identify which categories need public/static behavior.
+
+---
+
+# 11. E-LIBRARY
+
+Inspect how books/documents are served.
+
+Determine whether access is intended for:
+
+- public
+- authenticated school users
+- particular roles
+- particular school
+- particular Academic Session
+
+Check whether a direct file URL bypasses these restrictions.
+
+---
+
+# 12. FEE DOCUMENTS
+
+Inspect:
+
+- receipts
+- invoices
+- payment documents
+- generated PDFs
+- downloadable fee records
+
+These can contain private financial/Student information.
+
+Determine whether Student A could access Student B's document or School A could access School B's document using direct URLs/IDs.
+
+Do not change Fees.
+
+---
+
+# 13. REPORT CARDS / EXAM DOCUMENTS
+
+Inspect any generated/downloadable:
+
+- report cards
+- result PDFs
+- examination documents
+
+Determine authorization boundaries.
+
+Expected private boundary, if applicable, should derive from actual product behavior such as:
+
+authenticated Student
++
+school
++
+Student ownership
++
+Academic Session
+
+But report actual architecture first.
+
+Do NOT modify Examination/Archives.
+
+---
+
+# 14. PATH SECURITY
+
+Also inspect technical filesystem risks:
+
+- `../` path traversal
+- user-controlled filenames
+- predictable filenames
+- original filename reuse
+- unsafe path joins
+- arbitrary filesystem reads
+- content-type handling
+- executable uploads
+- filename sanitization
+- overwrite/collision behavior
+
+This is an audit only.
+
+Report confirmed risks separately from theoretical possibilities.
+
+---
+
+# 15. TENANT ISOLATION
+
+This is critical.
+
+For every non-public document category answer:
+
+Can a School A authenticated user access a School B file?
+
+Check actual server authorization.
+
+Do not rely only on the fact that the normal UI would not display the link.
+
+Direct URL access must be considered.
+
+---
+
+# 16. ACADEMIC SESSION
+
+Do NOT force Academic Session checks onto files that are genuinely global.
+
+For files attached to session-based records, determine whether authorization should be inherited from the parent record.
+
+Examples:
+
+Homework attachment
+→ Homework record
+→ school + session + class/section visibility
+
+Leave attachment
+→ Leave record
+→ Student + school + session
+
+Complaint evidence
+→ Complaint record
+→ school + session + filer/recipient visibility
+
+Report actual findings.
+
+---
+
+# 17. WEB VS MOBILE
+
+Compare Web and Mobile behavior.
+
+Identify cases where:
+
+- Mobile uses a protected API download
+- Web uses raw `/uploads`
+- both use raw paths
+- both use protected endpoints
+- authorization differs
+
+Do NOT change either platform.
+
+This comparison is important because we do not want a future fix to secure Mobile while leaving Web exposed, or vice versa.
+
+---
+
+# 18. AUTHENTICATION MODEL
+
+Remember BENIUS currently has:
+
+Web:
+server-side PostgreSQL-backed sessions/cookies.
+
+Mobile:
+mobile bearer/access/refresh authentication.
+
+A future protected-document architecture may need to support both.
+
+For this audit, determine how existing protected file routes authenticate Web and Mobile.
+
+Do NOT implement a new auth mechanism.
+
+---
+
+# 19. DO NOT PERFORM DESTRUCTIVE SECURITY TESTS
+
+Do NOT:
+
+- delete files
+- overwrite files
+- modify production/user records
+- expose real sensitive content in the report
+- perform destructive traversal tests
+- weaken permissions
+- change authentication
+
+Static/code-level analysis and safe existing tests are sufficient.
+
+If safe automated tests already exist, they may be run without modifying application behavior.
+
+---
+
+# 20. DETERMINE MINIMAL SAFE FIX STRATEGY
+
+After auditing, recommend a minimal architecture.
+
+The recommendation should answer:
+
+Should BENIUS:
+
+A. keep `/uploads` public for genuinely public assets and move private documents behind protected download routes;
+
+B. protect all `/uploads` and create explicit public routes for public assets;
+
+C. use another minimal architecture supported by the current codebase.
+
+Do NOT implement it.
+
+Explain why the recommended option causes the least regression risk.
+
+---
+
+# 21. PRIORITIZE FINDINGS
+
+Classify confirmed findings as:
+
+### CRITICAL
+Cross-school/private-document exposure or similarly severe authorization bypass.
+
+### HIGH
+Same-school unauthorized Student/private-record access.
+
+### MEDIUM
+Weak authorization/predictability with meaningful exposure.
+
+### LOW
+Hardening issue without demonstrated authorization bypass.
+
+Do not exaggerate severity.
+
+Only call something CRITICAL/HIGH when code evidence supports it.
+
+---
+
+# 22. DO NOT CHANGE CURRENT BASELINES
+
+Current accepted baseline:
+
+- API TypeScript diagnostics: **377**
+- Web TypeScript diagnostics: **60**
+- Mobile TypeScript: **0**
+- Student Steps 1–7 accepted
+- Student Profile intentionally remains current/global
+
+Because this is read-only, these should not change.
+
+---
+
+# 23. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 8A — DOCUMENT AUTHORIZATION AUDIT
+
+### Executive summary
+Explain in simple terms whether private Student documents can currently be accessed through direct URLs without sufficient authorization.
+
+### `/uploads` architecture
+Explain exactly how files are served.
+
+### Public file categories
+List files that are clearly intended/public based on code.
+
+### Authenticated shared file categories
+List school/cohort shared files.
+
+### Private file categories
+List Student/record-specific private files.
+
+### Unclear categories
+List anything requiring a product decision.
+
+### Student file inventory
+For each Student-facing file type report:
+- module
+- storage/path
+- normal access path
+- authorization
+- school isolation
+- session relevance
+- direct-URL behavior
+- classification
+
+### Homework findings
+Detailed findings.
+
+### Classwork findings
+Detailed findings.
+
+### Noticeboard findings
+Detailed findings.
+
+### Complaint findings
+Detailed findings.
+
+### Leave findings
+Detailed findings.
+
+### Fee document findings
+Detailed findings.
+
+### Examination/report-card findings
+Detailed findings.
+
+### Gallery findings
+Detailed findings.
+
+### E-Library findings
+Detailed findings.
+
+### Profile/school asset findings
+Detailed findings.
+
+### Web vs Mobile
+Explain differences in document authorization.
+
+### Cross-school test matrix
+For each private/shared category state whether School A → School B direct access appears possible from the code.
+
+### Same-school unauthorized access
+Explain whether Student A → Student B private-file access appears possible.
+
+### Path/file-system security
+Report traversal, filename, upload-type, collision, and related findings.
+
+### Confirmed vulnerabilities
+List only confirmed vulnerabilities with:
+- severity
+- affected route/path
+- affected module
+- why authorization can be bypassed
+- exact relevant source files/functions
+
+### Non-vulnerabilities / already protected paths
+List important paths that are already properly protected.
+
+### Recommended minimal fix
+Recommend the safest minimal architecture, but DO NOT implement it.
+
+### Proposed implementation phases
+Give small implementation phases so fixes can be applied without breaking BENIUS.
+
+### Database changes required
+State whether any are actually required.
+
+Prefer `None` if authorization can be fixed without schema changes.
+
+### UI changes required
+State whether any are actually required.
+
+Prefer `None` if transparent protected download routes can preserve UI.
+
+### Risk to existing Web application
+Explain regression risks.
+
+### Risk to Mobile application
+Explain compatibility considerations.
+
+### Files inspected
+List important files inspected.
+
+### Files changed
+Must be:
+`None`
+
+### Database changes
+Must be:
+`None`
+
+### UI changes
+Must be:
+`None`
+
+### Current validation baseline
+Confirm no intentional changes to:
+- API 377 diagnostics
+- Web 60 diagnostics
+- Mobile 0 diagnostics
+
+### Recommended next step
+State the single safest implementation step to perform first.
+
+---
+
+# FINAL INSTRUCTION
+
+This is a **READ-ONLY AUDIT**.
+
+Do not fix anything.
+
+Do not change any file.
+
+Do not run migrations.
+
+Do not redesign uploads.
+
+Do not make all files private merely because `/uploads` exists.
+
+First determine exactly:
+
+**what is public, what is shared, what is private, and where authorization can actually be bypassed.**
