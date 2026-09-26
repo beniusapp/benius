@@ -3,3 +3,4 @@
 - [Student content boundaries](student-content-boundaries.md) — historical cohort controls session reads; new Student uploads need owner/reviewer-gated downloads.
 - [Expo preview font loading](expo-preview-font-loading.md) — keep optional custom fonts from blocking the first visible Expo screen.
 - [API TypeScript test runner](api-server-test-runner.md) — bundle API tests as CommonJS with esbuild before Node’s test runner.
+- [Student result calculation boundaries](student-result-calculation-boundaries.md) — historical result access does not imply historical policy snapshots or a new journey formula.

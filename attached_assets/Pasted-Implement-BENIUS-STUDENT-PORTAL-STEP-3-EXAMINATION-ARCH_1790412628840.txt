@@ -1,0 +1,823 @@
+Implement **BENIUS STUDENT PORTAL — STEP 3: EXAMINATION + ARCHIVES ACADEMIC SESSION CORRECTION**.
+
+Steps already completed:
+
+- **Step 1:** reusable Student Academic Session foundation at `artifacts/api-server/src/student-academic-session.ts`
+- **Step 2:** Student Homework + Classwork Academic Session correction
+
+Do not undo or weaken either step.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct **Student Examination / Results** and **Student Archives → Report Cards** so that Student result data is safely and consistently based on:
+
+**Authenticated Student**
++
+**Authenticated Student's School**
++
+**Selected Academic Session**
++
+**that Student's exact enrollment/class/section for the selected Academic Session**
+
+Also ensure that Students can only see examination scores/results that are actually **published for Student visibility**.
+
+Example:
+
+Student:
+- 2025–26 → Class 8A
+- 2026–27 → Class 9A
+
+If the Student selects **2025–26**, Examination/Archives must use:
+
+**2025–26 + Class 8A**
+
+They must NOT use today's/current Class 9A placement.
+
+They must NOT mix 2026–27 scores/results into 2025–26.
+
+---
+
+# ABSOLUTE SCOPE
+
+Modify ONLY what is necessary for:
+
+### Student Examination / Results
+and
+### Student Archives → Report Cards / examination history
+
+Academic Session, historical enrollment, publication visibility, and directly related rank/cohort correctness.
+
+Do NOT fix:
+- Timetable
+- Noticeboard
+- Complaints
+- Leave
+- Dashboard
+- Homework/Classwork
+- Attendance
+- Fees
+- Profile
+- public `/uploads` document authorization
+- Teacher examination workflow
+- Admin Exam Controller
+- examination scheduling architecture
+- examination lifecycle redesign
+
+Do NOT redesign the UI.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+Use:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+Do NOT create another competing Student session resolver.
+
+For Student examination/archive reads requiring placement, use the equivalent of:
+
+`SELECTED_SESSION_ENROLLMENT_REQUIRED`
+
+Trusted chain:
+
+**Authenticated Student**
+→ **server-loaded Student**
+→ **Student's School**
+→ **validated selected Academic Session**
+→ **exact enrollment for school + Student + session**
+→ **class/section from that enrollment**
+
+Do NOT use current:
+
+`students.class`
+`students.section`
+
+as historical placement when selected-session enrollment exists/is required.
+
+---
+
+# 2. IMPORTANT COMPATIBILITY DETAIL FROM STEP 1
+
+Step 1 reported:
+
+> malformed raw headers are correctly rejected by the new resolver, but existing Examination call sites still pass the middleware-parsed ID.
+
+Now that Examination is explicitly in scope, correct the relevant **Student Examination/Archives** call sites so they use the Step 1 foundation correctly.
+
+Where raw selected-session header validation is required, pass/use the raw session selection through the intended Step 1 mechanism rather than relying on a previously parsed value that could hide malformed input.
+
+Do this ONLY for Student Examination/Archives.
+
+Do NOT globally rewrite shared middleware.
+
+Do NOT alter Admin/Teacher behavior.
+
+---
+
+# 3. EXAMINATION CLASS/SECTION AUTHORITY
+
+For Student Examination, the Student's class/section for the selected Academic Session must come from:
+
+`enrollments`
+
+for exact:
+
+- school
+- Student
+- Academic Session
+
+Do not trust a client-supplied `class` query parameter as the authority.
+
+If the existing UI sends `class`, it may remain for backward compatibility if necessary, but the server must derive/validate the authoritative class from the selected-session enrollment.
+
+A Student must not be able to request another class's result data simply by changing the class query.
+
+Same principle for section/rank cohort.
+
+---
+
+# 4. STUDENT EXAM SCORE READERS
+
+Audit and correct the Student-facing equivalents of:
+
+- `/api/student/exam-scores`
+- `/api/student/exam-scores/all-scores`
+- `/api/student/exam-scores/types`
+- `/api/student/exam-scores/classes`
+
+and any directly related Student result reader used by the current Examination page.
+
+Exact route names may differ; inspect actual code.
+
+For session-based score/result reads, enforce:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
++
+**selected-session enrollment**
++
+**authenticated Student ID**
+
+Never use a client-provided Student ID as authority.
+
+Never allow missing required session to remove the session predicate.
+
+Never allow foreign-school session IDs.
+
+Never mix scores across Academic Sessions.
+
+---
+
+# 5. PUBLISHED RESULTS ONLY — STUDENT VISIBILITY
+
+The forensic audit found that Student score/type readers can expose score rows without consistently enforcing:
+
+`published = true`
+
+This Step must correct Student visibility.
+
+For **Student-facing examination/result readers**, Students must only receive score/result rows that have been published according to the existing BENIUS publication mechanism.
+
+Use the existing `published` field/behavior.
+
+Do NOT invent:
+- a new approval workflow
+- a new examination lifecycle
+- a new publication state
+- a new table
+
+Do NOT change Teacher/Admin access to drafts/unpublished scores.
+
+This restriction applies to **Student-facing result visibility only**.
+
+If a score exists but is unpublished:
+
+Student result API/UI must behave as though that score is not yet available to the Student according to the existing empty/not-available behavior.
+
+Do not expose unpublished marks through:
+- main Examination page
+- Archives/report cards
+- exam types/classes derived from Student-visible score rows
+- journey/history result endpoints
+- rank calculations returned to Student
+
+where those outputs are derived from unpublished scores.
+
+---
+
+# 6. DO NOT CHANGE EXAMINATION CALCULATION RULES
+
+Very important:
+
+Do NOT change:
+- marks calculations
+- weighted calculations
+- pass/fail calculations
+- grading rules
+- grading thresholds
+- exam policy weights
+- promotion rules
+- grace rules
+- term logic
+- Exam Controller calculations
+- result formulas
+
+This Step is about:
+
+**correct session + correct enrollment + correct publication visibility + correct cohort**
+
+NOT changing how BENIUS calculates a result.
+
+If you discover a calculation inconsistency requiring a business decision, report it and leave it unchanged.
+
+---
+
+# 7. CURRENT EXAM POLICY / GRADING
+
+The audit found that examination policy/grading is currently school-level/current rather than historical-versioned.
+
+Do NOT introduce policy versioning in Step 3.
+
+Do NOT create policy snapshots.
+
+Preserve the existing BENIUS examination calculation/policy behavior.
+
+However, make sure the policy request cannot use a client-supplied class to escape the Student's selected-session enrollment class.
+
+If the Student Examination page requests policy for a class, server-side class authority must correspond to the selected-session enrollment where the endpoint is Student-specific.
+
+In the final report, clearly state that historical policy versioning remains unchanged/not implemented.
+
+---
+
+# 8. ARCHIVES — REPORT CARDS
+
+Correct Student Archives → Report Cards.
+
+The audit found that historical Archive score/type requests can fall back to:
+
+`student.class`
+
+which is today's/current class.
+
+That is wrong after promotion.
+
+Example:
+
+Current Student:
+Class 9A
+
+Selected historical session:
+2025–26 enrollment = Class 8A
+
+Archive Report Card for 2025–26 must use:
+
+**Class 8A**
+
+not Class 9A.
+
+Use the exact selected-session enrollment.
+
+Archive report cards must be scoped to:
+
+**school**
++
+**authenticated Student**
++
+**selected historical Academic Session**
++
+**historical enrollment class/section where relevant**
++
+**published Student-visible result data**
+
+Do NOT require the selected historical session to be active.
+
+Historical same-school sessions must remain readable.
+
+---
+
+# 9. ARCHIVES — EXAM TYPES
+
+If Archives obtains available exam types from score data, return only exam types supported by:
+
+**published scores**
+for:
+**authenticated Student + selected session + selected-session enrollment**
+
+Do not expose an exam type merely because an unpublished score exists.
+
+Do not derive historical exam types from today's class.
+
+---
+
+# 10. RANK / COHORT CORRECTNESS
+
+The audit found rank/cohort logic can use live:
+
+`student.section`
+
+Correct Student-facing rank/cohort calculations directly involved in Examination/Archives so that the cohort corresponds to the **selected Academic Session enrollment**.
+
+Example:
+
+2025–26 → Class 8A
+2026–27 → Class 9B
+
+When viewing 2025–26:
+
+rank/cohort must use the appropriate **2025–26 Class 8A** context, not today's Class 9B.
+
+Also ensure Student-visible rank/result calculations do not include unpublished score data where publication status is part of the existing Student visibility boundary.
+
+Do NOT redesign the rank formula itself.
+
+Only correct:
+- session
+- enrollment cohort
+- publication visibility
+
+If rank logic is shared with Admin/Teacher and cannot safely be changed without affecting them, create/use a Student-specific safe path rather than changing Admin/Teacher semantics.
+
+---
+
+# 11. JOURNEY / HISTORY
+
+The audit found Student `/journey` behavior currently uses raw percentage rather than the shared weighted promotion engine.
+
+Do NOT change that formula in this Step.
+
+That is a separate business/calculation decision.
+
+However, if the journey/history endpoint is Student-facing and session/result based:
+
+- scope it to authenticated Student
+- school
+- appropriate Academic Session(s)
+- historical enrollment where required
+- published Student-visible results only
+
+Do not expose unpublished result information through journey/history.
+
+Preserve the existing journey calculation formula otherwise.
+
+Report the raw-percentage-vs-weighted-engine inconsistency as remaining work if still present.
+
+---
+
+# 12. ENROLLMENT-HISTORY GET MUST NOT BE EXPANDED IN SCOPE
+
+The audit found:
+
+`/enrollment-history`
+
+GET currently performs an upsert for the active session using live Student class/section.
+
+That is a questionable GET-side mutation.
+
+Do NOT redesign/fix that behavior in this Step unless it is absolutely required for Examination/Archives correctness.
+
+Prefer using the Step 1 exact enrollment resolver directly for Examination/Archives.
+
+If the GET-side mutation remains, explicitly report it as remaining work.
+
+Do NOT broaden Step 3 into enrollment lifecycle redesign.
+
+---
+
+# 13. FRONTEND SESSION TRANSPORT
+
+Inspect Student Examination and Archives requests.
+
+Every request whose result depends on selected Academic Session must use the established explicit session-aware transport.
+
+Prefer:
+
+`sessionFetchForViewSession`
+
+or the established equivalent.
+
+The selected session used in the:
+
+**query/cache key**
+
+must be the same selected session explicitly used in the request.
+
+Do NOT depend only on mutable global header state.
+
+Do NOT use ordinary `fetch()` for a selected-session result request unless the header is explicitly and safely supplied.
+
+---
+
+# 14. REACT QUERY / CACHE ISOLATION
+
+Every Student Examination/Archives query whose output changes by Academic Session must include the Academic Session ID in its cache/query key.
+
+Conceptually:
+
+`["student-examination", sessionId, ...]`
+
+`["student-archive-report-card", sessionId, ...]`
+
+rather than a key that can be reused across sessions.
+
+Verify:
+
+**A → B → A**
+
+does not display B's result as A's result or vice versa.
+
+Apply this only to Examination/Archives in Step 3.
+
+---
+
+# 15. HISTORICAL SESSION READS
+
+Valid same-school historical Academic Sessions must remain readable.
+
+Do NOT globally require:
+
+`selected session = active session`
+
+for result/archive reads.
+
+A Student should be able to view their legitimate historical **published** results for an inactive Academic Session.
+
+Use that session's enrollment.
+
+---
+
+# 16. TENANT ISOLATION
+
+Permanent BENIUS requirement:
+
+A Student from School A must never retrieve or calculate with School B:
+- Academic Sessions
+- enrollments
+- scores
+- policies
+- rank cohorts
+- result data
+
+Derive school from the authenticated Student.
+
+Do NOT trust client:
+- schoolId
+- studentId
+- class
+- section
+
+as authorization authority.
+
+Foreign-school Academic Session IDs must be rejected.
+
+All score/result reads must remain constrained to the authenticated Student where appropriate.
+
+---
+
+# 17. DO NOT CHANGE TEACHER EXAMINATION
+
+Teacher Examination is OUT OF SCOPE.
+
+Teachers must continue to:
+- enter scores
+- save drafts
+- publish using existing behavior
+
+Do not change Teacher UI.
+
+Do not change Teacher publication workflow.
+
+Do not change Teacher authorization.
+
+Do not change Teacher score calculations.
+
+If shared storage must change, preserve Teacher behavior and test it.
+
+---
+
+# 18. DO NOT CHANGE ADMIN EXAM CONTROLLER
+
+Admin Exam Controller is OUT OF SCOPE.
+
+Do NOT modify:
+- promotion ledger
+- promotion decisions
+- promotion overrides
+- lock/unlock behavior
+- execution
+- promotion history
+- Exam Controller UI
+- Admin result calculations
+
+The strict Admin Exam Controller Academic Session work is separate.
+
+---
+
+# 19. MOBILE COMPATIBILITY
+
+BENIUS Web and Mobile share the same academic data/backend.
+
+Do NOT weaken existing mobile Student result security.
+
+Inspect mobile Examination/Archives compatibility if shared backend/storage functions are changed.
+
+Do NOT redesign mobile UI.
+
+Do NOT create a separate result model for mobile.
+
+Final intended Student rule for both platforms:
+
+**Authenticated Student + School + Selected Academic Session + Selected-session Enrollment + Published Student-visible Results**
+
+where applicable.
+
+If mobile currently has stronger publication/session enforcement, preserve it.
+
+---
+
+# 20. NO UI/UX CHANGES
+
+Preserve existing Student Examination and Archives UI exactly.
+
+Do NOT change:
+- Open Sans
+- colors
+- cards
+- layout
+- spacing
+- icons
+- labels
+- navigation
+- tabs
+- charts
+- result presentation
+- loading states
+- empty states
+- error states
+
+Only correct backend/data/session/publication/cohort behavior.
+
+---
+
+# 21. NO DATABASE SCHEMA CHANGES
+
+Expected:
+
+**NONE**
+
+Do NOT:
+- create tables
+- alter tables
+- add columns
+- add policy snapshots
+- add result snapshot tables
+- run migrations
+
+If a schema change appears necessary, STOP and report why.
+
+---
+
+# 22. ESSENTIAL TESTS
+
+Add focused tests.
+
+At minimum:
+
+### A. Correct selected session
+Student selects Session A.
+
+Only Session A Student results are returned.
+
+### B. Wrong session
+Session B scores must not appear while Session A is selected.
+
+### C. Historical enrollment
+Current Student = Class 9A.
+
+Session A enrollment = Class 8A.
+
+Session A results/report card must use Class 8A.
+
+### D. Client class tampering
+Student enrolled Class 8A attempts to request Class 9 result/policy/cohort data by changing query parameters.
+
+Result:
+Server continues using/validating Class 8A.
+
+### E. Unpublished score
+Student has unpublished score.
+
+Result:
+Not visible through Student result APIs/UI.
+
+### F. Published score
+Published score in selected session.
+
+Result:
+Visible according to existing rules.
+
+### G. Mixed published/unpublished
+Only published Student-visible data contributes to Student-visible result/type/rank/history outputs where applicable.
+
+### H. Historical published report
+Inactive same-school Session A with published results.
+
+Result:
+Readable.
+
+### I. Historical unpublished report
+Inactive same-school Session A with unpublished result.
+
+Result:
+Not exposed.
+
+### J. Foreign-school session
+School A Student selects School B session.
+
+Result:
+Rejected.
+
+### K. Authenticated Student ownership
+Student A must not retrieve Student B result by manipulating request parameters.
+
+### L. Rank cohort
+Historical rank uses selected-session enrollment cohort, not current Student section.
+
+### M. Archives exam types
+Only appropriate published exam types from selected session/historical enrollment are returned.
+
+### N. Missing session
+Required Examination/Archive request without selected session fails safely rather than becoming unscoped.
+
+### O. Malformed raw session
+Malformed selected-session header is rejected through the Step 1 mechanism.
+
+### P. Cache isolation
+A → B → A uses separate query/cache identities.
+
+### Q. Teacher regression
+Existing Teacher draft/publish behavior remains unchanged if shared backend/storage was touched.
+
+---
+
+# 23. VALIDATION
+
+Run:
+- Step 1 Student Academic Session tests
+- Step 2 Homework/Classwork focused tests
+- Step 3 Examination/Archives focused tests
+- relevant existing examination tests
+- web build
+- relevant TypeScript checks
+- mobile TypeScript/tests if shared/mobile paths affected
+
+Do NOT fix unrelated repository-wide TypeScript errors.
+
+Clearly distinguish:
+- pre-existing diagnostics
+from
+- new diagnostics introduced by Step 3
+
+Changed files must not introduce new diagnostics.
+
+---
+
+# 24. DIFF REVIEW
+
+Before finishing confirm:
+
+- no DB schema change
+- no UI redesign
+- no Homework/Classwork regression
+- no Attendance change
+- no Fees change
+- no Timetable/Noticeboard change
+- no Complaints change
+- no Leave change
+- no Profile change
+- no public-upload authorization change
+- no Admin Exam Controller behavior change
+- no Teacher Examination behavior change
+- no tenant-isolation regression
+- Step 1 foundation remains intact
+- Step 2 remains intact
+- mobile security not weakened
+
+---
+
+# 25. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 3 — EXAMINATION + ARCHIVES RESULT
+
+### Examination session behavior
+Explain how Student Examination is now scoped.
+
+### Published-result visibility
+Explain exactly where `published=true` is enforced for Student-facing result data.
+
+### Enrollment/class authority
+Confirm selected-session enrollment is authoritative instead of current Student class/section or client class.
+
+### Archives behavior
+Explain historical report-card and exam-type behavior.
+
+### Historical sessions
+Explain inactive same-school published-result access.
+
+### Rank/cohort behavior
+Explain how selected-session class/section is used.
+
+### Journey/history behavior
+Explain session/publication corrections and confirm whether the existing raw-percentage formula remains unchanged.
+
+### Examination policy behavior
+Explain class authorization and confirm historical policy versioning was NOT added.
+
+### Raw session validation
+Explain how malformed/missing/foreign session IDs are handled now.
+
+### Session transport
+List relevant Student Examination/Archives frontend requests corrected to explicit session transport.
+
+### Cache isolation
+Explain A → B → A behavior.
+
+### Tenant isolation
+Explain Student/school/session/result isolation.
+
+### Mobile compatibility
+Explain impact and validation.
+
+### Files changed
+List every file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Teacher Examination behavior changed
+Expected:
+`No`
+
+### Admin Exam Controller behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Separate pre-existing diagnostics from new diagnostics.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Explicitly deferred findings
+State whether these remain unchanged:
+- historical policy versioning
+- enrollment-history GET mutation
+- journey raw-percentage vs weighted-engine inconsistency
+
+### Remaining Student Portal work
+Do NOT implement:
+- Timetable/Noticeboard
+- Complaints
+- Leave
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Examination + Student Archives Academic Session, historical enrollment, publication visibility, and directly related Student rank/cohort correctness.**
+
+Do not redesign Examination.
+
+Do not change formulas/policies.
+
+Do not change Teacher Examination.
+
+Do not change Admin Exam Controller.
+
+Do not change the database schema.
+
+If correcting Student behavior requires changing broader examination business logic, STOP and report it instead.

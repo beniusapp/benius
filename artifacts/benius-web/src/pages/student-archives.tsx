@@ -8,6 +8,9 @@ import {
   TrendingUp, AlertCircle, ChevronDown,
 } from "lucide-react";
 import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
+import {
+  studentArchiveJourneyQueryKey, studentArchiveTypesQueryKey, studentArchiveScoresQueryKey,
+} from "@/lib/student-exam-query-keys";
 import { formatDateOnly } from "@shared/ist-time";
 
 interface AcademicSession {
@@ -23,7 +26,6 @@ interface StudentMe {
   name: string;
   digitalStudentId: string;
   class: string;
-  section: string;
   schoolName: string;
   schoolId: number;
 }
@@ -36,6 +38,7 @@ interface ExamScoreRow {
   isAbsent: boolean;
   examType: string;
   class: string;
+  section: string;
 }
 
 interface ExamSummary {
@@ -126,21 +129,43 @@ export default function StudentArchivesPage() {
   }, [selectedSession?.id]);
 
   const { data: journeyData, isLoading: journeyLoading } = useQuery<{ journey: { cls: string; examType: string; percentage: number }[] }>({
-    queryKey: ["/api/student/archive/journey", selectedSession?.id],
-    queryFn: () => archiveFetch("/api/student/exam/journey"),
+    queryKey: studentArchiveJourneyQueryKey(selectedSession?.id ?? null),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, sessionId] = queryKey as ReturnType<typeof studentArchiveJourneyQueryKey>;
+      if (sessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession("/api/student/exam/journey", sessionId, { signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    },
     enabled: !!selectedSession && activeTab === "report-cards",
   });
 
   const { data: examTypesData } = useQuery<{ examTypes: string[] }>({
-    queryKey: ["/api/student/archive/exam-types", selectedSession?.id],
-    queryFn: () => archiveFetch("/api/student/exam/types"),
+    queryKey: studentArchiveTypesQueryKey(selectedSession?.id ?? null),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, sessionId] = queryKey as ReturnType<typeof studentArchiveTypesQueryKey>;
+      if (sessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession("/api/student/exam/types", sessionId, { signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    },
     enabled: !!selectedSession && activeTab === "report-cards",
   });
   const examTypes = examTypesData?.examTypes || [];
 
-  const { data: scoresData, isLoading: scoresLoading } = useQuery<{ scores: ExamScoreRow[]; summary: ExamSummary }>({
-    queryKey: ["/api/student/archive/scores", selectedSession?.id, selectedExamType],
-    queryFn: () => archiveFetch(`/api/student/exam/scores?examType=${encodeURIComponent(selectedExamType)}`),
+  const { data: scoresData, isLoading: scoresLoading } = useQuery<{
+    scores: ExamScoreRow[]; cls: string; section: string; summary: ExamSummary;
+  }>({
+    queryKey: studentArchiveScoresQueryKey(selectedSession?.id ?? null, selectedExamType),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, sessionId, examType] = queryKey as ReturnType<typeof studentArchiveScoresQueryKey>;
+      if (sessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession(
+        `/api/student/exam/scores?examType=${encodeURIComponent(examType)}`, sessionId, { signal },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    },
     enabled: !!selectedSession && !!selectedExamType && activeTab === "report-cards",
   });
 
@@ -194,7 +219,7 @@ td{padding:8px 8px;font-size:12px;border-bottom:1px solid #f1f5f9}
 </style></head><body><div class="box">
 <div class="hd"><h1>${esc(student.schoolName)}</h1><h2>Academic Transcript · ${esc(selectedSession.sessionName)} · ${esc(selectedExamType)}</h2></div>
 <p style="margin:0 0 4px"><strong>${esc(student.name)}</strong></p>
-<p style="margin:0;font-size:12px;color:#64748b">ID: ${esc(student.digitalStudentId)} &nbsp;|&nbsp; Class: ${esc(student.class)}-${esc(student.section)}</p>
+<p style="margin:0;font-size:12px;color:#64748b">ID: ${esc(student.digitalStudentId)} &nbsp;|&nbsp; Class: ${esc(scoresData.cls)}-${esc(scoresData.section)}</p>
 <table><thead><tr><th>Subject</th><th style="text-align:center">Marks</th><th style="text-align:center">Max</th><th style="text-align:center">%</th></tr></thead>
 <tbody>${rows}</tbody></table>
 <div class="sum">

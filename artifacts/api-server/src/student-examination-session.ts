@@ -2,20 +2,15 @@ import {
   resolveStudentAcademicSession,
   type SchoolAcademicSession,
   type StudentAcademicSessionDependencies,
+  type StudentSessionEnrollment,
   type StudentSessionIdentity,
 } from "./student-academic-session";
 
 export type StudentExaminationSessionDependencies<
   TStudent extends StudentSessionIdentity,
   TSession extends SchoolAcademicSession,
-> = Pick<
-  StudentAcademicSessionDependencies<TStudent, TSession, never>,
-  "getStudentById" | "getAcademicSessionForSchool"
->;
-
-export type StudentExaminationSessionResolution<TStudent extends StudentSessionIdentity, TSession extends SchoolAcademicSession> =
-  | { ok: true; student: TStudent; schoolId: number; sessionId: number }
-  | { ok: false; status: 401 | 403; message: string };
+  TEnrollment extends StudentSessionEnrollment,
+> = StudentAcademicSessionDependencies<TStudent, TSession, TEnrollment>;
 
 /**
  * Resolves a required Student Examination session inside the authenticated
@@ -24,23 +19,29 @@ export type StudentExaminationSessionResolution<TStudent extends StudentSessionI
 export async function resolveStudentExaminationSession<
   TStudent extends StudentSessionIdentity,
   TSession extends SchoolAcademicSession,
+  TEnrollment extends StudentSessionEnrollment,
 >(
   studentId: number | undefined,
-  requestedSessionId: unknown,
-  dependencies: StudentExaminationSessionDependencies<TStudent, TSession>,
-): Promise<StudentExaminationSessionResolution<TStudent, TSession>> {
+  rawSessionHeader: unknown,
+  dependencies: StudentExaminationSessionDependencies<TStudent, TSession, TEnrollment>,
+) {
   const result = await resolveStudentAcademicSession(
     studentId,
-    requestedSessionId,
-    "SELECTED_SESSION_REQUIRED",
+    rawSessionHeader,
+    "SELECTED_SESSION_ENROLLMENT_REQUIRED",
     dependencies,
   );
-  if (!result.ok) {
+  if (!result.ok) return result;
+  // The Step 1 enrollment-required mode guarantees these values.
+  if (!result.enrollment || result.sessionId === null) {
     return {
-      ok: false,
-      status: result.status === 401 ? 401 : 403,
-      message: result.status === 401 ? result.message : "Invalid academic session",
+      ok: false as const, status: 403 as const,
+      message: "Student is not enrolled in this academic session",
+      code: "STUDENT_ENROLLMENT_REQUIRED" as const,
     };
   }
-  return { ok: true, student: result.student, schoolId: result.schoolId, sessionId: result.sessionId! };
+  return {
+    ok: true as const, student: result.student, schoolId: result.schoolId,
+    sessionId: result.sessionId, enrollment: result.enrollment,
+  };
 }

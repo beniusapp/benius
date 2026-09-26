@@ -8,6 +8,7 @@ import {
   MoreVertical, Check, History,
 } from "lucide-react";
 import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
+import { studentExamPolicyQueryKey, studentExamScoresQueryKey } from "@/lib/student-exam-query-keys";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useSessionView } from "@/contexts/session-view-context";
 import { selectGrade, type GradingRule } from "@shared/examination-calculation-engine";
@@ -1320,16 +1321,18 @@ export default function StudentExamination() {
   // ── Exam policy for the resolved class ───────────────────────────────────────
   const { data: policyData, isLoading: policyLoading, isError: policyMissing } =
     useQuery<ExamPolicyTier>({
-      queryKey: ["/api/student/exam/policy", selectedClass],
-      queryFn: async () => {
-        const r = await fetch(
-          `/api/student/exam/policy?class=${encodeURIComponent(selectedClass)}`,
-          { credentials: "include" },
+      queryKey: studentExamPolicyQueryKey(selectedSessionId, selectedClass),
+      queryFn: async ({ queryKey, signal }) => {
+        const [, requestSessionId, requestClass] = queryKey as ReturnType<typeof studentExamPolicyQueryKey>;
+        if (requestSessionId === null) throw new Error("Academic session is required");
+        const r = await sessionFetchForViewSession(
+          `/api/student/exam/policy?class=${encodeURIComponent(requestClass)}`,
+          requestSessionId, { signal },
         );
         if (!r.ok) throw new Error("No policy");
         return r.json();
       },
-      enabled: !!selectedClass,
+      enabled: !!selectedClass && selectedSessionId !== null && selectedSession?.verified === true,
       retry: false,
       staleTime: 60000,
     });
@@ -1339,16 +1342,18 @@ export default function StudentExamination() {
   // ── All scores — cache key includes sessionId to prevent cross-session bleed ──
   const { data: allScoresData, isLoading: scoresLoading } =
     useQuery<{ scores: ExamScore[]; cls: string }>({
-      queryKey: ["/api/student/exam/all-scores", selectedClass, selectedSessionId],
-      queryFn: async () => {
+      queryKey: studentExamScoresQueryKey(selectedSessionId, selectedClass),
+      queryFn: async ({ queryKey, signal }) => {
+        const [, requestSessionId, requestClass] = queryKey as ReturnType<typeof studentExamScoresQueryKey>;
+        if (requestSessionId === null) throw new Error("Academic session is required");
         const r = await sessionFetchForViewSession(
-          `/api/student/exam/all-scores?class=${encodeURIComponent(selectedClass)}`,
-          selectedSessionId,
+          `/api/student/exam/all-scores?class=${encodeURIComponent(requestClass)}`,
+          requestSessionId, { signal },
         );
         if (!r.ok) throw new Error("Failed");
         return r.json();
       },
-      enabled: !!selectedClass && selectedSessionId !== null,
+      enabled: !!selectedClass && selectedSessionId !== null && selectedSession?.verified === true,
       staleTime: 0,
       refetchInterval: 30000,
     });

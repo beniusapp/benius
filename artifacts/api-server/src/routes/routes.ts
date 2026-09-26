@@ -2271,66 +2271,65 @@ export async function registerRoutes(
 
   // ===== STUDENT EXAM ROUTES =====
   app.get("/api/student/exam/classes", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
+    const context = await resolveStudentExaminationSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const classes = await storage.getStudentDistinctClasses(
+      context.schoolId, context.student.id, context.sessionId,
+      context.enrollment.className, context.enrollment.sectionName,
+    );
     res.json({ classes });
   });
 
   app.get("/api/student/exam/types", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    // Security: studentId scopes data — no need for published-gate class restriction
-    const cls = (req.query.class as string) || student.class;
-    const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
+    const context = await resolveStudentExaminationSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const examTypes = await storage.getStudentExamTypesForStudent(
+      context.schoolId, context.student.id, context.enrollment.className,
+      context.sessionId, context.enrollment.sectionName,
+    );
     res.json({ examTypes });
   });
 
   app.get("/api/student/exam/scores", async (req, res) => {
     const context = await resolveStudentExaminationSession(
       req.session.studentId,
-      (req as any).viewSessionId,
+      req.headers["x-view-session-id"],
       storage,
     );
     if (!context.ok) return res.status(context.status).json({ message: context.message });
-    const { student, schoolId, sessionId } = context;
-    const cls = (req.query.class as string) || student.class;
+    const { student, schoolId, sessionId, enrollment } = context;
+    const cls = enrollment.className;
     const examType = req.query.examType as string;
     if (!examType) return res.status(400).json({ message: "examType is required" });
-    // Real-time: no published filter — studentId isolation guarantees tenant security
-    const scores = await storage.getStudentExamScores(schoolId, student.id, cls, examType, sessionId);
+    const scores = await storage.getStudentExamScores(schoolId, student.id, cls, examType, sessionId, enrollment.sectionName);
     let rank: { rank: number; total: number } | null = null;
     if (scores.length > 0) {
-      rank = await storage.getClassRank(schoolId, cls, student.section, examType, student.id, sessionId);
+      rank = await storage.getClassRank(schoolId, cls, enrollment.sectionName, examType, student.id, sessionId);
     }
     const totalObtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
     const totalMax = scores.reduce((sum, s) => sum + s.totalMarks, 0);
     const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100 * 10) / 10 : 0;
     try {
       const grade = await storage.resolveGrade(schoolId, cls, percentage);
-      res.json({ scores, summary: { totalObtained, totalMax, percentage, grade: grade.gradeLabel, rank } });
+      res.json({
+        scores, cls, section: enrollment.sectionName,
+        summary: { totalObtained, totalMax, percentage, grade: grade.gradeLabel, rank },
+      });
     } catch (error: any) {
       return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
     }
   });
 
   app.get("/api/student/exam/journey", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const classes = await storage.getStudentDistinctClasses(student.schoolId, student.id, viewSessionId);
-    const allClasses = classes.length > 0 ? classes : [student.class];
+    const context = await resolveStudentExaminationSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { student, schoolId, sessionId, enrollment } = context;
     const journey: { cls: string; examType: string; percentage: number }[] = [];
-    for (const cls of allClasses) {
-      const examTypes = await storage.getStudentExamTypesForStudent(student.schoolId, student.id, cls, viewSessionId);
+    for (const cls of [enrollment.className]) {
+      const examTypes = await storage.getStudentExamTypesForStudent(schoolId, student.id, cls, sessionId, enrollment.sectionName);
       if (examTypes.length === 0) continue;
       const finalExamType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
-      const scores = await storage.getStudentExamScores(student.schoolId, student.id, cls, finalExamType, viewSessionId);
+      const scores = await storage.getStudentExamScores(schoolId, student.id, cls, finalExamType, sessionId, enrollment.sectionName);
       if (scores.length === 0) continue;
       const obtained = scores.filter(s => !s.isAbsent).reduce((sum, s) => sum + s.marks, 0);
       const total = scores.reduce((sum, s) => sum + s.totalMarks, 0);
@@ -2340,28 +2339,27 @@ export async function registerRoutes(
     res.json({ journey });
   });
 
-  // Student: exam policy for their class — no published restriction
+  // Student: current school-level exam policy for the selected-session enrollment class.
   app.get("/api/student/exam/policy", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const cls = (req.query.class as string) || student.class;
-    const tiers = await storage.getExamPolicyTiers(student.schoolId);
+    const context = await resolveStudentExaminationSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const cls = context.enrollment.className;
+    const tiers = await storage.getExamPolicyTiers(context.schoolId);
     const tier = tiers.find(t =>
       (t.applicableClasses || []).map((c: string) => String(c).trim()).includes(String(cls).trim())
     );
     if (!tier) return res.status(404).json({ message: `No exam policy configured for Class ${cls}` });
-    const passPolicy = await storage.resolveClassPassPolicy(student.schoolId, cls);
+    const passPolicy = await storage.resolveClassPassPolicy(context.schoolId, cls);
     if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for Class ${cls}` });
     try {
-      const gradingRules = await storage.getGradingRules(student.schoolId, passPolicy.id);
+      const gradingRules = await storage.getGradingRules(context.schoolId, passPolicy.id);
       const { validateGradingRules } = await import("@shared/examination-calculation-engine");
       validateGradingRules(gradingRules);
       res.json({
         ...tier,
         passPercentage: passPolicy.passPercentage,
         gradingRules,
-        gradingPolicy: { schoolId: student.schoolId, tierId: passPolicy.id },
+        gradingPolicy: { schoolId: context.schoolId, tierId: passPolicy.id },
       });
     } catch (error: any) {
       return res.status(409).json({ message: error.message || "Grading policy is not configured correctly." });
@@ -2400,17 +2398,17 @@ export async function registerRoutes(
     res.json(history);
   });
 
-  // Student: all exam scores for a class — real-time, no published gate
+  // Student: published scores for the selected-session enrollment cohort.
   app.get("/api/student/exam/all-scores", async (req, res) => {
     const context = await resolveStudentExaminationSession(
       req.session.studentId,
-      (req as any).viewSessionId,
+      req.headers["x-view-session-id"],
       storage,
     );
     if (!context.ok) return res.status(context.status).json({ message: context.message });
-    const { student, schoolId, sessionId } = context;
-    const cls = (req.query.class as string) || student.class;
-    const scores = await storage.getStudentAllExamScores(schoolId, student.id, cls, sessionId);
+    const { student, schoolId, sessionId, enrollment } = context;
+    const cls = enrollment.className;
+    const scores = await storage.getStudentAllExamScores(schoolId, student.id, cls, sessionId, enrollment.sectionName);
     res.json({ scores, cls });
   });
 

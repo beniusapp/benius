@@ -455,6 +455,7 @@ export function registerMobileStudentAdditionalRoutes(
       if (!context) return;
       const classes = await storage.getStudentDistinctClasses(
         context.student.schoolId, context.student.id, context.session.id,
+        context.cohort.class, context.cohort.section,
       );
       res.json({ classes });
     } catch {
@@ -467,7 +468,7 @@ export function registerMobileStudentAdditionalRoutes(
       const context = await sessionStudentContext(req, res);
       if (!context) return;
       const examTypes = await storage.getStudentExamTypesForStudent(
-        context.student.schoolId, context.student.id, context.cohort.class, context.session.id,
+        context.student.schoolId, context.student.id, context.cohort.class, context.session.id, context.cohort.section,
       );
       res.json({ examTypes });
     } catch {
@@ -480,7 +481,7 @@ export function registerMobileStudentAdditionalRoutes(
       const context = await sessionStudentContext(req, res);
       if (!context) return;
       const scores = await storage.getStudentAllExamScores(
-        context.student.schoolId, context.student.id, context.cohort.class, context.session.id,
+        context.student.schoolId, context.student.id, context.cohort.class, context.session.id, context.cohort.section,
       );
       res.json({ scores, cls: context.cohort.class });
     } catch {
@@ -494,16 +495,17 @@ export function registerMobileStudentAdditionalRoutes(
       if (!context) return;
       const classes = await storage.getStudentDistinctClasses(
         context.student.schoolId, context.student.id, context.session.id,
+        context.cohort.class, context.cohort.section,
       );
       const journey: { cls: string; examType: string; percentage: number }[] = [];
       for (const cls of classes.length ? classes : [context.cohort.class]) {
         const examTypes = await storage.getStudentExamTypesForStudent(
-          context.student.schoolId, context.student.id, cls, context.session.id,
+          context.student.schoolId, context.student.id, cls, context.session.id, context.cohort.section,
         );
         if (examTypes.length === 0) continue;
         const examType = examTypes.includes("Annual") ? "Annual" : examTypes[examTypes.length - 1];
         const scores = await storage.getStudentExamScores(
-          context.student.schoolId, context.student.id, cls, examType, context.session.id,
+          context.student.schoolId, context.student.id, cls, examType, context.session.id, context.cohort.section,
         );
         if (scores.length === 0) continue;
         const obtained = scores.filter(score => !score.isAbsent).reduce((sum, score) => sum + score.marks, 0);
@@ -565,7 +567,7 @@ export function registerMobileStudentAdditionalRoutes(
       }
       const scores = await storage.getStudentExamScores(
         context.student.schoolId, context.student.id, context.cohort.class,
-        examType, context.session.id,
+        examType, context.session.id, context.cohort.section,
       );
       res.json({ scores, class: context.cohort.class, examType });
     } catch {

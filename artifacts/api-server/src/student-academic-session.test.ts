@@ -166,8 +166,16 @@ test("student identity is server-required", async () => {
 
 test("existing examination resolver delegates to the same school-owned boundary", async () => {
   const { dependencies } = fixture();
-  const valid = await resolveStudentExaminationSession(17, 22, dependencies);
-  assert.deepEqual(valid, { ok: true, student, schoolId: 1, sessionId: 22 });
+  const valid = await resolveStudentExaminationSession(17, "21", dependencies);
+  assert.deepEqual(valid, {
+    ok: true, student, schoolId: 1, sessionId: 21,
+    enrollment: {
+      schoolId: 1, studentId: 17, sessionId: 21,
+      className: "9", sectionName: "B", rollNo: 4, status: "Promoted",
+    },
+  });
   const invalid = await resolveStudentExaminationSession(17, 31, dependencies);
-  assert.deepEqual(invalid, { ok: false, status: 403, message: "Invalid academic session" });
+  assert.deepEqual(invalid, {
+    ok: false, status: 403, code: "STUDENT_SESSION_FORBIDDEN", message: "Invalid academic session",
+  });
 });

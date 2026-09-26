@@ -56,6 +56,7 @@ import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST,
 import { isAttendanceDateInSession } from "@shared/attendance-session-date";
 import { db } from "./db";
 import { pool } from "./db";
+import { studentPublishedRankScope, studentPublishedScoreScope } from "./student-examination-score-scope";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
@@ -2395,30 +2396,22 @@ export class DatabaseStorage {
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.examType);
   }
 
-  async getStudentDistinctClasses(schoolId: number, studentId: number, sessionId?: number | null): Promise<string[]> {
-    const conditions: SQL<unknown>[] = [eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId)];
-    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+  async getStudentDistinctClasses(schoolId: number, studentId: number, sessionId: number, cls: string, section: string): Promise<string[]> {
     const rows = await db.selectDistinct({ class: examScores.class })
       .from(examScores)
-      .where(and(...conditions))
+      .where(studentPublishedScoreScope(schoolId, studentId, sessionId, cls, section))
       .orderBy(sql`${examScores.class} ASC NULLS LAST`);
     return rows.map(r => r.class).filter((c): c is string => c !== null);
   }
 
-  // Student exam types for a specific student+class — no published gate (real-time visibility)
-  async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<string[]> {
-    const conditions: SQL<unknown>[] = [
-      eq(examScores.schoolId, schoolId),
-      eq(examScores.studentId, studentId),
-      eq(examScores.class, cls),
-    ];
-    if (sessionId) conditions.push(eq(examScores.sessionId, sessionId));
+  // Student-only types from published results in the selected enrollment cohort.
+  async getStudentExamTypesForStudent(schoolId: number, studentId: number, cls: string, sessionId: number, section: string): Promise<string[]> {
     const rows = await db.select({
       examType: examScores.examType,
       minId: sql<number>`MIN(${examScores.id})`,
     })
       .from(examScores)
-      .where(and(...conditions))
+      .where(studentPublishedScoreScope(schoolId, studentId, sessionId, cls, section))
       .groupBy(examScores.examType)
       .orderBy(sql`MIN(${examScores.id}) ASC`);
     return rows.map(r => r.examType);
@@ -2442,35 +2435,24 @@ export class DatabaseStorage {
     return rows.map(r => r.examType);
   }
 
-  // Student score fetch — no published gate (real-time visibility)
-  async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string, sessionId?: number | null): Promise<ExamScore[]> {
-    const conditions: SQL<unknown>[] = [
-      eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId),
-      eq(examScores.class, cls), eq(examScores.examType, examType),
-    ];
-    if (sessionId != null) conditions.push(eq(examScores.sessionId, sessionId));
-    return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject);
+  // Student-only score fetch; drafts remain visible to Teacher/Admin readers.
+  async getStudentExamScores(schoolId: number, studentId: number, cls: string, examType: string, sessionId: number, section: string): Promise<ExamScore[]> {
+    return await db.select().from(examScores).where(and(
+      studentPublishedScoreScope(schoolId, studentId, sessionId, cls, section),
+      eq(examScores.examType, examType),
+    )).orderBy(examScores.subject);
   }
 
-  // All scores for a student in a class — no published gate (real-time visibility)
-  async getStudentAllExamScores(schoolId: number, studentId: number, cls: string, sessionId?: number | null): Promise<ExamScore[]> {
-    const conditions: SQL<unknown>[] = [
-      eq(examScores.schoolId, schoolId), eq(examScores.studentId, studentId), eq(examScores.class, cls),
-    ];
-    if (sessionId != null) conditions.push(eq(examScores.sessionId, sessionId));
-    return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.subject, examScores.examType);
+  // Student-only history; never broaden a missing session into an unscoped read.
+  async getStudentAllExamScores(schoolId: number, studentId: number, cls: string, sessionId: number, section: string): Promise<ExamScore[]> {
+    return await db.select().from(examScores)
+      .where(studentPublishedScoreScope(schoolId, studentId, sessionId, cls, section))
+      .orderBy(examScores.subject, examScores.examType);
   }
 
   async getClassRank(schoolId: number, cls: string, section: string, examType: string, studentId: number, sessionId: number): Promise<{ rank: number; total: number }> {
     const allScores = await db.select().from(examScores)
-      .where(and(
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.class, cls),
-        eq(examScores.section, section),
-        eq(examScores.examType, examType),
-        eq(examScores.sessionId, sessionId),
-        eq(examScores.published, true),
-      ));
+      .where(studentPublishedRankScope(schoolId, sessionId, cls, section, examType));
 
     const byStudent: Record<number, { obtained: number; total: number }> = {};
     for (const s of allScores) {
