@@ -60,6 +60,7 @@ import { studentPublishedRankScope, studentPublishedScoreScope } from "./student
 import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeSessionScope } from "./student-notice-visibility";
 import { studentTimetableScope } from "./student-timetable-visibility";
 import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
+import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
@@ -3418,6 +3419,7 @@ export class DatabaseStorage {
 
   // ===== STUDENT LEAVE REQUESTS =====
   async createStudentLeaveRequest(data: InsertStudentLeaveRequest): Promise<StudentLeaveRequest> {
+    requireStudentLeaveSession(data.sessionId);
     const [req] = await db.insert(studentLeaveRequests).values(data).returning();
     return req;
   }
@@ -3521,11 +3523,9 @@ export class DatabaseStorage {
     return req ?? null;
   }
 
-  async getStudentLeavesByStudent(studentId: number, sessionId?: number | null): Promise<StudentLeaveRequest[]> {
-    const conditions: SQL<unknown>[] = [eq(studentLeaveRequests.studentId, studentId)];
-    if (sessionId) conditions.push(eq(studentLeaveRequests.sessionId, sessionId));
+  async getStudentLeavesByStudent(studentId: number, schoolId: number, sessionId: number): Promise<StudentLeaveRequest[]> {
     return await db.select().from(studentLeaveRequests)
-      .where(and(...conditions))
+      .where(studentLeaveSessionScope(studentId, schoolId, sessionId))
       .orderBy(desc(studentLeaveRequests.createdAt));
   }
 
@@ -3537,17 +3537,25 @@ export class DatabaseStorage {
     return req || null;
   }
 
-  async deleteStudentLeaveRequest(id: number, studentId: number): Promise<{ success: boolean; reason?: string }> {
+  async deleteStudentLeaveRequest(
+    id: number,
+    studentId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<{ success: boolean; reason?: string }> {
+    const scope = studentLeaveSessionScope(studentId, schoolId, sessionId);
     const [leave] = await db.select().from(studentLeaveRequests).where(and(
       eq(studentLeaveRequests.id, id),
-      eq(studentLeaveRequests.studentId, studentId),
+      scope,
     ));
     if (!leave) return { success: false, reason: "not_found" };
     if (leave.status !== "pending_teacher") return { success: false, reason: "not_pending" };
-    await db.delete(studentLeaveRequests).where(and(
+    const [deleted] = await db.delete(studentLeaveRequests).where(and(
       eq(studentLeaveRequests.id, id),
-      eq(studentLeaveRequests.studentId, studentId),
-    ));
+      scope,
+      eq(studentLeaveRequests.status, "pending_teacher"),
+    )).returning({ id: studentLeaveRequests.id });
+    if (!deleted) return { success: false, reason: "not_pending" };
     return { success: true };
   }
 

@@ -603,7 +603,9 @@ export function registerMobileStudentAdditionalRoutes(
     try {
       const context = await sessionStudentContext(req, res);
       if (!context) return;
-      res.json(await storage.getStudentLeavesByStudent(context.student.id, context.session.id));
+      res.json(await storage.getStudentLeavesByStudent(
+        context.student.id, context.student.schoolId, context.session.id,
+      ));
     } catch {
       sendFailure(res, "Unable to load Student leave applications.");
     }
@@ -681,13 +683,17 @@ export function registerMobileStudentAdditionalRoutes(
         fail(res, 400, "Invalid leave application ID.");
         return;
       }
-      const scopedLeaves = await storage.getStudentLeavesByStudent(context.student.id, context.session.id);
+      const scopedLeaves = await storage.getStudentLeavesByStudent(
+        context.student.id, context.student.schoolId, context.session.id,
+      );
       const scopedLeave = scopedLeaves.find(leave => leave.id === id);
       if (!scopedLeave) {
         fail(res, 404, "Leave application not found in the selected academic session.");
         return;
       }
-      const result = await storage.deleteStudentLeaveRequest(id, context.student.id);
+      const result = await storage.deleteStudentLeaveRequest(
+        id, context.student.id, context.student.schoolId, context.session.id,
+      );
       if (!result.success) {
         if (result.reason === "not_found") fail(res, 404, "Leave application not found.");
         else if (result.reason === "forbidden") fail(res, 403, "Access denied.");
@@ -717,7 +723,9 @@ export function registerMobileStudentAdditionalRoutes(
         return;
       }
       const attachmentUrl = `${PRIVATE_LEAVE_FILE_PREFIX}${filename}`;
-      const leaves = await storage.getStudentLeavesByStudent(context.student.id, context.session.id);
+      const leaves = await storage.getStudentLeavesByStudent(
+        context.student.id, context.student.schoolId, context.session.id,
+      );
       if (!leaves.some(leave => leave.attachmentUrl === attachmentUrl)) {
         fail(res, 404, "Leave attachment not found.");
         return;

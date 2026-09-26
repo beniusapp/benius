@@ -7,7 +7,8 @@ import {
   ArrowLeft, FileText, PlusCircle, X, Loader2, Clock, CheckCircle2, XCircle, Forward,
   CalendarDays, Trash2, Lock, Upload, Paperclip,
 } from "lucide-react";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession, queryClient } from "@/lib/queryClient";
+import { studentLeaveQueryKey } from "@/lib/student-leave-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -59,7 +60,8 @@ function daysBetween(start: string, end: string): number {
 export default function StudentLeave() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const { isArchiveMode } = useSessionView();
+  const { isArchiveMode, selectedSession } = useSessionView();
+  const sessionId = selectedSession?.id ?? null;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [category, setCategory] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -77,17 +79,19 @@ export default function StudentLeave() {
   }, [studentLoading, student, setLocation]);
 
   const { data: leaves = [], isLoading: leavesLoading } = useQuery<StudentLeaveRequest[]>({
-    queryKey: ["/api/student/leave", student?.id],
-    queryFn: async () => {
-      const res = await fetch("/api/student/leave", { credentials: "include" });
+    queryKey: studentLeaveQueryKey(sessionId, student?.id ?? null),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1] as number | null;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const res = await sessionFetchForViewSession("/api/student/leave", requestSessionId, { signal });
       if (!res.ok) throw new Error("Failed to load leaves");
       return res.json();
     },
-    enabled: !!student,
+    enabled: !!student && sessionId !== null,
   });
 
   const submitMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ sessionId: requestSessionId }: { sessionId: number; studentId: number }) => {
       // Single atomic FormData request — file + fields in one POST, no two-step race
       const fd = new FormData();
       fd.append("startDate", startDate);
@@ -95,17 +99,16 @@ export default function StudentLeave() {
       fd.append("reason", reason);
       if (category) fd.append("category", category);
       if (attachmentFile) fd.append("file", attachmentFile);
-      const res = await fetch("/api/student/leave", {
+      const res = await sessionFetchForViewSession("/api/student/leave", requestSessionId, {
         method: "POST",
         body: fd,
-        credentials: "include",
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || body.error || "Submission failed");
       }
     },
-    onSuccess: () => {
+    onSuccess: (_, { sessionId: requestSessionId, studentId }) => {
       toast({ title: "Leave Applied", description: "Your request has been submitted to your class teacher." });
       setDrawerOpen(false);
       setCategory("");
@@ -113,7 +116,10 @@ export default function StudentLeave() {
       setEndDate("");
       setReason("");
       setAttachmentFile(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
+      queryClient.invalidateQueries({
+        queryKey: studentLeaveQueryKey(requestSessionId, studentId),
+        exact: true,
+      });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -121,16 +127,21 @@ export default function StudentLeave() {
   });
 
   const deleteLeaveMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/student/leave/${id}`, undefined);
+    mutationFn: async ({ id, sessionId: requestSessionId }: { id: number; sessionId: number; studentId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/student/leave/${id}`, requestSessionId, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.message || "Failed to delete");
       }
     },
-    onSuccess: () => {
+    onSuccess: (_, { sessionId: requestSessionId, studentId }) => {
       toast({ title: "Leave application deleted", description: "Your balance has been restored." });
-      queryClient.invalidateQueries({ queryKey: ["/api/student/leave"] });
+      queryClient.invalidateQueries({
+        queryKey: studentLeaveQueryKey(requestSessionId, studentId),
+        exact: true,
+      });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -309,7 +320,11 @@ export default function StudentLeave() {
                       </span>
                       {leave.status === "pending_teacher" && !isArchiveMode && (
                         <button
-                          onClick={() => deleteLeaveMutation.mutate(leave.id)}
+                          onClick={() => {
+                            if (sessionId !== null) {
+                              deleteLeaveMutation.mutate({ id: leave.id, sessionId, studentId: student.id });
+                            }
+                          }}
                           disabled={deleteLeaveMutation.isPending}
                           className="flex items-center justify-center w-8 h-8 rounded-xl text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                           title="Delete pending request"
@@ -477,7 +492,11 @@ export default function StudentLeave() {
               {/* Submit — inside the scroll so it's always reachable above the keyboard */}
               <div className="pt-2 pb-4">
                 <button
-                  onClick={() => submitMutation.mutate()}
+                  onClick={() => {
+                    if (sessionId !== null) {
+                      submitMutation.mutate({ sessionId, studentId: student.id });
+                    }
+                  }}
                   disabled={!canSubmit || submitMutation.isPending}
                   className="w-full h-12 rounded-xl bg-[#10b981] hover:bg-[#059669] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors"
                   data-testid="button-submit-leave"

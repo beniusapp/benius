@@ -2651,22 +2651,10 @@ export async function registerRoutes(
 
   // Single atomic endpoint: fields + optional file arrive together, file written to disk from buffer
   app.post("/api/student/leave", leaveMemUpload.single("file"), async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-
-    // Archive-mode guard
-    const viewSessionId = req.headers["x-view-session-id"];
-    if (viewSessionId) {
-      const sessionId = parseInt(viewSessionId as string, 10);
-      if (!isNaN(sessionId)) {
-        const sessions = await storage.getAcademicSessions(student.schoolId);
-        const targetSession = sessions.find(s => s.id === sessionId);
-        if (targetSession && !targetSession.isActive) {
-          return res.status(403).json({ error: "Security Block: Leave applications cannot be submitted for historical academic terms." });
-        }
-      }
-    }
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "CURRENT_SESSION_WRITE", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
 
     const startDate  = req.body?.startDate  ?? req.body?.start_date;
     const endDate    = req.body?.endDate    ?? req.body?.end_date;
@@ -2688,39 +2676,46 @@ export async function registerRoutes(
       attachmentUrl = `/uploads/leave-attachments/${filename}`;
     }
 
-    // Tag with the school's active session for session-scoped filtering
-    const activeSessionForStudentLeave = await storage.getActiveSession(student.schoolId);
-
     const leave = await storage.createStudentLeaveRequest({
-      studentId: student.id,
-      schoolId: student.schoolId,
+      studentId: context.student.id,
+      schoolId: context.schoolId,
+      sessionId: context.sessionId!,
       startDate,
       endDate,
       reason,
       status: "pending_teacher",
       category: category || null,
       attachmentUrl,
-      sessionId: activeSessionForStudentLeave?.id ?? null,
     });
     res.status(201).json(leave);
   });
 
   app.get("/api/student/leave", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const leaves = await storage.getStudentLeavesByStudent(req.session.studentId, viewSessionId);
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const leaves = await storage.getStudentLeavesByStudent(
+      context.student.id, context.schoolId, context.sessionId!,
+    );
     res.json(leaves);
   });
 
   app.delete("/api/student/leave/:id", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    const result = await storage.deleteStudentLeaveRequest(id, req.session.studentId);
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "CURRENT_SESSION_WRITE", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+    const result = await storage.deleteStudentLeaveRequest(
+      id, context.student.id, context.schoolId, context.sessionId!,
+    );
     if (!result.success) {
       if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
       if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
       if (result.reason === "not_pending") return res.status(400).json({ message: "Only pending leave requests can be deleted" });
+      return res.status(400).json({ message: "Unable to delete leave request" });
     }
     res.json({ message: "Leave request deleted" });
   });
