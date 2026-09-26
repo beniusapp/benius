@@ -469,11 +469,29 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
       return null;
     },
     async resolveEnrollmentForStudentSession(schoolId: number, studentId: number, sessionId: number) {
+      if (schoolId === school.id && studentId === student.id && sessionId === 501) {
+        return {
+          schoolId, studentId, sessionId, className: student.class, sectionName: student.section,
+          rollNo: null, status: "active",
+        };
+      }
+      if (schoolId === school.id && studentId === student.id && sessionId === 502) {
+        return {
+          schoolId, studentId, sessionId, className: "Historical 8", sectionName: "C",
+          rollNo: null, status: "active",
+        };
+      }
       if (schoolId === school.id && sessionId === 501 && studentId === otherStudent.id) {
-        return { className: otherStudent.class, sectionName: otherStudent.section };
+        return {
+          schoolId, studentId, sessionId, className: otherStudent.class, sectionName: otherStudent.section,
+          rollNo: null, status: "active",
+        };
       }
       if (schoolId === foreignSchool.id && sessionId === 601 && studentId === foreignStudent.id) {
-        return { className: foreignStudent.class, sectionName: foreignStudent.section };
+        return {
+          schoolId, studentId, sessionId, className: foreignStudent.class, sectionName: foreignStudent.section,
+          rollNo: null, status: "active",
+        };
       }
       return undefined;
     },
@@ -1669,7 +1687,7 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     academicSessionRows[1].startDate, academicSessionRows[1].endDate,
   ]);
   assert.deepEqual(dashboardMetrics.noticeArguments, [
-    student.id, school.id, student.class, student.section, 502,
+    student.id, school.id, "Historical 8", "C", 502,
   ]);
   assert.deepEqual(dashboardMetrics.feeArguments, [student.id, school.id, 502]);
   const malformedDashboardOverrides = await requestStudentDashboard(

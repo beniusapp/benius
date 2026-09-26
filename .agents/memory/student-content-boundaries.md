@@ -9,6 +9,12 @@ When reading session-specific Student work, derive the student's class and secti
 
 **How to apply:** Apply this to future mobile Student modules that filter by cohort, including examination and timetable, and test a promoted student switching between active and archived sessions.
 
+The native Student Dashboard unread-notice count follows the same boundary: require the authenticated Student's exact enrollment in the selected school-owned session and use that enrollment's class and section with the existing notice audience resolver. Missing enrollment is unavailable; never fall back to the current profile placement.
+
+**Why:** The aggregate Dashboard otherwise can count notices for today's cohort while the Student is viewing a historical session.
+
+**How to apply:** Keep this check in the mobile aggregate as well as detail routes, and preserve the null-session notice rules in `notice-session-null-semantics.md`.
+
 Keep new Student-submitted files outside any unauthenticated static upload tree. Download by persisted ownership only, for the submitting Student or an explicitly authorized reviewer. Preserve existing browser URLs rather than changing their access behavior as an incidental part of mobile work.
 
 **Why:** An unguessable URL in a public static folder is still downloadable without authentication; a same-school Teacher alone is not entitled to another Teacher's Student submissions.

@@ -3,15 +3,16 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
-import { useISTToday } from "@/hooks/use-ist-today";
+import { nextStudentDashboardGreetingHour, studentDashboardGreeting } from "@/lib/student-dashboard-time";
 import {
-  nextStudentDashboardGreetingHour,
-  studentDashboardAcademicYear,
-  studentDashboardGreeting,
-} from "@/lib/student-dashboard-time";
+  canFetchStudentDashboardSessionData,
+  studentDashboardGlobalQueryKey,
+  studentDashboardSessionIdFromQueryKey,
+  studentDashboardSessionQueryKey,
+} from "@/lib/student-dashboard-session";
 import {
   millisecondsUntilNextISTHour,
   minutesSinceMidnightIST,
@@ -140,8 +141,7 @@ export default function StudentDashboard() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { sessions, selectedSession, setSelectedSession, isArchiveMode, isSessionsLoading, pendingActivation, confirmActivation } = useSessionView();
-  const today = useISTToday();
-  const fallbackAcademicYear = studentDashboardAcademicYear(today);
+  const selectedSessionId = selectedSession?.id ?? null;
   const [greetingMinutes, setGreetingMinutes] = useState(minutesSinceMidnightIST);
   const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
@@ -169,56 +169,84 @@ export default function StudentDashboard() {
   }, []);
 
   const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
-    queryKey: ["/api/student-me"],
+    queryKey: studentDashboardGlobalQueryKey("/api/student-me"),
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
-    queryKey: ["/api/student/notices/unread-count"],
-    enabled: !!student,
+    queryKey: studentDashboardSessionQueryKey("/api/student/notices/unread-count", selectedSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = studentDashboardSessionIdFromQueryKey(queryKey);
+      const response = await sessionFetchForViewSession(
+        "/api/student/notices/unread-count", requestSessionId, { signal },
+      );
+      if (!response.ok) throw new Error(`Notice count fetch failed: ${response.status}`);
+      return response.json() as Promise<{ count: number }>;
+    },
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
     refetchInterval: 60000,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
-    queryKey: ["/api/student/attendance/stats", selectedSession?.id ?? fallbackAcademicYear],
-    queryFn: async () => {
-      const params = selectedSession
-        ? `startDate=${encodeURIComponent(selectedSession.startDate)}&endDate=${encodeURIComponent(selectedSession.endDate)}&sessionId=${selectedSession.id}`
-        : `academicYear=${encodeURIComponent(fallbackAcademicYear)}`;
-      const r = await sessionFetchForViewSession(`/api/student/attendance/stats?${params}`, selectedSession?.id);
-      if (!r.ok) throw new Error(`Attendance fetch failed: ${r.status}`);
-      return r.json() as Promise<AttendanceStatsResponse>;
+    queryKey: studentDashboardSessionQueryKey("/api/student/attendance/stats", selectedSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = studentDashboardSessionIdFromQueryKey(queryKey);
+      const requestSession = sessions.find(session => session.id === requestSessionId);
+      if (!requestSession) throw new Error("Selected academic session is unavailable");
+      const params = new URLSearchParams({
+        startDate: requestSession.startDate,
+        endDate: requestSession.endDate,
+        sessionId: String(requestSessionId),
+      });
+      const response = await sessionFetchForViewSession(
+        `/api/student/attendance/stats?${params.toString()}`,
+        requestSessionId,
+        { signal },
+      );
+      if (!response.ok) throw new Error(`Attendance fetch failed: ${response.status}`);
+      return response.json() as Promise<AttendanceStatsResponse>;
     },
-    enabled: !!student && !isSessionsLoading,
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
 
   const { data: homeworkItems } = useQuery<HomeworkItem[]>({
-    queryKey: ["/api/student/homework"],
-    enabled: !!student,
+    queryKey: studentDashboardSessionQueryKey("/api/student/homework", selectedSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = studentDashboardSessionIdFromQueryKey(queryKey);
+      const response = await sessionFetchForViewSession(
+        "/api/student/homework", requestSessionId, { signal },
+      );
+      if (!response.ok) throw new Error(`Homework fetch failed: ${response.status}`);
+      return response.json() as Promise<HomeworkItem[]>;
+    },
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
 
   const { data: feeRecords = [] } = useQuery<FeeRecord[]>({
-    queryKey: ["/api/student/fees", selectedSession?.id ?? "default"],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/student/fees", { credentials: "include" });
-      if (!r.ok) throw new Error(`Fee fetch failed: ${r.status}`);
-      return r.json() as Promise<FeeRecord[]>;
+    queryKey: studentDashboardSessionQueryKey("/api/student/fees", selectedSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = studentDashboardSessionIdFromQueryKey(queryKey);
+      const response = await sessionFetchForViewSession(
+        "/api/student/fees", requestSessionId, { signal },
+      );
+      if (!response.ok) throw new Error(`Fee fetch failed: ${response.status}`);
+      return response.json() as Promise<FeeRecord[]>;
     },
-    enabled: !!student && !isSessionsLoading,
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
     staleTime: 0,
     refetchOnMount: true,
   });
 
   const { data: portalInfo } = useQuery<PortalInfo>({
-    queryKey: ["/api/student/fees/portal-info"],
+    queryKey: studentDashboardGlobalQueryKey("/api/student/fees/portal-info"),
     enabled: !!student,
     staleTime: 60_000,
   });

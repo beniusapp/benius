@@ -512,6 +512,16 @@ export function registerMobileAuthRoutes(app: Express): void {
           return reject(res, 401, "Student account is no longer authorized.");
         }
 
+        const enrollment = await storage.resolveEnrollmentForStudentSession(
+          principal.schoolId, principal.id, session.id,
+        );
+        if (!enrollment
+          || enrollment.schoolId !== principal.schoolId
+          || enrollment.studentId !== principal.id
+          || enrollment.sessionId !== session.id) {
+          return reject(res, 403, "Student is not enrolled in this academic session.");
+        }
+
         const historicalClassSection = await storage.resolveAttendanceClassSectionForStudent(
           principal.schoolId, session.id, principal.id,
         );
@@ -528,8 +538,8 @@ export function registerMobileAuthRoutes(app: Express): void {
           storage.getUnreadNoticeCount(
             principal.id,
             principal.schoolId,
-            data.student.class || "",
-            data.student.section || "",
+            enrollment.className,
+            enrollment.sectionName,
             session.id,
           ),
           storage.getFeeRecordsByStudent(principal.id, principal.schoolId, session.id),
