@@ -1,0 +1,701 @@
+Implement **BENIUS STUDENT PORTAL — STEP 7: DASHBOARD ACADEMIC SESSION + CACHE CORRECTION**.
+
+Completed and accepted:
+
+- Step 1 — Student Academic Session foundation
+- Step 2 — Homework + Classwork
+- Step 3 — Examination + Archives
+- Step 4 — Timetable + Noticeboard
+- Step 5 — Complaints
+- Step 6 — Leave
+
+Do not undo or weaken Steps 1–6.
+
+Current validation baseline after Step 6:
+
+- API TypeScript diagnostics: **377**
+- Web TypeScript diagnostics: **60**
+- Mobile TypeScript: **0 / PASS**
+
+Do NOT fix unrelated diagnostics.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct the **Student Dashboard** so every Dashboard item that depends on Academic Session uses:
+
+**Authenticated Student**
+→ **server-derived Student School**
+→ **Selected Academic Session**
+→ **selected-session data/enrollment where required**
+
+At the same time, preserve genuinely GLOBAL Student Dashboard information as global.
+
+The Dashboard must not mix data from different Academic Sessions or show stale cached data after session switching.
+
+---
+
+# IMPORTANT CONCEPT
+
+The Student Dashboard is **HYBRID**.
+
+It contains both:
+
+### GLOBAL information
+Examples may include:
+- Student identity
+- Student name/photo
+- School identity/basic header information
+
+and:
+
+### ACADEMIC SESSION information
+Examples identified by the previous audit include:
+- Attendance summary
+- Homework information
+- Notice/unread information
+- Fee information
+- other session-sensitive dashboard indicators actually present in the current implementation
+
+Do NOT make the entire Dashboard session-based.
+
+Do NOT make the entire Dashboard global.
+
+Inspect the actual existing Dashboard implementation and preserve its current feature set.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+For Student Dashboard backend reads that are Academic Session dependent, use the Step 1 Academic Session foundation where appropriate:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+Do NOT create another competing session resolver.
+
+The trusted identity chain remains:
+
+**Authenticated Student**
+→ **Student School**
+→ **validated selected Academic Session**
+→ **exact enrollment where required**
+
+Never trust client-provided:
+- Student ID
+- school ID
+- class
+- section
+
+as authorization authority.
+
+---
+
+# 2. AUDIT THE ACTUAL DASHBOARD FIRST
+
+Before changing code, inspect the current Student Dashboard and identify every data request/widget/card/summary.
+
+Classify each Dashboard data item internally as:
+
+- `GLOBAL`
+- `ACADEMIC_SESSION`
+- `HYBRID` if absolutely necessary
+
+Then implement only the corrections necessary for Academic Session consistency.
+
+Do NOT add new Dashboard cards or features.
+
+Do NOT remove existing cards or features.
+
+Do NOT redesign the Dashboard.
+
+In the final report, provide the classification of the Dashboard data sources you actually found.
+
+---
+
+# 3. GLOBAL DASHBOARD DATA
+
+Genuinely global identity/header data must remain global.
+
+Examples:
+
+- Student name
+- Student photo
+- school name/basic identity
+- permanent Student identity information
+
+Do NOT unnecessarily require Academic Session selection just to render global identity information.
+
+Do NOT convert permanent Student identity into historical enrollment data in Step 7.
+
+The separate Profile historical-placement decision remains deferred.
+
+---
+
+# 4. SESSION-DEPENDENT DASHBOARD DATA
+
+Every Dashboard item whose value changes by Academic Session must use the explicit selected Academic Session.
+
+Do not silently fall back to another session when an explicit selection exists.
+
+If a Dashboard session-dependent request requires enrollment/class/section, use the exact selected-session enrollment rather than current `students.class/section`.
+
+Do not mix data across sessions.
+
+---
+
+# 5. ATTENDANCE DASHBOARD DATA
+
+The previous audit found Dashboard Attendance is session-sensitive.
+
+Verify the Dashboard Attendance summary uses:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
+
+Preserve the Attendance rules already corrected/established elsewhere.
+
+Do NOT redesign Student Attendance.
+
+Do NOT change Attendance Policy.
+
+This step only ensures the Dashboard's Attendance representation follows the selected session.
+
+---
+
+# 6. HOMEWORK DASHBOARD DATA
+
+If the Dashboard displays Homework information/counts/recent Homework:
+
+it must use the same Academic Session semantics established in Step 2.
+
+Use:
+
+**selected Academic Session**
++
+**selected-session enrollment class/section**
+
+Do NOT recreate separate Homework authorization logic.
+
+Reuse the corrected backend/storage behavior from Step 2 where possible.
+
+Do not change the Homework page itself.
+
+---
+
+# 7. NOTICE / UNREAD DASHBOARD DATA
+
+IMPORTANT.
+
+Step 4 deliberately left the Dashboard's separate unread-notice badge/query outside scope.
+
+Correct it now.
+
+The Dashboard unread Notice count must use the same corrected rules established in Step 4:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
++
+**selected-session enrollment class/section**
++
+**existing Notice audience rules**
+
+Do NOT count notices from another Academic Session.
+
+Do NOT use today's class/section when viewing a historical session.
+
+Do NOT treat `session_id = null` notices as cross-session global notices.
+
+Step 4 established that null-session notices are not shown across school years because the existing implementation does not establish null as global.
+
+Preserve that decision.
+
+---
+
+# 8. FEES DASHBOARD DATA
+
+The previous audit classified Fees as hybrid:
+
+- payment portal/settings may be global
+- Student fee/payment ledger data is Academic Session based
+
+If the Dashboard displays Student fee amounts/status/summary:
+
+use the selected Academic Session for those Student financial records.
+
+Reuse the existing safe fee-session behavior.
+
+Do NOT redesign Fees.
+
+Do NOT change payment logic.
+
+Do NOT change payment gateway configuration.
+
+Do NOT change invoice/receipt behavior.
+
+This Step only corrects Dashboard consumption/cache/session handling.
+
+---
+
+# 9. OTHER DASHBOARD DATA
+
+Inspect any other existing Dashboard indicators.
+
+For each one:
+
+If it represents permanent/current identity/configuration:
+→ keep it GLOBAL.
+
+If it represents Academic Session records:
+→ use selected Academic Session.
+
+If uncertain, preserve existing behavior and report the ambiguity rather than inventing a new business rule.
+
+Do NOT expand Step 7 into another module's redesign.
+
+---
+
+# 10. FRONTEND SESSION TRANSPORT
+
+Every Student Dashboard request whose result depends on Academic Session must explicitly use the selected session represented by that query.
+
+Prefer:
+
+`sessionFetchForViewSession`
+
+or the already established equivalent.
+
+Do NOT rely only on mutable global header state.
+
+The session ID represented by the React Query key must be the same session ID explicitly sent in the request.
+
+Global Dashboard requests do not need artificial session transport.
+
+---
+
+# 11. REACT QUERY CACHE ISOLATION
+
+This is a major part of Step 7.
+
+Every Student Dashboard query whose result changes by Academic Session must include the Academic Session ID in its query/cache key.
+
+Conceptually:
+
+`["student-dashboard-attendance", sessionId]`
+
+`["student-dashboard-homework", sessionId, ...]`
+
+`["student-dashboard-notice-unread", sessionId]`
+
+`["student-dashboard-fees", sessionId]`
+
+Use actual existing naming conventions rather than blindly copying these examples.
+
+Global identity queries should NOT unnecessarily include session ID.
+
+Verify:
+
+**Session A → Session B → Session A**
+
+Session B must never temporarily appear as Session A Dashboard data.
+
+Each session should have its own cache identity.
+
+---
+
+# 12. SESSION SWITCH BEHAVIOR
+
+When Student switches Academic Session:
+
+### Global data
+should remain stable where appropriate.
+
+Example:
+Student name/photo should not disappear or change simply because Academic Session changed.
+
+### Session data
+must switch to the newly selected session.
+
+Example:
+
+Session A:
+- Attendance 92%
+- 3 unread notices
+- Fee balance X
+
+Session B:
+- Attendance 88%
+- 1 unread notice
+- Fee balance Y
+
+Selecting B must show B's values.
+
+Switching back to A must restore/refetch A's values, never B's.
+
+Do NOT hardcode these example values.
+
+---
+
+# 13. NO SELECTED SESSION
+
+Inspect the existing StudentSessionProvider behavior.
+
+Step 1 established the safe session foundation.
+
+If there is no valid effective selected/active Academic Session:
+
+- global Dashboard identity may still render if existing UX permits
+- session-dependent Dashboard requests must NOT execute unscoped queries
+- session-dependent widgets should use the existing loading/empty/unavailable behavior
+
+Do NOT invent fake/default session data.
+
+Do NOT use `sessions[0]` as an implicit fallback if that behavior has already been removed.
+
+---
+
+# 14. TENANT ISOLATION
+
+Permanent BENIUS requirement.
+
+School A Student Dashboard must never calculate/display School B:
+
+- Attendance
+- Homework
+- Notices
+- Fees
+- Academic Sessions
+- enrollments
+- other school-scoped records
+
+Server derives Student/school from authentication.
+
+Never trust client `schoolId`.
+
+Foreign-school selected sessions must remain rejected.
+
+---
+
+# 15. MOBILE COMPATIBILITY
+
+BENIUS has Web + Mobile using the same academic backend/data.
+
+Inspect the existing native Student Dashboard because a native Student Dashboard was previously implemented.
+
+Do NOT redesign it.
+
+Do NOT replace it with WebView.
+
+Do NOT add/remove cards.
+
+Ensure shared backend/storage corrections remain compatible with mobile.
+
+If the mobile Dashboard has session-sensitive cache/query keys, verify they already include selected Academic Session or minimally correct them if necessary.
+
+The intended behavior on BOTH Web and Mobile is:
+
+**global identity stays global**
++
+**session-sensitive Dashboard information follows the selected Academic Session**
+
+If mobile already has stronger/correct behavior, leave it unchanged.
+
+---
+
+# 16. DO NOT CHANGE INDIVIDUAL MODULES
+
+The underlying modules have already been handled separately or are out of scope.
+
+Do NOT redesign/fix:
+- Attendance page
+- Homework page
+- Noticeboard page
+- Fees page
+- Examination
+- Timetable
+- Complaints
+- Leave
+- Archives
+
+Only change shared/backend behavior if absolutely necessary for Dashboard correctness and preserve previous module behavior.
+
+---
+
+# 17. NO PROFILE HISTORICAL-PLACEMENT CHANGE
+
+Do NOT change Student Profile in Step 7.
+
+Current Profile placement behavior remains a separate explicit decision.
+
+Do NOT replace Dashboard permanent identity information with historical Profile behavior.
+
+If Dashboard currently displays class/section, inspect what that field represents.
+
+If it is intended to describe the selected Academic Session placement specifically, use selected-session enrollment.
+
+If it is simply part of permanent/current profile display and changing it would amount to the deferred Profile decision, leave it unchanged and report it.
+
+Do not make this product decision silently.
+
+---
+
+# 18. NO DOCUMENT AUTHORIZATION CHANGE
+
+Do NOT fix public `/uploads` or document authorization in Step 7.
+
+That remains a separate security step.
+
+---
+
+# 19. NO UI CHANGES
+
+Preserve Student Dashboard exactly.
+
+Do NOT change:
+
+- Open Sans
+- layout
+- cards
+- colors
+- icons
+- labels
+- navigation
+- spacing
+- loading presentation
+- empty-state design
+- error-state design
+
+No redesign.
+
+Only session/data/cache behavior.
+
+---
+
+# 20. NO DATABASE CHANGES
+
+Expected:
+
+**NONE**
+
+Do NOT:
+- alter schema
+- create tables
+- add columns
+- run migrations
+- rewrite historical records
+
+If a DB change appears necessary, STOP and report why.
+
+---
+
+# 21. ADMIN/TEACHER OUT OF SCOPE
+
+Do NOT change Admin Dashboard.
+
+Do NOT change Teacher Dashboard.
+
+Do NOT change Admin/Teacher module behavior.
+
+If shared storage is touched, preserve existing Admin/Teacher behavior.
+
+---
+
+# 22. ESSENTIAL TESTS
+
+At minimum test:
+
+### A. Global identity stability
+Switch Session A → B.
+
+Permanent Student identity remains correct and is not incorrectly session-scoped.
+
+### B. Attendance isolation
+A and B have different Attendance data.
+
+Dashboard returns/displays the correct value for each selected session.
+
+### C. Homework isolation
+Dashboard Homework data follows selected session and selected-session enrollment.
+
+### D. Notice unread isolation
+Session A notices are not counted in Session B.
+
+### E. Historical Notice cohort
+Historical unread count uses historical enrollment class/section.
+
+### F. Fee isolation
+Dashboard fee summary uses the selected Academic Session.
+
+### G. Session A → B → A
+All session-dependent Dashboard query/cache identities remain separate.
+
+### H. No session
+Session-dependent requests do not run unscoped.
+
+### I. Foreign-school session
+Rejected.
+
+### J. Tenant isolation
+No Dashboard aggregate includes another school's data.
+
+### K. Previous-step regression
+Steps 1–6 focused tests remain passing.
+
+### L. Mobile Dashboard compatibility
+Verify existing mobile Dashboard session behavior if affected.
+
+---
+
+# 23. VALIDATION
+
+Run:
+
+- Step 1–6 focused regression tests
+- new Step 7 Dashboard tests
+- relevant Dashboard tests
+- web build
+- relevant TypeScript checks
+- mobile TypeScript/tests
+
+Baseline:
+
+- API diagnostics: **377**
+- Web diagnostics: **60**
+- Mobile diagnostics: **0**
+
+Do NOT fix unrelated diagnostics.
+
+If counts change, identify the source.
+
+Changed Step 7 files must introduce no new diagnostics.
+
+---
+
+# 24. DIFF REVIEW
+
+Before finishing confirm:
+
+- no DB changes
+- no UI redesign
+- no Profile historical-placement decision
+- no document-authorization fix
+- no unrelated module changes
+- no Admin changes
+- no Teacher changes
+- Steps 1–6 remain intact
+- tenant isolation remains intact
+- mobile behavior is not weakened
+
+---
+
+# 25. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 7 — DASHBOARD SESSION + CACHE RESULT
+
+### Dashboard data classification
+List actual Dashboard data sources/widgets found and classify each as GLOBAL or ACADEMIC SESSION/HYBRID where necessary.
+
+### Global Dashboard behavior
+Explain what remains global.
+
+### Attendance behavior
+Explain selected-session handling.
+
+### Homework behavior
+Explain selected-session/enrollment handling.
+
+### Notice unread behavior
+Explain selected-session/enrollment/audience handling.
+
+### Fees behavior
+Explain selected-session handling.
+
+### Other Dashboard data
+Explain any other data found.
+
+### No-session behavior
+Explain what happens when no effective session exists.
+
+### Session transport
+Explain which Dashboard requests explicitly send session ID.
+
+### Cache isolation
+Explain A → B → A behavior and query-key changes.
+
+### Tenant isolation
+Explain school/session isolation.
+
+### Mobile Dashboard compatibility
+Explain whether mobile changes were needed and validation performed.
+
+### Profile placement
+Confirm no deferred Profile historical-placement decision was made.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Admin behavior changed
+Expected:
+`No`
+
+### Teacher behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Compare against:
+- API 377
+- Web 60
+- Mobile 0
+
+### Mobile validation
+PASS/FAIL.
+
+### Remaining Student Portal work
+Do NOT implement:
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Dashboard Academic Session correctness and session-dependent cache/transport isolation.**
+
+Keep genuinely global Dashboard information global.
+
+Do not redesign Dashboard.
+
+Do not change Profile historical-placement behavior.
+
+Do not change document authorization.
+
+Do not change database schema.
+
+Do not change Admin/Teacher behavior.
+
+If a broader product decision is required, STOP and report it rather than making the decision silently.
