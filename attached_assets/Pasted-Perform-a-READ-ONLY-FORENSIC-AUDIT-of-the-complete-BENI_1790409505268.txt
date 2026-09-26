@@ -1,0 +1,656 @@
+Perform a **READ-ONLY FORENSIC AUDIT** of the complete BENIUS **Student Portal** to determine exactly which modules/data are:
+
+1. **ACADEMIC SESSION BASED**
+2. **GLOBAL / SESSION-INDEPENDENT**
+3. **HYBRID** — some data global and some data Academic Session based
+
+### ABSOLUTE RULE
+
+**DO NOT MODIFY ANYTHING.**
+
+Do not change:
+- frontend code
+- backend code
+- database schema
+- database data
+- APIs
+- authentication
+- authorization
+- UI/UX
+- calculations
+- session handling
+- tenant isolation
+- Academic Session logic
+- mobile code
+
+Do not fix bugs even if you discover them.
+
+This is an investigation/report only.
+
+---
+
+# 1. FIRST IDENTIFY THE COMPLETE STUDENT PORTAL
+
+Inspect the actual BENIUS source code and identify every Student Portal page, screen, route, navigation item, dashboard card, tab, submenu, and student-facing module.
+
+Do NOT rely only on filenames.
+
+Trace:
+
+- Student login
+- Student dashboard
+- Student navigation
+- Student session provider/context
+- Student profile
+- Student attendance
+- Student examination/results
+- Student timetable
+- Student homework
+- Student classwork
+- Student notices/noticeboard
+- Student complaints
+- Student leave, if exposed
+- Student fees/payments, if exposed
+- Student gallery, if exposed
+- Student calendar, if exposed
+- Student archives/history
+- Any other module actually exposed to Student users
+
+If a module exists in code but is NOT exposed through the Student Portal, identify it separately as **internal/unexposed**.
+
+The **actual Student Portal UI is the source of truth for what belongs to the Student Portal**.
+
+---
+
+# 2. TRACE ACADEMIC SESSION SOURCE OF TRUTH
+
+Determine exactly how the Student Portal knows which Academic Session is selected.
+
+Inspect:
+
+- Student Session Provider
+- session context/state
+- session selector
+- local/session storage
+- API headers
+- cookies
+- route parameters
+- query parameters
+- `x-view-session-id`
+- backend session handling
+- Student session APIs
+- default/active Academic Session logic
+
+Document:
+
+**Where does the selected Academic Session ID originate?**
+
+**How does it reach the backend?**
+
+**How does the backend validate it?**
+
+**Is the selected session merely a UI filter, or is it actually enforced server-side?**
+
+---
+
+# 3. TENANT / SCHOOL ISOLATION
+
+For EVERY Student Portal module, verify that the data is constrained by:
+
+**authenticated school/tenant + authenticated student + selected Academic Session where applicable**
+
+Check:
+
+- `school_id`
+- authenticated student identity
+- session identity
+- `academic_session_id`
+- ownership checks
+- authorization checks
+- SQL/Drizzle queries
+- route parameters
+- query parameters
+- request headers
+
+Look specifically for possible cross-school access.
+
+DO NOT modify anything.
+
+---
+
+# 4. CLASSIFY EVERY STUDENT MODULE
+
+Create a table with:
+
+| Student Module | Classification | Why | Academic Session ID Used? | School/Tenant Enforced? | Student Identity Enforced? | Main Frontend File(s) | Main API Route(s) | Main DB Table(s) |
+|---|---|---|---|---|---|---|---|---|
+
+Classification must be exactly one of:
+
+### ACADEMIC SESSION BASED
+
+Use this only when the operational data genuinely belongs to a particular Academic Session.
+
+Examples may include:
+- session-specific enrollment
+- attendance
+- examination
+- timetable
+- classwork
+- homework
+- session-specific notices
+- session-specific academic history
+
+### GLOBAL
+
+Use this when the information is genuinely school/student identity-level and should not change when the Academic Session changes.
+
+Examples may include:
+- permanent student identity
+- account/security information
+- profile information that is genuinely permanent
+- school-wide static information
+
+### HYBRID
+
+Use this when a module contains both global and session-specific data.
+
+For example:
+
+**Student Profile**
+- permanent identity → Global
+- current/historical class placement → Academic Session
+- session-specific academic information → Academic Session
+
+Do not classify based on UI appearance alone.
+
+Trace the actual data source.
+
+---
+
+# 5. MODULE-BY-MODULE DEEP AUDIT
+
+For EVERY Student module, answer these questions.
+
+### A. Data ownership
+
+What database table(s) provide the data?
+
+For each relevant table, identify whether it contains:
+
+- `school_id`
+- `academic_session_id`
+- `student_id`
+- other session-related keys
+
+### B. Read path
+
+Trace:
+
+**Student UI → frontend hook/API → backend route → authorization → database query → response → UI**
+
+Document the exact path.
+
+### C. Write path
+
+If the Student can create/update/delete anything, trace:
+
+**Student UI → API → authorization → database mutation**
+
+Verify whether Academic Session is required where appropriate.
+
+### D. Session switching
+
+Determine what happens if the Student switches:
+
+**2025-26 → 2026-27**
+
+Does the module:
+
+1. correctly show different session data?
+2. remain global?
+3. partially change?
+4. incorrectly continue showing current-session data?
+5. mix records from multiple sessions?
+
+Document the actual behavior from code.
+
+### E. Historical session behavior
+
+Determine whether a student can view previous Academic Sessions.
+
+If yes:
+
+- How is the session selected?
+- Which API receives the session ID?
+- Which DB records are returned?
+- Is the old class/section taken from historical enrollment?
+- Or is the student's current class/section used?
+
+This is particularly important.
+
+---
+
+# 6. STUDENT MASTER VS SESSION ENROLLMENT
+
+Pay special attention to the distinction between:
+
+### Permanent Student Master
+
+For example:
+- student identity
+- name
+- date of birth
+- phone
+- guardian information
+- permanent identifiers
+- account information
+
+and:
+
+### Academic Session Enrollment / Placement
+
+For example:
+- academic session
+- class
+- section
+- roll number
+- enrollment status
+- session-specific class placement
+
+Determine which Student Portal modules incorrectly or correctly use the current student master when they should use session-specific enrollment.
+
+Do NOT fix anything.
+
+Just report it.
+
+---
+
+# 7. ATTENDANCE AUDIT
+
+Deeply inspect Student Attendance.
+
+Determine:
+
+- attendance table(s)
+- session ID
+- student ID
+- class/section source
+- date handling
+- monthly/yearly calculations
+- attendance summary
+- attendance history
+- selected Academic Session
+- school isolation
+
+Verify whether historical attendance is calculated from the selected Academic Session.
+
+Also identify whether the frontend sends the selected session or whether the backend derives it.
+
+---
+
+# 8. EXAMINATION / RESULTS AUDIT
+
+Deeply inspect Student Examination.
+
+Trace:
+
+- exam types
+- exam scores
+- published scores
+- result calculations
+- grading
+- policies
+- pass/fail
+- promotion information
+- academic history
+- archived results
+- selected Academic Session
+
+For every operation, verify:
+
+**school/tenant + student + Academic Session**
+
+Pay special attention to:
+
+- `/api/student/exam/classes`
+- `/api/student/exam/types`
+- `/api/student/exam/scores`
+- `/api/student/exam/journey`
+- `/api/student/exam/policy`
+- `/api/student/exam/enrollment-history`
+- `/api/student/exam/all-scores`
+
+and any other Student Examination APIs actually present.
+
+Determine whether the Student's result is calculated from the selected Academic Session or from current/global data.
+
+---
+
+# 9. TIMETABLE AUDIT
+
+Determine whether Student Timetable is:
+
+- session-specific
+- global
+- hybrid
+
+Trace:
+
+- timetable table(s)
+- session ID
+- student/class/section mapping
+- selected session
+- backend enforcement
+
+Determine whether switching Academic Session changes the timetable correctly.
+
+---
+
+# 10. HOMEWORK / CLASSWORK AUDIT
+
+For Student Homework and Classwork:
+
+Determine:
+
+- assignment ownership
+- session ID
+- class/section mapping
+- subject mapping
+- student visibility
+- submission data if applicable
+- selected session handling
+
+Check whether the backend enforces the selected Academic Session or whether session filtering happens only in the frontend.
+
+---
+
+# 11. NOTICEBOARD / NOTICES
+
+Determine:
+
+- whether notices have `academic_session_id`
+- how notices are created/tagged
+- how Student retrieves them
+- whether the selected Academic Session affects Student visibility
+- whether school isolation is enforced
+
+Identify any mismatch.
+
+---
+
+# 12. CALENDAR
+
+Determine whether Student Calendar is:
+
+**Global or Academic Session based**
+
+Inspect the actual database schema and APIs.
+
+Do not assume it is session-based merely because the Student can select an Academic Session.
+
+---
+
+# 13. PROFILE
+
+Audit Student Profile carefully.
+
+Separate:
+
+### GLOBAL
+Permanent identity/account information.
+
+### SESSION BASED
+Historical/current academic placement.
+
+Determine whether the Student Profile correctly distinguishes these.
+
+For example:
+
+**Student's name**
+→ likely Global
+
+**Student's class/section**
+→ potentially Academic Session based
+
+But do not assume; verify from code.
+
+---
+
+# 14. ARCHIVES / HISTORY
+
+Deeply inspect Student Archives and any historical Student views.
+
+Determine:
+
+- what data is historical
+- how Academic Session is selected
+- whether old class/section comes from session enrollment
+- whether old examination results remain session-specific
+- whether current student master fields are incorrectly used for historical records
+
+Report any possible historical-data mixing.
+
+---
+
+# 15. GLOBAL DATA AUDIT
+
+Identify everything in the Student Portal that should genuinely remain unchanged when Academic Session changes.
+
+For each Global item, explain why it is Global.
+
+Do NOT force an Academic Session ID onto genuinely global data.
+
+---
+
+# 16. HYBRID MODULE AUDIT
+
+For every Hybrid module, split the data into:
+
+### Global portion
+and
+
+### Academic Session portion
+
+Example format:
+
+**Student Profile — HYBRID**
+
+Global:
+- student identity
+- account information
+
+Academic Session:
+- class
+- section
+- roll number
+- enrollment status
+
+Do this for every Hybrid module.
+
+---
+
+# 17. SESSION LEAKAGE / SECURITY AUDIT
+
+Identify possible problems such as:
+
+- selected session not sent to backend
+- backend ignores supplied session
+- backend defaults to active session incorrectly
+- current student class/section used for historical session
+- records returned without `academic_session_id`
+- school ID not enforced
+- student ID not enforced
+- frontend-only session filtering
+- current-session data appearing in historical session
+- previous-session data appearing in current session
+- APIs allowing arbitrary session IDs
+- cross-school session access
+- mixed-session calculations
+
+For each finding provide:
+
+**Severity:**
+- 🔴 Critical
+- 🟠 High
+- 🟡 Medium
+- 🔵 Low
+
+Then provide:
+
+- exact file
+- exact route/API
+- exact query/storage function
+- what is happening
+- why it matters
+- whether it is a real issue or expected behavior
+
+Again: **DO NOT FIX ANYTHING.**
+
+---
+
+# 18. FINAL STUDENT PORTAL CLASSIFICATION
+
+At the end, provide this exact summary:
+
+## STUDENT PORTAL — FINAL CLASSIFICATION
+
+### 🟢 GLOBAL
+List every Global Student module.
+
+### 🔵 ACADEMIC SESSION BASED
+List every Academic Session based Student module.
+
+### 🟡 HYBRID
+List every Hybrid Student module and clearly state which portion is Global and which portion is session-specific.
+
+---
+
+# 19. SESSION SAFETY SUMMARY
+
+Provide:
+
+### Correctly session-scoped
+List modules where the selected Academic Session is properly enforced.
+
+### Partially session-scoped
+List modules where some operations are session-aware but others are not.
+
+### Not session-scoped
+List modules that are Global or where session enforcement is missing.
+
+### Potential session leakage
+List only genuine risks supported by the code.
+
+---
+
+# 20. RECOMMENDED CORRECTIONS — PLAN ONLY
+
+Do NOT implement corrections.
+
+After the audit, provide a prioritized correction plan:
+
+### 🔴 Critical
+Things that could cause cross-session or cross-school data leakage or incorrect historical results.
+
+### 🟠 High
+Things that could produce incorrect Student Portal information.
+
+### 🟡 Medium
+Consistency issues.
+
+### 🔵 Low
+Non-critical cleanup.
+
+For every recommendation state:
+
+- exact file(s)
+- exact API/route
+- exact data/query involved
+- what should eventually change
+- whether the change would affect Web UI behavior
+- whether it would affect Mobile replication
+
+Do not write code.
+
+---
+
+# 21. IMPORTANT BENIUS RULES
+
+These are permanent requirements and MUST NOT be changed:
+
+### Multi-tenant isolation
+
+Every school-scoped operation must remain isolated to the authenticated school/tenant.
+
+Never allow cross-school access.
+
+### Academic Session isolation
+
+When data is Academic Session based, it must be explicitly tied to:
+
+**authenticated school/tenant + Academic Session ID**
+
+A new Academic Session must have fresh/isolated academic operational context.
+
+Previous-session operational data must not leak into another session.
+
+### Student identity
+
+The authenticated Student ID must always be enforced server-side for Student-specific data.
+
+### Application timezone
+
+Application/business/display timestamps must use:
+
+**IST / Asia/Kolkata**
+
+Do not introduce BST or another timezone.
+
+---
+
+# 22. OUTPUT REQUIREMENT
+
+Do not give a generic explanation.
+
+Produce a concrete forensic report based on the actual BENIUS codebase.
+
+Include:
+
+1. Student Portal module inventory
+2. Global vs Academic Session vs Hybrid table
+3. Academic Session flow
+4. Tenant/school isolation audit
+5. Student identity authorization audit
+6. Attendance deep audit
+7. Examination deep audit
+8. Timetable audit
+9. Homework/Classwork audit
+10. Noticeboard audit
+11. Calendar audit
+12. Profile audit
+13. Archives/history audit
+14. Session leakage/security findings
+15. Exact files/APIs/queries involved
+16. Final classification
+17. Prioritized correction plan
+
+For every factual finding, give the exact source file/path and relevant function/route/query.
+
+### FINAL RESTRICTION
+
+**READ ONLY. NO CODE CHANGES.**
+
+Do not modify any file.
+
+Do not install packages.
+
+Do not run migrations.
+
+Do not alter database data.
+
+Do not alter configuration.
+
+Do not fix anything.
+
+The only deliverable from this task is the **Student Portal Academic Session vs Global forensic audit report**.
