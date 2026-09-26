@@ -1,0 +1,652 @@
+Implement **BENIUS STUDENT PORTAL — STEP 4: TIMETABLE + NOTICEBOARD ACADEMIC SESSION CORRECTION**.
+
+Completed and accepted:
+
+- Step 1 — Student Academic Session foundation
+- Step 2 — Homework + Classwork
+- Step 3 — Examination + Archives
+
+Do not undo or weaken Steps 1–3.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct Student **Timetable** and **Noticeboard** so session-sensitive data is based on:
+
+**Authenticated Student**
+→ **Student's server-derived School**
+→ **Selected Academic Session**
+→ **Student's exact enrollment for that session**
+→ **that enrollment's class/section**
+
+Example:
+
+Student:
+- 2025–26 = Class 8A
+- 2026–27 = Class 9A
+
+If the Student selects **2025–26**:
+
+Timetable must use:
+**2025–26 + Class 8A**
+
+Class/section-targeted Notices must evaluate the Student as:
+**2025–26 + Class 8A**
+
+Do NOT use today's/current Class 9A placement.
+
+Do NOT mix data between Academic Sessions.
+
+---
+
+# ABSOLUTE SCOPE
+
+Modify ONLY what is necessary for:
+
+1. Student Timetable
+2. Student Noticeboard
+
+Academic Session correctness, historical enrollment/cohort correctness, notice visibility/unread/read-state session correctness, frontend session transport, and session cache isolation.
+
+Do NOT fix:
+- Complaints
+- Leave
+- Dashboard
+- Profile
+- Homework/Classwork
+- Examination/Archives
+- Attendance
+- Fees
+- Calendar
+- Gallery
+- Faculty Info
+- E-Library
+- document/public `/uploads` authorization
+- Admin
+- Teacher
+
+No DB schema changes.
+No UI redesign.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+Use:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+Do NOT create another competing Student session resolver.
+
+For Student Timetable and session/cohort-sensitive Noticeboard operations, use the equivalent of:
+
+`SELECTED_SESSION_ENROLLMENT_REQUIRED`
+
+The authoritative chain must be:
+
+Authenticated Student
+→ server-loaded Student
+→ Student School
+→ validated selected Academic Session
+→ exact school + Student + session enrollment
+→ enrollment class/section
+
+Do NOT use current:
+
+`students.class`
+`students.section`
+
+as historical placement.
+
+---
+
+# 2. STUDENT TIMETABLE
+
+Correct the Student Timetable read path.
+
+The selected Academic Session must determine:
+
+- session ID
+- Student enrollment
+- class
+- section
+- timetable rows returned
+
+The effective query must remain constrained to:
+
+**Student school**
++
+**selected Academic Session**
++
+**selected-session enrollment class**
++
+**selected-session enrollment section**
+
+Do not allow a missing selected session to produce an unscoped Timetable query.
+
+Do not allow a client-provided class/section to override the selected-session enrollment.
+
+---
+
+# 3. PRESERVE EXISTING TIMETABLE PUBLICATION BEHAVIOR
+
+IMPORTANT:
+
+The previous forensic audit found that the current Student Timetable deliberately includes both:
+
+- draft timetable entries
+- published timetable entries
+
+Do NOT change this in Step 4.
+
+Do NOT add:
+
+`published = true`
+
+to Student Timetable merely because Step 3 added publication enforcement to Examination.
+
+Examination publication and Timetable publication are separate product behaviors.
+
+Preserve the existing Timetable visibility semantics exactly.
+
+This Step corrects only:
+
+- Academic Session
+- historical enrollment
+- cohort
+- tenant isolation
+- transport/cache behavior
+
+If the existing draft visibility looks questionable, report it as existing product behavior but DO NOT change it.
+
+---
+
+# 4. HISTORICAL TIMETABLE
+
+A valid inactive same-school Academic Session must remain usable for historical Timetable reads if BENIUS currently permits historical timetable viewing.
+
+Example:
+
+Current Student:
+Class 9A
+
+2025–26 enrollment:
+Class 8A
+
+Selected:
+2025–26
+
+Timetable must use:
+
+**2025–26 + Class 8A**
+
+not today's Class 9A.
+
+Do not globally require selected session = active session for Timetable reads.
+
+---
+
+# 5. STUDENT NOTICEBOARD LIST
+
+Correct Student Noticeboard list visibility.
+
+For session-based notices, visibility must be evaluated using:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
++
+**selected-session enrollment class/section**
+
+Where notices are targeted by class/section, use the selected-session enrollment.
+
+Do NOT use current Student class/section when a historical session is selected.
+
+Do NOT allow absence of the selected session to remove the intended session predicate and return mixed-year notices.
+
+---
+
+# 6. NOTICE SESSION RULE
+
+Inspect the existing Noticeboard data model carefully.
+
+The previous audit found notices can have a nullable `session_id`.
+
+Do NOT automatically treat:
+
+`session_id = null`
+
+as belonging to every Academic Session unless the existing product explicitly defines null as a global/school-wide notice independent of Academic Session.
+
+Determine from the existing code/data semantics whether null means:
+
+A. genuinely global/school-wide notice, or
+B. legacy/missing session assignment.
+
+Preserve legitimate global notice behavior if it exists.
+
+But do NOT let legacy nullable session data accidentally mix Academic Session-specific notices.
+
+If this distinction cannot be safely established from the existing implementation, do NOT invent a migration or new business rule.
+
+Report the ambiguity in the final result.
+
+No DB migration in Step 4.
+
+---
+
+# 7. NOTICE AUDIENCE RULES
+
+Preserve existing Noticeboard audience types and targeting rules.
+
+Do NOT redesign:
+- school-wide notices
+- class notices
+- section notices
+- Student-specific notices
+- existing audience labels/types
+
+Only correct the Student's class/section source where session placement matters.
+
+For class/section visibility, use selected-session enrollment rather than current Student placement.
+
+Student identity must continue to come from authentication.
+
+---
+
+# 8. NOTICE UNREAD COUNT
+
+Correct the Student Noticeboard unread-count path.
+
+The unread count displayed for the selected Academic Session must correspond to notices actually visible to that Student under:
+
+- Student school
+- selected session where applicable
+- selected-session enrollment class/section
+- existing audience rules
+
+Do not count another Academic Session's notices as unread for the selected session.
+
+Use the same session/cohort rules as the Noticeboard list.
+
+---
+
+# 9. NOTICE READ STATE / MARK READ
+
+Inspect the existing Student mark-read route.
+
+Preserve the existing read-state model.
+
+Before allowing the Student to mark a notice as read, verify that the authenticated Student is actually allowed to see that notice under the corrected:
+
+- school
+- selected Academic Session where applicable
+- selected-session enrollment
+- audience rules
+
+A Student must not be able to mark an inaccessible cross-session or foreign-school notice as read merely by knowing its ID.
+
+Do NOT redesign read receipts.
+
+Do NOT change Admin/Teacher notice creation.
+
+---
+
+# 10. FRONTEND SESSION TRANSPORT
+
+Inspect Student Timetable and Noticeboard requests.
+
+Every request whose result changes according to selected Academic Session must explicitly use the established session-aware transport.
+
+Prefer:
+
+`sessionFetchForViewSession`
+
+using the exact session ID captured by the query/cache key.
+
+Do not rely only on mutable global header state.
+
+Replace ordinary `fetch()` only where necessary for these two modules.
+
+Do NOT mass-refactor other Student modules.
+
+---
+
+# 11. CACHE ISOLATION
+
+Every Timetable/Noticeboard query whose output changes by Academic Session must include session ID in its React Query key.
+
+Conceptually:
+
+`["student-timetable", sessionId, ...]`
+
+`["student-notices", sessionId, ...]`
+
+`["student-notice-unread", sessionId, ...]`
+
+The request must use the same session ID represented by the query key.
+
+Verify:
+
+**A → B → A**
+
+does not reuse B's Timetable/notices as A's data.
+
+Do not refactor unrelated caches.
+
+---
+
+# 12. TENANT ISOLATION
+
+Permanent BENIUS requirement:
+
+School A Student must never access School B:
+- Academic Session
+- enrollment
+- timetable
+- notices
+- read state
+
+The server must derive Student and school from authentication.
+
+Never trust client:
+- `schoolId`
+- `studentId`
+- `class`
+- `section`
+
+as authorization authority.
+
+Foreign-school session IDs must remain rejected.
+
+Foreign-school timetable/notices must not become visible.
+
+---
+
+# 13. MOBILE COMPATIBILITY
+
+BENIUS Web and Mobile use the same academic data/backend.
+
+Do NOT weaken existing mobile session validation.
+
+If shared Timetable/Noticeboard backend/storage functions are changed, inspect mobile callers for compatibility.
+
+Do NOT redesign mobile UI.
+
+Do NOT create a separate mobile data model.
+
+Final intended rule for session-based data on both platforms:
+
+**Authenticated Student + School + Selected Academic Session + selected-session Enrollment**
+
+Preserve any stronger existing mobile protection.
+
+---
+
+# 14. NO ADMIN/TEACHER CHANGES
+
+Do NOT change:
+
+- Admin Noticeboard behavior
+- Teacher Noticeboard behavior
+- Admin Timetable behavior
+- Teacher Timetable behavior
+- notice creation/editing
+- timetable creation/editing
+- publication workflow
+
+If a shared storage function must change, keep existing Admin/Teacher behavior backward compatible and verify it.
+
+---
+
+# 15. NO UI CHANGES
+
+Preserve existing Student Timetable and Noticeboard UI exactly.
+
+Do NOT change:
+- Open Sans
+- colors
+- layout
+- cards
+- spacing
+- icons
+- labels
+- buttons
+- navigation
+- loading state
+- empty state
+- error state
+
+This is data/session correctness only.
+
+---
+
+# 16. NO DATABASE SCHEMA CHANGES
+
+Expected:
+
+**NONE**
+
+Do NOT:
+- create tables
+- alter tables
+- add columns
+- migrate notice rows
+- rewrite timetable rows
+- rewrite historical notices
+
+If a schema change appears necessary, STOP and report why.
+
+---
+
+# 17. ESSENTIAL TESTS
+
+At minimum test:
+
+### A. Timetable selected session
+Session A enrollment = Class 8A.
+
+Session A Class 8A timetable is returned.
+
+### B. Historical Timetable
+Current Student = Class 9A.
+Historical Session A = Class 8A.
+
+Selecting A uses Class 8A timetable.
+
+### C. Wrong-session Timetable
+Session B timetable must not appear under Session A.
+
+### D. Timetable draft visibility
+Confirm existing draft + published visibility remains unchanged.
+
+### E. Notice selected session
+Session A notice visible to Student's Session A cohort is returned.
+
+### F. Historical Notice cohort
+Current Student = Class 9A.
+Session A enrollment = Class 8A.
+
+Class 8A Session A notice is visible according to existing audience rules.
+
+Class 9A Session A notice must not become visible merely because Class 9A is today's placement.
+
+### G. Wrong-session Notice
+Session B session-specific notice does not appear under Session A.
+
+### H. Unread count
+Unread count corresponds to notices visible under selected Session A rules.
+
+### I. Mark read
+Student can mark an accessible notice read.
+
+Student cannot mark an inaccessible cross-session/foreign-school notice read.
+
+### J. Foreign-school session
+School A Student selects School B session.
+
+Result:
+Rejected.
+
+### K. Missing/malformed session
+Required session-sensitive request fails safely and never becomes an unscoped query.
+
+### L. Session switching
+A → B → A has separate query/cache identities.
+
+### M. Global/null notice semantics
+Test whatever legitimate existing null/global notice behavior is discovered.
+
+Do NOT invent semantics merely to make the test pass.
+
+### N. Admin/Teacher regression
+If shared storage was changed, existing Admin/Teacher behavior remains unchanged.
+
+---
+
+# 18. VALIDATION
+
+Run:
+- Step 1 focused tests
+- Step 2 focused tests
+- Step 3 focused tests
+- Step 4 focused tests
+- relevant existing Timetable/Noticeboard tests
+- web build
+- relevant TypeScript checks
+- mobile TypeScript/tests if shared/mobile paths are affected
+
+Do not fix unrelated repository-wide diagnostics.
+
+Clearly distinguish:
+- pre-existing diagnostics
+from
+- new diagnostics
+
+Changed files must introduce no new diagnostics.
+
+---
+
+# 19. DIFF REVIEW
+
+Before finishing confirm:
+
+- no DB schema changes
+- no UI changes
+- no Homework/Classwork changes
+- no Examination/Archives changes
+- no Attendance changes
+- no Fees changes
+- no Complaints changes
+- no Leave changes
+- no Profile changes
+- no document-authorization changes
+- no Admin behavior changes
+- no Teacher behavior changes
+- no tenant-isolation regression
+- Step 1–3 protections remain intact
+- mobile security is not weakened
+
+---
+
+# 20. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 4 — TIMETABLE + NOTICEBOARD RESULT
+
+### Timetable session behavior
+Explain selected-session/enrollment scoping.
+
+### Historical Timetable behavior
+Explain how historical class/section is determined.
+
+### Timetable publication behavior
+Confirm whether existing draft/published visibility remained unchanged.
+
+### Noticeboard session behavior
+Explain session and audience scoping.
+
+### Notice null/global semantics
+Explain what `session_id = null` actually means in the existing implementation and how it was preserved/handled. If ambiguous, state that clearly.
+
+### Notice enrollment/audience behavior
+Explain how selected-session class/section is used.
+
+### Unread-count behavior
+Explain session/cohort scoping.
+
+### Mark-read behavior
+Explain authorization/session validation.
+
+### Session transport
+List relevant requests converted/confirmed.
+
+### Cache isolation
+Explain A → B → A.
+
+### Tenant isolation
+Explain school/session/content isolation.
+
+### Mobile compatibility
+Explain impact/validation.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Admin behavior changed
+Expected:
+`No`
+
+### Teacher behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Separate pre-existing diagnostics from new diagnostics.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Remaining Student Portal work
+Do NOT implement:
+- Complaints
+- Leave
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Timetable + Student Noticeboard Academic Session and historical enrollment correctness.**
+
+Preserve existing Timetable draft/published visibility.
+
+Do not redesign Noticeboard.
+
+Do not change Admin/Teacher behavior.
+
+Do not change the database schema.
+
+If broader business behavior must change, STOP and report it instead.

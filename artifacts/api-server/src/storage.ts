@@ -57,6 +57,8 @@ import { isAttendanceDateInSession } from "@shared/attendance-session-date";
 import { db } from "./db";
 import { pool } from "./db";
 import { studentPublishedRankScope, studentPublishedScoreScope } from "./student-examination-score-scope";
+import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeSessionScope } from "./student-notice-visibility";
+import { studentTimetableScope } from "./student-timetable-visibility";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
@@ -1736,7 +1738,7 @@ export class DatabaseStorage {
     });
   }
 
-  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<(Notice & { isRead: boolean; creatorName: string | null })[]> {
+  async getStudentNotices(studentId: number, schoolId: number, cls: string, section: string, sessionId: number): Promise<(Notice & { isRead: boolean; creatorName: string | null })[]> {
     const classMatch = or(
       isNull(notices.targetClass),
       eq(notices.targetClass, cls),
@@ -1744,14 +1746,13 @@ export class DatabaseStorage {
     )!;
 
     const noticeConditions: SQL<unknown>[] = [
-      eq(notices.schoolId, schoolId),
+      studentNoticeSessionScope(schoolId, sessionId),
       or(
         eq(notices.targetType, "whole_school"),
         and(eq(notices.targetType, "student"), classMatch)!,
         and(eq(notices.targetType, "class"), classMatch)!
       )! as SQL<unknown>,
     ];
-    if (sessionId) noticeConditions.push(eq(notices.sessionId, sessionId) as SQL<unknown>);
 
     const rows = await db
       .select({
@@ -1778,15 +1779,7 @@ export class DatabaseStorage {
     if (rows.length === 0) return [];
 
     // Apply section filtering in application layer.
-    const filtered = rows.filter(n => {
-      if (n.targetType === "whole_school") return true;
-      if (!n.targetClass) return true;
-      const targetClasses = n.targetClass.split(",").map(c => c.trim());
-      if (!targetClasses.includes(cls)) return false;
-      if (!n.targetSection) return true;
-      const sections = n.targetSection.split(",").map(s => s.trim());
-      return sections.includes(section);
-    });
+    const filtered = rows.filter(n => studentNoticeMatchesAudience(n, cls, section));
 
     if (filtered.length === 0) return [];
 
@@ -1808,9 +1801,9 @@ export class DatabaseStorage {
     );
   }
 
-  async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string, sessionId?: number | null): Promise<number> {
+  async getUnreadNoticeCount(studentId: number, schoolId: number, cls: string, section: string, sessionId: number): Promise<number> {
     const all = await this.getStudentNotices(studentId, schoolId, cls, section, sessionId);
-    return all.filter(n => !n.isRead).length;
+    return countUnreadStudentNotices(all);
   }
 
   // ===== COMPLAINT METHODS =====
@@ -3054,15 +3047,9 @@ export class DatabaseStorage {
 
   async getTimetableByClassSection(schoolId: number, sessionId: number, cls: string, section: string): Promise<(TimetableEntry & { teacherName: string })[]> {
     await this.requireTimetableSession(schoolId, sessionId);
-    const conditions: any[] = [
-      eq(timetableEntries.schoolId, schoolId),
-      eq(timetableEntries.sessionId, sessionId),
-      eq(timetableEntries.class, cls),
-      eq(timetableEntries.section, section),
-    ];
     const result = await db.select().from(timetableEntries)
       .leftJoin(teachers, eq(timetableEntries.teacherId, teachers.id))
-      .where(and(...conditions));
+      .where(studentTimetableScope(schoolId, sessionId, cls, section));
     return result.map(r => ({ ...r.timetable_entries, teacherName: r.teachers?.fullName ?? "" }));
   }
 

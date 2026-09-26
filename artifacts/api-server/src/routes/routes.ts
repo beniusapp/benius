@@ -29,6 +29,8 @@ import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
 import { registerFeesRoutes } from "../fees-routes";
 import { requireStudentFeeSession } from "../student-fee-session-context";
 import { resolveStudentExaminationSession } from "../student-examination-session";
+import { resolveStudentAcademicSession } from "../student-academic-session";
+import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
 import { calculateLateFee } from "../late-fee-engine";
@@ -2624,18 +2626,17 @@ export async function registerRoutes(
   // ===== STUDENT TIMETABLE ROUTES =====
 
   app.get("/api/student/timetable", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const timetableSessionId = await resolveTimetableSessionId(req, res, student.schoolId);
-    if (timetableSessionId === null) return;
-    const all = await storage.getTimetableBySchool(student.schoolId, timetableSessionId);
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_ENROLLMENT_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { schoolId, sessionId, enrollment } = context;
+    const cls = enrollment!.className;
+    const section = enrollment!.sectionName;
     // Show all configured entries (draft + published) — students should see
     // their schedule as soon as it is set up, regardless of publish status.
-    const entries = all.filter(e =>
-      e.class === student.class && e.section === student.section
-    );
-    const structure = await storage.getTimetableStructure(student.schoolId, timetableSessionId, student.class || "");
+    const entries = await storage.getTimetableByClassSection(schoolId, sessionId!, cls, section);
+    const structure = await storage.getTimetableStructure(schoolId, sessionId!, cls);
     res.json({ entries, structure });
   });
 
@@ -2726,42 +2727,51 @@ export async function registerRoutes(
   // ===== STUDENT NOTICEBOARD ROUTES =====
 
   app.get("/api/student/notices", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_ENROLLMENT_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
     const noticesWithRead = await storage.getStudentNotices(
-      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+      context.student.id, context.schoolId, context.enrollment!.className,
+      context.enrollment!.sectionName, context.sessionId!,
     );
     res.json(noticesWithRead);
   });
 
   app.post("/api/student/notices/mark-read", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const { noticeIds } = req.body;
-    if (!Array.isArray(noticeIds)) return res.status(400).json({ message: "noticeIds must be an array" });
-    const requestedIds = noticeIds.map(Number).filter(n => !isNaN(n));
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_ENROLLMENT_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    if (!context.session?.isActive) {
+      return res.status(403).json({ message: "Notices cannot be marked read in an archived academic session" });
+    }
+    const requestedIds: unknown = req.body?.noticeIds;
+    if (!Array.isArray(requestedIds) || requestedIds.length > 500
+      || requestedIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+      return res.status(400).json({ message: "noticeIds must be a list of positive notice IDs" });
+    }
     if (requestedIds.length === 0) return res.json({ marked: 0 });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     // Only allow marking notices that are actually visible to this student
     const eligibleNotices = await storage.getStudentNotices(
-      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+      context.student.id, context.schoolId, context.enrollment!.className,
+      context.enrollment!.sectionName, context.sessionId!,
     );
-    const eligibleIds = new Set(eligibleNotices.map(n => n.id));
-    const ids = requestedIds.filter(id => eligibleIds.has(id));
-    await storage.markNoticesRead(req.session.studentId, ids);
-    res.json({ marked: ids.length });
+    if (!studentCanMarkNoticeIds(requestedIds, eligibleNotices)) {
+      return res.status(403).json({ message: "One or more notices are not available to this Student" });
+    }
+    await storage.markNoticesRead(context.student.id, requestedIds);
+    res.json({ marked: requestedIds.length });
   });
 
   app.get("/api/student/notices/unread-count", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_ENROLLMENT_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
     const count = await storage.getUnreadNoticeCount(
-      student.id, student.schoolId, student.class || "", student.section || "", viewSessionId
+      context.student.id, context.schoolId, context.enrollment!.className,
+      context.enrollment!.sectionName, context.sessionId!,
     );
     res.json({ count });
   });

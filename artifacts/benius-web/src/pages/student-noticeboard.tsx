@@ -6,7 +6,8 @@ import { fmtDate } from "@/lib/dateUtils";
 import {
   ArrowLeft, Bell, Loader2, Megaphone, BookOpen, AlertTriangle, Info, FileText, X, ExternalLink,
 } from "lucide-react";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
+import { getQueryFn, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { studentNoticeQueryKey } from "@/lib/student-notice-query-key";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
 
@@ -60,7 +61,11 @@ function isImageUrl(url: string): boolean {
 export default function StudentNoticeboard() {
   const [, setLocation] = useLocation();
   const { isArchiveMode, selectedSession } = useSessionView();
+  const sessionId = selectedSession?.id ?? null;
   const [selectedNotice, setSelectedNotice] = useState<StudentNotice | null>(null);
+  const [selectedNoticeSessionId, setSelectedNoticeSessionId] = useState<number | null>(null);
+
+  useEffect(() => { setSelectedNotice(null); }, [sessionId]);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe | null>({
     queryKey: ["/api/student-me"],
@@ -72,36 +77,44 @@ export default function StudentNoticeboard() {
   }, [studentLoading, student, setLocation]);
 
   const { data: notices = [], isLoading: noticesLoading } = useQuery<StudentNotice[]>({
-    queryKey: ["/api/student/notices"],
-    enabled: !!student,
+    queryKey: studentNoticeQueryKey(sessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1] as number | null;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession("/api/student/notices", requestSessionId, { signal });
+      if (!response.ok) throw new Error(`Unable to load notices (${response.status}).`);
+      return response.json();
+    },
+    enabled: !!student && sessionId !== null,
   });
 
   const markReadMutation = useMutation({
-    mutationFn: async (ids: number[]) => {
+    mutationFn: async ({ ids, sessionId: requestSessionId }: { ids: number[]; sessionId: number }) => {
       if (ids.length === 0) return;
-      await apiRequest("POST", "/api/student/notices/mark-read", { noticeIds: ids });
-    },
-    onSuccess: (_, ids) => {
-      queryClient.setQueryData<StudentNotice[]>(["/api/student/notices"], (old) =>
-        old ? old.map(n => (ids as number[]).includes(n.id) ? { ...n, isRead: true } : n) : old
+      const response = await sessionFetchForViewSession(
+        "/api/student/notices/mark-read", requestSessionId, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ noticeIds: ids }),
+        },
       );
-      queryClient.setQueryData<{ count: number }>(["/api/student/notices/unread-count"], (old) => {
-        if (!old) return old;
-        const readIds = ids as number[];
-        const currentNotices = queryClient.getQueryData<StudentNotice[]>(["/api/student/notices"]) ?? [];
-        const stillUnread = currentNotices.filter(n => !n.isRead && !readIds.includes(n.id)).length;
-        return { count: Math.max(0, stillUnread) };
-      });
+      if (!response.ok) throw new Error(`Unable to mark notices read (${response.status}).`);
+    },
+    onSuccess: (_, { ids, sessionId: requestSessionId }) => {
+      queryClient.setQueryData<StudentNotice[]>(studentNoticeQueryKey(requestSessionId), (old) =>
+        old ? old.map(n => ids.includes(n.id) ? { ...n, isRead: true } : n) : old
+      );
       queryClient.invalidateQueries({ queryKey: ["/api/student/notices/unread-count"] });
     },
   });
 
   const openNotice = (notice: StudentNotice) => {
+    if (sessionId === null) return;
     setSelectedNotice(notice);
+    setSelectedNoticeSessionId(sessionId);
     // Don't mark-read in archive mode — the mutation would be blocked server-side
     // anyway (403) but we skip it to avoid a noisy error toast.
     if (!notice.isRead && !isArchiveMode) {
-      markReadMutation.mutate([notice.id]);
+      markReadMutation.mutate({ ids: [notice.id], sessionId });
     }
   };
 
@@ -253,7 +266,7 @@ export default function StudentNoticeboard() {
 
       {/* ── Notice Detail Bottom Sheet ── */}
       <AnimatePresence>
-        {selectedNotice && (() => {
+        {selectedNotice && selectedNoticeSessionId === sessionId && (() => {
           const cfg = getTypeConfig(selectedNotice.noticeType);
           const Icon = cfg.icon;
           const isImg = selectedNotice.fileUrl ? isImageUrl(selectedNotice.fileUrl) : false;
