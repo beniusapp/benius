@@ -1,0 +1,658 @@
+Implement **BENIUS STUDENT PORTAL — STEP 1: ACADEMIC SESSION FOUNDATION / ENFORCEMENT**.
+
+This is a narrowly scoped foundation change.
+
+Do NOT start fixing individual Student modules such as Homework, Classwork, Examination, Archives, Timetable, Noticeboard, Complaints, Leave, Dashboard, Fees, Attendance or Profile unless a tiny compatibility adjustment is strictly necessary for the new foundation.
+
+The purpose of this step is to establish **one safe, reusable Student Academic Session boundary** that later module-specific fixes can use.
+
+---
+
+# 1. PERMANENT BENIUS RULE
+
+BENIUS is a multi-school / multi-tenant application.
+
+For every Student operation that is Academic Session based, the trusted server-side scope must be:
+
+**Authenticated Student**
+→ **derive Student's School/Tenant server-side**
+→ **Selected Academic Session ID**
+→ **verify Academic Session belongs to that same School**
+→ **verify Student/session relationship where the operation requires enrollment**
+→ **perform the read/write inside that scope**
+
+Never trust a client-supplied school ID.
+
+Never allow a Student from School A to use an Academic Session belonging to School B.
+
+Never allow omission or invalidity of a required Academic Session to silently remove the session predicate.
+
+---
+
+# 2. IMPORTANT AUDIT FINDINGS
+
+The previous read-only forensic audit established:
+
+1. `StudentSessionProvider` fetches `/api/student/academic-sessions`.
+
+2. The frontend stores the selected Student Academic Session in `sessionStorage` and validates restored IDs against the Student's available school sessions.
+
+3. Session-aware request helpers can send:
+
+`x-view-session-id`
+
+4. Ordinary frontend `fetch()` calls do NOT automatically send that selected-session header.
+
+5. Global middleware parses the header into `req.viewSessionId`.
+
+6. GET middleware does not universally establish that the requested session is valid for the authenticated Student's school; individual routes currently have different behavior.
+
+7. Student login stores:
+
+`req.session.studentId`
+
+but does NOT necessarily populate:
+
+`req.session.schoolId`
+
+8. Therefore the existing shared write/archive guard must NOT be treated as sufficient protection for Student requests merely because it checks `req.session.schoolId`.
+
+9. Some APIs currently:
+- validate the selected session,
+- some fall back to active session,
+- some accept nullable session IDs,
+- and some omit the session predicate entirely when the header is absent.
+
+This inconsistency is what Step 1 must address at the **foundation/helper level**.
+
+---
+
+# 3. DO NOT CHANGE THE STUDENT LOGIN MODEL UNNECESSARILY
+
+Do NOT simply add/trust a client-provided school ID.
+
+The authenticated Student identity must remain the authority.
+
+The safe model is:
+
+`req.session.studentId`
+→ load authenticated Student
+→ derive `student.schoolId`
+→ validate requested Academic Session against that school.
+
+If adding `schoolId` to the server-side Student login session is genuinely necessary, first determine whether that would affect existing Admin/Teacher/shared middleware behavior.
+
+Prefer deriving the Student's school from the authenticated Student record unless there is a strong architectural reason otherwise.
+
+Do NOT create a second authentication system.
+
+Do NOT modify mobile bearer authentication unless strictly required for compatibility.
+
+---
+
+# 4. CREATE/CONSOLIDATE A REUSABLE STUDENT SESSION RESOLVER
+
+Inspect the existing helpers first.
+
+There may already be logic such as:
+
+`student-examination-session.ts`
+
+or equivalent session-resolution utilities.
+
+Reuse/consolidate existing logic rather than creating duplicate competing session systems.
+
+Create or strengthen a reusable server-side Student Academic Session resolver whose conceptual contract is:
+
+Input:
+- authenticated Student identity
+- optional/required `x-view-session-id`
+- operation mode
+
+Output:
+- authenticated Student
+- trusted `schoolId`
+- validated Academic Session
+- validated `academicSessionId`
+- optionally the Student's enrollment for that session when required
+
+The resolver must derive school ownership server-side.
+
+---
+
+# 5. SUPPORT EXPLICIT OPERATION MODES
+
+Do NOT force exactly the same behavior onto every Student API.
+
+The foundation should support clear modes such as:
+
+### GLOBAL
+
+No Academic Session required.
+
+Used for genuinely global Student data.
+
+Examples:
+- account/security
+- permanent profile identity
+- Gallery
+- Faculty Info
+- School Calendar
+- E-Library
+
+Do NOT force an Academic Session onto these.
+
+### SELECTED_SESSION_REQUIRED
+
+The operation requires an explicitly selected/validated Academic Session.
+
+If the header is:
+- missing,
+- malformed,
+- nonexistent,
+- or belongs to another school,
+
+the operation must fail safely.
+
+Do NOT silently remove the session predicate.
+
+### SELECTED_OR_ACTIVE_SESSION
+
+Use only where existing BENIUS product behavior intentionally permits active-session fallback.
+
+The selected session must still be validated against the authenticated Student's school.
+
+Fallback must be explicit in code, not accidental.
+
+### SELECTED_SESSION_ENROLLMENT_REQUIRED
+
+For operations that depend on the Student's class/section/roll/status for the selected year:
+
+Resolve:
+
+**school + student + academic session**
+
+against the `enrollments` table.
+
+Return the selected-session placement such as:
+- class
+- section
+- roll number
+- enrollment status
+
+Do NOT use current `students.class` / `students.section` as the historical placement when a selected-session enrollment is required.
+
+---
+
+# 6. FAIL-CLOSED BEHAVIOR
+
+For a Student Academic Session operation, never use logic equivalent to:
+
+`if session exists → filter by session`
+`else → return records without session filtering`
+
+when the operation requires a session.
+
+That is precisely the cross-session behavior we are trying to eliminate.
+
+For a required-session operation:
+
+Missing session
+→ controlled error.
+
+Invalid session
+→ controlled error.
+
+Foreign-school session
+→ controlled authorization/validation error.
+
+Missing required Student enrollment
+→ controlled error/empty behavior appropriate to the existing API contract.
+
+Do NOT silently query all sessions.
+
+---
+
+# 7. TENANT ISOLATION
+
+This is non-negotiable.
+
+The resolver must verify:
+
+`academic_sessions.school_id === authenticatedStudent.schoolId`
+
+or the equivalent existing schema relationship.
+
+Never accept:
+
+`schoolId`
+
+from Student request body/query/header as the authority.
+
+Never resolve an Academic Session by ID alone and then use it without checking school ownership.
+
+---
+
+# 8. STUDENT IDENTITY
+
+Student-specific operations must continue deriving the Student from authenticated server state.
+
+Never trust a request parameter such as:
+
+`studentId`
+
+as a replacement for the authenticated Student identity.
+
+The foundation should make it difficult for future Student routes to accidentally operate on another Student.
+
+---
+
+# 9. ENROLLMENT FOUNDATION
+
+The existing architecture distinguishes:
+
+### Permanent/current Student master
+
+`students`
+
+and
+
+### Academic Session placement
+
+`enrollments`
+
+The enrollment model contains the conceptual relationship:
+
+**school + student + Academic Session → class + section + roll + status**
+
+Establish a reusable way for later module fixes to obtain the authenticated Student's selected-session enrollment.
+
+Do NOT yet rewrite every module to use it.
+
+That happens in later steps.
+
+For this Step 1, establish/test the helper/contract only.
+
+---
+
+# 10. FRONTEND SESSION TRANSPORT FOUNDATION
+
+Inspect:
+
+- `StudentSessionProvider`
+- `queryClient.ts`
+- `sessionFetch`
+- `sessionFetchForViewSession`
+- `apiRequest`
+- any Student-specific request helpers
+
+Ensure there is one clear supported way for Student session-aware requests to send the selected Academic Session.
+
+Do NOT mass-edit every Student page yet.
+
+Do NOT convert every ordinary `fetch()` in this step.
+
+Homework/Classwork/etc. will be corrected individually in later steps.
+
+However, document which helper later Student module fixes must use.
+
+The selected Academic Session used in the request must match the session used in the corresponding query/cache key when that module is later corrected.
+
+---
+
+# 11. DO NOT BREAK ARCHIVES
+
+BENIUS supports historical Student views.
+
+The foundation must support explicitly requesting an inactive/historical Academic Session for legitimate read operations.
+
+Do NOT globally reject an Academic Session merely because it is inactive.
+
+The correct distinction is:
+
+### Historical read
+A valid same-school historical Academic Session may be allowed.
+
+### Current operational write
+May require the active Academic Session depending on the module/business rule.
+
+Build the foundation so later routes can explicitly choose the correct mode.
+
+Do NOT hard-code:
+
+`selected session must always equal active session`
+
+for all Student operations.
+
+---
+
+# 12. DO NOT CHANGE GLOBAL MODULES
+
+Do NOT add Academic Session filtering to genuinely global data merely for consistency.
+
+The audit established that modules such as:
+
+- Gallery
+- Faculty Info
+- School Calendar
+- E-Library
+
+are intentionally/global structurally.
+
+Leave them global.
+
+Likewise permanent Student identity remains global.
+
+---
+
+# 13. DO NOT FIX MODULE-SPECIFIC ISSUES YET
+
+The audit identified issues involving:
+
+- Homework cross-session reads/submissions
+- Classwork session filtering
+- unpublished Examination scores
+- historical Examination class/section
+- Timetable historical cohort
+- Noticeboard historical cohort
+- Complaints session tagging
+- peer-report school validation
+- Leave session behavior
+- Dashboard query/cache keys
+- public upload authorization
+- Profile historical placement
+
+DO NOT solve those issues in this Step 1 unless a tiny mechanical change is unavoidable to keep compilation/tests working after introducing the foundation.
+
+They will be addressed individually.
+
+If you believe one of those modules MUST be changed for Step 1 to work, STOP and explain exactly why before making the module-specific behavior change.
+
+---
+
+# 14. DO NOT CHANGE ADMIN OR TEACHER BEHAVIOR
+
+This Step is for the Student Portal.
+
+Shared middleware may also serve:
+- Admin
+- Principal
+- Teacher
+- Support/internal roles
+
+Do NOT change their behavior accidentally.
+
+If modifying shared middleware could change another role's behavior, prefer a Student-specific resolver/helper.
+
+Do not refactor the whole authentication/session architecture.
+
+---
+
+# 15. MOBILE COMPATIBILITY
+
+BENIUS is being built as a hybrid Android+iOS application.
+
+Existing native mobile authentication/session handling already has stronger validated session behavior in some areas.
+
+Do NOT weaken it.
+
+Do NOT create a separate conflicting Academic Session model for mobile.
+
+Where possible, establish server-side Student session rules that can eventually be shared by:
+
+**Web Student Portal**
+and
+**Native Student modules**
+
+But do not rewrite mobile modules in this Step unless necessary for compilation/compatibility.
+
+---
+
+# 16. IST REQUIREMENT
+
+Do not change date/time behavior.
+
+BENIUS application/business/display timezone remains:
+
+**Asia/Kolkata / IST**
+
+Do not introduce server-local/BST behavior.
+
+---
+
+# 17. NO UI CHANGES
+
+Absolutely no Student UI redesign.
+
+Do not change:
+- page layout
+- cards
+- buttons
+- colors
+- Open Sans typography
+- spacing
+- navigation
+- icons
+- labels
+- dashboard structure
+- session selector appearance
+- mobile screen design
+
+This is backend/session-foundation work.
+
+---
+
+# 18. NO DATABASE MIGRATION UNLESS ABSOLUTELY REQUIRED
+
+The existing schema already contains:
+- Students
+- Academic Sessions
+- Enrollments
+
+This Step should preferably require **NO database schema change**.
+
+Do NOT create duplicate Academic Session tables.
+
+Do NOT create duplicate enrollment tables.
+
+Do NOT run destructive migrations.
+
+If you determine a schema change is genuinely unavoidable, STOP and report why instead of performing it.
+
+---
+
+# 19. ESSENTIAL TESTS
+
+Add only focused tests necessary for this foundation.
+
+At minimum verify:
+
+### Test A — valid same-school selected session
+
+Student from School A
++ Session A belonging to School A
+→ accepted.
+
+### Test B — foreign-school session
+
+Student from School A
++ Session B belonging to School B
+→ rejected.
+
+### Test C — nonexistent session
+
+Authenticated Student
++ nonexistent session ID
+→ rejected.
+
+### Test D — malformed session
+
+Authenticated Student
++ malformed selected-session value
+→ rejected safely.
+
+### Test E — required session missing
+
+A `SELECTED_SESSION_REQUIRED` operation without a selected session
+→ rejected rather than becoming an unscoped query.
+
+### Test F — historical same-school session
+
+Student from School A
++ legitimate previous Session belonging to School A
++ historical-read mode
+→ accepted.
+
+### Test G — enrollment resolution
+
+Student + School + selected Session
+→ returns enrollment only for that exact combination.
+
+Enrollment belonging to:
+- another Student,
+- another School,
+- or another Academic Session
+
+must never be returned.
+
+### Test H — global mode
+
+A genuinely global Student operation
+→ does not require Academic Session.
+
+### Test I — current operational mode
+
+If the helper supports active-session-only/current-write mode, verify a historical session cannot be used for that mode.
+
+---
+
+# 20. VALIDATION
+
+After implementation run:
+
+- relevant Student/session tests
+- API/server tests affected by the change
+- TypeScript/type checking
+- existing web build
+- existing mobile TypeScript validation if shared code was touched
+
+Do not claim physical-device testing unless actually performed.
+
+---
+
+# 21. CHANGE-SCOPE REVIEW
+
+Before finishing, inspect the diff.
+
+Verify:
+
+- no UI changes
+- no font changes
+- no unrelated module changes
+- no DB schema changes
+- no Admin behavior changes
+- no Teacher behavior changes
+- no tenant-isolation regression
+- no mobile-auth regression
+- no Academic Session behavior silently changed outside the intended Student foundation
+
+---
+
+# 22. FINAL REPORT
+
+Return exactly this structure:
+
+## STUDENT STEP 1 — ACADEMIC SESSION FOUNDATION RESULT
+
+### Foundation implemented
+Explain the reusable Student Academic Session resolver/helper and its exact file location.
+
+### Trusted identity chain
+Show:
+
+Authenticated Student
+→ School
+→ Academic Session
+→ Enrollment where required
+
+### Supported modes
+List the modes actually implemented and explain each briefly.
+
+### Tenant isolation
+Explain exactly how a foreign-school Academic Session is rejected.
+
+### Missing/invalid session behavior
+Explain what happens for:
+- missing
+- malformed
+- nonexistent
+- foreign-school session IDs
+
+### Historical session behavior
+Explain how legitimate historical reads remain possible.
+
+### Enrollment behavior
+Explain how selected-session enrollment is resolved without using current student placement as historical placement.
+
+### Frontend transport
+State which existing request helper should be used by later Student module fixes.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Must state either:
+`None`
+or explain why work was stopped.
+
+### Module-specific fixes performed
+Expected:
+`None`
+
+If anything else was changed, explain exactly why.
+
+### Tests
+List tests and PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Admin/Teacher behavior changed
+Expected:
+`No`
+
+### UI changed
+Expected:
+`No`
+
+### Remaining Student Portal work
+List, but DO NOT implement:
+- Homework/Classwork
+- Examination/Archives
+- Timetable/Noticeboard
+- Complaints
+- Leave
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL INSTRUCTION
+
+Implement **ONLY Student Step 1: Academic Session foundation**.
+
+Do not attempt to finish the entire Student Portal.
+
+Do not redesign anything.
+
+Do not change business rules beyond establishing safe Student session validation/resolution.
+
+Do not alter global modules.
+
+Do not fix the previously discovered module-specific issues yet.
+
+If implementing this foundation would require a broad behavioral change outside Student session validation, STOP and report the dependency instead of making that broader change.
