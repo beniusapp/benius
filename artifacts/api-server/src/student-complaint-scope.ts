@@ -1,11 +1,15 @@
 import { complaints } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 
-/** Student-only case boundary. Null legacy sessions cannot match a selected year. */
-export function studentComplaintSessionScope(schoolId: number, sessionId: number) {
-  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+export function requireStudentComplaintSession(sessionId: number | null | undefined): asserts sessionId is number {
+  if (!Number.isSafeInteger(sessionId) || (sessionId ?? 0) <= 0) {
     throw new Error("Student Complaints require a valid academic session");
   }
+}
+
+/** Student-only case boundary. Null legacy sessions cannot match a selected year. */
+export function studentComplaintSessionScope(schoolId: number, sessionId: number) {
+  requireStudentComplaintSession(sessionId);
   return and(eq(complaints.schoolId, schoolId), eq(complaints.sessionId, sessionId))!;
 }
 

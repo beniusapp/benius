@@ -59,7 +59,7 @@ import { pool } from "./db";
 import { studentPublishedRankScope, studentPublishedScoreScope } from "./student-examination-score-scope";
 import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeSessionScope } from "./student-notice-visibility";
 import { studentTimetableScope } from "./student-timetable-visibility";
-import { studentComplaintSessionScope } from "./student-complaint-scope";
+import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
@@ -2093,7 +2093,7 @@ export class DatabaseStorage {
       : eq(complaints.studentId, studentId);
 
     const result = await db.select().from(complaints)
-      .innerJoin(teachers, eq(complaints.teacherId, teachers.id))
+      .innerJoin(teachers, and(eq(complaints.teacherId, teachers.id), eq(teachers.schoolId, schoolId)))
       .where(and(...baseConditions, studentMatch))
       .orderBy(desc(complaints.createdAt));
 
@@ -2173,9 +2173,7 @@ export class DatabaseStorage {
   }
 
   async createStudentComplaint(data: InsertComplaint): Promise<Complaint> {
-    if (!Number.isSafeInteger(data.sessionId) || (data.sessionId ?? 0) <= 0) {
-      throw new Error("Student Complaints require a valid academic session");
-    }
+    requireStudentComplaintSession(data.sessionId);
     const [c] = await db.insert(complaints).values(data).returning();
     return c;
   }

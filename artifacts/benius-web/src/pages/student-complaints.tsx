@@ -116,7 +116,7 @@ function InboxDetailDrawer({
   const { data: notes = [], isLoading: notesLoading } = useQuery<ComplaintNote[]>({
     queryKey: studentComplaintNotesQueryKey(c.id, viewSessionId),
     queryFn: async ({ queryKey, signal }) => {
-      const requestSessionId = queryKey[3];
+      const requestSessionId = queryKey[3] as number | null;
       if (requestSessionId === null) throw new Error("Academic session is required");
       const res = await sessionFetchForViewSession(`/api/student/complaints/${c.id}/notes`, requestSessionId, { signal });
       if (!res.ok) throw new Error("Failed to load comments");
@@ -669,7 +669,7 @@ export default function StudentComplaints() {
   const { data: inboxData = [], isLoading: inboxLoading } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
     queryKey: studentComplaintInboxQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
-      const requestSessionId = queryKey[1];
+      const requestSessionId = queryKey[1] as number | null;
       if (requestSessionId === null) throw new Error("Academic session is required");
       const response = await sessionFetchForViewSession("/api/student/complaints/inbox", requestSessionId, { signal });
       if (!response.ok) throw new Error(`Unable to load complaints (${response.status}).`);
@@ -684,7 +684,7 @@ export default function StudentComplaints() {
   const { data: filedData = [], isLoading: filedLoading } = useQuery<ComplaintRecord[]>({
     queryKey: studentComplaintFiledQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
-      const requestSessionId = queryKey[1];
+      const requestSessionId = queryKey[1] as number | null;
       if (requestSessionId === null) throw new Error("Academic session is required");
       const response = await sessionFetchForViewSession("/api/student/complaints/filed", requestSessionId, { signal });
       if (!response.ok) throw new Error(`Unable to load filed complaints (${response.status}).`);
