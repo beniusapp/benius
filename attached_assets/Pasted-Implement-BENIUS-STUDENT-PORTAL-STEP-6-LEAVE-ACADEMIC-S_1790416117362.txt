@@ -1,0 +1,655 @@
+Implement **BENIUS STUDENT PORTAL — STEP 6: LEAVE ACADEMIC SESSION CORRECTION**.
+
+Completed and accepted:
+
+- Step 1 — Student Academic Session foundation
+- Step 2 — Homework + Classwork
+- Step 3 — Examination + Archives
+- Step 4 — Timetable + Noticeboard
+- Step 5 — Complaints
+
+Do not undo or weaken Steps 1–5.
+
+Important current validation baseline after Step 5:
+
+- Web TypeScript diagnostics: **60**
+- API TypeScript diagnostics: **377 currently observed**
+- Mobile TypeScript: **PASS / 0 diagnostics**
+
+Do NOT fix unrelated TypeScript diagnostics in this step.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct **Student Leave** so Student leave data consistently respects:
+
+**Authenticated Student**
+→ **server-derived Student School**
+→ **validated Academic Session**
+
+Student leave history must belong to the selected Academic Session.
+
+Current operational leave writes must follow the correct active Academic Session.
+
+Do not allow invalid, missing, foreign-school, or historical session selection to silently fall through to another session.
+
+---
+
+# ABSOLUTE SCOPE
+
+Modify ONLY what is necessary for:
+
+### Student Leave
+
+including where applicable:
+
+- Student leave list/history
+- Student leave creation
+- Student leave cancellation/deletion
+- Student leave detail
+- Student leave attachment metadata/access checks directly involved in leave authorization
+- frontend session transport
+- React Query/cache isolation
+
+Do NOT fix:
+
+- Dashboard
+- Profile
+- Complaints
+- Homework/Classwork
+- Examination/Archives
+- Timetable/Noticeboard
+- Attendance
+- Fees
+- Admin Leave Requests
+- Teacher Leave
+- leave policy architecture
+- public `/uploads` document authorization
+- general document authorization
+
+No UI redesign.
+No database schema changes.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+Use:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+Do NOT create another competing Student Academic Session resolver.
+
+Student Leave operations must derive:
+
+**Authenticated Student**
+→ **Student School**
+→ **validated selected Academic Session**
+
+Never trust client-provided:
+
+- `studentId`
+- `schoolId`
+- `sessionId`
+
+as authorization authority.
+
+Use the authenticated Student identity and server-derived school.
+
+---
+
+# 2. IMPORTANT EXISTING LEAVE ISSUE
+
+The previous forensic audit found that Student Leave creation currently:
+
+- derives Student/school
+- has some archived-session protection
+- but ultimately saves against the active session
+- and an invalid/foreign selected-session header can fall through rather than being rejected
+
+Correct this.
+
+If a selected Academic Session is supplied, it must be validated.
+
+Do NOT allow:
+
+invalid selected session
+→ ignore it
+→ silently use active session.
+
+Do NOT allow:
+
+foreign-school selected session
+→ ignore it
+→ silently use active session.
+
+Fail closed.
+
+---
+
+# 3. LEAVE HISTORY / LIST
+
+Student Leave history must be scoped to:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
+
+When Session A is selected:
+
+only Session A Student leave records should appear.
+
+Session B leave records must not appear.
+
+Missing required session must NOT cause an unscoped leave query.
+
+Valid historical same-school sessions should remain readable.
+
+---
+
+# 4. LEAVE CREATION
+
+Leave creation is a current operational write.
+
+Use the Step 1 current-write rule or equivalent safe behavior.
+
+A new Student leave request must:
+
+1. authenticate the Student
+2. derive Student school server-side
+3. validate the selected Academic Session
+4. require that selected session to be the active/current session where that is the existing BENIUS leave-write rule
+5. save the exact validated active Academic Session ID
+
+Do NOT silently replace an invalid/historical/foreign selection with the active session.
+
+If the Student selected an archived Academic Session:
+
+new leave creation must be rejected.
+
+If no selected session is supplied and the current UI always has a session selection, fail safely rather than inventing an unscoped write.
+
+Preserve existing leave date/business validations.
+
+---
+
+# 5. HISTORICAL LEAVE
+
+Historical leave records must remain readable.
+
+Example:
+
+2025–26:
+Student had 4 leave requests.
+
+2026–27:
+Student has 1 leave request.
+
+Selecting 2025–26 should show the 4 historical records.
+
+Selecting 2026–27 should show the current record.
+
+Do not mix them.
+
+Historical sessions are for legitimate historical reads, not new operational leave creation.
+
+---
+
+# 6. DELETE / CANCEL LEAVE
+
+The previous audit found Student Leave DELETE checks authenticated Student and pending status but does not sufficiently bind the operation to the selected Academic Session.
+
+Correct this.
+
+Before allowing Student cancellation/deletion, verify:
+
+- authenticated Student owns the leave request
+- leave belongs to authenticated Student's school
+- leave belongs to the validated selected Academic Session
+- selected session satisfies the existing current-write rule
+- existing pending/status rule still passes
+
+A Student must NOT select Session A and delete/cancel a Session B leave request by manipulating its ID.
+
+A historical leave request must not become writable merely because the Student knows its ID.
+
+Preserve existing status restrictions.
+
+---
+
+# 7. LEAVE DETAIL
+
+If Student Leave has an ID-specific detail route, ensure it validates:
+
+- authenticated Student
+- school
+- selected Academic Session
+- leave ownership
+- leave session
+
+Do not allow cross-session or cross-school ID access.
+
+If no separate detail route exists, report that and do not create one unnecessarily.
+
+---
+
+# 8. LEAVE POLICY
+
+Leave policy/configuration is currently conceptually school/global configuration rather than Academic Session history.
+
+Do NOT redesign or version Leave Policy.
+
+Do NOT create historical Leave Policy snapshots.
+
+Do NOT change:
+- leave limits
+- leave categories
+- approval rules
+- policy calculations
+
+Only correct Student leave-record Academic Session handling.
+
+Report that Leave Policy remains global/current if that is the existing architecture.
+
+---
+
+# 9. ATTACHMENTS
+
+Do NOT broaden this step into the known public `/uploads` document-authorization problem.
+
+However, if Student Leave attachment upload/download logic is directly part of the changed Leave route, preserve existing attachment behavior and ensure the Leave record itself passes Student/school/session authorization before any protected route action.
+
+Do NOT redesign file storage.
+
+The general document-authorization correction remains a later separate step.
+
+---
+
+# 10. FRONTEND SESSION TRANSPORT
+
+Inspect Student Leave requests.
+
+Every Leave request whose behavior depends on selected Academic Session must explicitly send the session represented by the current query/mutation context.
+
+Prefer:
+
+`sessionFetchForViewSession`
+
+or the established equivalent.
+
+Do NOT rely only on mutable global session header state.
+
+Apply this to relevant:
+
+- Leave list/history
+- creation
+- delete/cancel
+- detail if applicable
+
+Do not mass-refactor unrelated modules.
+
+---
+
+# 11. CACHE ISOLATION
+
+Every Student Leave query whose result changes by Academic Session must include the session ID in its React Query key.
+
+Conceptually:
+
+`["student-leave", sessionId, ...]`
+
+Mutations must invalidate the correct session-specific key.
+
+Verify:
+
+**A → B → A**
+
+does not display B's leave history as A's data.
+
+Do not refactor unrelated Student caches.
+
+---
+
+# 12. TENANT ISOLATION
+
+Permanent BENIUS requirement:
+
+School A Student must never read, create against, modify, or delete School B leave data.
+
+Server derives school from authenticated Student.
+
+Never trust client `schoolId`.
+
+Foreign-school Academic Session IDs must be rejected.
+
+Leave IDs must not bypass:
+- Student ownership
+- school ownership
+- session ownership
+
+---
+
+# 13. MOBILE COMPATIBILITY
+
+BENIUS Web and Mobile share the same backend academic data.
+
+The previous audit indicated mobile has stronger session behavior in several areas.
+
+Do NOT weaken mobile Leave protection.
+
+If shared Leave storage/backend functions are changed, inspect mobile callers for compatibility.
+
+Do NOT redesign mobile UI.
+
+Final intended rule for both platforms:
+
+**Authenticated Student + School + Academic Session**
+
+with:
+
+- historical session → legitimate reads
+- active session → operational leave writes
+
+where this matches existing BENIUS behavior.
+
+---
+
+# 14. NO ADMIN/TEACHER CHANGES
+
+Admin Leave Requests and Teacher Leave are OUT OF SCOPE.
+
+Do NOT change:
+- Admin leave approval
+- Teacher leave
+- approval workflow
+- leave statuses
+- Admin/Teacher UI
+- policy configuration
+
+If shared storage is changed, preserve existing Admin/Teacher behavior and verify it.
+
+---
+
+# 15. PRESERVE LEAVE BUSINESS LOGIC
+
+Do NOT change:
+
+- leave categories
+- date calculations
+- reason requirements
+- attachment requirements
+- approval/rejection workflow
+- pending/approved/rejected status semantics
+- leave policy
+- notification behavior unless a minimal session-compatible change is unavoidable
+
+This is an Academic Session/security correction only.
+
+---
+
+# 16. NO UI CHANGES
+
+Preserve Student Leave UI exactly.
+
+Do NOT change:
+- Open Sans
+- colors
+- layout
+- cards
+- buttons
+- forms
+- labels
+- navigation
+- loading states
+- empty states
+- error presentation
+
+Only session/data/security behavior may change.
+
+---
+
+# 17. NO DATABASE SCHEMA CHANGES
+
+Expected:
+
+**NONE**
+
+Do NOT:
+- create tables
+- alter tables
+- add columns
+- run migrations
+- rewrite historical leave rows
+- infer missing historical session IDs
+
+If schema changes appear necessary, STOP and report why.
+
+---
+
+# 18. ESSENTIAL TESTS
+
+At minimum test:
+
+### A. Current-session list
+Session A selected.
+
+Only Session A Student leave records returned.
+
+### B. Historical list
+Inactive same-school Session B selected.
+
+Session B historical leave records remain readable.
+
+### C. Wrong-session isolation
+Session B records do not appear under Session A.
+
+### D. Current leave creation
+Active Session A selected.
+
+New leave is stored with Session A.
+
+### E. Historical creation
+Inactive Session B selected.
+
+New leave creation is rejected.
+
+### F. Foreign-school selected session
+School A Student selects School B session.
+
+Rejected.
+
+Must NOT silently fall back to School A active session.
+
+### G. Malformed session
+Rejected.
+
+Must NOT silently fall back.
+
+### H. Missing required session
+Fails safely rather than creating/querying unscoped data.
+
+### I. Delete/cancel correct session
+Student owns pending Session A leave and Session A is valid/current.
+
+Existing allowed delete/cancel behavior succeeds.
+
+### J. Delete/cancel wrong session
+Session A selected but leave belongs to Session B.
+
+Rejected.
+
+### K. Historical delete/cancel
+Archived Session B leave cannot be modified if current-write rules apply.
+
+### L. Ownership
+Student A cannot delete/read Student B's leave by changing the leave ID.
+
+### M. Foreign-school leave
+School A Student cannot access/modify School B leave.
+
+### N. Cache isolation
+A → B → A uses distinct Leave query identities.
+
+### O. Admin/Teacher regression
+If shared code changed, existing Admin/Teacher Leave behavior remains unchanged.
+
+---
+
+# 19. VALIDATION
+
+Run:
+
+- Step 1 tests
+- Step 2 tests
+- Step 3 tests
+- Step 4 tests
+- Step 5 tests
+- Step 6 focused Leave tests
+- relevant existing Leave tests
+- web build
+- relevant TypeScript checks
+- mobile TypeScript/tests if shared/mobile paths are affected
+
+Current observed diagnostic baseline after Step 5:
+
+- API: **377**
+- Web: **60**
+- Mobile: **0**
+
+Do NOT fix unrelated existing diagnostics.
+
+If counts change, identify exactly whether changed Step 6 files introduced them.
+
+Do not simply call a higher count pre-existing without investigation.
+
+---
+
+# 20. DIFF REVIEW
+
+Before finishing confirm:
+
+- no DB schema changes
+- no UI changes
+- no Complaint changes
+- no Homework/Classwork changes
+- no Examination/Archives changes
+- no Timetable/Noticeboard changes
+- no Attendance changes
+- no Fees changes
+- no Dashboard changes
+- no Profile changes
+- no document-authorization changes
+- no Admin behavior changes
+- no Teacher behavior changes
+- no tenant-isolation regression
+- Steps 1–5 remain intact
+- mobile security not weakened
+
+---
+
+# 21. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 6 — LEAVE RESULT
+
+### Leave list/history behavior
+Explain selected-session scoping.
+
+### Leave creation behavior
+Explain active-session validation and saved session ID.
+
+### Invalid/foreign session behavior
+Confirm there is no silent active-session fallback.
+
+### Historical leave behavior
+Explain historical reads and write restrictions.
+
+### Delete/cancel behavior
+Explain ownership/school/session/status validation.
+
+### Leave detail behavior
+State whether a separate detail route exists and its protection.
+
+### Leave policy
+Confirm whether policy remains global/current and unchanged.
+
+### Attachment behavior
+Explain whether anything changed. General document authorization should remain deferred.
+
+### Session transport
+List Student Leave requests using explicit selected-session transport.
+
+### Cache isolation
+Explain A → B → A behavior.
+
+### Tenant isolation
+Explain school/Student/session/leave isolation.
+
+### Mobile compatibility
+Explain impact/validation.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Admin behavior changed
+Expected:
+`No`
+
+### Teacher behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Use the Step 5 baseline:
+- API 377
+- Web 60
+- Mobile 0
+
+Explain any change.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Remaining Student Portal work
+Do NOT implement:
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Leave Academic Session correctness and directly related Student Leave authorization.**
+
+Do not redesign Leave.
+
+Do not change Leave Policy.
+
+Do not change Admin/Teacher behavior.
+
+Do not change the database schema.
+
+Do not fix unrelated Student modules.
+
+If broader business behavior must change, STOP and report it instead.
