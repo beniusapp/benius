@@ -8,7 +8,8 @@ import {
   ChevronLeft, ChevronRight, FileText, X, ExternalLink,
   Play, Image as ImageIcon, BookOpen,
 } from "lucide-react";
-import { getQueryFn } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
+import { classworkQueryKey } from "@/lib/student-work-query-keys";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
 import { todayInIST } from "@shared/ist-time";
@@ -270,12 +271,15 @@ function DatePickerModal({ value, onSelect, onClose }: {
 
 export default function StudentClasswork() {
   const { isArchiveMode, selectedSession } = useSessionView();
+  const selectedSessionId = selectedSession?.id ?? null;
   const [, setLocation] = useLocation();
 
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState(() => toISODate(today));
   const [showCalendar, setShowCalendar] = useState(false);
-  const [activeCw, setActiveCw] = useState<ClassworkItem | null>(null);
+  const [activeCw, setActiveCw] = useState<{ sessionId: number; classwork: ClassworkItem } | null>(null);
+
+  useEffect(() => { setActiveCw(null); }, [selectedSessionId]);
 
   const weekDates = getWeekDates(new Date(selectedDate + "T12:00:00"));
   const todayStr = toISODate(today);
@@ -286,13 +290,17 @@ export default function StudentClasswork() {
   });
 
   const { data: cwList, isLoading: cwLoading } = useQuery<ClassworkItem[]>({
-    queryKey: ["/api/student/classwork", selectedDate],
-    queryFn: async () => {
-      const res = await fetch(`/api/student/classwork?date=${selectedDate}`, { credentials: "include" });
+    queryKey: classworkQueryKey(selectedSessionId, selectedDate),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, requestSessionId, requestDate] = queryKey as ReturnType<typeof classworkQueryKey>;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const res = await sessionFetchForViewSession(
+        `/api/student/classwork?date=${requestDate}`, requestSessionId, { signal },
+      );
       if (!res.ok) throw new Error("Failed to load classwork");
       return res.json();
     },
-    enabled: !!student,
+    enabled: !!student && selectedSessionId !== null,
   });
 
   useEffect(() => {
@@ -313,8 +321,8 @@ export default function StudentClasswork() {
   }
   if (!student) return null;
 
-  if (activeCw) {
-    return <ClassworkViewer cw={activeCw} onClose={() => setActiveCw(null)} />;
+  if (activeCw && activeCw.sessionId === selectedSessionId) {
+    return <ClassworkViewer cw={activeCw.classwork} onClose={() => setActiveCw(null)} />;
   }
 
   return (
@@ -443,7 +451,9 @@ export default function StudentClasswork() {
               return (
                 <button
                   key={cw.id}
-                  onClick={() => setActiveCw(cw)}
+                  onClick={() => {
+                    if (selectedSessionId !== null) setActiveCw({ sessionId: selectedSessionId, classwork: cw });
+                  }}
                   className="w-full text-left rounded-2xl bg-white/80 border border-white/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all p-4 flex flex-col gap-3 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2"
                   data-testid={`card-classwork-${cw.id}`}
                 >

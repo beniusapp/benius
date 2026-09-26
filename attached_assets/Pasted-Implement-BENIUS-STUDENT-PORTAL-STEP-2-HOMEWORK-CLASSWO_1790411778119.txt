@@ -1,0 +1,791 @@
+Implement **BENIUS STUDENT PORTAL — STEP 2: HOMEWORK + CLASSWORK ACADEMIC SESSION CORRECTION**.
+
+Step 1 is complete.
+
+The reusable Student Academic Session resolver now exists at:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+It establishes the trusted chain:
+
+**Authenticated Student → Student's School → validated Academic Session → exact Student/School/Session enrollment where required**
+
+Use that Step 1 foundation.
+
+Do NOT create another Student session resolver.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct Student Homework and Student Classwork so they consistently use:
+
+**authenticated Student**
++
+**authenticated Student's school**
++
+**selected Academic Session**
++
+**that Student's enrollment/class/section in the selected Academic Session**
+
+The selected Academic Session must control both:
+
+1. which Homework/Classwork records are visible, and
+2. which class/section cohort is used to determine visibility.
+
+Example:
+
+Student:
+- 2025–26 → Class 8A
+- 2026–27 → Class 9A
+
+If the Student selects:
+
+**2025–26**
+
+Homework and Classwork must use:
+
+**2025–26 + Class 8A**
+
+They must NOT use current `students.class = Class 9`.
+
+They must NOT mix Homework/Classwork from 2026–27.
+
+---
+
+# ABSOLUTE SCOPE
+
+Modify ONLY what is necessary for:
+
+### Student Homework
+and
+### Student Classwork
+
+Academic Session correctness.
+
+Do NOT fix:
+- Examination
+- Archives
+- Timetable
+- Noticeboard
+- Complaints
+- Leave
+- Dashboard
+- Profile
+- Fees
+- Attendance
+- public `/uploads` document authorization
+- Teacher portal
+- Admin portal
+
+Those are separate steps.
+
+Do NOT redesign anything.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+Use:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+For Homework/Classwork reads that depend on Student class/section, use the equivalent of:
+
+`SELECTED_SESSION_ENROLLMENT_REQUIRED`
+
+The backend must obtain:
+
+- authenticated Student
+- trusted school ID
+- validated selected Academic Session
+- enrollment belonging to that exact:
+  - school
+  - Student
+  - Academic Session
+
+Then use:
+
+`enrollment.class_name`
+`enrollment.section_name`
+
+or the exact existing schema field equivalents.
+
+Do NOT use:
+
+`students.class`
+`students.section`
+
+for selected-session Homework/Classwork visibility.
+
+---
+
+# 2. FRONTEND SESSION TRANSPORT
+
+The previous audit found important Student Homework and Classwork requests using ordinary `fetch()`.
+
+Ordinary `fetch()` does not automatically provide the selected Academic Session correctly.
+
+Correct the relevant Homework/Classwork session-sensitive requests to use the established session-aware request mechanism.
+
+Step 1 identified:
+
+`sessionFetchForViewSession`
+
+as the preferred helper for later session-keyed Student queries.
+
+Use the selected Academic Session ID explicitly.
+
+The Academic Session used in:
+
+**React Query/cache key**
+
+must be the same Academic Session passed to:
+
+**sessionFetchForViewSession**
+
+Do not depend only on mutable global header state.
+
+---
+
+# 3. HOMEWORK LIST
+
+Correct the Student Homework list.
+
+The list must require a validated selected Academic Session.
+
+Backend scope must effectively be:
+
+**school_id**
++
+**homework.session_id**
++
+**selected-session enrollment class**
++
+**selected-session enrollment section**
+
+Use the authenticated Student's selected-session enrollment.
+
+Do NOT allow:
+
+missing selected session
+→ unscoped Homework query.
+
+Do NOT allow:
+
+`session_id = null`
+or omitted session filtering
+
+to cause Homework from multiple sessions to appear.
+
+Preserve existing product behavior for Homework records otherwise.
+
+---
+
+# 4. HOMEWORK PENDING DATES
+
+Correct the Homework pending-date/calendar request as well.
+
+Pending dates must represent Homework belonging only to:
+
+**selected Academic Session + selected-session enrollment cohort**
+
+Do not calculate pending dates from Homework belonging to another Academic Session.
+
+Use the same selected Academic Session in:
+- query/cache key
+- request
+- backend validation
+- database filtering
+
+---
+
+# 5. HOMEWORK DETAIL
+
+Correct:
+
+`/api/student/homework/:id`
+
+or the exact current Student Homework detail route.
+
+Do NOT authorize Homework detail merely because:
+
+- Homework belongs to the same school, and
+- Homework matches the Student's current/live class.
+
+Instead verify:
+
+1. authenticated Student
+2. Student's school
+3. selected Academic Session
+4. selected-session enrollment
+5. Homework belongs to same school
+6. Homework belongs to selected Academic Session
+7. Homework class/section matches the selected-session enrollment according to existing BENIUS audience rules
+
+A Student must not be able to retrieve Homework from another Academic Session merely by knowing its ID.
+
+---
+
+# 6. HOMEWORK SUBMISSION
+
+Correct the Student Homework submission route.
+
+Before accepting a submission verify:
+
+**Authenticated Student**
+→ **School**
+→ **selected Academic Session**
+→ **selected-session enrollment**
+→ **Homework school**
+→ **Homework Academic Session**
+→ **Homework cohort**
+
+The Homework must belong to the selected Academic Session.
+
+Do NOT accept a submission to Homework from another Academic Session.
+
+For this Step, preserve the existing rules around:
+- due dates
+- submission status
+- attachment behavior
+- text answers
+- overwrite/update behavior
+- existing validation
+
+Do NOT redesign the Homework submission workflow.
+
+---
+
+# 7. CURRENT SESSION WRITE RULE
+
+Homework submission is an operational write.
+
+Inspect the existing BENIUS intended behavior carefully.
+
+If Homework submission is intended only for the current active Academic Session, use the Step 1:
+
+`CURRENT_SESSION_WRITE`
+
+behavior in addition to enrollment/cohort validation, or compose the equivalent safe checks.
+
+A historical Academic Session should remain viewable where BENIUS permits historical reads, but must NOT accidentally allow a new operational Homework submission if the intended business rule is current-session-only.
+
+Do not invent a new rule if existing BENIUS behavior clearly specifies otherwise.
+
+Report exactly what rule was preserved.
+
+---
+
+# 8. HOMEWORK SUBMISSION OWNERSHIP
+
+Continue using the authenticated Student identity for:
+
+`homework_submissions.student_id`
+
+Never accept a client-provided Student ID as the authority.
+
+Do not weaken existing ownership checks.
+
+This Step concerns session/cohort correctness, not changing Student identity behavior.
+
+---
+
+# 9. CLASSWORK LIST
+
+Correct Student Classwork.
+
+It must require:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
++
+**selected-session enrollment**
+
+Then query Classwork using:
+
+**school**
++
+**selected Academic Session**
++
+**enrollment class**
++
+**enrollment section**
+
+Do NOT use current/live Student class/section.
+
+Do NOT omit the Classwork session predicate when selected session is missing.
+
+Do NOT return Classwork from multiple Academic Sessions.
+
+---
+
+# 10. NULLABLE LEGACY SESSION DATA
+
+Homework/Classwork schema may contain nullable historical `session_id` values.
+
+Do NOT interpret:
+
+`session_id = null`
+
+as:
+
+“belongs to every Academic Session.”
+
+For a selected-session Student view, records must belong to the selected Academic Session.
+
+Do not automatically migrate or rewrite legacy rows in this Step.
+
+Do not run a database migration.
+
+If nullable legacy records require a future migration/cleanup, report the number/issue only if safely discoverable without modifying data.
+
+Do NOT repair the data during Step 2.
+
+---
+
+# 11. HISTORICAL SESSION BEHAVIOR
+
+Historical same-school sessions must remain valid for legitimate reads.
+
+Example:
+
+Student selects 2025–26.
+
+The Student should be able to view 2025–26 Homework/Classwork if BENIUS provides historical viewing.
+
+Use the Student's 2025–26 enrollment.
+
+Do NOT use today's class/section.
+
+However, historical selection must not permit an operational write that the existing product intends to restrict to the active session.
+
+Keep read and write rules separate.
+
+---
+
+# 12. REACT QUERY / CACHE ISOLATION
+
+Every Student Homework/Classwork query whose result changes by Academic Session must include the Academic Session ID in its cache/query key.
+
+Example conceptual pattern:
+
+`["student-homework", academicSessionId, ...otherFilters]`
+
+rather than:
+
+`["student-homework", ...otherFilters]`
+
+The request must use the same ID from the query key.
+
+This is important for:
+
+A → B → A
+
+session switching.
+
+Cached data from Session A must not temporarily appear as Session B data.
+
+Apply this only to Homework/Classwork in this step.
+
+Do NOT mass-refactor Student Portal query keys.
+
+---
+
+# 13. SESSION SWITCHING
+
+Verify:
+
+### Session A → Session B
+
+Homework/Classwork changes to Session B data.
+
+### Session B → Session A
+
+Session A can use its own correctly keyed cache/data.
+
+There must be no mixed-session display.
+
+If selected-session enrollment differs:
+
+A = Class 8A
+B = Class 9A
+
+then Homework/Classwork must follow the correct enrollment for each session.
+
+---
+
+# 14. TENANT ISOLATION
+
+Permanent requirement:
+
+School A Student must never retrieve School B Homework/Classwork.
+
+The server must derive the school from the authenticated Student.
+
+Never trust:
+- client `schoolId`
+- query `schoolId`
+- request-body `schoolId`
+
+as authority.
+
+Use the Step 1 resolver.
+
+Foreign-school Academic Session IDs must remain rejected.
+
+Foreign-school Homework/Classwork IDs must remain rejected/not found according to existing safe API conventions.
+
+---
+
+# 15. DO NOT CHANGE TEACHER HOMEWORK/CLASSWORK
+
+Teacher behavior is OUT OF SCOPE.
+
+Do not modify Teacher Homework/Classwork creation/editing behavior unless a shared storage function absolutely requires a backward-compatible adjustment.
+
+If a shared function is changed, verify Teacher behavior remains unchanged.
+
+Do NOT alter Teacher UI.
+
+---
+
+# 16. DO NOT CHANGE ADMIN
+
+Admin behavior is OUT OF SCOPE.
+
+No Admin API/UI changes.
+
+---
+
+# 17. MOBILE COMPATIBILITY
+
+BENIUS has both:
+
+- Web Student Portal
+- Native/hybrid mobile application
+
+The existing mobile implementation already has stronger session validation in some Student Homework paths.
+
+Do NOT weaken mobile.
+
+Do NOT create a separate academic-data model.
+
+If mobile uses the same backend/storage functions affected by this change, verify that the new behavior remains compatible.
+
+If a mobile route has duplicated Homework/Classwork logic, inspect it for compatibility but do not redesign it.
+
+The final intended rule for BOTH web and mobile is:
+
+**Student + School + Selected Academic Session + selected-session Enrollment**
+
+where the module is session-based.
+
+---
+
+# 18. DOCUMENT AUTHORIZATION IS NOT PART OF STEP 2
+
+The previous audit found that web Student uploaded files may use public `/uploads`.
+
+Do NOT fix that in this Step.
+
+That will be handled separately.
+
+Do not accidentally break existing attachment URLs while fixing Homework session validation.
+
+---
+
+# 19. NO UI/UX CHANGES
+
+Preserve the Student Homework and Classwork screens exactly.
+
+Do NOT change:
+- Open Sans
+- colors
+- layout
+- spacing
+- cards
+- icons
+- labels
+- buttons
+- filters
+- navigation
+- empty states
+- loading states
+- visual design
+- submission UI
+
+Only correct session/cohort/data behavior.
+
+---
+
+# 20. NO DATABASE SCHEMA CHANGES
+
+Expected database changes:
+
+**NONE**
+
+Do not:
+- create tables
+- alter tables
+- add session columns
+- run migrations
+- rewrite historical Homework/Classwork rows
+
+The required session/enrollment architecture already exists.
+
+If you believe a schema change is required, STOP and report why instead of making it.
+
+---
+
+# 21. ESSENTIAL TESTS
+
+Add focused tests for Student Homework/Classwork.
+
+At minimum test:
+
+### A. Homework correct session
+
+Student:
+Session A → Class 8A
+
+Homework:
+Session A → Class 8A
+
+Result:
+Visible.
+
+### B. Homework wrong session
+
+Student selects Session A.
+
+Homework belongs to Session B.
+
+Result:
+Not visible / rejected.
+
+### C. Historical enrollment
+
+Student current master:
+Class 9A
+
+Session A enrollment:
+Class 8A
+
+Student selects Session A.
+
+Class 8A Homework:
+Visible.
+
+Class 9A Session A Homework:
+Not visible unless existing audience rules explicitly allow it.
+
+### D. Homework detail wrong session
+
+Student selects Session A and requests Homework ID from Session B.
+
+Result:
+Rejected/not found.
+
+### E. Homework submission wrong session
+
+Student selects Session A and attempts submission to Session B Homework.
+
+Result:
+Rejected.
+
+### F. Historical write
+
+If current product rule is active-session-only submission:
+
+Student selects inactive historical Session A and attempts new submission.
+
+Result:
+Rejected.
+
+### G. Classwork correct session
+
+Session A selected.
+
+Only Session A Classwork for the selected-session enrollment cohort is returned.
+
+### H. Classwork wrong session
+
+Session B Classwork must not appear under Session A.
+
+### I. Foreign-school session
+
+School A Student + School B session.
+
+Result:
+Rejected.
+
+### J. Foreign-school content
+
+School A Student requests School B Homework/Classwork ID.
+
+Result:
+Rejected/not found.
+
+### K. Missing session
+
+Required Homework/Classwork request without selected session.
+
+Result:
+Controlled failure, NOT an unscoped query.
+
+### L. Session switching
+
+A → B → A
+
+Verify separate cache/request identities and correct data.
+
+---
+
+# 22. VALIDATION
+
+Run:
+
+- focused Homework/Classwork tests
+- Step 1 Student Academic Session tests
+- relevant API tests
+- web build
+- relevant TypeScript checks
+- mobile validation if shared/mobile code is affected
+
+Existing unrelated TypeScript diagnostics must NOT be fixed as part of this task.
+
+If typecheck reports pre-existing errors, clearly distinguish:
+
+**existing unchanged diagnostics**
+
+from:
+
+**new diagnostics introduced by Step 2**
+
+There must be no new diagnostics in changed files.
+
+---
+
+# 23. DIFF REVIEW
+
+Before finishing, inspect all changes.
+
+Confirm:
+
+- only Homework/Classwork/session-related files changed
+- no Examination changes
+- no Attendance changes
+- no Fees changes
+- no Complaints changes
+- no Leave changes
+- no Timetable/Noticeboard changes
+- no Dashboard changes
+- no Profile changes
+- no public-upload authorization changes
+- no Admin changes
+- no Teacher behavior changes
+- no UI changes
+- no DB schema changes
+- no tenant-isolation regression
+
+---
+
+# 24. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 2 — HOMEWORK + CLASSWORK RESULT
+
+### Homework session behavior
+Explain how list, pending dates, detail and submission are now scoped.
+
+### Classwork session behavior
+Explain how Classwork is now scoped.
+
+### Enrollment behavior
+Confirm whether selected-session `enrollments` now provides class/section rather than current `students.class/section`.
+
+### Historical reads
+Explain what happens when a Student selects an inactive same-school session.
+
+### Historical Homework submission
+State clearly whether it is allowed or rejected and what existing business rule was preserved.
+
+### Session transport
+State which frontend requests were converted and which helper they now use.
+
+### Cache isolation
+Show the new Homework/Classwork query-key structure conceptually and confirm A → B → A isolation.
+
+### Tenant isolation
+Explain foreign-school session/content handling.
+
+### Mobile compatibility
+Explain whether mobile routes/shared storage were affected and whether behavior remains compatible.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Teacher behavior changed
+Expected:
+`No`
+
+### Admin behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Distinguish pre-existing diagnostics from any new diagnostics.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Remaining Student Portal work
+Do NOT implement:
+- Examination/Archives
+- Timetable/Noticeboard
+- Complaints
+- Leave
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Homework + Student Classwork Academic Session correctness.**
+
+Use the Step 1 Student Academic Session foundation.
+
+Do not fix unrelated problems.
+
+Do not redesign anything.
+
+Do not change the database schema.
+
+Do not change Admin or Teacher behavior.
+
+Do not weaken mobile security.
+
+If a broader change becomes necessary, STOP and report it instead of expanding the scope.

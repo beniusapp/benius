@@ -8,7 +8,8 @@ import {
   ChevronLeft, ChevronRight, Upload, X, FileText, AlertCircle,
   CheckCircle, Clock, ExternalLink, Send, RefreshCw, Pencil, Lock,
 } from "lucide-react";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { homeworkPendingDatesQueryKey, homeworkQueryKey } from "@/lib/student-work-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { todayInIST } from "@shared/ist-time";
@@ -119,26 +120,32 @@ function StatusBadge({ submission, dueDate }: { submission: HomeworkSubmission |
   );
 }
 
-function DatePickerModal({ value, onSelect, onClose }: {
-  value: string; onSelect: (d: string) => void; onClose: () => void;
+function DatePickerModal({ value, sessionId, onSelect, onClose }: {
+  value: string; sessionId: number | null; onSelect: (d: string) => void; onClose: () => void;
 }) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(() => new Date(value + "T00:00:00").getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date(value + "T00:00:00").getMonth());
-  const [pendingDates, setPendingDates] = useState<Set<string>>(new Set());
 
   const firstDay = new Date(viewYear, viewMonth, 1).getDay();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const todayStr = toISODate(today);
 
-  // Fetch pending homework dates whenever the viewed month changes
-  useEffect(() => {
-    const month = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}`;
-    fetch(`/api/student/homework/pending-dates?month=${month}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : [])
-      .then((dates: string[]) => setPendingDates(new Set(dates)))
-      .catch(() => setPendingDates(new Set()));
-  }, [viewYear, viewMonth]);
+  const month = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}`;
+  const { data: pendingDateList } = useQuery<string[]>({
+    queryKey: homeworkPendingDatesQueryKey(sessionId, month),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, requestSessionId, requestMonth] = queryKey as ReturnType<typeof homeworkPendingDatesQueryKey>;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const res = await sessionFetchForViewSession(
+        `/api/student/homework/pending-dates?month=${requestMonth}`, requestSessionId, { signal },
+      );
+      if (!res.ok) throw new Error("Failed to load pending homework dates");
+      return res.json();
+    },
+    enabled: sessionId !== null,
+  });
+  const pendingDates = new Set(pendingDateList ?? []);
 
   function prevMonth() {
     if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
@@ -217,8 +224,8 @@ function DatePickerModal({ value, onSelect, onClose }: {
   );
 }
 
-function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
-  hw: HomeworkItem; studentId: number; onClose: () => void; onSuccess: () => void;
+function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
+  hw: HomeworkItem; studentId: number; sessionId: number; onClose: () => void; onSuccess: () => void;
 }) {
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
@@ -237,7 +244,7 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
       const formData = new FormData();
       if (selectedFile) formData.append("file", selectedFile);
       if (textAnswer.trim()) formData.append("textAnswer", textAnswer.trim());
-      const res = await fetch(`/api/student/homework/${hw.id}/submit`, {
+      const res = await sessionFetchForViewSession(`/api/student/homework/${hw.id}/submit`, sessionId, {
         method: "POST",
         body: formData,
         credentials: "include",
@@ -255,7 +262,8 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
           ? "Your submission was received but it's past the due date."
           : "Your homework has been submitted successfully.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/student/homework"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/homework", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/homework/pending-dates", sessionId] });
       onSuccess();
     },
     onError: (err: Error) => {
@@ -502,11 +510,15 @@ function SubmitDrawer({ hw, studentId, onClose, onSuccess }: {
 export default function StudentHomework() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { selectedSession } = useSessionView();
+  const selectedSessionId = selectedSession?.id ?? null;
 
   const today = new Date();
   const [selectedDate, setSelectedDate] = useState(() => toISODate(today));
   const [showCalendar, setShowCalendar] = useState(false);
-  const [activeHw, setActiveHw] = useState<HomeworkItem | null>(null);
+  const [activeHw, setActiveHw] = useState<{ sessionId: number; homework: HomeworkItem } | null>(null);
+
+  useEffect(() => { setActiveHw(null); }, [selectedSessionId]);
 
   const weekDates = getWeekDates(new Date(selectedDate + "T12:00:00"));
 
@@ -516,13 +528,17 @@ export default function StudentHomework() {
   });
 
   const { data: hwList, isLoading: hwLoading } = useQuery<HomeworkItem[]>({
-    queryKey: ["/api/student/homework", selectedDate],
-    queryFn: async () => {
-      const res = await fetch(`/api/student/homework?date=${selectedDate}`, { credentials: "include" });
+    queryKey: homeworkQueryKey(selectedSessionId, selectedDate),
+    queryFn: async ({ queryKey, signal }) => {
+      const [, requestSessionId, requestDate] = queryKey as ReturnType<typeof homeworkQueryKey>;
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const res = await sessionFetchForViewSession(
+        `/api/student/homework?date=${requestDate}`, requestSessionId, { signal },
+      );
       if (!res.ok) throw new Error("Failed to load homework");
       return res.json();
     },
-    enabled: !!student,
+    enabled: !!student && selectedSessionId !== null,
   });
 
   useEffect(() => {
@@ -667,7 +683,9 @@ export default function StudentHomework() {
               return (
                 <button
                   key={hw.id}
-                  onClick={() => setActiveHw(hw)}
+                  onClick={() => {
+                    if (selectedSessionId !== null) setActiveHw({ sessionId: selectedSessionId, homework: hw });
+                  }}
                   className="text-left rounded-2xl bg-white/80 border border-white/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all p-4 flex flex-col gap-3 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2"
                   data-testid={`card-homework-${hw.id}`}
                 >
@@ -702,15 +720,17 @@ export default function StudentHomework() {
       {showCalendar && (
         <DatePickerModal
           value={selectedDate}
+          sessionId={selectedSessionId}
           onSelect={handleDateSelect}
           onClose={() => setShowCalendar(false)}
         />
       )}
 
-      {activeHw && (
+      {activeHw && activeHw.sessionId === selectedSessionId && (
         <SubmitDrawer
-          hw={activeHw}
+          hw={activeHw.homework}
           studentId={student.id}
+          sessionId={activeHw.sessionId}
           onClose={() => setActiveHw(null)}
           onSuccess={() => setActiveHw(null)}
         />

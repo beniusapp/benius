@@ -1321,12 +1321,15 @@ export class DatabaseStorage {
     subject: string; content: string; fileUrl: string | null; dueDate: string | null;
     createdAt: Date; teacherName: string; submission: HomeworkSubmission | null;
   }[]> {
+    if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Student Homework requires a valid academic session");
+    }
     const conditions: SQL<unknown>[] = [
       eq(homework.schoolId, schoolId),
       eq(homework.class, cls),
       eq(homework.section, section),
+      eq(homework.sessionId, sessionId),
     ];
-    if (sessionId) conditions.push(eq(homework.sessionId, sessionId));
     if (date) {
       conditions.push(or(
         sql`${homework.createdAt}::date = ${date}::date`,
@@ -1360,6 +1363,9 @@ export class DatabaseStorage {
   }
 
   async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string, sessionId?: number | null): Promise<string[]> {
+    if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Student Homework dates require a valid academic session");
+    }
     // month = "YYYY-MM"
     const [yearStr, monStr] = month.split("-");
     const year = parseInt(yearStr);
@@ -1372,12 +1378,12 @@ export class DatabaseStorage {
       eq(homework.schoolId, schoolId),
       eq(homework.class, cls),
       eq(homework.section, section),
+      eq(homework.sessionId, sessionId),
       or(
         sql`${homework.createdAt}::date BETWEEN ${startDate}::date AND ${endDate}::date`,
         sql`${homework.dueDate} BETWEEN ${startDate} AND ${endDate}`,
       )!,
     ];
-    if (sessionId) dateConditions.push(eq(homework.sessionId, sessionId));
 
     const rows = await db.select({
       createdAt: homework.createdAt,
@@ -1406,12 +1412,15 @@ export class DatabaseStorage {
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;
   }[]> {
+    if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Student Classwork requires a valid academic session");
+    }
     const conditions: SQL<unknown>[] = [
       eq(classwork.schoolId, schoolId),
       eq(classwork.class, cls),
       eq(classwork.section, section),
+      eq(classwork.sessionId, sessionId),
     ];
-    if (sessionId) conditions.push(eq(classwork.sessionId, sessionId));
     if (date) {
       conditions.push(sql`${classwork.createdAt}::date = ${date}::date`);
     }

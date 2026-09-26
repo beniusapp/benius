@@ -29,6 +29,7 @@ import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
 import { registerFeesRoutes } from "../fees-routes";
 import { requireStudentFeeSession } from "../student-fee-session-context";
 import { resolveStudentExaminationSession } from "../student-examination-session";
+import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
 import { calculateLateFee } from "../late-fee-engine";
 import { buildLateFeeInfo } from "../late-fee-display";
@@ -2155,38 +2156,39 @@ export async function registerRoutes(
 
   // ===== STUDENT HOMEWORK ROUTES =====
   app.get("/api/student/homework", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
     const date = (req.query.date as string) || undefined;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const items = await storage.getStudentHomework(student.schoolId, student.class, student.section, student.id, date, viewSessionId);
+    const items = await storage.getStudentHomework(
+      context.schoolId, context.enrollment.className, context.enrollment.sectionName,
+      context.student.id, date, context.sessionId,
+    );
     res.json(items);
   });
 
   app.get("/api/student/homework/pending-dates", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const month = (req.query.month as string) || "";
     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ message: "month must be YYYY-MM" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const dates = await storage.getStudentHomeworkPendingDates(student.schoolId, student.class, student.section, student.id, month, viewSessionId);
+    const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const dates = await storage.getStudentHomeworkPendingDates(
+      context.schoolId, context.enrollment.className, context.enrollment.sectionName,
+      context.student.id, month, context.sessionId,
+    );
     res.json(dates);
   });
 
   app.get("/api/student/homework/:id", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+    const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
     const hwId = parseInt(req.params.id);
     if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
     const hw = await storage.getHomeworkById(hwId);
     if (!hw) return res.status(404).json({ message: "Homework not found" });
-    if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
+    if (!homeworkBelongsToStudentWorkSession(hw, context)) {
       return res.status(403).json({ message: "Access denied" });
     }
-    const submission = await storage.getHomeworkSubmission(hwId, student.id);
+    const submission = await storage.getHomeworkSubmission(hwId, context.student.id);
     res.json({ ...hw, submission: submission || null });
   });
 
@@ -2221,7 +2223,16 @@ export async function registerRoutes(
     });
 
     app.post("/api/student/homework/:id/submit", async (req, res, next) => {
-      if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+      const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage, true);
+      if (!context.ok) return res.status(context.status).json({ message: context.message });
+      const hwId = parseInt(req.params.id);
+      if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
+      const hw = await storage.getHomeworkById(hwId);
+      if (!hw) return res.status(404).json({ message: "Homework not found" });
+      if (!homeworkBelongsToStudentWorkSession(hw, context)) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      res.locals.studentHomeworkSubmission = { context, hw, hwId };
       next();
     }, (req, res, next) => {
       homeworkSubmissionUpload.single("file")(req, res, (err) => {
@@ -2229,16 +2240,12 @@ export async function registerRoutes(
         next();
       });
     }, async (req, res) => {
-      const hwId = parseInt(req.params.id);
-      if (isNaN(hwId)) return res.status(400).json({ message: "Invalid homework ID" });
-      const student = await storage.getStudentById(req.session.studentId!);
-      if (!student) return res.status(404).json({ message: "Student not found" });
-      const hw = await storage.getHomeworkById(hwId);
-      if (!hw) return res.status(404).json({ message: "Homework not found" });
-      if (hw.schoolId !== student.schoolId || hw.class !== student.class || hw.section !== student.section) {
-        return res.status(403).json({ message: "Access denied" });
-      }
-      const existing = await storage.getHomeworkSubmission(hwId, student.id);
+      const { context, hw, hwId } = res.locals.studentHomeworkSubmission as {
+        context: Awaited<ReturnType<typeof resolveStudentWorkSession>> & { ok: true };
+        hw: NonNullable<Awaited<ReturnType<typeof storage.getHomeworkById>>>;
+        hwId: number;
+      };
+      const existing = await storage.getHomeworkSubmission(hwId, context.student.id);
       if (existing?.status === "approved") {
         return res.status(400).json({ message: "This homework has already been approved and cannot be re-submitted" });
       }
@@ -2253,8 +2260,8 @@ export async function registerRoutes(
       const isLate = hw.dueDate ? hw.dueDate < today : false;
       const submission = await storage.upsertHomeworkSubmission({
         homeworkId: hwId,
-        studentId: student.id,
-        schoolId: student.schoolId,
+        studentId: context.student.id,
+        schoolId: context.schoolId,
         fileUrl,
         textAnswer,
       });
@@ -2409,12 +2416,12 @@ export async function registerRoutes(
 
   // ===== STUDENT CLASSWORK ROUTES =====
   app.get("/api/student/classwork", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
     const date = (req.query.date as string) || undefined;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const items = await storage.getStudentClasswork(student.schoolId, student.class, student.section, date, viewSessionId);
+    const items = await storage.getStudentClasswork(
+      context.schoolId, context.enrollment.className, context.enrollment.sectionName, date, context.sessionId,
+    );
     res.json(items);
   });
 
