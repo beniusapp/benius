@@ -12,8 +12,8 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "@expo-google-fonts/architects-daughter": "^0.4.0",
     "@expo-google-fonts/inter": "^0.4.0",
+    "@expo-google-fonts/open-sans": "^0.4.2",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "12.0.1",

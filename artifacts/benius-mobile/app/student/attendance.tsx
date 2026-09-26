@@ -23,7 +23,7 @@ const C = {
   archive: '#fffbeb', archiveBorder: '#fde68a', archiveText: '#92400e', tooltip: '#1e293b',
   blue: '#3b82f6',
 } as const;
-const HAND = 'ArchitectsDaughter_400Regular';
+const HAND = 'OpenSans_400Regular';
 type DayData = DisplayDay & { dayOfWeek: number; teacherId: number | null; markedBy: string | null };
 type Monthly = { schoolId: number; studentId: number; year: number; month: number; days: DayData[] };
 type MonthStat = { month: number; year: number; present: number; absent: number; halfDay: number; late: number; leave: number; holiday?: number; workingDays: number };

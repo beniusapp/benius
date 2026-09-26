@@ -32,7 +32,7 @@ export function Button({ label, onPress, disabled = false, secondary = false, ic
   const c = useColors();
   return <Pressable testID={`button-${label.toLowerCase().replace(/\s+/g, '-')}`} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.button, { backgroundColor: secondary ? c.secondary : c.primary, opacity: disabled ? .48 : pressed ? .75 : 1 }]}>
     {icon && <Feather name={icon} size={18} color={secondary ? c.secondaryForeground : c.primaryForeground} />}
-    <Text style={{ fontFamily: 'ArchitectsDaughter_400Regular', fontSize: 17, color: secondary ? c.secondaryForeground : c.primaryForeground }}>{label}</Text>
+    <Text style={{ fontFamily: 'OpenSans_400Regular', fontSize: 17, color: secondary ? c.secondaryForeground : c.primaryForeground }}>{label}</Text>
   </Pressable>;
 }
 export function Field({ label, value, onChangeText, secureTextEntry, disabled, keyboardType }: { label: string; value: string; onChangeText: (v: string) => void; secureTextEntry?: boolean; disabled?: boolean; keyboardType?: React.ComponentProps<typeof TextInput>['keyboardType'] }) {
@@ -55,8 +55,8 @@ export function State({ title, detail, retry, loading = false }: { title: string
 export const styles = StyleSheet.create({
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   brandIcon: { width: 48, height: 48, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  brand: { fontFamily: 'ArchitectsDaughter_400Regular', fontSize: 25 },
-  title: { fontFamily: 'ArchitectsDaughter_400Regular', fontSize: 23 },
+  brand: { fontFamily: 'OpenSans_400Regular', fontSize: 25 },
+  title: { fontFamily: 'OpenSans_400Regular', fontSize: 23 },
   button: { minHeight: 50, borderRadius: 8, flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   input: { minHeight: 50, borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, fontSize: 16 },
   card: { borderWidth: 1, borderRadius: 8, padding: 18, gap: 14 },

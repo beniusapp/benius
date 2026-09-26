@@ -22,7 +22,7 @@ const C = {
   bluePale: '#dbeafe', amber: '#a16207', amberPale: '#fefce8', amberBorder: '#fef08a',
   red: '#dc2626', redPale: '#fef2f2', redBorder: '#fecaca',
 };
-const HAND = 'ArchitectsDaughter_400Regular';
+const HAND = 'OpenSans_400Regular';
 type Profile = {
   id: number; studentId: number; schoolId: number; status: 'draft' | 'pending' | 'approved' | 'rejected';
   fullName: string | null; class: string | null; section: string | null; rollNo: string | null;

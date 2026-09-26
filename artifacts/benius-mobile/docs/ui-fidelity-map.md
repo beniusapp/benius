@@ -27,7 +27,7 @@ comparison. Authenticated native-device parity remains unverified.
 | Alerts and offline/error messages | Inline accessible `State` and offline banner in `components/Foundation.tsx` | Preserve severity, message, retry action, and accessibility announcement. |
 | Badges and status labels | Session status currently uses inline text and color | Future badges must retain source wording and meaning; no shared native Badge primitive exists. |
 | Loading, empty, and error states | `State` in `components/Foundation.tsx`; session skeleton, empty and retry states in `components/Authenticated.tsx` | Keep the same state meaning and recovery action as the corresponding web screen. |
-| Typography, colors, spacing, icons | `artifacts/benius-mobile/constants/colors.ts`, Architects Daughter font in `artifacts/benius-mobile/app/_layout.tsx`, Feather icons | Reuse web tokens and font roles; Feather icons are the native semantic equivalents of web Lucide icons. Preserve page-specific spacing and palette rather than forcing one style across all web modules. |
+| Typography, colors, spacing, icons | `artifacts/benius-mobile/constants/colors.ts`, Open Sans font in `artifacts/benius-mobile/app/_layout.tsx`, Feather icons | Reuse web tokens and font roles; Feather icons are the native semantic equivalents of web Lucide icons. Preserve page-specific spacing and palette rather than forcing one style across all web modules. |
 | Search and filters | No mobile module search/filter flows yet | Reproduce the corresponding web controls and filter behavior only when that module is authorized; do not invent filters in the foundation. |
 
 The web application has multiple responsive visual patterns. Native surfaces

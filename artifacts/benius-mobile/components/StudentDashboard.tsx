@@ -13,7 +13,7 @@ import { StudentDashboardResponse, validateStudentDashboard } from '@/lib/studen
 import { resolveStudentPhotoUrl, studentGreetingAt, studentYearAt } from '@/lib/student-dashboard-pure.mjs';
 import { studentDashboardColors as C, studentDashboardTiles as TILES } from '@/constants/student-dashboard';
 
-const HAND = 'ArchitectsDaughter_400Regular';
+const HAND = 'OpenSans_400Regular';
 const studentTilePaths = {
   profile: '/student-profile',
   attendance: '/student/attendance',

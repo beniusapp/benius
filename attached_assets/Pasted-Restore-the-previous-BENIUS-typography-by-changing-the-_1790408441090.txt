@@ -1,0 +1,201 @@
+Restore the previous BENIUS typography by changing the global/default font from **Architects Daughter to Open Sans** in BOTH the BENIUS web application and the native React Native/Expo mobile application.
+
+This is a **FONT-ONLY CHANGE**.
+
+## SOURCE OF TRUTH FOR THE PREVIOUS FONT
+
+We have already verified from the tracked `.migration-backup` source that the previous/saved BENIUS global web font was:
+
+**Open Sans, sans-serif**
+
+Evidence:
+
+* `.migration-backup/client/src/index.css:46` → `--font-sans: Open Sans, sans-serif`
+* `.migration-backup/client/src/index.css:173-175` → body uses the sans font
+* `.migration-backup/tailwind.config.ts:85-89` → `font-sans` maps to the sans font
+* `.migration-backup/client/index.html:9` → Open Sans is requested
+* The current web application incorrectly/temporarily uses Architects Daughter as the global font.
+
+## REQUIRED CHANGES
+
+### 1. BENIUS WEB APPLICATION
+
+Inspect the existing current web font implementation first.
+
+Change only the global/default font configuration from:
+
+**Architects Daughter**
+
+to:
+
+**Open Sans**
+
+Preserve the existing architecture and Tailwind configuration pattern.
+
+The expected result should be equivalent to:
+
+`--font-sans: "Open Sans", sans-serif`
+
+Update the Google Fonts import/link so Open Sans is loaded correctly.
+
+Ensure the existing `font-sans` Tailwind mapping continues to point to the global Open Sans font.
+
+Ensure the existing body/global typography continues using the same font mechanism, but now renders Open Sans.
+
+### 2. BENIUS NATIVE MOBILE APPLICATION
+
+The native mobile application currently uses:
+
+`ArchitectsDaughter_400Regular`
+
+Change the native mobile typography to **Open Sans**.
+
+Use the appropriate existing Expo-compatible Open Sans font package/loading mechanism.
+
+If an Open Sans package is already present, reuse it.
+
+If it is not present, add the minimal required dependency/configuration needed to load Open Sans correctly.
+
+The native mobile app should use the Open Sans regular font wherever the current native implementation explicitly uses Architects Daughter.
+
+Do NOT redesign the typography.
+
+Do NOT change font sizes, weights, line heights, letter spacing, margins, padding, alignment, colors, component dimensions, or layout.
+
+Only replace the font family.
+
+### 3. REMOVE ARCHITECTS DAUGHTER FROM THE DEFAULT TYPOGRAPHY
+
+After the change, Architects Daughter must no longer be the default/global BENIUS font.
+
+Remove/replace only the references necessary for the default font restoration.
+
+Do not unnecessarily remove unrelated font imports that are genuinely used by specific print/report/monospace/serif functionality.
+
+For example:
+
+* `font-mono` behavior must remain unchanged.
+* Existing serif behavior must remain unchanged.
+* Fee print/report-specific fonts must remain unchanged unless they are directly using Architects Daughter as their default font.
+* Do not alter generated report formatting.
+
+## ABSOLUTE UI PRESERVATION RULE
+
+The existing BENIUS web application is the source of truth.
+
+Do NOT change:
+
+* UI layout
+* spacing
+* colors
+* buttons
+* cards
+* borders
+* shadows
+* icons
+* navigation
+* routes
+* pages
+* forms
+* validations
+* API behavior
+* authentication
+* authorization
+* tenant/school isolation
+* Academic Session behavior
+* calculations
+* database schema
+* database data
+* business logic
+* mobile navigation
+* mobile screen structure
+* mobile functionality
+
+Do not fix unrelated issues.
+
+Do not refactor unrelated code.
+
+Do not change any feature behavior.
+
+This task is ONLY to restore the Open Sans font.
+
+## IMPORTANT BENIUS ARCHITECTURE RULES
+
+Preserve the permanent multi-tenant architecture:
+
+* Never change school/tenant isolation.
+* Never change authorization.
+* Never change session handling.
+* Never change Academic Session handling.
+* Never change APIs or database queries.
+
+The existing web application must remain fully functional.
+
+The mobile application must continue using the existing authentication/session/API architecture.
+
+Do not introduce a second authentication system.
+
+## BEFORE MODIFYING
+
+First inspect:
+
+* current web `index.css`
+* current web `tailwind.config.ts`
+* current web `index.html`
+* current mobile `_layout.tsx`
+* `Foundation.tsx`
+* `StudentDashboard.tsx`
+* package configuration
+* all current references to `Architects Daughter`
+* all current Open Sans references
+
+Use the verified `.migration-backup` configuration as the reference for the previous web font.
+
+Do not guess another font.
+
+## VALIDATION
+
+After making the font-only change:
+
+1. Search the project and confirm the default/global font is Open Sans.
+2. Confirm Architects Daughter is no longer used as the default/global font.
+3. Confirm native mobile screens that previously explicitly used Architects Daughter now use Open Sans.
+4. Run TypeScript/type checking for the mobile project.
+5. Run the existing web build.
+6. Run the appropriate Expo/mobile validation available in the project.
+7. Confirm there are no unrelated source changes.
+
+If possible, show a concise list of exactly which files were modified.
+
+## CRITICAL
+
+Do NOT modify anything until you have inspected the existing implementation.
+
+Do NOT recreate or redesign any screen.
+
+Do NOT change the current UI except for the visual difference caused naturally by replacing Architects Daughter with Open Sans.
+
+Do NOT change functionality.
+
+Do NOT change database/schema/API code.
+
+Do NOT change authentication.
+
+Do NOT change tenant isolation.
+
+Do NOT change Academic Session behavior.
+
+At the end, report:
+
+### FONT RESTORATION RESULT
+
+* Web global font: ___
+* Mobile native font: ___
+* Architects Daughter still used as default: Yes/No
+* Files changed: ___
+* Web build: PASS/FAIL
+* Mobile TypeScript: PASS/FAIL
+* Mobile validation: PASS/FAIL
+* Any unrelated changes: Yes/No
+
+If any unrelated change is required for the build, STOP and report it instead of making that unrelated change.

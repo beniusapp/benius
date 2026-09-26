@@ -5,7 +5,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { ArchitectsDaughter_400Regular, useFonts } from '@expo-google-fonts/architects-daughter';
+import { OpenSans_400Regular, useFonts } from '@expo-google-fonts/open-sans';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { SessionProvider } from '@/contexts/SessionContext';
@@ -34,7 +34,7 @@ function Navigation() {
   </Stack>;
 }
 export default function RootLayout() {
-  useFonts({ ArchitectsDaughter_400Regular });
+  useFonts({ OpenSans_400Regular });
   useEffect(() => { void SplashScreen.hideAsync(); }, []);
   return <SafeAreaProvider><ErrorBoundary><QueryClientProvider client={queryClient}>
     <GestureHandlerRootView style={{ flex: 1 }}><KeyboardProvider><NetworkProvider>

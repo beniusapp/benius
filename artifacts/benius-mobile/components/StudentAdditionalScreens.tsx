@@ -123,10 +123,10 @@ function ModuleFrame({ title, subtitle, children }: {
       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 }}>
       <Feather name="arrow-left" size={21} color={c.foreground} />
       <View style={{ flex: 1 }}>
-        <Text style={{ color: c.foreground, fontSize: 23, fontFamily: 'ArchitectsDaughter_400Regular' }}>{title}</Text>
+        <Text style={{ color: c.foreground, fontSize: 23, fontFamily: 'OpenSans_400Regular' }}>{title}</Text>
         <Text style={{ color: c.mutedForeground, marginTop: 2 }}>{subtitle}</Text>
       </View>
-      <Text style={{ fontSize: 18, color: c.foreground, fontFamily: 'ArchitectsDaughter_400Regular' }}>BENIUS</Text>
+      <Text style={{ fontSize: 18, color: c.foreground, fontFamily: 'OpenSans_400Regular' }}>BENIUS</Text>
     </Pressable>
     <View style={{ height: 1, backgroundColor: c.border, marginVertical: 12 }} />
     {children}

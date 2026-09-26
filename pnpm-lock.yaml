@@ -299,11 +299,11 @@ importers:
       '@babel/core':
         specifier: ^7.25.2
         version: 7.29.7
-      '@expo-google-fonts/architects-daughter':
-        specifier: ^0.4.0
-        version: 0.4.1
       '@expo-google-fonts/inter':
         specifier: ^0.4.0
+        version: 0.4.2
+      '@expo-google-fonts/open-sans':
+        specifier: ^0.4.2
         version: 0.4.2
       '@expo/vector-icons':
         specifier: ^15.0.2
@@ -1283,14 +1283,14 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@expo-google-fonts/architects-daughter@0.4.1':
-    resolution: {integrity: sha512-TdF8tj8Cx7imGWFe5QrZSco6eu2UmDFEhn2GkOsYOS3Wm74WZsl+dYqFdfn7DbdvNbNrAmtVADgm5+wgowLXJQ==}
-
   '@expo-google-fonts/inter@0.4.2':
     resolution: {integrity: sha512-syfiImMaDmq7cFi0of+waE2M4uSCyd16zgyWxdPOY7fN2VBmSLKEzkfbZgeOjJq61kSqPBNNtXjggiQiSD6gMQ==}
 
   '@expo-google-fonts/material-symbols@0.4.48':
     resolution: {integrity: sha512-aZztj44PyA/sj3TXSwwpLJwqMlTUJ49okbZJYURzEcuERxMQB0KbX7RrLBi8WJnuWz5HFOLlTRxORrJfNnUPNQ==}
+
+  '@expo-google-fonts/open-sans@0.4.2':
+    resolution: {integrity: sha512-gvhPqLXYnltWgll3iBwRGUwf5yN2HCh4mgQmFoQ8oU66LTs23oX4N7T3t0BDsKfP/1Z8F8+4c7wSkA11Nnk4kA==}
 
   '@expo/cli@57.0.27':
     resolution: {integrity: sha512-Jauk4chxmpVG5ElrMLTCwjFP20jbYU7PB4l3LYV8j+4e/3HU5jdl7qTQ4eVy1AaDUE9Ia2NCQ5A9kar2V1gaLg==}
@@ -6789,11 +6789,11 @@ snapshots:
   '@esbuild/linux-x64@0.28.2':
     optional: true
 
-  '@expo-google-fonts/architects-daughter@0.4.1': {}
-
   '@expo-google-fonts/inter@0.4.2': {}
 
   '@expo-google-fonts/material-symbols@0.4.48': {}
+
+  '@expo-google-fonts/open-sans@0.4.2': {}
 
   '@expo/cli@57.0.27(@expo/metro-runtime@57.0.16)(expo-constants@57.0.19)(expo-font@57.0.4)(expo-router@57.0.23)(expo@57.0.25)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.3(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@6.0.3)':
     dependencies:
