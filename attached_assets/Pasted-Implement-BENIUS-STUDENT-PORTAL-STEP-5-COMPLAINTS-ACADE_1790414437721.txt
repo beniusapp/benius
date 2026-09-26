@@ -1,0 +1,727 @@
+Implement **BENIUS STUDENT PORTAL — STEP 5: COMPLAINTS ACADEMIC SESSION CORRECTION**.
+
+Completed and accepted:
+
+- Step 1 — Student Academic Session foundation
+- Step 2 — Homework + Classwork
+- Step 3 — Examination + Archives
+- Step 4 — Timetable + Noticeboard
+
+Do not undo or weaken Steps 1–4.
+
+---
+
+# PRIMARY OBJECTIVE
+
+Correct **Student Complaints** so complaint records, complaint lists, complaint details/notes, and Student complaint creation are consistently bound to:
+
+**Authenticated Student**
+→ **server-derived Student School**
+→ **validated selected Academic Session**
+
+Where complaint behavior requires Student placement/audience context, use the Student's exact enrollment for that selected session.
+
+Also close the previously identified Student peer-report tenant-isolation gap.
+
+A complaint belonging to one Academic Session must not silently appear or operate inside another Academic Session.
+
+---
+
+# ABSOLUTE SCOPE
+
+Modify ONLY what is necessary for:
+
+### Student Complaints
+
+including:
+- complaints filed by Student
+- complaints received/inbox where applicable
+- complaint creation
+- peer/student reporting
+- staff/teacher grievance creation where applicable
+- complaint detail
+- complaint notes/replies
+- Student-side complaint session transport
+- Student-side complaint cache isolation
+- tenant validation of complaint targets
+
+Do NOT fix:
+- Leave
+- Dashboard
+- Profile
+- Homework/Classwork
+- Examination/Archives
+- Timetable/Noticeboard
+- Attendance
+- Fees
+- document authorization
+- Admin Complaint Hub behavior
+- Teacher Complaint behavior
+
+No UI redesign.
+No DB schema changes.
+
+---
+
+# 1. USE STEP 1 FOUNDATION
+
+Use:
+
+`artifacts/api-server/src/student-academic-session.ts`
+
+Do NOT create another competing Student session resolver.
+
+Student complaint operations that are Academic Session based must use the trusted chain:
+
+**Authenticated Student**
+→ **server-loaded Student**
+→ **Student School**
+→ **validated selected Academic Session**
+
+Use exact enrollment as well where existing complaint behavior genuinely depends on class/section.
+
+Never trust a client-provided:
+- Student ID
+- school ID
+- class
+- section
+- session ID
+
+as authorization authority.
+
+---
+
+# 2. COMPLAINT CREATION MUST HAVE A SESSION
+
+The forensic audit found Student complaint creation can create complaint records without assigning the selected Academic Session.
+
+Correct this.
+
+A newly created Student complaint must be associated with the correct validated Academic Session according to existing BENIUS current-write rules.
+
+Do NOT allow a new Student complaint to be created with:
+
+`session_id = null`
+
+merely because the route forgot to assign the session.
+
+Use the Step 1 foundation.
+
+For a current operational complaint write, determine whether the existing intended product rule is active-session-only.
+
+If existing BENIUS behavior indicates complaint creation is a current-session operation, require the selected session to be the active session using the Step 1 current-write behavior.
+
+Do NOT invent historical complaint creation if the existing product does not support it.
+
+Historical sessions may remain readable where appropriate, but new operational complaints should not accidentally be created inside an archived year.
+
+Report the preserved rule clearly.
+
+---
+
+# 3. FILED / SENT COMPLAINT LIST
+
+Correct the Student's filed/sent complaint list.
+
+It must be scoped to:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
+
+Do NOT allow absence of a session to cause the storage query to omit the session predicate.
+
+When Session A is selected:
+
+Session B complaints must not appear.
+
+Historical same-school Session A complaints should remain readable if the existing product supports complaint history.
+
+---
+
+# 4. INBOX / RECEIVED COMPLAINT LIST
+
+Correct the Student complaint inbox/received list where applicable.
+
+Use:
+
+**authenticated Student**
++
+**Student school**
++
+**selected Academic Session**
+
+Do not mix complaints from other Academic Sessions.
+
+Preserve existing recipient/audience rules.
+
+Do not redesign who is allowed to receive complaints.
+
+---
+
+# 5. COMPLAINT DETAIL
+
+Inspect any Student complaint detail endpoint/path.
+
+Before returning a complaint, verify:
+
+1. authenticated Student
+2. Student's school
+3. selected Academic Session
+4. complaint belongs to that school
+5. complaint belongs to that selected Academic Session
+6. authenticated Student is allowed to access it under existing filer/recipient rules
+
+Knowing a complaint ID must not allow access to:
+- another Academic Session's complaint
+- another school's complaint
+- another Student's unrelated complaint
+
+Preserve existing authorization semantics otherwise.
+
+---
+
+# 6. COMPLAINT NOTES / REPLIES
+
+The previous audit found complaint notes GET/POST checks school + filer/recipient but does not properly enforce complaint Academic Session.
+
+Correct this.
+
+Before reading notes:
+
+**Complaint's session must match the validated selected Academic Session.**
+
+Before adding a note/reply:
+
+**Complaint's session must match the validated selected Academic Session.**
+
+Also preserve existing filer/recipient authorization.
+
+A Student must not select Session A and read/write notes for a Session B complaint merely by knowing the complaint ID.
+
+If notes themselves do not have `session_id`, do NOT add one.
+
+The parent complaint's validated session is sufficient unless the existing schema already provides another mechanism.
+
+No schema change.
+
+---
+
+# 7. HISTORICAL COMPLAINTS
+
+Valid same-school inactive sessions should remain readable if BENIUS currently provides complaint history.
+
+Example:
+
+Complaint created in 2025–26.
+
+Student later moves to 2026–27.
+
+When selecting 2025–26, the Student may view the legitimate historical complaint and its notes according to existing access rules.
+
+However, historical complaint **writes/replies** must follow the existing product rule.
+
+If BENIUS treats notes/replies as current operational writes and archived sessions are read-only, enforce that.
+
+Do not invent a new historical-write policy.
+
+Inspect existing archive/read-only behavior and report what was preserved.
+
+---
+
+# 8. PEER / STUDENT REPORT TARGET VALIDATION
+
+Critical tenant-isolation correction.
+
+The forensic audit found the Student peer-report route accepts a supplied:
+
+`reportedStudentId`
+
+without adequately resolving and validating the target's school.
+
+Correct this.
+
+When Student A reports Student B:
+
+Server must load Student B itself.
+
+Verify:
+- Student B exists
+- Student B belongs to the SAME school as authenticated Student A
+- Student B is a legitimate target under existing complaint rules
+- Student A cannot bypass school isolation by supplying an arbitrary Student ID
+
+Do NOT trust a client-supplied school ID for Student B.
+
+A School A Student must NEVER create a complaint/report association pointing at a School B Student.
+
+If self-reporting is not a legitimate existing behavior, reject Student A reporting themselves.
+
+Preserve existing same-school target rules otherwise.
+
+---
+
+# 9. PEER TARGET AND ACADEMIC SESSION
+
+If the existing complaint product requires the reported Student to belong to the selected Academic Session/cohort, validate this using enrollment data.
+
+Do NOT assume today's Student placement.
+
+However, do not invent a same-class restriction if the existing product allows reporting another Student elsewhere in the same school.
+
+The important permanent requirement is:
+
+**No cross-school target association.**
+
+Any stronger session/cohort rule should come from existing BENIUS behavior.
+
+Report exactly what rule exists.
+
+---
+
+# 10. STAFF / TEACHER GRIEVANCE TARGET
+
+The previous audit found staff grievance already verifies Teacher school.
+
+Preserve that protection.
+
+Confirm Student cannot create a grievance against a Teacher/staff target from another school.
+
+Do NOT redesign the Teacher/staff directory or complaint recipient rules.
+
+If the existing implementation already correctly validates target school, reuse it rather than rewriting it unnecessarily.
+
+---
+
+# 11. GLOBAL TARGET LOOKUPS
+
+Teacher/peer lookup directories may be conceptually global within the Student's current school rather than historical-session data.
+
+Do NOT unnecessarily convert all target-directory lookup APIs into historical-session records.
+
+But they MUST remain tenant-isolated:
+
+**authenticated Student's school only.**
+
+The selected Academic Session should govern the complaint case itself.
+
+Do not broaden Step 5 into Teacher/Student directory redesign.
+
+---
+
+# 12. FRONTEND SESSION TRANSPORT
+
+Inspect all Student Complaint requests whose behavior depends on selected Academic Session.
+
+Use explicit session-aware transport, preferably:
+
+`sessionFetchForViewSession`
+
+with the exact session ID represented by the query/cache key.
+
+This includes, where applicable:
+- filed complaints
+- inbox complaints
+- complaint detail
+- notes
+- creation
+- note/reply submission
+
+Do NOT rely solely on mutable global header state.
+
+Do NOT mass-refactor other Student modules.
+
+---
+
+# 13. CACHE ISOLATION
+
+Every Student Complaint query whose result changes by Academic Session must include the session ID in its cache/query key.
+
+Conceptually:
+
+`["student-complaints-filed", sessionId, ...]`
+
+`["student-complaints-inbox", sessionId, ...]`
+
+`["student-complaint", sessionId, complaintId]`
+
+`["student-complaint-notes", sessionId, complaintId]`
+
+Use the same session ID for the actual request.
+
+Verify:
+
+**A → B → A**
+
+does not display Session B complaints/notes as Session A data.
+
+Mutations must invalidate/refetch the correct session-specific keys only.
+
+---
+
+# 14. CURRENT WRITE RULE
+
+For new complaints and complaint note/reply writes:
+
+Inspect existing BENIUS archive/current-session behavior.
+
+If these are intended current operational writes, use the Step 1 equivalent of:
+
+`CURRENT_SESSION_WRITE`
+
+and reject writes against inactive historical sessions.
+
+Reads may still allow legitimate historical same-school sessions.
+
+Do NOT make archived sessions writable merely to make implementation easier.
+
+Do NOT globally force active-session-only reads.
+
+---
+
+# 15. TENANT ISOLATION
+
+Permanent BENIUS requirement.
+
+School A Student must never access or associate complaint data with School B:
+- Students
+- Teachers/staff
+- complaints
+- notes
+- Academic Sessions
+
+Derive school from authenticated Student.
+
+Never authorize using client-provided `schoolId`.
+
+Foreign-school selected sessions must be rejected.
+
+Foreign-school complaint IDs must be rejected/not found according to existing safe API conventions.
+
+Foreign-school reported Student IDs must be rejected.
+
+Foreign-school Teacher/staff targets must remain rejected.
+
+---
+
+# 16. MOBILE COMPATIBILITY
+
+BENIUS Web and Mobile share backend academic data.
+
+Do NOT weaken existing mobile Complaint protections.
+
+If mobile Complaint routes use shared storage/functions touched by this Step, inspect them for compatibility.
+
+Do NOT redesign mobile UI.
+
+Do NOT create a separate complaint data model.
+
+Final intended session rule:
+
+**Authenticated Student + School + selected Academic Session + complaint belonging to that same session**
+
+for session-based complaint cases.
+
+---
+
+# 17. NO ADMIN/TEACHER BEHAVIOR CHANGES
+
+Admin Complaint Hub and Teacher Complaint behavior are OUT OF SCOPE.
+
+Do NOT change:
+- Admin complaint workflow
+- Teacher complaint workflow
+- Admin/Teacher UI
+- Admin/Teacher permissions
+- complaint statuses/workflow
+- resolution logic
+
+If shared storage must change, preserve existing behavior and verify regression safety.
+
+---
+
+# 18. PRESERVE COMPLAINT BUSINESS LOGIC
+
+Do NOT change:
+- complaint categories
+- statuses
+- priority rules
+- recipient types
+- resolution workflow
+- note format
+- complaint wording
+- existing visibility rules except where necessary for school/session authorization
+- notification behavior unless session correctness requires a minimal compatible adjustment
+
+This is a session/security correction, not a Complaint Hub redesign.
+
+---
+
+# 19. NO UI CHANGES
+
+Preserve Student Complaints UI exactly.
+
+Do NOT change:
+- Open Sans
+- layout
+- colors
+- cards
+- tabs
+- icons
+- buttons
+- labels
+- forms
+- navigation
+- loading states
+- empty states
+- error presentation
+
+Only data/session/security behavior may change.
+
+---
+
+# 20. NO DATABASE SCHEMA CHANGES
+
+Expected:
+
+**NONE**
+
+Do NOT:
+- create tables
+- alter tables
+- add columns
+- run migrations
+- rewrite historical complaint rows
+- bulk-fill null session IDs
+
+If existing historical complaints have `session_id = null`, do NOT guess which session they belong to.
+
+Do not migrate them in Step 5.
+
+Report legacy null-session behavior separately if relevant.
+
+If a schema change seems necessary, STOP and report why.
+
+---
+
+# 21. ESSENTIAL TESTS
+
+At minimum test:
+
+### A. Complaint creation
+Active Session A selected.
+
+New complaint is saved with Session A.
+
+### B. Null-session prevention
+New Student complaint cannot silently be created with null session.
+
+### C. Historical read
+Inactive same-school Session A complaint can be read if existing product supports historical complaint viewing.
+
+### D. Wrong-session list
+Session B complaints do not appear while Session A is selected.
+
+### E. Complaint detail
+Session A selected + Session B complaint ID.
+
+Result:
+Rejected/not found.
+
+### F. Notes read
+Session A selected + Session B complaint.
+
+Notes are rejected/not returned.
+
+### G. Notes write
+Session A selected + Session B complaint.
+
+New note/reply is rejected.
+
+### H. Historical write
+If archived sessions are read-only, new complaint/note/reply against inactive Session A is rejected.
+
+### I. Cross-school peer report
+School A Student supplies School B Student ID.
+
+Result:
+Rejected.
+
+### J. Valid same-school peer report
+Legitimate same-school target succeeds according to existing rules.
+
+### K. Self-report
+Verify/reject according to existing intended behavior. Do not invent silently.
+
+### L. Foreign-school Teacher/staff target
+Rejected.
+
+### M. Foreign-school selected session
+Rejected.
+
+### N. Missing/malformed session
+Required complaint operation fails safely rather than becoming unscoped.
+
+### O. Authentication ownership
+Student cannot read unrelated complaint simply by changing complaint ID.
+
+### P. Cache isolation
+A → B → A uses distinct complaint/notes query identities.
+
+### Q. Admin/Teacher regression
+If shared code changed, existing Admin/Teacher complaint behavior remains unchanged.
+
+---
+
+# 22. VALIDATION
+
+Run:
+- Step 1 tests
+- Step 2 tests
+- Step 3 tests
+- Step 4 tests
+- Step 5 focused Complaint tests
+- relevant existing Complaint tests
+- web build
+- relevant TypeScript checks
+- mobile TypeScript/tests if shared/mobile paths affected
+
+Do NOT fix unrelated existing TypeScript diagnostics.
+
+Clearly distinguish:
+- pre-existing diagnostics
+from
+- new Step 5 diagnostics
+
+Changed files must introduce no new diagnostics.
+
+---
+
+# 23. DIFF REVIEW
+
+Before finishing confirm:
+
+- no DB schema changes
+- no UI changes
+- no Homework/Classwork changes
+- no Examination/Archives changes
+- no Timetable/Noticeboard changes
+- no Attendance changes
+- no Fees changes
+- no Leave changes
+- no Dashboard changes
+- no Profile changes
+- no document-authorization changes
+- no Admin behavior changes
+- no Teacher behavior changes
+- no tenant-isolation regression
+- Steps 1–4 remain intact
+- mobile security not weakened
+
+---
+
+# 24. FINAL REPORT
+
+Return exactly:
+
+## STUDENT STEP 5 — COMPLAINTS RESULT
+
+### Complaint creation
+Explain how selected Academic Session is assigned and validated.
+
+### Current-write behavior
+State whether new complaints/replies are active-session-only.
+
+### Filed/inbox behavior
+Explain selected-session scoping.
+
+### Complaint detail behavior
+Explain session/school/ownership checks.
+
+### Complaint notes/replies
+Explain read/write session validation.
+
+### Historical complaints
+Explain historical read and write behavior.
+
+### Peer-report target validation
+Explain same-school validation and self-report behavior.
+
+### Teacher/staff target validation
+Explain tenant validation.
+
+### Enrollment/cohort behavior
+State whether complaint targeting requires selected-session enrollment/cohort and what existing rule was preserved.
+
+### Legacy null-session complaints
+Explain how existing null-session complaint rows behave. Confirm no migration was performed.
+
+### Session transport
+List Student Complaint requests using explicit selected-session transport.
+
+### Cache isolation
+Explain A → B → A behavior.
+
+### Tenant isolation
+Explain school/session/Student/target isolation.
+
+### Mobile compatibility
+Explain impact/validation.
+
+### Files changed
+List every changed file.
+
+### Database changes
+Expected:
+`None`
+
+### UI changes
+Expected:
+`None`
+
+### Admin behavior changed
+Expected:
+`No`
+
+### Teacher behavior changed
+Expected:
+`No`
+
+### Tests
+List PASS/FAIL.
+
+### Web build
+PASS/FAIL.
+
+### Typecheck
+Separate pre-existing diagnostics from new diagnostics.
+
+### Mobile validation
+PASS/FAIL/NOT AFFECTED.
+
+### Remaining Student Portal work
+Do NOT implement:
+- Leave
+- Dashboard/session cache
+- Profile historical placement decision
+- document authorization
+
+---
+
+# FINAL RESTRICTION
+
+Implement ONLY:
+
+**Student Complaints Academic Session correctness and directly related Student complaint tenant isolation.**
+
+Do not redesign Complaint Hub.
+
+Do not change Admin/Teacher behavior.
+
+Do not change the database schema.
+
+Do not fix unrelated Student modules.
+
+If broader business behavior must change, STOP and report it instead.

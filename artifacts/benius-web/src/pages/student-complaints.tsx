@@ -8,7 +8,12 @@ import {
   AlertTriangle, CheckCircle, Clock, Plus, Lock, ChevronDown, ChevronUp,
   Search, X, MessageSquare, Send, ChevronRight,
 } from "lucide-react";
-import { getQueryFn, apiRequest } from "@/lib/queryClient";
+import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
+import {
+  studentComplaintFiledQueryKey,
+  studentComplaintInboxQueryKey,
+  studentComplaintNotesQueryKey,
+} from "@/lib/student-complaint-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 
@@ -94,10 +99,12 @@ function StatusBadge({ status }: { status: string }) {
 function InboxDetailDrawer({
   c,
   student,
+  viewSessionId,
   onClose,
 }: {
   c: ComplaintRecord & { teacherName: string };
   student: StudentMe;
+  viewSessionId: number;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -107,29 +114,31 @@ function InboxDetailDrawer({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: notes = [], isLoading: notesLoading } = useQuery<ComplaintNote[]>({
-    queryKey: ["/api/student/complaints", c.id, "notes"],
-    queryFn: async () => {
-      const res = await fetch(`/api/student/complaints/${c.id}/notes`, { credentials: "include" });
+    queryKey: studentComplaintNotesQueryKey(c.id, viewSessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[3];
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const res = await sessionFetchForViewSession(`/api/student/complaints/${c.id}/notes`, requestSessionId, { signal });
       if (!res.ok) throw new Error("Failed to load comments");
       return res.json();
     },
+    enabled: viewSessionId !== null,
     refetchInterval: 15000,
   });
 
   const postNote = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/student/complaints/${c.id}/notes`, {
+    mutationFn: async ({ sessionId, content }: { sessionId: number; content: string }) => {
+      const res = await sessionFetchForViewSession(`/api/student/complaints/${c.id}/notes`, sessionId, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ content: commentText.trim() }),
+        body: JSON.stringify({ content }),
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_, { sessionId }) => {
       setCommentText("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student/complaints", c.id, "notes"] });
+      queryClient.invalidateQueries({ queryKey: studentComplaintNotesQueryKey(c.id, sessionId), exact: true });
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -348,7 +357,7 @@ function InboxDetailDrawer({
               onKeyDown={e => {
                 if (e.key === "Enter" && !e.shiftKey && commentText.trim()) {
                   e.preventDefault();
-                  postNote.mutate();
+                  postNote.mutate({ sessionId: viewSessionId, content: commentText.trim() });
                 }
               }}
               placeholder="Write a comment…"
@@ -358,7 +367,7 @@ function InboxDetailDrawer({
               data-testid="input-inbox-comment"
             />
             <button
-              onClick={() => postNote.mutate()}
+              onClick={() => postNote.mutate({ sessionId: viewSessionId, content: commentText.trim() })}
               disabled={!commentText.trim() || postNote.isPending}
               className="w-10 h-10 rounded-full bg-[#10b981] disabled:bg-gray-200 flex items-center justify-center flex-shrink-0 transition-colors"
               data-testid="button-send-inbox-comment"
@@ -630,9 +639,11 @@ export default function StudentComplaints() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { isArchiveMode } = useSessionView();
+  const { isArchiveMode, selectedSession } = useSessionView();
+  const sessionId = selectedSession?.id ?? null;
   const [activeTab, setActiveTab] = useState<TabId>("inbox");
   const [selectedInboxItem, setSelectedInboxItem] = useState<(ComplaintRecord & { teacherName: string }) | null>(null);
+  const [selectedInboxSessionId, setSelectedInboxSessionId] = useState<number | null>(null);
 
   const [staffTeacherId, setStaffTeacherId] = useState("");
   const [staffContent, setStaffContent] = useState("");
@@ -645,22 +656,41 @@ export default function StudentComplaints() {
   const [peerIncidentDateText, setPeerIncidentDateText] = useState("");
   const [peerContent, setPeerContent] = useState("");
 
+  useEffect(() => {
+    setSelectedInboxItem(null);
+    setSelectedInboxSessionId(null);
+  }, [sessionId]);
+
   const { data: student, isLoading: studentLoading } = useQuery<StudentMe>({
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const { data: inboxData = [], isLoading: inboxLoading } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
-    queryKey: ["/api/student/complaints/inbox"],
-    enabled: !!student,
+    queryKey: studentComplaintInboxQueryKey(sessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1];
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession("/api/student/complaints/inbox", requestSessionId, { signal });
+      if (!response.ok) throw new Error(`Unable to load complaints (${response.status}).`);
+      return response.json();
+    },
+    enabled: !!student && sessionId !== null,
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
 
   const { data: filedData = [], isLoading: filedLoading } = useQuery<ComplaintRecord[]>({
-    queryKey: ["/api/student/complaints/filed"],
-    enabled: !!student,
+    queryKey: studentComplaintFiledQueryKey(sessionId),
+    queryFn: async ({ queryKey, signal }) => {
+      const requestSessionId = queryKey[1];
+      if (requestSessionId === null) throw new Error("Academic session is required");
+      const response = await sessionFetchForViewSession("/api/student/complaints/filed", requestSessionId, { signal });
+      if (!response.ok) throw new Error(`Unable to load filed complaints (${response.status}).`);
+      return response.json();
+    },
+    enabled: !!student && sessionId !== null,
   });
 
   const { data: teacherOptions = [], isLoading: teachersLoading } = useQuery<TeacherOption[]>({
@@ -669,9 +699,20 @@ export default function StudentComplaints() {
   });
 
   const staffMutation = useMutation({
-    mutationFn: (data: object) => apiRequest("POST", "/api/student/complaints/staff-grievance", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
+    mutationFn: async ({ data, sessionId: requestSessionId }: { data: object; sessionId: number }) => {
+      const response = await sessionFetchForViewSession("/api/student/complaints/staff-grievance", requestSessionId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || `Unable to submit grievance (${response.status}).`);
+      }
+      return response;
+    },
+    onSuccess: (_, { sessionId: requestSessionId }) => {
+      queryClient.invalidateQueries({ queryKey: studentComplaintFiledQueryKey(requestSessionId), exact: true });
       toast({ title: "Grievance submitted", description: "Your complaint has been sent directly to the Principal." });
       setStaffTeacherId(""); setStaffContent(""); setStaffContact(null); setStaffSuggestions("");
     },
@@ -679,9 +720,20 @@ export default function StudentComplaints() {
   });
 
   const peerMutation = useMutation({
-    mutationFn: (data: object) => apiRequest("POST", "/api/student/complaints/peer-report", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/student/complaints/filed"] });
+    mutationFn: async ({ data, sessionId: requestSessionId }: { data: object; sessionId: number }) => {
+      const response = await sessionFetchForViewSession("/api/student/complaints/peer-report", requestSessionId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || `Unable to submit report (${response.status}).`);
+      }
+      return response;
+    },
+    onSuccess: (_, { sessionId: requestSessionId }) => {
+      queryClient.invalidateQueries({ queryKey: studentComplaintFiledQueryKey(requestSessionId), exact: true });
       toast({ title: "Report submitted", description: "Your peer report has been filed." });
       setPeerSelectedStudent(null); setPeerIncidentDate(""); setPeerIncidentDateText(""); setPeerContent("");
     },
@@ -707,29 +759,43 @@ export default function StudentComplaints() {
 
   const handleStaffSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (sessionId === null || isArchiveMode) {
+      toast({ title: "Read only", description: "Switch to the active session to file a complaint.", variant: "destructive" });
+      return;
+    }
     if (!staffTeacherId || !staffContent.trim()) {
       toast({ title: "Missing fields", description: "Please select a teacher and describe your complaint.", variant: "destructive" });
       return;
     }
     staffMutation.mutate({
-      teacherId: parseInt(staffTeacherId),
-      content: staffContent,
-      contactNumber: staffContact !== null ? staffContact : student.phone,
-      suggestions: staffSuggestions,
+      sessionId,
+      data: {
+        teacherId: parseInt(staffTeacherId),
+        content: staffContent,
+        contactNumber: staffContact !== null ? staffContact : student.phone,
+        suggestions: staffSuggestions,
+      },
     });
   };
 
   const handlePeerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (sessionId === null || isArchiveMode) {
+      toast({ title: "Read only", description: "Switch to the active session to file a complaint.", variant: "destructive" });
+      return;
+    }
     if (!peerSelectedStudent || !peerContent.trim()) {
       toast({ title: "Missing fields", description: "Please select a student and describe the incident.", variant: "destructive" });
       return;
     }
     peerMutation.mutate({
-      reportedStudentName: peerSelectedStudent.name,
-      reportedStudentId: peerSelectedStudent.id,
-      incidentDate: peerIncidentDate || null,
-      content: peerContent,
+      sessionId,
+      data: {
+        reportedStudentName: peerSelectedStudent.name,
+        reportedStudentId: peerSelectedStudent.id,
+        incidentDate: peerIncidentDate || null,
+        content: peerContent,
+      },
     });
   };
 
@@ -830,7 +896,16 @@ export default function StudentComplaints() {
             ) : (
               <div className="space-y-3">
                 {inboxData.map(c => (
-                  <InboxCard key={c.id} c={c} studentId={student?.id} onOpen={() => setSelectedInboxItem(c)} />
+                  <InboxCard
+                    key={c.id}
+                    c={c}
+                    studentId={student?.id}
+                    onOpen={() => {
+                      if (sessionId === null) return;
+                      setSelectedInboxSessionId(sessionId);
+                      setSelectedInboxItem(c);
+                    }}
+                  />
                 ))}
               </div>
             )}
@@ -1065,10 +1140,11 @@ export default function StudentComplaints() {
       )}
 
       {/* ── Inbox Detail Drawer ── */}
-      {selectedInboxItem && student && (
+      {selectedInboxItem && student && sessionId !== null && selectedInboxSessionId === sessionId && (
         <InboxDetailDrawer
           c={selectedInboxItem}
           student={student}
+          viewSessionId={selectedInboxSessionId}
           onClose={() => setSelectedInboxItem(null)}
         />
       )}

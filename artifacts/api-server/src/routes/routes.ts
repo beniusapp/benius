@@ -31,6 +31,7 @@ import { requireStudentFeeSession } from "../student-fee-session-context";
 import { resolveStudentExaminationSession } from "../student-examination-session";
 import { resolveStudentAcademicSession } from "../student-academic-session";
 import { studentCanMarkNoticeIds } from "../student-notice-visibility";
+import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
 import { calculateLateFee } from "../late-fee-engine";
@@ -2779,20 +2780,20 @@ export async function registerRoutes(
   // ===== STUDENT COMPLAINT ROUTES =====
 
   app.get("/api/student/complaints/inbox", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getStudentInboxComplaints(student.id, student.schoolId, viewSessionId);
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const list = await storage.getStudentInboxComplaints(context.student.id, context.schoolId, context.sessionId!);
     res.json(list);
   });
 
   app.get("/api/student/complaints/filed", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getStudentFiledComplaints(student.id, student.schoolId, viewSessionId);
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const list = await storage.getStudentFiledComplaints(context.student.id, context.schoolId, context.sessionId!);
     res.json(list);
   });
 
@@ -2805,23 +2806,25 @@ export async function registerRoutes(
   });
 
   app.post("/api/student/complaints/staff-grievance", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const { teacherId, content, contactNumber, suggestions } = req.body;
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "CURRENT_SESSION_WRITE", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const { teacherId, content, contactNumber, suggestions } = req.body ?? {};
     if (!teacherId || !content?.trim()) {
       return res.status(400).json({ message: "Teacher and complaint description are required" });
     }
     const targetTeacher = await storage.getTeacherById(parseInt(teacherId));
-    if (!targetTeacher || targetTeacher.schoolId !== student.schoolId) {
+    if (!targetTeacher || targetTeacher.schoolId !== context.schoolId) {
       return res.status(400).json({ message: "Invalid staff member" });
     }
-    const ticketId = await storage.getNextTicketId(student.schoolId);
+    const ticketId = await storage.getNextTicketId(context.schoolId);
     const complaint = await storage.createStudentComplaint({
       ticketId,
       teacherId: targetTeacher.id,
-      complainantStudentId: student.id,
-      schoolId: student.schoolId,
+      complainantStudentId: context.student.id,
+      schoolId: context.schoolId,
+      sessionId: context.sessionId!,
       complaintType: "student-to-staff",
       content: content.trim(),
       contactNumber: contactNumber?.trim() || null,
@@ -2844,27 +2847,44 @@ export async function registerRoutes(
   });
 
   app.post("/api/student/complaints/peer-report", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
-    const { reportedStudentName, reportedStudentId, incidentDate, content } = req.body;
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_ENROLLMENT_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    if (!context.session?.isActive) {
+      return res.status(403).json({ message: "Historical academic sessions are read-only" });
+    }
+    const { reportedStudentName, reportedStudentId, incidentDate, content } = req.body ?? {};
     if (!reportedStudentName?.trim() || !content?.trim()) {
       return res.status(400).json({ message: "Reported student name and description are required" });
     }
-    const ticketId = await storage.getNextTicketId(student.schoolId);
+    let targetId: number | null = null;
+    if (reportedStudentId !== undefined && reportedStudentId !== null && reportedStudentId !== "") {
+      targetId = typeof reportedStudentId === "string" && /^[1-9]\d*$/.test(reportedStudentId)
+        ? Number(reportedStudentId) : reportedStudentId;
+      if (!Number.isSafeInteger(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: "Invalid reported student" });
+      }
+      const peer = await storage.getStudentById(targetId);
+      if (!validStudentPeerTarget(context.student, peer)) {
+        return res.status(400).json({ message: "Invalid reported student" });
+      }
+    }
+    const ticketId = await storage.getNextTicketId(context.schoolId);
     const complaint = await storage.createStudentComplaint({
       ticketId,
-      complainantStudentId: student.id,
-      studentId: reportedStudentId ? parseInt(reportedStudentId) : null,
-      schoolId: student.schoolId,
+      complainantStudentId: context.student.id,
+      studentId: targetId,
+      schoolId: context.schoolId,
+      sessionId: context.sessionId!,
       complaintType: "student-peer-report",
       content: content.trim(),
       reportedStudentName: reportedStudentName.trim(),
       incidentDate: incidentDate ? new Date(incidentDate) : null,
       status: "Pending",
       isDeleted: false,
-      complainantClass: student.class,
-      complainantSection: student.section,
+      complainantClass: context.enrollment!.className,
+      complainantSection: context.enrollment!.sectionName,
     });
     res.status(201).json(complaint);
   });
@@ -2872,40 +2892,48 @@ export async function registerRoutes(
   // ===== STUDENT COMPLAINT NOTES =====
   // GET notes for a complaint the student is a party to
   app.get("/api/student/complaints/:id/notes", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(401).json({ message: "Student not found" });
-    const complaintId = parseInt(req.params.id);
-    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
-    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "SELECTED_SESSION_REQUIRED", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const complaintId = Number(req.params.id);
+    if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, context.schoolId);
+    if (!c || !studentComplaintMatchesSession(c, context.schoolId, context.sessionId!)) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
     // Only allow if this student is the recipient (inbox) or the filer
-    const isRecipient = c.studentId === student.id;
-    const isFiler = c.complainantStudentId === student.id;
-    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
+    if (c.studentId !== context.student.id && c.complainantStudentId !== context.student.id) {
+      const inbox = await storage.getStudentInboxComplaints(context.student.id, context.schoolId, context.sessionId!);
+      if (!inbox.some(item => item.id === complaintId)) return res.status(403).json({ message: "Access denied" });
+    }
     const notes = await storage.getComplaintNotes(complaintId);
     res.json(notes);
   });
 
   // POST a comment on a complaint the student is a party to
   app.post("/api/student/complaints/:id/notes", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
-    const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(401).json({ message: "Student not found" });
-    const complaintId = parseInt(req.params.id);
-    if (isNaN(complaintId)) return res.status(400).json({ message: "Invalid id" });
-    const c = await storage.getComplaintByIdForSchool(complaintId, student.schoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
-    const isRecipient = c.studentId === student.id;
-    const isFiler = c.complainantStudentId === student.id;
-    if (!isRecipient && !isFiler) return res.status(403).json({ message: "Access denied" });
-    const { content } = req.body;
+    const context = await resolveStudentAcademicSession(
+      req.session.studentId, req.headers["x-view-session-id"], "CURRENT_SESSION_WRITE", storage,
+    );
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const complaintId = Number(req.params.id);
+    if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid id" });
+    const c = await storage.getComplaintByIdForSchool(complaintId, context.schoolId);
+    if (!c || !studentComplaintMatchesSession(c, context.schoolId, context.sessionId!)) {
+      return res.status(404).json({ message: "Complaint not found" });
+    }
+    if (c.studentId !== context.student.id && c.complainantStudentId !== context.student.id) {
+      const inbox = await storage.getStudentInboxComplaints(context.student.id, context.schoolId, context.sessionId!);
+      if (!inbox.some(item => item.id === complaintId)) return res.status(403).json({ message: "Access denied" });
+    }
+    const { content } = req.body ?? {};
     if (!content?.trim()) return res.status(400).json({ message: "Content required" });
     const note = await storage.addComplaintNote({
       complaintId,
-      authorId: student.id,
+      authorId: context.student.id,
       authorRole: "student",
-      authorName: student.name,
+      authorName: context.student.name,
       content: content.trim(),
     });
     res.status(201).json(note);
