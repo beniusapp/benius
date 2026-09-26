@@ -1,0 +1,73 @@
+Do one more READ-ONLY investigation to identify the original/previous BENIUS web application font.
+
+Do NOT change any files.
+
+I currently know that the web application uses `Architects Daughter`, but I do not want to assume that this was the original BENIUS font.
+
+Please investigate every available source inside the Replit project/workspace that could reveal the original font, including:
+
+1. Git history and all locally available commits.
+2. Git branches, tags, reflog, or other available historical references.
+3. Previous versions/backups of:
+
+   * `index.css`
+   * `tailwind.config.ts`
+   * `index.html`
+   * theme files
+   * global CSS files
+4. Replit project history/version information if accessible from the project files.
+5. Any archived/duplicate BENIUS web source inside the workspace.
+6. Font files/assets already present in the project.
+7. Existing package dependencies that indicate the original UI font.
+8. Old screenshots/assets only if they are actually available inside the project.
+9. Search the entire project for:
+
+   * `font-family`
+   * `font-sans`
+   * `Inter`
+   * `Plus Jakarta Sans`
+   * `Roboto`
+   * `Segoe UI`
+   * `Arial`
+   * `system-ui`
+   * `Nunito`
+   * `Poppins`
+   * `DM Sans`
+   * other font-family declarations
+
+IMPORTANT:
+
+Do not assume that Inter or Plus Jakarta Sans was the previous font merely because they are common in Tailwind/shadcn/Replit projects.
+
+I want evidence from THIS BENIUS project.
+
+Return:
+
+### CURRENT FONT
+
+* Exact current font
+* Exact files and lines
+
+### ORIGINAL/PREVIOUS FONT
+
+* Exact font if identifiable
+* Evidence
+* File/commit where it appears
+* Confidence level
+
+### CANDIDATE FONTS
+
+If the original cannot be proven, list the fonts actually found in the project's previous/current code and explain why each is or is not a credible candidate.
+
+### FINAL CONCLUSION
+
+Give exactly one of these conclusions:
+
+A. "Original font identified with strong evidence: ______"
+
+OR
+
+B. "Original font cannot be reliably identified from the available project data."
+
+Do NOT modify anything.
+Do NOT recommend a replacement based only on visual guesswork.
