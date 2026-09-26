@@ -1,0 +1,332 @@
+I need a COMPLETE and PRECISE audit of the current BENIUS application.
+
+Do NOT design anything new.
+Do NOT make assumptions.
+Do NOT give generic recommendations.
+
+Inspect the ACTUAL current BENIUS codebase, including:
+
+- Web frontend
+- Backend/API routes
+- Database schema/tables
+- Shared business logic
+- Admin portal
+- Teacher portal
+- Student portal
+- Academic Session handling
+- School/tenant isolation
+- Existing session-related filters such as "x-view-session-id"
+- Existing queries and API parameters
+- Existing frontend pages/modules
+- Existing role/permission checks
+
+My goal is to clearly understand which data/modules are:
+
+1. ACADEMIC SESSION BASED
+2. GLOBAL / NOT ACADEMIC SESSION BASED
+
+IMPORTANT DEFINITIONS
+
+ACADEMIC SESSION BASED
+
+Consider a module/data Academic Session Based if its records, state, calculations, history, assignments, or behavior can legitimately be different for:
+
+School A + Academic Session 2025-26
+versus
+School A + Academic Session 2026-27
+
+Examples could include students enrolled in a class/section, attendance, examinations, marks, promotion, timetable, homework, classwork, etc.
+
+Do NOT classify something as session-based merely because the UI happens to display the currently selected Academic Session.
+
+GLOBAL DATA
+
+Consider data Global if it fundamentally belongs to the school/tenant and should remain available across Academic Sessions without creating a separate copy for every session.
+
+Examples could include school profile, school branding, basic configuration, subjects master, certain staff identity information, etc.
+
+IMPORTANT:
+If a module contains BOTH global and Academic Session Based data, DO NOT force it into one category.
+
+Instead classify it as:
+
+"HYBRID — GLOBAL + ACADEMIC SESSION BASED"
+
+and clearly explain which parts are global and which parts are session-based.
+
+==================================================
+PART 1 — ADMIN PORTAL
+
+Create a complete inventory of EVERY Admin portal module.
+
+For each module provide:
+
+| # | Admin Module | Academic Session Based / Global / Hybrid | Exact Reason | Main Tables | Main APIs/Routes | Session Filter Used? | Tenant/School Scoped? | Notes |
+
+Include ALL relevant Admin modules, not only Examination.
+
+At minimum investigate areas such as:
+
+- Dashboard
+- School Setup
+- Academic Session management
+- Student management
+- Teacher/Staff management
+- Attendance
+- Examination
+- Exam Controller
+- Timetable
+- Homework
+- Classwork
+- Fees
+- Payments
+- Reports
+- Promotion
+- Academic History
+- School configuration
+- Classes
+- Sections
+- Subjects
+- Exam Types
+- Grading
+- Policies
+- Any other Admin module currently present
+
+==================================================
+PART 2 — TEACHER PORTAL
+
+Create a complete inventory of EVERY Teacher portal module.
+
+For each module provide:
+
+| # | Teacher Module | Academic Session Based / Global / Hybrid | Exact Reason | Main Tables | Main APIs/Routes | Session Filter Used? | Tenant/School Scoped? | Notes |
+
+Investigate ALL Teacher modules currently present.
+
+At minimum investigate:
+
+- Teacher Dashboard
+- Profile
+- Attendance
+- Examination
+- Timetable
+- Homework
+- Classwork
+- Students
+- Subjects
+- Classes/Sections
+- Any teacher assignments
+- Any reports
+- Any other Teacher module
+
+==================================================
+PART 3 — STUDENT PORTAL
+
+Create a complete inventory of EVERY Student portal module.
+
+For each module provide:
+
+| # | Student Module | Academic Session Based / Global / Hybrid | Exact Reason | Main Tables | Main APIs/Routes | Session Filter Used? | Tenant/School Scoped? | Notes |
+
+Investigate ALL Student modules currently present.
+
+At minimum investigate:
+
+- Student Dashboard
+- Profile
+- Attendance
+- Examination
+- Results
+- Academic History
+- Timetable
+- Homework
+- Classwork
+- Fees/Payments if present
+- Documents/Downloads if present
+- Any other Student module
+
+==================================================
+PART 4 — DATABASE LEVEL CLASSIFICATION
+
+Create a separate database-level analysis.
+
+List the important tables/entities and classify them:
+
+| Table | Global / Session Based / Hybrid | Has school_id? | Has academic_session_id? | How session is currently determined | Risk/Observation |
+
+Do NOT assume that a table is session-based only because it indirectly belongs to a session.
+
+Determine this from the actual schema and actual queries.
+
+Pay special attention to tables where:
+
+- "school_id" exists
+- "academic_session_id" exists
+- session is derived through another table
+- current class/section fields are used instead of historical/session enrollment
+- records are reused across sessions
+- records are copied/created per session
+- session filtering is missing
+
+==================================================
+PART 5 — API LEVEL AUDIT
+
+Identify APIs that are:
+
+A. Explicitly Academic Session Based
+B. Explicitly Global
+C. Hybrid
+D. Potentially missing Academic Session filtering
+
+Use actual API routes from the codebase.
+
+For each important API provide:
+
+| API | Role | Module | Session Based / Global / Hybrid | How Session Is Determined | School/Tenant Check | Observation |
+
+==================================================
+PART 6 — CURRENT ACADEMIC SESSION SOURCE OF TRUTH
+
+Explain exactly how BENIUS currently determines the selected Academic Session for:
+
+- Admin
+- Teacher
+- Student
+
+Explain:
+
+1. Where the selected Academic Session is stored.
+2. How it reaches the frontend.
+3. How it reaches the backend.
+4. Whether "x-view-session-id" is used.
+5. Which APIs actually honor the selected session.
+6. Which APIs do NOT honor it.
+7. Whether any module accidentally uses current student/teacher/class fields instead of session-scoped records.
+
+==================================================
+PART 7 — CROSS-SESSION DATA SAFETY
+
+Identify any modules where data from Academic Session A could potentially appear in Academic Session B.
+
+For each finding:
+
+| Module | Potential Cross-Session Issue | Exact Code/Query Location | Current Behavior | Severity | Explanation |
+
+Do NOT fix anything.
+
+This is an AUDIT ONLY.
+
+==================================================
+PART 8 — FINAL MASTER SUMMARY
+
+At the end provide THREE clear master lists.
+
+ADMIN
+
+Academic Session Based
+
+- Module
+- Module
+- Module
+
+Global
+
+- Module
+- Module
+- Module
+
+Hybrid
+
+- Module
+- Module
+- Module
+
+TEACHER
+
+Academic Session Based
+
+- Module
+- Module
+- Module
+
+Global
+
+- Module
+- Module
+- Module
+
+Hybrid
+
+- Module
+- Module
+- Module
+
+STUDENT
+
+Academic Session Based
+
+- Module
+- Module
+- Module
+
+Global
+
+- Module
+- Module
+- Module
+
+Hybrid
+
+- Module
+- Module
+- Module
+
+==================================================
+PART 9 — MOBILE DEVELOPMENT IMPORTANCE
+
+Finally, provide a separate section:
+
+"WHAT THIS MEANS FOR MOBILE"
+
+For each portal explain:
+
+- Which data must always carry Academic Session ID/context in the mobile app.
+- Which data can be loaded globally.
+- Which modules need session-aware cache keys.
+- Which modules must refresh when the user changes Academic Session.
+- Which modules should NOT refresh merely because Academic Session changes.
+- Which APIs need special attention before native mobile implementation.
+
+IMPORTANT MOBILE RULE:
+
+The existing WEB APPLICATION is the absolute source of truth.
+
+Do NOT redesign or change current behavior.
+
+This audit is only to understand the existing architecture so that the future Mobile application can reproduce the same behavior correctly.
+
+==================================================
+IMPORTANT PROJECT RULES
+
+1. BENIUS is multi-tenant/multi-school.
+2. NEVER treat data from another school as accessible.
+3. Every school-scoped operation must remain restricted to the authenticated school/tenant.
+4. Academic Session Based data must be scoped to BOTH:
+   - authenticated school/tenant
+   - Academic Session ID
+5. A new Academic Session must not inherit operational data from a previous Academic Session unless the current BENIUS implementation explicitly does so.
+6. Do not change any code.
+7. Do not migrate data.
+8. Do not create new tables.
+9. Do not create new APIs.
+10. Do not fix existing bugs during this audit.
+11. Report the CURRENT implementation exactly as it exists.
+12. If something is uncertain, inspect the relevant code before classifying it.
+13. If the current implementation is incorrect or inconsistent, report that separately instead of silently correcting the classification.
+14. Use exact filenames, table names, API routes, and relevant code locations wherever possible.
+
+MOST IMPORTANT:
+
+I want a FACTUAL CODEBASE AUDIT, not a conceptual answer.
+
+The final answer should be structured so that I can use it as the architectural reference for deciding which parts of BENIUS Mobile must be Academic Session aware and which parts can remain global.
