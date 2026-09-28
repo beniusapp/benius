@@ -194,6 +194,22 @@ export function registerTeacherRoutes(app: Express) {
       sessionId: context.session.id,
     };
   };
+  const resolveTeacherAttendanceContext = async (
+    req: Request,
+    res: Response,
+    mode: Parameters<typeof resolveTeacherAcademicSession>[1],
+  ) => {
+    const context = await resolveTeacherAcademicSession(req, mode, storage);
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return null;
+    }
+    if (mode !== "GLOBAL" && !context.session) {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+      return null;
+    }
+    return context;
+  };
 
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
@@ -455,21 +471,14 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== ATTENDANCE =====
   app.get("/api/attendance/:schoolId/:class/:section/:date", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, class: cls, section, date } = req.params;
-    const sid = parseInt(schoolId);
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
-    let attendanceSession;
-    try {
-      attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId,
-        (req as any).viewSessionId,
-      );
-    } catch (error) {
-      if (sendAttendanceReadSessionError(res, error)) return;
-      throw error;
+    const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+    if (!context) return;
+    const sid = Number(schoolId);
+    if (!Number.isSafeInteger(sid) || sid <= 0 || context.schoolId !== sid) {
+      return res.status(403).json({ message: "Not authorized" });
     }
+    const attendanceSession = context.session!;
     try {
       requireAttendanceDateInSession(date, attendanceSession);
     } catch (error) {
@@ -482,12 +491,12 @@ export function registerTeacherRoutes(app: Express) {
     // whose live Student FK was nulled by physical deletion.
     const historicalView = !attendanceSession.isActive || date < addCalendarDays(todayInIST(), -7);
     const studentList = historicalView
-      ? await storage.getAttendanceReportRosterForSessionClass(sid, attendanceSession.id, cls, section)
-      : await storage.getAttendanceRosterForSessionClass(sid, attendanceSession.id, cls, section);
+      ? await storage.getAttendanceReportRosterForSessionClass(context.schoolId, attendanceSession.id, cls, section)
+      : await storage.getAttendanceRosterForSessionClass(context.schoolId, attendanceSession.id, cls, section);
     const records = historicalView
-      ? await storage.getAttendanceByClassDate(sid, attendanceSession.id, cls, section, date)
+      ? await storage.getAttendanceByClassDate(context.schoolId, attendanceSession.id, cls, section, date)
       : await storage.getAttendanceForStudentsOnDate(
-          sid, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
+          context.schoolId, attendanceSession.id, studentList.map(s => s.id), cls, section, date,
         );
 
     const result = studentList.map(student => {
@@ -511,7 +520,10 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.post("/api/attendance", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const context = await resolveTeacherAttendanceContext(req, res, "CURRENT_SESSION_WRITE");
+    if (!context) return;
+    const { teacher, schoolId } = context;
+    const attendanceSession = context.session!;
 
     const { date, records, class: cls, section } = req.body;
     if (!date || !Array.isArray(records)) return res.status(400).json({ message: "Invalid data" });
@@ -525,25 +537,6 @@ export function registerTeacherRoutes(app: Express) {
     const minDate = addCalendarDays(today, -7);
     if (date < minDate) return res.status(400).json({ message: "Can only edit attendance for the past 7 days" });
 
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const schoolId = req.session.schoolId;
-    if (!schoolId || teacher.schoolId !== schoolId) {
-      return res.status(403).json({ message: "Teacher does not belong to this school" });
-    }
-
-    // The selected view Session is validated by the global archive guard, but
-    // only the authenticated school's active Session determines the write ID.
-    const attendanceSession = await storage.getActiveSession(schoolId);
-    if (!attendanceSession || !attendanceSession.isActive || !Number.isInteger(attendanceSession.id)) {
-      return res.status(409).json({
-        message: "No active academic session is available for Attendance marking.",
-        code: "ATTENDANCE_SESSION_UNAVAILABLE",
-      });
-    }
-    if (attendanceSession.schoolId !== schoolId) {
-      return res.status(403).json({ message: "Active academic session does not belong to this school" });
-    }
     if (
       !isValidDateOnly(attendanceSession.startDate) ||
       !isValidDateOnly(attendanceSession.endDate) ||
@@ -619,49 +612,38 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/attendance/history/:schoolId/:class/:section/:startDate/:endDate", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     const { schoolId, class: cls, section, startDate, endDate } = req.params;
-    const sid = parseInt(schoolId);
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
+    const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+    if (!context) return;
+    const sid = Number(schoolId);
+    if (!Number.isSafeInteger(sid) || sid <= 0 || context.schoolId !== sid) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
     if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
       return res.status(400).json({ message: "Invalid Attendance date range" });
     }
     try {
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId,
-        (req as any).viewSessionId,
-      );
       const records = await storage.getAttendanceHistory(
-        sid, attendanceSession.id, cls, section, startDate, endDate,
+        context.schoolId, context.session!.id, cls, section, startDate, endDate,
       );
       res.json(records);
     } catch (err) {
-      if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch attendance history" });
     }
   });
 
   app.get("/api/attendance/status/:teacherId", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-    try {
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId,
-        (req as any).viewSessionId,
-        { allowActiveFallback: true },
-      );
-      const done = await storage.hasAttendanceToday(
-        teacher.id, teacher.assignedClass, teacher.assignedSection,
-        teacher.schoolId, attendanceSession.id,
-      );
-      res.json({ done });
-    } catch (error) {
-      if (sendAttendanceReadSessionError(res, error)) return;
-      throw error;
+    const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_OR_ACTIVE_SESSION");
+    if (!context) return;
+    const routeTeacherId = Number(req.params.teacherId);
+    if (!Number.isSafeInteger(routeTeacherId) || routeTeacherId !== context.teacher.id) {
+      return res.status(403).json({ message: "Not authorized" });
     }
+    const done = await storage.hasAttendanceToday(
+      context.teacher.id, context.teacher.assignedClass, context.teacher.assignedSection,
+      context.schoolId, context.session!.id,
+    );
+    res.json({ done });
   });
 
   // ===== HOMEWORK =====
@@ -4819,22 +4801,16 @@ Thank you for your prompt attention to this matter.
   const istToday = () => todayInIST();
 
   app.get("/api/teacher/self-attendance/today", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
+      const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+      if (!context) return;
       const today = istToday();
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
-        return res.status(403).json({ message: "Teacher school mismatch" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
 
       const [record] = await db.select().from(teacherSelfAttendance).where(
         and(
-          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-          eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          eq(teacherSelfAttendance.teacherId, context.teacher.id),
+          eq(teacherSelfAttendance.schoolId, context.schoolId),
+          eq(teacherSelfAttendance.sessionId, context.session!.id),
           eq(teacherSelfAttendance.attendanceDate, today),
         )
       );
@@ -4847,14 +4823,13 @@ Thank you for your prompt attention to this matter.
 
   // GET resolved attendance policy for the current teacher
   app.get("/api/teacher/attendance-policy", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const context = await resolveTeacherAttendanceContext(req, res, "GLOBAL");
+    if (!context) return;
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       const policyRows = await db.select().from(attendancePolicies).where(
-        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        and(eq(attendancePolicies.schoolId, context.schoolId), eq(attendancePolicies.isActive, true))
       );
-      const resolved = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
+      const resolved = resolvePolicy(policyRows, "TEACHER", context.teacher.assignedClass ?? "");
       res.json(resolved);
     } catch {
       res.json(DEFAULT_POLICY);
@@ -4863,21 +4838,19 @@ Thank you for your prompt attention to this matter.
 
   // POST check-in
   app.post("/api/teacher/self-attendance/check-in", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "CURRENT_SESSION_WRITE");
+      if (!context) return;
+      const { teacher, schoolId } = context;
+      const attendanceSession = context.session!;
       const today = istToday();
       requireAttendanceDateInSession(today, attendanceSession);
       const { latitude, longitude, locationVerified } = req.body;
 
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(
-          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.teacherId, teacher.id),
+          eq(teacherSelfAttendance.schoolId, schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, today),
         )
@@ -4888,7 +4861,7 @@ Thank you for your prompt attention to this matter.
 
       // Resolve policy and evaluate check-in status
       const policyRows = await db.select().from(attendancePolicies).where(
-        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
       );
       const policy = resolvePolicy(policyRows, "TEACHER", teacher.assignedClass ?? "");
       const evalResult = evaluateAttendanceStatus(utcToISTHHMM(now), policy);
@@ -4901,12 +4874,12 @@ Thank you for your prompt attention to this matter.
           .where(and(
             eq(teacherSelfAttendance.id, existing.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.schoolId, schoolId),
             eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           )).returning();
       } else {
         [record] = await db.insert(teacherSelfAttendance).values({
-          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: today,
+          teacherId: teacher.id, schoolId, attendanceDate: today,
           sessionId: attendanceSession.id,
           checkInTime: now, status, locationVerified: !!locationVerified,
           latitude: latitude?.toString() ?? null, longitude: longitude?.toString() ?? null,
@@ -4921,19 +4894,17 @@ Thank you for your prompt attention to this matter.
 
   // POST check-out
   app.post("/api/teacher/self-attendance/check-out", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       const today = istToday();
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "CURRENT_SESSION_WRITE");
+      if (!context) return;
+      const { teacher, schoolId } = context;
+      const attendanceSession = context.session!;
       requireAttendanceDateInSession(today, attendanceSession);
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(
-          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.teacherId, teacher.id),
+          eq(teacherSelfAttendance.schoolId, schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, today),
         )
@@ -4948,31 +4919,29 @@ Thank you for your prompt attention to this matter.
         .where(and(
           eq(teacherSelfAttendance.id, existing.id),
           eq(teacherSelfAttendance.teacherId, teacher.id),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.schoolId, schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
         )).returning();
 
       // Early check-out: if checkout time (IST) < halfDayCutoffTime → mark as Half Day
-      if (teacher) {
-        const policyRowsCO = await db.select().from(attendancePolicies).where(
-          and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
-        );
-        const coPolicy = resolvePolicy(policyRowsCO, "TEACHER", teacher.assignedClass ?? "");
-        const coIST = utcToISTHHMM(now);
-        const [coh, com] = coIST.split(":").map(Number);
-        const coMin = coh * 60 + com;
-        const [hch, hcm] = (coPolicy.halfDayCutoffTime || "12:00").split(":").map(Number);
-        const halfMin = hch * 60 + hcm;
-        if (coMin < halfMin) {
-          [record] = await db.update(teacherSelfAttendance)
-            .set({ status: "Half Day", updatedAt: now })
-            .where(and(
-              eq(teacherSelfAttendance.id, record.id),
-              eq(teacherSelfAttendance.teacherId, teacher.id),
-              eq(teacherSelfAttendance.schoolId, teacher.schoolId),
-              eq(teacherSelfAttendance.sessionId, attendanceSession.id),
-            )).returning();
-        }
+      const policyRowsCO = await db.select().from(attendancePolicies).where(
+        and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
+      );
+      const coPolicy = resolvePolicy(policyRowsCO, "TEACHER", teacher.assignedClass ?? "");
+      const coIST = utcToISTHHMM(now);
+      const [coh, com] = coIST.split(":").map(Number);
+      const coMin = coh * 60 + com;
+      const [hch, hcm] = (coPolicy.halfDayCutoffTime || "12:00").split(":").map(Number);
+      const halfMin = hch * 60 + hcm;
+      if (coMin < halfMin) {
+        [record] = await db.update(teacherSelfAttendance)
+          .set({ status: "Half Day", updatedAt: now })
+          .where(and(
+            eq(teacherSelfAttendance.id, record.id),
+            eq(teacherSelfAttendance.teacherId, teacher.id),
+            eq(teacherSelfAttendance.schoolId, schoolId),
+            eq(teacherSelfAttendance.sessionId, attendanceSession.id),
+          )).returning();
       }
 
       res.json(record);
@@ -4984,13 +4953,10 @@ Thank you for your prompt attention to this matter.
 
   // Full selected-Session rate; never trusts Teacher or school IDs from the request.
   app.get("/api/teacher/self-attendance/rate", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || !req.session.schoolId || req.session.schoolId !== teacher.schoolId)
-        return res.status(403).json({ message: "Teacher school mismatch" });
-      const session = await resolveAttendanceReadSession(teacher.schoolId, (req as any).viewSessionId);
-      res.json(await getTeacherSelfRate(teacher.schoolId, teacher.id, session));
+      const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+      if (!context) return;
+      res.json(await getTeacherSelfRate(context.schoolId, context.teacher.id, context.session!));
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       console.error("[self-attendance/rate]", err);
@@ -5000,7 +4966,6 @@ Thank you for your prompt attention to this matter.
 
   // GET history — accepts startDate/endDate (session bounds) or falls back to last N days
   app.get("/api/teacher/self-attendance/history", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
       let start: string;
       let end: string;
@@ -5018,18 +4983,14 @@ Thank you for your prompt attention to this matter.
         start = addCalendarDays(end, -(days - 1));
       }
 
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
-        return res.status(403).json({ message: "Teacher school mismatch" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+      if (!context) return;
+      const attendanceSession = context.session!;
 
       const records = await db.select().from(teacherSelfAttendance).where(
         and(
-          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.teacherId, context.teacher.id),
+          eq(teacherSelfAttendance.schoolId, context.schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           gte(teacherSelfAttendance.attendanceDate, start > attendanceSession.startDate ? start : attendanceSession.startDate),
           lte(teacherSelfAttendance.attendanceDate, end < attendanceSession.endDate ? end : attendanceSession.endDate),
@@ -5044,10 +5005,7 @@ Thank you for your prompt attention to this matter.
 
   // POST self-correction — applies immediately, no admin approval needed
   app.post("/api/teacher/self-attendance/correction", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
       const { date, requestedCheckIn, requestedCheckOut, reason } = req.body;
       if (!date || !requestedCheckIn || !requestedCheckOut || !reason?.trim())
         return res.status(400).json({ message: "All fields are required" });
@@ -5057,9 +5015,10 @@ Thank you for your prompt attention to this matter.
       if (diffDays === null)
         return res.status(400).json({ message: "Attendance date must be a valid date in YYYY-MM-DD format" });
       if (diffDays < 0 || diffDays > 7) return res.status(400).json({ message: "Corrections only allowed within the last 7 days" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "CURRENT_SESSION_WRITE");
+      if (!context) return;
+      const { teacher, schoolId } = context;
+      const attendanceSession = context.session!;
       requireAttendanceDateInSession(date, attendanceSession);
 
       // Parse times as IST (teachers enter local Indian time)
@@ -5071,7 +5030,7 @@ Thank you for your prompt attention to this matter.
 
       // Evaluate status from corrected times using current policy
       const corrPolicyRows = await db.select().from(attendancePolicies).where(
-        and(eq(attendancePolicies.schoolId, teacher.schoolId), eq(attendancePolicies.isActive, true))
+        and(eq(attendancePolicies.schoolId, schoolId), eq(attendancePolicies.isActive, true))
       );
       const corrPolicy = resolvePolicy(corrPolicyRows, "TEACHER", teacher.assignedClass ?? "");
       const status = recomputeStatus({ checkInTime: checkInIST, checkOutTime: checkOutIST }, corrPolicy);
@@ -5080,8 +5039,8 @@ Thank you for your prompt attention to this matter.
       // Upsert the attendance record — select first then insert or update
       const [existing] = await db.select().from(teacherSelfAttendance).where(
         and(
-          eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-          eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+          eq(teacherSelfAttendance.teacherId, teacher.id),
+          eq(teacherSelfAttendance.schoolId, schoolId),
           eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           eq(teacherSelfAttendance.attendanceDate, date),
         )
@@ -5093,12 +5052,12 @@ Thank you for your prompt attention to this matter.
           .where(and(
             eq(teacherSelfAttendance.id, existing.id),
             eq(teacherSelfAttendance.teacherId, teacher.id),
-            eq(teacherSelfAttendance.schoolId, teacher.schoolId),
+            eq(teacherSelfAttendance.schoolId, schoolId),
             eq(teacherSelfAttendance.sessionId, attendanceSession.id),
           )).returning();
       } else {
         [attendanceRecord] = await db.insert(teacherSelfAttendance).values({
-          teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+          teacherId: teacher.id, schoolId, attendanceDate: date,
           sessionId: attendanceSession.id,
           checkInTime: checkInIST, checkOutTime: checkOutIST, totalWorkingMinutes: workingMinutes,
           status, locationVerified: false,
@@ -5107,7 +5066,7 @@ Thank you for your prompt attention to this matter.
 
       // Log the correction as auto-approved for audit history
       const [correction] = await db.insert(attendanceCorrectionRequests).values({
-        teacherId: req.session.teacherId, schoolId: teacher.schoolId, attendanceDate: date,
+        teacherId: teacher.id, schoolId, attendanceDate: date,
         sessionId: attendanceSession.id,
         requestedCheckIn, requestedCheckOut, reason: reason.trim(), status: "Approved",
       }).returning();
@@ -5121,18 +5080,14 @@ Thank you for your prompt attention to this matter.
 
   // GET correction requests
   app.get("/api/teacher/self-attendance/corrections", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+      if (!context) return;
       const corrections = await db.select().from(attendanceCorrectionRequests)
         .where(and(
-          eq(attendanceCorrectionRequests.teacherId, req.session.teacherId),
-          eq(attendanceCorrectionRequests.schoolId, teacher.schoolId),
-          eq(attendanceCorrectionRequests.sessionId, attendanceSession.id),
+          eq(attendanceCorrectionRequests.teacherId, context.teacher.id),
+          eq(attendanceCorrectionRequests.schoolId, context.schoolId),
+          eq(attendanceCorrectionRequests.sessionId, context.session!.id),
         ))
         .orderBy(desc(attendanceCorrectionRequests.createdAt)).limit(20);
       res.json(corrections);
@@ -5147,15 +5102,10 @@ Thank you for your prompt attention to this matter.
   // Security: teacherId is ALWAYS taken from the authenticated session.
   // ─────────────────────────────────────────────────────────────────────────
   app.get("/api/teacher/attendance/history", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
     try {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      if (!req.session.schoolId || req.session.schoolId !== teacher.schoolId)
-        return res.status(403).json({ message: "Teacher school mismatch" });
-      const attendanceSession = await resolveAttendanceReadSession(
-        teacher.schoolId, (req as any).viewSessionId,
-      );
+      const context = await resolveTeacherAttendanceContext(req, res, "SELECTED_SESSION_REQUIRED");
+      if (!context) return;
+      const attendanceSession = context.session!;
 
       const {
         fromDate, toDate,
@@ -5166,8 +5116,8 @@ Thank you for your prompt attention to this matter.
 
       // Build conditions — teacherId always comes from session, never from query params
       const conditions: ReturnType<typeof eq>[] = [
-        eq(teacherSelfAttendance.teacherId, req.session.teacherId),
-        eq(teacherSelfAttendance.schoolId,  teacher.schoolId),
+        eq(teacherSelfAttendance.teacherId, context.teacher.id),
+        eq(teacherSelfAttendance.schoolId,  context.schoolId),
         eq(teacherSelfAttendance.sessionId, attendanceSession.id),
       ];
       if ((fromDate && !isValidDateOnly(fromDate)) || (toDate && !isValidDateOnly(toDate)) || (fromDate && toDate && fromDate > toDate)) {
@@ -5196,7 +5146,7 @@ Thank you for your prompt attention to this matter.
       const summary = { present, late, halfDay, absent, leave, totalWorkingMinutes, avgWorkingMinutes };
 
       // ── Statistics ────────────────────────────────────────────────────────
-      const rate = await getTeacherSelfRate(teacher.schoolId, teacher.id, attendanceSession);
+      const rate = await getTeacherSelfRate(context.schoolId, context.teacher.id, attendanceSession);
 
       // Streak: consecutive Present/Late/Half Day working days (most-recent first)
       const sorted = [...records].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
@@ -5226,7 +5176,7 @@ Thank you for your prompt attention to this matter.
       const totalPages   = Math.ceil(totalRecords / pageSizeNum);
       const paginatedRecords = records.slice((pageNum - 1) * pageSizeNum, pageNum * pageSizeNum);
 
-      console.log(`[attendance/history] teacherId=${req.session.teacherId} from=${fromDate} to=${toDate} records=${paginatedRecords.length} dates=${paginatedRecords.map((r: any) => r.attendanceDate).join(",")}`);
+      console.log(`[attendance/history] teacherId=${context.teacher.id} from=${fromDate} to=${toDate} records=${paginatedRecords.length} dates=${paginatedRecords.map((r: any) => r.attendanceDate).join(",")}`);
       res.json({
         records: paginatedRecords,
         summary,

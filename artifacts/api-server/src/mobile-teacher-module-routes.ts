@@ -626,10 +626,14 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
   if (!context) return;
   const { account, scopes } = context;
   const { module, action } = params.data;
+  const requiresCurrentSessionMode =
+    (module === "timetable" && (action === "save" || action === "delete"))
+    || (module === "attendance"
+      && ["submit", "self-check-in", "self-check-out", "self-correction"].includes(action));
   const session = await guardWriteSession(
     req,
     res,
-    module === "timetable" && (action === "save" || action === "delete"),
+    requiresCurrentSessionMode,
   );
   if (!session) return;
   const teacher = account.teacher;
