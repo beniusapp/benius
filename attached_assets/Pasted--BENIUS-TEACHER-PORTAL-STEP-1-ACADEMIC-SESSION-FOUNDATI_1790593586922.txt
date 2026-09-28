@@ -1,0 +1,615 @@
+# BENIUS — TEACHER PORTAL
+# STEP 1 — ACADEMIC SESSION FOUNDATION
+
+We have completed the Student Portal Academic Session correction work.
+
+We are now starting the **Teacher Portal**.
+
+This is **Teacher Step 1 only**.
+
+Do NOT start correcting individual Teacher modules yet.
+
+---
+
+# ABSOLUTE ARCHITECTURE RULES
+
+BENIUS is a **multi-school / multi-tenant School MIS**.
+
+Tenant isolation is mandatory.
+
+A Teacher from:
+
+**School A must NEVER read, write, calculate, modify, or receive data belonging to School B.**
+
+Every Teacher Academic Session operation must derive the school from the **authenticated Teacher identity**.
+
+Never trust a client-supplied:
+
+- schoolId
+- teacherId
+- class
+- section
+- session ownership
+
+without server-side validation.
+
+---
+
+# EXISTING WEB APPLICATION IS SOURCE OF TRUTH
+
+Do NOT redesign the Teacher Portal.
+
+Do NOT:
+
+- change UI/UX
+- change navigation
+- add features
+- remove features
+- change calculations
+- change workflows
+- change permissions unless required for tenant/session correctness
+- change Admin Portal
+- change Student Portal
+- change existing intentional behavior
+- change database schema unless absolutely unavoidable
+
+The goal is to establish a **safe Teacher Academic Session foundation** that later Teacher-module corrections can use.
+
+---
+
+# IMPORTANT — DO NOT MAKE EVERYTHING SESSION-BASED
+
+The Teacher Portal contains:
+
+### GLOBAL modules/data
+
+Examples identified previously include:
+
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+These should NOT automatically become Academic Session based.
+
+### ACADEMIC SESSION BASED modules
+
+Examples identified previously include:
+
+- Classwork
+- Noticeboard
+- Timetable
+
+### HYBRID modules
+
+Examples include:
+
+- Dashboard
+- Attendance
+- Homework
+- Complaint
+- Examination / Results / Reports
+- Leave
+- Approval Center / Student Profiles
+
+Hybrid means some data is session-specific while some supporting/master data may remain global.
+
+Do NOT force session scoping onto genuinely global data.
+
+---
+
+# STEP 1 OBJECTIVE
+
+Create/reuse a single authoritative Teacher Academic Session resolution mechanism.
+
+Later Teacher modules should be able to use this instead of independently trusting:
+
+- headers
+- query parameters
+- body parameters
+- current class placement
+- active session fallback
+- client-provided school IDs
+
+The trusted chain should be:
+
+**Authenticated Teacher**
+→ **server-loaded Teacher**
+→ **Teacher's School**
+→ **requested Academic Session**
+→ **verify Academic Session belongs to Teacher's School**
+→ module-specific Teacher assignment/mapping validation where required
+
+---
+
+# FIRST: AUDIT EXISTING FOUNDATION
+
+Before changing anything, inspect the actual current implementation.
+
+Find:
+
+- Teacher authentication/session middleware
+- Teacher identity fields stored in Web session
+- Mobile Teacher bearer-auth identity
+- Teacher `/me` routes
+- Academic Session headers/helpers
+- `x-view-session-id`
+- existing Teacher session resolver/helper if any
+- active Academic Session fallback logic
+- Teacher class/section/subject mappings
+- faculty mappings
+- timetable assignments
+- Student enrollment usage
+- any shared Student Academic Session resolver that should NOT be incorrectly reused for Teachers
+- existing Teacher mobile session handling
+
+Do not assume names or architecture.
+
+If an existing Teacher resolver already provides the required guarantees, strengthen/reuse it instead of creating unnecessary duplicate infrastructure.
+
+---
+
+# TEACHER IDENTITY MUST BE SERVER-DERIVED
+
+For Web:
+
+Use the authenticated Teacher session established by the existing Teacher login.
+
+For Mobile:
+
+Use the authenticated Teacher identity established by the existing Mobile bearer authentication.
+
+Never authorize a Teacher operation merely because the request contains:
+
+`teacherId=<id>`
+
+The authenticated identity must be authoritative.
+
+---
+
+# TEACHER SCHOOL MUST BE SERVER-DERIVED
+
+Load the authenticated Teacher.
+
+Determine their actual school from the server/database.
+
+Then validate the requested Academic Session against that school.
+
+Never use a client-supplied `schoolId` as the authorization boundary.
+
+Expected concept:
+
+Authenticated Teacher
+→ Teacher.schoolId
+→ AcademicSession.schoolId must equal Teacher.schoolId
+
+---
+
+# SELECTED ACADEMIC SESSION
+
+BENIUS Web uses:
+
+`x-view-session-id`
+
+for the selected Academic Session in supported session-aware requests.
+
+Teacher session-aware routes must eventually use the selected Academic Session explicitly.
+
+Step 1 should establish the safe resolver/foundation.
+
+Do NOT convert all Teacher routes during this step.
+
+---
+
+# REQUIRED SESSION BEHAVIOR
+
+The foundation must distinguish between:
+
+## GLOBAL
+
+No Academic Session required.
+
+Use for genuinely global Teacher data.
+
+---
+
+## SELECTED SESSION REQUIRED
+
+A valid explicit selected Academic Session is required.
+
+The session must:
+
+- exist
+- belong to the authenticated Teacher's school
+
+Historical/inactive same-school sessions may be valid for READ operations where the module supports historical viewing.
+
+---
+
+## SELECTED OR ACTIVE SESSION
+
+Only use this mode where existing Teacher product behavior genuinely requires active-session fallback.
+
+Do NOT use fallback simply for convenience.
+
+Future corrected session-sensitive Teacher pages should prefer explicit selected-session behavior.
+
+---
+
+## CURRENT SESSION WRITE
+
+For operations that must only modify the current/active Academic Session.
+
+Requirements:
+
+- selected session must exist
+- selected session must belong to Teacher's school
+- selected session must be active/current according to existing BENIUS rules
+- historical-session writes must fail
+
+Do NOT silently redirect an attempted historical write into the active session.
+
+---
+
+# TEACHER ASSIGNMENT / MAPPING
+
+Academic Session validation and Teacher authorization are NOT the same thing.
+
+Example:
+
+Teacher belongs to School A
++
+Session X belongs to School A
+
+does NOT automatically mean the Teacher may operate on every class/section/subject in Session X.
+
+Later module corrections may need:
+
+- Teacher class assignment
+- section assignment
+- subject assignment
+- faculty mapping
+- timetable assignment
+- class teacher mapping
+
+Step 1 should identify how these mappings currently work.
+
+Do NOT globally invent new mapping rules.
+
+Create the foundation so module-specific authorization can validate assignments where necessary.
+
+---
+
+# STUDENT PLACEMENT RULE
+
+When a Teacher module operates on Students for a selected Academic Session, later corrections should normally derive historical Student placement from:
+
+`enrollments`
+
+using:
+
+- authenticated Teacher school
+- Student
+- selected Academic Session
+
+Do NOT assume `students.class` / `students.section` represent historical placement.
+
+However, Step 1 should NOT rewrite individual Teacher modules yet.
+
+Document this requirement for later steps.
+
+---
+
+# SESSION VALIDATION
+
+For a session-aware Teacher request, validate:
+
+1. Teacher is authenticated.
+2. Teacher exists.
+3. Teacher's school is resolved server-side.
+4. Raw selected-session value is syntactically valid.
+5. Academic Session exists.
+6. Academic Session belongs to Teacher's school.
+7. Operation mode permits active/inactive session.
+8. Module-specific assignment validation can happen after session resolution.
+
+---
+
+# FAILURE BEHAVIOR
+
+Fail closed.
+
+Use consistent behavior.
+
+Examples:
+
+### No Teacher authentication
+401
+
+### Required session missing
+400
+
+### Malformed session ID
+400
+
+### Session does not exist
+Do not leak useful cross-tenant information.
+
+### Session belongs to another school
+403
+
+The response must not reveal sensitive information about the foreign school's Academic Session.
+
+### Historical session used for current-only write
+Reject clearly.
+
+Do NOT silently fall back to active session.
+
+---
+
+# CROSS-SCHOOL SECURITY TESTS
+
+Add focused tests for the foundation.
+
+At minimum test:
+
+### Same-school valid selected session
+Teacher School A
+→ Session School A
+→ accepted
+
+### Foreign-school session
+Teacher School A
+→ Session School B
+→ rejected
+
+### Missing required session
+→ rejected
+
+### Malformed session
+→ rejected
+
+### Historical same-school read
+→ allowed when using read-compatible mode
+
+### Historical write
+→ rejected under CURRENT_SESSION_WRITE
+
+### Client school spoof
+If request attempts to supply School B while authenticated Teacher belongs to School A:
+→ authorization must continue using School A.
+
+### Client Teacher spoof
+If request supplies another Teacher ID:
+→ authenticated Teacher remains authoritative.
+
+---
+
+# WEB + MOBILE COMPATIBILITY
+
+The foundation must support the existing architecture:
+
+### Web
+Server-side session cookie authentication.
+
+### Mobile
+Bearer/mobile authentication.
+
+Do NOT break either authentication system.
+
+Do NOT make Web depend on Mobile bearer tokens.
+
+Do NOT make Mobile depend on browser cookies.
+
+Reuse shared authorization logic beneath the authentication layer where practical.
+
+---
+
+# IST
+
+BENIUS business/display timezone remains:
+
+**Asia/Kolkata / IST**
+
+Do not introduce UTC/local-machine-date assumptions when determining active/current session behavior.
+
+Use existing BENIUS date/session conventions.
+
+---
+
+# DO NOT TOUCH STUDENT PORTAL
+
+Student Steps 1–7 are accepted.
+
+Do NOT refactor Student Academic Session behavior as part of this Teacher step.
+
+Student Profile intentionally remains current-information based.
+
+Do NOT change it.
+
+The legacy `/uploads` document-security issue is being tracked separately and is NOT part of Teacher Step 1.
+
+Do NOT attempt to fix `/uploads` here.
+
+---
+
+# DO NOT TOUCH ADMIN EXAM CONTROLLER
+
+Admin Exam Controller has a strict separate requirement:
+
+every operation must be scoped to authenticated school + selected Academic Session ID.
+
+Do NOT alter Admin Exam Controller in this Teacher foundation step.
+
+---
+
+# DATABASE
+
+Prefer:
+
+**NO DATABASE SCHEMA CHANGE**
+
+The existing Teacher, Academic Session, mapping, and enrollment structures should be inspected and reused.
+
+Do not add a new session table merely for this resolver.
+
+If you believe a schema change is unavoidable:
+
+STOP.
+
+Explain why before implementing it.
+
+---
+
+# UI
+
+Expected:
+
+**NO UI CHANGE**
+
+Do not visually alter Teacher Portal.
+
+Do not change cards, layout, fonts, navigation, labels, buttons, or workflows.
+
+---
+
+# VALIDATION
+
+Run focused validation.
+
+At minimum:
+
+- Teacher Academic Session resolver tests
+- cross-school isolation tests
+- historical read/current-write tests
+- API build/typecheck comparison
+- Web build
+- Mobile TypeScript validation if shared code is affected
+
+Current known diagnostic baseline before Teacher work:
+
+- API TypeScript diagnostics: **377**
+- Web TypeScript diagnostics: **60**
+- Mobile TypeScript diagnostics: **0**
+
+Do not hide new diagnostics inside the existing baseline.
+
+If counts change, explain exactly why.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## TEACHER STEP 1 — ACADEMIC SESSION FOUNDATION
+
+### Existing architecture found
+Explain Teacher auth, school identity, selected session transport, mappings, and existing session helpers.
+
+### Classification confirmed
+List Teacher modules under:
+- Global
+- Academic Session Based
+- Hybrid
+
+based on actual current code.
+
+If the previous classification differs from current code, report the difference rather than silently changing it.
+
+### Foundation implemented
+Explain the authoritative Teacher/session resolution chain.
+
+### Authentication
+Explain Web and Mobile identity handling.
+
+### Tenant isolation
+Explain how Teacher School A is prevented from resolving School B sessions.
+
+### Session modes
+List supported modes and behavior.
+
+### Historical session behavior
+Explain historical reads vs writes.
+
+### Teacher assignment handling
+Explain what Step 1 validates and what remains module-specific.
+
+### Student placement rule
+Explain how later Teacher modules should use selected-session enrollments.
+
+### Tests
+Report exact tests and results.
+
+### API diagnostics
+Before:
+377
+
+After:
+<actual>
+
+Explain any difference.
+
+### Web diagnostics
+Before:
+60
+
+After:
+<actual>
+
+### Mobile diagnostics
+Before:
+0
+
+After:
+<actual>
+
+### Web build
+PASS/FAIL
+
+### Database changes
+Expected:
+None
+
+### UI changes
+Expected:
+None
+
+### Student Portal changes
+Must be:
+None
+
+### Admin Portal changes
+Must be:
+None
+
+### `/uploads` changes
+Must be:
+None
+
+### Files changed
+List exact files.
+
+### Deferred Teacher module corrections
+List module-specific issues discovered but NOT fixed.
+
+### Recommended Teacher Step 2
+Recommend the next **single Teacher module/group** to correct.
+
+---
+
+# IMPORTANT FINAL RULE
+
+This is the Teacher equivalent of establishing the trusted Academic Session boundary.
+
+Do not attempt to fix the entire Teacher Portal in one step.
+
+The purpose is:
+
+**Authenticated Teacher
+→ authenticated Teacher's school
+→ validated selected Academic Session
+→ later module-specific authorization**
+
+with strict tenant isolation and without changing existing BENIUS UI/UX.
