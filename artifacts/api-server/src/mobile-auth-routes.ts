@@ -14,6 +14,10 @@ import { z } from "zod/v4";
 import { db, pool } from "./db";
 import { storage } from "./storage";
 import {
+  resolveTeacherAcademicSession,
+  type TeacherAcademicSessionRequest,
+} from "./teacher-academic-session";
+import {
   authenticationAttemptIsRevoked,
   studentAuthenticationAttemptIsRevoked,
 } from "./session-revocation";
@@ -395,6 +399,24 @@ export async function requireMobileAcademicSession(
   }
   if (auth.principal.role === "support_staff") {
     reject(res, 403, "This account is not permitted to select academic sessions.");
+    return;
+  }
+  if (auth.principal.role === "teacher") {
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!resolution.ok) {
+      reject(res, resolution.status, resolution.message);
+      return;
+    }
+    if (!resolution.session) {
+      reject(res, 503, "Unable to verify the selected academic session.");
+      return;
+    }
+    (req as MobileAuthenticatedRequest).mobileAcademicSession = resolution.session;
+    next();
     return;
   }
   const header = req.get("x-view-session-id");

@@ -20,6 +20,7 @@ import {
   todayInIST,
 } from "./shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
+import { resolveTeacherAcademicSession } from "./teacher-academic-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
@@ -160,8 +161,7 @@ export function registerTeacherRoutes(app: Express) {
    */
   const resolveTeacherExaminationContext = async (req: any, res: any) => {
     const context = await resolveTeacherExaminationSession(
-      req.session.teacherId,
-      req.viewSessionId,
+      req,
       storage,
     );
     if (!context.ok) {
@@ -311,10 +311,9 @@ export function registerTeacherRoutes(app: Express) {
   // Returns all sessions for the teacher's school, newest first.
   // Lets the frontend populate the "View Past Records" session picker.
   app.get("/api/teacher/academic-sessions", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const sessions = await storage.getAcademicSessions(teacher.schoolId);
+    const context = await resolveTeacherAcademicSession(req, "GLOBAL", storage);
+    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    const sessions = await storage.getAcademicSessions(context.schoolId);
     res.json(sessions);
   });
 
