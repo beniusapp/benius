@@ -1,0 +1,863 @@
+# BENIUS — TEACHER PORTAL
+# STEP 3 — ATTENDANCE ACADEMIC SESSION CORRECTION
+
+Teacher Step 1 — Academic Session Foundation is COMPLETE.
+
+Teacher Step 2 — Teacher Timetable correction is COMPLETE.
+
+Now correct **Teacher Attendance only**.
+
+Do NOT start Homework, Examination, Classwork, Noticeboard, Dashboard, Complaint, Leave, Approval Center, Student Profiles, or other Teacher modules.
+
+---
+
+# ABSOLUTE RULES
+
+BENIUS is a multi-school / multi-tenant School MIS.
+
+Tenant isolation is mandatory.
+
+A Teacher from School A must NEVER read, create, modify, delete, calculate with, or otherwise access School B attendance/session/student data.
+
+The existing Web application remains the source of truth for:
+
+- UI/UX
+- attendance workflow
+- attendance permissions
+- calculations
+- validation
+- date behavior
+- navigation
+- loading/error/empty states
+- existing intentional behavior
+
+Do NOT redesign Teacher Attendance.
+
+Do NOT add new Attendance features.
+
+Do NOT "improve" existing business rules unless required to correct Academic Session or tenant isolation.
+
+---
+
+# IMPORTANT CLASSIFICATION
+
+Teacher Attendance is:
+
+**HYBRID**
+
+Do NOT make the entire Attendance module Academic Session Based.
+
+The audit already indicated:
+
+### Session-sensitive
+Examples may include:
+- Student attendance records
+- attendance roster/cohort
+- attendance statistics derived from session records
+- session-specific Student placement
+- Teacher attendance records if stored/session-linked that way
+- attendance history tied to an Academic Session
+
+### Global/current supporting configuration
+Examples may include:
+- attendance policy
+- working-day configuration
+- school-level attendance settings
+
+However:
+
+**DO NOT assume this classification at route level.**
+
+Inspect the actual implementation first.
+
+Classify each Teacher Attendance route/read/write/calculation based on the existing schema and behavior.
+
+---
+
+# STEP 1 FOUNDATION
+
+Use the accepted Teacher Academic Session resolver:
+
+`teacher-academic-session.ts`
+
+Trusted chain:
+
+Authenticated Teacher
+→ server-loaded Teacher
+→ Teacher's real school
+→ selected Academic Session
+→ verify session belongs to Teacher's school
+→ module-specific Attendance authorization
+
+Do NOT duplicate the foundation.
+
+Do NOT trust client-supplied:
+
+- `teacherId`
+- `schoolId`
+
+for authorization.
+
+---
+
+# FIRST — FORENSIC AUDIT OF TEACHER ATTENDANCE
+
+Before changing code, trace the complete Teacher Attendance implementation.
+
+Inspect:
+
+- Teacher Attendance Web page
+- Mobile Teacher Attendance implementation if present
+- Teacher Attendance API routes
+- attendance storage functions
+- attendance schema/tables
+- Student roster loading
+- Teacher's class/section mappings
+- Teacher self-attendance if present
+- attendance marking
+- attendance editing
+- attendance history
+- attendance statistics
+- working-day logic
+- attendance policy
+- selected Academic Session handling
+- `x-view-session-id`
+- active-session fallback
+- date parameters
+- timezone/date conversion
+- cache/query keys
+- Mobile bearer-auth paths
+
+Determine exactly which pieces are:
+
+1. GLOBAL
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED CALCULATION
+
+Do not change anything until this flow is understood.
+
+---
+
+# STUDENT ATTENDANCE — SESSION PLACEMENT
+
+This is extremely important.
+
+When Teacher Attendance loads Students for a class/section in a selected Academic Session, Student placement should come from:
+
+`enrollments`
+
+using:
+
+authenticated Teacher's school
++
+Student
++
+selected Academic Session
+
+Do NOT use only current:
+
+`students.class`
+`students.section`
+`students.roll_number`
+
+for historical session rosters.
+
+Example:
+
+Student Arif:
+
+2025–26:
+Class 7 / Section A / Roll 12
+
+2026–27:
+Class 8 / Section B / Roll 8
+
+If Teacher selects 2025–26, Attendance must use:
+
+Class 7 / Section A / Roll 12
+
+not the Student's current Class 8 placement.
+
+Preserve permanent identity fields from `students`.
+
+Use session placement from `enrollments` where attendance cohort/placement is session-dependent.
+
+---
+
+# TEACHER ASSIGNMENT / ACCESS
+
+Do NOT assume that because a Teacher belongs to School A they may mark attendance for every Student in School A.
+
+Inspect the existing Teacher Attendance authorization.
+
+Determine how the current application decides which:
+
+- class
+- section
+- subject, if relevant
+- Students
+
+the Teacher can access.
+
+Preserve existing permissions.
+
+However, authorization must always begin from the authenticated Teacher.
+
+Never allow the client to impersonate another Teacher by supplying a different Teacher ID.
+
+Do NOT invent new Teacher assignment rules.
+
+---
+
+# SELECTED ACADEMIC SESSION
+
+For session-dependent Attendance reads, use the appropriate Step 1 selected-session mode.
+
+Normally:
+
+`SELECTED_SESSION_REQUIRED`
+
+for explicit session-sensitive reads.
+
+Do NOT silently replace a missing selected session with the active session unless a specific existing Attendance operation genuinely requires active fallback and that behavior is documented and justified.
+
+For the main Teacher Attendance session workflow, prefer explicit selected-session behavior.
+
+---
+
+# HISTORICAL ATTENDANCE
+
+Historical Academic Sessions should remain readable where the existing application supports history.
+
+Example:
+
+Current:
+2026–27
+
+Teacher selects:
+2025–26
+
+Expected:
+
+Teacher sees the appropriate 2025–26 attendance records/roster/history.
+
+BENIUS must NOT show 2026–27 attendance because that is currently active.
+
+Historical reads must remain constrained to:
+
+Teacher's school
++
+selected historical Academic Session
++
+existing Teacher access rules.
+
+---
+
+# ATTENDANCE WRITES
+
+Attendance writes are sensitive.
+
+Inspect all Teacher Attendance mutations, including:
+
+- mark attendance
+- update attendance
+- bulk mark
+- edit attendance
+- delete/reset if available
+- Teacher self-attendance if present
+- any attendance recomputation
+
+Determine which writes are allowed by existing BENIUS behavior.
+
+Do NOT add new write capabilities.
+
+For Student attendance writes that are intended only for the current active Academic Session:
+
+use:
+
+`CURRENT_SESSION_WRITE`
+
+The Teacher must explicitly have the active session selected.
+
+Do NOT:
+
+historical session
+→ silently write to active session.
+
+Instead:
+
+historical session write
+→ reject.
+
+---
+
+# CRITICAL — DO NOT REWRITE HISTORICAL ATTENDANCE
+
+Earlier Teacher audit identified a possible risk around Teacher self-attendance recomputation / historical rewriting.
+
+Investigate this carefully.
+
+If an Attendance action recalculates or updates records, ensure it does not accidentally modify historical attendance belonging to another Academic Session.
+
+Every session-sensitive mutation must target the exact intended:
+
+school
++
+session
++
+Teacher/Student
++
+attendance record/date
+
+Do NOT run broad update/recompute logic that can rewrite previous Academic Sessions.
+
+If you discover a genuine pre-existing broader architectural problem that cannot safely be fixed within Teacher Attendance Step 3:
+
+document it clearly.
+
+Do not redesign unrelated modules.
+
+---
+
+# DATE AND TIME — IST
+
+BENIUS business/display timezone is:
+
+**Asia/Kolkata / IST**
+
+Inspect Attendance date handling carefully.
+
+Attendance is particularly sensitive to date boundaries.
+
+Check:
+
+- today's date
+- attendance date
+- server timestamps
+- date-only fields
+- start/end-of-day calculations
+- Mobile date handling
+- Web date handling
+
+Do NOT introduce UTC date shifting that can move an attendance record to the previous/next date.
+
+Reuse existing BENIUS IST/date-only utilities where appropriate.
+
+Do not redesign existing date semantics unless there is an actual session/date correctness issue.
+
+---
+
+# GLOBAL ATTENDANCE SETTINGS
+
+Do NOT incorrectly attach selected Academic Session to genuinely global/current configuration.
+
+If current architecture treats these as school-level/global:
+
+- attendance policy
+- working-day configuration
+- attendance settings
+
+preserve that behavior.
+
+They should still be constrained by authenticated Teacher's school where Teachers are permitted to read them.
+
+But do not invent Academic Session versioning for a table that currently has no session model.
+
+If this creates a historical limitation, document it.
+
+Example:
+
+"Historical attendance records are session-specific, but the policy displayed is the current school-level policy because policies are not versioned."
+
+That is acceptable if it reflects the existing architecture.
+
+---
+
+# STATISTICS / CALCULATIONS
+
+Any Attendance statistic derived from session-specific attendance records must use the selected Academic Session.
+
+Examples:
+
+- present count
+- absent count
+- attendance percentage
+- monthly attendance
+- Student attendance summary
+
+If the Teacher selects 2025–26, statistics must not include 2026–27 records.
+
+Always preserve:
+
+school
++
+selected session
++
+existing Teacher/cohort access
+
+in session-derived calculations.
+
+Do not change the existing mathematical formula unless it is incorrectly crossing session boundaries.
+
+---
+
+# CACHE / QUERY KEYS
+
+Any Web or Mobile cache containing session-dependent Attendance data must include the selected Academic Session.
+
+Conceptually:
+
+Teacher
++
+Attendance
++
+selectedSessionId
++
+other relevant filters
+
+Session A data must not be reused for Session B.
+
+Test:
+
+Session A
+→ Attendance A
+
+Session B
+→ Attendance B
+
+Session A again
+→ Attendance A
+
+No stale cross-session data.
+
+Global Attendance policy/settings should not be artificially duplicated per session if they are genuinely global.
+
+---
+
+# MOBILE
+
+If Teacher Attendance is implemented natively in Mobile, inspect it carefully.
+
+Remember that Teacher Attendance is intended to be a native module in the hybrid BENIUS mobile architecture.
+
+Preserve the existing native UI.
+
+Mobile must use:
+
+validated bearer Teacher
++
+Teacher's real school
++
+selected Academic Session
+
+Do NOT introduce Web cookie dependency.
+
+Do NOT create a separate Mobile attendance business rule.
+
+Web and Mobile should use the same backend authorization/business truth wherever possible.
+
+---
+
+# TENANT ISOLATION TESTS
+
+Explicitly test:
+
+Teacher School A
++
+School A session
+→ allowed according to existing permissions.
+
+Teacher School A
++
+School B session
+→ rejected.
+
+Teacher School A
++
+School B Student
+→ rejected.
+
+Teacher School A
++
+School B attendance record
+→ rejected.
+
+Supplying another:
+
+- Teacher ID
+- school ID
+- Student ID
+- attendance record ID
+
+must never bypass authenticated tenant scope.
+
+Foreign and nonexistent identifiers should avoid unnecessary information leakage.
+
+---
+
+# SESSION / STUDENT PLACEMENT TESTS
+
+Create focused tests for a Student whose placement differs between sessions.
+
+Example fixture:
+
+2025–26:
+Class 7 / A / Roll 12
+
+2026–27:
+Class 8 / B / Roll 8
+
+Verify:
+
+Selecting 2025–26
+→ roster/history/statistics use 2025–26 enrollment.
+
+Selecting 2026–27
+→ roster/history/statistics use 2026–27 enrollment.
+
+Do not rely on current Student master placement for historical Attendance.
+
+---
+
+# HISTORICAL WRITE TEST
+
+Verify:
+
+Historical session selected
++
+Teacher attempts attendance write
+→ rejected.
+
+Then verify:
+
+Active session explicitly selected
++
+authorized Teacher
++
+authorized Student/cohort
+→ existing permitted Attendance write works.
+
+Do not redirect the historical request to active session.
+
+---
+
+# TEACHER SELF-ATTENDANCE
+
+If Teacher Attendance includes Teacher self-attendance:
+
+audit it separately from Student attendance.
+
+Determine:
+
+- whether it is session-specific
+- whether it uses date-only or timestamps
+- whether any recomputation can alter old records
+- whether historical session selection affects it
+- whether it is actually intended to follow Academic Session
+
+Do NOT force Student Attendance rules onto Teacher self-attendance without evidence.
+
+Preserve existing business semantics while fixing proven tenant/session problems.
+
+Document the result clearly.
+
+---
+
+# NO UI CHANGE
+
+Expected:
+
+**NO UI/UX CHANGE**
+
+Do not modify:
+
+- Attendance page layout
+- cards
+- tables
+- buttons
+- labels
+- colors
+- fonts
+- navigation
+- attendance statuses
+
+Only change underlying session/tenant/date correctness where required.
+
+---
+
+# DATABASE
+
+Expected:
+
+**NO DATABASE SCHEMA CHANGES**
+
+Reuse:
+
+- existing attendance tables
+- Academic Sessions
+- enrollments
+- Teacher mappings
+- existing policy/config tables
+
+If you believe a schema change is unavoidable:
+
+STOP and explain the reason before implementing.
+
+---
+
+# DO NOT TOUCH OTHER TEACHER MODULES
+
+Do NOT modify:
+
+- Timetable, except regression verification
+- Homework
+- Classwork
+- Noticeboard
+- Examination
+- Results
+- Reports
+- Complaint
+- Leave
+- Dashboard
+- Approval Center
+- Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+---
+
+# STUDENT PORTAL
+
+Do NOT change Student Portal.
+
+Student Portal Academic Session work is already accepted.
+
+---
+
+# ADMIN PORTAL
+
+Do NOT change Admin Portal.
+
+Especially do NOT modify:
+
+- Admin Attendance
+- Admin Exam Controller
+- Admin Timetable
+
+Teacher Attendance correction must remain isolated.
+
+---
+
+# `/uploads`
+
+Do NOT modify `/uploads`.
+
+Legacy document authorization remains a separate security workstream.
+
+---
+
+# VALIDATION BASELINES
+
+Accepted baseline before Teacher Step 3:
+
+API TypeScript diagnostics:
+**377**
+
+Web TypeScript diagnostics:
+**60**
+
+Mobile TypeScript diagnostics:
+**0**
+
+Teacher Step 1 resolver tests:
+**11 passed**
+
+Teacher Step 2 executed tests:
+**16 passed, 0 failed**
+
+Web build:
+**PASS**
+
+Keep these baselines visible.
+
+Do not hide new errors inside existing diagnostics.
+
+---
+
+# REQUIRED TESTING
+
+Run focused tests covering at minimum:
+
+1. Correct same-school selected-session Attendance read.
+2. Historical same-school Attendance read.
+3. Foreign-school session rejected.
+4. Missing required session rejected.
+5. Malformed session rejected.
+6. Current-session authorized attendance write works.
+7. Historical-session attendance write rejected.
+8. Cross-school Student rejected.
+9. Cross-school attendance record rejected.
+10. Client Teacher ID spoof cannot change Teacher identity.
+11. Client school ID spoof cannot change tenant.
+12. Historical Student placement comes from selected-session enrollment.
+13. Current Student placement comes from selected-session enrollment.
+14. Session-derived statistics stay inside selected session.
+15. Session A → B → A does not leak cached Attendance.
+16. Global attendance policy/settings remain global if current architecture defines them that way.
+17. IST/date handling does not shift attendance to another day.
+18. Existing Teacher assignment/visibility behavior remains unchanged.
+19. Teacher Timetable Step 2 behavior remains unchanged.
+20. Teacher Step 1 resolver behavior remains unchanged.
+
+If Teacher self-attendance exists, also test the relevant session/date/history behavior discovered during audit.
+
+Run relevant existing tests as regressions.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## TEACHER STEP 3 — ATTENDANCE
+
+### Existing architecture found
+Explain the actual Teacher Attendance architecture.
+
+### Route/data classification
+List which Attendance pieces are:
+- Global
+- Session read
+- Current-session write
+- Session-derived calculation
+
+### Existing problems found
+Explain actual session/tenant/date issues discovered.
+
+### Correction implemented
+Explain exactly what changed.
+
+### Teacher Academic Session foundation
+Explain how Step 1 resolver is used.
+
+### Tenant isolation
+Explain Teacher/school/Student/attendance scoping.
+
+### Teacher assignment behavior
+Explain how existing class/section access works and whether it changed.
+
+### Student placement
+Explain how selected-session `enrollments` are used.
+
+### Historical Attendance
+Explain historical read behavior.
+
+### Attendance writes
+Explain current-session write behavior and historical rejection.
+
+### Teacher self-attendance
+Explain actual behavior and whether any correction was needed.
+
+### Attendance policy/settings
+State which configuration remains global and why.
+
+### Statistics
+Explain session scoping of calculations.
+
+### IST/date behavior
+Explain date handling and any corrections.
+
+### Web cache/session behavior
+Explain selected-session query/cache handling.
+
+### Mobile behavior
+Explain native Teacher Attendance behavior and backend authorization.
+
+### Cross-school protection
+Give test results.
+
+### Session-switch behavior
+Report A → B → A.
+
+### Tests
+Give exact passed/failed counts.
+
+### Teacher Step 1 regression
+Report result.
+
+### Teacher Step 2 Timetable regression
+Report result.
+
+### API diagnostics
+Before: 377
+After: <actual>
+
+### Web diagnostics
+Before: 60
+After: <actual>
+
+### Mobile diagnostics
+Before: 0
+After: <actual>
+
+### Web build
+PASS/FAIL
+
+### Database changes
+Expected: None
+
+### UI changes
+Expected: None
+
+### Student Portal changes
+Must be: None
+
+### Admin Portal changes
+Must be: None
+
+### `/uploads` changes
+Must be: None
+
+### Files changed
+List exact files.
+
+### Deferred issues
+Clearly list anything discovered but intentionally left for another module/workstream.
+
+### Recommended Teacher Step 4
+Recommend the next single Teacher module/group to correct.
+
+---
+
+# FINAL REQUIREMENT
+
+Teacher Attendance must preserve the distinction:
+
+**Session-specific attendance data**
+→ selected Academic Session
+
+while:
+
+**genuinely global school Attendance configuration**
+→ remains global/current
+
+And all access must begin with:
+
+**Authenticated Teacher
+→ Teacher's real school
+→ validated Academic Session where required
+→ existing Teacher assignment/access
+→ selected-session Student enrollment where relevant
+→ correct Attendance data**
+
+Do not redesign the module.
+
+Do not modify unrelated portals.
+
+Do not introduce database schema changes without stopping first.
+
+Keep Step 3 narrow, safe, tenant-isolated, Academic Session correct, and IST correct.
