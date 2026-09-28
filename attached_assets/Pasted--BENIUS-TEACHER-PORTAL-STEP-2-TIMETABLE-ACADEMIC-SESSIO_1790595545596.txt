@@ -1,0 +1,703 @@
+# BENIUS — TEACHER PORTAL
+# STEP 2 — TIMETABLE ACADEMIC SESSION CORRECTION
+
+Teacher Step 1 — Academic Session Foundation is accepted as **COMPLETE**.
+
+Now correct **Teacher Timetable only**.
+
+Do NOT start Attendance, Homework, Examination, Classwork, Noticeboard, Dashboard, Leave, Complaint, Approval Center, or other Teacher modules.
+
+---
+
+# ABSOLUTE RULES
+
+BENIUS is a multi-school / multi-tenant School MIS.
+
+Tenant isolation is mandatory.
+
+A Teacher from School A must NEVER read, create, modify, delete, calculate with, or otherwise access School B timetable/session data.
+
+The existing Web application remains the source of truth for:
+
+- UI/UX
+- timetable display
+- workflows
+- permissions
+- timetable structure
+- calculations
+- navigation
+- loading/error/empty states
+- existing intentional behavior
+
+This step is an Academic Session / authorization correction.
+
+Do NOT redesign Timetable.
+
+---
+
+# STEP 1 FOUNDATION
+
+Teacher Step 1 created:
+
+`teacher-academic-session.ts`
+
+Use the shared Teacher Academic Session resolver established in Step 1.
+
+Trusted chain:
+
+Authenticated Teacher
+→ server-loaded Teacher
+→ Teacher's school
+→ selected Academic Session
+→ verify session belongs to Teacher's school
+→ module-specific Teacher timetable authorization
+
+Do NOT duplicate this logic.
+
+Do NOT authorize using client-supplied `teacherId` or `schoolId`.
+
+---
+
+# IMPORTANT EXISTING ISSUE
+
+Teacher Timetable currently uses the older:
+
+`resolveTimetableSessionId`
+
+This helper is shared with:
+
+- Admin
+- Student
+- Teacher
+
+and can fall back to the active session when the selected-session header is absent.
+
+Do NOT globally change `resolveTimetableSessionId`.
+
+Doing so could change Admin and Student behavior.
+
+Instead:
+
+**Migrate only the Teacher Timetable route group to the Teacher Step 1 resolver.**
+
+Admin Timetable must remain unchanged.
+
+Student Timetable must remain unchanged.
+
+---
+
+# TEACHER TIMETABLE CLASSIFICATION
+
+Teacher Timetable is:
+
+**ACADEMIC SESSION BASED**
+
+Therefore Teacher Timetable must operate against the explicitly selected Academic Session.
+
+For Teacher Timetable session-sensitive operations:
+
+Use:
+
+`SELECTED_SESSION_REQUIRED`
+
+for reads unless actual current code proves a specific operation requires another already-approved mode.
+
+Do NOT silently fall back to the active Academic Session when the Teacher has not supplied a selected session.
+
+---
+
+# FIRST — INSPECT ACTUAL IMPLEMENTATION
+
+Before modifying anything, trace the complete Teacher Timetable flow.
+
+Inspect:
+
+- Teacher Timetable Web page
+- Mobile Teacher Timetable if present
+- Teacher Timetable API routes
+- timetable storage/query functions
+- `resolveTimetableSessionId`
+- `teacher-academic-session.ts`
+- Teacher timetable/faculty/class/subject mappings
+- timetable schema
+- academic-session fields
+- class/section/subject fields
+- Teacher IDs
+- school IDs
+- publication/draft fields
+- read routes
+- create/update/delete routes if Teacher has them
+- cache/query keys
+- selected-session transport
+- `x-view-session-id`
+- any active-session fallback
+- any client-provided session ID
+- any client-provided school/Teacher ID
+
+Report actual behavior rather than assuming it.
+
+---
+
+# SELECTED SESSION — WEB
+
+Teacher Timetable Web requests must be pinned to the selected Academic Session.
+
+Use the existing supported selected-session request mechanism.
+
+The same session ID used in the React Query/cache key must be the session ID sent to the backend.
+
+Conceptually:
+
+selectedSessionId
+→ query key contains selectedSessionId
+→ request sends same selectedSessionId
+→ server validates same selectedSessionId
+
+Avoid:
+
+Session A cache key
++
+Session B request
+
+or unscoped cache keys.
+
+---
+
+# SELECTED SESSION — MOBILE
+
+If Mobile Teacher Timetable exists:
+
+preserve the current UI.
+
+Ensure requests use the selected Academic Session through the existing Mobile authenticated API architecture.
+
+The backend must validate:
+
+Mobile Teacher
+→ Teacher school
+→ selected session belongs to that school.
+
+Do NOT introduce browser-cookie dependency into Mobile.
+
+Do NOT redesign Mobile Timetable.
+
+---
+
+# NO ACTIVE-SESSION FALLBACK
+
+Teacher Timetable is Academic Session Based.
+
+Therefore:
+
+If Teacher selected Session A:
+→ show Session A timetable.
+
+If Teacher selected Session B:
+→ show Session B timetable.
+
+If required selected session is missing:
+→ reject / do not perform an unscoped timetable request.
+
+Do NOT silently substitute the active session.
+
+This is especially important when viewing historical Academic Sessions.
+
+---
+
+# HISTORICAL SESSION READS
+
+A Teacher should be able to view a valid historical Academic Session timetable if existing BENIUS product behavior supports historical session selection.
+
+Example:
+
+Current active session:
+2026–27
+
+Teacher selects:
+2025–26
+
+Expected:
+
+Teacher Timetable reads timetable belonging to 2025–26.
+
+It must NOT display 2026–27 because that happens to be active.
+
+Historical reads must remain:
+
+Teacher school
++
+selected historical session
++
+appropriate Teacher timetable visibility.
+
+---
+
+# WRITES
+
+First determine whether Teachers can:
+
+- create timetable entries
+- edit timetable entries
+- delete timetable entries
+- publish timetable
+- otherwise mutate timetable data
+
+Do NOT assume Teachers have these permissions.
+
+If Teacher Timetable is read-only in the current product:
+
+KEEP IT READ-ONLY.
+
+Do not add write capabilities.
+
+If Teacher writes genuinely exist:
+
+use the appropriate Step 1 session mode.
+
+For writes that must only affect the current active Academic Session:
+
+`CURRENT_SESSION_WRITE`
+
+must be used.
+
+Never silently redirect a historical-session write to the active session.
+
+Preserve existing Teacher permissions exactly.
+
+---
+
+# TEACHER TIMETABLE VISIBILITY
+
+Do not assume that belonging to the school means the Teacher may see every timetable record.
+
+Inspect actual existing Teacher Timetable behavior.
+
+Determine whether Teacher Timetable currently shows:
+
+- only entries assigned to that Teacher
+- class timetable
+- Teacher's subjects
+- Teacher's class/section mappings
+- all school timetable entries
+- some combination
+
+Preserve the existing product behavior.
+
+Where Teacher-specific authorization exists, derive Teacher identity from authentication.
+
+Do NOT trust a client-provided Teacher ID to decide timetable visibility.
+
+---
+
+# SCHOOL / TENANT ISOLATION
+
+Every Teacher Timetable query must ultimately be constrained by:
+
+**authenticated Teacher's school**
+
+and:
+
+**validated selected Academic Session**
+
+Do not perform timetable lookup using only:
+
+- timetable ID
+- Teacher ID
+- session ID
+- class
+- section
+
+without the appropriate tenant boundary.
+
+A Teacher from School A must not access School B timetable data even if they know:
+
+- School B session ID
+- timetable entry ID
+- Teacher ID
+- class
+- section
+- subject
+
+---
+
+# CLASS / SECTION / SUBJECT
+
+Preserve existing Teacher timetable assignment behavior.
+
+If class, section, or subject comes from the client, validate it against the authenticated Teacher's allowed timetable context where the current product requires that restriction.
+
+Do NOT invent new permissions.
+
+Do NOT broaden Teacher access.
+
+---
+
+# SESSION SWITCHING
+
+Test:
+
+Session A
+→ Teacher Timetable A
+
+switch to Session B
+→ Teacher Timetable B
+
+switch back to Session A
+→ Teacher Timetable A
+
+There must be no stale timetable data from another session.
+
+Cache/query keys must contain the selected Academic Session wherever timetable data is session-dependent.
+
+---
+
+# PUBLICATION BEHAVIOR
+
+Do NOT change draft/published timetable visibility merely because it appears unusual.
+
+Inspect current Teacher behavior and preserve it exactly.
+
+If Teachers currently see:
+
+- published only
+
+preserve published only.
+
+If they currently see:
+
+- draft + published
+
+preserve draft + published.
+
+This step is not a publication-policy redesign.
+
+---
+
+# STUDENT PLACEMENT
+
+If Teacher Timetable displays Student/cohort information and historical placement is relevant, use selected-session enrollment information where appropriate.
+
+Do not substitute current Student class/section for historical session placement.
+
+However, do not add Student logic if Teacher Timetable does not actually require it.
+
+---
+
+# ERROR BEHAVIOR
+
+Use the Step 1 foundation.
+
+Expected:
+
+Unauthenticated Teacher
+→ 401
+
+Required selected session missing
+→ 400
+
+Malformed session
+→ 400
+
+Foreign-school/nonexistent session
+→ safe rejection according to Step 1 behavior
+
+Historical session read
+→ allowed where supported
+
+Historical current-only write
+→ rejected
+
+Do not leak foreign-school information.
+
+---
+
+# GLOBAL MODULES
+
+Do NOT modify:
+
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+They remain outside this Timetable correction.
+
+---
+
+# OTHER TEACHER MODULES
+
+Do NOT modify:
+
+- Dashboard
+- Attendance
+- Homework
+- Classwork
+- Noticeboard
+- Complaint
+- Examination
+- Results
+- Reports
+- Leave
+- Approval Center
+- Student Profiles
+
+Those will be handled separately.
+
+---
+
+# STUDENT PORTAL
+
+Student Portal Academic Session correction work is complete.
+
+Do NOT change Student Timetable.
+
+Do NOT change Student session behavior.
+
+Do NOT change Student Profile.
+
+---
+
+# ADMIN PORTAL
+
+Do NOT change Admin Timetable.
+
+Do NOT change Admin Exam Controller.
+
+The old shared timetable resolver may continue serving Admin/Student behavior.
+
+Only the Teacher Timetable branch should migrate to the Teacher Step 1 foundation.
+
+---
+
+# `/uploads`
+
+The legacy `/uploads` authorization issue is tracked separately.
+
+Do NOT modify:
+
+- `/uploads`
+- file storage
+- attachment URLs
+- document security
+
+during Teacher Step 2.
+
+---
+
+# DATABASE
+
+Expected:
+
+**NO DATABASE SCHEMA CHANGES**
+
+Reuse existing timetable/session/mapping structures.
+
+Do not add tables or columns merely for this correction.
+
+If you believe schema changes are unavoidable:
+
+STOP and explain why before implementing.
+
+---
+
+# UI
+
+Expected:
+
+**NO UI/UX CHANGE**
+
+Teacher Timetable should look and behave visually exactly as before.
+
+Do not change:
+
+- layout
+- cards
+- colors
+- fonts
+- labels
+- navigation
+- buttons
+- timetable appearance
+
+Only correct session/tenant behavior underneath.
+
+---
+
+# TESTS
+
+Add focused Teacher Timetable tests.
+
+At minimum cover:
+
+1. Teacher School A + Session A → correct timetable.
+2. Teacher School A + historical Session A → correct historical timetable.
+3. Teacher School A + School B session → rejected.
+4. Missing selected session → no active-session fallback.
+5. Malformed selected session → rejected.
+6. Client-supplied Teacher ID cannot impersonate another Teacher.
+7. Client-supplied school ID cannot cross tenant.
+8. Session A → B → A does not reuse wrong cached timetable.
+9. Existing Teacher timetable visibility rules remain unchanged.
+10. Existing draft/published behavior remains unchanged.
+11. Admin Timetable behavior remains unchanged.
+12. Student Timetable behavior remains unchanged.
+
+If Teacher writes exist, additionally test:
+
+13. Valid permitted current-session write.
+14. Historical-session write rejected.
+15. Cross-school write rejected.
+
+Do not invent write tests if Teacher Timetable is read-only.
+
+---
+
+# VALIDATION BASELINES
+
+Current accepted baseline:
+
+API TypeScript diagnostics:
+**377**
+
+Web TypeScript diagnostics:
+**60**
+
+Mobile TypeScript diagnostics:
+**0**
+
+Teacher Step 1 focused tests:
+**11 passed**
+
+Run:
+
+- Teacher Step 1 resolver tests
+- new Teacher Timetable focused tests
+- relevant existing timetable tests
+- API diagnostic comparison
+- Web diagnostic comparison
+- Mobile typecheck if affected
+- Web build
+
+Do not hide newly introduced errors inside baseline diagnostics.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## TEACHER STEP 2 — TIMETABLE
+
+### Existing behavior found
+Explain exactly how Teacher Timetable worked before Step 2.
+
+### Teacher permissions
+State whether Teacher Timetable is read-only or supports writes.
+
+### Previous session behavior
+Explain where `resolveTimetableSessionId` / active fallback was previously used.
+
+### Correction implemented
+Explain exactly what changed.
+
+### Teacher Academic Session foundation
+Explain how Teacher Timetable now uses Step 1.
+
+### Tenant isolation
+Explain how authenticated Teacher school scopes timetable access.
+
+### Selected-session behavior
+Explain explicit session handling.
+
+### Historical sessions
+Explain historical timetable behavior.
+
+### Teacher assignment / visibility
+Explain which timetable records the Teacher can see and how that was preserved.
+
+### Publication behavior
+State exactly whether Teacher sees published-only or draft + published and confirm it was not changed.
+
+### Web behavior
+Explain selected-session request and cache behavior.
+
+### Mobile behavior
+Explain whether Mobile Teacher Timetable was affected and how.
+
+### Cross-school protection
+Report tests/results.
+
+### Session-switch tests
+Report A → B → A behavior.
+
+### Teacher Step 1 regression
+Report Step 1 tests.
+
+### Admin Timetable regression
+Confirm behavior unchanged.
+
+### Student Timetable regression
+Confirm behavior unchanged.
+
+### Tests
+Give exact passed/failed counts.
+
+### API diagnostics
+Before: 377
+After: <actual>
+
+### Web diagnostics
+Before: 60
+After: <actual>
+
+### Mobile diagnostics
+Before: 0
+After: <actual>
+
+### Web build
+PASS/FAIL
+
+### Database changes
+Expected: None
+
+### UI changes
+Expected: None
+
+### Student Portal changes
+Must be: None
+
+### Admin Portal changes
+Must be: None
+
+### `/uploads` changes
+Must be: None
+
+### Files changed
+List exact files.
+
+### Deferred issues
+List anything discovered but deliberately not corrected because it belongs to another Teacher module.
+
+### Recommended Teacher Step 3
+Recommend the next single Teacher module/group to correct.
+
+---
+
+# FINAL REQUIREMENT
+
+Teacher Timetable must now follow:
+
+**Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher timetable visibility/assignment rules
+→ timetable records for that exact school/session**
+
+Do not redesign anything.
+
+Do not change Admin or Student Timetable.
+
+Do not fix unrelated issues.
+
+Keep this correction narrow, safe, and tenant-isolated.
