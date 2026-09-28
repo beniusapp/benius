@@ -1085,29 +1085,9 @@ export class DatabaseStorage {
     cls: string,
     section: string,
   ): Promise<Student[]> {
-    const [attendanceRoster, allSessionEnrollments, scoreStudents] = await Promise.all([
-      this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section),
-      db.select({ studentId: enrollments.studentId }).from(enrollments).where(and(
-        eq(enrollments.schoolId, schoolId),
-        eq(enrollments.sessionId, sessionId),
-      )),
-      db.select({ student: students }).from(students).innerJoin(examScores, and(
-        eq(examScores.studentId, students.id),
-        eq(examScores.schoolId, students.schoolId),
-      )).where(and(
-        eq(students.schoolId, schoolId),
-        eq(examScores.schoolId, schoolId),
-        eq(examScores.sessionId, sessionId),
-        eq(examScores.class, cls),
-        eq(examScores.section, section),
-      )),
-    ]);
-    const enrolledStudentIds = new Set(allSessionEnrollments.map(row => row.studentId));
-    const roster = new Map(attendanceRoster.map(student => [student.id, student]));
-    for (const { student } of scoreStudents) {
-      if (!enrolledStudentIds.has(student.id)) roster.set(student.id, student);
-    }
-    return [...roster.values()];
+    // Examination cohorts follow the same session-aware roster as Attendance.
+    // Never add score-only rows: a score is not proof of enrollment or placement.
+    return this.getAttendanceRosterForSessionClass(schoolId, sessionId, cls, section);
   }
 
   async resolveAttendanceClassSectionForStudent(
@@ -2385,9 +2365,76 @@ export class DatabaseStorage {
     }));
   }
 
+  /**
+   * Teacher Examination score read. A result must match both the saved score
+   * cohort and the student's enrollment in the selected session; permanent
+   * student identity is joined only inside the authenticated school.
+   */
+  async getTeacherExamScoresForSession(
+    schoolId: number,
+    subject: string,
+    examType: string,
+    cls: string,
+    section: string,
+    sessionId: number,
+  ): Promise<(ExamScore & { studentName: string; dsid: string })[]> {
+    const result = await db.select().from(examScores)
+      .innerJoin(enrollments, and(
+        eq(enrollments.studentId, examScores.studentId),
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+      ))
+      .innerJoin(students, and(
+        eq(examScores.studentId, students.id),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.sessionId, sessionId),
+        eq(examScores.subject, subject),
+        eq(examScores.examType, examType),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+      ));
+    return result.map(r => ({
+      ...r.exam_scores,
+      studentName: r.students.name,
+      dsid: r.students.digitalStudentId,
+      photoUrl: r.students.photoUrl ?? null,
+    }));
+  }
+
   async getExamScoresByStudent(studentId: number, schoolId: number, sessionId?: number | null): Promise<ExamScore[]> {
     const conditions = [eq(examScores.studentId, studentId), eq(examScores.schoolId, schoolId), ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : [])];
     return await db.select().from(examScores).where(and(...conditions)).orderBy(examScores.examType);
+  }
+
+  async getTeacherExamScoresByStudentInClassSession(
+    studentId: number,
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<ExamScore[]> {
+    const rows = await db.select().from(examScores)
+      .innerJoin(enrollments, and(
+        eq(enrollments.studentId, examScores.studentId),
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+      ))
+      .where(and(
+        eq(examScores.studentId, studentId),
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.sessionId, sessionId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+      ))
+      .orderBy(examScores.examType);
+    return rows.map(row => row.exam_scores);
   }
 
   async getStudentDistinctClasses(schoolId: number, studentId: number, sessionId: number, cls: string, section: string): Promise<string[]> {
@@ -2481,6 +2528,42 @@ export class DatabaseStorage {
       grouped[s.examType].count++;
     }
 
+    return Object.entries(grouped).map(([examType, data]) => ({
+      examType,
+      avgPercentage: Math.round(data.total / data.count),
+    }));
+  }
+
+  /** Session-pinned Teacher class averages based on persisted cohort snapshots. */
+  async getTeacherClassAveragesForSession(
+    schoolId: number,
+    cls: string,
+    section: string,
+    subject: string,
+    sessionId: number,
+  ): Promise<{ examType: string; avgPercentage: number }[]> {
+    const scoreRows = await db.select({ score: examScores }).from(examScores)
+      .innerJoin(enrollments, and(
+        eq(enrollments.studentId, examScores.studentId),
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+      ))
+      .where(and(
+        eq(examScores.schoolId, schoolId),
+        eq(examScores.sessionId, sessionId),
+        eq(examScores.class, cls),
+        eq(examScores.section, section),
+        eq(examScores.subject, subject),
+        eq(examScores.isAbsent, false),
+      ));
+    const grouped: Record<string, { total: number; count: number }> = {};
+    for (const { score } of scoreRows) {
+      if (!grouped[score.examType]) grouped[score.examType] = { total: 0, count: 0 };
+      grouped[score.examType].total += Math.round((score.marks / score.totalMarks) * 100);
+      grouped[score.examType].count++;
+    }
     return Object.entries(grouped).map(([examType, data]) => ({
       examType,
       avgPercentage: Math.round(data.total / data.count),
@@ -6729,61 +6812,82 @@ export class DatabaseStorage {
     schoolId: number, cls: string, section: string, term: string,
     teacherId: number, lock: boolean,
     entries: Array<{ studentId: number; decision: string; targetClass: string; targetSection: string; editCount: number; autoSuggestion?: string }>,
-    sessionId?: number,
-  ): Promise<void> {
+    sessionId: number,
+  ): Promise<boolean> {
     const now = new Date();
+    return db.transaction(async (tx) => {
+      // The existing conflict identity omits sessionId. Refuse to overwrite a
+      // decision tagged to another (or legacy untagged) session until the
+      // database can represent both rows independently. Transaction-scoped
+      // advisory locks also close the concurrent first-insert race.
+      const studentIds = [...new Set(entries.map(entry => entry.studentId))].sort((a, b) => a - b);
+      for (const studentId of studentIds) {
+        const conflictIdentity = JSON.stringify([schoolId, cls, section, term, studentId]);
+        await tx.execute(sql`
+          SELECT pg_advisory_xact_lock(hashtextextended(${conflictIdentity}, 0))
+        `);
+        const existing = await tx.select({ sessionId: promotionDecisions.sessionId })
+          .from(promotionDecisions)
+          .where(and(
+            eq(promotionDecisions.schoolId, schoolId),
+            eq(promotionDecisions.class, cls),
+            eq(promotionDecisions.section, section),
+            eq(promotionDecisions.term, term),
+            eq(promotionDecisions.studentId, studentId),
+          ))
+          .limit(1)
+          .for("update");
+        if (existing.length > 0 && existing[0].sessionId !== sessionId) return false;
+      }
 
-    // When unlocking: bulk-clear ALL locked flags for this cohort first.
-    // This handles stale locked rows for students who were already promoted
-    // (their class is now different, so they are absent from `entries` but
-    // their old promotionDecision row still has locked=true and would
-    // re-trigger the UI lock on the next refetch).
-    if (!lock) {
-      await db.update(promotionDecisions)
-        .set({ locked: false, lockedAt: null, updatedAt: now })
-        .where(and(
-          eq(promotionDecisions.schoolId, schoolId),
-          eq(promotionDecisions.class, cls),
-          eq(promotionDecisions.section, section),
-          eq(promotionDecisions.term, term),
-        ));
-    }
+      // When unlocking, clear only locked rows from the selected session.
+      if (!lock) {
+        await tx.update(promotionDecisions)
+          .set({ locked: false, lockedAt: null, updatedAt: now })
+          .where(and(
+            eq(promotionDecisions.schoolId, schoolId),
+            eq(promotionDecisions.class, cls),
+            eq(promotionDecisions.section, section),
+            eq(promotionDecisions.term, term),
+            eq(promotionDecisions.sessionId, sessionId),
+          ));
+      }
 
-    for (const e of entries) {
-      const isManual = !!e.autoSuggestion && e.autoSuggestion !== e.decision;
-      await db.insert(promotionDecisions).values({
-        schoolId, class: cls, section, term,
-        studentId: e.studentId,
-        decision: e.decision,
-        targetClass: e.targetClass,
-        targetSection: e.targetSection,
-        editCount: e.editCount,
-        processedByTeacherId: teacherId,
-        locked: lock,
-        lockedAt: lock ? now : null,
-        autoSuggestion: e.autoSuggestion ?? null,
-        manualIntervention: isManual,
-        updatedAt: now,
-        // Tag the record with the academic session so future GET queries can
-        // apply strict session-scoped WHERE session_id = ? filtering.
-        sessionId: sessionId ?? null,
-      }).onConflictDoUpdate({
-        target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
-        set: {
-          decision: e.decision,
-          targetClass: e.targetClass,
-          targetSection: e.targetSection,
-          editCount: e.editCount,
+      for (const entry of entries) {
+        const isManual = !!entry.autoSuggestion && entry.autoSuggestion !== entry.decision;
+        await tx.insert(promotionDecisions).values({
+          schoolId, class: cls, section, term,
+          studentId: entry.studentId,
+          decision: entry.decision,
+          targetClass: entry.targetClass,
+          targetSection: entry.targetSection,
+          editCount: entry.editCount,
           processedByTeacherId: teacherId,
           locked: lock,
           lockedAt: lock ? now : null,
-          autoSuggestion: e.autoSuggestion ?? null,
+          autoSuggestion: entry.autoSuggestion ?? null,
           manualIntervention: isManual,
           updatedAt: now,
-          sessionId: sessionId ?? null,
-        },
-      });
-    }
+          sessionId,
+        }).onConflictDoUpdate({
+          target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
+          set: {
+            decision: entry.decision,
+            targetClass: entry.targetClass,
+            targetSection: entry.targetSection,
+            editCount: entry.editCount,
+            processedByTeacherId: teacherId,
+            locked: lock,
+            lockedAt: lock ? now : null,
+            autoSuggestion: entry.autoSuggestion ?? null,
+            manualIntervention: isManual,
+            updatedAt: now,
+            sessionId,
+          },
+        });
+      }
+      return true;
+    });
   }
 
   async getLedgerStatus(schoolId: number, term: string, sessionId?: number): Promise<Array<{

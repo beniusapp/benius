@@ -1,5 +1,6 @@
 import {
   resolveTeacherAcademicSession,
+  type TeacherAcademicSessionMode,
   type TeacherAcademicSessionDependencies,
   type TeacherAcademicSessionRequest,
 } from "./teacher-academic-session";
@@ -21,10 +22,11 @@ export type TeacherExaminationSessionResolution =
 export async function resolveTeacherExaminationSession(
   request: TeacherAcademicSessionRequest,
   dependencies: TeacherAcademicSessionDependencies,
+  mode: TeacherAcademicSessionMode = "SELECTED_SESSION_REQUIRED",
 ): Promise<TeacherExaminationSessionResolution> {
   const resolution = await resolveTeacherAcademicSession(
     request,
-    "SELECTED_SESSION_REQUIRED",
+    mode,
     dependencies,
   );
   if (!resolution.ok) return resolution;

@@ -159,10 +159,15 @@ export function registerTeacherRoutes(app: Express) {
    * required and is resolved together with the authenticated teacher's school,
    * so an invalid or foreign session has the same non-enumerating response.
    */
-  const resolveTeacherExaminationContext = async (req: any, res: any) => {
+  const resolveTeacherExaminationContext = async (
+    req: any,
+    res: any,
+    mode: "SELECTED_SESSION_REQUIRED" | "CURRENT_SESSION_WRITE" = "SELECTED_SESSION_REQUIRED",
+  ) => {
     const context = await resolveTeacherExaminationSession(
       req,
       storage,
+      mode,
     );
     if (!context.ok) {
       res.status(context.status).json({ message: context.message });
@@ -1218,24 +1223,29 @@ export function registerTeacherRoutes(app: Express) {
   // ===== EXAMINATION =====
   app.post("/api/exam-scores", async (req, res) => {
     try {
-      const context = await resolveTeacherExaminationContext(req, res);
+      const context = await resolveTeacherExaminationContext(req, res, "CURRENT_SESSION_WRITE");
       if (!context) return;
       const { teacher } = context;
 
       const { scores, subject, examType, totalMarks, class: cls, section } = req.body;
       if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
-      const submittedStudentIds = scores.map((s: any) => parseInt(s.studentId));
-      if (submittedStudentIds.some((id: number) => !Number.isInteger(id))) {
+      const submittedStudentIds = scores.map((s: any) => Number.parseInt(s.studentId, 10));
+      if (submittedStudentIds.some((id: number) => !Number.isSafeInteger(id) || id <= 0)) {
         return res.status(400).json({ message: "Invalid student ID" });
-      }
-      const submittedStudents = await Promise.all(submittedStudentIds.map(id => storage.getStudentById(id)));
-      if (submittedStudents.some(student => !student || student.schoolId !== context.schoolId)) {
-        return res.status(403).json({ message: "Not authorized for submitted students" });
       }
 
       const resolvedClass = cls || teacher.assignedClass || null;
       const resolvedSection = section || teacher.assignedSection || null;
       if (!resolvedClass) return res.status(400).json({ message: "Class is required to resolve the examination pass policy" });
+      if (!resolvedSection) return res.status(400).json({ message: "Section is required to resolve the examination roster" });
+      const placements = await Promise.all(submittedStudentIds.map(id =>
+        storage.resolveAttendanceClassSectionForStudent(context.schoolId, context.sessionId, id),
+      ));
+      if (placements.some(placement =>
+        !placement || placement.class !== resolvedClass || placement.section !== resolvedSection
+      )) {
+        return res.status(403).json({ message: "Scores include a student outside the selected session roster" });
+      }
       const passPolicy = await storage.resolveClassPassPolicy(context.schoolId, resolvedClass);
       if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${resolvedClass}` });
       const maxMarks = parseInt(totalMarks) || 100;
@@ -1276,7 +1286,7 @@ export function registerTeacherRoutes(app: Express) {
         return res.status(400).json({ message: "class, section, examType, schoolId required" });
       }
       if (req.session.teacherId) {
-        const context = await resolveTeacherExaminationContext(req, res);
+        const context = await resolveTeacherExaminationContext(req, res, "CURRENT_SESSION_WRITE");
         if (!context) return;
         const count = await storage.publishExamScores(context.schoolId, cls, section, examType, context.sessionId);
         return res.json({ message: `Published ${count} scores`, count });
@@ -1302,7 +1312,10 @@ export function registerTeacherRoutes(app: Express) {
       const context = await resolveTeacherExaminationContext(req, res);
       if (!context) return;
       const { class: cls, section, subject } = req.params;
-      const averages = await storage.getClassAverages(context.schoolId, decodeURIComponent(cls), decodeURIComponent(section), decodeURIComponent(subject), context.sessionId);
+      const averages = await storage.getTeacherClassAveragesForSession(
+        context.schoolId, decodeURIComponent(cls), decodeURIComponent(section),
+        decodeURIComponent(subject), context.sessionId,
+      );
       res.json(averages);
     } catch (err: any) {
       console.error("GET /api/exam-scores/class-average error:", err);
@@ -1312,10 +1325,29 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/exam-scores/student/:studentId/:schoolId", async (req, res) => {
     try {
-      const studentId = parseInt(req.params.studentId);
+      const studentId = Number.parseInt(req.params.studentId, 10);
       const context = await resolveTeacherExaminationContext(req, res);
       if (!context) return;
-      const list = await storage.getExamScoresByStudent(studentId, context.schoolId, context.sessionId);
+      if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+        res.status(404).json({ message: "Student not found" });
+        return;
+      }
+      const placement = await storage.resolveAttendanceClassSectionForStudent(
+        context.schoolId, context.sessionId, studentId,
+      );
+      const cls = typeof req.query.class === "string" ? req.query.class : "";
+      const section = typeof req.query.section === "string" ? req.query.section : "";
+      if (!cls || !section) {
+        res.status(400).json({ message: "class and section are required" });
+        return;
+      }
+      if (!placement || placement.class !== cls || placement.section !== section) {
+        res.status(404).json({ message: "Student not found" });
+        return;
+      }
+      const list = await storage.getTeacherExamScoresByStudentInClassSession(
+        studentId, context.schoolId, context.sessionId, cls, section,
+      );
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores/student error:", err);
@@ -1328,7 +1360,10 @@ export function registerTeacherRoutes(app: Express) {
       const context = await resolveTeacherExaminationContext(req, res);
       if (!context) return;
       const { subject, examType, class: cls, section } = req.params;
-      const list = await storage.getExamScores(context.schoolId, decodeURIComponent(subject), decodeURIComponent(examType), cls, section, context.sessionId);
+      const list = await storage.getTeacherExamScoresForSession(
+        context.schoolId, decodeURIComponent(subject), decodeURIComponent(examType),
+        cls, section, context.sessionId,
+      );
       res.json(list);
     } catch (err: any) {
       console.error("GET /api/exam-scores error:", err);
@@ -4624,7 +4659,9 @@ Thank you for your prompt attention to this matter.
         schoolId, context.sessionId, cls, section,
       );
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId, context.sessionId);
+        const scores = await storage.getTeacherExamScoresByStudentInClassSession(
+          s.id, schoolId, context.sessionId, cls, section,
+        );
         return {
           studentId: s.id,
           name: s.name,
@@ -4678,13 +4715,13 @@ Thank you for your prompt attention to this matter.
    *  Any authenticated teacher can view (read-only unless they are the assigned teacher). */
   app.get("/api/teacher/promotion-decisions/:class/:section/:term", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const context = await resolveTeacherExaminationContext(req, res);
+    if (!context) return;
     try {
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term, (req as any).viewSessionId ?? undefined);
+      const decisions = await storage.getPromotionDecisions(context.schoolId, cls, section, term, context.sessionId);
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });
@@ -4697,8 +4734,9 @@ Thank you for your prompt attention to this matter.
    *  Authorization: caller must have a faculty mapping for the given class-section. */
   app.post("/api/teacher/promotion-decisions", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const context = await resolveTeacherExaminationContext(req, res, "CURRENT_SESSION_WRITE");
+    if (!context) return;
+    const { teacher } = context;
     try {
       const { class: cls, section, term, lock, entries } = req.body;
       if (!cls || !section || !term || !Array.isArray(entries)) {
@@ -4711,16 +4749,21 @@ Thank you for your prompt attention to this matter.
       if (!isAssigned) {
         return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
       }
-      // Tag the ledger with the academic session. Prefer the header value
-      // (admin previewing a session); otherwise resolve the active session
-      // so teacher-submitted decisions are always year-tagged correctly.
-      const activeSessForTag = (req as any).viewSessionId
-        ? null
-        : await storage.getActiveSession(teacher.schoolId);
-      const ledgerSessionId: number | null =
-        (req as any).viewSessionId ?? activeSessForTag?.id ?? null;
+      const placements = await Promise.all(entries.map((entry: any) =>
+        storage.resolveAttendanceClassSectionForStudent(context.schoolId, context.sessionId, Number(entry.studentId)),
+      ));
+      if (placements.some(placement =>
+        !placement || placement.class !== cls || placement.section !== section
+      )) {
+        return res.status(403).json({ message: "Promotion decisions include a student outside the selected session roster" });
+      }
 
-      await storage.savePromotionDecisions(teacher.schoolId, cls, section, term, teacher.id, !!lock, entries, ledgerSessionId ?? undefined);
+      const saved = await storage.savePromotionDecisions(
+        context.schoolId, cls, section, term, teacher.id, !!lock, entries, context.sessionId,
+      );
+      if (!saved) {
+        return res.status(409).json({ message: "A promotion decision for this student is already stored in another academic session. No changes were made." });
+      }
       res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
@@ -4733,16 +4776,26 @@ Thank you for your prompt attention to this matter.
    *  Returns { omit: true } when the term has promotionGateVerdict disabled. */
   app.get("/api/teacher/promotion-verdict/:studentId", async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const context = await resolveTeacherExaminationContext(req, res);
+    if (!context) return;
+    const { teacher } = context;
     try {
-      const studentId = parseInt(req.params.studentId, 10);
+      const studentId = Number.parseInt(req.params.studentId, 10);
       const term = decodeURIComponent((req.query.term as string) ?? "");
       const cls  = decodeURIComponent((req.query.class as string) ?? "");
       const section = decodeURIComponent((req.query.section as string) ?? "");
 
       if (!term || !cls || !section) {
         return res.status(400).json({ message: "term, class and section query params are required" });
+      }
+      if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+        return res.status(404).json({ message: "Student not found" });
+      }
+      const placement = await storage.resolveAttendanceClassSectionForStudent(
+        context.schoolId, context.sessionId, studentId,
+      );
+      if (!placement || placement.class !== cls || placement.section !== section) {
+        return res.status(404).json({ message: "Student not found" });
       }
 
       // ── Step 1: check policy config to see if promotionGateVerdict is enabled ──
@@ -4763,7 +4816,7 @@ Thank you for your prompt attention to this matter.
       }
 
       // ── Step 2: fetch the verdict from the Promotion Ledger ──
-      const decisions = await storage.getPromotionDecisions(teacher.schoolId, cls, section, term);
+      const decisions = await storage.getPromotionDecisions(context.schoolId, cls, section, term, context.sessionId);
       const verdict = decisions.find(d => d.studentId === studentId);
 
       if (!verdict) {

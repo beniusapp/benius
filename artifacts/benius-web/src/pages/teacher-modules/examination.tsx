@@ -111,9 +111,12 @@ function StudentTimeline({ studentId, studentName, schoolId, sessionId, subject,
   viewClass: string; viewSection: string; gradingRules: GradingRuleClient[];
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
-    queryKey: ["/api/exam-scores/student", studentId, schoolId, sessionId],
+    queryKey: ["/api/exam-scores/student", schoolId, sessionId, viewClass, viewSection, studentId],
     queryFn: async () => {
-      const res = await sessionFetchForViewSession(`/api/exam-scores/student/${studentId}/${schoolId}`, sessionId);
+      const res = await sessionFetchForViewSession(
+        `/api/exam-scores/student/${studentId}/${schoolId}?class=${encodeURIComponent(viewClass)}&section=${encodeURIComponent(viewSection)}`,
+        sessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
@@ -725,7 +728,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     error: policyErrorRaw,
     refetch: refetchPolicy,
   } = useQuery<ExamPolicyTier | null>({
-    queryKey: ["/api/teacher/exam-policy", resClass],
+    queryKey: ["/api/teacher/exam-policy", teacher.schoolId, resClass],
     queryFn: async () => {
       const r = await fetch(`/api/teacher/exam-policy/${encodeURIComponent(resClass)}`, { credentials: "include" });
       if (!r.ok) {
@@ -763,7 +766,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       })
       .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(null); } });
     return () => { cancelled = true; };
-  }, [resClass]);
+  }, [teacher.schoolId, resClass]);
 
   function handleResClassChange(cls: string) {
     setResClass(cls);
@@ -772,7 +775,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   }
 
   const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/teacher/class-scores", selectedSessionId, resClass, resSection],
+    queryKey: ["/api/teacher/class-scores", teacher.schoolId, selectedSessionId, resClass, resSection],
     queryFn: async () => {
       const res = await sessionFetchForViewSession(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
       if (!res.ok) throw new Error("Failed to fetch scores");
@@ -784,7 +787,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/teacher/attendance-summary", selectedSessionId, resClass, resSection],
+    queryKey: ["/api/teacher/attendance-summary", teacher.schoolId, selectedSessionId, resClass, resSection],
     queryFn: async () => {
       const res = await sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
       if (!res.ok) return [];
@@ -927,7 +930,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     studentId: number; decision: string; targetClass: string;
     targetSection: string; editCount: number; locked: boolean;
   }>>({
-    queryKey: ["/api/teacher/promotion-decisions", selectedSessionId, resClass, resSection, resTerm],
+    queryKey: ["/api/teacher/promotion-decisions", teacher.schoolId, selectedSessionId, resClass, resSection, resTerm],
     queryFn: async () => {
       const r = await sessionFetchForViewSession(
         `/api/teacher/promotion-decisions/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}/${encodeURIComponent(resTerm)}`,
@@ -1081,7 +1084,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
         duration: 4000,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", selectedSessionId, resClass, resSection, resTerm] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", teacher.schoolId, selectedSessionId, resClass, resSection, resTerm] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -1518,13 +1521,21 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 // ── Main Examination Module ───────────────────────────────────────────────────
 export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
-  const selectedSessionId = useTeacherSelectedSession()?.id;
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id;
   const { toast } = useToast();
   const {
     classes, subjects, examTypes, isLoading: configLoading,
     hasClasses, hasSections, getSectionsForClass, getSubjectsForClass, getExamTypesForClass,
   } = useSchoolConfigStrict(teacher.schoolId);
   const today = todayInIST();
+  const attendanceRosterDate = selectedSession?.startDate && selectedSession.endDate
+    ? today < selectedSession.startDate
+      ? selectedSession.startDate
+      : today > selectedSession.endDate
+        ? selectedSession.endDate
+        : today
+    : null;
   const [tab, setTab] = useState<"add" | "view" | "results">("add");
 
   const [selectedClass, setSelectedClass] = useState("");
@@ -1600,16 +1611,20 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       });
 
     return () => { cancelled = true; };
-  }, [selectedClass]);
+  }, [teacher.schoolId, selectedClass]);
 
   const { data: students = [] } = useQuery<StudentInfo[]>({
-    queryKey: ["/api/attendance", teacher.schoolId, selectedClass, selectedSection, today],
+    queryKey: ["/api/attendance", teacher.schoolId, selectedSessionId, selectedClass, selectedSection, attendanceRosterDate],
     queryFn: async () => {
-      const res = await fetch(`/api/attendance/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${today}`, { credentials: "include" });
+      if (!attendanceRosterDate || !selectedSessionId) return [];
+      const res = await sessionFetchForViewSession(
+        `/api/attendance/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}/${attendanceRosterDate}`,
+        selectedSessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: !!selectedClass && !!selectedSection,
+    enabled: !!selectedSessionId && !!attendanceRosterDate && !!selectedClass && !!selectedSection,
   });
 
   const { data: existingScores = [] } = useQuery<ExamScoreEntry[]>({
@@ -1655,7 +1670,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       })
       .catch(() => { if (!cancelled) { setViewPassPercentage(null); setViewGradingRules([]); } });
     return () => { cancelled = true; };
-  }, [viewClass]);
+  }, [teacher.schoolId, viewClass]);
 
   // Audit map: studentId → { updatedBy, updatedAt } for already-saved scores
   const auditMap = useMemo(() => {
@@ -1711,6 +1726,9 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
     onSuccess: (data) => {
       toast({ title: "Scores Saved", description: data.message });
       queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, selectedSessionId, subject, examType, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/class-scores", teacher.schoolId, selectedSessionId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores/class-average", teacher.schoolId, selectedSessionId, selectedClass, selectedSection, subject] });
+      queryClient.invalidateQueries({ queryKey: ["/api/exam-scores/student", teacher.schoolId, selectedSessionId] });
     },
     onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
   });

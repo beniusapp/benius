@@ -5,7 +5,7 @@ import { sessionFetchForViewSession } from "@/lib/queryClient";
 import { computeAllStudentResults } from "@shared/examination-calculation-engine";
 
 const examinationSource = readFileSync(
-  resolve(process.cwd(), "client/src/pages/teacher-modules/examination.tsx"),
+  resolve(process.cwd(), "src/pages/teacher-modules/examination.tsx"),
   "utf8",
 );
 
@@ -15,20 +15,21 @@ describe("Teacher Examination selected-session transport", () => {
     vi.clearAllMocks();
   });
 
-  it("pins distinct selected sessions into distinct cache identities and request headers", async () => {
+  it("keeps Session A → B → A cache identities and request headers isolated", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("[]"));
     vi.stubGlobal("fetch", fetchMock);
-    const firstSessionId = 41;
-    const secondSessionId = 30375;
-    const firstKey = ["/api/teacher/class-scores", firstSessionId, "6", "B"];
-    const secondKey = ["/api/teacher/class-scores", secondSessionId, "6", "B"];
+    const sessionIds = [41, 30375, 41];
+    const keys = sessionIds.map(sessionId => ["/api/teacher/class-scores", 11, sessionId, "6", "B"]);
 
-    await sessionFetchForViewSession(String(firstKey[0]), firstSessionId);
-    await sessionFetchForViewSession(String(secondKey[0]), secondSessionId);
+    for (const sessionId of sessionIds) {
+      await sessionFetchForViewSession("/api/teacher/class-scores/6/B", sessionId);
+    }
 
-    expect(firstKey).not.toEqual(secondKey);
-    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("x-view-session-id")).toBe("41");
-    expect(new Headers(fetchMock.mock.calls[1][1].headers).get("x-view-session-id")).toBe("30375");
+    expect(keys[0]).not.toEqual(keys[1]);
+    expect(keys[0]).toEqual(keys[2]);
+    expect(fetchMock.mock.calls.map(([, init]) =>
+      new Headers(init.headers).get("x-view-session-id"),
+    )).toEqual(["41", "30375", "41"]);
   });
 
   it("sends the selected Session for the Examination Attendance summary and updates it when switched", async () => {
@@ -58,13 +59,39 @@ describe("Teacher Examination selected-session transport", () => {
 
   it("wires the Examination Attendance widget to the selected Session and waits for one", () => {
     expect(examinationSource).toContain(
-      'queryKey: ["/api/teacher/attendance-summary", selectedSessionId, resClass, resSection]',
+      'queryKey: ["/api/teacher/attendance-summary", teacher.schoolId, selectedSessionId, resClass, resSection]',
     );
     expect(examinationSource).toContain(
       "sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId)",
     );
     expect(examinationSource).toContain(
       "enabled: !!selectedSessionId && !!resClass && !!resSection",
+    );
+  });
+
+  it("pins the Add Marks Attendance roster request and cache to the selected session", () => {
+    expect(examinationSource).toContain(
+      'queryKey: ["/api/attendance", teacher.schoolId, selectedSessionId, selectedClass, selectedSection, attendanceRosterDate]',
+    );
+    expect(examinationSource).toMatch(
+      /sessionFetchForViewSession\(\s*`\/api\/attendance\/[^`]*\$\{attendanceRosterDate\}`,\s*selectedSessionId,\s*\)/,
+    );
+    expect(examinationSource).toContain(
+      "enabled: !!selectedSessionId && !!attendanceRosterDate && !!selectedClass && !!selectedSection",
+    );
+    expect(examinationSource).toContain("today < selectedSession.startDate");
+    expect(examinationSource).toContain("today > selectedSession.endDate");
+  });
+
+  it("keys class and student result caches by school and the full selected cohort", () => {
+    expect(examinationSource).toContain(
+      'queryKey: ["/api/teacher/class-scores", teacher.schoolId, selectedSessionId, resClass, resSection]',
+    );
+    expect(examinationSource).toContain(
+      'queryKey: ["/api/exam-scores/student", schoolId, sessionId, viewClass, viewSection, studentId]',
+    );
+    expect(examinationSource).toContain(
+      'queryKey: ["/api/exam-scores/class-average", schoolId, sessionId, viewClass, viewSection, subject]',
     );
   });
 

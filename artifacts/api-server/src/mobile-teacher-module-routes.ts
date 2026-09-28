@@ -488,7 +488,9 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
         }
         const [scores, roster] = classScope && subject && examType
           ? await Promise.all([
-            storage.getExamScores(account.school.id, subject, examType, classScope.className, classScope.section, session.id),
+            storage.getTeacherExamScoresForSession(
+              account.school.id, subject, examType, classScope.className, classScope.section, session.id,
+            ),
             storage.getAttendanceRosterForSessionClass(account.school.id, session.id, classScope.className, classScope.section),
           ])
           : [[], []];
