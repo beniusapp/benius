@@ -13,6 +13,7 @@ import { calendarDayDifference, formatDateTimeIST, getAcademicYearForISTDate, to
 import { AttendanceLeaveMutationError, storage } from "./storage";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
+import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
 
 type Teacher = NonNullable<Awaited<ReturnType<typeof storage.getTeacherWithSchool>>>;
 type TeacherScope = { className: string; section: string; subject: string | null };
@@ -301,7 +302,28 @@ function isAssignedSubject(scopes: TeacherScope[], className: string, section: s
     && scope.subject?.trim().toLocaleLowerCase() === subject.trim().toLocaleLowerCase());
 }
 
-async function guardWriteSession(req: Request, res: Response): Promise<AcademicSession | null> {
+async function guardWriteSession(
+  req: Request,
+  res: Response,
+  requireCurrentSessionMode = false,
+): Promise<AcademicSession | null> {
+  if (requireCurrentSessionMode) {
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "CURRENT_SESSION_WRITE",
+      storage,
+    );
+    if (!resolution.ok) {
+      fail(res, resolution.status, resolution.message);
+      return null;
+    }
+    if (!resolution.session) {
+      fail(res, 503, "Unable to verify the selected academic session.");
+      return null;
+    }
+    return resolution.session;
+  }
+
   const session = (req as MobileTeacherRequest).teacherModuleContext?.session;
   if (!session) {
     fail(res, 403, "The selected academic session is not available.");
@@ -603,12 +625,16 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
   const context = getContext(req, res);
   if (!context) return;
   const { account, scopes } = context;
-  const session = await guardWriteSession(req, res);
+  const { module, action } = params.data;
+  const session = await guardWriteSession(
+    req,
+    res,
+    module === "timetable" && (action === "save" || action === "delete"),
+  );
   if (!session) return;
   const teacher = account.teacher;
 
   try {
-    const { module, action } = params.data;
     if (module === "timetable" && (action === "save" || action === "delete")) {
       const body = z.object({
         dayOfWeek: z.coerce.number().int().min(0).max(6),

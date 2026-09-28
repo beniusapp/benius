@@ -170,6 +170,30 @@ export function registerTeacherRoutes(app: Express) {
     }
     return context;
   };
+  const resolveTeacherTimetableContext = async (
+    req: Request,
+    res: Response,
+    writable = false,
+  ) => {
+    const context = await resolveTeacherAcademicSession(
+      req,
+      writable ? "CURRENT_SESSION_WRITE" : "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return null;
+    }
+    if (!context.session) {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+      return null;
+    }
+    return {
+      teacher: context.teacher,
+      schoolId: context.schoolId,
+      sessionId: context.session.id,
+    };
+  };
 
   // ===== TEACHER CRUD (Principal) =====
   app.post("/api/schools/:schoolId/teachers", async (req, res) => {
@@ -2091,6 +2115,15 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/timetable/teacher/:teacherId", async (req, res) => {
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      const context = await resolveTeacherTimetableContext(req, res);
+      if (!context) return;
+      const requestedTeacherId = parseInt(req.params.teacherId);
+      if (requestedTeacherId !== context.teacher.id)
+        return res.status(403).json({ message: "Not authorized" });
+      const list = await storage.getTimetableByTeacher(context.schoolId, context.sessionId, context.teacher.id);
+      return res.json(list);
+    }
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const tid = parseInt(req.params.teacherId);
     // Teachers can only view their own timetable
@@ -2179,17 +2212,17 @@ export function registerTeacherRoutes(app: Express) {
   // ===== TEACHER SELF-MANAGEMENT TIMETABLE ROUTES =====
 
   app.post("/api/timetable/teacher-slot", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    if (!req.session.teacherId && req.session.userId && req.session.userRole !== "teacher")
+      return res.status(403).json({ message: "Teacher access required" });
+    const context = await resolveTeacherTimetableContext(req, res, true);
+    if (!context) return;
+    const { teacher, schoolId, sessionId } = context;
     const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
     if (dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
       return res.status(400).json({ message: "dayOfWeek, period, class, section, subject required" });
-    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
-    if (timetableSessionId === null) return;
     const validation = await storage.validateTimetableEntry({
-      schoolId: teacher.schoolId,
-      sessionId: timetableSessionId,
+      schoolId,
+      sessionId,
       teacherId: teacher.id,
       dayOfWeek: parseInt(dayOfWeek),
       period: parseInt(period),
@@ -2201,8 +2234,8 @@ export function registerTeacherRoutes(app: Express) {
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
     const entry = await storage.createTimetableEntry({
-      schoolId: teacher.schoolId,
-      sessionId: timetableSessionId,
+      schoolId,
+      sessionId,
       teacherId: teacher.id,
       dayOfWeek: parseInt(dayOfWeek),
       period: parseInt(period),
@@ -2218,13 +2251,13 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/timetable/:id/teacher", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
-    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
-    if (timetableSessionId === null) return;
+    if (!req.session.teacherId && req.session.userId && req.session.userRole !== "teacher")
+      return res.status(403).json({ message: "Teacher access required" });
+    const context = await resolveTeacherTimetableContext(req, res, true);
+    if (!context) return;
+    const { teacher, schoolId, sessionId } = context;
     // Pass teacher.schoolId and teacher.id for school+ownership isolation at query level
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), schoolId, sessionId);
     if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
     const { dayOfWeek, period, class: cls, section, subject, room, startTime, endTime } = req.body;
@@ -2234,8 +2267,8 @@ export function registerTeacherRoutes(app: Express) {
     const newSection = section || entry.section;
     const newSubject = subject || entry.subject;
     const validation = await storage.validateTimetableEntry({
-      schoolId: teacher.schoolId,
-      sessionId: timetableSessionId,
+      schoolId,
+      sessionId,
       teacherId: teacher.id,
       dayOfWeek: newDay,
       period: newPeriod,
@@ -2247,7 +2280,7 @@ export function registerTeacherRoutes(app: Express) {
       requireAllocation: true,
     });
     if (!validation.valid) return res.status(409).json({ message: validation.error });
-    const updated = await storage.updateTimetableEntry(entry.id, teacher.schoolId, timetableSessionId, {
+    const updated = await storage.updateTimetableEntry(entry.id, schoolId, sessionId, {
       dayOfWeek: newDay,
       period: newPeriod,
       class: newClass,
@@ -2263,16 +2296,16 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.delete("/api/timetable/:id/teacher", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
-    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
-    if (timetableSessionId === null) return;
+    if (!req.session.teacherId && req.session.userId && req.session.userRole !== "teacher")
+      return res.status(403).json({ message: "Teacher access required" });
+    const context = await resolveTeacherTimetableContext(req, res, true);
+    if (!context) return;
+    const { teacher, schoolId, sessionId } = context;
     // School-scoped query at storage level: null returned if ID belongs to another school
-    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), teacher.schoolId, timetableSessionId);
+    const entry = await storage.getTimetableEntryById(parseInt(req.params.id), schoolId, sessionId);
     if (!entry || entry.teacherId !== teacher.id)
       return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteTimetableEntry(entry.id, teacher.schoolId, timetableSessionId);
+    await storage.deleteTimetableEntry(entry.id, schoolId, sessionId);
     res.json({ message: "Entry deleted" });
   });
 
@@ -2301,6 +2334,13 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const { class: cls, section } = req.query as { class?: string; section?: string };
     if (!cls || !section) return res.status(400).json({ message: "class and section query params required" });
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      const context = await resolveTeacherTimetableContext(req, res);
+      if (!context) return;
+      const list = await storage.getTimetableByClassSection(context.schoolId, context.sessionId, cls, section);
+      const structure = await storage.getTimetableStructure(context.schoolId, context.sessionId, cls);
+      return res.json({ entries: list, structure });
+    }
     let schoolId: number;
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -2322,6 +2362,15 @@ export function registerTeacherRoutes(app: Express) {
     const { class: cls, section, dayOfWeek, period } = req.query as { class?: string; section?: string; dayOfWeek?: string; period?: string };
     if (!cls || !section || dayOfWeek === undefined || period === undefined) {
       return res.status(400).json({ message: "class, section, dayOfWeek, period required" });
+    }
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      const context = await resolveTeacherTimetableContext(req, res);
+      if (!context) return;
+      const occupancy = await storage.checkSlotOccupancy(
+        context.schoolId, context.sessionId, cls, section, parseInt(dayOfWeek), parseInt(period), context.teacher.id,
+      );
+      if (!occupancy) return res.json({ taken: false });
+      return res.json({ taken: true, teacherName: occupancy.teacherName, subject: occupancy.subject });
     }
     let schoolId: number;
     let excludeTeacherId: number | undefined;
@@ -2401,9 +2450,11 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== TEACHER BATCH SAVE with collision detection =====
   app.post("/api/timetable/teacher/save-batch", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher || teacher.schoolId !== req.session.schoolId) return res.status(401).json({ message: "Teacher not found" });
+    if (!req.session.teacherId && req.session.userId && req.session.userRole !== "teacher")
+      return res.status(403).json({ message: "Teacher access required" });
+    const context = await resolveTeacherTimetableContext(req, res, true);
+    if (!context) return;
+    const { teacher, schoolId, sessionId } = context;
     const { changes } = req.body as {
       changes: Array<{
         dayOfWeek: number;
@@ -2416,23 +2467,21 @@ export function registerTeacherRoutes(app: Express) {
       }>;
     };
     if (!Array.isArray(changes)) return res.status(400).json({ message: "changes array required" });
-    const timetableSessionId = await resolveTimetableSessionId(req, res, teacher.schoolId, true);
-    if (timetableSessionId === null) return;
 
     const saved: unknown[] = [];
     const conflicts: Array<{ dayOfWeek: number; period: number; teacherName: string; subject: string }> = [];
     for (const change of changes) {
       const { dayOfWeek, period, class: cls, section, subject, room } = change;
       if (change._delete) {
-        await storage.deleteTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, dayOfWeek, period);
+        await storage.deleteTeacherTimetableSlot(schoolId, sessionId, teacher.id, dayOfWeek, period);
         continue;
       }
-      const occupancy = await storage.checkSlotOccupancy(teacher.schoolId, timetableSessionId, cls, section, dayOfWeek, period, teacher.id);
+      const occupancy = await storage.checkSlotOccupancy(schoolId, sessionId, cls, section, dayOfWeek, period, teacher.id);
       if (occupancy) {
         conflicts.push({ dayOfWeek, period, teacherName: occupancy.teacherName, subject: occupancy.subject });
         continue;
       }
-      const entry = await storage.upsertTeacherTimetableSlot(teacher.schoolId, timetableSessionId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
+      const entry = await storage.upsertTeacherTimetableSlot(schoolId, sessionId, teacher.id, { dayOfWeek, period, class: cls, section, subject, room: room || null });
       saved.push(entry);
     }
     res.json({ saved, conflicts });
@@ -2440,6 +2489,14 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== TIMETABLE STRUCTURE (Period Bell Schedule) =====
   app.get("/api/timetable/structure", async (req, res) => {
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      const cls = req.query.class as string;
+      if (!cls) return res.status(400).json({ message: "class query param required" });
+      const context = await resolveTeacherTimetableContext(req, res);
+      if (!context) return;
+      const rows = await storage.getTimetableStructure(context.schoolId, context.sessionId, cls);
+      return res.json(rows);
+    }
     // Allow admin, teacher, and student sessions
     let schoolId: number | undefined;
     if (req.session.teacherId) {

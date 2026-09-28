@@ -175,6 +175,28 @@ describe("Teacher Timetable selected Academic Session", () => {
     expect(keys).toContainEqual(["/api/timetable/structure", 202, "5"]);
   });
 
+  it("returns to A after A→B→A without using B's cache or global header", async () => {
+    setViewSessionId(202);
+    const rendered = render(view());
+    fireEvent.click(await screen.findByTestId("tab-my-schedule"));
+    expect(await screen.findByText("Session 101")).toBeTruthy();
+
+    selected = b;
+    setViewSessionId(101);
+    rendered.rerender(view());
+    expect(await screen.findByText("Session 202")).toBeTruthy();
+
+    selected = a;
+    setViewSessionId(202);
+    rendered.rerender(view());
+    expect(await screen.findByText("Session 101")).toBeTruthy();
+    await waitFor(() => {
+      const teacherGets = timetableRequests("GET").filter(r => r.url.startsWith("/api/timetable/teacher/"));
+      expect(teacherGets.map(r => r.session)).toEqual(["101", "202", "101"]);
+    });
+    expect(screen.queryByText("Session 202")).toBeNull();
+  });
+
   it("F. explicitly targets B on save and invalidates only B timetable queries", async () => {
     selected = b;
     setViewSessionId(101);
