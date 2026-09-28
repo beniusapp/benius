@@ -1,0 +1,201 @@
+# BENIUS — TEACHER PORTAL
+# READ-ONLY VERIFICATION BEFORE STEP 5
+
+Before proceeding to Teacher Step 5, I want one important rule verified.
+
+**DO NOT MODIFY ANY CODE IN THIS TASK.**
+This is a read-only audit/verification only.
+
+## QUESTION
+
+For all Teacher Portal modules corrected so far:
+
+- Teacher Timetable
+- Teacher Attendance
+- Teacher Examination
+- Teacher Results
+- Teacher Reports
+
+I want to confirm:
+
+### Are previous / inactive Academic Sessions STRICTLY READ-ONLY?
+
+My intended BENIUS rule is:
+
+**ACTIVE Academic Session**
+→ normal reads
+→ permitted writes according to existing Teacher permissions
+
+**PREVIOUS / INACTIVE Academic Session**
+→ historical viewing/reads allowed
+→ NO create
+→ NO edit/update
+→ NO delete
+→ NO score entry/change
+→ NO attendance marking/change
+→ NO timetable save/change/delete
+→ NO publication/unpublication
+→ NO correction that modifies historical records
+→ NO recalculation that persists changes
+→ NO promotion-ledger save/change
+→ NO other mutation of historical academic operational data
+
+In simple terms:
+
+**Previous Academic Session = STRICTLY READ-ONLY.**
+
+A historical session must NEVER silently redirect a write to the current active session.
+
+---
+
+## PLEASE VERIFY THE ACTUAL CODE
+
+Do not answer based only on our previous implementation reports.
+
+Inspect the actual current backend routes and relevant Web/Mobile request paths.
+
+For each completed module, verify every mutation route/action:
+
+### 1. Teacher Timetable
+Check:
+- create/save
+- edit/update
+- delete
+- any other mutation
+
+### 2. Teacher Attendance
+Check:
+- Student attendance marking
+- bulk marking
+- attendance editing/correction
+- Teacher self-attendance
+- check-in/check-out
+- corrections
+- delete/reset/recompute if any
+- any other mutation
+
+### 3. Teacher Examination / Results / Reports
+Check:
+- score entry
+- score update
+- score delete/reset if available
+- publication
+- unpublication if available
+- result mutations
+- report mutations
+- promotion-ledger saves
+- remarks/comments if mutable
+- any other mutation
+
+---
+
+## WEB AND MOBILE
+
+Verify both:
+
+**Web Teacher Portal**
+and
+**Mobile Teacher Portal**
+
+where the relevant operation exists.
+
+Remember that Web and Mobile share the backend, but also inspect whether any separate route/mutation path can bypass the protection.
+
+---
+
+## REQUIRED SECURITY CHECK
+
+For every historical-session mutation attempt, verify that:
+
+Authenticated Teacher
+→ Teacher's real school
+→ selected Academic Session
+→ session is inactive/historical
+→ mutation is REJECTED
+
+There must be no path where:
+
+historical session selected
+→ mutation succeeds
+
+and no path where:
+
+historical session selected
+→ backend silently performs the mutation against the active session.
+
+---
+
+## IMPORTANT DISTINCTION
+
+This verification concerns **academic operational data tied to an Academic Session**.
+
+Do NOT incorrectly classify genuinely global/current school configuration as historical-session data.
+
+For example, school-level/global policies or settings that are intentionally not session-versioned are a separate matter.
+
+The question is specifically:
+
+> Can a Teacher modify historical session-specific academic data?
+
+The expected answer is:
+
+**NO.**
+
+---
+
+## DO NOT CHANGE ANYTHING
+
+If you discover even ONE mutation path that can modify previous/inactive Academic Session data:
+
+**DO NOT FIX IT YET.**
+
+Report it clearly with:
+
+- module
+- route/action
+- Web/Mobile
+- what historical data can be changed
+- why existing protection does not block it
+- severity
+- recommended correction
+
+Then STOP and wait for approval.
+
+---
+
+## FINAL RESPONSE
+
+Return a simple table:
+
+| Module | Historical Reads | Historical Writes | Strictly Read-Only? |
+|---|---|---|---|
+| Timetable | Allowed/Not Allowed | Blocked/Not Blocked | YES/NO |
+| Attendance | Allowed/Not Allowed | Blocked/Not Blocked | YES/NO |
+| Examination | Allowed/Not Allowed | Blocked/Not Blocked | YES/NO |
+| Results | Allowed/Not Allowed | Blocked/Not Blocked | YES/NO |
+| Reports | Allowed/Not Allowed | Blocked/Not Blocked | YES/NO |
+
+Then answer explicitly:
+
+**“Are all previous/inactive Academic Sessions strictly read-only for Teacher session-specific academic data?”**
+
+Answer:
+
+**YES**
+
+only if you verified all relevant mutation paths.
+
+Otherwise answer:
+
+**NO**
+
+and list every remaining mutation path that can change historical data.
+
+Also confirm:
+
+- Web verified: YES/NO
+- Mobile verified: YES/NO
+- No historical write redirects to active session: YES/NO
+- No code changed during this audit: YES/NO
+
+Do not proceed to Teacher Step 5.
