@@ -12,9 +12,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useSchoolConfig } from "@/hooks/use-school-config";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import {
+  useArchiveMode, useTeacherSelectedSession, type TeacherMe,
+} from "@/pages/teacher-dashboard";
 
 interface NoticeEntry {
   id: number;
@@ -82,6 +84,8 @@ function markIdsRead(teacherId: number, ids: number[]) {
 
 export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const { classes: CLASS_OPTIONS, sections: SECTION_OPTIONS, examTypes } = useSchoolConfig(teacher.schoolId);
   const [tab, setTab] = useState<"admin" | "student">("admin");
@@ -144,12 +148,17 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   })();
 
   const { data: adminNotices = [], isLoading: loadingAdmin } = useQuery<NoticeEntry[]>({
-    queryKey: ["/api/notices", teacher.schoolId, "teacher"],
-    queryFn: async () => {
-      const res = await fetch(`/api/notices/${teacher.schoolId}?target=teacher`, { credentials: "include" });
+    queryKey: ["/api/teacher/noticeboard", teacher.schoolId, selectedSessionId, "teacher"],
+    queryFn: async ({ signal }) => {
+      const res = await sessionFetchForViewSession(
+        "/api/teacher/noticeboard/teacher",
+        selectedSessionId,
+        { signal },
+      );
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -170,12 +179,17 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   }, [tab, adminNotices, teacher.id]);
 
   const { data: studentNotices = [], isLoading: loadingStudent } = useQuery<NoticeEntry[]>({
-    queryKey: ["/api/notices", teacher.schoolId, "student"],
-    queryFn: async () => {
-      const res = await fetch(`/api/notices/${teacher.schoolId}?target=student`, { credentials: "include" });
+    queryKey: ["/api/teacher/noticeboard", teacher.schoolId, selectedSessionId, "student"],
+    queryFn: async ({ signal }) => {
+      const res = await sessionFetchForViewSession(
+        "/api/teacher/noticeboard/student",
+        selectedSessionId,
+        { signal },
+      );
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const handleFileSelect = useCallback((file: File | null) => {
@@ -196,16 +210,22 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   }, [filePreview]);
 
   const { data: myNotices = [], isLoading: loadingMyNotices } = useQuery<NoticeEntry[]>({
-    queryKey: ["/api/notices/teacher/mine"],
-    queryFn: async () => {
-      const res = await fetch("/api/notices/teacher/mine", { credentials: "include" });
+    queryKey: ["/api/teacher/noticeboard", teacher.schoolId, selectedSessionId, "mine"],
+    queryFn: async ({ signal }) => {
+      const res = await sessionFetchForViewSession(
+        "/api/teacher/noticeboard/mine",
+        selectedSessionId,
+        { signal },
+      );
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const postMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (sessionId: number | null) => {
+      if (sessionId === null) throw new Error("Select an academic session before posting.");
       const fd = new FormData();
       fd.append("content", content);
       fd.append("targetType", scope === "whole_school" ? "whole_school" : "student");
@@ -216,16 +236,20 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
       fd.append("noticeType", noticeType);
       fd.append("schoolId", String(teacher.schoolId));
       if (selectedFile) fd.append("file", selectedFile);
-      const res = await fetch("/api/notices", { method: "POST", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession("/api/notices", sessionId, {
+        method: "POST",
+        body: fd,
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, sessionId) => {
       toast({ title: "Notice Posted!", description: "Students can now view the notice." });
       setContent("");
       clearFile();
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/teacher/noticeboard", teacher.schoolId, sessionId],
+      });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -233,29 +257,39 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const r = await apiRequest("DELETE", `/api/notices/${id}`, undefined);
+    mutationFn: async ({ id, sessionId }: { id: number; sessionId: number | null }) => {
+      if (sessionId === null) throw new Error("Select an academic session before deleting.");
+      const r = await sessionFetchForViewSession(`/api/notices/${id}`, sessionId, {
+        method: "DELETE",
+      });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Notice Deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/teacher/noticeboard", teacher.schoolId, sessionId],
+      });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const editMutation = useMutation({
-    mutationFn: async ({ id, content }: { id: number; content: string }) => {
-      const r = await apiRequest("PUT", `/api/notices/${id}`, { content });
+    mutationFn: async ({ id, content, sessionId }: { id: number; content: string; sessionId: number | null }) => {
+      if (sessionId === null) throw new Error("Select an academic session before editing.");
+      const r = await sessionFetchForViewSession(`/api/notices/${id}`, sessionId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Notice Updated" });
       setEditingId(null);
       setEditContent("");
-      queryClient.invalidateQueries({ queryKey: ["/api/notices/teacher/mine"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/notices", teacher.schoolId, "student"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/teacher/noticeboard", teacher.schoolId, sessionId],
+      });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -569,8 +603,8 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
               </div>
 
               <Button
-                onClick={() => postMutation.mutate()}
-                disabled={isArchiveMode || !canPost || postMutation.isPending}
+                onClick={() => postMutation.mutate(selectedSessionId)}
+                disabled={isArchiveMode || selectedSessionId === null || !canPost || postMutation.isPending}
                 className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
                   canPost
                     ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-md active:scale-[0.98]"
@@ -649,7 +683,7 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={() => deleteMutation.mutate(n.id)}
+                                onClick={() => deleteMutation.mutate({ id: n.id, sessionId: selectedSessionId })}
                                 disabled={isArchiveMode || deleteMutation.isPending}
                                 className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-40"
                                 title="Delete notice"
@@ -677,7 +711,11 @@ export default function NoticeboardModule({ teacher }: { teacher: TeacherMe }) {
                           />
                           <div className="flex gap-2">
                             <button
-                              onClick={() => editMutation.mutate({ id: n.id, content: editContent })}
+                              onClick={() => editMutation.mutate({
+                                id: n.id,
+                                content: editContent,
+                                sessionId: selectedSessionId,
+                              })}
                               disabled={isArchiveMode || !editContent.trim() || editMutation.isPending}
                               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-50 transition-colors"
                               data-testid={`button-save-my-notice-${n.id}`}

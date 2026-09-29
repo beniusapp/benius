@@ -1673,6 +1673,23 @@ export class DatabaseStorage {
       .limit(limit);
   }
 
+  async getTeacherNoticesForSession(
+    schoolId: number,
+    teacherId: number,
+    sessionId: number,
+    limit = 50,
+  ): Promise<Notice[]> {
+    return await db.select().from(notices)
+      .where(and(
+        eq(notices.schoolId, schoolId),
+        eq(notices.sessionId, sessionId),
+        eq(notices.createdById, teacherId),
+        eq(notices.creatorRole, "teacher"),
+      ))
+      .orderBy(desc(notices.createdAt))
+      .limit(limit);
+  }
+
   async getNoticeById(id: number): Promise<Notice | null> {
     const [n] = await db.select().from(notices).where(eq(notices.id, id));
     return n ?? null;
@@ -1682,8 +1699,41 @@ export class DatabaseStorage {
     await db.delete(notices).where(and(eq(notices.id, id), eq(notices.schoolId, schoolId)));
   }
 
+  async deleteTeacherNoticeForSession(
+    id: number,
+    schoolId: number,
+    sessionId: number,
+    teacherId: number,
+  ): Promise<boolean> {
+    const deleted = await db.delete(notices).where(and(
+      eq(notices.id, id),
+      eq(notices.schoolId, schoolId),
+      eq(notices.sessionId, sessionId),
+      eq(notices.createdById, teacherId),
+      eq(notices.creatorRole, "teacher"),
+    )).returning({ id: notices.id });
+    return deleted.length > 0;
+  }
+
   async updateNotice(id: number, schoolId: number, content: string): Promise<Notice | null> {
     const [n] = await db.update(notices).set({ content }).where(and(eq(notices.id, id), eq(notices.schoolId, schoolId))).returning();
+    return n ?? null;
+  }
+
+  async updateTeacherNoticeForSession(
+    id: number,
+    schoolId: number,
+    sessionId: number,
+    teacherId: number,
+    content: string,
+  ): Promise<Notice | null> {
+    const [n] = await db.update(notices).set({ content }).where(and(
+      eq(notices.id, id),
+      eq(notices.schoolId, schoolId),
+      eq(notices.sessionId, sessionId),
+      eq(notices.createdById, teacherId),
+      eq(notices.creatorRole, "teacher"),
+    )).returning();
     return n ?? null;
   }
 

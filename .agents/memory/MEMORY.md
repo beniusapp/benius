@@ -5,5 +5,6 @@
 - [API TypeScript test runner](api-server-test-runner.md) — bundle API tests as CommonJS with esbuild before Node’s test runner.
 - [Student result calculation boundaries](student-result-calculation-boundaries.md) — historical result access does not imply historical policy snapshots or a new journey formula.
 - [Notice session null semantics](notice-session-null-semantics.md) — unassigned legacy notices are not automatically global across school years.
+- [Teacher Noticeboard session routing](teacher-noticeboard-session-routing.md) — keep Teacher content session-scoped while the legacy Dashboard badge returns IDs only.
 - [TypeScript diagnostic baselines](typescript-diagnostic-baselines.md) — an empty LSP snapshot does not prove package typechecks are clean.
 - [Teacher Timetable session routing](teacher-timetable-session-routing.md) — enforce Teacher session rules without changing shared Admin/Student fallback behavior.

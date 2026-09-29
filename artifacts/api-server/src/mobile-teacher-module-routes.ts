@@ -418,13 +418,11 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
         {
           const [visible, own] = await Promise.all([
             storage.getTeacherScopedNotices(account.school.id, teacher.id, session.id),
-            storage.getNoticesByTeacher(teacher.id, 500),
+            storage.getTeacherNoticesForSession(account.school.id, teacher.id, session.id, 500),
           ]);
           const items = new Map<number, typeof visible[number]>();
           for (const item of visible) items.set(item.id, item);
-          for (const item of own) {
-            if (item.schoolId === account.school.id && item.sessionId === session.id) items.set(item.id, item);
-          }
+          for (const item of own) items.set(item.id, item);
           res.json({ scopes, items: [...items.values()].sort((a, b) =>
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
           ) });
@@ -1216,10 +1214,23 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         return;
       }
       if (action === "delete") {
-        await storage.deleteNotice(notice.id, account.school.id);
+        const deleted = await storage.deleteTeacherNoticeForSession(
+          notice.id,
+          account.school.id,
+          session.id,
+          teacher.id,
+        );
+        if (!deleted) { fail(res, 404, "Notice not found in the selected academic session."); return; }
         res.json({ deleted: true });
       } else {
-        const updated = await storage.updateNotice(notice.id, account.school.id, body.data.content!);
+        const updated = await storage.updateTeacherNoticeForSession(
+          notice.id,
+          account.school.id,
+          session.id,
+          teacher.id,
+          body.data.content!,
+        );
+        if (!updated) { fail(res, 404, "Notice not found in the selected academic session."); return; }
         res.json({ item: updated });
       }
       return;

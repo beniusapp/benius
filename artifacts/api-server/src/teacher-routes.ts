@@ -20,7 +20,11 @@ import {
   todayInIST,
 } from "./shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
-import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
+import {
+  resolveTeacherAcademicSession,
+  type TeacherAcademicSessionMode,
+  type TeacherAcademicSessionRequest,
+} from "./teacher-academic-session";
 import {
   countDistinctHomeworkStudents,
   deriveHomeworkSchoolOptions,
@@ -28,6 +32,10 @@ import {
   isHomeworkSubjectConfigured,
 } from "./teacher-homework-policy";
 import { isClassworkOwnedByTeacherInScope, parsePositiveSafeIntegerPathParam } from "./teacher-classwork-policy";
+import {
+  isTeacherNoticeAudienceWithinSchool,
+  isTeacherNoticeOwnedByTeacherInSession,
+} from "./teacher-notice-policy";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
@@ -44,6 +52,63 @@ type TeacherHomeworkContext = {
 type TeacherHomeworkRequest = Request & { teacherHomeworkContext?: TeacherHomeworkContext };
 type TeacherClassworkContext = TeacherHomeworkContext;
 type TeacherClassworkRequest = Request & { teacherClassworkContext?: TeacherClassworkContext };
+type TeacherNoticeContext = TeacherHomeworkContext;
+type TeacherNoticeRequest = Request & { teacherNoticeContext?: TeacherNoticeContext };
+
+function withTeacherNoticeContext(
+  mode: TeacherAcademicSessionMode,
+  options: { optional?: boolean; allowDashboardBadgeProjection?: boolean } = {},
+): RequestHandler {
+  return async (req, res, next) => {
+    const isTeacherSession = req.session.teacherId != null || req.session.userRole === "teacher";
+    if (options.optional && !isTeacherSession) {
+      next();
+      return;
+    }
+    // The existing Dashboard badge needs notice IDs only and does not send a
+    // session header. Keep that request working without returning notice content.
+    if (options.allowDashboardBadgeProjection
+      && req.session.teacherId != null
+      && req.query.target === "teacher"
+      && req.get("x-view-session-id") === undefined) {
+      next();
+      return;
+    }
+
+    try {
+      const resolution = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        mode,
+        storage,
+      );
+      if (!resolution.ok) {
+        res.status(resolution.status).json({ message: resolution.message });
+        return;
+      }
+      if (!resolution.session) {
+        res.status(503).json({ message: "Unable to verify the selected academic session." });
+        return;
+      }
+      (req as TeacherNoticeRequest).teacherNoticeContext = {
+        teacher: resolution.teacher,
+        schoolId: resolution.schoolId,
+        session: resolution.session,
+      };
+      next();
+    } catch {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+    }
+  };
+}
+
+function getTeacherNoticeContext(req: Request, res: Response): TeacherNoticeContext | null {
+  const context = (req as TeacherNoticeRequest).teacherNoticeContext;
+  if (!context) {
+    res.status(401).json({ message: "Teacher request is not authenticated." });
+    return null;
+  }
+  return context;
+}
 
 const homeworkCreateBodySchema = z.object({
   class: z.string().optional(),
@@ -152,6 +217,10 @@ function removeStagedHomeworkUpload(req: Request): void {
 }
 
 function removeStagedClassworkUpload(req: Request): void {
+  if (req.file?.path) fs.unlink(req.file.path, () => undefined);
+}
+
+function removeStagedNoticeUpload(req: Request): void {
   if (req.file?.path) fs.unlink(req.file.path, () => undefined);
 }
 
@@ -1161,117 +1230,294 @@ export function registerTeacherRoutes(app: Express) {
   // ===== NOTICES (Noticeboard) — SESSION-SCOPED MODULE =====
   // Notices carry a session_id and are filtered by viewSessionId when fetched.
   // Note: notices differ from the global modules below — they ARE session-scoped.
-  app.post("/api/notices", diskUpload.single("file"), async (req, res) => {
+  app.post(
+    "/api/notices",
+    withTeacherNoticeContext("CURRENT_SESSION_WRITE", { optional: true }),
+    diskUpload.single("file"),
+    async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const { content, targetType, targetClass, targetSection, schoolId, noticeType } = req.body;
-    if (!content || !targetType || !schoolId) return res.status(400).json({ message: "Content, targetType, and schoolId required" });
+    const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
+    const rawBody = req.body as Record<string, unknown>;
+    let content = rawBody.content as string | undefined;
+    let targetType = rawBody.targetType as string | undefined;
+    let targetClass = rawBody.targetClass as string | undefined;
+    let targetSection = rawBody.targetSection as string | undefined;
+    let noticeType = rawBody.noticeType as string | undefined;
+    let schoolId = Number.parseInt(String(rawBody.schoolId ?? ""), 10);
 
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== parseInt(schoolId)) return res.status(403).json({ message: "Not authorized for this school" });
+    if (teacherContext) {
+      const parsed = z.object({
+        content: z.string().refine(value => value.trim().length > 0),
+        targetType: z.enum(["student", "whole_school"]),
+        targetClass: z.string().optional(),
+        targetSection: z.string().optional(),
+        noticeType: z.string().max(30).optional(),
+        schoolId: z.coerce.number().int().positive(),
+      }).strict().safeParse(rawBody);
+      if (!parsed.success) {
+        removeStagedNoticeUpload(req);
+        return res.status(400).json({ message: "Invalid notice details." });
+      }
+      if (parsed.data.schoolId !== teacherContext.schoolId) {
+        removeStagedNoticeUpload(req);
+        return res.status(403).json({ message: "Not authorized for this school." });
+      }
+
+      content = parsed.data.content;
+      targetType = parsed.data.targetType;
+      targetClass = parsed.data.targetClass;
+      targetSection = parsed.data.targetSection;
+      noticeType = parsed.data.noticeType;
+      schoolId = teacherContext.schoolId;
+
+      const resolvedSection = targetSection && targetSection !== "all" ? targetSection : null;
+      let schoolOptions;
+      try {
+        schoolOptions = await getHomeworkSchoolOptions(teacherContext.schoolId);
+      } catch {
+        removeStagedNoticeUpload(req);
+        return res.status(503).json({ message: "Unable to verify notice audience for this school." });
+      }
+      if (!isTeacherNoticeAudienceWithinSchool({
+        targetType,
+        targetClass: targetClass || null,
+        targetSection: resolvedSection,
+      }, schoolOptions)) {
+        removeStagedNoticeUpload(req);
+        return res.status(403).json({ message: "The notice audience is not configured for this school." });
+      }
+    } else if (!content || !targetType || !rawBody.schoolId) {
+      return res.status(400).json({ message: "Content, targetType, and schoolId required" });
     }
 
-    const creatorRole = req.session.teacherId ? "teacher" : "admin";
-    const createdById = req.session.teacherId || req.session.userId;
+    if (!Number.isSafeInteger(schoolId) || schoolId <= 0) {
+      return res.status(400).json({ message: "Invalid schoolId." });
+    }
+
+    const creatorRole = teacherContext ? "teacher" : "admin";
+    const createdById = teacherContext?.teacher.id ?? req.session.userId;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
 
     // Normalise section: empty string and the sentinel "all" both mean no section restriction
     const resolvedSection = (targetSection && targetSection !== "all") ? targetSection : null;
 
-    // Tag with the school's current active session so notices are session-scoped
-    const activeSession = await storage.getActiveSession(parseInt(schoolId));
+    // Teacher writes use the verified selected current session; Admin behavior remains unchanged.
+    const activeSession = teacherContext ? null : await storage.getActiveSession(schoolId);
 
     const notice = await storage.createNotice({
-      schoolId: parseInt(schoolId), createdById: createdById!, creatorRole, targetType,
+      schoolId, createdById: createdById!, creatorRole, targetType: targetType!,
       targetClass: targetClass || null, targetSection: resolvedSection,
-      noticeType: noticeType || "Routine", content, fileUrl,
-      sessionId: activeSession?.id ?? null,
+      noticeType: noticeType || "Routine", content: content!, fileUrl,
+      sessionId: teacherContext?.session.id ?? activeSession?.id ?? null,
     });
-    res.status(201).json(notice);
+    return res.status(201).json(notice);
   });
 
-  app.get("/api/notices/:schoolId", async (req, res) => {
+  app.get(
+    "/api/teacher/noticeboard/:view",
+    withTeacherNoticeContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherNoticeContext(req, res);
+      if (!context) return;
+      const view = req.params.view;
+      if (view === "teacher") {
+        return res.json(await storage.getTeacherScopedNotices(
+          context.schoolId,
+          context.teacher.id,
+          context.session.id,
+        ));
+      }
+      if (view === "student") {
+        return res.json(await storage.getNoticesByTarget(
+          context.schoolId,
+          "student",
+          undefined,
+          undefined,
+          context.session.id,
+        ));
+      }
+      if (view === "mine") {
+        return res.json(await storage.getTeacherNoticesForSession(
+          context.schoolId,
+          context.teacher.id,
+          context.session.id,
+          50,
+        ));
+      }
+      return res.status(404).json({ message: "Notice feed not found." });
+    },
+  );
+
+  app.get(
+    "/api/notices/:schoolId",
+    withTeacherNoticeContext("SELECTED_SESSION_REQUIRED", {
+      optional: true,
+      allowDashboardBadgeProjection: true,
+    }),
+    async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const sid = parseInt(req.params.schoolId);
+    const schoolIdParam = Array.isArray(req.params.schoolId)
+      ? req.params.schoolId[0] ?? ""
+      : req.params.schoolId;
+    const sid = parseInt(schoolIdParam, 10);
 
     if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
+      const targetType = (req.query.target as string) || "teacher";
+      if (targetType !== "teacher" && targetType !== "student") {
+        return res.status(403).json({ message: "Not authorized to view this notice audience." });
+      }
+
+      const context = (req as TeacherNoticeRequest).teacherNoticeContext;
+      if (context) {
+        if (context.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school." });
+        if (targetType === "teacher") {
+          return res.json(await storage.getTeacherScopedNotices(sid, context.teacher.id, context.session.id));
+        }
+        return res.json(await storage.getNoticesByTarget(sid, "student", undefined, undefined, context.session.id));
+      }
+
+      // This is the unchanged Dashboard badge request: it only consumes IDs.
+      // Do not return notice text or attachments without an explicit session.
+      const identity = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        "GLOBAL",
+        storage,
+      );
+      if (!identity.ok) return res.status(identity.status).json({ message: identity.message });
+      if (identity.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school." });
+      const ids = await storage.getTeacherScopedNotices(sid, identity.teacher.id);
+      return res.json(ids.map(({ id }) => ({ id })));
     }
 
     const targetType = (req.query.target as string) || "teacher";
 
     const noticeSessionId: number | null = (req as any).viewSessionId ?? null;
 
-    // When a teacher requests their own notices, scope strictly to their
-    // class-section assignments so they only see notices relevant to them.
-    if (targetType === "teacher" && req.session.teacherId) {
-      const list = await storage.getTeacherScopedNotices(sid, req.session.teacherId, noticeSessionId);
-      return res.json(list);
-    }
-
     const cls = req.query.class as string | undefined;
     const section = req.query.section as string | undefined;
     const list = await storage.getNoticesByTarget(sid, targetType, cls, section, noticeSessionId);
-    res.json(list);
+    return res.json(list);
   });
 
   app.get("/api/notices/:schoolId/all", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      return res.status(403).json({ message: "Teachers cannot access the full-school notice feed." });
+    }
     const sid = parseInt(req.params.schoolId);
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(sid))?.id ?? null;
     const list = await storage.getAllSchoolNotices(sid, 500, sessionFilter);
-    res.json(list);
+    return res.json(list);
   });
 
   app.delete("/api/admin/notices/bulk", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    if (req.session.teacherId || req.session.userRole === "teacher") {
+      return res.status(403).json({ message: "Teachers cannot bulk-delete notices." });
+    }
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const { olderThanDays } = req.body;
     if (typeof olderThanDays !== "number" || olderThanDays < 0) return res.status(400).json({ message: "Invalid olderThanDays (0 = delete all)" });
     const deleted = await storage.bulkDeleteNotices(schoolId, olderThanDays);
-    res.json({ deleted });
+    return res.json({ deleted });
   });
 
-  app.get("/api/notices/teacher/mine", async (req, res) => {
+  app.get(
+    "/api/notices/teacher/mine",
+    withTeacherNoticeContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
     if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getNoticesByTeacher(req.session.teacherId, 50);
-    res.json(list);
+    const context = getTeacherNoticeContext(req, res);
+    if (!context) return;
+    const list = await storage.getTeacherNoticesForSession(
+      context.schoolId,
+      context.teacher.id,
+      context.session.id,
+      50,
+    );
+    return res.json(list);
   });
 
-  app.delete("/api/notices/:id", async (req, res) => {
+  app.delete(
+    "/api/notices/:id",
+    withTeacherNoticeContext("CURRENT_SESSION_WRITE", { optional: true }),
+    async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    if (req.session.teacherId) {
+    const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] ?? "" : req.params.id;
+    const id = teacherContext
+      ? parsePositiveSafeIntegerPathParam(rawId)
+      : parseInt(rawId, 10);
+    if (id === null || Number.isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    if (teacherContext) {
       const notice = await storage.getNoticeById(id);
       if (!notice) return res.status(404).json({ message: "Notice not found" });
-      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+      if (notice.createdById !== teacherContext.teacher.id || notice.creatorRole !== "teacher") {
         return res.status(403).json({ message: "Not authorized to delete this notice" });
       }
+      const scope = {
+        schoolId: teacherContext.schoolId,
+        sessionId: teacherContext.session.id,
+        teacherId: teacherContext.teacher.id,
+      };
+      if (!isTeacherNoticeOwnedByTeacherInSession(notice, scope)) {
+        return res.status(404).json({ message: "Notice not found in the selected session." });
+      }
+      const deleted = await storage.deleteTeacherNoticeForSession(
+        id,
+        scope.schoolId,
+        scope.sessionId,
+        scope.teacherId,
+      );
+      if (!deleted) return res.status(404).json({ message: "Notice not found in the selected session." });
+      return res.json({ message: "Notice deleted" });
     }
     await storage.deleteNotice(id, req.session.schoolId!);
-    res.json({ message: "Notice deleted" });
+    return res.json({ message: "Notice deleted" });
   });
 
-  app.put("/api/notices/:id", async (req, res) => {
+  app.put(
+    "/api/notices/:id",
+    withTeacherNoticeContext("CURRENT_SESSION_WRITE", { optional: true }),
+    async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+    const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] ?? "" : req.params.id;
+    const id = teacherContext
+      ? parsePositiveSafeIntegerPathParam(rawId)
+      : parseInt(rawId, 10);
+    if (id === null || Number.isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const { content } = req.body;
     if (!content || !content.trim()) return res.status(400).json({ message: "Content is required" });
-    if (req.session.teacherId) {
+    if (teacherContext) {
       const notice = await storage.getNoticeById(id);
       if (!notice) return res.status(404).json({ message: "Notice not found" });
-      if (notice.createdById !== req.session.teacherId || notice.creatorRole !== "teacher") {
+      if (notice.createdById !== teacherContext.teacher.id || notice.creatorRole !== "teacher") {
         return res.status(403).json({ message: "Not authorized to edit this notice" });
       }
+      const scope = {
+        schoolId: teacherContext.schoolId,
+        sessionId: teacherContext.session.id,
+        teacherId: teacherContext.teacher.id,
+      };
+      if (!isTeacherNoticeOwnedByTeacherInSession(notice, scope)) {
+        return res.status(404).json({ message: "Notice not found in the selected session." });
+      }
+      const scopedUpdate = await storage.updateTeacherNoticeForSession(
+        id,
+        scope.schoolId,
+        scope.sessionId,
+        scope.teacherId,
+        content.trim(),
+      );
+      if (!scopedUpdate) return res.status(404).json({ message: "Notice not found in the selected session." });
+      return res.json(scopedUpdate);
     }
     const updated = await storage.updateNotice(id, req.session.schoolId!, content.trim());
     if (!updated) return res.status(404).json({ message: "Notice not found" });
-    res.json(updated);
+    return res.json(updated);
   });
 
   // ===== COMPLAINTS =====
