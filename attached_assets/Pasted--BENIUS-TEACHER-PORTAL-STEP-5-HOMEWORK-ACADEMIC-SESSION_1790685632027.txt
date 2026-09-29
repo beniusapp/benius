@@ -1,0 +1,851 @@
+# BENIUS — TEACHER PORTAL
+# STEP 5 — HOMEWORK ACADEMIC SESSION CORRECTION
+
+Accepted Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Historical-session audit: CONFIRMED READ-ONLY for completed Teacher session-specific academic modules
+
+Now work ONLY on:
+
+# TEACHER HOMEWORK
+
+Do NOT start Classwork, Noticeboard, Dashboard, Complaint, Leave, Approval Center, Student Profiles, or other Teacher modules.
+
+---
+
+# PERMANENT HISTORICAL SESSION RULE
+
+This rule is now explicit for BENIUS:
+
+**ACTIVE Academic Session**
+→ reads allowed
+→ existing permitted writes allowed
+
+**PREVIOUS / INACTIVE Academic Session**
+→ historical reads allowed
+→ STRICTLY READ-ONLY
+
+For session-specific Teacher Homework data, an inactive Academic Session must NOT allow:
+
+- create homework
+- edit homework
+- delete homework
+- change homework
+- upload/replace/remove homework attachment
+- modify Student submission state
+- grade/review/change submission if such actions exist
+- any other persisted Homework mutation
+
+A historical write must NEVER silently redirect to the active Academic Session.
+
+Backend enforcement is mandatory.
+
+Do not rely only on disabled UI controls.
+
+---
+
+# ABSOLUTE TENANT RULE
+
+BENIUS is multi-school / multi-tenant.
+
+A Teacher from School A must NEVER access or modify School B:
+
+- Homework
+- Students
+- submissions
+- attachments
+- classes
+- sections
+- Academic Sessions
+- related records
+
+Authorization must begin with:
+
+Authenticated Teacher
+→ Teacher's real school
+→ selected Academic Session
+→ existing Teacher Homework authorization
+
+Do NOT trust client-supplied:
+
+- teacherId
+- schoolId
+
+for authorization.
+
+---
+
+# WEB IS SOURCE OF TRUTH
+
+The existing BENIUS Web application remains the source of truth for:
+
+- Homework UI/UX
+- workflow
+- permissions
+- fields
+- validation
+- attachment behavior
+- Student submission behavior
+- class/section behavior
+- navigation
+- loading/error/empty states
+
+Do NOT redesign Homework.
+
+Web and Mobile use the same backend/database.
+
+Correct Web, Mobile and/or shared backend only where required.
+
+---
+
+# IMPORTANT CLASSIFICATION
+
+Teacher Homework is currently classified as:
+
+**HYBRID**
+
+Do NOT blindly make every Homework-related object session-based.
+
+First inspect the actual implementation.
+
+Determine which parts are:
+
+1. GLOBAL/current supporting data
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED data/calculation
+5. TEACHER ASSIGNMENT restricted
+6. STUDENT SUBMISSION data
+
+Document the actual classification.
+
+---
+
+# FIRST — FORENSIC AUDIT
+
+Before modifying anything, trace the complete Teacher Homework workflow.
+
+Inspect:
+
+- Teacher Homework Web page
+- Teacher Homework Mobile implementation if present
+- Homework API routes
+- storage functions
+- Homework schema
+- Student Homework schema
+- submission schema
+- attachment handling
+- Teacher attachment upload/download
+- Student submission upload/download
+- homework create
+- homework edit
+- homework delete
+- homework list
+- homework detail
+- Student submission list
+- Student submission detail
+- grading/review/status actions if they exist
+- Teacher class/section authorization
+- Student roster/count
+- selected Academic Session transport
+- `x-view-session-id`
+- cache/query keys
+- active-session fallback
+- Web cookie auth
+- Mobile bearer auth
+
+Do not assume behavior.
+
+---
+
+# STEP 1 FOUNDATION
+
+Use the accepted:
+
+`teacher-academic-session.ts`
+
+For session-sensitive Homework operations, follow:
+
+Authenticated Teacher
+→ server-loaded Teacher
+→ Teacher's school
+→ selected Academic Session
+→ existing Homework class/section authorization
+→ Homework/submission data
+
+Do NOT duplicate the foundation.
+
+---
+
+# HOMEWORK READS
+
+Teacher Homework lists/details for session-specific Homework must use the explicitly selected Academic Session.
+
+Normally use:
+
+`SELECTED_SESSION_REQUIRED`
+
+where appropriate.
+
+Example:
+
+Teacher selects 2025–26
+→ sees permitted 2025–26 Homework.
+
+Teacher selects 2026–27
+→ sees permitted 2026–27 Homework.
+
+Do NOT mix Homework between sessions.
+
+Do NOT silently fall back to active session for historical Homework reads where an explicit selection is required.
+
+---
+
+# HOMEWORK WRITES
+
+For session-specific Homework mutations:
+
+use:
+
+`CURRENT_SESSION_WRITE`
+
+where the operation is intended for the active Academic Session.
+
+This includes existing actions such as:
+
+- create
+- edit
+- delete
+- attachment mutation
+- submission-related Teacher mutation
+
+but ONLY where those actions actually exist.
+
+Do not invent actions.
+
+Historical session selected
++
+Homework mutation
+→ REJECT.
+
+Never redirect to active session.
+
+---
+
+# TEACHER CLASS / SECTION AUTHORIZATION
+
+Do NOT assume a Teacher may create/view/manage Homework for every class and section in the school.
+
+Inspect existing behavior.
+
+Preserve existing:
+
+- assigned class
+- section
+- subject
+- faculty mapping
+- Homework authorization
+
+if present.
+
+Do NOT invent stricter or broader rules.
+
+But authorization must derive Teacher identity from authentication.
+
+Client-provided Teacher ID must not grant another Teacher's access.
+
+---
+
+# STUDENT PLACEMENT
+
+This is important.
+
+For session-sensitive Homework Student rosters/counts/submissions, Student placement should come from:
+
+`enrollments`
+
+for:
+
+authenticated school
++
+Student
++
+selected Academic Session
+
+Do NOT rely only on current:
+
+`students.class`
+`students.section`
+`students.roll_number`
+
+for historical Homework.
+
+Example:
+
+2025–26:
+Rahim → Class 7A
+
+2026–27:
+Rahim → Class 8B
+
+Teacher selects 2025–26 Homework.
+
+Rahim should be treated according to:
+
+**2025–26 enrollment → Class 7A**
+
+not current Class 8B.
+
+---
+
+# STUDENT COUNT
+
+Earlier Teacher Homework audit noted that Homework rows may be session-linked while displayed Student count may use current Student master data.
+
+Investigate this specifically.
+
+If the Teacher Homework UI shows:
+
+- Student count
+- assigned Student count
+- submission count
+- pending count
+
+determine whether the count should represent the selected Academic Session.
+
+If it is session-derived, use selected-session enrollment/cohort.
+
+Do NOT use current Student master class/section for a historical session count.
+
+Preserve the UI and meaning.
+
+Only correct the data source if necessary.
+
+---
+
+# STUDENT SUBMISSIONS
+
+A Student submission must remain tied to the correct:
+
+school
++
+Academic Session
++
+Homework
++
+Student
+
+Teacher access to a submission must be validated through its parent Homework and tenant/session context.
+
+Knowing another:
+
+- submission ID
+- Homework ID
+- Student ID
+
+must not allow cross-school or cross-session access.
+
+Historical submissions may be viewed where existing behavior permits.
+
+Historical submission mutation by Teacher must follow the strict read-only rule.
+
+---
+
+# ATTACHMENTS
+
+Do NOT modify the global `/uploads` architecture in this step.
+
+The legacy `/uploads` authorization issue remains a separate security workstream.
+
+However, verify that Homework records/attachments are associated with the correct:
+
+school
++
+session
++
+Homework
+
+for normal Homework authorization.
+
+Do NOT attempt to globally secure `/uploads` during Step 5.
+
+If you discover a document-authorization issue already covered by the known `/uploads` audit, document it as deferred rather than changing it.
+
+Do not introduce a new storage architecture.
+
+---
+
+# CACHE / SESSION TRANSPORT
+
+Every session-dependent Teacher Homework cache/query must include the selected Academic Session.
+
+The request must send the same session.
+
+Conceptually:
+
+selectedSessionId
+→ query key
+→ request header
+→ backend validation
+→ exact session Homework
+
+Test:
+
+Session A
+→ Homework A
+
+Session B
+→ Homework B
+
+Session A
+→ Homework A
+
+No stale cross-session Homework.
+
+---
+
+# WEB
+
+Inspect Web Teacher Homework.
+
+Preserve UI completely.
+
+Correct only:
+
+- session transport
+- cache identity
+- backend authorization
+- Student placement/count
+- historical write protection
+
+where actually needed.
+
+Web uses existing cookie authentication.
+
+---
+
+# MOBILE
+
+Inspect Mobile Teacher Homework if implemented.
+
+Mobile remains:
+
+bearer authenticated.
+
+Do NOT introduce Web cookie dependency.
+
+Preserve existing native/hybrid UI.
+
+Ensure Mobile uses the same selected Academic Session and backend Homework truth.
+
+Do not create separate Mobile Homework business logic unnecessarily.
+
+---
+
+# HISTORICAL SESSION TEST
+
+Explicitly verify:
+
+Inactive Session A selected
+→ Homework list/details readable where existing behavior permits.
+
+But:
+
+Inactive Session A
+→ create ❌
+→ edit ❌
+→ delete ❌
+→ attachment mutation ❌
+→ submission mutation ❌
+
+No write may silently target Active Session B.
+
+---
+
+# CROSS-SCHOOL TESTS
+
+Explicitly verify:
+
+School A Teacher + School A Homework
+→ allowed according to existing permissions.
+
+School A Teacher + School B session
+→ rejected.
+
+School A Teacher + School B Homework
+→ rejected.
+
+School A Teacher + School B Student submission
+→ rejected.
+
+Spoofed:
+
+- teacherId
+- schoolId
+- Homework ID
+- Student ID
+- submission ID
+
+must not bypass tenant authorization.
+
+---
+
+# SESSION PLACEMENT TEST
+
+Use a Student whose placement changes:
+
+2025–26:
+Class 7A / Roll 12
+
+2026–27:
+Class 8B / Roll 8
+
+Verify historical Homework roster/count/submission access uses:
+
+2025–26 → Class 7A / Roll 12
+
+and current session uses:
+
+2026–27 → Class 8B / Roll 8.
+
+---
+
+# IST
+
+BENIUS business/display timezone remains:
+
+**Asia/Kolkata / IST**
+
+Preserve existing Homework:
+
+- assigned date
+- due date
+- submission date/time
+- created/updated timestamps
+
+Do not introduce UTC date shifting.
+
+Reuse existing IST/date-only utilities where appropriate.
+
+Do not redesign date semantics.
+
+---
+
+# DO NOT CHANGE PREVIOUS COMPLETED WORK
+
+Regression-check but do NOT redesign:
+
+- Teacher Timetable
+- Teacher Attendance
+- Teacher Examination
+- Teacher Results
+- Teacher Reports
+
+The strict historical read-only rule must continue holding.
+
+---
+
+# DO NOT TOUCH OTHER TEACHER MODULES
+
+Do NOT modify:
+
+- Classwork
+- Noticeboard
+- Dashboard
+- Complaint
+- Leave
+- Approval Center
+- Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+---
+
+# STUDENT PORTAL
+
+Do NOT change Student Portal.
+
+Student Homework session correction was already completed separately.
+
+Teacher Step 5 must not alter Student Portal behavior.
+
+---
+
+# ADMIN PORTAL
+
+Do NOT change Admin Portal.
+
+Do NOT change Admin Exam Controller.
+
+---
+
+# PROMOTION LEDGER LIMITATION
+
+Teacher Step 4 documented a separate limitation:
+
+The promotion-ledger conflict identity does not include Academic Session.
+
+Do NOT attempt that database migration here.
+
+Keep it deferred.
+
+---
+
+# `/uploads`
+
+Do NOT modify `/uploads`.
+
+The known legacy document authorization workstream remains separate.
+
+---
+
+# DATABASE
+
+Expected:
+
+**NO DATABASE SCHEMA CHANGES**
+
+Use existing Homework/session/enrollment/submission structures.
+
+If a database schema change appears unavoidable:
+
+STOP.
+
+Explain exactly why.
+
+Do not implement the schema change without approval.
+
+---
+
+# UI
+
+Expected:
+
+**NO UI/UX CHANGES**
+
+Do not modify:
+
+- page layout
+- cards
+- tables
+- buttons
+- labels
+- colors
+- fonts
+- navigation
+
+This is data/session/security correction only.
+
+---
+
+# ACCEPTED BASELINES
+
+Current accepted diagnostics:
+
+API:
+**373**
+
+Web:
+**60**
+
+Mobile:
+**0**
+
+Teacher Step 1: PASS
+
+Teacher Step 2 Timetable: PASS
+
+Teacher Step 3 Attendance: PASS
+
+Teacher Step 4 Examination/Results/Reports:
+**21 API session regression tests passed**
+
+Historical-session source audit:
+**PASS — previous/inactive sessions confirmed read-only for completed Teacher academic modules**
+
+Web production build:
+**PASS**
+
+Do not hide new diagnostics inside these baselines.
+
+---
+
+# REQUIRED TESTING
+
+At minimum verify:
+
+1. Same-school selected-session Homework read.
+2. Historical same-school Homework read.
+3. Foreign-school session rejected.
+4. Missing/malformed required session rejected.
+5. Cross-school Homework rejected.
+6. Cross-school Student submission rejected.
+7. Teacher/school spoofing ineffective.
+8. Current-session permitted Homework create works.
+9. Current-session permitted edit works if edit exists.
+10. Current-session permitted delete works if delete exists.
+11. Historical Homework create rejected.
+12. Historical Homework edit rejected.
+13. Historical Homework delete rejected.
+14. Historical attachment mutation rejected if such mutation exists.
+15. Historical submission mutation rejected if such mutation exists.
+16. Historical Student placement uses selected-session enrollment.
+17. Current Student placement uses selected-session enrollment.
+18. Student/session-derived counts use selected-session cohort.
+19. Session A → B → A remains isolated.
+20. IST/date behavior remains unchanged.
+21. Mobile bearer authentication remains intact.
+22. Teacher Step 1 regression passes.
+23. Timetable regression passes.
+24. Attendance regression passes.
+25. Examination/Results/Reports regression passes.
+26. Student Portal remains unchanged.
+27. Admin Portal remains unchanged.
+
+Only test actions that actually exist.
+
+Do not invent Homework features.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## TEACHER STEP 5 — HOMEWORK
+
+### Existing architecture found
+Explain actual Teacher Homework architecture.
+
+### Route/data classification
+List:
+- Global/current
+- Selected-session reads
+- Current-session writes
+- Session-derived data
+- Teacher-assignment-restricted data
+
+### Existing problems found
+Explain actual problems.
+
+### Correction implemented
+Explain exactly what changed.
+
+### Teacher Academic Session foundation
+Explain Step 1 usage.
+
+### Tenant isolation
+Explain Teacher/school/Homework/Student/submission scoping.
+
+### Teacher assignment behavior
+Explain existing class/section/subject permissions.
+
+### Student placement
+Explain selected-session enrollment behavior.
+
+### Student counts
+Explain whether counts were session-correct and any correction.
+
+### Homework reads
+Explain historical/current reads.
+
+### Homework writes
+Explain active-session write behavior.
+
+### Historical read-only verification
+Explicitly confirm create/edit/delete/etc. are rejected for inactive sessions.
+
+### Student submissions
+Explain session/tenant authorization.
+
+### Attachments
+Explain existing behavior and confirm `/uploads` was not changed.
+
+### Web behavior
+Explain session transport/cache behavior.
+
+### Mobile behavior
+Explain bearer/session behavior.
+
+### Session-switch behavior
+Report A → B → A.
+
+### IST/date behavior
+Explain preservation.
+
+### Tests
+Give exact passed/failed counts.
+
+### Previous Teacher regression
+Report Steps 1–4 regression results.
+
+### API diagnostics
+Before: 373
+After: <actual>
+
+### Web diagnostics
+Before: 60
+After: <actual>
+
+### Mobile diagnostics
+Before: 0
+After: <actual>
+
+### Web build
+PASS/FAIL
+
+### Database changes
+Expected: None
+
+### UI changes
+Expected: None
+
+### Student Portal changes
+Must be: None
+
+### Admin Portal changes
+Must be: None
+
+### `/uploads` changes
+Must be: None
+
+### Files changed
+List exact files.
+
+### Deferred issues
+List anything intentionally deferred.
+
+### Recommended Teacher Step 6
+Recommend the next single Teacher module/group.
+
+---
+
+# FINAL REQUIREMENT
+
+Teacher Homework must follow:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher Homework permissions
+→ selected-session Student enrollment/cohort
+→ Homework and submissions belonging to that same school/session
+
+And:
+
+**Inactive/previous Academic Session = STRICTLY READ-ONLY.**
+
+Do not redesign the module.
+
+Do not modify unrelated portals.
+
+Do not change `/uploads`.
+
+Do not introduce database schema changes without approval.
