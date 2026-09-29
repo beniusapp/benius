@@ -1,0 +1,714 @@
+# BENIUS — TEACHER PORTAL
+# STEP 7 — NOTICEBOARD ACADEMIC SESSION CORRECTION
+
+Accepted Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Step 5 — Homework: COMPLETE
+- Step 6 — Classwork: COMPLETE
+
+Permanent BENIUS rule:
+
+**Previous / inactive Academic Session = STRICTLY READ-ONLY for session-specific academic operational data.**
+
+Now work ONLY on:
+
+# TEACHER NOTICEBOARD
+
+Do NOT start Dashboard, Complaint, Leave, Approval Center, Student Profiles, or other Teacher modules.
+
+---
+
+# PRIMARY GOAL
+
+Teacher Noticeboard must correctly follow:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher Noticeboard permissions
+→ existing audience/visibility rules
+→ notices belonging to that exact school/session
+
+The selected Academic Session must never be replaced silently by the active session.
+
+---
+
+# IMPORTANT
+
+Noticeboard has more than one security dimension:
+
+1. SCHOOL / TENANT
+2. ACADEMIC SESSION
+3. TEACHER AUTHORIZATION
+4. NOTICE AUDIENCE / VISIBILITY
+5. NOTICE OWNERSHIP where applicable
+
+All of these must remain correct.
+
+Do NOT solve only the session filter while accidentally weakening audience restrictions.
+
+---
+
+# FIRST — FORENSIC AUDIT
+
+Before changing anything, inspect the complete current Teacher Noticeboard implementation.
+
+Inspect:
+
+- Web Teacher Noticeboard page
+- Mobile Teacher Noticeboard if implemented
+- API routes
+- storage methods
+- schema
+- list route
+- detail route if present
+- create
+- edit/update
+- delete
+- publish/unpublish if present
+- mark-read/read-state if present
+- attachment behavior
+- audience selection
+- class/section targeting
+- Student targeting if present
+- Teacher targeting if present
+- role targeting
+- school-wide notices
+- creator/ownership behavior
+- selected Academic Session transport
+- `x-view-session-id`
+- cache/query keys
+- active-session fallback
+- null `session_id` behavior
+- Web cookie authentication
+- Mobile bearer authentication
+
+Do NOT assume Noticeboard behaves like Homework or Classwork.
+
+Document actual behavior first.
+
+---
+
+# CLASSIFY NOTICEBOARD DATA
+
+Determine what is:
+
+1. GLOBAL/current
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED
+5. AUDIENCE-RESTRICTED
+6. TEACHER-OWNED / PERMISSION-RESTRICTED
+7. READ-STATE data if applicable
+
+Do not blindly make every related record session-based.
+
+---
+
+# SESSION FOUNDATION
+
+Reuse:
+
+`teacher-academic-session.ts`
+
+Do NOT create a competing Teacher session resolver.
+
+Normally:
+
+`SELECTED_SESSION_REQUIRED`
+→ session-specific reads.
+
+`CURRENT_SESSION_WRITE`
+→ session-specific mutations that should only be allowed in the active session.
+
+Use the actual product behavior to determine which actions belong to each category.
+
+---
+
+# NOTICE READS
+
+When Teacher selects Session A:
+
+→ session-specific Noticeboard reads must return notices applicable to Session A.
+
+When Teacher selects Session B:
+
+→ return notices applicable to Session B.
+
+No Session A/B mixing.
+
+Historical same-school notices may remain viewable where existing product behavior permits.
+
+Do NOT silently substitute the active session.
+
+---
+
+# NULL SESSION NOTICES — IMPORTANT
+
+The previous BENIUS audits found that Noticeboard data may contain nullable `session_id`.
+
+Investigate this explicitly.
+
+Determine:
+
+- Why null-session notices exist.
+- Whether they represent legitimate global/legacy notices.
+- Whether Teacher Portal currently displays them.
+- Whether they should appear in every session or should be excluded from selected-session views.
+- Whether creating new Teacher notices can produce null `session_id`.
+
+Do NOT guess.
+
+Do NOT automatically delete/migrate legacy null-session notices.
+
+Do NOT change schema.
+
+Report the existing semantics and apply the minimum safe correction consistent with existing BENIUS behavior.
+
+If semantics are genuinely ambiguous, preserve data and document the limitation instead of inventing a new product rule.
+
+---
+
+# NOTICE AUDIENCE
+
+This is critical.
+
+Inspect all existing audience types.
+
+Examples may include:
+
+- entire school
+- Teachers
+- Students
+- particular class
+- particular section
+- specific roles
+- specific users
+
+Only use audience types that actually exist.
+
+A Teacher must only see notices they are entitled to see under existing Noticeboard behavior.
+
+A Teacher creating/managing a notice must only use audiences permitted by existing Teacher permissions.
+
+Do NOT broaden audience access.
+
+---
+
+# SESSION-SENSITIVE CLASS/SECTION TARGETING
+
+If a notice targets Students/classes/sections and that targeting is session-sensitive, validate it against the selected Academic Session.
+
+Example:
+
+2025–26:
+Rahim → Class 7A
+
+2026–27:
+Rahim → Class 8B
+
+A notice targeted to Class 7A in 2025–26 must not accidentally use Rahim's current 2026–27 Class 8B placement when determining session-sensitive audience membership.
+
+Use `enrollments` for historical Student placement where required.
+
+Do NOT change permanent Student identity.
+
+---
+
+# TENANT ISOLATION
+
+School A must never access School B notices.
+
+Verify:
+
+School A Teacher + School A session/notice
+→ allowed according to existing permissions.
+
+School A Teacher + School B session
+→ rejected.
+
+School A Teacher + School B notice ID
+→ rejected.
+
+School A Teacher + School B audience/Student/class target
+→ rejected.
+
+Do not trust request-supplied:
+
+- schoolId
+- teacherId
+- sessionId
+- noticeId
+
+for authorization.
+
+Authenticated server context must control identity/school.
+
+---
+
+# WRITES
+
+Inspect every existing Noticeboard mutation.
+
+Potential examples:
+
+- create
+- edit
+- delete
+- publish
+- unpublish
+- attachment mutation
+- audience changes
+- mark-read/read-state
+
+Only handle actions that actually exist.
+
+For academic operational notice mutations:
+
+Active selected session
+→ existing permitted mutation works.
+
+Inactive selected session
+→ mutation rejected.
+
+Historical write must NEVER redirect to active session.
+
+---
+
+# READ-STATE — AUDIT CAREFULLY
+
+If Teacher Noticeboard has:
+
+- mark as read
+- viewed state
+- acknowledgement
+- read receipt
+
+determine whether that is considered:
+
+A. harmless user interaction metadata that can still update while viewing a historical notice
+
+or
+
+B. historical academic operational data that should be immutable.
+
+Do NOT make this product decision silently.
+
+If existing BENIUS behavior clearly establishes the rule, preserve it and document it.
+
+If ambiguous, report it rather than redesigning it.
+
+The strict historical read-only rule definitely applies to the NOTICE CONTENT and operational notice mutations.
+
+---
+
+# OWNERSHIP / EDITING
+
+Inspect whether Teachers can:
+
+- create notices
+- edit only their own notices
+- delete only their own notices
+- edit notices created by Admin
+- manage notices for assigned classes only
+
+Preserve the existing product rule.
+
+Do NOT broaden Teacher permissions.
+
+For mutations, authorization should be atomic where practical:
+
+notice ID
++
+school
++
+session
++
+Teacher ownership/permission
+
+Do not authorize only by notice ID.
+
+---
+
+# ATTACHMENTS
+
+Do NOT modify `/uploads`.
+
+The known legacy attachment authorization issue remains a separate security workstream.
+
+Preserve current Noticeboard attachment UI/storage.
+
+Normal Notice record authorization must still enforce:
+
+Teacher
++
+school
++
+selected session
++
+audience/ownership as applicable.
+
+If you encounter the known raw `/uploads` exposure, document it as deferred.
+
+---
+
+# WEB
+
+Web remains the source of truth.
+
+Preserve existing Teacher Noticeboard:
+
+- UI
+- UX
+- labels
+- layout
+- navigation
+- permissions
+- workflows
+
+Correct only session/data/security behavior where required.
+
+Web continues using cookie authentication.
+
+Session-dependent query keys must include selected Academic Session.
+
+Requests must carry the same selected session.
+
+---
+
+# MOBILE
+
+Inspect Mobile Teacher Noticeboard if implemented.
+
+Mobile continues using bearer authentication.
+
+Do NOT introduce cookie dependency.
+
+Preserve existing native/hybrid architecture.
+
+Ensure Mobile uses the same selected session and backend authorization.
+
+Do not create a separate Mobile Noticeboard business rule.
+
+---
+
+# SESSION SWITCHING
+
+Explicitly verify:
+
+Session A
+→ notices for A
+
+Session B
+→ notices for B
+
+Session A again
+→ notices for A
+
+No stale Session B data in Session A.
+
+Cache identity and request transport must agree.
+
+---
+
+# HISTORICAL READ-ONLY
+
+For notice content and normal operational mutations:
+
+Inactive Session A:
+
+- view permitted historical notices ✅
+- create ❌
+- edit ❌
+- delete ❌
+- publish/unpublish ❌ if those actions exist
+- attachment content mutation ❌
+- audience mutation ❌
+
+Backend must enforce this.
+
+Do not rely only on UI.
+
+No historical mutation may be redirected to Active Session B.
+
+---
+
+# IST
+
+BENIUS timezone remains:
+
+**Asia/Kolkata / IST**
+
+Preserve existing:
+
+- notice dates
+- publish dates
+- expiry dates
+- created/updated timestamps
+- read timestamps if applicable
+
+Do not introduce date shifting.
+
+---
+
+# REGRESSION
+
+Do not redesign completed Teacher modules.
+
+Regression-check relevant session protections for:
+
+- Timetable
+- Attendance
+- Examination
+- Results
+- Reports
+- Homework
+- Classwork
+
+Permanent rule remains:
+
+**Inactive session = read-only for session-specific academic operational data.**
+
+---
+
+# DO NOT TOUCH
+
+Do NOT change:
+
+- Teacher Dashboard
+- Teacher Complaint
+- Teacher Leave
+- Teacher Approval Center
+- Teacher Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Do NOT change Student Portal.
+
+Do NOT change Admin Portal.
+
+Do NOT change Admin Exam Controller.
+
+Do NOT modify `/uploads`.
+
+Do NOT perform the deferred promotion-ledger migration.
+
+---
+
+# DATABASE
+
+Expected:
+
+**NO DATABASE SCHEMA CHANGES**
+
+If a schema change appears necessary:
+
+STOP.
+
+Explain why and wait for approval.
+
+Do not migrate nullable session data without approval.
+
+---
+
+# UI
+
+Expected:
+
+**NO UI/UX CHANGES**
+
+Do not redesign Noticeboard.
+
+---
+
+# REQUIRED TESTING
+
+Test applicable existing behavior, including:
+
+1. Selected-session notice read.
+2. Historical same-school notice read.
+3. Session A/B isolation.
+4. Foreign-school session rejected.
+5. Cross-school notice rejected.
+6. Direct foreign notice ID rejected.
+7. Spoofed school/Teacher IDs ineffective.
+8. Audience restrictions preserved.
+9. Session-sensitive audience placement uses correct session enrollment where applicable.
+10. Current-session create succeeds if Teachers can create.
+11. Current-session edit succeeds if available/permitted.
+12. Current-session delete succeeds if available/permitted.
+13. Historical create rejected.
+14. Historical edit rejected.
+15. Historical delete rejected.
+16. Historical publish/unpublish rejected if applicable.
+17. Historical attachment mutation rejected if applicable.
+18. No historical write redirects to active session.
+19. Null-session behavior explicitly tested/documented.
+20. Web session transport/cache isolation.
+21. Mobile bearer/session behavior.
+22. Session A → B → A isolation.
+23. IST behavior unchanged.
+24. Homework regression.
+25. Classwork regression.
+26. Previous Teacher session regressions where relevant.
+27. Student Portal unchanged.
+28. Admin Portal unchanged.
+
+Only test features that actually exist.
+
+---
+
+# CURRENT CONTEXT
+
+Teacher Step 6 reported:
+
+- 21 focused API tests PASS
+- 30 Mobile tests PASS
+- API build PASS
+- Web production build PASS
+- API diagnostics: 369 before → 365 after
+- Web diagnostics: 60 → 60
+- Mobile diagnostics: 0 → 0
+- No schema changes
+- No UI changes
+- No Student changes
+- No Admin changes
+- `/uploads` unchanged
+
+Use actual current diagnostics for Step 7 rather than assuming older counts.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## TEACHER STEP 7 — NOTICEBOARD
+
+### Existing architecture found
+
+### Classification
+- Global/current
+- Selected-session reads
+- Current-session writes
+- Audience-restricted
+- Ownership-restricted
+- Read-state if applicable
+
+### Problems found
+
+### Corrections implemented
+
+### Session foundation
+Explain use of `teacher-academic-session.ts`.
+
+### Tenant isolation
+
+### Audience behavior
+Explain all actual existing audience types and how they are protected.
+
+### Session-sensitive audience/cohort behavior
+Explain whether `enrollments` are involved.
+
+### Null-session notices
+Explain exactly what they mean currently and what was done.
+
+### Reads
+Explain current/historical behavior.
+
+### Writes
+Explain active-session mutation behavior.
+
+### Historical read-only
+Explicitly confirm protection.
+
+### Read-state
+Explain behavior separately.
+
+### Ownership/permissions
+
+### Attachments
+Confirm `/uploads` unchanged.
+
+### Web
+Explain selected-session request/cache behavior.
+
+### Mobile
+Explain bearer/session behavior.
+
+### Session A → B → A
+PASS/FAIL and how tested.
+
+### IST
+
+### Tests
+Exact pass/fail counts.
+
+### Previous Teacher regressions
+
+### Diagnostics
+API before/after.
+Web before/after.
+Mobile before/after.
+
+### Build
+PASS/FAIL.
+
+### Database changes
+Expected NONE.
+
+### UI changes
+Expected NONE.
+
+### Student Portal changes
+Must be NONE.
+
+### Admin Portal changes
+Must be NONE.
+
+### `/uploads` changes
+Must be NONE.
+
+### Files changed
+Exact list.
+
+### Deferred issues
+
+### Recommended Teacher Step 8
+Recommend the next single module/group.
+
+---
+
+# FINAL EXPECTATION
+
+Teacher Noticeboard must follow:
+
+Authenticated Teacher
+→ real Teacher school
+→ explicitly selected Academic Session
+→ existing Noticeboard permissions
+→ correct audience
+→ notices belonging to that same school/session
+
+And:
+
+**Previous/inactive session notice CONTENT and normal operational data = STRICTLY READ-ONLY.**
+
+Do not weaken audience restrictions.
+
+Do not mix schools.
+
+Do not mix sessions.
+
+Do not silently fall back to active session.
+
+Do not redesign Noticeboard.
+
+Do not modify unrelated portals.
