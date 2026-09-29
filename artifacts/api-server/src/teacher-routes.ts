@@ -27,6 +27,7 @@ import {
   isHomeworkClassSectionConfigured,
   isHomeworkSubjectConfigured,
 } from "./teacher-homework-policy";
+import { isClassworkOwnedByTeacherInScope, parsePositiveSafeIntegerPathParam } from "./teacher-classwork-policy";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
@@ -41,6 +42,8 @@ type TeacherHomeworkContext = {
   session: NonNullable<Awaited<ReturnType<typeof storage.getAcademicSessionForSchool>>>;
 };
 type TeacherHomeworkRequest = Request & { teacherHomeworkContext?: TeacherHomeworkContext };
+type TeacherClassworkContext = TeacherHomeworkContext;
+type TeacherClassworkRequest = Request & { teacherClassworkContext?: TeacherClassworkContext };
 
 const homeworkCreateBodySchema = z.object({
   class: z.string().optional(),
@@ -96,6 +99,45 @@ function getTeacherHomeworkContext(req: Request, res: Response): TeacherHomework
   return context;
 }
 
+function withTeacherClassworkContext(
+  mode: "SELECTED_SESSION_REQUIRED" | "CURRENT_SESSION_WRITE",
+): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const resolution = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        mode,
+        storage,
+      );
+      if (!resolution.ok) {
+        res.status(resolution.status).json({ message: resolution.message });
+        return;
+      }
+      if (!resolution.session) {
+        res.status(503).json({ message: "Unable to verify the selected academic session." });
+        return;
+      }
+      (req as TeacherClassworkRequest).teacherClassworkContext = {
+        teacher: resolution.teacher,
+        schoolId: resolution.schoolId,
+        session: resolution.session,
+      };
+      next();
+    } catch {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+    }
+  };
+}
+
+function getTeacherClassworkContext(req: Request, res: Response): TeacherClassworkContext | null {
+  const context = (req as TeacherClassworkRequest).teacherClassworkContext;
+  if (!context) {
+    res.status(401).json({ message: "Teacher request is not authenticated." });
+    return null;
+  }
+  return context;
+}
+
 async function getHomeworkSchoolOptions(schoolId: number) {
   const [metadata, classSections, classSubjects] = await Promise.all([
     storage.getAllSchoolMetadata(schoolId),
@@ -106,6 +148,10 @@ async function getHomeworkSchoolOptions(schoolId: number) {
 }
 
 function removeStagedHomeworkUpload(req: Request): void {
+  if (req.file?.path) fs.unlink(req.file.path, () => undefined);
+}
+
+function removeStagedClassworkUpload(req: Request): void {
   if (req.file?.path) fs.unlink(req.file.path, () => undefined);
 }
 
@@ -964,71 +1010,153 @@ export function registerTeacherRoutes(app: Express) {
   );
 
   // ===== CLASSWORK =====
-  app.post("/api/classwork", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+  app.post(
+    "/api/classwork",
+    withTeacherClassworkContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherClassworkContext(req, res);
+      if (!context) { removeStagedClassworkUpload(req); return; }
 
-    const { content, class: cls, section, subject } = req.body;
-    if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
-
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const activeSession = await storage.getActiveSession(teacher.schoolId);
-    const cw = await storage.createClasswork({
-      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section,
-      subject: subject || "General", content, fileUrl,
-      sessionId: activeSession?.id ?? null,
-    });
-    res.status(201).json(cw);
-  });
-
-  app.get("/api/classwork/:schoolId/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const sid = parseInt(req.params.schoolId);
-
-    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
-    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-
-    const cls = req.params.class;
-    const section = req.params.section;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getClassworkByClass(sid, cls, section, viewSessionId ?? undefined);
-
-    const teacherCache = new Map<number, string>();
-    const enriched = await Promise.all(list.map(async (cw) => {
-      if (!teacherCache.has(cw.teacherId)) {
-        const t = await storage.getTeacherById(cw.teacherId);
-        teacherCache.set(cw.teacherId, t?.fullName || "Unknown");
+      const { content, class: cls, section, subject } = req.body;
+      if (!content || !cls || !section) {
+        removeStagedClassworkUpload(req);
+        res.status(400).json({ message: "Content, class, and section required" });
+        return;
       }
-      return { ...cw, teacherName: teacherCache.get(cw.teacherId)! };
-    }));
-    res.json(enriched);
-  });
 
-  app.patch("/api/classwork/:id", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id as string);
-    const cw = await storage.getClassworkById(id);
-    if (!cw) return res.status(404).json({ message: "Classwork not found" });
-    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+      const cw = await storage.createClasswork({
+        teacherId: context.teacher.id,
+        schoolId: context.schoolId,
+        class: cls,
+        section,
+        subject: subject || "General",
+        content,
+        fileUrl,
+        sessionId: context.session.id,
+      });
+      res.status(201).json(cw);
+    },
+  );
 
-    const { content, subject } = req.body;
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? cw.fileUrl : null);
-    const updated = await storage.updateClasswork(id, req.session.schoolId!, { content: content || cw.content, subject: subject || cw.subject, fileUrl });
-    res.json(updated);
-  });
+  app.get(
+    "/api/classwork/:schoolId/:class/:section",
+    withTeacherClassworkContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherClassworkContext(req, res);
+      if (!context) return;
 
-  app.delete("/api/classwork/:id", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
-    const cw = await storage.getClassworkById(id);
-    if (!cw) return res.status(404).json({ message: "Classwork not found" });
-    if (cw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    if (cw.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteClasswork(id, req.session.schoolId!);
-    res.json({ message: "Classwork deleted" });
-  });
+      const rawSchoolId = Array.isArray(req.params.schoolId) ? req.params.schoolId[0] : req.params.schoolId;
+      const schoolId = parsePositiveSafeIntegerPathParam(rawSchoolId);
+      if (schoolId === null) {
+        res.status(400).json({ message: "Invalid school ID" });
+        return;
+      }
+      if (schoolId !== context.schoolId) {
+        res.status(403).json({ message: "Not authorized for this school" });
+        return;
+      }
+
+      const cls = Array.isArray(req.params.class) ? req.params.class[0] : req.params.class;
+      const section = Array.isArray(req.params.section) ? req.params.section[0] : req.params.section;
+      const list = await storage.getClassworkByClass(context.schoolId, cls, section, context.session.id);
+
+      const teacherCache = new Map<number, string>();
+      const enriched = await Promise.all(list.map(async (cw) => {
+        if (!teacherCache.has(cw.teacherId)) {
+          const author = await storage.getTeacherById(cw.teacherId);
+          teacherCache.set(
+            cw.teacherId,
+            author?.schoolId === context.schoolId ? author.fullName : "Unknown",
+          );
+        }
+        return { ...cw, teacherName: teacherCache.get(cw.teacherId)! };
+      }));
+      res.json(enriched);
+    },
+  );
+
+  app.patch(
+    "/api/classwork/:id",
+    withTeacherClassworkContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherClassworkContext(req, res);
+      if (!context) { removeStagedClassworkUpload(req); return; }
+      const id = parsePositiveSafeIntegerPathParam(req.params.id);
+      if (id === null) {
+        removeStagedClassworkUpload(req);
+        res.status(400).json({ message: "Invalid classwork ID." });
+        return;
+      }
+
+      const cw = await storage.getClassworkById(id);
+      if (!cw || cw.schoolId !== context.schoolId || cw.sessionId !== context.session.id) {
+        removeStagedClassworkUpload(req);
+        res.status(404).json({ message: "Classwork not found in the selected session." });
+        return;
+      }
+      if (cw.teacherId !== context.teacher.id) {
+        removeStagedClassworkUpload(req);
+        res.status(403).json({ message: "Not authorized" });
+        return;
+      }
+
+      const { content, subject } = req.body;
+      const fileUrl = req.file
+        ? `/uploads/${req.file.filename}`
+        : (req.body.keepFile === "true" ? cw.fileUrl : null);
+      const updated = await storage.updateClasswork(
+        id,
+        context.schoolId,
+        context.session.id,
+        context.teacher.id,
+        { content: content || cw.content, subject: subject || cw.subject, fileUrl },
+      );
+      if (!updated) {
+        removeStagedClassworkUpload(req);
+        res.status(404).json({ message: "Classwork not found in the selected session." });
+        return;
+      }
+      res.json(updated);
+    },
+  );
+
+  app.delete(
+    "/api/classwork/:id",
+    withTeacherClassworkContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+      const context = getTeacherClassworkContext(req, res);
+      if (!context) return;
+      const id = parsePositiveSafeIntegerPathParam(req.params.id);
+      if (id === null) {
+        res.status(400).json({ message: "Invalid classwork ID." });
+        return;
+      }
+
+      const cw = await storage.getClassworkById(id);
+      if (!cw || cw.schoolId !== context.schoolId || cw.sessionId !== context.session.id) {
+        res.status(404).json({ message: "Classwork not found in the selected session." });
+        return;
+      }
+      if (cw.teacherId !== context.teacher.id) {
+        res.status(403).json({ message: "Not authorized" });
+        return;
+      }
+      const deleted = await storage.deleteClasswork(
+        id,
+        context.schoolId,
+        context.session.id,
+        context.teacher.id,
+      );
+      if (!deleted) {
+        res.status(404).json({ message: "Classwork not found in the selected session." });
+        return;
+      }
+      res.json({ message: "Classwork deleted" });
+    },
+  );
 
   // ===== NOTICES (Noticeboard) — SESSION-SCOPED MODULE =====
   // Notices carry a session_id and are filtered by viewSessionId when fetched.

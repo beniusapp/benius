@@ -14,6 +14,7 @@ import { AttendanceLeaveMutationError, storage } from "./storage";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
+import { isClassworkOwnedByTeacherInScope } from "./teacher-classwork-policy";
 
 type Teacher = NonNullable<Awaited<ReturnType<typeof storage.getTeacherWithSchool>>>;
 type TeacherScope = { className: string; section: string; subject: string | null };
@@ -873,17 +874,25 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         res.json({ item: updated });
       } else {
         const item = await storage.getClassworkById(body.data.itemId);
-        if (!item || item.schoolId !== account.school.id || item.sessionId !== session.id || item.teacherId !== teacher.id
+        if (!item || !isClassworkOwnedByTeacherInScope(item, {
+          teacherId: teacher.id,
+          schoolId: account.school.id,
+          sessionId: session.id,
+        })
           || !await resolveScope(account, item.class, item.section)
           || !isAssignedSubject(scopes, item.class, item.section, body.data.subject ?? item.subject)) {
           fail(res, 403, "This classwork is not editable by this teacher in the selected session.");
           return;
         }
-        const updated = await storage.updateClasswork(item.id, account.school.id, {
+        const updated = await storage.updateClasswork(item.id, account.school.id, session.id, teacher.id, {
           content: body.data.content ?? item.content,
           subject: body.data.subject ?? item.subject,
           fileUrl: fileUrl ?? (body.data.removeAttachment ? null : item.fileUrl),
         });
+        if (!updated) {
+          fail(res, 404, "This classwork is no longer available in the selected session.");
+          return;
+        }
         if (fileUrl) (req as MobileTeacherRequest).teacherUploadRetained = true;
         if (updated.fileUrl !== item.fileUrl) await removePrivateFileUrl(item.fileUrl, module);
         res.json({ item: updated });
@@ -908,12 +917,20 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         await removePrivateFileUrl(item.fileUrl, module);
       } else {
         const item = await storage.getClassworkById(body.data.itemId);
-        if (!item || item.schoolId !== account.school.id || item.sessionId !== session.id || item.teacherId !== teacher.id
+        if (!item || !isClassworkOwnedByTeacherInScope(item, {
+          teacherId: teacher.id,
+          schoolId: account.school.id,
+          sessionId: session.id,
+        })
           || !await resolveScope(account, item.class, item.section)) {
           fail(res, 403, "This classwork is not editable by this teacher in the selected session.");
           return;
         }
-        await storage.deleteClasswork(item.id, account.school.id);
+        const deleted = await storage.deleteClasswork(item.id, account.school.id, session.id, teacher.id);
+        if (!deleted) {
+          fail(res, 404, "This classwork is no longer available in the selected session.");
+          return;
+        }
         await removePrivateFileUrl(item.fileUrl, module);
       }
       res.json({ deleted: true });

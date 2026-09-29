@@ -14,3 +14,9 @@ For test bundles that import `sharp`, externalize that package and emit the Comm
 **Why:** Bundling `sharp` as CommonJS rewrites its `import.meta.url` to an undefined value used by `createRequire`. Externalizing it fixes that, but a bundle under `/tmp` cannot resolve the API package's installed `sharp`.
 
 **How to apply:** Use esbuild's `--external:sharp` flag for these tests and run the output from inside the API package's `node_modules/.cache` directory.
+
+Do not externalize all packages in API test bundles. Let esbuild bundle workspace packages, while still externalizing `sharp` when needed.
+
+**Why:** Leaving `@workspace/db` external resolved to its TypeScript source entry, whose directory import Node 20 rejects from CommonJS (`ERR_UNSUPPORTED_DIR_IMPORT`).
+
+**How to apply:** Avoid `--packages=external` for these bundles; use `--external:sharp` only when required by a test's dependency graph.

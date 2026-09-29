@@ -1572,13 +1572,16 @@ export class DatabaseStorage {
     return cw;
   }
 
-  async getClassworkByClass(schoolId: number, cls: string, section: string, sessionId?: number): Promise<Classwork[]> {
+  async getClassworkByClass(schoolId: number, cls: string, section: string, sessionId: number): Promise<Classwork[]> {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Classwork requires a valid academic session");
+    }
     return await db.select().from(classwork).where(
       and(
         eq(classwork.schoolId, schoolId),
         eq(classwork.class, cls),
         eq(classwork.section, section),
-        ...(sessionId != null ? [eq(classwork.sessionId, sessionId)] : []),
+        eq(classwork.sessionId, sessionId),
       )
     ).orderBy(desc(classwork.createdAt));
   }
@@ -1588,13 +1591,30 @@ export class DatabaseStorage {
     return cw;
   }
 
-  async updateClasswork(id: number, schoolId: number, data: { content?: string; subject?: string; fileUrl?: string | null }): Promise<Classwork> {
-    const [cw] = await db.update(classwork).set(data).where(and(eq(classwork.id, id), eq(classwork.schoolId, schoolId))).returning();
+  async updateClasswork(
+    id: number,
+    schoolId: number,
+    sessionId: number,
+    teacherId: number,
+    data: { content?: string; subject?: string; fileUrl?: string | null },
+  ): Promise<Classwork | undefined> {
+    const [cw] = await db.update(classwork).set(data).where(and(
+      eq(classwork.id, id),
+      eq(classwork.schoolId, schoolId),
+      eq(classwork.sessionId, sessionId),
+      eq(classwork.teacherId, teacherId),
+    )).returning();
     return cw;
   }
 
-  async deleteClasswork(id: number, schoolId: number): Promise<void> {
-    await db.delete(classwork).where(and(eq(classwork.id, id), eq(classwork.schoolId, schoolId)));
+  async deleteClasswork(id: number, schoolId: number, sessionId: number, teacherId: number): Promise<boolean> {
+    const deleted = await db.delete(classwork).where(and(
+      eq(classwork.id, id),
+      eq(classwork.schoolId, schoolId),
+      eq(classwork.sessionId, sessionId),
+      eq(classwork.teacherId, teacherId),
+    )).returning({ id: classwork.id });
+    return deleted.length > 0;
   }
 
   // ===== NOTICE METHODS =====

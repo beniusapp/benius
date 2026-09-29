@@ -12,8 +12,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { todayInIST } from "@shared/ist-time";
 
@@ -68,6 +68,8 @@ function getAvatarColor(name: string): string {
 
 export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const {
     classes,
@@ -115,19 +117,22 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   const classSelected = selectedClass !== "";
   const sectionSelected = selectedSection !== "";
   const subjectSelected = subject.trim() !== "";
-  const canPost = classSelected && sectionSelected && subjectSelected && content.trim().length > 0;
+  const canPost = selectedSessionId !== null && classSelected && sectionSelected && subjectSelected && content.trim().length > 0;
 
+  const classworkQueryKey = ["/api/classwork", teacher.schoolId, selectedClass, selectedSection, selectedSessionId] as const;
   const { data: entries = [], isLoading } = useQuery<ClassworkEntry[]>({
-    queryKey: ["/api/classwork", teacher.schoolId, selectedClass, selectedSection],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/classwork/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}`,
-        { credentials: "include" }
+    queryKey: classworkQueryKey,
+    queryFn: async ({ queryKey }) => {
+      const [, schoolId, className, section, sessionId] = queryKey as typeof classworkQueryKey;
+      if (sessionId === null) throw new Error("A selected academic session is required.");
+      const res = await sessionFetchForViewSession(
+        `/api/classwork/${schoolId}/${encodeURIComponent(className)}/${section}`,
+        sessionId,
       );
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
-    enabled: classSelected && sectionSelected,
+    enabled: classSelected && sectionSelected && selectedSessionId !== null,
   });
 
   const handleFileSelect = useCallback((file: File | null) => {
@@ -148,23 +153,30 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   }, [filePreview]);
 
   const createMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (input: {
+      sessionId: number;
+      className: string;
+      section: string;
+      subject: string;
+      content: string;
+      file: File | null;
+    }) => {
       const fd = new FormData();
-      fd.append("content", content);
-      fd.append("subject", subject || teacher.subject || "General");
-      fd.append("class", selectedClass);
-      fd.append("section", selectedSection);
-      if (selectedFile) fd.append("file", selectedFile);
-      const res = await fetch("/api/classwork", { method: "POST", body: fd, credentials: "include" });
+      fd.append("content", input.content);
+      fd.append("subject", input.subject);
+      fd.append("class", input.className);
+      fd.append("section", input.section);
+      if (input.file) fd.append("file", input.file);
+      const res = await sessionFetchForViewSession("/api/classwork", input.sessionId, { method: "POST", body: fd });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, { sessionId, className, section }) => {
       toast({ title: "Activity Posted!", description: "Class activity has been logged successfully." });
       setContent("");
       setSubject("");
       clearFile();
-      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, className, section, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -172,19 +184,26 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (id: number) => {
+    mutationFn: async (input: {
+      id: number;
+      sessionId: number;
+      className: string;
+      section: string;
+      subject: string;
+      content: string;
+    }) => {
       const fd = new FormData();
-      fd.append("content", editContent);
-      fd.append("subject", editSubject);
+      fd.append("content", input.content);
+      fd.append("subject", input.subject);
       fd.append("keepFile", "true");
-      const res = await fetch(`/api/classwork/${id}`, { method: "PATCH", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/classwork/${input.id}`, input.sessionId, { method: "PATCH", body: fd });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, { sessionId, className, section }) => {
       toast({ title: "Activity Updated" });
       setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, className, section, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -192,15 +211,15 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/classwork/${id}`, { method: "DELETE", credentials: "include" });
+    mutationFn: async (input: { id: number; sessionId: number; className: string; section: string }) => {
+      const res = await sessionFetchForViewSession(`/api/classwork/${input.id}`, input.sessionId, { method: "DELETE" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, { sessionId, className, section }) => {
       toast({ title: "Activity Deleted" });
       setDeleteConfirmId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/classwork", teacher.schoolId, className, section, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -356,7 +375,17 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           <Button
-            onClick={() => createMutation.mutate()}
+            onClick={() => {
+              if (selectedSessionId === null) return;
+              createMutation.mutate({
+                sessionId: selectedSessionId,
+                className: selectedClass,
+                section: selectedSection,
+                subject: subject || teacher.subject || "General",
+                content,
+                file: selectedFile,
+              });
+            }}
             disabled={isArchiveMode || !canPost || createMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
               canPost
@@ -458,8 +487,18 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
                         <div className="flex gap-2">
                           <Button
                             size="sm"
-                            onClick={() => updateMutation.mutate(entry.id)}
-                            disabled={isArchiveMode || updateMutation.isPending}
+                            onClick={() => {
+                              if (selectedSessionId === null) return;
+                              updateMutation.mutate({
+                                id: entry.id,
+                                sessionId: selectedSessionId,
+                                className: selectedClass,
+                                section: selectedSection,
+                                subject: editSubject,
+                                content: editContent,
+                              });
+                            }}
+                            disabled={isArchiveMode || selectedSessionId === null || updateMutation.isPending}
                             className="rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white"
                             data-testid={`button-save-edit-${entry.id}`}
                           >
@@ -500,8 +539,16 @@ export default function ClassworkModule({ teacher }: { teacher: TeacherMe }) {
                             <>
                               <span className="text-xs text-destructive mr-1">Delete?</span>
                               <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
-                                onClick={() => deleteMutation.mutate(entry.id)}
-                                disabled={isArchiveMode || deleteMutation.isPending}
+                                 onClick={() => {
+                                   if (selectedSessionId === null) return;
+                                   deleteMutation.mutate({
+                                     id: entry.id,
+                                     sessionId: selectedSessionId,
+                                     className: selectedClass,
+                                     section: selectedSection,
+                                   });
+                                 }}
+                                 disabled={isArchiveMode || selectedSessionId === null || deleteMutation.isPending}
                                 data-testid={`button-confirm-delete-${entry.id}`}
                               >
                                 {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
