@@ -1,0 +1,673 @@
+# BENIUS — TEACHER PORTAL
+# STEP 6 — CLASSWORK ACADEMIC SESSION CORRECTION
+
+Teacher progress accepted as COMPLETE:
+
+- Step 1 — Academic Session Foundation
+- Step 2 — Timetable
+- Step 3 — Attendance
+- Step 4 — Examination / Results / Reports
+- Step 5 — Homework
+
+Historical-session audit also established the BENIUS rule:
+
+**Previous / inactive Academic Session = STRICTLY READ-ONLY for session-specific academic operational data.**
+
+Now work ONLY on:
+
+# TEACHER CLASSWORK
+
+Do NOT start Noticeboard, Dashboard, Complaint, Leave, Approval Center, Student Profiles, or any other Teacher module.
+
+---
+
+# CORE RULE
+
+Teacher Classwork must follow:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher Classwork permissions
+→ selected-session class/section/cohort
+→ Classwork belonging to that exact school/session
+
+Never trust client-supplied `teacherId` or `schoolId` for authorization.
+
+---
+
+# HISTORICAL SESSION RULE
+
+For session-specific Teacher Classwork:
+
+## ACTIVE SESSION
+- reads allowed
+- existing permitted create/edit/delete actions allowed
+
+## PREVIOUS / INACTIVE SESSION
+- historical reads allowed
+- STRICTLY READ-ONLY
+
+An inactive session must NOT allow:
+
+- create Classwork
+- edit/update Classwork
+- delete Classwork
+- replace/remove/upload attachment as a persisted Classwork mutation
+- any other persisted Classwork mutation
+
+Historical writes must be rejected.
+
+They must NEVER silently redirect to the active session.
+
+Backend enforcement is mandatory.
+
+Do not rely only on disabled buttons.
+
+---
+
+# FIRST — AUDIT THE ACTUAL IMPLEMENTATION
+
+Before changing code, inspect the complete Teacher Classwork implementation:
+
+- Web Teacher Classwork page
+- Mobile Teacher Classwork if implemented
+- API routes
+- storage methods
+- database/schema fields
+- create
+- edit/update
+- delete
+- list
+- detail
+- attachment behavior
+- class/section selection
+- subject behavior if applicable
+- Teacher assignment/faculty mapping if applicable
+- Student/cohort information if used
+- selected Academic Session handling
+- `x-view-session-id`
+- active-session fallback
+- Web query/cache keys
+- Mobile query/cache keys
+- Web cookie authentication
+- Mobile bearer authentication
+
+Do not assume Classwork behaves exactly like Homework.
+
+Document what actually exists.
+
+---
+
+# CLASSIFY THE DATA
+
+Determine which Classwork-related behavior is:
+
+1. GLOBAL/current
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED
+5. TEACHER-ASSIGNMENT-RESTRICTED
+
+Do not blindly make every related object session-based.
+
+---
+
+# USE THE EXISTING TEACHER SESSION FOUNDATION
+
+Reuse:
+
+`teacher-academic-session.ts`
+
+Do NOT create another competing session resolver.
+
+For normal session-specific reads, use:
+
+`SELECTED_SESSION_REQUIRED`
+
+where appropriate.
+
+For current-session-only mutations, use:
+
+`CURRENT_SESSION_WRITE`
+
+where appropriate.
+
+---
+
+# CLASSWORK READS
+
+When Teacher selects Session A:
+
+→ return Classwork for Session A.
+
+When Teacher selects Session B:
+
+→ return Classwork for Session B.
+
+Never mix the two.
+
+Historical same-school Classwork should remain readable where existing product behavior permits.
+
+Do not silently replace the selected historical session with the active session.
+
+---
+
+# CLASSWORK WRITES
+
+Inspect every actual mutation.
+
+Examples may include:
+
+- create
+- edit/update
+- delete
+- attachment mutation
+
+Only apply rules to actions that actually exist.
+
+For session-specific mutations:
+
+Active selected session
+→ existing permitted write works.
+
+Inactive selected session
+→ reject.
+
+Missing/malformed required session
+→ reject appropriately.
+
+Foreign-school session
+→ reject.
+
+Never:
+
+Historical Session A selected
+→ save into Active Session B.
+
+---
+
+# TENANT ISOLATION
+
+School A Teacher must never access School B Classwork.
+
+Verify:
+
+School A Teacher
++
+School A session/Classwork
+→ allowed according to existing permissions.
+
+School A Teacher
++
+School B session
+→ rejected.
+
+School A Teacher
++
+School B Classwork ID
+→ rejected.
+
+Spoofing:
+
+- teacherId
+- schoolId
+- sessionId
+- classworkId
+
+must not bypass authorization.
+
+---
+
+# TEACHER PERMISSIONS
+
+Preserve existing Classwork authorization.
+
+Inspect whether Classwork is restricted by:
+
+- assigned class
+- section
+- subject
+- faculty mapping
+- Teacher ownership
+
+Do NOT invent new restrictions.
+
+Do NOT weaken existing restrictions.
+
+The authenticated Teacher identity must be authoritative.
+
+---
+
+# STUDENT PLACEMENT / COHORT
+
+If Teacher Classwork uses Student rosters, Student counts, class/section membership, or any Student-derived information, use the selected Academic Session enrollment where the information is session-specific.
+
+Use:
+
+`enrollments`
+
+scoped by:
+
+school
++
+student
++
+selected Academic Session
+
+Do NOT use current `students.class`, `students.section`, or `students.roll_number` as historical placement.
+
+Example:
+
+2025–26:
+Rahim → Class 7A / Roll 12
+
+2026–27:
+Rahim → Class 8B / Roll 8
+
+If Teacher opens 2025–26 Classwork, any session-sensitive Student placement/count must use:
+
+Class 7A / Roll 12.
+
+Do not change permanent Student identity fields.
+
+---
+
+# STUDENT COUNTS
+
+If Classwork displays:
+
+- Student count
+- assigned count
+- recipient count
+- completion/submission count
+
+inspect where the count comes from.
+
+If the count represents the selected session's class/section/cohort, it must use selected-session enrollment.
+
+Do not use today's/current Student master placement for historical Classwork.
+
+If Classwork does not use Student counts, do not invent them.
+
+---
+
+# ATTACHMENTS
+
+Do NOT modify the global `/uploads` architecture.
+
+The known legacy `/uploads` authorization issue remains a separate security workstream.
+
+Preserve existing attachment UI and storage behavior.
+
+However, normal Classwork record authorization must still correctly validate:
+
+Teacher
++
+school
++
+session
++
+Classwork
+
+Do not create a new attachment architecture.
+
+If you encounter the already-known public attachment issue, document it as deferred.
+
+---
+
+# WEB
+
+Web remains the source of truth.
+
+Preserve the existing Teacher Classwork UI/UX exactly.
+
+Correct only what is required for:
+
+- selected-session transport
+- query/cache isolation
+- backend session enforcement
+- tenant isolation
+- historical read-only protection
+- selected-session cohort information
+
+Do NOT redesign the page.
+
+Web continues using cookie authentication.
+
+---
+
+# MOBILE
+
+Inspect Mobile Teacher Classwork if implemented.
+
+Mobile continues using bearer authentication.
+
+Do NOT introduce cookie dependency.
+
+Do NOT redesign or convert module architecture.
+
+If Mobile uses this module, make sure it sends/uses the same selected Academic Session and receives the same backend-correct data.
+
+---
+
+# CACHE / SESSION SWITCHING
+
+Session-sensitive cache keys must include selected Academic Session.
+
+Explicitly verify:
+
+Session A
+→ Classwork A
+
+switch to Session B
+→ Classwork B
+
+switch back to Session A
+→ Classwork A
+
+No stale Session B data should appear in Session A.
+
+---
+
+# HISTORICAL READ-ONLY TEST
+
+Explicitly verify:
+
+Inactive Session A selected
+→ historical Classwork read allowed where existing behavior permits.
+
+Inactive Session A:
+- create ❌
+- edit/update ❌
+- delete ❌
+- attachment mutation ❌
+
+No mutation may target Active Session B instead.
+
+---
+
+# IST
+
+BENIUS business/display timezone remains:
+
+**Asia/Kolkata / IST**
+
+Preserve existing:
+
+- Classwork date
+- due/completion date if applicable
+- created/updated timestamps
+
+Do not introduce UTC date shifting.
+
+Reuse existing date/IST utilities where appropriate.
+
+---
+
+# REGRESSION — PREVIOUS TEACHER WORK
+
+Do not redesign previous completed modules.
+
+Regression-check that existing protections remain intact for:
+
+- Timetable
+- Attendance
+- Examination
+- Results
+- Reports
+- Homework
+
+Especially preserve:
+
+**Inactive session = read-only**
+
+for session-specific academic data.
+
+---
+
+# DO NOT TOUCH
+
+Do NOT change:
+
+- Teacher Dashboard
+- Teacher Noticeboard
+- Teacher Complaint
+- Teacher Leave
+- Teacher Approval Center
+- Teacher Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Do NOT change Student Portal.
+
+Do NOT change Admin Portal.
+
+Do NOT change Admin Exam Controller.
+
+Do NOT modify `/uploads`.
+
+Do NOT work on the deferred promotion-ledger database migration.
+
+---
+
+# DATABASE
+
+Expected:
+
+**NO DATABASE SCHEMA CHANGE**
+
+Use the existing Classwork/session/enrollment structure.
+
+If you determine a schema change is required:
+
+STOP.
+
+Explain why and wait for approval.
+
+---
+
+# UI
+
+Expected:
+
+**NO UI/UX CHANGE**
+
+Do not change:
+
+- layout
+- cards
+- tables
+- buttons
+- labels
+- colors
+- fonts
+- navigation
+
+This is a session/data/security correction.
+
+---
+
+# TESTING
+
+At minimum verify applicable existing actions:
+
+1. Selected-session Classwork read.
+2. Historical same-school Classwork read.
+3. Foreign-school session rejected.
+4. Cross-school Classwork rejected.
+5. Missing/malformed required session rejected.
+6. Teacher/school spoofing ineffective.
+7. Current-session Classwork create succeeds when permitted.
+8. Current-session edit succeeds if edit exists.
+9. Current-session delete succeeds if delete exists.
+10. Historical create rejected.
+11. Historical edit rejected.
+12. Historical delete rejected.
+13. Historical attachment mutation rejected if such action exists.
+14. Selected-session Student placement/count is correct if used.
+15. Historical placement uses historical enrollment if used.
+16. Session A → B → A cache/request isolation.
+17. Web cookie authentication remains intact.
+18. Mobile bearer authentication remains intact.
+19. Tenant isolation remains intact.
+20. IST/date behavior remains unchanged.
+21. Homework regression passes.
+22. Previous Teacher session regressions remain passing.
+
+Do not invent tests for features that don't exist.
+
+---
+
+# CURRENT VERIFICATION CONTEXT
+
+Teacher Step 5 Homework reported:
+
+- API/Web builds PASS
+- 31 focused API tests PASS
+- 30 Mobile tests PASS
+- Mobile typecheck PASS
+- no changed Homework-handler type errors
+- no schema changes
+- no Student Portal changes
+- no Admin Portal changes
+- `/uploads` unchanged
+
+Previously accepted project diagnostic baselines were:
+
+API: 373
+Web: 60
+Mobile: 0
+
+Report the actual current counts rather than hiding new errors inside old baselines.
+
+---
+
+# FINAL REPORT FORMAT
+
+Return:
+
+## TEACHER STEP 6 — CLASSWORK
+
+### Existing architecture found
+Explain actual implementation.
+
+### Classification
+- Global/current
+- Selected-session reads
+- Current-session writes
+- Session-derived
+- Teacher-assignment-restricted
+
+### Problems found
+List actual problems only.
+
+### Corrections implemented
+Explain exactly what changed.
+
+### Session foundation
+Explain use of `teacher-academic-session.ts`.
+
+### Tenant isolation
+Explain school/session/Classwork protection.
+
+### Teacher permissions
+Explain preserved assignment/ownership rules.
+
+### Student placement/cohort
+Explain selected-session enrollment usage if applicable.
+
+### Student counts
+Explain whether Classwork uses them and whether correction was needed.
+
+### Reads
+Explain current/historical read behavior.
+
+### Writes
+Explain active-session mutation behavior.
+
+### Historical read-only
+Explicitly confirm whether inactive sessions are strictly read-only.
+
+### Attachments
+Confirm existing behavior and `/uploads` unchanged.
+
+### Web
+Explain request/session/cache handling.
+
+### Mobile
+Explain bearer/session behavior.
+
+### Session A → B → A
+PASS/FAIL.
+
+### IST
+Explain preservation.
+
+### Tests
+Give exact counts and failures.
+
+### Previous Teacher regressions
+Report status.
+
+### Diagnostics
+API before/after.
+Web before/after.
+Mobile before/after.
+
+### Build
+PASS/FAIL.
+
+### Database changes
+Expected: NONE.
+
+### UI changes
+Expected: NONE.
+
+### Student Portal changes
+Must be: NONE.
+
+### Admin Portal changes
+Must be: NONE.
+
+### `/uploads` changes
+Must be: NONE.
+
+### Files changed
+List exact files.
+
+### Deferred issues
+List only genuine deferred issues.
+
+### Recommended Teacher Step 7
+Recommend the next single module/group.
+
+---
+
+# FINAL EXPECTATION
+
+The final Teacher Classwork behavior must be:
+
+Teacher selects Academic Session
+→ authenticated Teacher's real school verified
+→ selected session verified as belonging to that school
+→ existing Teacher Classwork permissions applied
+→ exact selected-session Classwork returned
+→ selected-session enrollment/cohort used where relevant
+
+For writes:
+
+Active session
+→ existing permitted mutations work.
+
+Previous/inactive session
+→ **STRICTLY READ-ONLY.**
+
+Never silently redirect historical writes to the active session.
+
+Do not redesign Classwork.
+
+Do not modify unrelated modules.
