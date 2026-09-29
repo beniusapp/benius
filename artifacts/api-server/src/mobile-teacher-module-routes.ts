@@ -858,12 +858,16 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
           fail(res, 400, "Due date must be a valid date today or later.");
           return;
         }
-        const updated = await storage.updateHomework(item.id, account.school.id, {
+        const updated = await storage.updateHomework(item.id, account.school.id, session.id, teacher.id, {
           content: body.data.content ?? item.content,
           subject: body.data.subject ?? item.subject,
           dueDate: body.data.dueDate === undefined ? item.dueDate : body.data.dueDate,
           fileUrl: fileUrl ?? (body.data.removeAttachment ? null : item.fileUrl),
         });
+        if (!updated) {
+          fail(res, 404, "This homework is no longer available in the selected session.");
+          return;
+        }
         if (fileUrl) (req as MobileTeacherRequest).teacherUploadRetained = true;
         if (updated.fileUrl !== item.fileUrl) await removePrivateFileUrl(item.fileUrl, module);
         res.json({ item: updated });
@@ -896,7 +900,11 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
           fail(res, 403, "This homework is not editable by this teacher in the selected session.");
           return;
         }
-        await storage.deleteHomework(item.id, account.school.id);
+        const deleted = await storage.deleteHomework(item.id, account.school.id, session.id, teacher.id);
+        if (!deleted) {
+          fail(res, 404, "This homework is no longer available in the selected session.");
+          return;
+        }
         await removePrivateFileUrl(item.fileUrl, module);
       } else {
         const item = await storage.getClassworkById(body.data.itemId);

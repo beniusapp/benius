@@ -1244,14 +1244,16 @@ export class DatabaseStorage {
     return hw;
   }
 
-  async getHomeworkByClass(schoolId: number, cls: string, section: string, sessionId?: number): Promise<Homework[]> {
-    // When sessionId is provided, strictly scope results to that academic year.
+  async getHomeworkByClass(schoolId: number, cls: string, section: string, sessionId: number): Promise<Homework[]> {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new Error("Homework requires a valid academic session");
+    }
     return await db.select().from(homework).where(
       and(
         eq(homework.schoolId, schoolId),
         eq(homework.class, cls),
         eq(homework.section, section),
-        ...(sessionId != null ? [eq(homework.sessionId, sessionId)] : []),
+        eq(homework.sessionId, sessionId),
       )
     ).orderBy(desc(homework.createdAt));
   }
@@ -1273,13 +1275,30 @@ export class DatabaseStorage {
     return rows.map(r => r.student);
   }
 
-  async updateHomework(id: number, schoolId: number, data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null }): Promise<Homework> {
-    const [updated] = await db.update(homework).set(data).where(and(eq(homework.id, id), eq(homework.schoolId, schoolId))).returning();
+  async updateHomework(
+    id: number,
+    schoolId: number,
+    sessionId: number,
+    teacherId: number,
+    data: { content: string; subject: string; fileUrl: string | null; dueDate?: string | null },
+  ): Promise<Homework | undefined> {
+    const [updated] = await db.update(homework).set(data).where(and(
+      eq(homework.id, id),
+      eq(homework.schoolId, schoolId),
+      eq(homework.sessionId, sessionId),
+      eq(homework.teacherId, teacherId),
+    )).returning();
     return updated;
   }
 
-  async deleteHomework(id: number, schoolId: number): Promise<void> {
-    await db.delete(homework).where(and(eq(homework.id, id), eq(homework.schoolId, schoolId)));
+  async deleteHomework(id: number, schoolId: number, sessionId: number, teacherId: number): Promise<boolean> {
+    const deleted = await db.delete(homework).where(and(
+      eq(homework.id, id),
+      eq(homework.schoolId, schoolId),
+      eq(homework.sessionId, sessionId),
+      eq(homework.teacherId, teacherId),
+    )).returning({ id: homework.id });
+    return deleted.length > 0;
   }
 
   async getHomeworkById(id: number): Promise<Homework | undefined> {

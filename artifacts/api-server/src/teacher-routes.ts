@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import { storage, evaluatePromotion, AttendanceLeaveMutationError } from "./storage";
 import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
@@ -20,7 +20,13 @@ import {
   todayInIST,
 } from "./shared/ist-time";
 import { resolveTeacherExaminationSession } from "./teacher-examination-session";
-import { resolveTeacherAcademicSession } from "./teacher-academic-session";
+import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
+import {
+  countDistinctHomeworkStudents,
+  deriveHomeworkSchoolOptions,
+  isHomeworkClassSectionConfigured,
+  isHomeworkSubjectConfigured,
+} from "./teacher-homework-policy";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
@@ -28,6 +34,87 @@ import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
 import { authenticationAttemptIsRevoked } from "./session-revocation";
+
+type TeacherHomeworkContext = {
+  teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>;
+  schoolId: number;
+  session: NonNullable<Awaited<ReturnType<typeof storage.getAcademicSessionForSchool>>>;
+};
+type TeacherHomeworkRequest = Request & { teacherHomeworkContext?: TeacherHomeworkContext };
+
+const homeworkCreateBodySchema = z.object({
+  class: z.string().optional(),
+  section: z.string().optional(),
+  subject: z.string().optional(),
+  content: z.string().optional(),
+  dueDate: z.string().optional(),
+});
+
+const homeworkUpdateBodySchema = z.object({
+  content: z.string().optional(),
+  subject: z.string().optional(),
+  dueDate: z.string().optional(),
+  keepFile: z.string().optional(),
+});
+
+function withTeacherHomeworkContext(
+  mode: "SELECTED_SESSION_REQUIRED" | "CURRENT_SESSION_WRITE",
+): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const resolution = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        mode,
+        storage,
+      );
+      if (!resolution.ok) {
+        res.status(resolution.status).json({ message: resolution.message });
+        return;
+      }
+      if (!resolution.session) {
+        res.status(503).json({ message: "Unable to verify the selected academic session." });
+        return;
+      }
+      (req as TeacherHomeworkRequest).teacherHomeworkContext = {
+        teacher: resolution.teacher,
+        schoolId: resolution.schoolId,
+        session: resolution.session,
+      };
+      next();
+    } catch {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+    }
+  };
+}
+
+function getTeacherHomeworkContext(req: Request, res: Response): TeacherHomeworkContext | null {
+  const context = (req as TeacherHomeworkRequest).teacherHomeworkContext;
+  if (!context) {
+    res.status(401).json({ message: "Teacher request is not authenticated." });
+    return null;
+  }
+  return context;
+}
+
+async function getHomeworkSchoolOptions(schoolId: number) {
+  const [metadata, classSections, classSubjects] = await Promise.all([
+    storage.getAllSchoolMetadata(schoolId),
+    storage.getClassSectionsMap(schoolId),
+    storage.getClassSubjectsMap(schoolId),
+  ]);
+  return deriveHomeworkSchoolOptions(metadata, classSections, classSubjects);
+}
+
+function removeStagedHomeworkUpload(req: Request): void {
+  if (req.file?.path) fs.unlink(req.file.path, () => undefined);
+}
+
+function parseLegacyHomeworkId(raw: string | string[] | undefined): number | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
+}
 
 /** Select one school-owned Timetable session for the entire request. */
 export async function resolveTimetableSessionId(
@@ -652,71 +739,229 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== HOMEWORK =====
-  app.post("/api/homework", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+  app.post(
+    "/api/homework",
+    withTeacherHomeworkContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) { removeStagedHomeworkUpload(req); return; }
 
-    const { content, subject, class: cls, section, dueDate } = req.body;
-    if (!content || !cls || !section) return res.status(400).json({ message: "Content, class, and section required" });
-
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const activeSession = await storage.getActiveSession(teacher.schoolId);
-    const hw = await storage.createHomework({
-      teacherId: teacher.id, schoolId: teacher.schoolId, class: cls, section, subject: subject || "General", content, fileUrl, dueDate: dueDate || null,
-      sessionId: activeSession?.id ?? null,
-    });
-    res.status(201).json(hw);
-  });
-
-  app.get("/api/homework/:schoolId/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const sid = parseInt(req.params.schoolId);
-    if (isNaN(sid)) return res.status(400).json({ message: "Invalid school ID" });
-
-    const sessionTeacher = await storage.getTeacherById(req.session.teacherId);
-    if (!sessionTeacher || sessionTeacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-
-    const cls = req.params.class;
-    const section = req.params.section;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getHomeworkByClass(sid, cls, section, viewSessionId ?? undefined);
-    const totalStudents = await storage.getStudentCountByClassSection(sid, cls, section);
-
-    const teacherCache = new Map<number, string>();
-    const enriched = await Promise.all(list.map(async (hw) => {
-      const viewCount = await storage.getHomeworkViewCount(hw.id);
-      if (!teacherCache.has(hw.teacherId)) {
-        const t = await storage.getTeacherById(hw.teacherId);
-        teacherCache.set(hw.teacherId, t?.fullName || "Unknown");
+      const parsed = homeworkCreateBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        removeStagedHomeworkUpload(req);
+        res.status(400).json({ message: "Content, class, and section required" });
+        return;
       }
-      return { ...hw, viewCount, totalStudents, teacherName: teacherCache.get(hw.teacherId)! };
-    }));
-    res.json(enriched);
-  });
 
-  app.patch("/api/homework/:id", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id as string);
-    const hw = await storage.getHomeworkById(id);
-    if (!hw) return res.status(404).json({ message: "Homework not found" });
-    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
+      const { content, subject: submittedSubject, class: cls, section, dueDate: submittedDueDate } = parsed.data;
+      if (!content || !cls || !section) {
+        removeStagedHomeworkUpload(req);
+        res.status(400).json({ message: "Content, class, and section required" });
+        return;
+      }
+      const subject = submittedSubject || "General";
+      const dueDate = submittedDueDate || null;
 
-    const { content, subject, dueDate } = req.body;
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? hw.fileUrl : null);
-    const updated = await storage.updateHomework(id, req.session.schoolId!, { content: content || hw.content, subject: subject || hw.subject, fileUrl, dueDate: dueDate !== undefined ? (dueDate || null) : hw.dueDate });
-    res.json(updated);
-  });
+      let options;
+      try {
+        options = await getHomeworkSchoolOptions(context.schoolId);
+      } catch {
+        removeStagedHomeworkUpload(req);
+        res.status(503).json({ message: "Unable to load school class configuration." });
+        return;
+      }
+      if (!isHomeworkClassSectionConfigured(options, cls, section)) {
+        removeStagedHomeworkUpload(req);
+        res.status(403).json({ message: "This class and section are not configured for the school." });
+        return;
+      }
+      if (!isHomeworkSubjectConfigured(options, cls, subject)) {
+        removeStagedHomeworkUpload(req);
+        res.status(403).json({ message: "This subject is not configured for the selected class." });
+        return;
+      }
 
-  app.delete("/api/homework/:id", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
-    const hw = await storage.getHomeworkById(id);
-    if (!hw) return res.status(404).json({ message: "Homework not found" });
-    if (hw.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    await storage.deleteHomework(id, req.session.schoolId!);
-    res.json({ message: "Homework deleted" });
-  });
+      try {
+        const hw = await storage.createHomework({
+          teacherId: context.teacher.id,
+          schoolId: context.schoolId,
+          class: cls,
+          section,
+          subject,
+          content,
+          fileUrl: req.file ? `/uploads/${req.file.filename}` : null,
+          dueDate,
+          sessionId: context.session.id,
+        });
+        res.status(201).json(hw);
+      } catch {
+        removeStagedHomeworkUpload(req);
+        res.status(503).json({ message: "Unable to create homework." });
+      }
+    },
+  );
+
+  app.get(
+    "/api/homework/:schoolId/:class/:section",
+    withTeacherHomeworkContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) return;
+
+      const rawSchoolId = Array.isArray(req.params.schoolId) ? req.params.schoolId[0] : req.params.schoolId;
+      const sid = /^[1-9]\d*$/.test(rawSchoolId) ? Number(rawSchoolId) : NaN;
+      if (!Number.isSafeInteger(sid)) {
+        res.status(400).json({ message: "Invalid school ID" });
+        return;
+      }
+      if (sid !== context.schoolId) {
+        res.status(403).json({ message: "Not authorized for this school" });
+        return;
+      }
+
+      const cls = Array.isArray(req.params.class) ? req.params.class[0] : req.params.class;
+      const section = Array.isArray(req.params.section) ? req.params.section[0] : req.params.section;
+      let options;
+      try {
+        options = await getHomeworkSchoolOptions(context.schoolId);
+      } catch {
+        res.status(503).json({ message: "Unable to load school class configuration." });
+        return;
+      }
+      if (!isHomeworkClassSectionConfigured(options, cls, section)) {
+        res.status(403).json({ message: "This class and section are not configured for the school." });
+        return;
+      }
+
+      const [list, roster] = await Promise.all([
+        storage.getHomeworkByClass(context.schoolId, cls, section, context.session.id),
+        storage.getStudentsByClassSectionInSession(context.schoolId, cls, section, context.session.id),
+      ]);
+      const totalStudents = countDistinctHomeworkStudents(roster);
+
+      const teacherCache = new Map<number, string>();
+      const enriched = await Promise.all(list.map(async (hw) => {
+        const viewCount = await storage.getHomeworkViewCount(hw.id);
+        if (!teacherCache.has(hw.teacherId)) {
+          const author = await storage.getTeacherById(hw.teacherId);
+          teacherCache.set(hw.teacherId, author?.schoolId === context.schoolId ? author.fullName : "Unknown");
+        }
+        return { ...hw, viewCount, totalStudents, teacherName: teacherCache.get(hw.teacherId)! };
+      }));
+      res.json(enriched);
+    },
+  );
+
+  app.patch(
+    "/api/homework/:id",
+    withTeacherHomeworkContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) { removeStagedHomeworkUpload(req); return; }
+      const id = parseLegacyHomeworkId(req.params.id);
+      if (!id) {
+        removeStagedHomeworkUpload(req);
+        res.status(400).json({ message: "Invalid homework ID." });
+        return;
+      }
+      const hw = await storage.getHomeworkById(id);
+      if (!hw || hw.schoolId !== context.schoolId || hw.sessionId !== context.session.id) {
+        removeStagedHomeworkUpload(req);
+        res.status(404).json({ message: "Homework not found in the selected session." });
+        return;
+      }
+      if (hw.teacherId !== context.teacher.id) {
+        removeStagedHomeworkUpload(req);
+        res.status(403).json({ message: "Not authorized" });
+        return;
+      }
+
+      const parsed = homeworkUpdateBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        removeStagedHomeworkUpload(req);
+        res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid homework details." });
+        return;
+      }
+
+      const content = parsed.data.content || hw.content;
+      const subject = parsed.data.subject || hw.subject;
+      const dueDate = parsed.data.dueDate === undefined ? hw.dueDate : (parsed.data.dueDate || null);
+
+      if (parsed.data.subject) {
+        let options;
+        try {
+          options = await getHomeworkSchoolOptions(context.schoolId);
+        } catch {
+          removeStagedHomeworkUpload(req);
+          res.status(503).json({ message: "Unable to load school class configuration." });
+          return;
+        }
+        if (!isHomeworkSubjectConfigured(options, hw.class, subject)) {
+          removeStagedHomeworkUpload(req);
+          res.status(403).json({ message: "This subject is not configured for the selected class." });
+          return;
+        }
+      }
+
+      const fileUrl = req.file
+        ? `/uploads/${req.file.filename}`
+        : (parsed.data.keepFile === "true" ? hw.fileUrl : null);
+      try {
+        const updated = await storage.updateHomework(
+          id,
+          context.schoolId,
+          context.session.id,
+          context.teacher.id,
+          { content, subject, fileUrl, dueDate },
+        );
+        if (!updated) {
+          removeStagedHomeworkUpload(req);
+          res.status(404).json({ message: "Homework not found in the selected session." });
+          return;
+        }
+        res.json(updated);
+      } catch {
+        removeStagedHomeworkUpload(req);
+        res.status(503).json({ message: "Unable to update homework." });
+      }
+    },
+  );
+
+  app.delete(
+    "/api/homework/:id",
+    withTeacherHomeworkContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) return;
+      const id = parseLegacyHomeworkId(req.params.id);
+      if (!id) {
+        res.status(400).json({ message: "Invalid homework ID." });
+        return;
+      }
+      const hw = await storage.getHomeworkById(id);
+      if (!hw || hw.schoolId !== context.schoolId || hw.sessionId !== context.session.id) {
+        res.status(404).json({ message: "Homework not found in the selected session." });
+        return;
+      }
+      if (hw.teacherId !== context.teacher.id) {
+        res.status(403).json({ message: "Not authorized" });
+        return;
+      }
+      const deleted = await storage.deleteHomework(
+        id,
+        context.schoolId,
+        context.session.id,
+        context.teacher.id,
+      );
+      if (!deleted) {
+        res.status(404).json({ message: "Homework not found in the selected session." });
+        return;
+      }
+      res.json({ message: "Homework deleted" });
+    },
+  );
 
   // ===== CLASSWORK =====
   app.post("/api/classwork", diskUpload.single("file"), async (req, res) => {

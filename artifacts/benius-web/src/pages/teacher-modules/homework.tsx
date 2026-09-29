@@ -13,8 +13,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { addCalendarDays, todayInIST } from "@shared/ist-time";
 
@@ -72,6 +72,8 @@ function getAvatarColor(name: string): string {
 
 export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const {
     classes,
@@ -124,19 +126,19 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const sectionSelected = selectedSection !== "";
   const subjectSelected = subject.trim() !== "";
   const isDueDateValid = dueDate >= tomorrow;
-  const canPost = classSelected && sectionSelected && subjectSelected && content.trim().length > 0 && isDueDateValid;
+  const canPost = !!selectedSessionId && classSelected && sectionSelected && subjectSelected && content.trim().length > 0 && isDueDateValid;
 
   const { data: entries = [], isLoading } = useQuery<HomeworkEntry[]>({
-    queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection],
+    queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection, selectedSessionId],
     queryFn: async () => {
-      const res = await fetch(
+      const res = await sessionFetchForViewSession(
         `/api/homework/${teacher.schoolId}/${encodeURIComponent(selectedClass)}/${selectedSection}`,
-        { credentials: "include" }
+        selectedSessionId,
       );
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
-    enabled: classSelected && sectionSelected,
+    enabled: classSelected && sectionSelected && selectedSessionId !== null,
   });
 
   const handleFileSelect = useCallback((file: File | null) => {
@@ -157,7 +159,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   }, [filePreview]);
 
   const createMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (sessionId: number) => {
       const fd = new FormData();
       fd.append("content", content);
       fd.append("subject", subject || teacher.subject || "General");
@@ -165,17 +167,17 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
       fd.append("section", selectedSection);
       fd.append("dueDate", dueDate);
       if (selectedFile) fd.append("file", selectedFile);
-      const res = await fetch("/api/homework", { method: "POST", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession("/api/homework", sessionId, { method: "POST", body: fd });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, sessionId) => {
       toast({ title: "Homework Posted!", description: "Students can now view the assignment." });
       setContent("");
       setSubject("");
       setDueDate("");
       clearFile();
-      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -183,20 +185,20 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async (id: number) => {
+    mutationFn: async ({ id, sessionId }: { id: number; sessionId: number }) => {
       const fd = new FormData();
       fd.append("content", editContent);
       fd.append("subject", editSubject);
       if (editDueDate) fd.append("dueDate", editDueDate);
       fd.append("keepFile", "true");
-      const res = await fetch(`/api/homework/${id}`, { method: "PATCH", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/homework/${id}`, sessionId, { method: "PATCH", body: fd });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, { sessionId }) => {
       toast({ title: "Homework Updated" });
       setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -204,15 +206,15 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/homework/${id}`, { method: "DELETE", credentials: "include" });
+    mutationFn: async ({ id, sessionId }: { id: number; sessionId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/homework/${id}`, sessionId, { method: "DELETE" });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, { sessionId }) => {
       toast({ title: "Homework Deleted" });
       setDeleteConfirmId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection, sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -379,7 +381,9 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
           </div>
 
           <Button
-            onClick={() => createMutation.mutate()}
+            onClick={() => {
+              if (selectedSessionId !== null) createMutation.mutate(selectedSessionId);
+            }}
             disabled={isArchiveMode || !canPost || createMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
               canPost
@@ -525,8 +529,12 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                         <div className="flex gap-2">
                           <Button
                             size="sm"
-                            onClick={() => updateMutation.mutate(entry.id)}
-                            disabled={isArchiveMode || updateMutation.isPending}
+                            onClick={() => {
+                              if (selectedSessionId !== null) {
+                                updateMutation.mutate({ id: entry.id, sessionId: selectedSessionId });
+                              }
+                            }}
+                            disabled={isArchiveMode || selectedSessionId === null || updateMutation.isPending}
                             className="rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 text-white"
                             data-testid={`button-save-edit-${entry.id}`}
                           >
@@ -570,8 +578,12 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                             <>
                               <span className="text-xs text-destructive mr-1">Delete?</span>
                               <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
-                                onClick={() => deleteMutation.mutate(entry.id)}
-                                disabled={isArchiveMode || deleteMutation.isPending}
+                                onClick={() => {
+                                  if (selectedSessionId !== null) {
+                                    deleteMutation.mutate({ id: entry.id, sessionId: selectedSessionId });
+                                  }
+                                }}
+                                disabled={isArchiveMode || selectedSessionId === null || deleteMutation.isPending}
                                 data-testid={`button-confirm-delete-${entry.id}`}
                               >
                                 {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
