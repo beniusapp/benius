@@ -1003,7 +1003,7 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     method: "GET" | "POST" = "GET",
     accessToken?: string,
     body?: unknown,
-    options: { https?: boolean; authorization?: string } = {},
+    options: { https?: boolean; authorization?: string; sessionId?: number | string } = {},
   ) {
     ipSerial += 1;
     const response = await fetch(`${baseUrl}/api/mobile/teacher/${route}`, {
@@ -1011,6 +1011,7 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
       headers: {
         ...(options.https === false ? {} : { "x-forwarded-proto": "https" }),
         "x-forwarded-for": `198.51.100.${ipSerial}`,
+        ...(options.sessionId === undefined ? {} : { "x-view-session-id": String(options.sessionId) }),
         ...(options.authorization ? { authorization: options.authorization }
           : accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         ...(body !== undefined && !(body instanceof FormData) ? { "content-type": "application/json" } : {}),
@@ -1114,11 +1115,29 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.deepEqual(teacherMetrics.attendanceArguments, [
     teacher.id, teacher.assignedClass, teacher.assignedSection, school.id, 501,
   ]);
+  const teacherArchiveSession = academicSessionRows.find(
+    session => session.schoolId === school.id && !session.isActive,
+  );
+  assert.ok(teacherArchiveSession);
   const teacherPendingCount = await requestTeacherRoute(
-    "pending-profiles/count", "GET", teacherLogin.body.accessToken,
+    "pending-profiles/count", "GET", teacherLogin.body.accessToken, undefined,
+    { sessionId: teacherArchiveSession.id },
   );
   assert.deepEqual(teacherPendingCount.body, { count: 2 });
-  assert.deepEqual(teacherMetrics.pendingCountArguments, [school.id, teacher.id, null]);
+  assert.deepEqual(teacherMetrics.pendingCountArguments, [school.id, teacher.id, teacherArchiveSession.id]);
+  const pendingCountWithoutSession = await requestTeacherRoute(
+    "pending-profiles/count", "GET", teacherLogin.body.accessToken,
+  );
+  assert.equal(pendingCountWithoutSession.response.status, 400);
+  assert.deepEqual(teacherMetrics.pendingCountArguments, [school.id, teacher.id, teacherArchiveSession.id]);
+  const foreignSession = academicSessionRows.find(session => session.schoolId !== school.id);
+  assert.ok(foreignSession);
+  const pendingCountForForeignSession = await requestTeacherRoute(
+    "pending-profiles/count", "GET", teacherLogin.body.accessToken, undefined,
+    { sessionId: foreignSession.id },
+  );
+  assert.equal(pendingCountForForeignSession.response.status, 403);
+  assert.deepEqual(teacherMetrics.pendingCountArguments, [school.id, teacher.id, teacherArchiveSession.id]);
   teacherMetrics.crossSchoolContext = true;
   assert.equal((await requestTeacherRoute("me", "GET", teacherLogin.body.accessToken)).response.status, 401);
   teacherMetrics.crossSchoolContext = false;

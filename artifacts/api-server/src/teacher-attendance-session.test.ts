@@ -63,6 +63,8 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   const calls = {
     selected: [] as Array<[number, number]>,
     activeFallback: [] as number[],
+    attendanceIndicatorSessions: [] as number[],
+    pendingProfileReads: [] as Array<[number, number, number | null | undefined]>,
     rosterReads: [] as Array<[number, number, string, string]>,
     reportRosterReads: [] as Array<[number, number, string, string]>,
     historyReads: [] as Array<[number, number, string, string, string, string]>,
@@ -110,6 +112,8 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     calls.selected.push([id, schoolId]);
     return sessions.find((session) => session.id === id && session.schoolId === schoolId);
   });
+  replaceStorage("getAcademicSessionById", async (id: number) =>
+    sessions.find((session) => session.id === id));
   replaceStorage("getActiveSession", async (schoolId: number) => {
     calls.activeFallback.push(schoolId);
     return schoolId === 1 ? sessions[0] : undefined;
@@ -159,7 +163,18 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     calls.upserts.push(records);
     return records;
   });
-  replaceStorage("hasAttendanceToday", async () => false);
+  replaceStorage("hasAttendanceToday", async (
+    _teacherId: number, _className: string, _section: string, _schoolId: number, sessionId: number,
+  ) => {
+    calls.attendanceIndicatorSessions.push(sessionId);
+    return sessionId === 101;
+  });
+  replaceStorage("getPendingProfilesForTeacher", async (
+    schoolId: number, teacherId: number, _unused: unknown, sessionId: number | null | undefined,
+  ) => {
+    calls.pendingProfileReads.push([schoolId, teacherId, sessionId]);
+    return sessionId === 102 ? [{ id: 1 }, { id: 2 }] : [];
+  });
   t.after(() => {
     const target = storage as any;
     for (const { name, hadOwn, original } of replacements.reverse()) {
@@ -177,6 +192,8 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     (req as any).session = role === "anonymous"
       ? {}
       : { teacherId: 9, userId: 90, schoolId: 1, userRole: "teacher" };
+    const selectedSession = req.get("x-view-session-id");
+    if (selectedSession !== undefined) (req as any).viewSessionId = Number(selectedSession);
     if (req.path.startsWith("/api/mobile/teacher/") && role !== "anonymous") {
       (req as any).mobileAuth = {
         principal: { id: 9, principalId: 90, entityId: 9, role: "teacher", schoolId: 1 },
@@ -363,4 +380,26 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   assert.equal(mobileCorrection.status, 200);
   assert.equal(calls.correctionInserts.at(-1)?.sessionId, 101);
   assert.equal(calls.correctionInserts.at(-1)?.status, "Pending", "Mobile keeps its existing pending-review behavior");
+
+  const teacherMeWhileViewingArchive = await request("/api/teacher-me", { sessionId: 102 });
+  assert.equal(teacherMeWhileViewingArchive.status, 200);
+  assert.equal(
+    teacherMeWhileViewingArchive.body.attendanceDoneToday,
+    true,
+    "the Dashboard's today indicator stays tied to the active session while viewing an archive",
+  );
+  assert.equal(calls.attendanceIndicatorSessions.at(-1), 101);
+
+  const pendingCountWithoutSession = await request("/api/teacher/pending-profiles/count");
+  assert.equal(pendingCountWithoutSession.status, 400);
+  assert.deepEqual(calls.pendingProfileReads, []);
+
+  const historicalPendingCount = await request("/api/teacher/pending-profiles/count", { sessionId: 102 });
+  assert.equal(historicalPendingCount.status, 200);
+  assert.deepEqual(historicalPendingCount.body, { count: 2 });
+  assert.deepEqual(calls.pendingProfileReads, [[1, 9, 102]]);
+
+  const foreignPendingCount = await request("/api/teacher/pending-profiles/count", { sessionId: 201 });
+  assert.equal(foreignPendingCount.status, 403);
+  assert.deepEqual(calls.pendingProfileReads, [[1, 9, 102]]);
 });

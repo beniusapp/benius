@@ -575,7 +575,7 @@ export function registerTeacherRoutes(app: Express) {
     try {
       attendanceSession = await resolveAttendanceReadSession(
         data.teacher.schoolId,
-        (req as any).viewSessionId,
+        undefined,
         { allowActiveFallback: true },
       );
     } catch (error) {
@@ -4519,12 +4519,30 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/teacher/pending-profiles/count", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
-    res.json({ count: profiles.length });
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!resolution.ok) {
+      res.status(resolution.status).json({ message: resolution.message });
+      return;
+    }
+    if (resolution.sessionId === null) {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+      return;
+    }
+    try {
+      const profiles = await storage.getPendingProfilesForTeacher(
+        resolution.schoolId,
+        resolution.teacher.id,
+        undefined,
+        resolution.sessionId,
+      );
+      res.json({ count: profiles.length });
+    } catch {
+      res.status(503).json({ message: "Unable to load pending profile count." });
+    }
   });
 
   app.post("/api/teacher/profiles/:studentId/approve", async (req, res) => {

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getQueryFn, setViewSessionId } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
 
 import ProfileModule from "@/pages/teacher-modules/profile";
 import AttendanceModule from "@/pages/teacher-modules/attendance";
@@ -263,35 +263,6 @@ export default function TeacherDashboard() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: pendingProfilesData } = useQuery<{ count: number }>({
-    queryKey: ["/api/teacher/pending-profiles/count"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-    enabled: !!teacher,
-    refetchInterval: 60000,
-  });
-  const pendingProfilesCount = pendingProfilesData?.count ?? 0;
-
-  // Fetch teacher-scoped admin notices to compute unread badge for the noticeboard tile
-  const { data: adminNoticesForBadge = [] } = useQuery<Array<{ id: number }>>({
-    queryKey: ["/api/notices", teacher?.schoolId, "teacher"],
-    queryFn: async () => {
-      if (!teacher) return [];
-      const res = await fetch(`/api/notices/${teacher.schoolId}?target=teacher`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    enabled: !!teacher,
-    staleTime: 30000,
-    refetchOnMount: "always",
-  });
-
-  // Unread count = notices whose IDs are not in the teacher's localStorage read-set
-  const noticeboardUnreadCount = useMemo(() => {
-    if (!teacher) return 0;
-    const readIds = getDashboardReadIds(teacher.id);
-    return adminNoticesForBadge.filter(n => !readIds.has(n.id)).length;
-  }, [adminNoticesForBadge, teacher?.id]);
-
   // ── Academic sessions for look-back picker ─────────────────────────────
   const { data: allSessions = [] } = useQuery<AcademicSessionItem[]>({
     queryKey: ["/api/teacher/academic-sessions"],
@@ -303,6 +274,56 @@ export default function TeacherDashboard() {
   const viewingSession = viewingSessionId != null
     ? (allSessions.find(s => s.id === viewingSessionId) ?? null)
     : null;
+  const selectedSessionId = viewingSessionId != null
+    ? (viewingSession?.id ?? null)
+    : (activeSession?.id ?? null);
+
+  const { data: pendingProfilesData } = useQuery<{ count: number } | null>({
+    queryKey: ["/api/teacher/pending-profiles/count", teacher?.schoolId ?? null, teacher?.id ?? null, selectedSessionId],
+    queryFn: async ({ queryKey, signal }) => {
+      const sessionId = queryKey[3];
+      if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+        throw new Error("A selected academic session is required to load dashboard approvals.");
+      }
+      const res = await sessionFetchForViewSession(String(queryKey[0]), sessionId, { signal });
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
+      return await res.json() as { count: number };
+    },
+    enabled: !!teacher && selectedSessionId !== null,
+    staleTime: 30000,
+    refetchInterval: 60000,
+    refetchOnMount: "always",
+  });
+  const pendingProfilesCount = pendingProfilesData?.count ?? 0;
+
+  // Fetch teacher-scoped admin notice IDs using the same session as the Dashboard.
+  const { data: adminNoticesForBadge = [] } = useQuery<Array<{ id: number }>>({
+    queryKey: ["/api/notices", teacher?.schoolId ?? null, teacher?.id ?? null, selectedSessionId, "teacher"],
+    queryFn: async ({ queryKey, signal }) => {
+      const schoolId = queryKey[1];
+      const sessionId = queryKey[3];
+      if (typeof schoolId !== "number" || typeof sessionId !== "number") return [];
+      const res = await sessionFetchForViewSession(
+        `/api/notices/${schoolId}?target=teacher`,
+        sessionId,
+        { signal },
+      );
+      if (res.status === 401) return [];
+      if (!res.ok) throw new Error(`${res.status}: ${(await res.text()) || res.statusText}`);
+      return await res.json() as Array<{ id: number }>;
+    },
+    enabled: !!teacher && selectedSessionId !== null,
+    staleTime: 30000,
+    refetchOnMount: "always",
+  });
+
+  // Unread count = selected-session notices whose IDs are not in the Teacher's local read-set.
+  const noticeboardUnreadCount = useMemo(() => {
+    if (!teacher) return 0;
+    const readIds = getDashboardReadIds(teacher.id);
+    return adminNoticesForBadge.filter(n => !readIds.has(n.id)).length;
+  }, [adminNoticesForBadge, teacher?.id]);
 
   // Sync viewingSessionId → global queryClient header whenever it changes.
   useEffect(() => {

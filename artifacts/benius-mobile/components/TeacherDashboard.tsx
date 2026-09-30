@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
-import { API_BASE_URL, apiGet, type MobileUser } from '@/lib/api';
+import { API_BASE_URL, apiGet, apiGetForSession, type MobileUser } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcademicSession } from '@/contexts/SessionContext';
 import { useNetwork } from '@/contexts/NetworkContext';
@@ -21,7 +21,7 @@ export type TeacherMe = {
   mappings: { className: string; section: string; subject: string | null }[];
 };
 export const teacherKey = (u: MobileUser) => ['mobile/teacher/me', u.schoolId, u.role, u.id] as const;
-export const pendingKey = (u: MobileUser) => ['mobile/teacher/pending-profiles/count', u.schoolId, u.role, u.id] as const;
+export const pendingKey = (u: MobileUser, sessionId: number | null) => ['mobile/teacher/pending-profiles/count', u.schoolId, u.role, u.id, sessionId] as const;
 export function useTeacherMe() {
   const { user } = useAuth();
   return useQuery({
@@ -118,14 +118,20 @@ export default function TeacherDashboard() {
   const { sessions, selectedId } = useAcademicSession();
   const me = useTeacherMe();
   const pending = useQuery({
-    queryKey: user ? pendingKey(user) : ['mobile/teacher/pending-profiles/count', 'guest'],
-    queryFn: async ({ signal }) => {
-      const data = await apiGet<{ count: number }>('/mobile/teacher/pending-profiles/count', { signal });
+    queryKey: user ? pendingKey(user, selectedId) : ['mobile/teacher/pending-profiles/count', 'guest', selectedId],
+    queryFn: async ({ signal, queryKey }) => {
+      const sessionId = queryKey[4];
+      if (typeof sessionId !== 'number' || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+        throw new Error('An academic session is required to load pending approvals.');
+      }
+      const data = await apiGetForSession<{ count: number }>('/mobile/teacher/pending-profiles/count', sessionId, { signal });
       if (!data || !Number.isSafeInteger(data.count) || data.count < 0) throw new Error('Invalid approval count.');
       return data.count;
     },
-    enabled: !!me.data && user?.role === 'teacher',
+    enabled: !!me.data && user?.role === 'teacher' && selectedId !== null,
+    staleTime: 30_000,
     refetchInterval: 60_000,
+    refetchOnMount: 'always',
   });
   if (user?.role !== 'teacher') return null;
   if (me.isPending) return <View style={s.page}><View style={{ padding: 20, gap: 18 }}><View style={[s.skeleton, { height: 55 }]} /><View style={[s.skeleton, { height: 90 }]} /><View style={[s.skeleton, { height: 210 }]} /><View style={[s.skeleton, { height: 210 }]} /></View></View>;

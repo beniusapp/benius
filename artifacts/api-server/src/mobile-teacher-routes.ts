@@ -8,6 +8,10 @@ import sharp from "sharp";
 import { z } from "zod/v4";
 import { authenticationAttemptIsRevoked } from "./session-revocation";
 import { resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
+import {
+  resolveTeacherAcademicSession,
+  type TeacherAcademicSessionRequest,
+} from "./teacher-academic-session";
 import { storage } from "./storage";
 
 type MobileTeacherPrincipal = {
@@ -219,9 +223,22 @@ export function registerMobileTeacherRoutes(
     async (req, res) => {
       const authorized = await getAuthorizedTeacher(req, res);
       if (!authorized) return;
+      const resolution = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        "SELECTED_SESSION_REQUIRED",
+        storage,
+      );
+      if (!resolution.ok) {
+        return reject(res, resolution.status, resolution.message);
+      }
+      if (resolution.schoolId !== authorized.school.id
+        || resolution.teacher.id !== authorized.teacher.id
+        || resolution.sessionId === null) {
+        return reject(res, 403, "The selected academic session is not available.");
+      }
       try {
         const profiles = await storage.getPendingProfilesForTeacher(
-          authorized.school.id, authorized.teacherId, undefined, null,
+          resolution.schoolId, resolution.teacher.id, undefined, resolution.sessionId,
         );
         return res.json({ count: profiles.length });
       } catch {

@@ -8,6 +8,10 @@ const examinationSource = readFileSync(
   resolve(process.cwd(), "src/pages/teacher-modules/examination.tsx"),
   "utf8",
 );
+const dashboardSource = readFileSync(
+  resolve(process.cwd(), "src/pages/teacher-dashboard.tsx"),
+  "utf8",
+);
 
 describe("Teacher Examination selected-session transport", () => {
   afterEach(() => {
@@ -55,6 +59,31 @@ describe("Teacher Examination selected-session transport", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(new Headers(fetchMock.mock.calls[0][1].headers).get("x-view-session-id")).toBeNull();
+  });
+
+  it("keys Dashboard approval and Noticeboard badges by the selected session and pins each request", async () => {
+    expect(dashboardSource).toContain(
+      'queryKey: ["/api/teacher/pending-profiles/count", teacher?.schoolId ?? null, teacher?.id ?? null, selectedSessionId]',
+    );
+    expect(dashboardSource).toContain(
+      'queryKey: ["/api/notices", teacher?.schoolId ?? null, teacher?.id ?? null, selectedSessionId, "teacher"]',
+    );
+    expect(dashboardSource).toMatch(/sessionFetchForViewSession\(\s*String\(queryKey\[0\]\),\s*sessionId/);
+    expect(dashboardSource).toMatch(/const sessionId = queryKey\[3\]/);
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    const sessionIds = [41, 30375, 41];
+    const keys = sessionIds.map(sessionId => ["/api/teacher/pending-profiles/count", 11, 9, sessionId]);
+    for (const sessionId of sessionIds) {
+      await sessionFetchForViewSession("/api/teacher/pending-profiles/count", sessionId);
+    }
+
+    expect(keys[0]).not.toEqual(keys[1]);
+    expect(keys[0]).toEqual(keys[2]);
+    expect(fetchMock.mock.calls.map(([, init]) =>
+      new Headers(init.headers).get("x-view-session-id"),
+    )).toEqual(["41", "30375", "41"]);
   });
 
   it("wires the Examination Attendance widget to the selected Session and waits for one", () => {
