@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, Send, CheckCircle, Forward, Calendar, Clock, XCircle, AlertCircle, Trash2, Eye, Paperclip, History, CheckCircle2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -10,8 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface LeaveEntry {
   id: number;
@@ -85,6 +85,8 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const [leaveType, setLeaveType] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -95,6 +97,14 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   const [actionComment, setActionComment] = useState("");
   const [selectedLeave, setSelectedLeave] = useState<any | null>(null);
   const [showStudentHistory, setShowStudentHistory] = useState(false);
+  useEffect(() => {
+    setPendingAction(null);
+    setActionComment("");
+    setSelectedLeave(null);
+  }, [selectedSessionId]);
+
+  const leaveQueryKey = ["/api/leave/teacher", teacher.id, selectedSessionId] as const;
+  const studentLeavesQueryKey = ["/api/student-leaves/teacher/mine", selectedSessionId] as const;
 
   const { data: studentLeaveHistory = [], isLoading: historyLoading } = useQuery<any[]>({
     queryKey: ["/api/student-leaves/teacher/history"],
@@ -106,12 +116,16 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: leaves = [], isLoading } = useQuery<LeaveEntry[]>({
-    queryKey: ["/api/leave/teacher", teacher.id],
+    queryKey: leaveQueryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/leave/teacher/${teacher.id}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(
+        `/api/leave/teacher/${teacher.id}`,
+        selectedSessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const { data: rawBalance, isLoading: balanceLoading } = useQuery({
@@ -134,28 +148,41 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const { data: studentLeaves = [], isLoading: studentLeavesLoading } = useQuery<StudentLeaveEntry[]>({
-    queryKey: ["/api/student-leaves/teacher/mine"],
+    queryKey: studentLeavesQueryKey,
     queryFn: async () => {
-      const res = await fetch("/api/student-leaves/teacher/mine", { credentials: "include" });
+      const res = await sessionFetchForViewSession(
+        "/api/student-leaves/teacher/mine",
+        selectedSessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const selectedBalance = balanceItems.find(b => b.name === leaveType);
   const isBalanceZero = selectedBalance ? selectedBalance.remaining === 0 : false;
 
   const submitMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/leave", { leaveType, startDate, endDate, reason });
+    mutationFn: async (sessionId: number) => {
+      const res = await sessionFetchForViewSession("/api/leave", sessionId, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leaveType, startDate, endDate, reason }),
+      });
+      if (!res.ok) {
+        const body = await res.json();
+        throw new Error(body.message || "Failed to submit leave request");
+      }
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, sessionId) => {
       toast({ title: "Leave Request Submitted" });
       setLeaveType("");
       setStartDate("");
       setEndDate("");
       setReason("");
-      queryClient.invalidateQueries({ queryKey: ["/api/leave/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/teacher", teacher.id, sessionId] });
       queryClient.invalidateQueries({ queryKey: ["/api/leave/balance", teacher.id] });
     },
     onError: (error: Error) => {
@@ -164,13 +191,19 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const approveMutation = useMutation({
-    mutationFn: async ({ id, comment }: { id: number; comment?: string }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/approve`, { teacherComment: comment || undefined });
+    mutationFn: async ({ id, comment, sessionId }: { id: number; comment?: string; sessionId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/student-leaves/${id}/approve`, sessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacherComment: comment || undefined }),
+      });
+      if (!res.ok) { const body = await res.json(); throw new Error(body.message || "Failed to approve leave"); }
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Leave Approved", description: "Attendance has been auto-synced for the leave dates." });
       setPendingAction(null); setActionComment("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine", sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -178,13 +211,19 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const forwardMutation = useMutation({
-    mutationFn: async ({ id, comment }: { id: number; comment?: string }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/forward`, { teacherComment: comment || undefined });
+    mutationFn: async ({ id, comment, sessionId }: { id: number; comment?: string; sessionId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/student-leaves/${id}/forward`, sessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacherComment: comment || undefined }),
+      });
+      if (!res.ok) { const body = await res.json(); throw new Error(body.message || "Failed to forward leave"); }
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Leave Escalated", description: "Leave request forwarded to principal." });
       setPendingAction(null); setActionComment("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine", sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -192,16 +231,19 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const deleteMyLeaveMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/leave/${id}`, undefined);
+    mutationFn: async ({ id, sessionId }: { id: number; sessionId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/leave/${id}`, sessionId, {
+        method: "DELETE",
+      });
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.message || "Failed to delete");
       }
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Leave request deleted", description: "Your balance has been restored." });
-      queryClient.invalidateQueries({ queryKey: ["/api/leave/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leave/teacher", teacher.id, sessionId] });
       queryClient.invalidateQueries({ queryKey: ["/api/leave/balance", teacher.id] });
     },
     onError: (error: Error) => {
@@ -210,13 +252,19 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: async ({ id, reason }: { id: number; reason: string }) => {
-      await apiRequest("PATCH", `/api/student-leaves/${id}/reject`, { rejectionReason: reason });
+    mutationFn: async ({ id, reason, sessionId }: { id: number; reason: string; sessionId: number }) => {
+      const res = await sessionFetchForViewSession(`/api/student-leaves/${id}/reject`, sessionId, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rejectionReason: reason }),
+      });
+      if (!res.ok) { const body = await res.json(); throw new Error(body.message || "Failed to reject leave"); }
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, { sessionId }) => {
       toast({ title: "Leave Rejected", description: "The student has been notified." });
       setPendingAction(null); setActionComment("");
-      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student-leaves/teacher/mine", sessionId] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -374,8 +422,10 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                 data-testid="input-leave-reason"
               />
               <Button
-                onClick={() => submitMutation.mutate()}
-                disabled={isArchiveMode || !leaveType || !startDate || !endDate || !reason.trim() || submitMutation.isPending || isBalanceZero}
+                onClick={() => {
+                  if (selectedSessionId !== null) submitMutation.mutate(selectedSessionId);
+                }}
+                disabled={isArchiveMode || selectedSessionId === null || !leaveType || !startDate || !endDate || !reason.trim() || submitMutation.isPending || isBalanceZero}
                 data-testid="button-submit-leave"
               >
                 {submitMutation.isPending ? (
@@ -412,8 +462,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                           <StatusBadge status={l.status} />
                           {l.status === "pending" && (
                             <button
-                              onClick={() => deleteMyLeaveMutation.mutate(l.id)}
-                              disabled={deleteMyLeaveMutation.isPending}
+                              onClick={() => {
+                                if (selectedSessionId !== null) {
+                                  deleteMyLeaveMutation.mutate({ id: l.id, sessionId: selectedSessionId });
+                                }
+                              }}
+                              disabled={isArchiveMode || selectedSessionId === null || deleteMyLeaveMutation.isPending}
                               className="flex items-center justify-center w-7 h-7 rounded-md text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                               title="Delete this pending request"
                               data-testid={`button-delete-leave-${l.id}`}
@@ -560,8 +614,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                             {pendingAction.type === "approve" && (
                               <Button
                                 size="sm"
-                                onClick={() => approveMutation.mutate({ id: sl.id, comment: actionComment })}
-                                disabled={isArchiveMode || approveMutation.isPending}
+                                onClick={() => {
+                                  if (selectedSessionId !== null) {
+                                    approveMutation.mutate({ id: sl.id, comment: actionComment, sessionId: selectedSessionId });
+                                  }
+                                }}
+                                disabled={isArchiveMode || selectedSessionId === null || approveMutation.isPending}
                                 className="bg-emerald-600 hover:bg-emerald-700 text-white"
                                 data-testid={`button-confirm-approve-${sl.id}`}
                               >
@@ -573,8 +631,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                               <Button
                                 size="sm"
                                 variant="destructive"
-                                onClick={() => rejectMutation.mutate({ id: sl.id, reason: actionComment })}
-                                disabled={isArchiveMode || rejectMutation.isPending}
+                                onClick={() => {
+                                  if (selectedSessionId !== null) {
+                                    rejectMutation.mutate({ id: sl.id, reason: actionComment, sessionId: selectedSessionId });
+                                  }
+                                }}
+                                disabled={isArchiveMode || selectedSessionId === null || rejectMutation.isPending}
                                 data-testid={`button-confirm-reject-${sl.id}`}
                               >
                                 {rejectMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
@@ -584,8 +646,12 @@ export default function LeaveModule({ teacher }: { teacher: TeacherMe }) {
                             {pendingAction.type === "escalate" && (
                               <Button
                                 size="sm"
-                                onClick={() => forwardMutation.mutate({ id: sl.id, comment: actionComment })}
-                                disabled={isArchiveMode || forwardMutation.isPending}
+                                onClick={() => {
+                                  if (selectedSessionId !== null) {
+                                    forwardMutation.mutate({ id: sl.id, comment: actionComment, sessionId: selectedSessionId });
+                                  }
+                                }}
+                                disabled={isArchiveMode || selectedSessionId === null || forwardMutation.isPending}
                                 className="bg-blue-600 hover:bg-blue-700 text-white"
                                 data-testid={`button-confirm-escalate-${sl.id}`}
                               >

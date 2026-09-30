@@ -25,6 +25,7 @@ import {
   type TeacherAcademicSessionMode,
   type TeacherAcademicSessionRequest,
 } from "./teacher-academic-session";
+import { isTeacherLeaveDateRangeWithinSession } from "./teacher-leave-scope";
 import {
   countDistinctHomeworkStudents,
   deriveHomeworkSchoolOptions,
@@ -2580,15 +2581,27 @@ export function registerTeacherRoutes(app: Express) {
 
   // ===== LEAVE =====
   app.post("/api/leave", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "CURRENT_SESSION_WRITE",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    const { teacher, session } = resolution;
 
     const { leaveType, startDate, endDate, reason } = req.body;
-    if (!leaveType || !startDate || !endDate || !reason) return res.status(400).json({ message: "All fields required" });
+    if (typeof leaveType !== "string" || !leaveType.trim()
+      || typeof reason !== "string" || !reason.trim()
+      || typeof startDate !== "string" || typeof endDate !== "string") {
+      return res.status(400).json({ message: "All fields required" });
+    }
 
     if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate) || startDate > endDate) {
       return res.status(400).json({ message: "Invalid date range" });
+    }
+    if (!isTeacherLeaveDateRangeWithinSession(startDate, endDate, session.startDate, session.endDate)) {
+      return res.status(400).json({ message: "Leave dates must fall within the selected Academic Session." });
     }
     const daysRequested = calendarDayDifference(startDate, endDate)! + 1;
 
@@ -2606,22 +2619,32 @@ export function registerTeacherRoutes(app: Express) {
       });
     }
 
-    // Tag leave request with the school's current active session
-    const activeSessionForLeave = await storage.getActiveSession(teacher.schoolId);
-
     const leave = await storage.createLeaveRequest({
       teacherId: teacher.id, schoolId: teacher.schoolId, policyId: matchedPolicy.id,
-      leaveType, startDate, endDate, reason, status: "pending",
-      sessionId: activeSessionForLeave?.id ?? null,
+      leaveType: leaveType.trim(), startDate, endDate, reason: reason.trim(), status: "pending",
+      sessionId: session.id,
     });
     res.status(201).json(leave);
   });
 
   app.get("/api/leave/teacher/:teacherId", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    if (req.session.teacherId !== parseInt(req.params.teacherId)) return res.status(403).json({ message: "Not authorized" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getLeaveRequestsByTeacher(req.session.teacherId, viewSessionId);
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    const requestedTeacherId = Number(req.params.teacherId);
+    if (!Number.isSafeInteger(requestedTeacherId) || requestedTeacherId <= 0) {
+      return res.status(400).json({ message: "Invalid Teacher ID" });
+    }
+    if (requestedTeacherId !== resolution.teacher.id) return res.status(403).json({ message: "Not authorized" });
+    const list = await storage.getLeaveRequestsByTeacher(
+      resolution.teacher.id,
+      resolution.schoolId,
+      resolution.session.id,
+    );
     res.json(list);
   });
 
@@ -2728,10 +2751,21 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.delete("/api/leave/:id", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "CURRENT_SESSION_WRITE",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-    const result = await storage.deleteLeaveRequest(id, req.session.teacherId);
+    const result = await storage.deleteLeaveRequest(
+      id,
+      resolution.teacher.id,
+      resolution.schoolId,
+      resolution.session.id,
+    );
     if (!result.success) {
       if (result.reason === "not_found") return res.status(404).json({ message: "Leave request not found" });
       if (result.reason === "forbidden") return res.status(403).json({ message: "Not authorized" });
@@ -2834,11 +2868,18 @@ export function registerTeacherRoutes(app: Express) {
   // ===== STUDENT LEAVE REQUESTS =====
   // Returns all pending_teacher student leave requests for all classes the teacher is mapped to.
   app.get("/api/student-leaves/teacher/mine", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getStudentLeavesByTeacher(teacher.id, teacher.schoolId, viewSessionId);
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    const list = await storage.getStudentLeavesByTeacher(
+      resolution.teacher.id,
+      resolution.schoolId,
+      resolution.session.id,
+    );
     res.json(list);
   });
 
@@ -2861,11 +2902,21 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/student-leaves/:id/approve", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "CURRENT_SESSION_WRITE",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    const { teacher } = resolution;
+    const leaveId = Number(req.params.id);
+    if (!Number.isSafeInteger(leaveId) || leaveId <= 0) return res.status(400).json({ message: "Invalid leave request ID" });
+    const leave = await storage.getStudentLeaveById(leaveId, resolution.schoolId);
     if (!leave) return res.status(403).json({ message: "Not authorized" });
+    if (leave.sessionId !== resolution.session.id) {
+      return res.status(404).json({ message: "Leave request not found in the selected session." });
+    }
     const student = await storage.getStudentById(leave.studentId);
     if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
@@ -2885,7 +2936,7 @@ export function registerTeacherRoutes(app: Express) {
     try {
       updated = await storage.approveStudentLeaveWithAttendance({
         leaveId: leave.id, studentId: leave.studentId, teacherId: teacher.id,
-        schoolId: teacher.schoolId, sessionId: leave.sessionId,
+        schoolId: resolution.schoolId, sessionId: resolution.session.id,
         expectedStatus: "pending_teacher", reviewedBy: teacher.id, reviewerRole: "teacher",
         teacherComment: approveComment || undefined,
       });
@@ -2903,11 +2954,21 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/student-leaves/:id/forward", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "CURRENT_SESSION_WRITE",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    const { teacher } = resolution;
+    const leaveId = Number(req.params.id);
+    if (!Number.isSafeInteger(leaveId) || leaveId <= 0) return res.status(400).json({ message: "Invalid leave request ID" });
+    const leave = await storage.getStudentLeaveById(leaveId, resolution.schoolId);
     if (!leave) return res.status(403).json({ message: "Not authorized" });
+    if (leave.sessionId !== resolution.session.id) {
+      return res.status(404).json({ message: "Leave request not found in the selected session." });
+    }
     const student = await storage.getStudentById(leave.studentId);
     if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
     const mappingsFwd = await storage.getFacultyMappingsByTeacher(teacher.id);
@@ -2920,7 +2981,17 @@ export function registerTeacherRoutes(app: Express) {
     }
     if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be forwarded" });
     const { teacherComment: fwdComment } = req.body;
-    const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "forwarded_to_admin", teacher.id, "teacher", undefined, undefined, fwdComment || undefined);
+    const updated = await storage.updateStudentLeaveStatus(
+      leave.id,
+      resolution.schoolId,
+      "forwarded_to_admin",
+      teacher.id,
+      "teacher",
+      undefined,
+      undefined,
+      fwdComment || undefined,
+      resolution.session.id,
+    );
     if (!updated) return res.status(404).json({ message: "Leave request not found" });
     await storage.createAuditLog({
       schoolId: teacher.schoolId, actionType: "forward", entityType: "student_leave", entityId: leave.id,
@@ -4297,10 +4368,21 @@ Thank you for your prompt attention to this matter.
 
     // Teacher path: class/section scoped rejection
     if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), teacher.schoolId);
+      const resolution = await resolveTeacherAcademicSession(
+        req as unknown as TeacherAcademicSessionRequest,
+        "CURRENT_SESSION_WRITE",
+        storage,
+      );
+      if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+      if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+      const { teacher } = resolution;
+      const leaveId = Number(req.params.id);
+      if (!Number.isSafeInteger(leaveId) || leaveId <= 0) return res.status(400).json({ message: "Invalid leave request ID" });
+      const leave = await storage.getStudentLeaveById(leaveId, resolution.schoolId);
       if (!leave) return res.status(404).json({ message: "Leave request not found" });
+      if (leave.sessionId !== resolution.session.id) {
+        return res.status(404).json({ message: "Leave request not found in the selected session." });
+      }
       const student = await storage.getStudentById(leave.studentId);
       if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
       const mappingsRej = await storage.getFacultyMappingsByTeacher(teacher.id);
@@ -4312,7 +4394,17 @@ Thank you for your prompt attention to this matter.
         return res.status(403).json({ message: "Not authorized for this student's class/section" });
       }
       if (leave.status !== "pending_teacher") return res.status(409).json({ message: "Only pending teacher-tier leaves can be rejected here" });
-      const updated = await storage.updateStudentLeaveStatus(leave.id, teacher.schoolId, "rejected", teacher.id, "teacher", rejectionReason || undefined);
+      const updated = await storage.updateStudentLeaveStatus(
+        leave.id,
+        resolution.schoolId,
+        "rejected",
+        teacher.id,
+        "teacher",
+        rejectionReason || undefined,
+        undefined,
+        undefined,
+        resolution.session.id,
+      );
       if (!updated) return res.status(404).json({ message: "Leave request not found" });
       await storage.createAuditLog({
         schoolId: teacher.schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,

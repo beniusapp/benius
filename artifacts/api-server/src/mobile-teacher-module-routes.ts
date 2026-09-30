@@ -14,6 +14,7 @@ import { AttendanceLeaveMutationError, storage } from "./storage";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
+import { isTeacherLeaveDateRangeWithinSession } from "./teacher-leave-scope";
 import {
   teacherCanAccessAssignedPeerReport,
   teacherComplaintMatchesSession,
@@ -575,7 +576,7 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
       }
       case "leave": {
         const [items, balance, policies, studentItems, studentHistory] = await Promise.all([
-          storage.getLeaveRequestsByTeacher(teacher.id, session.id),
+          storage.getLeaveRequestsByTeacher(teacher.id, account.school.id, session.id),
           storage.getTeacherLeaveBalanceByPolicies(teacher.id, account.school.id),
           storage.getActiveLeavePoliciesBySchool(account.school.id, "teacher"),
           storage.getStudentLeavesByTeacher(teacher.id, account.school.id, session.id),
@@ -634,8 +635,8 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
   const { module, action } = params.data;
   const requiresCurrentSessionMode =
     module === "complaint"
-    ||
-    (module === "timetable" && (action === "save" || action === "delete"))
+    || module === "leave"
+    || (module === "timetable" && (action === "save" || action === "delete"))
     || (module === "attendance"
       && ["submit", "self-check-in", "self-check-out", "self-correction"].includes(action));
   const session = await guardWriteSession(
@@ -1305,6 +1306,15 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         fail(res, 400, "Leave dates are invalid.");
         return;
       }
+      if (!isTeacherLeaveDateRangeWithinSession(
+        body.data.startDate,
+        body.data.endDate,
+        session.startDate,
+        session.endDate,
+      )) {
+        fail(res, 400, "Leave dates must fall within the selected academic session.");
+        return;
+      }
       const dateDifference = calendarDayDifference(body.data.startDate, body.data.endDate);
       if (dateDifference == null) { fail(res, 400, "Leave dates are invalid."); return; }
       const daysRequested = dateDifference + 1;
@@ -1367,7 +1377,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       } else if (action === "forward-student") {
         updated = await storage.updateStudentLeaveStatus(
           leave.id, account.school.id, "forwarded_to_admin", teacher.id, "teacher",
-          undefined, undefined, body.data.note || undefined,
+          undefined, undefined, body.data.note || undefined, session.id,
         );
         if (!updated) { fail(res, 404, "Student leave request not found."); return; }
         await storage.createAuditLog({
@@ -1377,7 +1387,8 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         });
       } else {
         updated = await storage.updateStudentLeaveStatus(
-          leave.id, account.school.id, "rejected", teacher.id, "teacher", body.data.note || undefined,
+          leave.id, account.school.id, "rejected", teacher.id, "teacher",
+          body.data.note || undefined, undefined, undefined, session.id,
         );
         if (!updated) { fail(res, 404, "Student leave request not found."); return; }
         await storage.createAuditLog({

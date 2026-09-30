@@ -9,3 +9,4 @@
 - [TypeScript diagnostic baselines](typescript-diagnostic-baselines.md) — an empty LSP snapshot does not prove package typechecks are clean.
 - [Teacher Timetable session routing](teacher-timetable-session-routing.md) — enforce Teacher session rules without changing shared Admin/Student fallback behavior.
 - [Teacher Complaint session boundaries](teacher-complaint-session-boundaries.md) — exact selected-session reads; active-session writes; NULL legacy complaints remain unassigned.
+- [Teacher Leave session boundaries](teacher-leave-session-boundaries.md) — keep Teacher requests session-scoped while policies and renewal-period balances remain global/current.

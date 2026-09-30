@@ -3155,10 +3155,16 @@ export class DatabaseStorage {
     return req;
   }
 
-  async getLeaveRequestsByTeacher(teacherId: number, sessionId?: number | null): Promise<LeaveRequest[]> {
-    const conditions: any[] = [eq(leaveRequests.teacherId, teacherId)];
-    if (sessionId != null) conditions.push(eq(leaveRequests.sessionId, sessionId));
-    return await db.select().from(leaveRequests).where(and(...conditions)).orderBy(desc(leaveRequests.createdAt));
+  async getLeaveRequestsByTeacher(
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<LeaveRequest[]> {
+    return await db.select().from(leaveRequests).where(and(
+      eq(leaveRequests.teacherId, teacherId),
+      eq(leaveRequests.schoolId, schoolId),
+      eq(leaveRequests.sessionId, sessionId),
+    )).orderBy(desc(leaveRequests.createdAt));
   }
 
   async getLeaveRequestById(id: number): Promise<LeaveRequest | null> {
@@ -3779,7 +3785,7 @@ export class DatabaseStorage {
   // Returns all pending_teacher leaves from every class-section a teacher is mapped to.
   // Uses faculty_mappings (the admin-configured multi-class assignment) rather than the
   // single assignedClass/assignedSection field, so multi-class teachers see all their students.
-  async getStudentLeavesByTeacher(teacherId: number, schoolId: number, sessionId?: number | null): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+  async getStudentLeavesByTeacher(teacherId: number, schoolId: number, sessionId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
     // 1. Get all class-sections this teacher is mapped to
     const mappings = await db
       .select({ className: facultyMappings.className, section: facultyMappings.section })
@@ -3795,10 +3801,10 @@ export class DatabaseStorage {
 
     const whereConditions: any[] = [
       eq(studentLeaveRequests.schoolId, schoolId),
+      eq(studentLeaveRequests.sessionId, sessionId),
       eq(studentLeaveRequests.status, "pending_teacher"),
       or(...classConditions),
     ];
-    if (sessionId != null) whereConditions.push(eq(studentLeaveRequests.sessionId, sessionId));
 
     const result = await db.select().from(studentLeaveRequests)
       .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
@@ -3841,7 +3847,7 @@ export class DatabaseStorage {
     }));
   }
 
-  async updateStudentLeaveStatus(id: number, schoolId: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string, teacherComment?: string): Promise<StudentLeaveRequest | null> {
+  async updateStudentLeaveStatus(id: number, schoolId: number, status: string, reviewedBy: number, reviewerRole: string, rejectionReason?: string, adminComment?: string, teacherComment?: string, sessionId?: number): Promise<StudentLeaveRequest | null> {
     const updateData: Record<string, unknown> = { status, reviewedBy, reviewerRole };
     if (rejectionReason !== undefined) updateData.rejectionReason = rejectionReason;
     if (adminComment !== undefined) updateData.adminComment = adminComment;
@@ -3851,6 +3857,7 @@ export class DatabaseStorage {
       .where(and(
         eq(studentLeaveRequests.id, id),
         eq(studentLeaveRequests.schoolId, schoolId),
+        ...(sessionId === undefined ? [] : [eq(studentLeaveRequests.sessionId, sessionId)]),
       )).returning();
     return req ?? null;
   }
@@ -3891,12 +3898,27 @@ export class DatabaseStorage {
     return { success: true };
   }
 
-  async deleteLeaveRequest(id: number, teacherId: number): Promise<{ success: boolean; reason?: string }> {
+  async deleteLeaveRequest(
+    id: number,
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<{ success: boolean; reason?: string }> {
     const leave = await this.getLeaveRequestById(id);
     if (!leave) return { success: false, reason: "not_found" };
-    if (leave.teacherId !== teacherId) return { success: false, reason: "forbidden" };
+    if (leave.teacherId !== teacherId || leave.schoolId !== schoolId) {
+      return { success: false, reason: "forbidden" };
+    }
+    if (leave.sessionId !== sessionId) return { success: false, reason: "not_found" };
     if (leave.status !== "pending") return { success: false, reason: "not_pending" };
-    await db.delete(leaveRequests).where(eq(leaveRequests.id, id));
+    const [deleted] = await db.delete(leaveRequests).where(and(
+      eq(leaveRequests.id, id),
+      eq(leaveRequests.teacherId, teacherId),
+      eq(leaveRequests.schoolId, schoolId),
+      eq(leaveRequests.sessionId, sessionId),
+      eq(leaveRequests.status, "pending"),
+    )).returning({ id: leaveRequests.id });
+    if (!deleted) return { success: false, reason: "not_pending" };
     return { success: true };
   }
 
