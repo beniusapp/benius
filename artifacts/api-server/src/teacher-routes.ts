@@ -36,6 +36,12 @@ import {
   isTeacherNoticeAudienceWithinSchool,
   isTeacherNoticeOwnedByTeacherInSession,
 } from "./teacher-notice-policy";
+import {
+  teacherCanAccessAssignedPeerReport,
+  teacherComplaintMatchesSession,
+  teacherHasAssignedEnrollment,
+  teacherOwnsComplaintInSession,
+} from "./teacher-complaint-scope";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "./attendance-read-session";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { WEEKDAYS } from "./teacher-working-days";
@@ -54,6 +60,8 @@ type TeacherClassworkContext = TeacherHomeworkContext;
 type TeacherClassworkRequest = Request & { teacherClassworkContext?: TeacherClassworkContext };
 type TeacherNoticeContext = TeacherHomeworkContext;
 type TeacherNoticeRequest = Request & { teacherNoticeContext?: TeacherNoticeContext };
+type TeacherComplaintContext = TeacherHomeworkContext;
+type TeacherComplaintRequest = Request & { teacherComplaintContext?: TeacherComplaintContext };
 
 function withTeacherNoticeContext(
   mode: TeacherAcademicSessionMode,
@@ -416,6 +424,62 @@ export function registerTeacherRoutes(app: Express) {
       return null;
     }
     return context;
+  };
+  const withTeacherComplaintContext = (
+    mode: "SELECTED_SESSION_REQUIRED" | "CURRENT_SESSION_WRITE",
+  ): RequestHandler => (req, res, next) => {
+    void resolveTeacherAcademicSession(req, mode, storage).then((context) => {
+      if (!context.ok) {
+        res.status(context.status).json({ message: context.message });
+        return;
+      }
+      if (!context.session) {
+        res.status(503).json({ message: "Unable to verify the selected academic session." });
+        return;
+      }
+      (req as TeacherComplaintRequest).teacherComplaintContext = {
+        teacher: context.teacher,
+        schoolId: context.schoolId,
+        session: context.session,
+      };
+      next();
+    }).catch(() => {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+    });
+  };
+  const getTeacherComplaintContext = (req: Request, res: Response): TeacherComplaintContext | null => {
+    const context = (req as TeacherComplaintRequest).teacherComplaintContext;
+    if (!context) {
+      res.status(401).json({ message: "Teacher Complaint request is not authenticated." });
+      return null;
+    }
+    return context;
+  };
+  const getTeacherComplaintMappings = async (teacher: TeacherComplaintContext["teacher"]) => {
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    const effectiveMappings = [...mappings];
+    if (teacher.assignedClass && teacher.assignedSection
+      && !effectiveMappings.some((mapping) =>
+        mapping.className === teacher.assignedClass && mapping.section === teacher.assignedSection,
+      )) {
+      effectiveMappings.push({
+        className: teacher.assignedClass,
+        section: teacher.assignedSection,
+        subject: null,
+      });
+    }
+    return effectiveMappings;
+  };
+  const getTeacherComplaintForSession = async (
+    complaintId: number,
+    context: TeacherComplaintContext,
+  ) => {
+    const complaint = await storage.getComplaintByIdForSchool(complaintId, context.schoolId);
+    return complaint && teacherComplaintMatchesSession(
+      complaint,
+      context.schoolId,
+      context.session.id,
+    ) ? complaint : undefined;
   };
 
   // ===== TEACHER CRUD (Principal) =====
@@ -1521,115 +1585,221 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== COMPLAINTS =====
-  app.post("/api/complaints", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
-    const { content, complaintType, reportedStudentName, notifyAdmin } = req.body;
-    if (!content) return res.status(400).json({ message: "Content required" });
-
-    // Parse student IDs for teacher-to-student complaints (one complaint for all students)
-    let studentIds: number[] = [];
-    if ((complaintType || "teacher-to-student") !== "teacher-to-admin") {
-      try {
-        const raw = req.body.studentIds;
-        studentIds = raw ? JSON.parse(raw) : [];
-      } catch { studentIds = []; }
-      if (studentIds.length === 0) return res.status(400).json({ message: "At least one student required" });
-    }
-
-    const ticketId = await storage.getNextTicketId(teacher.schoolId);
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    const isTeacherToStudent = (complaintType || "teacher-to-student") === "teacher-to-student";
-    const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
-
-    // Tag complaint with the school's current active session
-    const activeSessionForComplaint = await storage.getActiveSession(teacher.schoolId);
-
-    const complaint = await storage.createComplaintWithStudents({
-      ticketId,
-      teacherId: teacher.id,
-      studentId: null,
-      schoolId: teacher.schoolId,
-      complaintType: complaintType || "teacher-to-student",
-      content,
-      reportedStudentName: reportedStudentName || null,
-      fileUrl,
-      escalatedToPrincipal: shouldNotifyAdmin,
-      notifyAdmin: shouldNotifyAdmin,
-      status: shouldNotifyAdmin ? "Escalated" : "Pending",
-      batchId: null,
-      sessionId: activeSessionForComplaint?.id ?? null,
-    }, studentIds);
-
-    res.status(201).json(complaint);
-  });
-
-  app.get("/api/complaints/teacher/:teacherId", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const tid = parseInt(req.params.teacherId);
-    if (tid !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    const teacher = await storage.getTeacherById(tid);
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getComplaintsByTeacher(tid, teacher?.assignedClass, teacher?.assignedSection, teacher?.schoolId, viewSessionId);
-    res.json(list);
-  });
-
   const STUDENT_ONLY_TYPES = ["student-to-staff", "student-peer-report"] as const;
 
-  app.patch("/api/complaints/:id", diskUpload.single("file"), async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id as string);
-    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
-    if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot edit — complaint is no longer pending" });
+  app.post(
+    "/api/complaints",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherComplaintContext(req, res);
+      if (!context) return;
+      const { content, reportedStudentName, notifyAdmin } = req.body;
+      const complaintType = req.body.complaintType || "teacher-to-student";
+      if (typeof content !== "string" || !content.trim()) {
+        return res.status(400).json({ message: "Content required" });
+      }
+      if (!["teacher-to-student", "teacher-to-admin"].includes(complaintType)) {
+        return res.status(400).json({ message: "Invalid complaint type" });
+      }
 
-    const { content } = req.body;
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : (req.body.keepFile === "true" ? c.fileUrl : null);
-    const updated = await storage.updateComplaint(id, teacher.schoolId, { content: content || c.content, fileUrl });
-    res.json(updated);
-  });
+      let studentIds: number[] = [];
+      if (complaintType === "teacher-to-student") {
+        try {
+          const parsed: unknown = req.body.studentIds ? JSON.parse(req.body.studentIds) : [];
+          if (!Array.isArray(parsed)
+            || parsed.some((id) => !Number.isSafeInteger(id) || Number(id) <= 0)) {
+            return res.status(400).json({ message: "Invalid complaint student selection" });
+          }
+          studentIds = [...new Set(parsed as number[])];
+        } catch {
+          return res.status(400).json({ message: "Invalid complaint student selection" });
+        }
+        if (studentIds.length === 0) {
+          return res.status(400).json({ message: "At least one student required" });
+        }
+        const enrolled = await storage.getComplaintTargetsForSession(
+          context.schoolId,
+          context.session.id,
+          studentIds,
+        );
+        const assignments = await getTeacherComplaintMappings(context.teacher);
+        const enrolledById = new Map(enrolled.map((student) => [student.id, student]));
+        if (enrolledById.size !== studentIds.length
+          || studentIds.some((studentId) => !teacherHasAssignedEnrollment(
+            enrolledById.get(studentId),
+            context.schoolId,
+            context.session.id,
+            studentId,
+            assignments,
+          ))) {
+          return res.status(403).json({
+            message: "Each student must be enrolled in one of the teacher's assigned classes for the selected session.",
+          });
+        }
+      }
 
-  app.delete("/api/complaints/:id", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id);
-    const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
-    if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-    if (c.teacherId !== req.session.teacherId) return res.status(403).json({ message: "Not authorized" });
-    if (c.status !== "Pending") return res.status(400).json({ message: "Cannot delete — complaint is no longer pending" });
-    await storage.softDeleteComplaint(id, teacher.schoolId);
-    res.json({ message: "Complaint deleted" });
-  });
+      const ticketId = await storage.getNextTicketId(context.schoolId);
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+      const isTeacherToStudent = complaintType === "teacher-to-student";
+      const shouldNotifyAdmin = isTeacherToStudent && (notifyAdmin === "true" || notifyAdmin === true);
+      const complaint = await storage.createComplaintWithStudents({
+        ticketId,
+        teacherId: context.teacher.id,
+        studentId: null,
+        schoolId: context.schoolId,
+        complaintType,
+        content: content.trim(),
+        reportedStudentName: reportedStudentName || null,
+        fileUrl,
+        escalatedToPrincipal: shouldNotifyAdmin,
+        notifyAdmin: shouldNotifyAdmin,
+        status: shouldNotifyAdmin ? "Escalated" : "Pending",
+        batchId: null,
+        sessionId: context.session.id,
+      }, studentIds);
+
+      res.status(201).json(complaint);
+    },
+  );
+
+  app.get(
+    "/api/complaints/student-targets",
+    withTeacherComplaintContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherComplaintContext(req, res);
+      if (!context) return;
+      const rawQuery = req.query.q;
+      if (rawQuery !== undefined && typeof rawQuery !== "string") {
+        return res.status(400).json({ message: "Invalid student search." });
+      }
+      const query = typeof rawQuery === "string" ? rawQuery.slice(0, 100) : "";
+      const assignments = await getTeacherComplaintMappings(context.teacher);
+      const targets = await storage.searchComplaintTargetsForSession(
+        context.schoolId,
+        context.session.id,
+        query,
+        assignments,
+      );
+      res.json(targets);
+    },
+  );
+
+  app.get(
+    "/api/complaints/teacher/:teacherId",
+    withTeacherComplaintContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherComplaintContext(req, res);
+      if (!context) return;
+      const rawTeacherId = Array.isArray(req.params.teacherId)
+        ? req.params.teacherId[0] ?? ""
+        : req.params.teacherId;
+      const teacherId = Number(rawTeacherId);
+      if (!Number.isSafeInteger(teacherId) || teacherId <= 0) {
+        return res.status(400).json({ message: "Invalid Teacher ID" });
+      }
+      if (teacherId !== context.teacher.id) return res.status(403).json({ message: "Not authorized" });
+      const list = await storage.getComplaintsByTeacher(
+        context.teacher.id,
+        context.schoolId,
+        context.session.id,
+        context.teacher.assignedClass ?? undefined,
+        context.teacher.assignedSection ?? undefined,
+      );
+      res.json(list);
+    },
+  );
+
+  app.patch(
+    "/api/complaints/:id",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    diskUpload.single("file"),
+    async (req, res) => {
+      const context = getTeacherComplaintContext(req, res);
+      if (!context) return;
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+      const complaint = await getTeacherComplaintForSession(id, context);
+      if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+      if (STUDENT_ONLY_TYPES.includes(complaint.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      if (!teacherOwnsComplaintInSession(complaint, context.teacher.id, context.schoolId, context.session.id)) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+      if (complaint.status !== "Pending") {
+        return res.status(400).json({ message: "Cannot edit — complaint is no longer pending" });
+      }
+
+      const content = typeof req.body.content === "string" ? req.body.content.trim() : "";
+      const fileUrl = req.file
+        ? `/uploads/${req.file.filename}`
+        : (req.body.keepFile === "true" ? complaint.fileUrl : null);
+      const updated = await storage.updateComplaint(
+        id,
+        context.schoolId,
+        { content: content || complaint.content, fileUrl },
+        context.session.id,
+      );
+      if (!updated) return res.status(404).json({ message: "Complaint not found" });
+      res.json(updated);
+    },
+  );
+
+  app.delete(
+    "/api/complaints/:id",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+      const context = getTeacherComplaintContext(req, res);
+      if (!context) return;
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+      const complaint = await getTeacherComplaintForSession(id, context);
+      if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+      if (STUDENT_ONLY_TYPES.includes(complaint.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      if (!teacherOwnsComplaintInSession(complaint, context.teacher.id, context.schoolId, context.session.id)) {
+        return res.status(403).json({ message: "Not authorized" });
+      }
+      if (complaint.status !== "Pending") {
+        return res.status(400).json({ message: "Cannot delete — complaint is no longer pending" });
+      }
+      await storage.softDeleteComplaint(id, context.schoolId, context.session.id);
+      res.json({ message: "Complaint deleted" });
+    },
+  );
 
   app.patch("/api/complaints/:id/status", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
 
     if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      const c = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
-      if (!c) return res.status(404).json({ message: "Complaint not found" });
-      // Verify ownership — teachers can only update their own complaints
-      if (c.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
-      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+      const resolution = await resolveTeacherAcademicSession(req, "CURRENT_SESSION_WRITE", storage);
+      if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+      if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+      const context: TeacherComplaintContext = {
+        teacher: resolution.teacher,
+        schoolId: resolution.schoolId,
+        session: resolution.session,
+      };
+      const complaint = await getTeacherComplaintForSession(id, context);
+      if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+      if (!teacherOwnsComplaintInSession(complaint, context.teacher.id, context.schoolId, context.session.id)) {
+        return res.status(403).json({ message: "Not authorized: not your complaint" });
+      }
+      if (STUDENT_ONLY_TYPES.includes(complaint.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
       const { status } = req.body;
-      if (!["Pending", "Investigating", "Resolved"].includes(status)) return res.status(400).json({ message: "Invalid status" });
-      const updated = await storage.updateComplaintStatus(id, teacher.schoolId, status);
+      if (!["Pending", "Investigating", "Resolved"].includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      const updated = await storage.updateComplaintStatus(
+        id, context.schoolId, status, undefined, context.session.id,
+      );
+      if (!updated) return res.status(404).json({ message: "Complaint not found" });
       return res.json(updated);
     }
 
@@ -1645,34 +1815,41 @@ export function registerTeacherRoutes(app: Express) {
 
   app.post("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const complaintId = parseInt(req.params.id);
+    const complaintId = Number(req.params.id);
+    if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid ID" });
 
     let actorSchoolId: number | undefined;
-    let teacher = null;
+    let teacher: TeacherComplaintContext["teacher"] | null = null;
+    let selectedSessionId: number | undefined;
     if (req.session.teacherId) {
-      teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      actorSchoolId = teacher.schoolId;
+      const resolution = await resolveTeacherAcademicSession(req, "CURRENT_SESSION_WRITE", storage);
+      if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+      if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+      teacher = resolution.teacher;
+      actorSchoolId = resolution.schoolId;
+      selectedSessionId = resolution.session.id;
     } else if (req.session.userId && req.session.schoolId) {
       actorSchoolId = req.session.schoolId;
     }
 
     if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
-    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const complaint = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
 
     if (teacher) {
-      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+      if (!teacherComplaintMatchesSession(complaint, actorSchoolId, selectedSessionId!)) {
+        return res.status(404).json({ message: "Complaint not found in the selected session." });
+      }
+      if (STUDENT_ONLY_TYPES.includes(complaint.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
-      // Private teacher-to-admin complaints: only the filing teacher may access notes
-      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
-        return res.status(403).json({ message: "Access denied: not your private complaint" });
+      if (!teacherOwnsComplaintInSession(complaint, teacher.id, actorSchoolId, selectedSessionId!)) {
+        return res.status(403).json({ message: "Access denied: not your complaint" });
       }
     }
 
     const { content } = req.body;
-    if (!content) return res.status(400).json({ message: "Content required" });
+    if (typeof content !== "string" || !content.trim()) return res.status(400).json({ message: "Content required" });
 
     let authorName = "Admin";
     let authorRole = "admin";
@@ -1680,39 +1857,47 @@ export function registerTeacherRoutes(app: Express) {
     if (teacher) {
       authorName = teacher.fullName || "Teacher";
       authorRole = "teacher";
-      authorId = req.session.teacherId!;
+      authorId = teacher.id;
     }
 
-    const note = await storage.addComplaintNote({ complaintId, authorId, authorRole, authorName, content });
+    const note = await storage.addComplaintNote({
+      complaintId, authorId, authorRole, authorName, content: content.trim(),
+    });
     res.status(201).json(note);
   });
 
   app.get("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const complaintId = parseInt(req.params.id);
+    const complaintId = Number(req.params.id);
+    if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid ID" });
 
     let actorSchoolId: number | undefined;
+    let teacher: TeacherComplaintContext["teacher"] | null = null;
+    let selectedSessionId: number | undefined;
     if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      actorSchoolId = teacher.schoolId;
+      const resolution = await resolveTeacherAcademicSession(req, "SELECTED_SESSION_REQUIRED", storage);
+      if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+      if (!resolution.session) return res.status(503).json({ message: "Unable to verify the selected academic session." });
+      teacher = resolution.teacher;
+      actorSchoolId = resolution.schoolId;
+      selectedSessionId = resolution.session.id;
     } else if (req.session.userId && req.session.schoolId) {
       actorSchoolId = req.session.schoolId;
     }
 
     if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
-    const c = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
-    if (!c) return res.status(404).json({ message: "Complaint not found" });
+    const complaint = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
+    if (!complaint) return res.status(404).json({ message: "Complaint not found" });
 
-    if (req.session.teacherId) {
-      const teacher = await storage.getTeacherById(req.session.teacherId);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-      if (STUDENT_ONLY_TYPES.includes(c.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
+    if (teacher) {
+      if (!teacherComplaintMatchesSession(complaint, actorSchoolId, selectedSessionId!)) {
+        return res.status(404).json({ message: "Complaint not found in the selected session." });
+      }
+      if (STUDENT_ONLY_TYPES.includes(complaint.complaintType as typeof STUDENT_ONLY_TYPES[number])) {
         return res.status(403).json({ message: "Access denied" });
       }
-      // Private teacher-to-admin complaints: only the filing teacher may read notes
-      if (c.complaintType === "teacher-to-admin" && c.teacherId !== teacher.id) {
-        return res.status(403).json({ message: "Access denied: not your private complaint" });
+      if (!teacherOwnsComplaintInSession(complaint, teacher.id, actorSchoolId, selectedSessionId!)) {
+        return res.status(403).json({ message: "Access denied: not your complaint" });
       }
     }
 
@@ -1721,107 +1906,124 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   // ===== CLASS FEED (Peer Reports for Class Teacher) =====
-  app.get("/api/complaints/class-feed", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
-    const fmMappings = await storage.getFacultyMappingsByTeacher(req.session.teacherId);
-
-    // Merge faculty_mappings with the legacy assignedClass/assignedSection field so
-    // teachers whose assignments were saved only in the teachers table are not excluded.
-    const allMappings = [...fmMappings];
-    if (teacher.assignedClass && teacher.assignedSection) {
-      const alreadyPresent = allMappings.some(
-        m => m.className === teacher.assignedClass && m.section === teacher.assignedSection
-      );
-      if (!alreadyPresent) {
-        allMappings.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
-      }
-    }
-
+  app.get(
+    "/api/complaints/class-feed",
+    withTeacherComplaintContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+    const context = getTeacherComplaintContext(req, res);
+    if (!context) return;
+    const allMappings = await getTeacherComplaintMappings(context.teacher);
     console.log(
-      `[ClassFeed] Teacher ${teacher.id} (${teacher.fullName}) — effective class assignments:`,
+      `[ClassFeed] Teacher ${context.teacher.id} (${context.teacher.fullName}) — effective class assignments:`,
       allMappings.map(m => `${m.className}-${m.section}`)
     );
 
     const filterClass = (req.query.cls as string) || undefined;
     const filterSection = (req.query.section as string) || undefined;
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const list = await storage.getClassFeedComplaints(teacher.schoolId, allMappings, filterClass, filterSection, viewSessionId);
+    const list = await storage.getClassFeedComplaints(
+      context.schoolId,
+      context.session.id,
+      allMappings,
+      filterClass,
+      filterSection,
+    );
     res.json(list);
   });
 
-  app.patch("/api/complaints/:id/resolve", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id);
-    const { resolutionRemarks } = req.body;
-    if (!resolutionRemarks?.trim()) return res.status(400).json({ message: "Resolution remarks are required" });
-    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+  app.patch(
+    "/api/complaints/:id/resolve",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+    const context = getTeacherComplaintContext(req, res);
+    if (!context) return;
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+    const resolutionRemarks = req.body.resolutionRemarks;
+    if (typeof resolutionRemarks !== "string" || !resolutionRemarks.trim()) {
+      return res.status(400).json({ message: "Resolution remarks are required" });
+    }
+    const complaint = await getTeacherComplaintForSession(id, context);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    // Hard-fail if no target studentId — peer reports must always have one
-    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
-    const targetStudent = await storage.getStudentById(complaint.studentId);
-    const fmForResolve = await storage.getFacultyMappingsByTeacher(teacher.id);
-    const effectiveForResolve = [...fmForResolve];
-    if (teacher.assignedClass && teacher.assignedSection &&
-        !effectiveForResolve.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
-      effectiveForResolve.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    const targetEnrollment = complaint.studentId
+      ? (await storage.getComplaintTargetsForSession(
+        context.schoolId,
+        context.session.id,
+        [complaint.studentId],
+      ))[0] ?? null
+      : null;
+    const mappings = await getTeacherComplaintMappings(context.teacher);
+    if (!teacherCanAccessAssignedPeerReport(
+      complaint,
+      context.schoolId,
+      context.session.id,
+      mappings,
+      targetEnrollment,
+    )) {
+      return res.status(403).json({ message: "Not authorized: target student not enrolled in your assigned classes for this session" });
     }
-    const isAuthorizedToResolve = effectiveForResolve.some(
-      m => m.className === targetStudent?.class && m.section === targetStudent?.section
+    const updated = await storage.resolveComplaint(
+      id,
+      context.schoolId,
+      resolutionRemarks.trim(),
+      context.session.id,
     );
-    if (!targetStudent || !isAuthorizedToResolve) {
-      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
-    }
-    const updated = await storage.resolveComplaint(id, teacher.schoolId, resolutionRemarks.trim());
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
     res.json(updated);
   });
 
   // Teacher self-resolves their own teacher-to-student complaint
-  app.patch("/api/teacher/complaints/:id/self-resolve", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id);
-    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+  app.patch(
+    "/api/teacher/complaints/:id/self-resolve",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+    const context = getTeacherComplaintContext(req, res);
+    if (!context) return;
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+    const complaint = await getTeacherComplaintForSession(id, context);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
-    if (complaint.complaintType !== "teacher-to-student") return res.status(403).json({ message: "Only teacher-to-student complaints can be self-resolved" });
-    if (complaint.teacherId !== teacher.id) return res.status(403).json({ message: "Not authorized: not your complaint" });
+    if (complaint.complaintType !== "teacher-to-student") {
+      return res.status(403).json({ message: "Only teacher-to-student complaints can be self-resolved" });
+    }
+    if (!teacherOwnsComplaintInSession(complaint, context.teacher.id, context.schoolId, context.session.id)) {
+      return res.status(403).json({ message: "Not authorized: not your complaint" });
+    }
     if (complaint.status === "Resolved") return res.status(409).json({ message: "Already resolved" });
-    const updated = await storage.resolveComplaint(id, teacher.schoolId, null);
+    const updated = await storage.resolveComplaint(id, context.schoolId, null, context.session.id);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
     res.json(updated);
   });
 
-  app.patch("/api/complaints/:id/escalate", async (req, res) => {
-    if (!req.session.teacherId) return res.status(403).json({ message: "Teacher access required" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const id = parseInt(req.params.id);
-    const complaint = await storage.getComplaintByIdForSchool(id, teacher.schoolId);
+  app.patch(
+    "/api/complaints/:id/escalate",
+    withTeacherComplaintContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+    const context = getTeacherComplaintContext(req, res);
+    if (!context) return;
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
+    const complaint = await getTeacherComplaintForSession(id, context);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
     if (complaint.complaintType !== "student-peer-report") return res.status(403).json({ message: "Access denied" });
-    // Hard-fail if no target studentId — peer reports must always have one
-    if (!complaint.studentId) return res.status(403).json({ message: "Complaint has no target student" });
-    const targetStudent = await storage.getStudentById(complaint.studentId);
-    const fmForEscalate = await storage.getFacultyMappingsByTeacher(teacher.id);
-    const effectiveForEscalate = [...fmForEscalate];
-    if (teacher.assignedClass && teacher.assignedSection &&
-        !effectiveForEscalate.some(m => m.className === teacher.assignedClass && m.section === teacher.assignedSection)) {
-      effectiveForEscalate.push({ className: teacher.assignedClass, section: teacher.assignedSection, subject: null });
+    const targetEnrollment = complaint.studentId
+      ? (await storage.getComplaintTargetsForSession(
+        context.schoolId,
+        context.session.id,
+        [complaint.studentId],
+      ))[0] ?? null
+      : null;
+    const mappings = await getTeacherComplaintMappings(context.teacher);
+    if (!teacherCanAccessAssignedPeerReport(
+      complaint,
+      context.schoolId,
+      context.session.id,
+      mappings,
+      targetEnrollment,
+    )) {
+      return res.status(403).json({ message: "Not authorized: target student not enrolled in your assigned classes for this session" });
     }
-    const isAuthorizedToEscalate = effectiveForEscalate.some(
-      m => m.className === targetStudent?.class && m.section === targetStudent?.section
-    );
-    if (!targetStudent || !isAuthorizedToEscalate) {
-      return res.status(403).json({ message: "Not authorized: target student not in your assigned classes" });
-    }
-    const updated = await storage.escalateComplaint(id, teacher.schoolId);
+    const updated = await storage.escalateComplaint(id, context.schoolId, context.session.id);
     if (!updated) return res.status(404).json({ message: "Complaint not found" });
     res.json(updated);
   });

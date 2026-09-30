@@ -11,8 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface SearchResult {
   id: number;
@@ -84,27 +84,33 @@ const TYPE_PILLS: Record<string, string> = {
 
 function ResolutionThread({ complaintId, teacherId }: { complaintId: number; teacherId: number }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const [noteContent, setNoteContent] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const notesQueryKey = ["/api/complaints", "notes", teacherId, complaintId, selectedSessionId] as const;
 
   const { data: notes = [], isLoading } = useQuery<ComplaintNote[]>({
-    queryKey: ["/api/complaints", complaintId, "notes"],
+    queryKey: notesQueryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/complaints/${complaintId}/notes`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(
+        `/api/complaints/${complaintId}/notes`,
+        selectedSessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: expanded,
+    enabled: expanded && selectedSessionId !== null,
   });
 
   const addNoteMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/complaints/${complaintId}/notes`, {
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
+      const res = await sessionFetchForViewSession(`/api/complaints/${complaintId}/notes`, selectedSessionId, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: noteContent }),
-        credentials: "include",
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
@@ -112,7 +118,7 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
     onSuccess: () => {
       toast({ title: "Note Added" });
       setNoteContent("");
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints", complaintId, "notes"] });
+      queryClient.invalidateQueries({ queryKey: notesQueryKey });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -166,7 +172,7 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
             <Button
               size="sm"
               onClick={() => addNoteMutation.mutate()}
-              disabled={isArchiveMode || !noteContent.trim() || addNoteMutation.isPending}
+          disabled={isArchiveMode || selectedSessionId === null || !noteContent.trim() || addNoteMutation.isPending}
               className="h-8 px-3 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs"
               data-testid={`button-add-note-${complaintId}`}
             >
@@ -181,11 +187,13 @@ function ResolutionThread({ complaintId, teacherId }: { complaintId: number; tea
 
 function MultiStudentSearchInput({
   schoolId,
+  sessionId,
   selectedStudents,
   onAdd,
   onRemove,
 }: {
   schoolId: number;
+  sessionId: number | null;
   selectedStudents: SearchResult[];
   onAdd: (student: SearchResult) => void;
   onRemove: (id: number) => void;
@@ -203,13 +211,16 @@ function MultiStudentSearchInput({
   const selectedIds = new Set(selectedStudents.map(s => s.id));
 
   const { data: allResults = [], isFetching } = useQuery<SearchResult[]>({
-    queryKey: ["/api/students/search", schoolId, debouncedQuery],
+    queryKey: ["/api/complaints/student-targets", schoolId, sessionId, debouncedQuery],
     queryFn: async () => {
-      const res = await fetch(`/api/students/search/${schoolId}?q=${encodeURIComponent(debouncedQuery)}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(
+        `/api/complaints/student-targets?q=${encodeURIComponent(debouncedQuery)}`,
+        sessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    enabled: debouncedQuery.length >= 2,
+    enabled: sessionId !== null && debouncedQuery.length >= 2,
   });
 
   const results = allResults.filter(s => !selectedIds.has(s.id));
@@ -345,23 +356,27 @@ function ClassFeedDrawer({
 }) {
   const { toast } = useToast();
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const [resolveRemarks, setResolveRemarks] = useState("");
   const [showResolveBox, setShowResolveBox] = useState(false);
 
   const resolveMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/complaints/${entry.id}/resolve`, {
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
+      const res = await sessionFetchForViewSession(`/api/complaints/${entry.id}/resolve`, selectedSessionId, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resolutionRemarks: resolveRemarks }),
-        credentials: "include",
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Complaint Resolved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/class-feed"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/complaints/class-feed", teacher.schoolId, selectedSessionId],
+      });
       onClose();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -369,17 +384,18 @@ function ClassFeedDrawer({
 
   const escalateMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/complaints/${entry.id}/escalate`, {
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
+      const res = await sessionFetchForViewSession(`/api/complaints/${entry.id}/escalate`, selectedSessionId, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Escalated to Principal" });
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/class-feed"] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/complaints/class-feed", teacher.schoolId, selectedSessionId],
+      });
       onClose();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -454,7 +470,7 @@ function ClassFeedDrawer({
                   <Button
                     size="sm"
                     onClick={() => resolveMutation.mutate()}
-                    disabled={isArchiveMode || !resolveRemarks.trim() || resolveMutation.isPending}
+                    disabled={isArchiveMode || selectedSessionId === null || !resolveRemarks.trim() || resolveMutation.isPending}
                     className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1"
                     data-testid="button-confirm-resolve"
                   >
@@ -471,7 +487,7 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => setShowResolveBox(true)}
-                  disabled={isArchiveMode}
+                  disabled={isArchiveMode || selectedSessionId === null}
                   className="rounded-xl bg-emerald-400 hover:bg-emerald-500 text-black font-bold flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
                   data-testid="button-resolve"
                 >
@@ -480,7 +496,7 @@ function ClassFeedDrawer({
                 <Button
                   size="sm"
                   onClick={() => escalateMutation.mutate()}
-                  disabled={isArchiveMode || escalateMutation.isPending || !!entry.escalatedToPrincipal}
+                  disabled={isArchiveMode || selectedSessionId === null || escalateMutation.isPending || !!entry.escalatedToPrincipal}
                   className="rounded-xl bg-amber-400 hover:bg-amber-500 text-black font-bold flex-1"
                   data-testid="button-escalate"
                 >
@@ -501,6 +517,8 @@ function ClassFeedDrawer({
 }
 
 function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const [selected, setSelected] = useState<ClassFeedEntry | null>(null);
   const [filterClass, setFilterClass] = useState("all");
   const [filterSection, setFilterSection] = useState("all");
@@ -535,18 +553,23 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
     setFilterSection("all");
   };
 
+  useEffect(() => {
+    setSelected(null);
+  }, [selectedSessionId]);
+
   const params = new URLSearchParams();
   if (filterClass !== "all") params.set("cls", filterClass);
   if (filterSection !== "all") params.set("section", filterSection);
   const qs = params.toString() ? `?${params.toString()}` : "";
 
   const { data: feed = [], isLoading } = useQuery<ClassFeedEntry[]>({
-    queryKey: ["/api/complaints/class-feed", filterClass, filterSection],
+    queryKey: ["/api/complaints/class-feed", teacher.schoolId, selectedSessionId, filterClass, filterSection],
     queryFn: async () => {
-      const res = await fetch(`/api/complaints/class-feed${qs}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/complaints/class-feed${qs}`, selectedSessionId);
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const noMappings = teacher.mappings.length === 0;
@@ -652,6 +675,8 @@ function ClassFeedTab({ teacher }: { teacher: TeacherMe }) {
 
 export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const [activeView, setActiveView] = useState<"my" | "feed">("my");
 
@@ -668,13 +693,30 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
   const [editContent, setEditContent] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
+  useEffect(() => {
+    setSelectedStudents([]);
+    setEditingId(null);
+    setDeleteConfirmId(null);
+  }, [selectedSessionId]);
+
+  const complaintsQueryKey = [
+    "/api/complaints/teacher",
+    teacher.schoolId,
+    teacher.id,
+    selectedSessionId,
+  ] as const;
+
   const { data: complaints = [], isLoading } = useQuery<ComplaintEntry[]>({
-    queryKey: ["/api/complaints/teacher", teacher.id],
+    queryKey: complaintsQueryKey,
     queryFn: async () => {
-      const res = await fetch(`/api/complaints/teacher/${teacher.id}`, { credentials: "include" });
+      const res = await sessionFetchForViewSession(
+        `/api/complaints/teacher/${teacher.id}`,
+        selectedSessionId,
+      );
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
+    enabled: selectedSessionId !== null,
   });
 
   const canPost = (() => {
@@ -702,6 +744,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const submitMutation = useMutation({
     mutationFn: async () => {
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
       const fd = new FormData();
       fd.append("content", content);
       fd.append("complaintType", complaintType);
@@ -710,7 +753,10 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
         if (notifyAdmin) fd.append("notifyAdmin", "true");
       }
       if (selectedFile) fd.append("file", selectedFile);
-      const res = await fetch("/api/complaints", { method: "POST", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession("/api/complaints", selectedSessionId, {
+        method: "POST",
+        body: fd,
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
@@ -723,7 +769,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
       setSelectedStudents([]);
       setNotifyAdmin(false);
       clearFile();
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: complaintsQueryKey });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -732,17 +778,21 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const updateMutation = useMutation({
     mutationFn: async (id: number) => {
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
       const fd = new FormData();
       fd.append("content", editContent);
       fd.append("keepFile", "true");
-      const res = await fetch(`/api/complaints/${id}`, { method: "PATCH", body: fd, credentials: "include" });
+      const res = await sessionFetchForViewSession(`/api/complaints/${id}`, selectedSessionId, {
+        method: "PATCH",
+        body: fd,
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Complaint Updated" });
       setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: complaintsQueryKey });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -751,14 +801,17 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/complaints/${id}`, { method: "DELETE", credentials: "include" });
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
+      const res = await sessionFetchForViewSession(`/api/complaints/${id}`, selectedSessionId, {
+        method: "DELETE",
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Complaint Removed" });
       setDeleteConfirmId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: complaintsQueryKey });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -767,13 +820,16 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
   const selfResolveMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/teacher/complaints/${id}/self-resolve`, { method: "PATCH", credentials: "include" });
+      if (selectedSessionId === null) throw new Error("Select an academic session first.");
+      const res = await sessionFetchForViewSession(`/api/teacher/complaints/${id}/self-resolve`, selectedSessionId, {
+        method: "PATCH",
+      });
       if (!res.ok) { const err = await res.json(); throw new Error(err.message); }
       return res.json();
     },
     onSuccess: () => {
       toast({ title: "Complaint Resolved", description: "Marked as resolved successfully." });
-      queryClient.invalidateQueries({ queryKey: ["/api/complaints/teacher", teacher.id] });
+      queryClient.invalidateQueries({ queryKey: complaintsQueryKey });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -847,6 +903,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
             <>
               <MultiStudentSearchInput
                 schoolId={teacher.schoolId}
+                sessionId={selectedSessionId}
                 selectedStudents={selectedStudents}
                 onAdd={(s) => setSelectedStudents(prev => prev.some(x => x.id === s.id) ? prev : [...prev, s])}
                 onRemove={(id) => setSelectedStudents(prev => prev.filter(s => s.id !== id))}
@@ -923,7 +980,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
 
           <Button
             onClick={() => submitMutation.mutate()}
-            disabled={isArchiveMode || !canPost || submitMutation.isPending}
+            disabled={isArchiveMode || selectedSessionId === null || !canPost || submitMutation.isPending}
             className={`w-full h-12 rounded-xl text-sm font-semibold transition-all ${
               canPost
                 ? "bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white shadow-md active:scale-[0.98]"
@@ -1016,7 +1073,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                         />
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => updateMutation.mutate(c.id)}
-                            disabled={isArchiveMode || updateMutation.isPending}
+                            disabled={isArchiveMode || selectedSessionId === null || updateMutation.isPending}
                             className="rounded-lg bg-gradient-to-r from-red-600 to-rose-600 text-white"
                             data-testid={`button-save-edit-${c.id}`}>
                             {updateMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
@@ -1069,7 +1126,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                           <Button
                             size="sm"
                             onClick={() => selfResolveMutation.mutate(c.id)}
-                            disabled={isArchiveMode || selfResolveMutation.isPending}
+                            disabled={isArchiveMode || selectedSessionId === null || selfResolveMutation.isPending}
                             className="h-7 px-3 rounded-lg bg-emerald-400 hover:bg-emerald-500 text-black font-bold text-xs"
                             data-testid={`button-self-resolve-${c.id}`}
                           >
@@ -1084,7 +1141,7 @@ export default function ComplaintModule({ teacher }: { teacher: TeacherMe }) {
                               <>
                                 <span className="text-xs text-destructive mr-1">Delete?</span>
                                 <Button size="sm" variant="destructive" className="h-7 px-2 rounded-lg text-xs"
-                                  onClick={() => deleteMutation.mutate(c.id)} disabled={isArchiveMode || deleteMutation.isPending}
+                                  onClick={() => deleteMutation.mutate(c.id)} disabled={isArchiveMode || selectedSessionId === null || deleteMutation.isPending}
                                   data-testid={`button-confirm-delete-${c.id}`}>
                                   {deleteMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "Yes"}
                                 </Button>

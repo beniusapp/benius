@@ -8,3 +8,4 @@
 - [Teacher Noticeboard session routing](teacher-noticeboard-session-routing.md) — keep Teacher content session-scoped while the legacy Dashboard badge returns IDs only.
 - [TypeScript diagnostic baselines](typescript-diagnostic-baselines.md) — an empty LSP snapshot does not prove package typechecks are clean.
 - [Teacher Timetable session routing](teacher-timetable-session-routing.md) — enforce Teacher session rules without changing shared Admin/Student fallback behavior.
+- [Teacher Complaint session boundaries](teacher-complaint-session-boundaries.md) — exact selected-session reads; active-session writes; NULL legacy complaints remain unassigned.

@@ -60,6 +60,7 @@ import { studentPublishedRankScope, studentPublishedScoreScope } from "./student
 import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeSessionScope } from "./student-notice-visibility";
 import { studentTimetableScope } from "./student-timetable-visibility";
 import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
+import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./teacher-complaint-scope";
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -1897,6 +1898,7 @@ export class DatabaseStorage {
   }
 
   async createComplaint(data: InsertComplaint): Promise<Complaint> {
+    requireTeacherComplaintSession(data.schoolId, data.sessionId);
     const [c] = await db.insert(complaints).values(data).returning();
     return c;
   }
@@ -1905,19 +1907,121 @@ export class DatabaseStorage {
     data: InsertComplaint,
     studentIds: number[]
   ): Promise<Complaint & { students: { id: number; name: string; class: string | null; section: string | null }[] }> {
+    requireTeacherComplaintSession(data.schoolId, data.sessionId);
+    const uniqueStudentIds = [...new Set(studentIds)];
+    if (uniqueStudentIds.some((studentId) => !Number.isSafeInteger(studentId) || studentId <= 0)) {
+      throw new Error("Complaint targets must be valid students in the selected academic session.");
+    }
+    const enrolledStudents = uniqueStudentIds.length > 0
+      ? await this.getComplaintTargetsForSession(data.schoolId, data.sessionId, uniqueStudentIds)
+      : [];
+    if (enrolledStudents.length !== uniqueStudentIds.length) {
+      throw new Error("Complaint targets must belong to the teacher's school and selected academic session.");
+    }
     const [c] = await db.insert(complaints).values(data).returning();
-    if (studentIds.length > 0) {
+    if (uniqueStudentIds.length > 0) {
       await db.insert(complaintStudents).values(
-        studentIds.map(sid => ({ complaintId: c.id, studentId: sid }))
+        uniqueStudentIds.map(sid => ({ complaintId: c.id, studentId: sid }))
       );
     }
-    const studs = studentIds.length > 0
-      ? await db.select({ id: students.id, name: students.name, cls: students.class, sec: students.section })
-          .from(complaintStudents)
-          .innerJoin(students, eq(complaintStudents.studentId, students.id))
-          .where(eq(complaintStudents.complaintId, c.id))
-      : [];
-    return { ...c, students: studs.map(s => ({ id: s.id, name: s.name, class: s.cls, section: s.sec })) };
+    return {
+      ...c,
+      students: enrolledStudents.map((student) => ({
+        id: student.id,
+        name: student.name,
+        class: student.class,
+        section: student.section,
+      })),
+    };
+  }
+
+  async searchComplaintTargetsForSession(
+    schoolId: number,
+    sessionId: number,
+    query: string,
+    assignments: { className: string; section: string }[],
+  ): Promise<{
+    id: number;
+    name: string;
+    digitalStudentId: string;
+    class: string;
+    section: string;
+    photoUrl: string | null;
+  }[]> {
+    requireTeacherComplaintSession(schoolId, sessionId);
+    const normalizedQuery = query.trim();
+    if (normalizedQuery.length < 2 || assignments.length === 0) return [];
+    const assignmentConditions = assignments.map((assignment) =>
+      and(
+        eq(enrollments.className, assignment.className),
+        eq(enrollments.sectionName, assignment.section),
+      )
+    ) as SQL[];
+    return await db.select({
+      id: students.id,
+      name: students.name,
+      digitalStudentId: students.digitalStudentId,
+      class: enrollments.className,
+      section: enrollments.sectionName,
+      photoUrl: students.photoUrl,
+    }).from(enrollments)
+      .innerJoin(students, and(
+        eq(enrollments.studentId, students.id),
+        eq(enrollments.schoolId, schoolId),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        or(...assignmentConditions),
+        or(
+          ilike(students.name, `%${normalizedQuery}%`),
+          ilike(students.digitalStudentId, `%${normalizedQuery}%`),
+        ),
+      ))
+      .limit(15);
+  }
+
+  async getComplaintTargetsForSession(schoolId: number, sessionId: number, studentIds: number[]): Promise<{
+    id: number;
+    name: string;
+    digitalStudentId: string;
+    class: string;
+    section: string;
+    photoUrl: string | null;
+    schoolId: number;
+    sessionId: number;
+    studentId: number;
+    className: string;
+    sectionName: string;
+  }[]> {
+    requireTeacherComplaintSession(schoolId, sessionId);
+    const uniqueStudentIds = [...new Set(studentIds)];
+    if (uniqueStudentIds.length === 0) return [];
+    if (uniqueStudentIds.some((studentId) => !Number.isSafeInteger(studentId) || studentId <= 0)) return [];
+    return await db.select({
+      id: students.id,
+      name: students.name,
+      digitalStudentId: students.digitalStudentId,
+      class: enrollments.className,
+      section: enrollments.sectionName,
+      photoUrl: students.photoUrl,
+      schoolId: enrollments.schoolId,
+      sessionId: enrollments.sessionId,
+      studentId: students.id,
+      className: enrollments.className,
+      sectionName: enrollments.sectionName,
+    }).from(enrollments)
+      .innerJoin(students, and(
+        eq(enrollments.studentId, students.id),
+        eq(enrollments.schoolId, schoolId),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        inArray(enrollments.studentId, uniqueStudentIds),
+      ));
   }
 
   async getComplaintById(id: number): Promise<Complaint | undefined> {
@@ -1930,20 +2034,40 @@ export class DatabaseStorage {
     return c;
   }
 
-  async updateComplaint(id: number, schoolId: number, data: { content?: string; fileUrl?: string | null }): Promise<Complaint> {
-    const [c] = await db.update(complaints).set(data).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
+  async updateComplaint(
+    id: number,
+    schoolId: number,
+    data: { content?: string; fileUrl?: string | null },
+    sessionId?: number,
+  ): Promise<Complaint> {
+    const scope = sessionId === undefined
+      ? and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))
+      : and(eq(complaints.id, id), teacherComplaintSessionScope(schoolId, sessionId));
+    const [c] = await db.update(complaints).set(data).where(scope).returning();
     return c;
   }
 
-  async softDeleteComplaint(id: number, schoolId: number): Promise<void> {
-    await db.update(complaints).set({ isDeleted: true }).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)));
+  async softDeleteComplaint(id: number, schoolId: number, sessionId?: number): Promise<void> {
+    const scope = sessionId === undefined
+      ? and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))
+      : and(eq(complaints.id, id), teacherComplaintSessionScope(schoolId, sessionId));
+    await db.update(complaints).set({ isDeleted: true }).where(scope);
   }
 
-  async updateComplaintStatus(id: number, schoolId: number, status: string, resolutionRemarks?: string): Promise<Complaint> {
+  async updateComplaintStatus(
+    id: number,
+    schoolId: number,
+    status: string,
+    resolutionRemarks?: string,
+    sessionId?: number,
+  ): Promise<Complaint> {
     const updateData: Record<string, unknown> = { status };
     if (resolutionRemarks !== undefined) updateData.resolutionRemarks = resolutionRemarks;
     if (status === "Resolved") updateData.resolvedAt = new Date();
-    const [c] = await db.update(complaints).set(updateData).where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))).returning();
+    const scope = sessionId === undefined
+      ? and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))
+      : and(eq(complaints.id, id), teacherComplaintSessionScope(schoolId, sessionId));
+    const [c] = await db.update(complaints).set(updateData).where(scope).returning();
     return c;
   }
 
@@ -2061,17 +2185,25 @@ export class DatabaseStorage {
     });
   }
 
-  async getComplaintsByTeacher(teacherId: number, assignedClass?: string, assignedSection?: string, schoolId?: number, sessionId?: number | null): Promise<(Complaint & { studentName: string | null; students: { id: number; name: string; class: string | null; section: string | null }[] })[]> {
+  async getComplaintsByTeacher(
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+    assignedClass?: string,
+    assignedSection?: string,
+  ): Promise<(Complaint & { studentName: string | null; students: { id: number; name: string; class: string | null; section: string | null }[] })[]> {
+    requireTeacherComplaintSession(schoolId, sessionId);
     const STUDENT_FILED_TYPES = ["student-to-staff", "student-peer-report"];
     const ownWhereConditions: any[] = [
       eq(complaints.teacherId, teacherId),
-      eq(complaints.isDeleted, false),
+      teacherComplaintSessionScope(schoolId, sessionId),
       sql`${complaints.complaintType} NOT IN ('student-to-staff', 'student-peer-report')`,
     ];
-    if (schoolId) ownWhereConditions.push(eq(complaints.schoolId, schoolId));
-    if (sessionId != null) ownWhereConditions.push(eq(complaints.sessionId, sessionId));
     const ownComplaints = await db.select().from(complaints)
-      .leftJoin(students, eq(complaints.studentId, students.id))
+      .leftJoin(students, and(
+        eq(complaints.studentId, students.id),
+        eq(students.schoolId, schoolId),
+      ))
       .where(and(...ownWhereConditions))
       .orderBy(desc(complaints.createdAt));
 
@@ -2082,18 +2214,24 @@ export class DatabaseStorage {
 
     let allResults = ownResults;
 
-    if (assignedClass && assignedSection && schoolId) {
+    if (assignedClass && assignedSection) {
       const s2sConditions: any[] = [
-        eq(complaints.isDeleted, false),
+        teacherComplaintSessionScope(schoolId, sessionId),
         eq(complaints.complaintType, "student-to-student"),
-        eq(complaints.schoolId, schoolId),
         sql`${complaints.teacherId} != ${teacherId}`,
-        eq(students.class, assignedClass),
-        eq(students.section, assignedSection),
+        eq(enrollments.className, assignedClass),
+        eq(enrollments.sectionName, assignedSection),
       ];
-      if (sessionId != null) s2sConditions.push(eq(complaints.sessionId, sessionId));
       const s2sFromOthers = await db.select().from(complaints)
-        .leftJoin(students, eq(complaints.studentId, students.id))
+        .innerJoin(students, and(
+          eq(complaints.studentId, students.id),
+          eq(students.schoolId, schoolId),
+        ))
+        .innerJoin(enrollments, and(
+          eq(enrollments.studentId, students.id),
+          eq(enrollments.schoolId, schoolId),
+          eq(enrollments.sessionId, sessionId),
+        ))
         .where(and(...s2sConditions))
         .orderBy(desc(complaints.createdAt));
 
@@ -2121,11 +2259,19 @@ export class DatabaseStorage {
         complaintId: complaintStudents.complaintId,
         id: students.id,
         name: students.name,
-        cls: students.class,
-        sec: students.section,
+        cls: enrollments.className,
+        sec: enrollments.sectionName,
       })
         .from(complaintStudents)
-        .innerJoin(students, eq(complaintStudents.studentId, students.id))
+        .innerJoin(students, and(
+          eq(complaintStudents.studentId, students.id),
+          eq(students.schoolId, schoolId),
+        ))
+        .leftJoin(enrollments, and(
+          eq(enrollments.studentId, students.id),
+          eq(enrollments.schoolId, schoolId),
+          eq(enrollments.sessionId, sessionId),
+        ))
         .where(inArray(complaintStudents.complaintId, ids));
       for (const row of csRows) {
         const list = studentsByComplaint.get(row.complaintId) ?? [];
@@ -2250,11 +2396,12 @@ export class DatabaseStorage {
 
   async getClassFeedComplaints(
     schoolId: number,
+    sessionId: number,
     mappings: { className: string; section: string }[],
     filterClass?: string,
     filterSection?: string,
-    sessionId?: number | null,
   ): Promise<(Complaint & { complainantStudentName: string | null })[]> {
+    requireTeacherComplaintSession(schoolId, sessionId);
     // Narrow mappings to the selected filter (if any)
     const activeMappings = filterClass
       ? mappings.filter(m =>
@@ -2267,65 +2414,78 @@ export class DatabaseStorage {
 
     // Step 1: find IDs of TARGET students across all active class-section pairs
     const classSectionConditions = activeMappings.map(m =>
-      and(eq(students.class, m.className), eq(students.section, m.section))
+      and(eq(enrollments.className, m.className), eq(enrollments.sectionName, m.section))
     ) as SQL[];
 
-    let targetIds: number[];
-    if (sessionId) {
-      // Archive mode: resolve student list via session enrollments
-      const enrolled = await db.select({ studentId: enrollments.studentId })
-        .from(enrollments)
-        .innerJoin(students, eq(enrollments.studentId, students.id))
-        .where(and(
-          eq(enrollments.sessionId, sessionId),
-          eq(students.schoolId, schoolId),
-          or(...classSectionConditions),
-        ));
-      targetIds = enrolled.map(e => e.studentId);
-    } else {
-      const targetStudentRows = await db.select({ id: students.id })
-        .from(students)
-        .where(and(
-          eq(students.schoolId, schoolId),
-          eq(students.isActive, true),
-          or(...classSectionConditions),
-        ));
-      targetIds = targetStudentRows.map(s => s.id);
-    }
+    const enrolled = await db.select({ studentId: enrollments.studentId })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(enrollments.studentId, students.id),
+        eq(enrollments.schoolId, schoolId),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        or(...classSectionConditions),
+      ));
+    const targetIds = enrolled.map((student) => student.studentId);
     if (targetIds.length === 0) return [];
 
     // Step 2: fetch peer-reports where studentId (the TARGET) is in those IDs
     const feedConditions = [
       eq(complaints.schoolId, schoolId),
+      eq(complaints.sessionId, sessionId),
       eq(complaints.complaintType, "student-peer-report"),
       inArray(complaints.studentId, targetIds),
       eq(complaints.isDeleted, false),
     ] as SQL[];
-    if (sessionId) feedConditions.push(eq(complaints.sessionId, sessionId) as SQL);
 
-    const result = await db.select().from(complaints)
-      .leftJoin(students, eq(complaints.complainantStudentId, students.id))
+    const result = await db.select({
+      complaint: complaints,
+      complainantStudentName: students.name,
+      complainantPhotoUrl: students.photoUrl,
+      complainantClass: enrollments.className,
+      complainantSection: enrollments.sectionName,
+    }).from(complaints)
+      .leftJoin(students, and(
+        eq(complaints.complainantStudentId, students.id),
+        eq(students.schoolId, schoolId),
+      ))
+      .leftJoin(enrollments, and(
+        eq(enrollments.studentId, complaints.complainantStudentId),
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+      ))
       .where(and(...feedConditions))
       .orderBy(desc(complaints.createdAt));
     return result.map(r => ({
-      ...r.complaints,
-      complainantStudentName: r.students?.name || null,
-      complainantPhotoUrl: r.students?.photoUrl ?? null,
+      ...r.complaint,
+      complainantStudentName: r.complainantClass ? r.complainantStudentName || null : null,
+      complainantPhotoUrl: r.complainantClass ? r.complainantPhotoUrl ?? null : null,
+      complainantClass: r.complainantClass ?? null,
+      complainantSection: r.complainantSection ?? null,
     }));
   }
 
-  async resolveComplaint(id: number, schoolId: number, remarks: string | null): Promise<Complaint | null> {
+  async resolveComplaint(id: number, schoolId: number, remarks: string | null, sessionId?: number): Promise<Complaint | null> {
+    const scope = sessionId === undefined
+      ? and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))
+      : and(eq(complaints.id, id), teacherComplaintSessionScope(schoolId, sessionId));
     const [c] = await db.update(complaints)
       .set({ status: "Resolved", ...(remarks != null ? { resolutionRemarks: remarks } : {}) })
-      .where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)))
+      .where(scope)
       .returning();
     return c || null;
   }
 
-  async escalateComplaint(id: number, schoolId: number): Promise<Complaint | null> {
+  async escalateComplaint(id: number, schoolId: number, sessionId?: number): Promise<Complaint | null> {
+    const scope = sessionId === undefined
+      ? and(eq(complaints.id, id), eq(complaints.schoolId, schoolId))
+      : and(eq(complaints.id, id), teacherComplaintSessionScope(schoolId, sessionId));
     const [c] = await db.update(complaints)
       .set({ escalatedToPrincipal: true, status: "Escalated" })
-      .where(and(eq(complaints.id, id), eq(complaints.schoolId, schoolId)))
+      .where(scope)
       .returning();
     return c || null;
   }

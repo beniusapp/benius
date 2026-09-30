@@ -14,6 +14,11 @@ import { AttendanceLeaveMutationError, storage } from "./storage";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY } from "./attendance-policy-engine";
 import { getTeacherSelfRate } from "./teacher-self-attendance-rate";
 import { resolveTeacherAcademicSession, type TeacherAcademicSessionRequest } from "./teacher-academic-session";
+import {
+  teacherCanAccessAssignedPeerReport,
+  teacherComplaintMatchesSession,
+  teacherOwnsComplaintInSession,
+} from "./teacher-complaint-scope";
 import { isClassworkOwnedByTeacherInScope } from "./teacher-classwork-policy";
 
 type Teacher = NonNullable<Awaited<ReturnType<typeof storage.getTeacherWithSchool>>>;
@@ -434,14 +439,14 @@ async function getModuleData(req: Request, res: Response): Promise<void> {
             storage.getAttendanceRosterForSessionClass(account.school.id, session.id, scope.className, scope.section),
           ));
           const complaints = await storage.getComplaintsByTeacher(
-            teacher.id, teacher.assignedClass, teacher.assignedSection, account.school.id, session.id,
+            teacher.id, account.school.id, session.id, teacher.assignedClass, teacher.assignedSection,
           );
           const classFeed = await storage.getClassFeedComplaints(
             account.school.id,
+            session.id,
             scopes.map(({ className, section }) => ({ className, section })),
             undefined,
             undefined,
-            session.id,
           );
           res.json({
             scopes,
@@ -628,6 +633,8 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
   const { account, scopes } = context;
   const { module, action } = params.data;
   const requiresCurrentSessionMode =
+    module === "complaint"
+    ||
     (module === "timetable" && (action === "save" || action === "delete"))
     || (module === "attendance"
       && ["submit", "self-check-in", "self-check-out", "self-correction"].includes(action));
@@ -1087,19 +1094,30 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       }).strict().safeParse(req.body);
       if (!body.success) { fail(res, 400, "Resolution remarks are required."); return; }
       const item = await storage.getComplaintByIdForSchool(body.data.complaintId, account.school.id);
-      if (!item || item.sessionId !== session.id || item.complaintType !== "student-peer-report" || !item.studentId) {
+      if (!item || !teacherComplaintMatchesSession(item, account.school.id, session.id)
+        || item.complaintType !== "student-peer-report" || !item.studentId) {
         fail(res, 404, "Assigned-class complaint was not found in the selected session.");
         return;
       }
-      const student = await storage.getStudentById(item.studentId);
-      if (!student || student.schoolId !== account.school.id || !scopes.some((scope) =>
-        scope.className === student.class && scope.section === student.section,
+      const targetEnrollment = (await storage.getComplaintTargetsForSession(
+        account.school.id,
+        session.id,
+        [item.studentId],
+      ))[0] ?? null;
+      if (!teacherCanAccessAssignedPeerReport(
+        item,
+        account.school.id,
+        session.id,
+        scopes,
+        targetEnrollment,
       )) {
         fail(res, 403, "This complaint's student is outside the teacher's assigned classes.");
         return;
       }
       if (item.status === "Resolved") { fail(res, 409, "This complaint is already resolved."); return; }
-      const updated = await storage.resolveComplaint(item.id, account.school.id, body.data.resolutionRemarks);
+      const updated = await storage.resolveComplaint(
+        item.id, account.school.id, body.data.resolutionRemarks, session.id,
+      );
       if (!updated) { fail(res, 404, "Complaint not found."); return; }
       res.json({ item: updated });
       return;
@@ -1135,11 +1153,11 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       }).strict().safeParse(req.body);
       if (!body.success) { fail(res, 400, "Invalid complaint action."); return; }
       const item = await storage.getComplaintByIdForSchool(body.data.complaintId, account.school.id);
-      if (!item || item.sessionId !== session.id) {
+      if (!item || !teacherComplaintMatchesSession(item, account.school.id, session.id)) {
         fail(res, 404, "Complaint does not belong to the selected session and school.");
         return;
       }
-      if (item.teacherId !== teacher.id || item.isDeleted
+      if (!teacherOwnsComplaintInSession(item, teacher.id, account.school.id, session.id)
         || !["teacher-to-admin", "teacher-to-student"].includes(item.complaintType)) {
         fail(res, 403, "This complaint is not available to this teacher.");
         return;
@@ -1156,13 +1174,15 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       if (action === "edit") {
         if (item.status !== "Pending") { fail(res, 409, "Only pending complaints can be edited."); return; }
         if (!body.data.content) { fail(res, 400, "Complaint details are required."); return; }
-        const updated = await storage.updateComplaint(item.id, account.school.id, { content: body.data.content });
+        const updated = await storage.updateComplaint(
+          item.id, account.school.id, { content: body.data.content }, session.id,
+        );
         res.json({ item: updated });
         return;
       }
       if (action === "delete") {
         if (item.status !== "Pending") { fail(res, 409, "Only pending complaints can be deleted."); return; }
-        await storage.softDeleteComplaint(item.id, account.school.id);
+        await storage.softDeleteComplaint(item.id, account.school.id, session.id);
         res.json({ deleted: true });
         return;
       }
@@ -1171,7 +1191,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         return;
       }
       if (item.status === "Resolved") { fail(res, 409, "This complaint is already resolved."); return; }
-      const updated = await storage.resolveComplaint(item.id, account.school.id, null);
+      const updated = await storage.resolveComplaint(item.id, account.school.id, null, session.id);
       if (!updated) { fail(res, 404, "Complaint not found."); return; }
       res.json({ item: updated });
       return;
@@ -1495,10 +1515,18 @@ async function getPrivateFile(req: Request, res: Response): Promise<void> {
       authorized = !!item && (item.teacherId === context.account.teacher.id
         || scopes.some((scope) => scope.className === item.class && scope.section === item.section));
     } else if (params.data.module === "complaint") {
-      const complaints = await storage.getComplaintsByTeacher(context.account.teacher.id, context.account.teacher.assignedClass,
-        context.account.teacher.assignedSection, account.school.id, session.id);
-      const classFeed = await storage.getClassFeedComplaints(account.school.id,
-        scopes.map(({ className, section }) => ({ className, section })), undefined, undefined, session.id);
+      const complaints = await storage.getComplaintsByTeacher(
+        context.account.teacher.id,
+        account.school.id,
+        session.id,
+        context.account.teacher.assignedClass,
+        context.account.teacher.assignedSection,
+      );
+      const classFeed = await storage.getClassFeedComplaints(
+        account.school.id,
+        session.id,
+        scopes.map(({ className, section }) => ({ className, section })),
+      );
       authorized = complaints.some((item) => item.fileUrl === expectedUrl && item.teacherId === context.account.teacher.id)
         || classFeed.some((item) => item.fileUrl === expectedUrl && item.schoolId === account.school.id && item.status !== "Deleted");
     } else if (params.data.module === "noticeboard") {
