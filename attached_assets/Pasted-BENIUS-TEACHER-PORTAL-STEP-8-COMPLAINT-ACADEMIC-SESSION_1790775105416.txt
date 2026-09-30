@@ -1,0 +1,797 @@
+BENIUS — TEACHER PORTAL
+
+STEP 8 — COMPLAINT ACADEMIC SESSION CORRECTION
+
+Accepted Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Step 5 — Homework: COMPLETE
+- Step 6 — Classwork: COMPLETE
+- Step 7 — Noticeboard: COMPLETE
+
+Permanent BENIUS rule:
+
+Previous / inactive Academic Session = STRICTLY READ-ONLY for session-specific academic operational data.
+
+Now work ONLY on:
+
+TEACHER COMPLAINT
+
+Do NOT start Dashboard, Leave, Approval Center, Student Profiles, or other Teacher modules.
+
+---
+
+PRIMARY GOAL
+
+Teacher Complaint must follow:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher Complaint permissions
+→ complaint relationship/visibility
+→ complaint belonging to that same school/session
+
+Do not mix schools.
+
+Do not mix sessions.
+
+Do not silently fall back to the active Academic Session.
+
+---
+
+IMPORTANT — COMPLAINT IS HYBRID
+
+Do NOT assume every Complaint-related object is session-specific.
+
+First inspect the actual implementation and classify:
+
+1. GLOBAL/current supporting data
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED data
+5. COMPLAINT RELATIONSHIP / VISIBILITY restricted
+6. TARGET-person restricted
+7. NOTES / REPLIES restricted
+8. ATTACHMENT restricted
+
+Preserve existing product behavior.
+
+---
+
+FIRST — FORENSIC AUDIT
+
+Before modifying code, inspect the complete Teacher Complaint workflow.
+
+Inspect:
+
+- Web Teacher Complaint page
+- Mobile Teacher Complaint implementation if present
+- API routes
+- storage methods
+- complaint schema
+- list/inbox
+- filed/sent complaints
+- received complaints
+- complaint detail
+- complaint create
+- edit if available
+- delete/cancel/withdraw if available
+- status changes if available
+- notes
+- replies/comments if available
+- evidence/attachments
+- Teacher grievance flows
+- Student-related complaints
+- target selection
+- role/type selection
+- visibility rules
+- creator/ownership rules
+- selected Academic Session handling
+- "x-view-session-id"
+- cache/query keys
+- active-session fallback
+- nullable "session_id"
+- Web cookie authentication
+- Mobile bearer authentication
+
+Do NOT assume the Teacher Complaint module behaves exactly like Student Complaint.
+
+Use existing Teacher behavior as the source of truth.
+
+---
+
+SESSION FOUNDATION
+
+Reuse:
+
+"teacher-academic-session.ts"
+
+Do NOT create another competing Teacher session resolver.
+
+For session-specific reads, normally use:
+
+"SELECTED_SESSION_REQUIRED"
+
+where appropriate.
+
+For current-session-only Complaint mutations, use:
+
+"CURRENT_SESSION_WRITE"
+
+where appropriate.
+
+---
+
+COMPLAINT READS
+
+When Teacher selects Session A:
+
+→ show the complaints they are permitted to see for Session A.
+
+When Teacher selects Session B:
+
+→ show the complaints they are permitted to see for Session B.
+
+No A/B mixing.
+
+Historical same-school complaints may remain readable according to existing Complaint permissions.
+
+Do NOT replace historical selection with the active session.
+
+---
+
+COMPLAINT WRITES
+
+Inspect all actual mutations.
+
+Potential examples:
+
+- create/file complaint
+- withdraw/cancel
+- edit
+- status change
+- note
+- reply/comment
+- evidence/attachment mutation
+
+Only apply rules to actions that actually exist.
+
+For session-specific Complaint operational mutations:
+
+Active selected session
+→ existing permitted action works.
+
+Previous/inactive selected session
+→ mutation rejected.
+
+No historical write may silently target the active session.
+
+---
+
+COMPLAINT RELATIONSHIP AUTHORIZATION
+
+This is critical.
+
+Knowing a Complaint ID must NOT automatically provide access.
+
+For every complaint/detail/note/action, verify the authenticated Teacher has an existing legitimate relationship to that complaint.
+
+Examples may include:
+
+- complaint creator
+- complaint recipient
+- complaint target
+- permitted Teacher role
+- other existing authorized relationship
+
+Use only relationships that actually exist in BENIUS.
+
+Authorization should include:
+
+authenticated Teacher
++
+real school
++
+selected session
++
+Complaint
++
+existing permitted relationship
+
+Do NOT authorize only by Complaint ID.
+
+---
+
+TENANT ISOLATION
+
+School A Teacher must never access School B Complaint data.
+
+Verify:
+
+School A Teacher
++
+School A session/Complaint
+→ allowed according to existing permissions.
+
+School A Teacher
++
+School B session
+→ rejected.
+
+School A Teacher
++
+School B Complaint ID
+→ rejected.
+
+School A Teacher
++
+School B target person
+→ rejected.
+
+School A Teacher
++
+School B note/reply/evidence
+→ rejected.
+
+Do not trust request-supplied:
+
+- schoolId
+- teacherId
+- sessionId
+- complaintId
+- targetId
+
+for authorization.
+
+Server-authenticated context must control school/Teacher identity.
+
+---
+
+TARGET PERSON
+
+Inspect who a Teacher can currently complain about or send a grievance regarding.
+
+Possible existing target types may include:
+
+- Student
+- Teacher
+- staff
+- other roles
+
+Do NOT invent target types.
+
+If the target is a Student and the relationship is session-sensitive, use selected-session enrollment where required.
+
+If the target is another Teacher/staff member and that identity is global/current, preserve that existing behavior.
+
+Every target must belong to the authenticated Teacher's school.
+
+Cross-school targeting must be rejected.
+
+---
+
+STUDENT PLACEMENT
+
+If Complaint uses Student class/section placement for:
+
+- target lists
+- labels
+- authorization
+- filtering
+- recipient selection
+
+and that placement is session-sensitive, use:
+
+"enrollments"
+
+for:
+
+school
++
+Student
++
+selected Academic Session
+
+Do NOT use current Student class/section as historical placement.
+
+Example:
+
+2025–26:
+Rahim → Class 7A / Roll 12
+
+2026–27:
+Rahim → Class 8B / Roll 8
+
+When viewing a 2025–26 complaint, any session-sensitive placement should use 7A / Roll 12.
+
+Do not change permanent Student identity.
+
+---
+
+NOTES / REPLIES
+
+If Complaint supports notes, replies, comments, or conversation entries:
+
+inspect them separately.
+
+They must not allow access merely because the caller knows:
+
+- Complaint ID
+- note ID
+- reply ID
+
+Validate through the parent Complaint:
+
+Teacher
+→ school
+→ selected session
+→ Complaint
+→ authorized relationship
+→ note/reply
+
+For session-specific operational notes/replies:
+
+Inactive session should be read-only unless existing BENIUS behavior clearly establishes a different category.
+
+Do NOT silently invent a new historical interaction rule.
+
+If there is ambiguity similar to Noticeboard read-state, report it before changing product semantics.
+
+---
+
+NULL SESSION COMPLAINTS
+
+The previous BENIUS audits found nullable/legacy session behavior in Complaint data.
+
+Inspect explicitly:
+
+- Can "complaints.session_id" be null?
+- Why?
+- Are null-session complaints legacy?
+- Are they shown in Teacher Complaint?
+- Can new Teacher complaints still be created without a session?
+- Does any route treat null as active/current?
+
+Do NOT delete or migrate legacy data.
+
+Do NOT assign historical null records to an Academic Session without evidence.
+
+For new session-specific Teacher complaints, do not silently create null-session records if the current architecture supports proper session association.
+
+If legacy semantics are unclear, document them.
+
+---
+
+ATTACHMENTS / EVIDENCE
+
+Do NOT modify "/uploads".
+
+The known legacy attachment authorization issue remains a separate security workstream.
+
+However, normal Complaint record authorization must still enforce:
+
+Teacher
++
+school
++
+session
++
+Complaint relationship
+
+before returning protected metadata/actions.
+
+If evidence URLs ultimately use the known public "/uploads" path, document that limitation and leave the global storage architecture unchanged.
+
+Do NOT create a new attachment system in Step 8.
+
+---
+
+WEB
+
+Web remains the source of truth.
+
+Preserve existing:
+
+- Complaint UI
+- fields
+- target choices
+- workflow
+- statuses
+- labels
+- layout
+- navigation
+- permissions
+
+Correct only session/data/security handling where required.
+
+Web continues using cookie authentication.
+
+Session-dependent query keys must include selected Academic Session.
+
+Requests must send the same selected session.
+
+---
+
+MOBILE
+
+Inspect Mobile Teacher Complaint if implemented.
+
+Mobile continues using bearer authentication.
+
+Do NOT introduce cookie dependency.
+
+Preserve existing native/hybrid behavior.
+
+Ensure it uses the same:
+
+school
++
+selected session
++
+Complaint relationship
+
+rules as the shared backend.
+
+---
+
+CACHE / SESSION SWITCHING
+
+Verify:
+
+Session A
+→ Complaints A
+
+Session B
+→ Complaints B
+
+Session A again
+→ Complaints A
+
+No stale Session B Complaint data should appear in Session A.
+
+Cache key and request header must use the same selected session.
+
+---
+
+HISTORICAL READ-ONLY
+
+For session-specific Complaint operational data:
+
+Inactive Session A:
+
+- view permitted historical complaints ✅
+- view permitted historical details ✅
+- create new complaint ❌
+- edit ❌ if edit exists
+- withdraw/cancel ❌ if applicable
+- status mutation ❌
+- attachment/evidence mutation ❌
+- other operational mutation ❌
+
+Notes/replies should be audited and classified explicitly.
+
+No historical mutation may redirect to Active Session B.
+
+Backend enforcement is mandatory.
+
+---
+
+IST
+
+BENIUS timezone remains:
+
+Asia/Kolkata / IST
+
+Preserve existing:
+
+- complaint created date/time
+- updated time
+- notes/replies timestamps
+- status timestamps
+- evidence timestamps
+
+Do not introduce UTC date shifting.
+
+---
+
+REGRESSION
+
+Do not redesign completed Teacher modules.
+
+Regression-check relevant session protections for:
+
+- Timetable
+- Attendance
+- Examination
+- Results
+- Reports
+- Homework
+- Classwork
+- Noticeboard
+
+Keep:
+
+Previous/inactive session = read-only
+
+for session-specific academic operational data.
+
+Also remember the separate future Teacher Dashboard issue:
+
+Noticeboard Dashboard badge/count is not yet session-aware.
+
+Do NOT fix Dashboard during this Step 8.
+
+---
+
+DO NOT TOUCH
+
+Do NOT modify:
+
+- Teacher Dashboard
+- Teacher Leave
+- Teacher Approval Center
+- Teacher Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Do NOT modify Student Portal.
+
+Do NOT modify Admin Portal.
+
+Do NOT modify Admin Exam Controller.
+
+Do NOT modify "/uploads".
+
+Do NOT perform the deferred promotion-ledger session-aware migration.
+
+---
+
+DATABASE
+
+Expected:
+
+NO DATABASE SCHEMA CHANGE
+
+Use existing Complaint/session structures.
+
+If a schema change appears necessary:
+
+STOP.
+
+Explain why and wait for approval.
+
+Do not migrate legacy null-session Complaint data without approval.
+
+---
+
+UI
+
+Expected:
+
+NO UI/UX CHANGE
+
+Do not redesign Complaint.
+
+---
+
+REQUIRED TESTING
+
+Test applicable existing behavior:
+
+1. Selected-session Complaint list.
+2. Historical same-school Complaint list.
+3. Historical permitted Complaint detail.
+4. Session A/B isolation.
+5. Foreign-school session rejected.
+6. Cross-school Complaint rejected.
+7. Direct foreign Complaint ID rejected.
+8. Cross-school target rejected.
+9. Spoofed Teacher/school IDs ineffective.
+10. Existing Complaint relationship restrictions preserved.
+11. Current-session create succeeds where permitted.
+12. Historical create rejected.
+13. Historical edit rejected if edit exists.
+14. Historical cancel/withdraw rejected if available.
+15. Historical status mutation rejected if available.
+16. Historical attachment/evidence mutation rejected if applicable.
+17. Notes/replies scoped through parent Complaint.
+18. Historical notes/replies behavior explicitly verified/classified.
+19. Null-session Complaint behavior explicitly tested/documented.
+20. Session-sensitive Student placement uses selected-session enrollment where applicable.
+21. Web query/session transport correct.
+22. Mobile bearer/session behavior correct.
+23. Session A → B → A isolated.
+24. IST unchanged.
+25. Noticeboard regression.
+26. Classwork regression.
+27. Homework regression.
+28. Previous Teacher session regressions where relevant.
+29. Student Portal unchanged.
+30. Admin Portal unchanged.
+
+Only test features that actually exist.
+
+---
+
+CURRENT CONTEXT
+
+Teacher Step 7 Noticeboard reported:
+
+- 14 focused session-policy tests PASS
+- API build PASS
+- Web build PASS
+- Mobile typecheck PASS
+- no schema changes
+- no Student Portal changes
+- no Admin Portal changes
+- "/uploads" unchanged
+
+Known separate follow-up:
+
+Teacher Dashboard Noticeboard badge/count is currently not session-aware.
+
+Do NOT modify Dashboard in Step 8.
+
+Use the actual current API/Web/Mobile diagnostic counts rather than assuming an older baseline.
+
+---
+
+FINAL REPORT
+
+Return:
+
+TEACHER STEP 8 — COMPLAINT
+
+Existing architecture found
+
+Classification
+
+- Global/current
+- Selected-session reads
+- Current-session writes
+- Relationship-restricted
+- Target-restricted
+- Notes/replies
+- Attachments/evidence
+
+Problems found
+
+Corrections implemented
+
+Session foundation
+
+Explain use of "teacher-academic-session.ts".
+
+Tenant isolation
+
+Complaint relationship authorization
+
+Explain exactly who can access what.
+
+Target-person behavior
+
+Explain actual existing target types.
+
+Student placement
+
+Explain selected-session enrollment usage if applicable.
+
+Null-session complaints
+
+Explain existing behavior and what was done.
+
+Reads
+
+Explain active/historical behavior.
+
+Writes
+
+Explain current-session mutation behavior.
+
+Historical read-only
+
+Explicitly confirm protection.
+
+Notes/replies
+
+Explain authorization and historical behavior separately.
+
+Attachments/evidence
+
+Confirm "/uploads" unchanged and document limitation.
+
+Web
+
+Explain session request/cache behavior.
+
+Mobile
+
+Explain bearer/session behavior.
+
+Session A → B → A
+
+PASS/FAIL and how tested.
+
+IST
+
+Tests
+
+Exact pass/fail counts.
+
+Previous Teacher regressions
+
+Diagnostics
+
+API before/after.
+Web before/after.
+Mobile before/after.
+
+Build
+
+PASS/FAIL.
+
+Database changes
+
+Expected NONE.
+
+UI changes
+
+Expected NONE.
+
+Student Portal changes
+
+Must be NONE.
+
+Admin Portal changes
+
+Must be NONE.
+
+"/uploads" changes
+
+Must be NONE.
+
+Files changed
+
+Exact list.
+
+Deferred issues
+
+Recommended Teacher Step 9
+
+Recommend the next single Teacher module/group.
+
+---
+
+FINAL EXPECTATION
+
+Teacher Complaint must follow:
+
+Authenticated Teacher
+→ real school
+→ explicitly selected Academic Session
+→ existing Complaint permissions/relationship
+→ same-school target
+→ Complaint belonging to that exact session
+
+Historical same-school Complaint data may be viewed where permitted.
+
+But:
+
+Previous/inactive session = STRICTLY READ-ONLY for session-specific Complaint operational data.
+
+No cross-school access.
+
+No cross-session mixing.
+
+No silent active-session fallback.
+
+No UI redesign.
+
+No unrelated module changes.
