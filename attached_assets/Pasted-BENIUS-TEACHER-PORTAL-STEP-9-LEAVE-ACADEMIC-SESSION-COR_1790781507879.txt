@@ -1,0 +1,793 @@
+BENIUS — TEACHER PORTAL
+
+STEP 9 — LEAVE ACADEMIC SESSION CORRECTION
+
+Accepted Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Step 5 — Homework: COMPLETE
+- Step 6 — Classwork: COMPLETE
+- Step 7 — Noticeboard: COMPLETE
+- Step 8 — Complaint: COMPLETE
+
+Permanent BENIUS rule:
+
+Previous / inactive Academic Session = STRICTLY READ-ONLY for session-specific academic operational data.
+
+Now work ONLY on:
+
+TEACHER LEAVE
+
+Do NOT start Dashboard, Approval Center, Student Profiles, or any other remaining Teacher module.
+
+---
+
+PRIMARY GOAL
+
+Teacher Leave must correctly follow:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicitly selected Academic Session
+→ existing Teacher Leave permissions
+→ leave request belonging to that same Teacher/school/session
+
+Do not mix schools.
+
+Do not mix sessions.
+
+Do not silently fall back from a selected historical session to the active session.
+
+---
+
+IMPORTANT — LEAVE IS HYBRID
+
+Do NOT make the entire Leave system session-specific blindly.
+
+Previous audits established that Teacher Leave contains both session-specific and global/current behavior.
+
+Audit and classify the actual current implementation into:
+
+1. GLOBAL/CURRENT
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. SESSION-DERIVED
+5. TEACHER-OWNED
+6. APPROVAL/STATUS controlled
+7. ATTENDANCE-INTEGRATED
+8. ATTACHMENT-related
+
+In particular, existing school Leave Policy may be global/current rather than versioned per Academic Session.
+
+Preserve that architecture unless the actual code establishes otherwise.
+
+---
+
+FIRST — FORENSIC AUDIT
+
+Before changing anything, inspect the complete Teacher Leave workflow.
+
+Inspect:
+
+- Web Teacher Leave page
+- Mobile Teacher Leave if implemented
+- API routes
+- storage methods
+- database/schema fields
+- Teacher leave request list/history
+- create/apply leave
+- cancel/withdraw if available
+- edit if available
+- approval/status display
+- leave balances if present
+- leave policy
+- leave types
+- date validation
+- attachment/document behavior
+- Attendance synchronization
+- approved Leave → Attendance behavior
+- selected Academic Session transport
+- "x-view-session-id"
+- active-session fallback
+- cache/query keys
+- nullable "session_id"
+- Web cookie authentication
+- Mobile bearer authentication
+
+Do NOT assume behavior.
+
+Document what actually exists before correcting it.
+
+---
+
+SESSION FOUNDATION
+
+Reuse:
+
+"teacher-academic-session.ts"
+
+Do NOT create another competing Teacher session resolver.
+
+Normally:
+
+"SELECTED_SESSION_REQUIRED"
+→ session-specific Leave reads/history.
+
+"CURRENT_SESSION_WRITE"
+→ session-specific Leave mutations.
+
+Use the actual Leave workflow to determine where these modes apply.
+
+---
+
+LEAVE READS
+
+When Teacher selects Session A:
+
+→ show that Teacher's permitted Leave records for Session A.
+
+When Teacher selects Session B:
+
+→ show that Teacher's permitted Leave records for Session B.
+
+No A/B mixing.
+
+Historical same-school Leave history should remain readable where existing behavior permits.
+
+Do NOT silently replace the selected historical session with the active session.
+
+---
+
+LEAVE WRITES
+
+Inspect all actual Teacher Leave mutations.
+
+Potential examples:
+
+- apply/create
+- edit
+- cancel
+- withdraw
+- attachment upload/change/remove
+- other Teacher-controlled mutation
+
+Only handle actions that actually exist.
+
+For session-specific Leave mutations:
+
+Active selected session
+→ existing permitted action works.
+
+Previous/inactive selected session
+→ mutation rejected.
+
+No historical write may silently target the active Academic Session.
+
+Backend enforcement is mandatory.
+
+Do not rely only on disabled UI controls.
+
+---
+
+TEACHER OWNERSHIP
+
+A Teacher must only access/manage Leave records allowed by the existing product behavior.
+
+Do not authorize merely because the caller knows a Leave ID.
+
+For Teacher-owned leave, verify:
+
+Authenticated Teacher
++
+Teacher's real school
++
+selected Academic Session
++
+Leave record
++
+Teacher ownership
+
+where applicable.
+
+Request-supplied "teacherId" or "schoolId" must not override authenticated identity.
+
+---
+
+LEAVE POLICY
+
+Audit the Leave Policy separately.
+
+Previous BENIUS architecture indicates that Leave policies may be:
+
+school-level/global/current
+
+rather than Academic-Session-versioned.
+
+If that is still true:
+
+KEEP IT THAT WAY.
+
+Do NOT create historical copies.
+
+Do NOT add "session_id" to Leave Policy.
+
+Do NOT redesign policy versioning.
+
+This means viewing historical Leave may still display/use current policy information where that is existing BENIUS behavior.
+
+Document this limitation clearly.
+
+Do not silently change it.
+
+---
+
+LEAVE TYPES / BALANCES
+
+If Leave has:
+
+- leave types
+- entitlement
+- balance
+- used leave
+- remaining leave
+- limits
+
+audit exactly how each is calculated.
+
+If a balance/count represents the selected Academic Session, it must use the selected session's Leave records.
+
+If a setting is intentionally global/current, preserve it.
+
+Do NOT mix historical Leave records with current-session records in session-derived counts.
+
+Do NOT change formulas or entitlement rules unless there is a direct session-boundary bug.
+
+---
+
+LEAVE DATE VALIDATION
+
+Inspect how Leave dates are validated against:
+
+- Academic Session start/end
+- active session
+- current date
+- working days
+- holidays
+- existing Leave policy
+
+Preserve existing business rules.
+
+But make sure a Leave request for the active selected session cannot accidentally create records outside the intended session due to active-session fallback.
+
+Historical session selected
+→ no new Leave request.
+
+---
+
+ATTENDANCE INTEGRATION — VERY IMPORTANT
+
+Teacher Leave may interact with Teacher Attendance.
+
+Audit:
+
+Leave request
+→ approval/status
+→ Attendance update/synchronization
+
+The existing Step 3 Attendance protections must NOT be weakened.
+
+If approved Leave updates Attendance, verify:
+
+same Teacher
++
+same school
++
+same Academic Session
++
+correct Leave date
+
+A Leave belonging to Session A must not update Attendance in Session B.
+
+Historical Leave viewing must not trigger Attendance mutation/recalculation.
+
+Do NOT redesign Attendance.
+
+Only correct Leave-side session propagation if needed.
+
+---
+
+APPROVAL / STATUS
+
+Teacher Step 9 is about the Teacher Leave side.
+
+Inspect what the Teacher can actually do with Leave status.
+
+If Teacher can only:
+
+- apply
+- view
+- cancel/withdraw
+
+preserve that.
+
+Do NOT give Teacher approval/rejection powers that belong to Admin/another role.
+
+Do NOT modify Admin Approval Center in this step.
+
+Status must be read from the correct Leave record/session.
+
+---
+
+NULL SESSION LEAVE RECORDS
+
+Audit whether legacy Teacher Leave records can have:
+
+"session_id = NULL"
+
+Determine:
+
+- whether they exist
+- how current Teacher Leave reads treat them
+- whether new records can still become null-session
+- whether any route treats null as active
+
+Do NOT migrate them.
+
+Do NOT assign them to a session without evidence.
+
+Do NOT delete them.
+
+For session-specific Teacher Leave views, use the minimum safe behavior consistent with the current architecture.
+
+Document legacy/null-session behavior.
+
+---
+
+ATTACHMENTS
+
+Do NOT modify "/uploads".
+
+The known legacy document authorization issue remains a separate security workstream.
+
+However, normal Leave attachment metadata/actions must remain authorized through the parent Leave record:
+
+Teacher
+→ school
+→ session
+→ Leave ownership
+
+Do not create a new attachment architecture.
+
+Document the known "/uploads" limitation if applicable.
+
+---
+
+WEB
+
+Web remains the source of truth.
+
+Preserve existing:
+
+- Leave UI
+- fields
+- policy display
+- statuses
+- date behavior
+- workflow
+- buttons
+- labels
+- navigation
+
+Correct only session/data/security behavior where required.
+
+Web continues using cookie authentication.
+
+Session-dependent cache/query keys must include selected Academic Session.
+
+Requests must carry the same session.
+
+---
+
+MOBILE
+
+Inspect Mobile Teacher Leave if implemented.
+
+Mobile continues using bearer authentication.
+
+Do NOT introduce cookie dependency.
+
+Preserve existing native/hybrid behavior.
+
+Mobile and Web must ultimately use the same backend truth for:
+
+Teacher
++
+school
++
+selected session
++
+Leave record.
+
+---
+
+SESSION SWITCHING
+
+Verify:
+
+Session A
+→ Leave A
+
+Session B
+→ Leave B
+
+Session A again
+→ Leave A
+
+No stale Session B Leave records/counts in Session A.
+
+Cache keys and request session must agree.
+
+---
+
+HISTORICAL READ-ONLY
+
+For session-specific Teacher Leave:
+
+Inactive Session A:
+
+- view historical Leave records ✅
+- view status/history ✅
+- apply new Leave ❌
+- edit ❌ if available
+- cancel/withdraw ❌ if available
+- attachment mutation ❌
+- any Teacher-controlled operational mutation ❌
+
+Viewing historical Leave must not mutate Attendance.
+
+No write may redirect to Active Session B.
+
+Backend enforcement is mandatory.
+
+---
+
+IST
+
+BENIUS timezone remains:
+
+Asia/Kolkata / IST
+
+Preserve existing:
+
+- Leave start/end dates
+- applied timestamp
+- approval/status timestamps
+- cancellation timestamps
+- Attendance synchronization dates
+
+Use existing IST/date-only utilities.
+
+Do not introduce UTC date shifting.
+
+---
+
+TENANT ISOLATION
+
+Explicitly verify:
+
+School A Teacher + School A Leave
+→ allowed according to existing permissions.
+
+School A Teacher + School B session
+→ rejected.
+
+School A Teacher + School B Leave ID
+→ rejected.
+
+Spoofed:
+
+- schoolId
+- teacherId
+- sessionId
+- leaveId
+
+must not bypass authorization.
+
+---
+
+REGRESSION
+
+Do not redesign previous completed Teacher modules.
+
+Regression-check relevant protections for:
+
+- Timetable
+- Attendance
+- Examination
+- Results
+- Reports
+- Homework
+- Classwork
+- Noticeboard
+- Complaint
+
+Especially verify Leave changes do not weaken Attendance session isolation.
+
+Remember separate deferred items:
+
+1. Teacher Dashboard Noticeboard badge/count is not yet session-aware.
+2. Promotion-ledger conflict identity does not include Academic Session.
+3. "/uploads" legacy authorization remains a separate security workstream.
+
+Do NOT fix these during Step 9.
+
+---
+
+DO NOT TOUCH
+
+Do NOT modify:
+
+- Teacher Dashboard
+- Teacher Approval Center
+- Teacher Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Do NOT modify Student Portal.
+
+Do NOT modify Admin Portal.
+
+Do NOT modify Admin Exam Controller.
+
+Do NOT modify "/uploads".
+
+---
+
+DATABASE
+
+Expected:
+
+NO DATABASE SCHEMA CHANGE
+
+If you determine a schema change is required:
+
+STOP.
+
+Explain exactly why and wait for approval.
+
+Do not migrate legacy Leave data.
+
+---
+
+UI
+
+Expected:
+
+NO UI/UX CHANGE
+
+Do not redesign Teacher Leave.
+
+---
+
+REQUIRED TESTING
+
+Test applicable existing behavior:
+
+1. Selected-session Teacher Leave read.
+2. Historical same-school Leave read.
+3. Session A/B isolation.
+4. Foreign-school session rejected.
+5. Cross-school Leave rejected.
+6. Direct foreign Leave ID rejected.
+7. Teacher/school spoofing ineffective.
+8. Current-session Leave application succeeds where permitted.
+9. Historical Leave application rejected.
+10. Historical edit rejected if edit exists.
+11. Historical cancel/withdraw rejected if available.
+12. Historical attachment mutation rejected if applicable.
+13. Teacher ownership enforced.
+14. Null-session behavior documented/tested.
+15. Session-derived balances/counts use correct session if they exist.
+16. Global/current Leave Policy remains global if that is existing architecture.
+17. Leave date/session boundaries remain correct.
+18. Approved Leave/Attendance integration uses same school/session.
+19. Historical Leave viewing causes no Attendance write.
+20. Session A → B → A cache isolation.
+21. Web cookie authentication remains intact.
+22. Mobile bearer authentication remains intact.
+23. IST behavior unchanged.
+24. Complaint regression.
+25. Noticeboard regression.
+26. Attendance regression.
+27. Previous Teacher session regressions where relevant.
+28. Student Portal unchanged.
+29. Admin Portal unchanged.
+
+Only test features that actually exist.
+
+---
+
+CURRENT CONTEXT
+
+Teacher Step 8 Complaint reported:
+
+- API build PASS
+- 22 focused API/session tests PASS
+- Web production build PASS
+- 30 Mobile tests PASS
+- Mobile typecheck PASS
+- API diagnostics: 358
+- Web diagnostics: 60
+- no new changed-file diagnostics
+- no schema/migration/backfill
+- no "/uploads" changes
+- workflows running
+
+Use actual current diagnostic counts for Step 9.
+
+---
+
+FINAL REPORT
+
+Return:
+
+TEACHER STEP 9 — LEAVE
+
+Existing architecture found
+
+Classification
+
+- Global/current
+- Selected-session reads
+- Current-session writes
+- Session-derived
+- Teacher-owned
+- Approval/status
+- Attendance-integrated
+- Attachments
+
+Problems found
+
+Corrections implemented
+
+Session foundation
+
+Explain use of "teacher-academic-session.ts".
+
+Tenant isolation
+
+Teacher ownership
+
+Leave policy
+
+Explain whether global/current or session-specific.
+
+Leave types/balances
+
+Explain actual behavior.
+
+Date/session validation
+
+Reads
+
+Explain active/historical behavior.
+
+Writes
+
+Explain current-session mutation behavior.
+
+Historical read-only
+
+Explicitly confirm protection.
+
+Approval/status
+
+Explain Teacher-side behavior.
+
+Attendance integration
+
+Explain school/session propagation and whether Attendance was changed.
+
+Null-session Leave
+
+Explain legacy behavior.
+
+Attachments
+
+Confirm "/uploads" unchanged.
+
+Web
+
+Explain selected-session transport/cache behavior.
+
+Mobile
+
+Explain bearer/session behavior.
+
+Session A → B → A
+
+PASS/FAIL and how tested.
+
+IST
+
+Tests
+
+Exact pass/fail counts.
+
+Previous Teacher regressions
+
+Diagnostics
+
+API before/after.
+Web before/after.
+Mobile before/after.
+
+Build
+
+PASS/FAIL.
+
+Database changes
+
+Expected NONE.
+
+UI changes
+
+Expected NONE.
+
+Student Portal changes
+
+Must be NONE.
+
+Admin Portal changes
+
+Must be NONE.
+
+"/uploads" changes
+
+Must be NONE.
+
+Files changed
+
+Exact list.
+
+Deferred issues
+
+Recommended Teacher Step 10
+
+Recommend the next single Teacher module/group.
+
+---
+
+FINAL EXPECTATION
+
+Teacher Leave must follow:
+
+Authenticated Teacher
+→ real school
+→ explicitly selected Academic Session
+→ Teacher's permitted Leave records
+→ correct session-specific history/status
+
+For mutations:
+
+Active selected session → normal permitted Teacher Leave actions.
+
+Previous/inactive session → STRICTLY READ-ONLY.
+
+Leave must never cross school boundaries.
+
+Leave must never cross Academic Session boundaries.
+
+Leave must never silently redirect a historical action into the active session.
+
+Any Leave → Attendance synchronization must stay within the same Teacher + school + Academic Session.
+
+Do not redesign the module.
+
+Do not modify unrelated portals.
