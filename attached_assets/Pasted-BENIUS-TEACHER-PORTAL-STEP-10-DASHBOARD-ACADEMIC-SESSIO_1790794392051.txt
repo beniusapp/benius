@@ -1,0 +1,779 @@
+BENIUS — TEACHER PORTAL
+
+STEP 10 — DASHBOARD ACADEMIC SESSION CORRECTION
+
+Accepted Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Step 5 — Homework: COMPLETE
+- Step 6 — Classwork: COMPLETE
+- Step 7 — Noticeboard: COMPLETE
+- Step 8 — Complaint: COMPLETE
+- Step 9 — Leave: COMPLETE
+
+Now work ONLY on:
+
+TEACHER DASHBOARD
+
+Do NOT start Approval Center / Student Profiles or global Teacher modules.
+
+---
+
+PRIMARY GOAL
+
+Teacher Dashboard must show information for the correct:
+
+Authenticated Teacher
+→ real school
+→ explicitly selected Academic Session
+→ existing Teacher permissions/assignments
+→ correct Dashboard data
+
+The Dashboard is an AGGREGATION layer.
+
+Do NOT rewrite completed underlying modules.
+
+Instead, inspect every Dashboard card, badge, count, summary, recent item, status, alert, and shortcut and determine where its data comes from.
+
+---
+
+PERMANENT SESSION RULE
+
+For session-specific academic operational data:
+
+Previous / inactive Academic Session = READ-ONLY.
+
+Dashboard viewing itself is read-only.
+
+Selecting a historical session must show the appropriate historical/session-specific Dashboard information where that information is designed to follow Academic Sessions.
+
+Do NOT silently substitute the active session.
+
+---
+
+FIRST — FORENSIC AUDIT
+
+Before changing code, inspect the actual Teacher Dashboard implementation across:
+
+- Web
+- Mobile
+- API
+- storage/database queries
+- shared utilities
+
+Create an inventory of EVERY Dashboard element.
+
+Examples may include, only if they actually exist:
+
+- Teacher information
+- assigned class/section
+- Attendance summary
+- today's Attendance
+- Student Attendance summary
+- Homework count/recent Homework
+- Classwork count/recent Classwork
+- Noticeboard badge/count/recent notices
+- Examination information
+- Result/report information
+- Timetable/today's classes
+- Leave information
+- Complaint information
+- pending Student Leave
+- Approval Center counts
+- Student counts
+- announcements
+- calendar information
+- school information
+- shortcuts
+- badges
+- notifications
+
+Do NOT assume these exist.
+
+Audit the actual Dashboard first.
+
+For EACH element classify it as:
+
+1. GLOBAL/CURRENT
+2. SELECTED-SESSION
+3. CURRENT-DAY / CURRENT-OPERATIONAL
+4. TEACHER-ASSIGNMENT dependent
+5. SESSION + ASSIGNMENT dependent
+6. EXTERNAL/SHARED
+7. STATIC/NAVIGATION ONLY
+
+Return this classification in the final report.
+
+---
+
+IMPORTANT — DO NOT MAKE EVERYTHING SESSION-SPECIFIC
+
+Teacher Dashboard is HYBRID.
+
+Some information should follow the selected Academic Session.
+
+Some information may intentionally remain current/global.
+
+Examples of potentially global/current data:
+
+- Teacher Profile/current personal information
+- School information
+- global policies
+- Gallery
+- Faculty information
+- School Calendar if globally designed
+- Library information if globally designed
+
+Preserve existing product decisions.
+
+Do NOT add Academic Session filtering merely because an item appears on Dashboard.
+
+Determine what the underlying source actually represents.
+
+---
+
+SELECTED-SESSION DATA
+
+If a Dashboard item represents data from a session-specific module already corrected, it must use the explicitly selected Academic Session.
+
+Examples, if actually present:
+
+- Attendance
+- Homework
+- Classwork
+- Noticeboard
+- Timetable
+- Examination
+- Results/Reports
+- Complaint
+- Leave
+
+Do not independently invent different session behavior on Dashboard.
+
+Dashboard should respect the same session boundary as the underlying module.
+
+---
+
+KNOWN DEFERRED ISSUE — NOTICEBOARD BADGE
+
+Teacher Step 7 intentionally deferred this:
+
+Teacher Dashboard Noticeboard badge/count is not session-aware.
+
+Fix this during Step 10.
+
+The Noticeboard Dashboard badge/count/recent information must respect:
+
+Authenticated Teacher
++
+real school
++
+explicitly selected Academic Session
++
+existing Noticeboard audience/visibility permissions
+
+Session A notices must not affect Session B Dashboard counts.
+
+Do not change the Noticeboard module UI or underlying product rules.
+
+Only correct Dashboard aggregation/session behavior as necessary.
+
+---
+
+SESSION FOUNDATION
+
+Reuse:
+
+"teacher-academic-session.ts"
+
+Do NOT create another Teacher Academic Session resolver.
+
+For session-specific Dashboard reads, use the appropriate existing read mode, normally:
+
+"SELECTED_SESSION_REQUIRED"
+
+Dashboard should not silently use the active session when a historical session was explicitly selected.
+
+---
+
+DASHBOARD READ-ONLY NATURE
+
+Teacher Dashboard should normally be read-only aggregation/navigation.
+
+Do NOT introduce new Dashboard writes.
+
+If an existing Dashboard control performs a mutation, inspect it carefully and preserve its existing permission model.
+
+Do not expand scope without reporting it.
+
+---
+
+TEACHER ASSIGNMENT
+
+Some Dashboard information may depend on the Teacher's class/section/subject assignment.
+
+Preserve the underlying module's existing assignment semantics.
+
+Do NOT create one universal assignment rule for the entire Dashboard.
+
+For each Dashboard item:
+
+Dashboard
+→ underlying module/data source
+→ existing Teacher permission/assignment rule
+
+must remain consistent.
+
+---
+
+CURRENT VS HISTORICAL ASSIGNMENT
+
+Do not invent historical Teacher assignment snapshots if BENIUS does not store them.
+
+If a Dashboard item uses current Teacher assignment because that is the existing architecture, document it.
+
+If the underlying corrected module already supports session-specific placement/assignment, use that behavior.
+
+No schema changes to manufacture historical assignments.
+
+---
+
+STUDENT PLACEMENT
+
+If any Dashboard aggregation requires Student class/section/roll placement for a selected Academic Session:
+
+Use session-specific "enrollments".
+
+Do NOT use current:
+
+"students.class"
+"students.section"
+"students.roll_number"
+
+for historical placement.
+
+Example:
+
+2025–26:
+Student → Class 7A → Roll 12
+
+2026–27:
+Student → Class 8B → Roll 8
+
+Selecting 2025–26 must not calculate the historical Dashboard using 2026–27 placement.
+
+Only apply this where Dashboard actually needs Student placement.
+
+---
+
+SESSION SWITCHING / CACHE ISOLATION
+
+This is critical.
+
+Verify:
+
+Session A
+→ Dashboard A data
+
+Session B
+→ Dashboard B data
+
+Session A again
+→ Dashboard A data
+
+No stale Dashboard count/card/badge from Session B may remain when returning to Session A.
+
+Inspect:
+
+- React Query keys
+- cached Dashboard data
+- derived state
+- API request headers
+- mobile state/cache
+- component state
+- badge state
+
+Any session-dependent cache key must include selected Academic Session.
+
+---
+
+WEB
+
+Web remains source of truth for existing product behavior.
+
+Preserve:
+
+- Dashboard design
+- layout
+- cards
+- icons
+- labels
+- navigation
+- calculations
+- visible modules
+- Teacher permissions
+
+Do NOT redesign the Dashboard.
+
+Web continues using cookie authentication.
+
+For session-sensitive Dashboard requests:
+
+- send explicit selected session
+- cache by selected session
+- no active-session fallback
+
+---
+
+MOBILE
+
+Audit the actual Mobile Teacher Dashboard.
+
+Mobile continues using bearer authentication.
+
+Preserve existing native UI.
+
+For session-sensitive Dashboard data:
+
+- use selected Academic Session
+- use existing Mobile session context
+- use same backend authorization
+- isolate caches/state by session
+
+Do NOT introduce Web cookie authentication into native API calls.
+
+---
+
+TENANT ISOLATION
+
+Every Dashboard aggregation must remain scoped to the authenticated Teacher's real school.
+
+Verify:
+
+School A Teacher
+→ School A Dashboard data only.
+
+School A Teacher
+→ School B session rejected.
+
+School A Teacher
+→ School B notices/homework/attendance/etc. must never contribute to cards/counts/badges.
+
+Do not trust client-supplied:
+
+- schoolId
+- teacherId
+
+for authorization.
+
+---
+
+HISTORICAL SESSION BEHAVIOR
+
+When Teacher selects an inactive historical Academic Session:
+
+Session-specific Dashboard elements
+→ show historical/session-specific information where supported.
+
+Global/current elements
+→ continue showing current/global information if that is the existing BENIUS design.
+
+Do NOT fake historical values for data that is not historically versioned.
+
+Do NOT silently substitute active-session academic data.
+
+Dashboard itself must not mutate historical records.
+
+---
+
+TODAY / CURRENT-DAY ITEMS
+
+Pay special attention to items such as:
+
+- Today's classes
+- Today's Attendance
+- today's timetable
+- today's events
+- current alerts
+
+These can be conceptually different from historical session data.
+
+Audit actual behavior.
+
+If a historical Academic Session is selected but a widget is inherently "today/current operational", do NOT invent a historical equivalent.
+
+Determine the current intended BENIUS behavior and document it.
+
+If the current implementation creates misleading cross-session data, correct it using the minimum safe change.
+
+Do not invent new product semantics without reporting ambiguity.
+
+---
+
+COUNTS / BADGES / RECENT ITEMS
+
+For every count/badge/recent item, trace the full query.
+
+Example:
+
+Teacher Dashboard
+→ Noticeboard count
+→ authenticated Teacher
+→ school
+→ selected session
+→ audience/visibility
+→ count
+
+Do the same for every actual session-sensitive count.
+
+Do NOT count all-school/all-session records and filter only on the frontend.
+
+Backend/storage scoping should be authoritative where applicable.
+
+---
+
+NULL SESSION RECORDS
+
+Some legacy module records may have nullable "session_id".
+
+Do NOT migrate them.
+
+Do NOT assign them to the selected or active session without evidence.
+
+Do NOT delete them.
+
+Follow the already accepted behavior of each underlying module.
+
+Document any Dashboard impact caused by legacy NULL-session data.
+
+---
+
+IST
+
+BENIUS remains:
+
+Asia/Kolkata / IST
+
+Preserve current date/day calculations.
+
+Especially inspect:
+
+- today's timetable
+- today's Attendance
+- recent items
+- date labels
+- current-day widgets
+
+Do not introduce UTC date shifting.
+
+---
+
+REGRESSION
+
+Do NOT rewrite completed Teacher modules.
+
+Regression-check relevant session boundaries for:
+
+- Timetable
+- Attendance
+- Examination
+- Results
+- Reports
+- Homework
+- Classwork
+- Noticeboard
+- Complaint
+- Leave
+
+Dashboard must CONSUME their correct behavior rather than creating conflicting behavior.
+
+---
+
+DO NOT FIX THESE HERE
+
+Still deferred:
+
+1. Promotion-ledger conflict identity does not include Academic Session.
+2. "/uploads" legacy attachment authorization concern.
+
+Do NOT fix either during Dashboard Step 10.
+
+---
+
+DO NOT TOUCH
+
+Do NOT modify:
+
+- Teacher Approval Center / Student Profiles
+- Teacher Profile module
+- Gallery module
+- Faculty Info module
+- School Calendar module
+- Library module
+
+unless a minimal Dashboard read integration change is strictly required.
+
+Do NOT redesign those modules.
+
+Do NOT modify Student Portal.
+
+Do NOT modify Admin Portal.
+
+Do NOT modify Admin Exam Controller.
+
+Do NOT modify "/uploads".
+
+---
+
+DATABASE
+
+Expected:
+
+NO DATABASE SCHEMA CHANGE
+
+If a schema change appears necessary:
+
+STOP.
+
+Explain why.
+
+Wait for approval.
+
+Do not create a migration.
+
+---
+
+UI
+
+Expected:
+
+NO UI/UX REDESIGN
+
+The existing Teacher Dashboard should look and behave the same, except incorrect session data/badges/counts should become correct.
+
+---
+
+REQUIRED TESTING
+
+Test applicable existing Dashboard behavior:
+
+1. Dashboard loads for selected active session.
+2. Dashboard loads for selected historical same-school session.
+3. Session A → Dashboard A.
+4. Session B → Dashboard B.
+5. Session A again → Dashboard A.
+6. No stale A/B cache leakage.
+7. Foreign-school session rejected.
+8. School A Teacher cannot receive School B Dashboard aggregation.
+9. Teacher identity spoofing ineffective.
+10. School identity spoofing ineffective.
+11. Noticeboard badge/count uses selected session.
+12. Noticeboard audience/visibility preserved.
+13. Homework Dashboard data uses selected session if present.
+14. Classwork Dashboard data uses selected session if present.
+15. Attendance Dashboard data uses selected session if present.
+16. Timetable Dashboard data uses selected session if present.
+17. Examination/Result/Report Dashboard data uses selected session if present.
+18. Complaint Dashboard data uses selected session if present.
+19. Leave Dashboard data uses selected session if present.
+20. Global/current widgets remain global/current where intended.
+21. Student placement uses selected-session enrollment where applicable.
+22. Historical Dashboard viewing causes no writes.
+23. NULL-session behavior follows underlying module rules.
+24. Web session-dependent query/cache keys are isolated.
+25. Mobile session-dependent state/cache is isolated.
+26. Web cookie authentication remains intact.
+27. Mobile bearer authentication remains intact.
+28. IST/current-day behavior unchanged.
+29. Previous Teacher module regressions.
+30. Student Portal unchanged.
+31. Admin Portal unchanged.
+32. "/uploads" unchanged.
+
+Only test Dashboard features that actually exist.
+
+Do NOT create fake features simply to satisfy this checklist.
+
+---
+
+STEP 9 CONTEXT
+
+Teacher Step 9 Leave reported:
+
+- API build PASS
+- Web production build PASS
+- new session-date tests: 3 PASS
+- shared academic-session tests: 11 PASS
+- API diagnostics: 358
+- Web diagnostics: 60
+- no reported changed-file type errors in relevant Leave areas
+- no schema changes
+- no migrations
+- no "/uploads" changes
+- no Student Portal changes
+- no Admin Approval Center changes
+- development DB contained 0 Leave rows
+- authenticated Teacher Leave screen was not visually exercised
+- Expo Metro running with a DevTools environment warning concerning "libglib-2.0.so.0"
+
+Use actual current baselines and report any changes.
+
+---
+
+FINAL REPORT REQUIRED
+
+Return:
+
+TEACHER STEP 10 — DASHBOARD
+
+Existing Dashboard architecture
+
+Dashboard inventory
+
+List every actual card/count/badge/recent item/widget found.
+
+Classification
+
+For each item identify:
+
+- Global/current
+- Selected-session
+- Current-day/current-operational
+- Assignment-dependent
+- Session + assignment
+- Static/navigation
+
+Problems found
+
+Corrections implemented
+
+Academic Session foundation
+
+Explain use of "teacher-academic-session.ts".
+
+Noticeboard badge/count
+
+Explicitly explain the previously deferred issue and correction.
+
+Other module aggregations
+
+Explain session handling for each actual module represented on Dashboard.
+
+Teacher assignment behavior
+
+Student placement
+
+Explain whether selected-session enrollment was needed.
+
+Tenant isolation
+
+Historical Dashboard behavior
+
+Current-day widgets
+
+Explain how they behave when historical session is selected.
+
+NULL-session records
+
+Explain impact.
+
+Web
+
+Explain session transport and cache keys.
+
+Mobile
+
+Explain bearer/session/cache behavior.
+
+Session A → B → A
+
+PASS/FAIL and how verified.
+
+IST
+
+Tests
+
+Exact counts.
+
+Regression results
+
+Diagnostics
+
+API before/after.
+Web before/after.
+Mobile before/after.
+
+Builds
+
+PASS/FAIL.
+
+Database changes
+
+Expected NONE.
+
+UI changes
+
+Expected NONE.
+
+Student Portal changes
+
+Must be NONE.
+
+Admin Portal changes
+
+Must be NONE.
+
+"/uploads" changes
+
+Must be NONE.
+
+Files changed
+
+Exact list.
+
+Deferred issues
+
+Recommended Teacher Step 11
+
+Recommend the next single Teacher module/group.
+
+---
+
+FINAL EXPECTATION
+
+Teacher Dashboard should behave as:
+
+Authenticated Teacher
+→ real school
+→ explicitly selected Academic Session
+→ existing Teacher permissions/assignments
+→ correctly scoped Dashboard aggregation.
+
+For session-specific Dashboard information:
+
+Selected Session A → Session A information.
+
+Selected Session B → Session B information.
+
+A → B → A must return correctly to A without stale data.
+
+For global/current Dashboard information:
+
+Keep the existing global/current behavior.
+
+For historical sessions:
+
+Session-specific information may be viewed but Dashboard must never mutate historical academic operational data.
+
+Fix the previously deferred Teacher Dashboard Noticeboard badge/count session issue.
+
+Do NOT redesign Dashboard.
+
+Do NOT rewrite completed modules.
+
+Do NOT change database schema.
+
+Do NOT modify Student/Admin portals.
