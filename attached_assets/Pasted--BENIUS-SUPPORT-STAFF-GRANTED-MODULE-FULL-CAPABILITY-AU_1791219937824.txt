@@ -1,0 +1,478 @@
+# BENIUS — SUPPORT STAFF GRANTED MODULE FULL CAPABILITY AUDIT
+
+## READ-ONLY AUDIT ONLY
+
+DO NOT CHANGE ANY CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT CHANGE SUPPORT STAFF PERMISSIONS.
+
+DO NOT MODIFY MOBILE.
+
+DO NOT DEPLOY.
+
+I want to verify whether the existing Support Staff permission system actually works completely.
+
+---
+
+# PRODUCT INTENT
+
+Principal/Admin creates a Support Staff account.
+
+While creating/managing that Support Staff account, Principal/Admin selects which modules that Support Staff is allowed to access.
+
+Example:
+
+Principal grants:
+
+- Student Registry
+- Teacher Registry
+- Visitor Log
+- Fees & Payments
+
+Support Staff then logs in using the credentials created/provided by Principal/Admin.
+
+My intended concept is:
+
+> Support Staff is an operational assistant to the Principal/Admin.
+
+Therefore, when Principal/Admin explicitly grants a module to Support Staff, the Support Staff should be able to perform the normal operational tasks available to Principal/Admin INSIDE THAT GRANTED MODULE.
+
+Example:
+
+If Student Registry is granted, Support Staff should not merely be able to open Student Registry.
+
+They should be able to perform the Student Registry operations that the Principal normally performs, subject to any action that is intentionally defined as Principal-only for security/account ownership reasons.
+
+The same principle applies to other granted operational modules.
+
+However:
+
+> A Support Staff member must NEVER gain access to a module that Principal/Admin did not grant.
+
+---
+
+# IMPORTANT DISTINCTION
+
+I am NOT asking you to automatically make Support Staff equal to Principal everywhere.
+
+Principal/Admin account-level/security functionality may remain Principal-only, such as:
+
+- Principal/Admin personal profile
+- Principal/Admin password
+- Principal/Admin PIN
+- recovery/security settings
+- security log
+- Support Staff account/permission administration itself, if currently intended as Principal-only
+- other genuinely account-owner/security-sensitive operations
+
+The audit should distinguish:
+
+### MODULE OPERATION
+
+An operation belonging to a module explicitly granted to Support Staff.
+
+versus
+
+### PRINCIPAL-ONLY ACCOUNT/SECURITY OPERATION
+
+An operation that should remain restricted even if Support Staff can access operational modules.
+
+Do not invent new restrictions.
+
+Report the existing behavior first.
+
+---
+
+# MAIN QUESTION
+
+When Principal grants a module to Support Staff:
+
+**Can Support Staff actually perform ALL normal Principal/Admin operational tasks inside that module?**
+
+I do NOT only want to know whether:
+
+- menu is visible
+- dashboard tile is visible
+- page opens
+
+I want complete end-to-end capability verification.
+
+Check:
+
+**UI → API → backend authorization → storage/database operation**
+
+for every action.
+
+---
+
+# AUDIT THE ACTUAL SUPPORT STAFF PERMISSION SYSTEM
+
+First identify:
+
+1. How Principal creates Support Staff.
+2. How `allowedModules` is stored.
+3. How it is placed into the Support Staff authenticated session.
+4. How frontend navigation checks module permission.
+5. How pages check Support Staff access.
+6. How backend APIs check Support Staff module permission.
+7. Whether APIs distinguish Admin vs Support Staff.
+8. Whether some APIs still require `userRole === "admin"` even though they belong to a module granted to Support Staff.
+
+This last point is especially important.
+
+---
+
+# AUDIT EVERY SUPPORT STAFF-GRANTABLE MODULE
+
+Find the ACTUAL list of modules that Principal/Admin can grant to Support Staff from the current BENIUS implementation.
+
+Do not assume the list from this prompt.
+
+For EACH grantable module, compare:
+
+### Principal/Admin capabilities
+
+versus
+
+### Support Staff capabilities when that module is granted.
+
+Check EVERY operational action.
+
+Examples include, where applicable:
+
+- View/list
+- Search
+- Filter
+- View details
+- Create/add
+- Edit/update
+- Delete
+- Approve/reject
+- Activate/deactivate
+- Upload
+- Download
+- Generate
+- Print
+- Export
+- Import
+- Assign
+- Collect payment
+- Record payment
+- Generate receipt
+- Refund/cancel if supported
+- Change status
+- Bulk actions
+- Reports
+- configuration actions belonging to that module
+
+Use the actual implementation, not this example list.
+
+---
+
+# SPECIFIC EXAMPLES TO AUDIT THOROUGHLY
+
+At minimum, if currently grantable, inspect:
+
+## STUDENT REGISTRY
+
+If Principal grants Student Registry:
+
+Can Support Staff perform every normal Student Registry operation available to Principal?
+
+Audit every button/action and its backend endpoint.
+
+---
+
+## TEACHER REGISTRY
+
+If Principal grants Teacher Registry:
+
+Can Support Staff perform every normal Teacher Registry operation available to Principal?
+
+Audit every operation and endpoint.
+
+---
+
+## VISITOR LOG
+
+If Principal grants Visitor Log:
+
+Can Support Staff perform every normal Visitor Log operation available to Principal?
+
+---
+
+## FEES & PAYMENTS
+
+If Principal grants Fees & Payments:
+
+Can Support Staff perform every normal operational Fees & Payments task that Principal can perform?
+
+Pay special attention to backend authorization because this is financially sensitive.
+
+Do NOT weaken financial security.
+
+Only report current behavior and differences.
+
+---
+
+# VERY IMPORTANT — DIRECT API SECURITY
+
+For every grantable module verify BOTH directions:
+
+### Granted module
+
+Support Staff WITH permission:
+
+→ required operational APIs should work according to intended module access.
+
+### Non-granted module
+
+Support Staff WITHOUT permission:
+
+→ frontend module hidden/rejected
+AND
+→ direct API request rejected.
+
+It is NOT sufficient to hide a module from the sidebar.
+
+Backend must enforce `allowedModules`.
+
+For example:
+
+```text
+Support Staff allowedModules:
+student_registry
+visitor_log
+
+Student Registry API → ALLOW
+Visitor Log API → ALLOW
+
+Teacher Registry API → REJECT
+Fees API → REJECT
+```
+
+even if the Support Staff manually calls the API.
+
+---
+
+# CHECK FOR FALSE ADMIN-ONLY BLOCKS
+
+Identify operations where:
+
+1. Principal can perform the operation.
+2. The operation belongs to a module.
+3. Support Staff has that module in `allowedModules`.
+4. But backend rejects Support Staff only because code checks:
+
+`userRole === "admin"`
+
+instead of accepting the authorized Support Staff module permission.
+
+Report these clearly.
+
+These may explain situations where Support Staff can open a module but cannot fully operate it.
+
+DO NOT FIX THEM YET.
+
+---
+
+# CHECK THE OPPOSITE SECURITY PROBLEM
+
+Also identify APIs where Support Staff can perform an operation even though the corresponding module is NOT present in `allowedModules`.
+
+This is more serious.
+
+Classify this as a SECURITY ISSUE.
+
+---
+
+# TENANT ISOLATION
+
+Support Staff must remain strictly restricted to their own school.
+
+Example:
+
+School A Support Staff
+→ School A granted module data only.
+
+School A Support Staff
+→ School B data = REJECT.
+
+Principal granting a module must NEVER bypass tenant isolation.
+
+---
+
+# ACADEMIC SESSION
+
+Where a granted module contains Academic Session-specific operations, preserve BENIUS rules:
+
+- selected same-school Academic Session
+- selected-session data
+- active-session writes
+- historical sessions read-only
+- no silent fallback
+- selected-session enrollment where required
+
+Support Staff permission must not bypass these protections.
+
+---
+
+# DO NOT CHANGE BUSINESS LOGIC
+
+This is an AUDIT.
+
+Do not decide that Support Staff should have more or fewer permissions.
+
+Do not modify APIs to allow Support Staff.
+
+Do not modify UI.
+
+First show me exactly what currently works and what does not.
+
+I will decide corrections after reviewing the report.
+
+---
+
+# REQUIRED CAPABILITY MATRIX
+
+Create a clear table like:
+
+| Module | Action | Principal | Support Staff WITH grant | Support Staff WITHOUT grant | Result |
+|---|---|---|---|---|---|
+| Student Registry | View | Allow | Allow | Reject | PASS |
+| Student Registry | Add | Allow | Reject | Reject | GAP |
+| Student Registry | Edit | Allow | Allow | Reject | PASS |
+| Teacher Registry | ... | ... | ... | ... | ... |
+
+Do this for ALL meaningful operations in ALL Support Staff-grantable modules.
+
+Do not summarize a module as PASS unless its important operations were actually traced.
+
+---
+
+# CLASSIFY EVERY DIFFERENCE
+
+Use:
+
+### PASS
+Principal and granted Support Staff can perform the intended operational action, while non-granted Support Staff is rejected.
+
+### CAPABILITY GAP
+Principal can perform a normal module operation, but granted Support Staff cannot.
+
+### SECURITY ISSUE
+Non-granted Support Staff can perform an operation, cross-school access is possible, or another authorization boundary fails.
+
+### PRINCIPAL-ONLY BY DESIGN
+Only use this where current product/security intent clearly establishes that the action belongs specifically to Principal/Admin account ownership/security rather than ordinary module operation.
+
+### POLICY DECISION REQUIRED
+Use this if it is unclear whether Support Staff should be allowed to perform that particular sensitive action.
+
+Do not guess.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# SUPPORT STAFF GRANTED MODULE CAPABILITY AUDIT
+
+## Overall verdict
+
+Choose:
+
+- PASS
+- CAPABILITY GAPS FOUND
+- SECURITY ISSUES FOUND
+- CAPABILITY GAPS + SECURITY ISSUES FOUND
+
+## How Support Staff permissions currently work
+
+Explain simply.
+
+## Actual grantable module list
+
+List every module Principal can currently grant.
+
+## Complete capability matrix
+
+Principal vs Support Staff with grant vs Support Staff without grant.
+
+## Fully working modules
+
+Modules where granted Support Staff can successfully perform the intended Principal-equivalent operational work.
+
+## Capability gaps
+
+For each gap:
+
+- Module
+- Action
+- Principal behavior
+- Granted Support Staff behavior
+- Frontend file
+- API route
+- Backend authorization causing the difference
+- Why it happens
+
+DO NOT FIX.
+
+## Security issues
+
+Especially identify APIs accessible without the required module grant.
+
+DO NOT FIX.
+
+## Principal-only operations
+
+List account/security operations correctly restricted to Principal/Admin.
+
+## Policy decisions required
+
+List sensitive operations where you need my decision.
+
+## Tenant-isolation result
+
+## Academic-Session result
+
+## Student Registry result
+
+## Teacher Registry result
+
+## Visitor Log result
+
+## Fees & Payments result
+
+## Backend `allowedModules` enforcement result
+
+Answer explicitly:
+
+**Does every grantable module have server-side permission enforcement, or are some permissions only enforced by the UI?**
+
+## Final answer
+
+Answer this clearly:
+
+**If Principal gives Support Staff access to a module today, can Support Staff perform ALL normal Principal operational tasks inside that module?**
+
+YES / NO / PARTIALLY
+
+Explain exactly why.
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Mobile changes
+NONE
+
+## Deployment
+NONE
+
+STOP after the report.
