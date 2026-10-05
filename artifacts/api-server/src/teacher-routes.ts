@@ -2941,14 +2941,44 @@ export function registerTeacherRoutes(app: Express) {
     res.json(list);
   });
 
-  // Legacy per-class route — kept for backwards-compat but new UI uses /teacher/mine
+  // Legacy per-class route — retained for compatibility, with the same selected-session
+  // and assignment boundaries as the current Teacher Student Leave workflow.
   app.get("/api/student-leaves/:schoolId/:class/:section", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    const sid = parseInt(req.params.schoolId);
-    if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized for this school" });
-    const list = await storage.getStudentLeavesByClassSection(sid, req.params.class, req.params.section);
-    res.json(list);
+    const resolution = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!resolution.ok) return res.status(resolution.status).json({ message: resolution.message });
+    if (!resolution.session) {
+      return res.status(503).json({ message: "Unable to verify the selected academic session." });
+    }
+
+    const rawSchoolId = Array.isArray(req.params.schoolId)
+      ? req.params.schoolId[0]
+      : req.params.schoolId;
+    const requestedSchoolId = parsePositiveSafeIntegerPathParam(rawSchoolId);
+    if (requestedSchoolId === null) return res.status(400).json({ message: "Invalid school ID" });
+    if (requestedSchoolId !== resolution.schoolId) {
+      return res.status(403).json({ message: "Not authorized for this school" });
+    }
+
+    const className = req.params.class;
+    const sectionName = req.params.section;
+    const assignments = await getTeacherProfileAssignments(resolution.teacher);
+    if (!assignments.some(assignment =>
+      assignment.className === className && assignment.section === sectionName,
+    )) {
+      return res.status(403).json({ message: "Not authorized for this class and section" });
+    }
+
+    const list = await storage.getStudentLeavesBySessionClassSection(
+      resolution.schoolId,
+      resolution.session.id,
+      className,
+      sectionName,
+    );
+    return res.json(list);
   });
 
   app.patch("/api/student-leaves/:id/approve", async (req, res) => {

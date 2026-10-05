@@ -62,6 +62,11 @@ import { studentTimetableScope } from "./student-timetable-visibility";
 import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
 import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./teacher-complaint-scope";
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
+import {
+  teacherStudentLeaveEnrollmentJoin,
+  teacherStudentLeaveSessionScope,
+  teacherStudentLeaveStudentJoin,
+} from "./teacher-student-leave-scope";
 import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
@@ -3774,6 +3779,26 @@ export class DatabaseStorage {
       .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
       .where(and(...conditions))
       .orderBy(desc(studentLeaveRequests.createdAt));
+    return result.map(r => ({
+      ...r.student_leave_requests,
+      studentName: r.students.name,
+      dsid: r.students.digitalStudentId,
+      photoUrl: r.students.photoUrl ?? null,
+    }));
+  }
+
+  async getStudentLeavesBySessionClassSection(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; photoUrl: string | null })[]> {
+    const result = await db.select().from(studentLeaveRequests)
+      .innerJoin(enrollments, teacherStudentLeaveEnrollmentJoin())
+      .innerJoin(students, teacherStudentLeaveStudentJoin())
+      .where(teacherStudentLeaveSessionScope(schoolId, sessionId, cls, section))
+      .orderBy(desc(studentLeaveRequests.createdAt));
+
     return result.map(r => ({
       ...r.student_leave_requests,
       studentName: r.students.name,
