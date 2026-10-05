@@ -426,6 +426,56 @@ export function registerTeacherRoutes(app: Express) {
     }
     return context;
   };
+  const resolveTeacherProfileContext = async (
+    req: Request,
+    res: Response,
+    writable = false,
+  ) => {
+    const context = await resolveTeacherAcademicSession(
+      req as unknown as TeacherAcademicSessionRequest,
+      writable ? "CURRENT_SESSION_WRITE" : "SELECTED_SESSION_REQUIRED",
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return null;
+    }
+    if (!context.session) {
+      res.status(503).json({ message: "Unable to verify the selected academic session." });
+      return null;
+    }
+    return {
+      teacher: context.teacher,
+      schoolId: context.schoolId,
+      session: context.session,
+      sessionId: context.session.id,
+    };
+  };
+  const getTeacherProfileAssignments = async (
+    teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>,
+  ) => {
+    const mappings = await storage.getFacultyMappingsByTeacher(teacher.id);
+    return [
+      ...(teacher.assignedClass && teacher.assignedSection
+        ? [{ className: teacher.assignedClass, section: teacher.assignedSection }]
+        : []),
+      ...mappings.map(({ className, section }) => ({ className, section })),
+    ];
+  };
+  const teacherHasStudentEnrollmentInAssignments = async (
+    teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>,
+    schoolId: number,
+    sessionId: number,
+    studentId: number,
+  ) => {
+    const [enrollment, assignments] = await Promise.all([
+      storage.resolveEnrollmentForStudentSession(schoolId, studentId, sessionId),
+      getTeacherProfileAssignments(teacher),
+    ]);
+    return !!enrollment && assignments.some((assignment) =>
+      assignment.className === enrollment.className && assignment.section === enrollment.sectionName,
+    );
+  };
   const withTeacherComplaintContext = (
     mode: "SELECTED_SESSION_REQUIRED" | "CURRENT_SESSION_WRITE",
   ): RequestHandler => (req, res, next) => {
@@ -4482,62 +4532,47 @@ Thank you for your prompt attention to this matter.
 
   // ===== STUDENT PROFILE VERIFICATION (Teacher) =====
   app.post("/api/teacher/profiles/bulk-approve", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const parsed = z.object({ studentIds: z.array(z.number()).min(1) }).safeParse(req.body);
+    const context = await resolveTeacherProfileContext(req, res, true);
+    if (!context) return;
+    const parsed = z.object({
+      studentIds: z.array(z.number().int().positive()).min(1).max(200),
+    }).strict().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: "Invalid student IDs" });
 
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
     const uniqueIds = Array.from(new Set(parsed.data.studentIds));
-    const [mappings] = await Promise.all([
-      storage.getFacultyMappingsByTeacher(req.session.teacherId),
-    ]);
-    const validIds: number[] = [];
-    for (const sid of uniqueIds) {
-      const student = await storage.getStudentById(sid);
-      if (!student || student.schoolId !== teacher.schoolId) continue;
-      const covers =
-        (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
-        mappings.some(m => m.className === student.class && m.section === student.section);
-      if (!covers) continue;
-      validIds.push(sid);
-    }
-
-    const result = await storage.bulkApproveStudentProfiles(validIds, req.session.teacherId);
-    res.json(result);
+    const pending = await storage.getPendingProfilesForTeacher(
+      context.schoolId, context.teacher.id, undefined, context.sessionId,
+    );
+    const pendingIds = new Set(pending.map((profile) => profile.studentId));
+    const validIds = uniqueIds.filter((studentId) => pendingIds.has(studentId));
+    const result = await storage.bulkApproveStudentProfiles(
+      validIds, context.teacher.id, context.schoolId, context.sessionId,
+    );
+    res.json({ approved: result.approved, skipped: result.skipped + uniqueIds.length - validIds.length });
   });
 
   app.get("/api/teacher/pending-profiles", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    // Pass teacherId so storage resolves all class-sections via faculty_mappings too
-    const profiles = await storage.getPendingProfilesForTeacher(teacher.schoolId, req.session.teacherId, undefined, viewSessionId);
-    res.json(profiles);
+    const context = await resolveTeacherProfileContext(req, res);
+    if (!context) return;
+    try {
+      const profiles = await storage.getPendingProfilesForTeacher(
+        context.schoolId, context.teacher.id, undefined, context.sessionId,
+      );
+      res.json(profiles);
+    } catch {
+      res.status(503).json({ message: "Unable to load pending profiles for the selected session." });
+    }
   });
 
   app.get("/api/teacher/pending-profiles/count", async (req, res) => {
-    const resolution = await resolveTeacherAcademicSession(
-      req as unknown as TeacherAcademicSessionRequest,
-      "SELECTED_SESSION_REQUIRED",
-      storage,
-    );
-    if (!resolution.ok) {
-      res.status(resolution.status).json({ message: resolution.message });
-      return;
-    }
-    if (resolution.sessionId === null) {
-      res.status(503).json({ message: "Unable to verify the selected academic session." });
-      return;
-    }
+    const context = await resolveTeacherProfileContext(req, res);
+    if (!context) return;
     try {
       const profiles = await storage.getPendingProfilesForTeacher(
-        resolution.schoolId,
-        resolution.teacher.id,
+        context.schoolId,
+        context.teacher.id,
         undefined,
-        resolution.sessionId,
+        context.sessionId,
       );
       res.json({ count: profiles.length });
     } catch {
@@ -4546,92 +4581,110 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/teacher/profiles/:studentId/approve", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const studentId = parseInt(req.params.studentId);
-    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const context = await resolveTeacherProfileContext(req, res, true);
+    if (!context) return;
+    const studentId = Number(req.params.studentId);
+    if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({ message: "Invalid student ID" });
+    }
+    const parsed = z.object({
+      corrections: z.record(z.string(), z.string().max(500)).optional(),
+    }).strict().safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ message: "Invalid profile corrections" });
 
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
-    const [student, mappings] = await Promise.all([
+    const pending = await storage.getPendingProfilesForTeacher(
+      context.schoolId, context.teacher.id, undefined, context.sessionId,
+    );
+    if (!pending.some((profile) => profile.studentId === studentId)) {
+      return res.status(403).json({ message: "Student profile is not assigned for review in this session" });
+    }
+    const [existing, student, enrollment, assignments] = await Promise.all([
+      storage.getStudentProfile(studentId),
       storage.getStudentById(studentId),
-      storage.getFacultyMappingsByTeacher(req.session.teacherId),
+      storage.resolveEnrollmentForStudentSession(context.schoolId, studentId, context.sessionId),
+      getTeacherProfileAssignments(context.teacher),
     ]);
-    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
-    const coversClass =
-      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
-      mappings.some(m => m.className === student.class && m.section === student.section);
-    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
-
-    const existing = await storage.getStudentProfile(studentId);
-    if (!existing) return res.status(404).json({ message: "Student profile not found" });
-    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
-
-    // Optional teacher corrections applied before finalising approval
-    const { corrections } = req.body as { corrections?: Record<string, string> };
-    if (corrections && Object.keys(corrections).length > 0) {
-      const allowed = ["fullName", "rollNo", "fatherName", "motherName", "presentAddress", "aadharNumber", "gender", "phone", "email", "dob", "enrollmentDate", "guardianName", "bloodGroup", "class", "section"];
-      const safe = Object.fromEntries(Object.entries(corrections).filter(([k]) => allowed.includes(k)));
-      if (Object.keys(safe).length > 0) {
-        await db.update(studentProfiles).set(safe).where(eq(studentProfiles.studentId, studentId));
-      }
+    if (!existing || existing.schoolId !== context.schoolId) {
+      return res.status(404).json({ message: "Student profile not found" });
+    }
+    if (!student || student.schoolId !== context.schoolId || !enrollment
+      || !assignments.some((assignment) =>
+        assignment.className === enrollment.className && assignment.section === enrollment.sectionName,
+      )) {
+      return res.status(403).json({ message: "Student is not enrolled in your assigned class for the selected session" });
+    }
+    const photoOnly = existing.status !== "pending" && existing.photoStatus === "pending";
+    if (existing.status !== "pending" && !photoOnly) {
+      return res.status(409).json({ message: "Profile is not in pending state" });
     }
 
-    const profile = await storage.approveStudentProfile(studentId, req.session.teacherId);
+    const corrections = parsed.data.corrections ?? {};
+    const allowed = new Set([
+      "fullName", "fatherName", "motherName", "presentAddress", "aadharNumber",
+      "gender", "phone", "email", "dob", "enrollmentDate", "guardianName", "bloodGroup",
+    ]);
+    if (Object.keys(corrections).some((key) => !allowed.has(key))) {
+      return res.status(400).json({ message: "Profile correction contains an unsupported field" });
+    }
+    if (photoOnly && Object.keys(corrections).length > 0) {
+      return res.status(409).json({ message: "Photo-only requests cannot change Student profile details" });
+    }
+    if (!photoOnly && Object.keys(corrections).length > 0) {
+      await db.update(studentProfiles).set(corrections).where(and(
+        eq(studentProfiles.studentId, studentId),
+        eq(studentProfiles.schoolId, context.schoolId),
+        eq(studentProfiles.status, "pending"),
+      ));
+    }
+
+    const profile = await storage.approveStudentProfile(
+      studentId, context.teacher.id, context.schoolId, context.sessionId,
+    );
     if (!profile) return res.status(500).json({ message: "Failed to approve profile" });
-
-    // Propagate photo to live student record
-    if (profile.photoUrl) {
-      await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
+    if (photoOnly) {
+      res.json(profile);
+      return;
     }
 
-    // Build verified profile JSON — fall back to live student data for class/section
+    if (profile.photoUrl) await storage.updateStudentLivePhoto(studentId, profile.photoUrl);
     const verifiedProfileJson = JSON.stringify({
-      fullName:       profile.fullName,
-      class:          profile.class    || student.class,
-      section:        profile.section  || student.section,
-      rollNo:         profile.rollNo,
-      fatherName:     profile.fatherName,
-      motherName:     profile.motherName,
+      fullName: profile.fullName,
+      class: enrollment.className,
+      section: enrollment.sectionName,
+      rollNo: enrollment.rollNo === null ? null : String(enrollment.rollNo),
+      fatherName: profile.fatherName,
+      motherName: profile.motherName,
       presentAddress: profile.presentAddress,
-      aadharNumber:   profile.aadharNumber,
-      gender:         profile.gender,
-      phone:          profile.phone,
-      email:          profile.email,
-      dob:            profile.dob,
+      aadharNumber: profile.aadharNumber,
+      gender: profile.gender,
+      phone: profile.phone,
+      email: profile.email,
+      dob: profile.dob,
       enrollmentDate: profile.enrollmentDate,
-      guardianName:   profile.guardianName,
-      bloodGroup:     profile.bloodGroup,
-      photoUrl:       profile.photoUrl,
-      verifiedAt:     profile.verifiedAt instanceof Date
-                        ? profile.verifiedAt.toISOString()
-                        : profile.verifiedAt,
-      approvedByName: teacher.fullName ?? null,
+      guardianName: profile.guardianName,
+      bloodGroup: profile.bloodGroup,
+      photoUrl: profile.photoUrl,
+      verifiedAt: profile.verifiedAt instanceof Date ? profile.verifiedAt.toISOString() : profile.verifiedAt,
+      approvedByName: context.teacher.fullName ?? null,
     });
     await storage.updateStudentVerifiedProfile(studentId, verifiedProfileJson);
 
-    // Propagate all profile fields to the live student record
     const liveUpdates: Record<string, unknown> = {};
-    if (profile.fullName)     liveUpdates.name          = profile.fullName;
-    if (profile.aadharNumber) liveUpdates.aadharNumber  = profile.aadharNumber;
-    if (profile.gender)       liveUpdates.gender        = profile.gender;
-    if (profile.phone)        liveUpdates.phone         = profile.phone;
-    if (profile.dob)          liveUpdates.dob           = profile.dob;
+    if (profile.fullName) liveUpdates.name = profile.fullName;
+    if (profile.aadharNumber) liveUpdates.aadharNumber = profile.aadharNumber;
+    if (profile.gender) liveUpdates.gender = profile.gender;
+    if (profile.phone) liveUpdates.phone = profile.phone;
+    if (profile.dob) liveUpdates.dob = profile.dob;
     if (profile.enrollmentDate) liveUpdates.enrollmentDate = profile.enrollmentDate;
-    if (profile.guardianName) liveUpdates.guardianName  = profile.guardianName;
-    if (profile.bloodGroup)   liveUpdates.bloodGroup    = profile.bloodGroup;
-    if (profile.fatherName)   liveUpdates.fatherName    = profile.fatherName;
-    if (profile.motherName)   liveUpdates.motherName    = profile.motherName;
-    if (profile.presentAddress) liveUpdates.address     = profile.presentAddress;
-    if (profile.email)        liveUpdates.email         = profile.email;
+    if (profile.guardianName) liveUpdates.guardianName = profile.guardianName;
+    if (profile.bloodGroup) liveUpdates.bloodGroup = profile.bloodGroup;
+    if (profile.fatherName) liveUpdates.fatherName = profile.fatherName;
+    if (profile.motherName) liveUpdates.motherName = profile.motherName;
+    if (profile.presentAddress) liveUpdates.address = profile.presentAddress;
+    if (profile.email) liveUpdates.email = profile.email;
     if (Object.keys(liveUpdates).length > 0) {
-      await storage.updateStudentLiveFieldsForTeacherApproval(
-        studentId,
-        teacher.schoolId,
-        liveUpdates,
-      );
+      await storage.updateStudentLiveFieldsForTeacherApproval(studentId, context.schoolId, liveUpdates);
     }
-
     res.json(profile);
   });
 
@@ -4639,20 +4692,35 @@ Thank you for your prompt attention to this matter.
   app.post(
     "/api/teacher/students/:studentId/photo",
     async (req, res, next) => {
-      if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+      const context = await resolveTeacherProfileContext(req, res, true);
+      if (!context) return;
+      const studentId = Number(req.params.studentId);
+      if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+        res.status(400).json({ message: "Invalid student ID" });
+        return;
+      }
+      try {
+        if (!await teacherHasStudentEnrollmentInAssignments(
+          context.teacher, context.schoolId, context.sessionId, studentId,
+        )) {
+          res.status(403).json({ message: "Student is not in your assigned class for the selected session" });
+          return;
+        }
+      } catch {
+        res.status(503).json({ message: "Unable to verify Student enrollment for the selected session" });
+        return;
+      }
+      (req as any).teacherProfileContext = context;
       next();
     },
     studentPhotoUpload.single("photo"),
     async (req: any, res) => {
       if (!req.file) return res.status(400).json({ message: "No image uploaded" });
-      const studentId = parseInt(req.params.studentId);
-      if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
-
-      const teacher = await storage.getTeacherById(req.session.teacherId!);
-      if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
+      const context = req.teacherProfileContext as Awaited<ReturnType<typeof resolveTeacherProfileContext>>;
+      if (!context) return res.status(401).json({ message: "Teacher profile request is not authenticated" });
+      const studentId = Number(req.params.studentId);
       const student = await storage.getStudentById(studentId);
-      if (!student || student.schoolId !== teacher.schoolId)
+      if (!student || student.schoolId !== context.schoolId)
         return res.status(403).json({ message: "Access denied" });
 
       const photoUrl = `/uploads/student-photos/${req.file.filename}`;
@@ -4660,10 +4728,13 @@ Thank you for your prompt attention to this matter.
 
       // Also update the student_profiles photo if a profile exists
       const profile = await storage.getStudentProfile(studentId);
-      if (profile) {
+      if (profile?.schoolId === context.schoolId) {
         await db.update(studentProfiles)
           .set({ photoUrl, photoStatus: "approved", updatedAt: new Date() })
-          .where(eq(studentProfiles.studentId, studentId));
+          .where(and(
+            eq(studentProfiles.studentId, studentId),
+            eq(studentProfiles.schoolId, context.schoolId),
+          ));
       }
 
       res.json({ photoUrl });
@@ -4675,31 +4746,38 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/teacher/profiles/:studentId/reject", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const studentId = parseInt(req.params.studentId);
-    if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
+    const context = await resolveTeacherProfileContext(req, res, true);
+    if (!context) return;
+    const studentId = Number(req.params.studentId);
+    if (!Number.isSafeInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({ message: "Invalid student ID" });
+    }
 
     const parsed = rejectProfileSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-
-    const [student, mappings] = await Promise.all([
-      storage.getStudentById(studentId),
-      storage.getFacultyMappingsByTeacher(req.session.teacherId),
-    ]);
-    if (!student || student.schoolId !== teacher.schoolId) return res.status(403).json({ message: "Access denied" });
-    const coversClass =
-      (teacher.assignedClass === student.class && teacher.assignedSection === student.section) ||
-      mappings.some(m => m.className === student.class && m.section === student.section);
-    if (!coversClass) return res.status(403).json({ message: "Student is not in your assigned class" });
-
+    const pending = await storage.getPendingProfilesForTeacher(
+      context.schoolId, context.teacher.id, undefined, context.sessionId,
+    );
+    if (!pending.some((profile) => profile.studentId === studentId)) {
+      return res.status(403).json({ message: "Student profile is not assigned for review in this session" });
+    }
+    if (!await teacherHasStudentEnrollmentInAssignments(
+      context.teacher, context.schoolId, context.sessionId, studentId,
+    )) {
+      return res.status(403).json({ message: "Student is not enrolled in your assigned class for the selected session" });
+    }
     const existing = await storage.getStudentProfile(studentId);
-    if (!existing) return res.status(404).json({ message: "Student profile not found" });
-    if (existing.status !== "pending") return res.status(409).json({ message: "Profile is not in pending state" });
+    if (!existing || existing.schoolId !== context.schoolId) {
+      return res.status(404).json({ message: "Student profile not found" });
+    }
+    if (existing.status !== "pending" && existing.photoStatus !== "pending") {
+      return res.status(409).json({ message: "Profile is not in pending state" });
+    }
 
-    const profile = await storage.rejectStudentProfile(studentId, req.session.teacherId, parsed.data.note ?? "");
+    const profile = await storage.rejectStudentProfile(
+      studentId, context.teacher.id, parsed.data.note ?? "", context.schoolId, context.sessionId,
+    );
     if (!profile) return res.status(500).json({ message: "Failed to reject profile" });
     res.json(profile);
   });
@@ -4707,12 +4785,16 @@ Thank you for your prompt attention to this matter.
   // ===== TEACHER APPROVAL HISTORY =====
 
   app.get("/api/teacher/profiles/approval-history", async (req, res) => {
-    if (!req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
-    const teacher = await storage.getTeacherById(req.session.teacherId);
-    if (!teacher) return res.status(401).json({ message: "Teacher not found" });
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-    const history = await storage.getTeacherApprovalHistory(req.session.teacherId, teacher.schoolId, viewSessionId);
-    res.json(history);
+    const context = await resolveTeacherProfileContext(req, res);
+    if (!context) return;
+    try {
+      const history = await storage.getTeacherApprovalHistory(
+        context.teacher.id, context.schoolId, context.sessionId,
+      );
+      res.json(history);
+    } catch {
+      res.status(503).json({ message: "Unable to load approval history for the selected session." });
+    }
   });
 
   // ===== ASSET LIFECYCLE MANAGER =====

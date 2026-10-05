@@ -11,3 +11,4 @@
 - [Teacher Complaint session boundaries](teacher-complaint-session-boundaries.md) — exact selected-session reads; active-session writes; NULL legacy complaints remain unassigned.
 - [Teacher Leave session boundaries](teacher-leave-session-boundaries.md) — keep Teacher requests session-scoped while policies and renewal-period balances remain global/current.
 - [Teacher Dashboard session boundaries](teacher-dashboard-session-boundaries.md) — badges follow the selected session; the current-day Attendance status follows the active session.
+- [Teacher profile photo review](teacher-profile-photo-review.md) — photo-only review must not rewrite full-profile verification state or its approval history.

@@ -65,6 +65,10 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     activeFallback: [] as number[],
     attendanceIndicatorSessions: [] as number[],
     pendingProfileReads: [] as Array<[number, number, number | null | undefined]>,
+    profileApprovals: [] as Array<[number, number, number, number]>,
+    profileRejections: [] as Array<[number, number, string, number, number]>,
+    bulkProfileApprovals: [] as Array<[number[], number, number, number]>,
+    approvalHistoryReads: [] as Array<[number, number, number]>,
     rosterReads: [] as Array<[number, number, string, string]>,
     reportRosterReads: [] as Array<[number, number, string, string]>,
     historyReads: [] as Array<[number, number, string, string, string, string]>,
@@ -173,8 +177,55 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     schoolId: number, teacherId: number, _unused: unknown, sessionId: number | null | undefined,
   ) => {
     calls.pendingProfileReads.push([schoolId, teacherId, sessionId]);
-    return sessionId === 102 ? [{ id: 1 }, { id: 2 }] : [];
+    if (sessionId === 102) return [{ studentId: 1 }, { studentId: 2 }];
+    if (sessionId === 101) return [{ studentId: 10, status: "pending" }];
+    return [];
   });
+  replaceStorage("getStudentProfile", async (studentId: number) => studentId === 10 ? ({
+    id: 1,
+    studentId: 10,
+    schoolId: 1,
+    status: "pending",
+    photoStatus: "approved",
+    fullName: "Arif",
+    verifiedAt: null,
+    photoUrl: null,
+  }) : undefined);
+  replaceStorage("getStudentById", async (studentId: number) => studentId === 10
+    ? { ...currentStudent, schoolId: 1 }
+    : undefined);
+  replaceStorage("resolveEnrollmentForStudentSession", async (
+    schoolId: number, studentId: number, sessionId: number,
+  ) => schoolId === 1 && studentId === 10 && sessionId === 101
+    ? { className: "5", sectionName: "A", rollNo: 4 }
+    : undefined);
+  replaceStorage("approveStudentProfile", async (
+    studentId: number, teacherId: number, schoolId: number, sessionId: number,
+  ) => {
+    calls.profileApprovals.push([studentId, teacherId, schoolId, sessionId]);
+    return { id: 1, studentId, schoolId, status: "approved", photoStatus: "approved" };
+  });
+  replaceStorage("rejectStudentProfile", async (
+    studentId: number, teacherId: number, note: string, schoolId: number, sessionId: number,
+  ) => {
+    calls.profileRejections.push([studentId, teacherId, note, schoolId, sessionId]);
+    return { id: 1, studentId, schoolId, status: "rejected", photoStatus: "rejected" };
+  });
+  replaceStorage("bulkApproveStudentProfiles", async (
+    studentIds: number[], teacherId: number, schoolId: number, sessionId: number,
+  ) => {
+    calls.bulkProfileApprovals.push([studentIds, teacherId, schoolId, sessionId]);
+    return { approved: studentIds.length, skipped: 0 };
+  });
+  replaceStorage("getTeacherApprovalHistory", async (
+    teacherId: number, schoolId: number, sessionId: number,
+  ) => {
+    calls.approvalHistoryReads.push([teacherId, schoolId, sessionId]);
+    return [];
+  });
+  replaceStorage("updateStudentVerifiedProfile", async () => undefined);
+  replaceStorage("updateStudentLiveFieldsForTeacherApproval", async () => undefined);
+  replaceStorage("updateStudentLivePhoto", async () => undefined);
   t.after(() => {
     const target = storage as any;
     for (const { name, hadOwn, original } of replacements.reverse()) {
@@ -402,4 +453,72 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   const foreignPendingCount = await request("/api/teacher/pending-profiles/count", { sessionId: 201 });
   assert.equal(foreignPendingCount.status, 403);
   assert.deepEqual(calls.pendingProfileReads, [[1, 9, 102]]);
+
+  assert.equal((await request("/api/teacher/pending-profiles")).status, 400);
+  assert.deepEqual(calls.pendingProfileReads, [[1, 9, 102]], "pending reads cannot fall back without a selected session");
+  const selectedPendingProfiles = await request("/api/teacher/pending-profiles", { sessionId: 102 });
+  assert.equal(selectedPendingProfiles.status, 200);
+  assert.deepEqual(calls.pendingProfileReads.at(-1), [1, 9, 102]);
+
+  const selectedApprovalHistory = await request("/api/teacher/profiles/approval-history", { sessionId: 102 });
+  assert.equal(selectedApprovalHistory.status, 200);
+  assert.deepEqual(calls.approvalHistoryReads.at(-1), [9, 1, 102]);
+
+  const archiveApproval = await request("/api/teacher/profiles/10/approve", {
+    method: "POST", sessionId: 102, body: {},
+  });
+  assert.equal(archiveApproval.status, 403, "approval mutations are restricted to the active session");
+  assert.deepEqual(calls.profileApprovals, []);
+
+  const unsupportedPlacementCorrection = await request("/api/teacher/profiles/10/approve", {
+    method: "POST", sessionId: 101, body: { corrections: { class: "6", rollNo: "4" } },
+  });
+  assert.equal(unsupportedPlacementCorrection.status, 400, "Teacher corrections cannot change enrollment placement");
+  assert.deepEqual(calls.profileApprovals, []);
+
+  const unassignedStudentApproval = await request("/api/teacher/profiles/11/approve", {
+    method: "POST", sessionId: 101, body: {},
+  });
+  assert.equal(unassignedStudentApproval.status, 403, "direct IDs must be present in the Teacher's selected-session queue");
+  assert.deepEqual(calls.profileApprovals, []);
+
+  const unassignedStudentPhoto = await request("/api/teacher/students/11/photo", {
+    method: "POST", sessionId: 101,
+  });
+  assert.equal(unassignedStudentPhoto.status, 403, "photo access requires the selected-session enrollment and Teacher assignment");
+
+  const activeApproval = await request("/api/teacher/profiles/10/approve", {
+    method: "POST", sessionId: 101, body: {},
+  });
+  assert.equal(activeApproval.status, 200);
+  assert.deepEqual(calls.profileApprovals, [[10, 9, 1, 101]]);
+
+  const activeRejection = await request("/api/teacher/profiles/10/reject", {
+    method: "POST", sessionId: 101, body: { note: "Please correct the phone number." },
+  });
+  assert.equal(activeRejection.status, 200);
+  assert.deepEqual(calls.profileRejections, [[10, 9, "Please correct the phone number.", 1, 101]]);
+
+  const bulkApproval = await request("/api/teacher/profiles/bulk-approve", {
+    method: "POST", sessionId: 101, body: { studentIds: [10, 11] },
+  });
+  assert.equal(bulkApproval.status, 200);
+  assert.deepEqual(bulkApproval.body, { approved: 1, skipped: 1 });
+  assert.deepEqual(calls.bulkProfileApprovals, [[[10], 9, 1, 101]]);
+
+  const mobileArchiveApproval = await request("/api/mobile/teacher/modules/student-profiles/approve", {
+    method: "POST", sessionId: 102, body: { studentId: 10 },
+  });
+  assert.equal(mobileArchiveApproval.status, 403, "Mobile profile writes remain active-session-only");
+
+  const mobilePlacementCorrection = await request("/api/mobile/teacher/modules/student-profiles/approve", {
+    method: "POST", sessionId: 101, body: { studentId: 10, corrections: { class: "6" } },
+  });
+  assert.equal(mobilePlacementCorrection.status, 400, "Mobile cannot correct class placement");
+
+  const mobileApproval = await request("/api/mobile/teacher/modules/student-profiles/approve", {
+    method: "POST", sessionId: 101, body: { studentId: 10, corrections: {} },
+  });
+  assert.equal(mobileApproval.status, 200);
+  assert.deepEqual(calls.profileApprovals.at(-1), [10, 9, 1, 101]);
 });

@@ -636,6 +636,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
   const requiresCurrentSessionMode =
     module === "complaint"
     || module === "leave"
+    || module === "student-profiles"
     || (module === "timetable" && (action === "save" || action === "delete"))
     || (module === "attendance"
       && ["submit", "self-check-in", "self-check-out", "self-correction"].includes(action));
@@ -1408,20 +1409,25 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         fail(res, 403, "This Student profile is not assigned for review.");
         return;
       }
+      const enrollment = await storage.resolveEnrollmentForStudentSession(
+        account.school.id, body.data.studentId, session.id,
+      );
+      if (!enrollment || !await resolveScope(account, enrollment.className, enrollment.sectionName)) {
+        fail(res, 403, "This Student is not enrolled in a class assigned to the teacher for this session.");
+        return;
+      }
       if (action === "approve") {
         const corrections = body.data.corrections ?? {};
-        const allowed = new Set(["fullName", "rollNo", "fatherName", "motherName", "guardianName",
+        const allowed = new Set(["fullName", "fatherName", "motherName", "guardianName",
           "presentAddress", "aadharNumber", "gender", "phone", "email", "dob", "enrollmentDate",
-          "bloodGroup", "class", "section"]);
+          "bloodGroup"]);
         if (Object.keys(corrections).some((key) => !allowed.has(key))) {
           fail(res, 400, "Profile correction contains an unsupported field.");
           return;
         }
         const pendingProfile = pending.find((profile) => profile.studentId === body.data.studentId)!;
-        const correctedClass = corrections.class ?? pendingProfile.class;
-        const correctedSection = corrections.section ?? pendingProfile.section;
-        if (!await resolveScope(account, correctedClass, correctedSection)) {
-          fail(res, 403, "Corrected class and section must remain assigned to this teacher.");
+        if (pendingProfile.status !== "pending" && Object.keys(corrections).length > 0) {
+          fail(res, 409, "Photo-only requests cannot change Student profile details.");
           return;
         }
         if (Object.keys(corrections).length) {
@@ -1431,9 +1437,18 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
             eq(studentProfiles.status, "pending"),
           ));
         }
-        res.json({ item: await storage.approveStudentProfile(body.data.studentId, teacher.id) });
+        const approved = await storage.approveStudentProfile(
+          body.data.studentId, teacher.id, account.school.id, session.id,
+        );
+        if (!approved) { fail(res, 409, "Student profile is no longer awaiting approval."); return; }
+        res.json({ item: approved });
       } else {
-        res.json({ item: await storage.rejectStudentProfile(body.data.studentId, teacher.id, body.data.note ?? "Returned for correction.") });
+        const rejected = await storage.rejectStudentProfile(
+          body.data.studentId, teacher.id, body.data.note ?? "Returned for correction.",
+          account.school.id, session.id,
+        );
+        if (!rejected) { fail(res, 409, "Student profile is no longer awaiting review."); return; }
+        res.json({ item: rejected });
       }
       return;
     }
@@ -1441,7 +1456,7 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
       const pending = await storage.getPendingProfilesForTeacher(account.school.id, teacher.id, undefined, session.id);
       if (!pending.length) { res.json({ approved: 0, skipped: 0 }); return; }
       const result = await storage.bulkApproveStudentProfiles(
-        pending.map((profile) => profile.studentId), teacher.id,
+        pending.map((profile) => profile.studentId), teacher.id, account.school.id, session.id,
       );
       res.json(result);
       return;

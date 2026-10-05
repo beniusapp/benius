@@ -1,12 +1,12 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   CheckCircle, XCircle, Clock, Loader2, User, Eye,
   Users, FileText, ChevronLeft, ShieldCheck, Pencil, Save, Camera, History, X,
 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequestForViewSession, queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useArchiveMode, type TeacherMe } from "@/pages/teacher-dashboard";
+import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 
 interface PendingProfile {
   id: number;
@@ -89,7 +89,7 @@ const FIELD_LABELS: { key: string; label: string; editable: boolean }[] = [
   { key: "class",          label: "Class",              editable: false },
   { key: "section",        label: "Section",            editable: false },
   { key: "gender",         label: "Gender",             editable: true  },
-  { key: "rollNo",         label: "Roll Number",        editable: true  },
+  { key: "rollNo",         label: "Roll Number",        editable: false },
   { key: "guardianName",   label: "Guardian Name",      editable: true  },
   { key: "phone",          label: "Phone",              editable: true  },
   { key: "email",          label: "Email",              editable: true  },
@@ -104,7 +104,6 @@ const FIELD_LABELS: { key: string; label: string; editable: boolean }[] = [
 
 type EditableFields = {
   fullName: string;
-  rollNo: string;
   fatherName: string;
   motherName: string;
   presentAddress: string;
@@ -121,7 +120,6 @@ type EditableFields = {
 function initEdits(p: PendingProfile): EditableFields {
   return {
     fullName:       p.fullName       ?? "",
-    rollNo:         p.rollNo         ?? "",
     fatherName:     p.fatherName     ?? "",
     motherName:     p.motherName     ?? "",
     presentAddress: p.presentAddress ?? "",
@@ -138,6 +136,8 @@ function initEdits(p: PendingProfile): EditableFields {
 
 export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe }) {
   const isArchiveMode = useArchiveMode();
+  const selectedSession = useTeacherSelectedSession();
+  const selectedSessionId = selectedSession?.id ?? null;
   const { toast } = useToast();
   const [selectedIds,      setSelectedIds]      = useState<Set<number>>(new Set());
   const [reviewProfile,    setReviewProfile]    = useState<PendingProfile | null>(null);
@@ -145,87 +145,148 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
   const [rejectNote,       setRejectNote]       = useState("");
   const [showRejectInput,  setShowRejectInput]  = useState(false);
   const [editMode,         setEditMode]         = useState(false);
-  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", rollNo:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", email:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
+  const [editedFields,     setEditedFields]     = useState<EditableFields>({ fullName:"", fatherName:"", motherName:"", presentAddress:"", aadharNumber:"", gender:"", phone:"", email:"", dob:"", enrollmentDate:"", guardianName:"", bloodGroup:"" });
   const [livePhotoUrl,     setLivePhotoUrl]     = useState<string | null>(null);
   const [showHistory,      setShowHistory]      = useState(false);
   const [historyDetail,    setHistoryDetail]    = useState<HistoryRecord | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: profiles = [], isLoading } = useQuery<PendingProfile[]>({
-    queryKey: ["/api/teacher/pending-profiles"],
+  const pendingQueryKey = ["/api/teacher/pending-profiles", teacher.schoolId, teacher.id, selectedSessionId] as const;
+  const historyQueryKey = ["/api/teacher/profiles/approval-history", teacher.schoolId, teacher.id, selectedSessionId] as const;
+
+  const { data: profiles = [], isLoading, isError: profilesError, error: profilesLoadError } = useQuery<PendingProfile[]>({
+    queryKey: pendingQueryKey,
+    queryFn: async ({ queryKey, signal }) => {
+      const response = await sessionFetchForViewSession(
+        String(queryKey[0]), queryKey[3] as number | null, { signal },
+      );
+      if (!response.ok) throw new Error("Unable to load pending Student profiles for this session.");
+      return response.json();
+    },
+    enabled: selectedSessionId !== null,
     refetchInterval: 30000,
   });
 
-  const { data: historyRecords = [], isLoading: historyLoading } = useQuery<HistoryRecord[]>({
-    queryKey: ["/api/teacher/profiles/approval-history"],
-    enabled: showHistory,
+  const { data: historyRecords = [], isLoading: historyLoading, isError: historyError } = useQuery<HistoryRecord[]>({
+    queryKey: historyQueryKey,
+    queryFn: async ({ queryKey, signal }) => {
+      const response = await sessionFetchForViewSession(
+        String(queryKey[0]), queryKey[3] as number | null, { signal },
+      );
+      if (!response.ok) throw new Error("Unable to load approval history for this session.");
+      return response.json();
+    },
+    enabled: showHistory && selectedSessionId !== null,
   });
 
   const approveMutation = useMutation({
-    mutationFn: async ({ studentId, corrections }: { studentId: number; corrections?: Record<string, string> }) => {
-      return apiRequest("POST", `/api/teacher/profiles/${studentId}/approve`, { corrections });
-    },
-    onSuccess: () => {
+    mutationFn: async ({ studentId, corrections, sessionId }: {
+      studentId: number; corrections?: Record<string, string>; sessionId: number;
+    }) => apiRequestForViewSession(
+      "POST", `/api/teacher/profiles/${studentId}/approve`, { corrections }, sessionId,
+    ),
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
+      if (variables.sessionId !== selectedSessionId) return;
       toast({ title: "Profile approved!" });
       closeModal();
     },
-    onError: (e: Error) => toast({ title: "Approval failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error, variables) => {
+      if (variables.sessionId === selectedSessionId) {
+        toast({ title: "Approval failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   const rejectMutation = useMutation({
-    mutationFn: async ({ studentId, note }: { studentId: number; note: string }) => {
-      return apiRequest("POST", `/api/teacher/profiles/${studentId}/reject`, { note });
-    },
-    onSuccess: () => {
+    mutationFn: async ({ studentId, note, sessionId }: {
+      studentId: number; note: string; sessionId: number;
+    }) => apiRequestForViewSession(
+      "POST", `/api/teacher/profiles/${studentId}/reject`, { note }, sessionId,
+    ),
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
+      if (variables.sessionId !== selectedSessionId) return;
       toast({ title: "Profile rejected." });
       closeModal();
     },
-    onError: (e: Error) => toast({ title: "Rejection failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error, variables) => {
+      if (variables.sessionId === selectedSessionId) {
+        toast({ title: "Rejection failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   const photoUploadMutation = useMutation({
-    mutationFn: async ({ studentId, file }: { studentId: number; file: File }) => {
+    mutationFn: async ({ studentId, file, sessionId }: {
+      studentId: number; file: File; sessionId: number;
+    }) => {
       const fd = new FormData();
       fd.append("photo", file);
-      const r = await fetch(`/api/teacher/students/${studentId}/photo`, {
-        method: "POST", body: fd, credentials: "include",
+      const r = await sessionFetchForViewSession(`/api/teacher/students/${studentId}/photo`, sessionId, {
+        method: "POST", body: fd,
       });
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || "Upload failed"); }
       return r.json() as Promise<{ photoUrl: string }>;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
+      if (variables.sessionId !== selectedSessionId) return;
       setLivePhotoUrl(data.photoUrl);
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       toast({ title: "Photo updated!" });
     },
-    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error, variables) => {
+      if (variables.sessionId === selectedSessionId) {
+        toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   function handlePhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file || !reviewProfile) return;
+    if (!file || !reviewProfile || selectedSessionId === null || isArchiveMode) return;
     e.target.value = "";
     if (file.size > 1 * 1024 * 1024) {
       toast({ title: "Image too large", description: "Please upload an image smaller than 1 MB.", variant: "destructive" });
       return;
     }
-    photoUploadMutation.mutate({ studentId: reviewProfile.studentId, file });
+    photoUploadMutation.mutate({ studentId: reviewProfile.studentId, file, sessionId: selectedSessionId });
   }
 
   const bulkApproveMutation = useMutation({
-    mutationFn: async (ids: number[]) => apiRequest("POST", "/api/teacher/profiles/bulk-approve", { studentIds: ids }),
-    onSuccess: () => {
+    mutationFn: async ({ ids, sessionId }: { ids: number[]; sessionId: number }) =>
+      apiRequestForViewSession("POST", "/api/teacher/profiles/bulk-approve", { studentIds: ids }, sessionId),
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles"] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/pending-profiles/count"] });
+      if (variables.sessionId !== selectedSessionId) return;
       toast({ title: "Profiles approved!" });
       setSelectedIds(new Set());
     },
-    onError: (e: Error) => toast({ title: "Bulk approval failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error, variables) => {
+      if (variables.sessionId === selectedSessionId) {
+        toast({ title: "Bulk approval failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setReviewProfile(null);
+    setPhotoPreview(null);
+    setEditedFields({
+      fullName: "", fatherName: "", motherName: "", presentAddress: "", aadharNumber: "",
+      gender: "", phone: "", email: "", dob: "", enrollmentDate: "", guardianName: "", bloodGroup: "",
+    });
+    setRejectNote("");
+    setShowRejectInput(false);
+    setEditMode(false);
+    setLivePhotoUrl(null);
+    setShowHistory(false);
+    setHistoryDetail(null);
+  }, [teacher.schoolId, teacher.id, selectedSessionId]);
 
   function toggleSelect(id: number) {
     setSelectedIds((prev) => {
@@ -264,19 +325,29 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
       toast({ title: "Note required", description: "Please provide a reason for rejection.", variant: "destructive" });
       return;
     }
-    if (!reviewProfile) return;
-    rejectMutation.mutate({ studentId: reviewProfile.studentId, note: rejectNote });
+    if (!reviewProfile || selectedSessionId === null || isArchiveMode) return;
+    rejectMutation.mutate({
+      studentId: reviewProfile.studentId,
+      note: rejectNote,
+      sessionId: selectedSessionId,
+    });
   }
 
   function handleApprove() {
-    if (!reviewProfile) return;
+    if (!reviewProfile || selectedSessionId === null || isArchiveMode) return;
     // Build corrections: only changed editable fields
     const corrections: Record<string, string> = {};
-    (Object.keys(editedFields) as (keyof EditableFields)[]).forEach((k) => {
-      const original = (reviewProfile[k as keyof PendingProfile] as string | null) ?? "";
-      if (editedFields[k] !== original) corrections[k] = editedFields[k];
+    if (reviewProfile.status === "pending") {
+      (Object.keys(editedFields) as (keyof EditableFields)[]).forEach((k) => {
+        const original = (reviewProfile[k as keyof PendingProfile] as string | null) ?? "";
+        if (editedFields[k] !== original) corrections[k] = editedFields[k];
+      });
+    }
+    approveMutation.mutate({
+      studentId: reviewProfile.studentId,
+      corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
+      sessionId: selectedSessionId,
     });
-    approveMutation.mutate({ studentId: reviewProfile.studentId, corrections: Object.keys(corrections).length > 0 ? corrections : undefined });
   }
 
   // Build subtitle: list all classes this teacher covers
@@ -295,6 +366,14 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (selectedSessionId === null) {
+    return (
+      <div className="rounded-xl border border-border bg-white px-5 py-10 text-center text-sm text-muted-foreground">
+        Select an academic session to view Student profiles.
       </div>
     );
   }
@@ -339,8 +418,11 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
               </span>
               {someSelected && (
                 <button
-                  onClick={() => bulkApproveMutation.mutate(Array.from(selectedIds))}
-                  disabled={isArchiveMode || bulkApproveMutation.isPending}
+                  onClick={() => bulkApproveMutation.mutate({
+                    ids: Array.from(selectedIds),
+                    sessionId: selectedSessionId,
+                  })}
+                  disabled={isArchiveMode || selectedSessionId === null || bulkApproveMutation.isPending}
                   className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow"
                   data-testid="button-bulk-approve"
                 >
@@ -353,7 +435,11 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
         </div>
       </div>
 
-      {profiles.length === 0 ? (
+      {profilesError ? (
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {profilesLoadError instanceof Error ? profilesLoadError.message : "Unable to load Student profiles for this session."}
+        </div>
+      ) : profiles.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-2xl border border-border">
           <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
           <h3 className="text-base font-semibold text-gray-700">All caught up!</h3>
@@ -508,7 +594,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                     Submitted: {new Date(reviewProfile.submittedAt).toLocaleDateString("en-GB")}
                   </span>
                 )}
-                {!isArchiveMode && !showRejectInput && (
+                {!isArchiveMode && reviewProfile.status === "pending" && !showRejectInput && (
                   <button
                     onClick={() => setEditMode(e => !e)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -618,7 +704,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                             </span>
                           )}
                         </div>
-                        {!isArchiveMode && (
+                          {!isArchiveMode && selectedSessionId !== null && (
                           <button
                             onClick={() => photoInputRef.current?.click()}
                             disabled={photoUploadMutation.isPending}
@@ -728,7 +814,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                     </button>
                     <button
                       onClick={submitRejection}
-                      disabled={isArchiveMode || rejectMutation.isPending}
+                      disabled={isArchiveMode || selectedSessionId === null || rejectMutation.isPending}
                       className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-60"
                       data-testid="button-confirm-reject"
                     >
@@ -740,7 +826,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
                     onClick={() => setShowRejectInput(true)}
-                    disabled={isArchiveMode}
+                    disabled={isArchiveMode || selectedSessionId === null}
                     className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 transition-colors disabled:opacity-50"
                     data-testid="button-reject"
                   >
@@ -749,7 +835,7 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
                   </button>
                   <button
                     onClick={handleApprove}
-                    disabled={isArchiveMode || approveMutation.isPending}
+                    disabled={isArchiveMode || selectedSessionId === null || approveMutation.isPending}
                     className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60 shadow ${
                       editMode
                         ? "bg-amber-500 hover:bg-amber-600"
@@ -805,6 +891,10 @@ export default function StudentProfilesModule({ teacher }: { teacher: TeacherMe 
               {historyLoading ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+                </div>
+              ) : historyError ? (
+                <div role="alert" className="px-5 py-4 text-sm text-red-700">
+                  Unable to load approval history for this session.
                 </div>
               ) : historyDetail ? (
                 /* ── Detail view ── */

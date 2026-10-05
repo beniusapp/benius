@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sessionFetchForViewSession } from "@/lib/queryClient";
+import { apiRequestForViewSession, sessionFetchForViewSession } from "@/lib/queryClient";
 import { computeAllStudentResults } from "@shared/examination-calculation-engine";
 
 const examinationSource = readFileSync(
@@ -10,6 +10,10 @@ const examinationSource = readFileSync(
 );
 const dashboardSource = readFileSync(
   resolve(process.cwd(), "src/pages/teacher-dashboard.tsx"),
+  "utf8",
+);
+const approvalSource = readFileSync(
+  resolve(process.cwd(), "src/pages/teacher-modules/student-profiles.tsx"),
   "utf8",
 );
 
@@ -84,6 +88,35 @@ describe("Teacher Examination selected-session transport", () => {
     expect(fetchMock.mock.calls.map(([, init]) =>
       new Headers(init.headers).get("x-view-session-id"),
     )).toEqual(["41", "30375", "41"]);
+  });
+
+  it("keys Approval Center reads by the selected session and pins approval writes to that session", async () => {
+    expect(approvalSource).toContain(
+      'const pendingQueryKey = ["/api/teacher/pending-profiles", teacher.schoolId, teacher.id, selectedSessionId]',
+    );
+    expect(approvalSource).toContain(
+      'const historyQueryKey = ["/api/teacher/profiles/approval-history", teacher.schoolId, teacher.id, selectedSessionId]',
+    );
+    expect(approvalSource).toMatch(
+      /sessionFetchForViewSession\(\s*String\(queryKey\[0\]\),\s*queryKey\[3\]/,
+    );
+    expect(approvalSource).toContain("apiRequestForViewSession(");
+    expect(approvalSource).toContain(
+      "}, [teacher.schoolId, teacher.id, selectedSessionId]);",
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const sessionId of [41, 30375, 41]) {
+      await sessionFetchForViewSession("/api/teacher/pending-profiles", sessionId);
+      await apiRequestForViewSession(
+        "POST", "/api/teacher/profiles/bulk-approve", { studentIds: [10] }, sessionId,
+      );
+    }
+
+    expect(fetchMock.mock.calls.map(([, init]) =>
+      new Headers(init.headers).get("x-view-session-id"),
+    )).toEqual(["41", "41", "30375", "30375", "41", "41"]);
   });
 
   it("wires the Examination Attendance widget to the selected Session and waits for one", () => {

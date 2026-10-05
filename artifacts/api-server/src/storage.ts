@@ -5113,6 +5113,10 @@ export class DatabaseStorage {
     primarySection?: string,
     sessionId?: number | null,
   ): Promise<(StudentProfile & { studentName: string; dsid: string; currentVerifiedProfile: string | null })[]> {
+    // Approval reads are always tied to an explicitly selected session. Do not
+    // fall back to current Student placement for legacy or incomplete callers.
+    if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) return [];
+
     // Build the full set of class-sections this teacher covers.
     // Accepts either (schoolId, teacherId) or legacy (schoolId, cls, section).
     const assignments: Array<{ cls: string; sec: string }> = [];
@@ -5123,6 +5127,7 @@ export class DatabaseStorage {
         this.getTeacherById(teacherIdOrPrimaryClass),
         this.getFacultyMappingsByTeacher(teacherIdOrPrimaryClass),
       ]);
+      if (!teacherRecord || teacherRecord.schoolId !== schoolId) return [];
       if (teacherRecord?.assignedClass && teacherRecord?.assignedSection) {
         assignments.push({ cls: teacherRecord.assignedClass, sec: teacherRecord.assignedSection });
       }
@@ -5140,12 +5145,10 @@ export class DatabaseStorage {
 
     if (assignments.length === 0) return [];
 
-    // Pre-fetch all students for the assignments — session-scoped if sessionId provided
+    // Pre-fetch students from exact selected-session enrollments.
     const allowedStudentIds = new Set<number>();
     for (const { cls, sec } of assignments) {
-      const list = sessionId
-        ? await this.getStudentsByClassSectionInSession(schoolId, cls, sec, sessionId)
-        : await this.getStudentsByClassSection(schoolId, cls, sec);
+      const list = await this.getStudentsByClassSectionInSession(schoolId, cls, sec, sessionId);
       list.forEach(s => allowedStudentIds.add(s.id));
     }
     if (allowedStudentIds.size === 0) return [];
@@ -5165,31 +5168,65 @@ export class DatabaseStorage {
     const result = [];
     for (const p of allPending) {
       if (!allowedStudentIds.has(p.studentId)) continue;
-      const student = await this.getStudentById(p.studentId);
-      if (!student) continue;
+      const [student, enrollment] = await Promise.all([
+        this.getStudentById(p.studentId),
+        this.resolveEnrollmentForStudentSession(schoolId, p.studentId, sessionId),
+      ]);
+      if (!student || student.schoolId !== schoolId || !enrollment) continue;
       result.push({
         ...p,
         studentName: student.name,
         dsid: student.digitalStudentId,
         currentVerifiedProfile: student.verifiedProfile || null,
+        class: enrollment.className,
+        section: enrollment.sectionName,
+        rollNo: enrollment.rollNo === null ? null : String(enrollment.rollNo),
       });
     }
     return result;
   }
 
-  async bulkApproveStudentProfiles(studentIds: number[], teacherId: number): Promise<{ approved: number; skipped: number }> {
+  async bulkApproveStudentProfiles(
+    studentIds: number[],
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<{ approved: number; skipped: number }> {
     const teacherRecord = await this.getTeacherById(teacherId);
-    const approverName = teacherRecord?.fullName ?? "Teacher";
-    const eligible: { studentId: number; snapshot: string; profile: StudentProfile }[] = [];
+    if (!teacherRecord || teacherRecord.schoolId !== schoolId
+      || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      return { approved: 0, skipped: studentIds.length };
+    }
+    const mappings = await this.getFacultyMappingsByTeacher(teacherId);
+    const assignments = [
+      ...(teacherRecord.assignedClass && teacherRecord.assignedSection
+        ? [{ className: teacherRecord.assignedClass, section: teacherRecord.assignedSection }]
+        : []),
+      ...mappings.map(({ className, section }) => ({ className, section })),
+    ];
+    const approverName = teacherRecord.fullName ?? "Teacher";
+    const eligible: {
+      studentId: number;
+      snapshot: string;
+      profile: StudentProfile;
+    }[] = [];
     const photoUpdates: { studentId: number; photoUrl: string }[] = [];
 
     for (const studentId of studentIds) {
-      const existing = await this.getStudentProfile(studentId);
+      const [existing, enrollment] = await Promise.all([
+        this.getStudentProfile(studentId),
+        this.resolveEnrollmentForStudentSession(schoolId, studentId, sessionId),
+      ]);
+      if (!existing || existing.schoolId !== schoolId || !enrollment
+        || !assignments.some((assignment) =>
+          assignment.className === enrollment.className && assignment.section === enrollment.sectionName,
+        )) continue;
       // Accept full-profile pending OR photo-only pending
-      if (!existing || (existing.status !== "pending" && existing.photoStatus !== "pending")) continue;
+      if (existing.status !== "pending" && existing.photoStatus !== "pending") continue;
       const snap = JSON.stringify({
-        fullName: existing.fullName, class: existing.class, section: existing.section,
-        rollNo: existing.rollNo, fatherName: existing.fatherName, motherName: existing.motherName,
+        fullName: existing.fullName, class: enrollment.className, section: enrollment.sectionName,
+        rollNo: enrollment.rollNo === null ? null : String(enrollment.rollNo),
+        fatherName: existing.fatherName, motherName: existing.motherName,
         presentAddress: existing.presentAddress, aadharNumber: existing.aadharNumber,
         gender: existing.gender, phone: existing.phone, dob: existing.dob,
         enrollmentDate: existing.enrollmentDate, guardianName: existing.guardianName,
@@ -5209,12 +5246,23 @@ export class DatabaseStorage {
         // For photo-only pending (status = draft), only approve the photo — do not flip overall status
         const isPhotoOnly = profile.status !== "pending" && profile.photoStatus === "pending";
         await tx.update(studentProfiles).set({
-          ...(isPhotoOnly ? {} : { status: "approved", approvedSnapshot: snapshot }),
-          verifiedAt: now,
-          verifiedBy: teacherId,
-          photoStatus: "approved",
+          ...(isPhotoOnly
+            ? { photoStatus: "approved" }
+            : {
+                status: "approved",
+                approvedSnapshot: snapshot,
+                verifiedAt: now,
+                verifiedBy: teacherId,
+                photoStatus: "approved",
+              }),
           updatedAt: now,
-        }).where(eq(studentProfiles.studentId, studentId));
+        }).where(and(
+          eq(studentProfiles.studentId, studentId),
+          eq(studentProfiles.schoolId, schoolId),
+          isPhotoOnly
+            ? and(eq(studentProfiles.status, profile.status), eq(studentProfiles.photoStatus, "pending"))!
+            : eq(studentProfiles.status, "pending"),
+        ));
 
         // Only write a new verifiedProfile snapshot for full-profile approvals
         if (!isPhotoOnly) {
@@ -5223,31 +5271,59 @@ export class DatabaseStorage {
             verifiedAt: now.toISOString(),
             approvedByName: approverName,
           });
-          await tx.update(students).set({ verifiedProfile: verifiedJson }).where(eq(students.id, studentId));
+          await tx.update(students).set({ verifiedProfile: verifiedJson }).where(and(
+            eq(students.id, studentId),
+            eq(students.schoolId, schoolId),
+          ));
         }
       }
       for (const { studentId, photoUrl } of photoUpdates) {
-        await tx.update(students).set({ photoUrl }).where(eq(students.id, studentId));
+        await tx.update(students).set({ photoUrl }).where(and(
+          eq(students.id, studentId),
+          eq(students.schoolId, schoolId),
+        ));
       }
     });
 
     return { approved: eligible.length, skipped };
   }
 
-  async approveStudentProfile(studentId: number, teacherId: number): Promise<StudentProfile> {
-    const existing = await this.getStudentProfile(studentId);
-    if (!existing) throw new Error("Profile not found");
+  async approveStudentProfile(
+    studentId: number,
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<StudentProfile | undefined> {
+    const [existing, enrollment] = await Promise.all([
+      db.select().from(studentProfiles).where(and(
+        eq(studentProfiles.studentId, studentId),
+        eq(studentProfiles.schoolId, schoolId),
+      )).then((rows) => rows[0]),
+      this.resolveEnrollmentForStudentSession(schoolId, studentId, sessionId),
+    ]);
+    if (!existing || !enrollment) throw new Error("Student profile is unavailable in the selected session");
+    if (existing.status !== "pending" && existing.photoStatus !== "pending") {
+      throw new Error("Profile is not pending approval");
+    }
 
     // Photo-only approval: profile is still draft/rejected but a new photo is pending
     if (existing.status !== "pending" && existing.photoStatus === "pending") {
       const [updated] = await db
         .update(studentProfiles)
-        .set({ photoStatus: "approved", verifiedBy: teacherId, updatedAt: new Date() })
-        .where(eq(studentProfiles.studentId, studentId))
+        .set({ photoStatus: "approved", updatedAt: new Date() })
+        .where(and(
+          eq(studentProfiles.studentId, studentId),
+          eq(studentProfiles.schoolId, schoolId),
+          eq(studentProfiles.status, existing.status),
+          eq(studentProfiles.photoStatus, "pending"),
+        ))
         .returning();
       // Propagate the approved photo to the live students record immediately
       if (existing.photoUrl) {
-        await db.update(students).set({ photoUrl: existing.photoUrl }).where(eq(students.id, studentId));
+        await db.update(students).set({ photoUrl: existing.photoUrl }).where(and(
+          eq(students.id, studentId),
+          eq(students.schoolId, schoolId),
+        ));
       }
       return updated;
     }
@@ -5256,9 +5332,9 @@ export class DatabaseStorage {
     const snapshot = existing
       ? JSON.stringify({
           fullName:       existing.fullName,
-          class:          existing.class,
-          section:        existing.section,
-          rollNo:         existing.rollNo,
+          class:          enrollment.className,
+          section:        enrollment.sectionName,
+          rollNo:         enrollment.rollNo === null ? null : String(enrollment.rollNo),
           fatherName:     existing.fatherName,
           motherName:     existing.motherName,
           presentAddress: existing.presentAddress,
@@ -5283,16 +5359,53 @@ export class DatabaseStorage {
         approvedSnapshot: snapshot,
         updatedAt: new Date(),
       })
-      .where(eq(studentProfiles.studentId, studentId))
+      .where(and(
+        eq(studentProfiles.studentId, studentId),
+        eq(studentProfiles.schoolId, schoolId),
+        eq(studentProfiles.status, "pending"),
+      ))
       .returning();
     return updated;
   }
 
-  async rejectStudentProfile(studentId: number, teacherId: number, note: string): Promise<StudentProfile> {
+  async rejectStudentProfile(
+    studentId: number,
+    teacherId: number,
+    note: string,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<StudentProfile | undefined> {
+    const [existing, enrollment] = await Promise.all([
+      db.select().from(studentProfiles).where(and(
+        eq(studentProfiles.studentId, studentId),
+        eq(studentProfiles.schoolId, schoolId),
+      )).then((rows) => rows[0]),
+      this.resolveEnrollmentForStudentSession(schoolId, studentId, sessionId),
+    ]);
+    if (!existing || !enrollment
+      || (existing.status !== "pending" && existing.photoStatus !== "pending")) {
+      throw new Error("Student profile is unavailable for review in the selected session");
+    }
+    const photoOnly = existing.status !== "pending" && existing.photoStatus === "pending";
     const [updated] = await db
       .update(studentProfiles)
-      .set({ status: "rejected", verifiedAt: new Date(), verifiedBy: teacherId, rejectionNote: note, updatedAt: new Date() })
-      .where(eq(studentProfiles.studentId, studentId))
+      .set(photoOnly
+        ? { photoStatus: "rejected", updatedAt: new Date() }
+        : {
+            status: "rejected",
+            photoStatus: existing.photoStatus === "pending" ? "rejected" : existing.photoStatus,
+            verifiedAt: new Date(),
+            verifiedBy: teacherId,
+            rejectionNote: note,
+            updatedAt: new Date(),
+          })
+      .where(and(
+        eq(studentProfiles.studentId, studentId),
+        eq(studentProfiles.schoolId, schoolId),
+        photoOnly
+          ? and(eq(studentProfiles.status, existing.status), eq(studentProfiles.photoStatus, "pending"))!
+          : eq(studentProfiles.status, "pending"),
+      ))
       .returning();
     return updated;
   }
@@ -5300,28 +5413,30 @@ export class DatabaseStorage {
   async getTeacherApprovalHistory(
     teacherId: number,
     schoolId: number,
-    sessionId?: number | null,
+    sessionId: number,
   ): Promise<(StudentProfile & { studentName: string; dsid: string; class: string; section: string })[]> {
-    // When sessionId provided, restrict to the session's date window
-    let startDate: Date | null = null;
-    let endDate: Date | null = null;
-    if (sessionId) {
-      const [sess] = await db.select().from(academicSessions).where(eq(academicSessions.id, sessionId));
-      if (sess) {
-        startDate = new Date(sess.startDate + "T00:00:00");
-        endDate   = new Date(sess.endDate   + "T23:59:59");
-      }
-    }
+    const [sess, teacher, mappings] = await Promise.all([
+      this.getAcademicSessionForSchool(sessionId, schoolId),
+      this.getTeacherById(teacherId),
+      this.getFacultyMappingsByTeacher(teacherId),
+    ]);
+    if (!sess || !teacher || teacher.schoolId !== schoolId) return [];
+    const startDate = new Date(sess.startDate + "T00:00:00");
+    const endDate = new Date(sess.endDate + "T23:59:59");
+    const assignments = [
+      ...(teacher.assignedClass && teacher.assignedSection
+        ? [{ className: teacher.assignedClass, section: teacher.assignedSection }]
+        : []),
+      ...mappings.map(({ className, section }) => ({ className, section })),
+    ];
 
     const conditions = [
       eq(studentProfiles.schoolId, schoolId),
       eq(studentProfiles.verifiedBy, teacherId),
       eq(studentProfiles.status, "approved"),
     ] as SQL[];
-    if (startDate && endDate) {
-      conditions.push(gte(studentProfiles.verifiedAt, startDate) as SQL);
-      conditions.push(lte(studentProfiles.verifiedAt, endDate) as SQL);
-    }
+    conditions.push(gte(studentProfiles.verifiedAt, startDate) as SQL);
+    conditions.push(lte(studentProfiles.verifiedAt, endDate) as SQL);
 
     const approved = await db
       .select()
@@ -5331,14 +5446,21 @@ export class DatabaseStorage {
 
     const result = [];
     for (const p of approved) {
-      const student = await this.getStudentById(p.studentId);
-      if (!student) continue;
+      const [student, enrollment] = await Promise.all([
+        this.getStudentById(p.studentId),
+        this.resolveEnrollmentForStudentSession(schoolId, p.studentId, sessionId),
+      ]);
+      if (!student || student.schoolId !== schoolId || !enrollment
+        || !assignments.some((assignment) =>
+          assignment.className === enrollment.className && assignment.section === enrollment.sectionName,
+        )) continue;
       result.push({
         ...p,
         studentName: student.name,
         dsid: student.digitalStudentId,
-        class: student.class,
-        section: student.section,
+        class: enrollment.className,
+        section: enrollment.sectionName,
+        rollNo: enrollment.rollNo === null ? null : String(enrollment.rollNo),
       });
     }
     return result;
@@ -5348,8 +5470,8 @@ export class DatabaseStorage {
     await db.update(students).set({ passwordHash }).where(eq(students.id, studentId));
   }
 
-  async getPendingProfilesCountForTeacher(schoolId: number, cls: string, section: string): Promise<number> {
-    const profiles = await this.getPendingProfilesForTeacher(schoolId, cls, section);
+  async getPendingProfilesCountForTeacher(schoolId: number, teacherId: number, sessionId: number): Promise<number> {
+    const profiles = await this.getPendingProfilesForTeacher(schoolId, teacherId, undefined, sessionId);
     return profiles.length;
   }
 

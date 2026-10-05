@@ -251,6 +251,10 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
     setAttendanceStatuses({});
   }, [data?.entries]);
   useEffect(() => {
+    setProfileReviewId(null);
+    setProfileEdits({});
+  }, [selectedId]);
+  useEffect(() => {
     setSubject(selectedScope?.subject ?? '');
   }, [selectedScopeKey, selectedScope?.subject]);
   useEffect(() => {
@@ -761,9 +765,9 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
         {data?.items?.length
           ? data.items.map((item, index) => <View key={item.studentId ?? index} style={styles.studentLeaveCard}>
             <RecordCard item={item} index={index} />
-            {profileReviewId === Number(item.studentId) && <>
+            {profileReviewId === Number(item.studentId) && item.status === 'pending' && <>
               <Text style={styles.sectionLabel}>Current vs requested</Text>
-              {['fullName', 'rollNo', 'phone', 'class', 'section', 'presentAddress'].map((field) => <View key={field}>
+              {['fullName', 'phone', 'presentAddress'].map((field) => <View key={field}>
                 <Text style={styles.muted}>{field} · current: {String(item.currentVerifiedProfile ? (() => {
                   try { return JSON.parse(String(item.currentVerifiedProfile))[field]; } catch { return ''; }
                 })() : '')}</Text>
@@ -772,15 +776,20 @@ function NativeTeacherModule({ module, user }: { module: ModuleId; user: MobileU
               </View>)}
               <Text style={styles.muted}>Photo status · current: {String(item.photoStatus ?? 'unknown')} · requested: {item.photoUrl ? 'pending' : 'none'}</Text>
             </>}
-            <ActionButton label={profileReviewId === Number(item.studentId) ? 'Approve edited profile' : 'Review details'} icon={profileReviewId === Number(item.studentId) ? 'check' : 'eye'}
+            <ActionButton label={profileReviewId === Number(item.studentId)
+              ? item.status === 'pending' ? 'Approve edited profile' : 'Approve photo request'
+              : 'Review details'} icon={profileReviewId === Number(item.studentId) ? 'check' : 'eye'}
               disabled={!canWrite} onPress={() => {
                 if (profileReviewId === Number(item.studentId)) {
-                  void submit('approve', { studentId: Number(item.studentId), corrections: profileEdits }, 'Student profile approved.', false);
+                  void submit('approve', {
+                    studentId: Number(item.studentId),
+                    corrections: item.status === 'pending' ? profileEdits : {},
+                  }, 'Student profile approved.', false);
                   setProfileReviewId(null); setProfileEdits({});
                 } else {
                   let current: Item = {};
                   try { current = item.currentVerifiedProfile ? JSON.parse(String(item.currentVerifiedProfile)) : {}; } catch { current = {}; }
-                  const fields = ['fullName', 'rollNo', 'phone', 'class', 'section', 'presentAddress'];
+                  const fields = ['fullName', 'phone', 'presentAddress'];
                   setProfileReviewId(Number(item.studentId));
                   setProfileEdits(Object.fromEntries(fields.map((field) => [field, String(item[field] ?? current[field] ?? '')])));
                 }
