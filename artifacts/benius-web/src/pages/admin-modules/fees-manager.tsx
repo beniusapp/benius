@@ -4360,7 +4360,7 @@ function StructuresTab({ isArchiveMode, canGenerateInvoices }: { isArchiveMode: 
     mutationFn: async () => {
       const freq = genTarget!.frequency;
       const body: Record<string, unknown> = {};
-      // Attach the admin-selected fee period for monthly/quarterly fees.
+      // Attach the selected fee period for monthly/quarterly fees.
       // Annual/one-time and the academic session are both resolved server-side automatically.
       if ((freq === "monthly" || freq === "quarterly") && genFeePeriodStart && genFeePeriodEnd) {
         body.feePeriodStart = genFeePeriodStart;

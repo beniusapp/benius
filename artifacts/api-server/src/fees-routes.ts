@@ -4136,7 +4136,7 @@ export function registerFeesRoutes(app: Express) {
     const actor = await resolveFeeAuditActor(req, schoolId);
 
     const parsed = z.object({
-      // feePeriodStart/feePeriodEnd: required for monthly/quarterly fees (admin picks the month).
+      // feePeriodStart/feePeriodEnd: required for monthly/quarterly fees (caller picks the month).
       // For annual/one-time the backend uses the active session dates automatically.
       feePeriodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
       feePeriodEnd:   z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),

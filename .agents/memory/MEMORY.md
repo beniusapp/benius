@@ -1,5 +1,5 @@
 - [BENIUS database preservation](benius-database-preservation.md) — avoid force-pushing the inherited schema when Drizzle proposes truncating populated tables.
-- [Fees Support Staff permissions](fees-support-staff-permissions.md) — preserve area boundaries, Admin-only exclusions, and narrow legacy Fees grant mapping.
+- [Fees Support Staff permissions](fees-support-staff-permissions.md) — bulk generation inherits Fee Structures; preserve other Admin-only boundaries and legacy mapping.
 - [BENIUS Web-first development](benius-web-first-development.md) — prioritize Web and required backend work; keep Mobile feature work frozen until explicitly requested.
 - [Native mobile auth boundary](native-mobile-auth-boundary.md) — keep mobile bearer auth separate from web cookies; browser preview is not a sign-in client.
 - [Student content boundaries](student-content-boundaries.md) — historical cohort controls session reads; new Student uploads need owner/reviewer-gated downloads.
