@@ -1,0 +1,473 @@
+BENIUS — FUTURE SHARED WEB + MOBILE API ARCHITECTURE
+
+IMPORTANT: READ-ONLY ARCHITECTURE AUDIT
+
+DO NOT CHANGE ANY CODE.
+
+DO NOT MODIFY WEB.
+
+DO NOT MODIFY MOBILE.
+
+DO NOT MODIFY DATABASE.
+
+DO NOT DELETE EXISTING MOBILE APIs.
+
+DO NOT DEPLOY OR PUBLISH.
+
+I want to plan the future architecture of BENIUS.
+
+Currently:
+
+- Web frontend = React
+- Mobile frontend = React Native
+- Backend = Node.js
+- Database = PostgreSQL
+- Web authentication = server session / HTTP-only cookie
+- Mobile authentication = bearer access/refresh tokens
+- Web and Mobile currently have many separate API routes
+- Some business rules have become duplicated and inconsistent between Web and Mobile
+
+Mobile development is currently FROZEN.
+
+Web + backend + database will be completed first.
+
+---
+
+FUTURE TARGET
+
+After the Web application is complete, I want BENIUS to move toward this architecture:
+
+                REACT WEB
+                    |
+                    |
+             SHARED API ROUTES
+                    |
+              NODE.JS BACKEND
+                    |
+            ONE BUSINESS LOGIC
+                    |
+               POSTGRESQL
+                    |
+             REACT NATIVE
+                   MOBILE
+
+More accurately:
+
+          React Web       React Native
+              \               /
+               \             /
+                SHARED APIs
+                    |
+              AUTHENTICATION
+              /             \
+       Web Cookie       Mobile Token
+              \             /
+               Authenticated User
+                    |
+            SAME BUSINESS RULES
+                    |
+               SAME DATABASE
+
+---
+
+MAIN PRINCIPLE
+
+I do NOT want separate:
+
+- Web Attendance business logic
+- Mobile Attendance business logic
+
+or separate:
+
+- Web Homework business logic
+- Mobile Homework business logic
+
+or similar duplicated business rules.
+
+I want one authoritative BENIUS backend business rule wherever practical.
+
+Web and Mobile should become different frontend clients of the same BENIUS backend.
+
+---
+
+AUTHENTICATION REQUIREMENT
+
+Web and Mobile do NOT need to authenticate in exactly the same way.
+
+Keep the concept:
+
+WEB
+
+HTTP-only cookie / server session
+
+MOBILE
+
+Bearer access token / refresh token
+
+But after authentication, both mechanisms should resolve to a common trusted authenticated identity.
+
+Conceptually:
+
+Web Cookie
+
+→ Authentication Layer
+/
+Mobile Bearer Token
+
+        ↓
+
+Authenticated principal:
+
+- user ID
+
+- role
+
+- school ID
+
+- Teacher/Student/Admin identity as applicable
+  
+        ↓
+
+Same authorization/business logic.
+
+The business layer should NOT need separate rules simply because the request came from Web or Mobile.
+
+---
+
+EXAMPLE — ATTENDANCE
+
+Future desired concept:
+
+React Web
+
+→ POST /api/teacher/attendance
+/
+React Native
+
+Backend authenticates:
+
+Web → cookie/session
+
+Mobile → bearer token
+
+Both resolve to the authenticated Teacher.
+
+Then ONE Attendance business rule checks:
+
+- authenticated Teacher
+- Teacher school
+- requested school/resource belongs to same tenant
+- selected Academic Session
+- valid class/section
+- selected-session Student enrollment
+- active-session requirement for writes
+- historical-session read-only rule
+
+Then the operation is performed.
+
+There must NOT be:
+
+Web Attendance Rule A
+
+and
+
+Mobile Attendance Rule B.
+
+---
+
+SAME PRINCIPLE FOR OTHER MODULES
+
+Study whether this future shared approach can be used for:
+
+- Attendance
+- Homework
+- Classwork
+- Timetable
+- Noticeboard
+- Examination
+- Results/Reports
+- Complaint
+- Leave
+- Approval Center
+- Student Profiles
+- Faculty Information
+- Gallery
+- School Calendar
+- Library
+- Teacher Profile
+
+Also consider Principal/Admin and Student APIs at an architectural level where relevant.
+
+DO NOT implement anything.
+
+---
+
+IMPORTANT
+
+I am NOT asking you to blindly make every existing Web route the shared route.
+
+First determine whether the current Web API is:
+
+- secure
+- tenant-safe
+- properly authenticated
+- session-safe
+- correctly validated
+- suitable for Mobile
+- using stable request/response contracts
+
+Some existing Web APIs may themselves need correction before becoming shared APIs.
+
+---
+
+TENANT ISOLATION
+
+Any future shared API must preserve strict multi-tenancy.
+
+Authenticated School A user:
+
+→ School A resources only.
+
+School A:
+
+→ School B resources = REJECT.
+
+Never trust client-supplied:
+
+- schoolId
+- teacherId
+- studentId
+- role
+
+as authorization.
+
+Derive trusted identity and tenant from authentication/server-side records.
+
+---
+
+ACADEMIC SESSION
+
+Session-sensitive shared APIs must preserve:
+
+- explicit selected Academic Session
+- school ownership of session
+- selected-session reads
+- active-session writes
+- historical sessions strictly read-only
+- no silent active-session fallback
+- selected-session Student enrollment where required
+
+---
+
+BUSINESS LOGIC LOCATION
+
+Audit where current business rules exist.
+
+Classify each important rule as currently living in:
+
+1. Web frontend
+2. Web API route
+3. Mobile frontend
+4. Mobile API route
+5. Shared helper/service
+6. Storage layer
+7. Database
+
+Identify duplicated rules.
+
+---
+
+DESIRED FUTURE STRUCTURE
+
+Evaluate whether BENIUS can gradually move toward something conceptually similar to:
+
+API ROUTE
+↓
+AUTHENTICATION
+↓
+AUTHORIZATION
+↓
+BUSINESS SERVICE
+↓
+STORAGE/DATABASE
+
+For example:
+
+Web request ──────┐
+↓
+Attendance Service
+↑
+Mobile request ───┘
+
+The shared service should contain the important Attendance business rules.
+
+Do NOT create this service now.
+
+This is architecture planning only.
+
+---
+
+SHARED ROUTE VS SHARED SERVICE
+
+For every module determine which future approach is better:
+
+OPTION A — SAME API ROUTE
+
+Web and Mobile call the exact same endpoint.
+
+Example:
+
+"POST /api/teacher/attendance"
+
+The endpoint supports both cookie/session and bearer authentication.
+
+OR:
+
+OPTION B — SEPARATE ENTRY ROUTES, SHARED SERVICE
+
+Web and Mobile retain separate HTTP routes/authentication adapters, but both call the exact same internal business service.
+
+Example:
+
+Web route ──┐
+→ AttendanceService
+Mobile route┘
+
+Business rules must not be duplicated.
+
+Explain which option is safer/easier for the existing BENIUS architecture.
+
+---
+
+VERY IMPORTANT — DO NOT MIGRATE NOW
+
+Mobile remains frozen.
+
+Do NOT:
+
+- delete "/api/mobile/..."
+- redirect Mobile APIs
+- merge routes
+- modify authentication
+- change tokens
+- change cookies
+- change React Native
+- change Web requests
+- create shared services
+- perform route migration
+
+I only want the plan.
+
+---
+
+MIGRATION PLAN
+
+Provide a safe future migration plan for AFTER Web is complete.
+
+The plan should avoid breaking the working Web application.
+
+For example, explain whether we should:
+
+1. Finish Web.
+2. Stabilize Web APIs/business rules.
+3. Audit backend authorization.
+4. Extract shared business services where appropriate.
+5. Make authentication resolve to a common trusted user/principal.
+6. Decide module-by-module whether exact routes can be shared.
+7. Connect React Native to finalized APIs.
+8. Test Web and Mobile against identical business-rule cases.
+9. Retire obsolete duplicated Mobile routes only after replacement is verified.
+
+Improve this sequence if the actual codebase suggests a safer approach.
+
+---
+
+REQUIRED REPORT
+
+Return:
+
+BENIUS SHARED API ARCHITECTURE AUDIT
+
+Current architecture
+
+Explain simply.
+
+Current Web authentication
+
+Current Mobile authentication
+
+Can both authentication methods safely support shared APIs?
+
+YES / NO / WITH CHANGES
+
+Explain why.
+
+Current duplicated business logic
+
+List exact modules/routes/helpers.
+
+Existing shared logic
+
+List what is already shared.
+
+Recommended future architecture
+
+Show a simple diagram.
+
+Same-route candidates
+
+List modules where exact same Web/Mobile route appears practical.
+
+Shared-service candidates
+
+List modules where separate entry routes may be preferable but business logic should be shared.
+
+Authentication unification design
+
+Explain how cookie/session and bearer-token requests can resolve to the same trusted user identity without weakening security.
+
+Tenant-isolation design
+
+Academic-Session design
+
+Migration risks
+
+Safe migration sequence
+
+Give numbered steps.
+
+What should be done NOW?
+
+The expected answer should respect that Mobile is currently frozen and Web is being completed first.
+
+What should be done AFTER WEB IS COMPLETE?
+
+Code changes
+
+NONE.
+
+Database changes
+
+NONE.
+
+Mobile changes
+
+NONE.
+
+Deployment
+
+NONE.
+
+Final recommendation
+
+Answer clearly:
+
+Should BENIUS eventually use one authoritative backend business layer for both Web and Mobile?
+
+And:
+
+Should Web and Mobile use the exact same API routes everywhere, or should some routes remain separate while sharing the same underlying business services?
+
+STOP after the report.
+
+Do not implement anything.
