@@ -1602,6 +1602,7 @@ export default function AdminDashboard() {
     queryKey: ["/api/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+  const isPrincipalAdmin = me?.role === "admin";
 
   // Tenant-scoped school profile — used by the header logo.
   // Keyed by schoolId so each school gets its own cache slot; resolved server-side
@@ -1612,7 +1613,7 @@ export default function AdminDashboard() {
       const r = await fetch("/api/admin/profile", { credentials: "include" });
       return r.ok ? r.json() : null;
     },
-    enabled: !!me,
+    enabled: isPrincipalAdmin,
   });
 
   useEffect(() => {
@@ -1864,6 +1865,44 @@ export default function AdminDashboard() {
     ? me.displayName.trim().split(/\s+/).slice(0, 2).map((w: string) => w[0].toUpperCase()).join("")
     : me.email.split("@")[0].split(/[._-]/).filter(Boolean).map((w: string) => w[0].toUpperCase()).slice(0, 2).join("");
 
+  const profileIdentityContent = (
+    <>
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
+        style={{
+          background: "linear-gradient(135deg, rgba(99,102,241,0.35), rgba(6,182,212,0.35))",
+          border: "2px solid rgba(6,182,212,0.40)",
+        }}
+        data-testid="div-navbar-initials"
+      >
+        {isPrincipalAdmin && adminProfile?.logoUrl
+          ? <img
+              src={adminProfile.logoUrl}
+              alt="School logo"
+              className="w-full h-full object-contain"
+              onError={e => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+                const parent = e.currentTarget.parentElement;
+                if (parent) {
+                  const span = document.createElement("span");
+                  span.className = "text-[10px] font-bold text-teal-300";
+                  span.textContent = adminInitials;
+                  parent.appendChild(span);
+                }
+              }}
+            />
+          : <span className="text-[10px] font-bold text-teal-300">{adminInitials}</span>
+        }
+      </div>
+      <div className="hidden sm:block text-right">
+        <p className="text-xs font-semibold text-white leading-none" data-testid="text-admin-email">
+          {me.email.split("@")[0]}
+        </p>
+        <p className="text-[10px] text-white/40 mt-0.5">{me.schoolName}</p>
+      </div>
+    </>
+  );
+
   return (
     <SessionViewContext.Provider value={{
       sessions,
@@ -1938,46 +1977,23 @@ export default function AdminDashboard() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            {/* Initials avatar — taps to open profile */}
-            <button
-              onClick={() => setShowProfile(true)}
-              data-testid="button-open-profile"
-              className="flex items-center gap-2"
-            >
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden"
-                style={{
-                  background: "linear-gradient(135deg, rgba(99,102,241,0.35), rgba(6,182,212,0.35))",
-                  border: "2px solid rgba(6,182,212,0.40)",
-                }}
-                data-testid="div-navbar-initials"
+            {isPrincipalAdmin ? (
+              <button
+                type="button"
+                onClick={() => setShowProfile(true)}
+                data-testid="button-open-profile"
+                className="flex items-center gap-2"
               >
-                {adminProfile?.logoUrl
-                  ? <img
-                      src={adminProfile.logoUrl}
-                      alt="School logo"
-                      className="w-full h-full object-contain"
-                      onError={e => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
-                        const parent = e.currentTarget.parentElement;
-                        if (parent) {
-                          const span = document.createElement("span");
-                          span.className = "text-[10px] font-bold text-teal-300";
-                          span.textContent = adminInitials;
-                          parent.appendChild(span);
-                        }
-                      }}
-                    />
-                  : <span className="text-[10px] font-bold text-teal-300">{adminInitials}</span>
-                }
+                {profileIdentityContent}
+              </button>
+            ) : (
+              <div
+                data-testid="support-staff-identity"
+                className="flex items-center gap-2"
+              >
+                {profileIdentityContent}
               </div>
-              <div className="hidden sm:block text-right">
-                <p className="text-xs font-semibold text-white leading-none" data-testid="text-admin-email">
-                  {me.email.split("@")[0]}
-                </p>
-                <p className="text-[10px] text-white/40 mt-0.5">{me.schoolName}</p>
-              </div>
-            </button>
+            )}
 
             {/* Logout */}
             <button
@@ -2437,7 +2453,7 @@ export default function AdminDashboard() {
         </p>
       </footer>
 
-      {showProfile && <AdminProfilePanel me={me} onClose={() => setShowProfile(false)} />}
+      {isPrincipalAdmin && showProfile && <AdminProfilePanel me={me} onClose={() => setShowProfile(false)} />}
     </div>
     </SessionViewContext.Provider>
   );

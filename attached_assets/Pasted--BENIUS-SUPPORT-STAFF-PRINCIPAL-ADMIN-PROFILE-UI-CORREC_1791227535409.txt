@@ -1,0 +1,282 @@
+# BENIUS — SUPPORT STAFF
+## PRINCIPAL/ADMIN PROFILE UI CORRECTION
+
+I now authorize the previously audited Support Staff / Principal Profile UI correction.
+
+This is a SMALL WEB UI correction.
+
+Do NOT modify Support Staff module permissions.
+
+Do NOT modify Academic Session behavior.
+
+Do NOT modify Mobile.
+
+Do NOT modify database/schema.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+Support Staff logs in through the Principal/Admin portal and works on modules granted by Principal.
+
+However:
+
+> Principal/Admin Profile and account settings belong ONLY to Principal/Admin.
+
+Support Staff must NOT have access to the Principal/Admin Profile interface.
+
+---
+
+# CURRENT BEHAVIOR
+
+When Support Staff logs in, the top-right header correctly displays the Support Staff's own identity, for example:
+
+```text id="mx3n9r"
+supportstaff1mis
+Marry Immaculate School
+Logout
+```
+
+This is correct and should remain.
+
+However, clicking the identity/profile area currently opens the Admin Profile drawer containing:
+
+- Profile
+- School
+- Password
+- PIN
+- Log
+- Recovery Email
+- Recovery Phone
+- account/PIN information
+- Save Changes
+- other Principal/Admin account controls
+
+This is incorrect for Support Staff.
+
+---
+
+# REQUIRED BEHAVIOR
+
+## Principal/Admin
+
+NO CHANGE.
+
+Principal/Admin must continue to have:
+
+- clickable Profile/account control;
+- Profile drawer;
+- Profile tab;
+- School tab;
+- Password tab;
+- PIN tab;
+- Log/Security Log;
+- recovery settings;
+- existing Principal/Admin account functionality.
+
+---
+
+## Support Staff
+
+Keep the top-right identity display:
+
+- Support Staff name/username
+- school name
+- avatar/initial if currently displayed
+- Logout
+
+But this identity display must NOT provide access to the Principal/Admin Profile.
+
+For:
+
+`userRole === "support_staff"`
+
+or the canonical existing Support Staff role check:
+
+### DO NOT
+
+- open Admin Profile drawer;
+- render Admin Profile tabs;
+- request `/api/admin/profile`;
+- request Principal account/security information merely because the header is rendered;
+- expose School settings;
+- expose Password settings;
+- expose PIN settings;
+- expose Security Log;
+- expose recovery settings;
+- expose Principal/Admin profile actions.
+
+The Support Staff identity area may simply be **non-clickable**.
+
+Do NOT create a new Support Staff Profile page in this task.
+
+---
+
+# BACKEND
+
+The previous audit confirmed the Principal/Admin Profile APIs already require Admin authorization.
+
+KEEP those protections.
+
+Do NOT loosen backend authorization.
+
+Do NOT make `/api/admin/profile` accessible to Support Staff.
+
+This correction is about preventing the Support Staff Web UI from opening/rendering Principal/Admin Profile functionality.
+
+---
+
+# IMPORTANT
+
+Support Staff must still be able to:
+
+- remain logged in;
+- see their own name/username in the header;
+- see their school name;
+- logout;
+- use their granted modules;
+- use the Academic Session selector;
+- use Fees & Payments according to the permissions already implemented.
+
+None of those should be affected.
+
+---
+
+# DO NOT TOUCH
+
+Do NOT change:
+
+- Support Staff login
+- Support Staff credentials
+- `allowedModules`
+- Fees & Payments permissions
+- Academic Session selector
+- Principal/Admin login
+- Principal/Admin Profile behavior
+- Principal/Admin security settings
+- other modules
+- backend module authorization
+- database
+- Mobile
+
+---
+
+# VALIDATION
+
+Verify:
+
+### Principal/Admin
+
+Header Profile → clickable
+
+Admin Profile drawer → opens
+
+Profile → works
+
+School → works
+
+Password → works
+
+PIN → works
+
+Log → works
+
+Existing behavior unchanged.
+
+### Support Staff
+
+Own name → visible
+
+Own school → visible
+
+Logout → works
+
+Principal/Admin Profile drawer → cannot open
+
+Profile/School/Password/PIN/Log controls → not rendered
+
+`/api/admin/profile` → not requested from the Support Staff UI
+
+Granted modules → unaffected
+
+Academic Session selector → unaffected
+
+Fees permissions → unaffected
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## SUPPORT STAFF — ADMIN PROFILE UI CORRECTION
+
+### Previous behavior
+
+### New behavior
+
+### Files changed
+
+### Support Staff identity in header
+VISIBLE / HIDDEN
+
+Expected: VISIBLE
+
+### Support Staff Admin Profile trigger
+AVAILABLE / NOT AVAILABLE
+
+Expected: NOT AVAILABLE
+
+### Admin Profile drawer for Support Staff
+AVAILABLE / NOT AVAILABLE
+
+Expected: NOT AVAILABLE
+
+### `/api/admin/profile` requested by Support Staff UI
+YES / NO
+
+Expected: NO
+
+### Principal/Admin Profile
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED
+
+### Support Staff module permissions
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED
+
+### Academic Session behavior
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED
+
+### Fees & Payments behavior
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED
+
+### Backend Admin Profile authorization
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED
+
+### Database/schema changes
+NONE
+
+### Mobile changes
+NONE
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
