@@ -1,0 +1,422 @@
+# BENIUS — SUPPORT STAFF → PRINCIPAL/ADMIN SHARED SCHOOL DATA AUDIT
+
+## READ-ONLY AUDIT ONLY
+
+DO NOT CHANGE CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT CHANGE PERMISSIONS.
+
+DO NOT MODIFY MOBILE.
+
+DO NOT DEPLOY.
+
+---
+
+# WHAT I WANT TO VERIFY
+
+Support Staff is created by the Principal/Admin of a school.
+
+Support Staff works as an operational assistant to that Principal/Admin.
+
+Therefore:
+
+> Whatever an authorized Support Staff member does inside a module granted by Principal/Admin must operate on the SAME school data used by Principal/Admin.
+
+Support Staff must NOT have a separate copy of school operational data.
+
+---
+
+# SIMPLE EXAMPLE
+
+Principal/Admin of School A grants:
+
+**Fees & Payments → Fee Structures**
+
+Support Staff logs in and creates a Fee Structure.
+
+Expected:
+
+```text id="pgnwub"
+Support Staff
+     ↓
+Creates Fee Structure
+     ↓
+School A shared database/data
+     ↓
+Principal/Admin logs in
+     ↓
+Principal sees the SAME Fee Structure
+```
+
+There should NOT be:
+
+```text id="p3kxjz"
+Principal Fees Data
+       ≠
+Support Staff Fees Data
+```
+
+---
+
+# IMPORTANT TERMINOLOGY
+
+Do NOT interpret “save in Principal portal” as saving data under the Principal user's personal account ID.
+
+The intended architecture is:
+
+> Data belongs to the SCHOOL/TENANT and, where applicable, the Academic Session.
+
+Principal/Admin and authorized Support Staff are two authenticated users operating on that SAME school data.
+
+Support Staff actions should remain attributable to the Support Staff actor where audit/history information exists.
+
+In other words:
+
+```text id="c5dzgt"
+DATA OWNER/SCOPE:
+School A
+
+ACTION PERFORMED BY:
+Support Staff X
+
+VISIBLE TO:
+Principal/Admin of School A
+and other properly authorized users
+```
+
+Do NOT rewrite Support Staff actions to falsely appear as though Principal personally performed them.
+
+---
+
+# MAIN AUDIT QUESTION
+
+When Support Staff performs an authorized action today:
+
+1. Is the resulting data written to the SAME tables/records/storage used by Principal/Admin?
+2. Is it scoped to the SAME authenticated school?
+3. Is the result immediately available to Principal/Admin through the normal Principal/Admin module?
+4. Is there any separate Support Staff-only operational dataset?
+5. Does any Support Staff route save data in a way that Principal/Admin cannot subsequently see?
+6. Does any Support Staff operation incorrectly associate records with the negative Support Staff `userId` where a school/Admin ownership ID is expected?
+7. Are creator/audit fields correctly recording the actual Support Staff actor without changing school ownership?
+
+---
+
+# AUDIT THE CURRENT SUPPORT STAFF ARCHITECTURE
+
+Trace:
+
+```text id="trj27e"
+Support Staff login
+      ↓
+Authenticated staff identity
+      ↓
+Authenticated school/tenant
+      ↓
+allowedModules
+      ↓
+Granted module API
+      ↓
+Storage/database
+      ↓
+Principal/Admin reads same data
+```
+
+Confirm whether this is actually how BENIUS currently works.
+
+---
+
+# SCHOOL/TENANT OWNERSHIP
+
+This is critical.
+
+Support Staff created by:
+
+**Principal/Admin → School A**
+
+must operate ONLY on:
+
+**School A data**
+
+Never:
+
+**School B data**
+
+Verify that Support Staff actions derive/validate the school from authenticated server-side identity rather than trusting a client-provided school ID.
+
+---
+
+# ACADEMIC SESSION
+
+For session-specific operations, verify that both Principal and Support Staff operate against:
+
+**Same School + Same Academic Session records**
+
+Example:
+
+```text id="ozxexu"
+School A
+Academic Session 2026–27
+
+Principal action
+        ↓
+School A + Session 2026–27
+
+Support Staff action
+        ↓
+School A + Session 2026–27
+```
+
+Historical-session read-only rules must remain unchanged.
+
+---
+
+# FEES & PAYMENTS — CHECK FIRST
+
+We recently corrected Support Staff Fees & Payments.
+
+Audit this thoroughly.
+
+For every Support Staff Fees operation currently allowed, verify that the result is visible to Principal/Admin through the SAME Fees & Payments module.
+
+Include:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+- Generate Invoices
+
+Example:
+
+Support Staff creates/changes a Fee Structure.
+
+Does Principal immediately read the SAME Fee Structure?
+
+Support Staff records a transaction/payment where permitted.
+
+Does Principal see the SAME transaction?
+
+Support Staff generates invoices.
+
+Does Principal see those SAME invoices?
+
+Support Staff creates/updates reminders where supported.
+
+Does Principal see those SAME reminders?
+
+Do NOT change External Portal. It remains Principal/Admin-only.
+
+---
+
+# OTHER SUPPORT STAFF MODULES
+
+For every currently grantable Support Staff module, inspect the architecture and determine whether Support Staff and Principal use the same underlying school data.
+
+Do NOT fix the existing capability/permission gaps during this audit.
+
+The question here is specifically:
+
+> When Support Staff CAN successfully perform an operation, is that operation performed against the same school data that Principal/Admin uses?
+
+---
+
+# VERY IMPORTANT — ACTOR ATTRIBUTION
+
+Shared data does NOT mean pretending Principal performed the action.
+
+If Support Staff performs:
+
+```text id="bfr89u"
+Record Payment
+```
+
+then ideally:
+
+```text id="m7moyz"
+School ownership:
+School A
+
+Academic Session:
+2026–27 where applicable
+
+Performed by:
+Support Staff X
+```
+
+Principal should see the resulting school transaction, while audit/history should identify Support Staff X where BENIUS supports actor tracking.
+
+Verify how the current code handles:
+
+- createdBy
+- updatedBy
+- performedBy
+- actor ID
+- actor role
+- audit log
+- negative Support Staff user IDs
+
+or equivalent fields.
+
+Report inconsistencies.
+
+DO NOT change them.
+
+---
+
+# CHECK FOR BAD PATTERNS
+
+Specifically look for:
+
+### A. Separate Support Staff data
+
+Support Staff action writes somewhere different from Principal operational data.
+
+### B. Principal cannot see Staff-created data
+
+Staff successfully creates something but normal Principal query excludes it because of creator/user filtering.
+
+### C. Incorrect ownership
+
+Record is owned by Support Staff user rather than the school where school ownership is intended.
+
+### D. Negative-ID problems
+
+Support Staff's negative compatibility `userId` is written into a field that expects an Admin `users.id`, causing broken reads/relationships.
+
+### E. Wrong Academic Session
+
+Staff action writes to active session while Principal/Staff selected another session incorrectly.
+
+### F. Cross-school possibility
+
+Staff can write/read another school's data.
+
+### G. Incorrect attribution
+
+Staff action is stored/audited as though Principal performed it.
+
+---
+
+# DO NOT FIX ANYTHING
+
+This is a READ-ONLY AUDIT.
+
+If you find a problem, report it.
+
+Do not modify the architecture.
+
+Do not create new tables.
+
+Do not alter ownership.
+
+Do not modify Support Staff permissions.
+
+---
+
+# REQUIRED REPORT
+
+Return:
+
+# SUPPORT STAFF → PRINCIPAL SHARED DATA AUDIT
+
+## Overall verdict
+
+Choose:
+
+- PASS — SAME SCHOOL DATA
+- MOSTLY SHARED, GAPS FOUND
+- DATA OWNERSHIP PROBLEMS FOUND
+- CRITICAL TENANT/DATA ISOLATION ISSUE
+
+## Simple answer
+
+Answer:
+
+**When Support Staff performs an authorized operation, is it saved into the same school operational data that Principal/Admin uses and sees?**
+
+YES / NO / PARTIALLY
+
+Explain simply.
+
+## Architecture
+
+Show:
+
+Support Staff → API → School/Session → Storage/DB → Principal view
+
+## Separate Support Staff operational database/data?
+
+YES / NO
+
+## Fees & Payments
+
+For each:
+
+| Operation | Staff writes/uses same school data? | Principal sees same result? | Actor attribution |
+|---|---|---|---|
+| Financial Analytics | | | |
+| Fee Structures | | | |
+| Ledger & Transactions | | | |
+| Reminders | | | |
+| Generate Invoices | | | |
+| Audit Log | | | |
+
+## Other modules
+
+Report whether successful Support Staff operations use the same Principal/Admin school data.
+
+## School ownership
+
+Explain how school/tenant is derived and enforced.
+
+## Academic Session ownership
+
+Explain whether Staff and Principal use the same School + Academic Session data.
+
+## Actor attribution
+
+Explain whether the system preserves:
+
+**Support Staff performed the action**
+
+while keeping:
+
+**School owns the operational data**
+
+## Negative Support Staff ID
+
+Explain whether the negative compatibility `userId` creates any incorrect ownership, foreign-key, audit, or visibility problem.
+
+## Principal visibility gaps
+
+List any successful Support Staff action that Principal/Admin cannot subsequently see through the normal module.
+
+## Cross-school problems
+
+List any Support Staff operation that could affect another school.
+
+## Final answer
+
+Answer explicitly:
+
+**Does Support Staff act as an authorized worker of the Principal's school, with their successful actions affecting the same school data that Principal/Admin sees?**
+
+YES / NO / PARTIALLY
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Mobile changes
+NONE
+
+## Deployment
+NONE
+
+STOP after the report.
