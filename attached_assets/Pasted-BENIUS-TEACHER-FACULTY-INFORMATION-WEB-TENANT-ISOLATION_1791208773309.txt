@@ -1,0 +1,415 @@
+BENIUS — TEACHER FACULTY INFORMATION
+
+WEB TENANT-ISOLATION SECURITY FIX
+
+IMPORTANT DEVELOPMENT SCOPE
+
+BENIUS Mobile development is currently FROZEN.
+
+For this task:
+
+- Work only on the Web application and the backend code required for this Web security correction.
+- DO NOT modify Mobile screens.
+- DO NOT modify Mobile API routes.
+- DO NOT modify Mobile tests.
+- DO NOT attempt Web ↔ Mobile parity work.
+- DO NOT perform unrelated refactoring.
+- DO NOT deploy or publish.
+
+---
+
+PROBLEM IDENTIFIED
+
+The previous Teacher Web ↔ Mobile parity audit found a potential HIGH-severity tenant-isolation problem in:
+
+Teacher Portal → Faculty Information
+
+The audit reported that the Web Faculty Information frontend calls an API similar to:
+
+"/api/faculty/:schoolId"
+
+and that the backend authenticates the request but may not verify that the requested "schoolId" actually belongs to the authenticated Teacher.
+
+If confirmed, this could potentially allow:
+
+Teacher from School A
+→ manually request School B schoolId
+→ receive School B Faculty Information.
+
+This must NEVER be possible in BENIUS.
+
+---
+
+PERMANENT BENIUS TENANT RULE
+
+BENIUS is a multi-tenant application.
+
+A Teacher authenticated under:
+
+School A
+
+may access Faculty Information only for:
+
+School A
+
+They must NEVER be able to access:
+
+School B faculty data
+
+even if they manually modify:
+
+- URL
+- path parameter
+- API request
+- browser developer tools
+- frontend state
+- request payload
+- query parameter
+
+Frontend controls alone are NOT sufficient.
+
+The backend must enforce tenant isolation.
+
+---
+
+STEP 1 — VERIFY BEFORE CHANGING
+
+First inspect the actual current implementation.
+
+Identify:
+
+1. Teacher Faculty Information Web component/page.
+2. Exact API endpoint called by Web.
+3. Backend route handler.
+4. Authentication middleware.
+5. How authenticated Teacher identity is resolved.
+6. How authenticated Teacher's "schoolId" is determined.
+7. How requested/path "schoolId" is currently handled.
+8. Storage/database query used to retrieve Faculty Information.
+9. Whether storage itself is school-scoped.
+10. Existing tests covering this endpoint.
+
+Confirm whether the parity audit finding is accurate.
+
+If the endpoint is already safely tenant-bound through another verified mechanism, STOP and explain why.
+
+Do NOT make unnecessary changes.
+
+---
+
+STEP 2 — REQUIRED SECURITY BEHAVIOR
+
+If the vulnerability is confirmed, correct it with the smallest safe backend change.
+
+The backend must derive/trust the Teacher's school from the authenticated server-side Teacher identity.
+
+Conceptually:
+
+Authenticated Teacher
+→ resolve actual Teacher record
+→ obtain trusted "teacher.schoolId"
+→ authorize Faculty Information only for that school.
+
+Never trust a client-supplied school ID as authorization.
+
+---
+
+PATH PARAMETER
+
+If the existing endpoint remains:
+
+"/api/faculty/:schoolId"
+
+then the backend must verify:
+
+"requestedSchoolId === authenticatedTeacher.schoolId"
+
+before retrieving faculty data.
+
+If they do not match:
+
+REJECT THE REQUEST.
+
+Do not query the foreign school's faculty first and filter afterward.
+
+---
+
+IMPORTANT
+
+Do NOT silently replace a foreign requested school ID with the Teacher's real school ID.
+
+For example, this is NOT desired:
+
+Teacher School A requests School B
+→ backend silently changes it to School A
+→ returns School A.
+
+Instead:
+
+Teacher School A requests School B
+→ REJECT
+
+This makes unauthorized requests explicit and prevents hidden authorization mistakes.
+
+Use the project's existing appropriate authorization error convention/status.
+
+Do not invent inconsistent error handling if BENIUS already has a standard.
+
+---
+
+AUTHENTICATED IDENTITY
+
+Authorization must be based on trusted server-side authentication/session information.
+
+Do NOT authorize using client-controlled values such as:
+
+- "schoolId" supplied by frontend
+- "teacherId" supplied by frontend
+- query parameters
+- request body identity fields
+- localStorage/sessionStorage values
+
+The frontend may send routing/context information, but it must not determine authorization.
+
+---
+
+STORAGE / DATABASE
+
+Faculty query must remain strictly school-scoped.
+
+Conceptually:
+
+Faculty
+WHERE school_id = authenticatedTeacher.schoolId
+
+Do not return cross-school records.
+
+If the existing storage function already requires schoolId, pass only the validated/trusted school ID after authorization.
+
+Do NOT redesign the schema.
+
+---
+
+WEB FRONTEND
+
+Do not redesign Faculty Information.
+
+If the Web frontend already sends the logged-in Teacher's schoolId correctly, leave the normal UI behavior unchanged.
+
+This task is primarily about ensuring that manually altering the request cannot bypass tenant isolation.
+
+Only make a Web frontend change if genuinely necessary for correctness.
+
+---
+
+TESTS — REQUIRED
+
+Add/update focused regression tests.
+
+At minimum verify:
+
+Test 1 — SAME SCHOOL
+
+Teacher authenticated in School A
+→ requests School A Faculty Information
+→ SUCCESS.
+
+Test 2 — FOREIGN SCHOOL
+
+Teacher authenticated in School A
+→ requests School B Faculty Information
+→ REJECTED.
+
+Absolutely no School B faculty data should be returned.
+
+Test 3 — UNAUTHENTICATED
+
+Unauthenticated request
+→ REJECTED according to existing BENIUS authentication behavior.
+
+Test 4 — INVALID/NONEXISTENT SCHOOL
+
+Confirm safe existing behavior for an invalid/nonexistent school ID without leaking tenant information.
+
+Use the existing project conventions.
+
+---
+
+CROSS-TENANT DATA LEAK CHECK
+
+Specifically verify that the response cannot include Faculty records whose school does not equal the authenticated Teacher's school.
+
+If practical, construct the regression fixture with:
+
+School A
+
+- Teacher A
+- Faculty A
+
+School B
+
+- Teacher B
+- Faculty B
+
+Authenticate as Teacher A.
+
+Expected:
+
+Faculty A → accessible according to existing rules.
+
+Faculty B → NEVER returned.
+
+---
+
+DO NOT CHANGE PRODUCT LOGIC
+
+This task does NOT authorize changing:
+
+- Faculty Information fields
+- Teacher profile behavior
+- Faculty visibility within the same school
+- Academic Session behavior
+- Teacher assignments
+- Student permissions
+- Admin behavior
+- Attendance
+- Homework
+- Classwork
+- Examination
+- Leave
+- Noticeboard
+- Timetable
+- Library
+
+Only correct the Faculty Information tenant-isolation issue if confirmed.
+
+---
+
+ACADEMIC SESSION
+
+Faculty Information is currently treated as a global/current school directory.
+
+Do NOT make Faculty Information Academic-Session-specific as part of this fix.
+
+This task is tenant isolation only.
+
+---
+
+MOBILE FREEZE
+
+Very important:
+
+Do NOT modify:
+
+"artifacts/benius-mobile/"
+
+Do NOT change Mobile Faculty Information.
+
+Do NOT change "/api/mobile/..." behavior.
+
+If the backend code you need to modify is unexpectedly shared with Mobile and the correction could alter Mobile behavior, STOP and report the dependency before making that shared change.
+
+---
+
+NO LARGE REFACTOR
+
+Do NOT:
+
+- merge Web and Mobile APIs
+- redesign authentication
+- create a new API architecture
+- migrate database tables
+- refactor unrelated Teacher routes
+- clean up unrelated code
+
+Use the smallest safe correction.
+
+---
+
+VALIDATION
+
+After the correction, run only the focused/relevant tests and appropriate build/typecheck checks.
+
+Do not spend time fixing unrelated pre-existing TypeScript diagnostics.
+
+If broad project diagnostics already exist, distinguish:
+
+pre-existing diagnostics
+
+from:
+
+new diagnostics introduced by this change.
+
+There must be no new relevant errors caused by this correction.
+
+---
+
+REQUIRED FINAL REPORT
+
+Return:
+
+TEACHER FACULTY INFORMATION — TENANT ISOLATION FIX
+
+Audit result
+
+- Was the reported vulnerability confirmed? YES / NO
+- Explain exactly why.
+
+Root cause
+
+Explain in simple language.
+
+Files changed
+
+List exact files.
+
+Previous behavior
+
+New behavior
+
+Tenant isolation verification
+
+Explicitly state:
+
+- School A Teacher → School A Faculty: ALLOWED / REJECTED
+- School A Teacher → School B Faculty: ALLOWED / REJECTED
+
+Authentication source
+
+Explain what trusted server-side identity/school value now authorizes the request.
+
+Database/storage scope
+
+Explain how faculty retrieval is school-scoped.
+
+Tests
+
+List tests run and results.
+
+Web impact
+
+State whether normal Web Faculty Information behavior changed.
+
+Mobile impact
+
+Must state whether any Mobile file/API/behavior was changed.
+
+Database changes
+
+YES / NO
+
+Deployment
+
+YES / NO
+
+Final verdict
+
+Choose:
+
+PASS — TENANT ISOLATION ENFORCED
+
+or
+
+NEEDS CHANGES
+
+Do not begin another task after completing this correction.
