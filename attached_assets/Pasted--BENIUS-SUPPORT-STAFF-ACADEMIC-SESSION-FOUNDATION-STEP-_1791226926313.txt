@@ -1,0 +1,451 @@
+# BENIUS — SUPPORT STAFF ACADEMIC SESSION FOUNDATION
+## STEP — SHARED ACADEMIC SESSION SELECTOR CORRECTION
+
+We completed the read-only Principal/Admin vs Support Staff Academic Session audit.
+
+The audit confirmed:
+
+- Principal/Admin and Support Staff already use the SAME school's Academic Session records.
+- They use the SAME Academic Session IDs.
+- They use the SAME school-wide active Academic Session.
+- There is NO separate Support Staff Academic Session database/store.
+- The current problem is that Support Staff cannot load the shared Admin Dashboard Academic Session selector because `GET /api/admin/academic-sessions` is Admin-only.
+
+I now authorize a SMALL correction for this issue only.
+
+---
+
+# PRODUCT REQUIREMENT
+
+Principal/Admin and Support Staff of the same school must use the same Academic Session foundation.
+
+Support Staff must be able to load the SAME Academic Session list belonging to their authenticated school and use the existing dashboard Academic Session selector.
+
+Example:
+
+```text
+School A
+
+Academic Sessions:
+2026–2027  Active
+2025–2026
+2024–2025
+```
+
+Principal/Admin should see those sessions.
+
+Support Staff of School A should see those SAME sessions.
+
+Do NOT create a separate Support Staff Academic Session system.
+
+---
+
+# IMPORTANT — THIS IS READ ACCESS TO THE SESSION LIST
+
+Allowing Support Staff to use the Academic Session selector does NOT mean Support Staff can manage Academic Sessions.
+
+Support Staff must NOT gain permission from this correction to:
+
+- create Academic Sessions;
+- edit Academic Sessions;
+- delete Academic Sessions;
+- activate/deactivate Academic Sessions;
+- change Academic Session configuration;
+- perform School Setup Academic Session administration.
+
+Academic Session MANAGEMENT remains subject to the existing Principal/Admin / School Setup authorization.
+
+This correction is for the shared session selector/context only.
+
+---
+
+# REQUIRED BACKEND CORRECTION
+
+The audit identified:
+
+`GET /api/admin/academic-sessions`
+
+currently requires:
+
+`userRole === "admin"`
+
+This causes Support Staff to receive 403 and the dashboard to display:
+
+`No sessions found`
+
+Correct the READ authorization so an authenticated Support Staff member can retrieve the Academic Sessions belonging to their OWN authenticated school.
+
+Do NOT simply remove authorization.
+
+For Support Staff:
+
+1. authenticate the Support Staff session;
+2. resolve the Support Staff's school from the server-side authenticated session/account;
+3. return ONLY that school's Academic Sessions;
+4. never trust a client-supplied school ID as authorization authority.
+
+Principal/Admin behavior must remain unchanged.
+
+---
+
+# TENANT ISOLATION — NON-NEGOTIABLE
+
+Example:
+
+```text
+Support Staff → School A
+
+School A sessions:
+ALLOW
+
+School B sessions:
+REJECT / NEVER RETURN
+```
+
+Support Staff must never retrieve another school's Academic Sessions.
+
+Do not weaken existing school/tenant isolation.
+
+---
+
+# FRONTEND
+
+Use the EXISTING Admin Dashboard Academic Session selector.
+
+Do NOT build a separate selector for Support Staff.
+
+After correction:
+
+### Principal/Admin
+
+```text
+Academic Session ▼
+2026–27 Active
+2025–26
+2024–25
+```
+
+### Support Staff
+
+```text
+Academic Session ▼
+2026–27 Active
+2025–26
+2024–25
+```
+
+Both lists come from the same school's Academic Session records.
+
+---
+
+# DEFAULT SELECTION
+
+Preserve the existing Principal behavior where the school's active Academic Session is the normal/default selection.
+
+Support Staff should follow the SAME behavior.
+
+Example:
+
+School active session:
+
+`2026–27`
+
+When Support Staff logs in normally:
+
+`2026–27` should be the normal/default selected session.
+
+Do not create a different Support Staff default-session rule.
+
+---
+
+# INDEPENDENT BROWSER SELECTION
+
+Principal and Support Staff do NOT need to have the same session selected at the same moment.
+
+Example:
+
+```text
+Principal browser:
+2025–26
+
+Support Staff browser:
+2026–27
+```
+
+This is valid.
+
+Each authenticated browser/session may maintain its own selected Academic Session context.
+
+The important requirement is that both selections come from the SAME School Academic Session records.
+
+---
+
+# X-VIEW-SESSION-ID
+
+When Support Staff selects an Academic Session through the existing selector, ensure the existing Web session-context mechanism sends the selected Academic Session ID in the same way as Principal/Admin, including:
+
+`x-view-session-id`
+
+where the current architecture requires it.
+
+Do NOT create a separate Support Staff session header.
+
+Do NOT create a second session-context architecture.
+
+Reuse the existing mechanism.
+
+---
+
+# MODULE PERMISSIONS MUST REMAIN SEPARATE
+
+VERY IMPORTANT:
+
+Academic Session selection must NEVER grant module access.
+
+Example:
+
+Support Staff has:
+
+```text
+Fees & Payments       YES
+Exam Controller       NO
+Attendance            NO
+```
+
+Selecting an Academic Session must NOT change this.
+
+They continue to have:
+
+```text
+Fees & Payments       YES
+Exam Controller       NO
+Attendance            NO
+```
+
+`allowedModules` remains authoritative for Support Staff module access.
+
+Academic Session authorization and module authorization are TWO separate checks.
+
+Both must pass.
+
+---
+
+# HISTORICAL SESSION RULE
+
+Preserve BENIUS's permanent rule.
+
+If Support Staff selects an inactive/previous Academic Session:
+
+### READ
+
+Allowed only where:
+
+- Support Staff has the corresponding module permission; AND
+- that module supports historical reading.
+
+### WRITE
+
+STRICTLY REJECT.
+
+No:
+
+- create
+- edit
+- delete
+- approve
+- reject
+- publish
+- correction
+- status change
+- operational mutation
+
+against historical session-specific data.
+
+A historical operation must NEVER silently write into the active Academic Session.
+
+---
+
+# FEES & PAYMENTS
+
+We already completed Support Staff Fees & Payments permissions.
+
+Do NOT redesign Fees.
+
+Simply verify that after this selector correction:
+
+Support Staff with appropriate Fees permissions can select the same school's Academic Session and the existing Fees routes receive/use the selected-session context where applicable.
+
+Preserve:
+
+- Financial Analytics permission
+- Fee Structures permission
+- Ledger & Transactions permission
+- Reminders permission
+- Audit Log permission
+- Generate Invoices under Fee Structures
+- External Portal Principal/Admin-only
+
+Do not change these permissions.
+
+---
+
+# GLOBAL DATA
+
+Do NOT force Academic Session filtering onto intentionally global/current-school data.
+
+This correction concerns the shared Academic Session context.
+
+Existing global modules/data should remain global unless their existing business rules say otherwise.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- Support Staff module permission structure
+- Fees permissions
+- Student Registry
+- Teacher Registry
+- Visitor Log
+- Noticeboard
+- Attendance
+- Examination
+- other module authorization
+- Principal Profile
+- Support Staff Profile
+- Mobile
+- database schema
+- `/uploads`
+- promotion ledger
+- unrelated API routes
+
+Do NOT address the audit's low-level read-response inconsistency in unrelated routes during this step.
+
+Keep this correction focused.
+
+---
+
+# REQUIRED TESTS
+
+Verify at minimum:
+
+### Principal/Admin
+
+- Academic Session list still loads.
+- Active session defaults correctly.
+- Archived session can still be selected.
+- Existing behavior unchanged.
+
+### Support Staff
+
+- Academic Session list now loads.
+- Same school's sessions are returned.
+- Same active Academic Session is available/default.
+- Support Staff can select an archived session.
+- Existing selected-session mechanism sends the selected session correctly.
+
+### Tenant isolation
+
+- School A Support Staff receives School A sessions.
+- School A Support Staff cannot retrieve School B sessions.
+
+### Module permissions
+
+Selecting an Academic Session does NOT bypass `allowedModules`.
+
+### Historical protection
+
+Support Staff selecting an archived session does NOT gain historical write capability.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## SUPPORT STAFF ACADEMIC SESSION SELECTOR CORRECTION
+
+### Previous behavior
+
+### New behavior
+
+### Files changed
+
+### Principal/Admin session list
+PASS / FAIL
+
+### Support Staff session list
+PASS / FAIL
+
+### Same school session records
+YES / NO
+
+### Same Academic Session IDs
+YES / NO
+
+### Same active Academic Session
+YES / NO
+
+### Default active-session selection
+PASS / FAIL
+
+### Independent browser selection
+PRESERVED / NOT PRESERVED
+
+### `x-view-session-id`
+Explain how Support Staff now uses the existing selected-session mechanism.
+
+### Tenant isolation
+
+School A Support Staff → School A sessions:
+ALLOW / REJECT
+
+School A Support Staff → School B sessions:
+ALLOW / REJECT
+
+### Module permission isolation
+
+Does selecting a session grant an unauthorized module?
+
+YES / NO
+
+Expected: NO.
+
+### Historical reads
+Explain existing behavior.
+
+### Historical writes
+
+Support Staff archived-session mutation:
+ALLOW / REJECT
+
+Expected: REJECT for session-specific operational data.
+
+### Fees & Payments regression
+PASS / FAIL
+
+### Academic Session management permission
+
+Can this correction alone allow Support Staff to create/edit/delete/activate Academic Sessions?
+
+YES / NO
+
+Expected: NO.
+
+### Database/schema changes
+NONE
+
+### Mobile changes
+NONE
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.

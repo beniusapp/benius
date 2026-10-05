@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { type Server } from "http";
+import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
@@ -3235,12 +3236,13 @@ export async function registerRoutes(
   });
 
   // ===== ACADEMIC SESSIONS API =====
-  // All routes are admin-only and strictly scoped to req.session.schoolId (tenant isolation).
+  // Listing is shared read access; session management remains Admin-only.
 
   app.get("/api/admin/academic-sessions", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
+    const access = resolveAcademicSessionListAccess(req.session);
+    if (!access.authorized)
       return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId;
+    const schoolId = access.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     try {
       const rows = await storage.getAcademicSessions(schoolId);
