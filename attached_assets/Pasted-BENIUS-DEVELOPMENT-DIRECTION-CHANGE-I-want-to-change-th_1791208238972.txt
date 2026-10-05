@@ -1,0 +1,420 @@
+BENIUS — DEVELOPMENT DIRECTION CHANGE
+
+I want to change the development approach for BENIUS from this point onward.
+
+Please read these instructions carefully before making any changes.
+
+PRIMARY DECISION
+
+From now on:
+
+BENIUS Web Application will be completed first.
+
+The Web application represents the primary product/business behavior that I want to finalize.
+
+The Mobile application is temporarily FROZEN for feature development and business-logic changes.
+
+DO NOT delete the Mobile application.
+
+DO NOT rewrite the Mobile application.
+
+DO NOT remove existing Mobile APIs.
+
+DO NOT attempt to synchronize every new Web change into Mobile right now.
+
+Keep the existing Mobile project safely intact.
+
+---
+
+DEVELOPMENT PRIORITY FROM NOW ON
+
+Development should focus on:
+
+1. Web Application
++
+2. Shared Backend/API
++
+3. Database
+
+The goal is to fully complete and stabilize BENIUS Web before continuing serious Mobile development.
+
+When I request a new feature, correction, audit, or business-rule change from now on, assume the scope is:
+
+WEB + the backend/database changes genuinely required to support Web correctly.
+
+Do NOT automatically modify Mobile.
+
+If my requested Web change requires changing a shared backend function that is also used by Mobile, tell me BEFORE making the change if it could affect existing Mobile behavior.
+
+---
+
+IMPORTANT — WEB SOURCE OF TRUTH
+
+The established BENIUS Web product behavior will be used to finalize the intended business rules.
+
+However:
+
+Do NOT place important security/business rules only in the Web frontend.
+
+The backend should remain the authoritative enforcement layer for things such as:
+
+- Authentication
+- Authorization
+- School/tenant isolation
+- Academic Session validation
+- Student enrollment validation
+- Historical-session write protection
+- Ownership
+- Teacher permissions
+- Attendance rules
+- Examination permissions
+- Leave permissions
+- Data validation
+- Other security-sensitive business rules
+
+The Web frontend may control the user experience, but backend enforcement must protect the actual operation.
+
+---
+
+TARGET ARCHITECTURE
+
+The long-term BENIUS architecture should conceptually be:
+
+                BENIUS
+                   |
+          SHARED BACKEND
+                   |
+             SHARED DATABASE
+                   |
+          BUSINESS RULES
+                   |
+          +--------+--------+
+          |                 |
+         WEB              MOBILE
+      React Web        React Native
+       FIRST             LATER
+
+Web and Mobile may have different frontend implementations.
+
+Web may use cookie/session authentication.
+
+Mobile may use bearer authentication.
+
+That authentication difference is intentional.
+
+But equivalent Web and Mobile operations should eventually reach the SAME underlying BENIUS business rules.
+
+---
+
+IMPORTANT ARCHITECTURAL PRINCIPLE
+
+Do NOT create new duplicated business rules unnecessarily.
+
+For example, avoid designing:
+
+Web Attendance Rule
+and
+Mobile Attendance Rule
+
+as independent implementations.
+
+The desired future model is conceptually:
+
+Web route
+
+→ Shared Attendance business/service logic
+/
+Mobile route
+
+Likewise for other modules where appropriate.
+
+Web and Mobile routes do NOT have to be forcibly merged into one HTTP endpoint.
+
+Separate transport/authentication routes are acceptable where technically appropriate.
+
+The important requirement is:
+
+Do not duplicate or contradict the underlying business rules.
+
+---
+
+DO NOT REFACTOR EVERYTHING NOW
+
+This instruction does NOT authorize a large architecture refactor.
+
+Do NOT:
+
+- merge every Web/Mobile API
+- delete Mobile routes
+- rewrite authentication
+- rewrite the backend
+- redesign the database
+- migrate every module into shared services
+- perform speculative cleanup
+
+We will do architectural consolidation carefully later.
+
+For now:
+
+Web first. Mobile frozen.
+
+---
+
+EXISTING MOBILE APPLICATION
+
+Preserve:
+
+"artifacts/benius-mobile/"
+
+and all existing Mobile code.
+
+Do not intentionally change Mobile screens, Mobile services, Mobile API behavior, Mobile tests, or Mobile business rules unless I explicitly request a Mobile change.
+
+If a shared backend modification necessarily affects Mobile, report:
+
+1. what shared code must change,
+2. why Web requires it,
+3. what Mobile behavior may be affected,
+4. whether the effect is breaking or non-breaking,
+
+before making that shared change where practical.
+
+---
+
+EXISTING MOBILE PARITY AUDIT
+
+We already identified Web/Mobile business-rule drift.
+
+Examples include:
+
+- Attendance
+- Homework
+- Classwork
+- Examination
+- Faculty Information
+- Leave-related behavior
+- Timetable
+- Noticeboard
+- Library
+- other differences documented in the parity audit
+
+DO NOT attempt to fix all Mobile parity differences now.
+
+Keep the audit findings recorded for the later Mobile-alignment phase.
+
+---
+
+IMPORTANT EXCEPTION — SECURITY
+
+Freezing Mobile does NOT mean security problems in shared backend code should be ignored.
+
+If a vulnerability affects:
+
+- tenant isolation
+- authentication
+- authorization
+- cross-school access
+- data integrity
+- shared backend security
+
+report it clearly.
+
+Do not weaken backend security merely to preserve existing Mobile behavior.
+
+But do not silently redesign Mobile either.
+
+---
+
+PERMANENT BENIUS RULES
+
+Continue preserving these rules during Web development.
+
+MULTI-TENANT
+
+School A must NEVER access School B data.
+
+This applies across every module.
+
+Tenant isolation is non-negotiable.
+
+---
+
+ACADEMIC SESSION
+
+Session-sensitive academic operations must use the explicitly selected Academic Session.
+
+No silent active-session fallback where selected session is required.
+
+Foreign-school sessions must be rejected.
+
+---
+
+HISTORICAL SESSIONS
+
+Previous/inactive Academic Sessions are strictly READ-ONLY for session-specific academic operational data.
+
+Historical reads may be allowed according to permissions.
+
+Historical:
+
+- create
+- edit
+- delete
+- approve
+- reject
+- publish
+- correction
+- status mutation
+- other operational writes
+
+must be rejected.
+
+Never silently redirect a historical write to the active session.
+
+---
+
+STUDENT PLACEMENT
+
+For session-sensitive academic operations, Student:
+
+- Class
+- Section
+- Roll Number
+
+must come from the Student's enrollment for the selected Academic Session where that module requires historical/session placement.
+
+Do not infer historical academic placement from the Student's current profile.
+
+Existing intentional exceptions must remain unchanged unless explicitly requested.
+
+---
+
+TIMEZONE
+
+BENIUS business/display timezone is:
+
+Asia/Kolkata / IST
+
+---
+
+CURRENT PRODUCT DECISIONS TO PRESERVE
+
+Attendance
+
+Any authenticated Teacher of the school may mark Student Attendance for any valid class/section belonging to that SAME school.
+
+Teacher assignment is NOT required for Student Attendance.
+
+Tenant/session/enrollment protection still applies.
+
+---
+
+Homework
+
+Any authenticated Teacher of the school may create Homework for a valid class/section/subject belonging to that SAME school.
+
+Teacher assignment is NOT required for creation.
+
+Existing creator ownership rules for edit/delete remain separate.
+
+---
+
+Classwork
+
+Same principle as Homework.
+
+Any authenticated Teacher of the school may create Classwork for a valid same-school class/section/subject.
+
+Teacher assignment is NOT required for creation.
+
+Existing creator ownership rules remain separate.
+
+---
+
+Examination
+
+Examination is different.
+
+Teacher class/section/subject assignment IS part of the intended Examination permission model.
+
+The known Web Examination assignment-enforcement issue remains OPEN.
+
+Do NOT silently change Examination behavior as part of this development-direction instruction.
+
+---
+
+Student Leave
+
+Preserve the existing Student Leave permission model and previous session-placement corrections.
+
+Do not reinterpret Student Leave as school-wide Teacher access.
+
+---
+
+DEVELOPMENT PROCESS GOING FORWARD
+
+For each Web module:
+
+1. Understand the existing intended business behavior.
+2. Audit the Web frontend.
+3. Audit the corresponding backend/API.
+4. Audit tenant isolation.
+5. Audit Academic Session behavior where applicable.
+6. Audit historical read-only enforcement.
+7. Audit authorization/ownership.
+8. Audit selected-session Student enrollment where applicable.
+9. Correct genuine Web/backend defects only after authorization.
+10. Test the Web + backend behavior.
+11. Do NOT automatically modify Mobile.
+
+---
+
+AFTER WEB IS COMPLETE
+
+When BENIUS Web is fully completed and stabilized, we will begin a separate:
+
+MOBILE REPLICATION / ALIGNMENT PHASE
+
+At that point:
+
+React Native Mobile should replicate the finalized BENIUS functionality.
+
+The goal will be:
+
+             FINAL BENIUS BUSINESS RULES
+                       |
+                SHARED BACKEND
+                   /        \
+                 WEB       MOBILE
+                          React Native
+
+During that phase we will systematically compare each module and remove Web/Mobile business-rule drift.
+
+Mobile should not invent new permissions or business rules unless explicitly designed.
+
+---
+
+VERY IMPORTANT
+
+For now, do NOT make code changes from this instruction alone.
+
+This is a development-direction / architecture instruction.
+
+First acknowledge the new development direction and tell me:
+
+1. Whether you understand that Mobile feature development is now frozen.
+2. Whether future normal development requests will target Web + required backend/database work unless I explicitly mention Mobile.
+3. Whether the existing Mobile project can remain safely intact.
+4. Whether you understand that backend business/security enforcement remains required.
+5. Whether you understand that we are NOT asking for a large backend/API refactor right now.
+6. Whether you understand that the Web/Mobile parity findings should be retained for the later Mobile-alignment phase.
+
+DO NOT modify files.
+
+DO NOT modify database.
+
+DO NOT deploy.
+
+DO NOT publish.
+
+Acknowledge and STOP.
