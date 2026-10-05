@@ -1,0 +1,336 @@
+BENIUS — TEACHER PORTAL
+
+STEP 12A — LEGACY STUDENT LEAVE ROUTE SECURITY CORRECTION
+
+The final Teacher Portal read-only audit returned:
+
+NEEDS CHANGES
+
+Work ONLY on this confirmed HIGH finding:
+
+"GET /api/student-leaves/:schoolId/:class/:section"
+
+Do NOT fix any other audit finding in this step.
+
+---
+
+CONFIRMED PROBLEM
+
+The audit found that this legacy route:
+
+"GET /api/student-leaves/:schoolId/:class/:section"
+
+currently verifies that the authenticated Teacher belongs to the requested school, but it does NOT adequately enforce:
+
+- explicitly selected Academic Session
+- Teacher assignment to the requested class/section
+- Student enrollment in that selected Academic Session
+
+It can therefore return pending Student Leave requests across sessions/classes, including legacy NULL-session rows.
+
+The current Web Teacher Leave screen uses:
+
+"/api/student-leaves/teacher/mine"
+
+and no current Web/Mobile consumer of the legacy route was found.
+
+Nevertheless, the legacy endpoint remains registered and directly callable, so it must not remain an authorization/session bypass.
+
+---
+
+FIRST — VERIFY BEFORE EDITING
+
+Reconfirm:
+
+1. Exact route implementation.
+2. Exact authentication middleware.
+3. Storage/query method called.
+4. Whether ANY Web/Mobile/Admin/other code currently consumes this route.
+5. Existing Teacher assignment model relevant to Student Leave.
+6. Existing session-aware Student enrollment model.
+7. Whether safely retiring/removing the route would break anything.
+
+Do NOT assume.
+
+If the route truly has no consumer, compare:
+
+A. safely retire/remove the legacy route
+
+versus
+
+B. retain it but fully harden it.
+
+Choose the smallest safe correction.
+
+If route removal has uncertain compatibility risk, retain and harden it.
+
+---
+
+REQUIRED SECURITY IF ROUTE REMAINS
+
+The route must require:
+
+Authenticated Teacher
+→ Teacher's real school
+→ explicit selected Academic Session
+→ session belongs to that school
+→ Teacher is permitted for requested class/section
+→ Students are enrolled in requested class/section in selected session
+→ Leave requests belong to same school + selected session
+
+Do NOT trust ":schoolId" merely because it appears in the URL.
+
+Authenticated Teacher identity must remain authoritative.
+
+---
+
+SESSION FOUNDATION
+
+Reuse:
+
+"teacher-academic-session.ts"
+
+For this historical-capable read route, use the appropriate explicit selected-session read behavior.
+
+Do NOT independently resolve/fallback to active session.
+
+Missing selected session
+→ reject.
+
+Foreign-school session
+→ reject.
+
+Historical same-school selected session
+→ read permitted historical records.
+
+No active-session substitution.
+
+---
+
+TEACHER ASSIGNMENT
+
+The Teacher must not be able to change:
+
+":class"
+or
+":section"
+
+in the URL to access an unrelated class.
+
+Use the existing Teacher assignment rules already used by the current Student Leave workflow.
+
+Do NOT invent new assignment semantics.
+
+If existing Student Leave review supports a legacy assignment fallback, preserve the accepted existing behavior consistently.
+
+---
+
+STUDENT PLACEMENT
+
+Use selected-session:
+
+"enrollments"
+
+for Student class/section membership.
+
+Do NOT use current:
+
+"students.class"
+"students.section"
+
+to establish historical Student membership.
+
+Example:
+
+2025–26:
+Student → 7A
+
+2026–27:
+Student → 8B
+
+Selecting 2025–26 and requesting 7A
+→ Student may appear.
+
+Selecting 2025–26 and requesting 8B merely because Student is currently 8B
+→ must NOT make that Student part of the 2025–26 cohort.
+
+---
+
+LEAVE SESSION
+
+Returned Leave requests must belong to:
+
+authenticated school
++
+explicit selected Academic Session
++
+permitted cohort.
+
+Do NOT include:
+
+- another session's Leave
+- another school's Leave
+- NULL-session Leave as if it belongs to the selected session
+
+Do NOT migrate or alter NULL-session records.
+
+---
+
+HISTORICAL BEHAVIOR
+
+This endpoint is a READ.
+
+Historical same-school selected sessions may be read according to existing Teacher permission.
+
+This correction must NOT add historical write capability anywhere.
+
+---
+
+TENANT SECURITY
+
+Verify:
+
+School A Teacher + School A selected session + assigned cohort
+→ allowed.
+
+School A Teacher + School B session
+→ rejected.
+
+School A Teacher changing "schoolId" to School B
+→ rejected.
+
+School A Teacher changing class/section to unassigned cohort
+→ rejected.
+
+---
+
+DO NOT TOUCH OTHER AUDIT FINDINGS
+
+Specifically DO NOT fix yet:
+
+- public "/uploads"
+- Web Examination assignment gaps
+- Web Homework assignment gaps
+- Web Classwork assignment gaps
+- current "/teacher/mine" historical placement issue
+- Homework due-date validation
+- Attendance policy differences
+- Timetable/Calendar browser-timezone behavior
+- generic Student search
+- promotion-ledger schema limitation
+
+Those will be handled separately.
+
+---
+
+DO NOT CHANGE
+
+- database schema
+- migrations
+- UI/UX
+- Student Portal
+- Admin Portal
+- Mobile architecture
+- current Teacher Leave business workflow
+- Leave policy/balance formulas
+
+---
+
+TESTS
+
+At minimum verify:
+
+1. Missing selected session rejected.
+2. Foreign-school selected session rejected.
+3. Spoofed "schoolId" rejected.
+4. Assigned Teacher + active selected session + correct cohort works.
+5. Assigned Teacher + historical selected session + correct historical cohort reads correctly.
+6. Unassigned class rejected.
+7. Unassigned section rejected.
+8. Session A Leave does not appear in Session B.
+9. NULL-session Leave does not leak into selected session.
+10. Student current placement does not override selected-session enrollment.
+11. Cross-school Student/Leave does not leak.
+12. Current "/api/student-leaves/teacher/mine" behavior is not regressed.
+13. Step 9 Leave protections remain intact.
+14. No Student/Admin regression.
+
+If the route is safely removed instead, test that:
+
+- no current consumer depends on it
+- current Teacher Leave workflow still passes
+- no replacement authorization gap is introduced.
+
+---
+
+FINAL REPORT
+
+Return:
+
+STEP 12A — LEGACY STUDENT LEAVE ROUTE
+
+Existing problem confirmed
+
+Consumer search
+
+State exactly whether anything still uses this endpoint.
+
+Decision
+
+Choose:
+
+- RETIRED
+  or
+- HARDENED
+
+Explain why.
+
+Session enforcement
+
+Teacher assignment enforcement
+
+Enrollment enforcement
+
+Tenant isolation
+
+NULL-session behavior
+
+Historical read behavior
+
+Tests
+
+Exact results.
+
+Regression results
+
+Builds/typechecks
+
+Report actual results and distinguish existing diagnostics.
+
+Database changes
+
+Must be NONE.
+
+UI changes
+
+Must be NONE.
+
+Other audit findings
+
+Explicitly confirm they remain untouched.
+
+Files changed
+
+Exact list.
+
+Verdict
+
+PASS / FAIL
+
+---
+
+Do NOT publish or deploy.
+
+After this correction, STOP.
+
+Do not automatically start Step 12B.
