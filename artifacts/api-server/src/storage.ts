@@ -64,6 +64,8 @@ import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
 import {
   teacherStudentLeaveEnrollmentJoin,
+  teacherStudentLeaveAssignments,
+  teacherStudentLeaveQueueSessionScope,
   teacherStudentLeaveSessionScope,
   teacherStudentLeaveStudentJoin,
 } from "./teacher-student-leave-scope";
@@ -3807,36 +3809,32 @@ export class DatabaseStorage {
     }));
   }
 
-  // Returns all pending_teacher leaves from every class-section a teacher is mapped to.
-  // Uses faculty_mappings (the admin-configured multi-class assignment) rather than the
-  // single assignedClass/assignedSection field, so multi-class teachers see all their students.
-  async getStudentLeavesByTeacher(teacherId: number, schoolId: number, sessionId: number): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
-    // 1. Get all class-sections this teacher is mapped to
+  // Returns pending teacher-tier leaves for this Teacher's existing mapped and
+  // legacy-assigned class/section pairs, using placement from the selected session.
+  async getStudentLeavesByTeacher(
+    teacherId: number,
+    schoolId: number,
+    sessionId: number,
+  ): Promise<(StudentLeaveRequest & { studentName: string; dsid: string; class: string; section: string })[]> {
+    const teacher = await this.getTeacherById(teacherId);
+    if (!teacher || teacher.schoolId !== schoolId) return [];
+
     const mappings = await db
       .select({ className: facultyMappings.className, section: facultyMappings.section })
       .from(facultyMappings)
       .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)));
 
-    if (mappings.length === 0) return [];
-
-    // 2. Build OR conditions for each class+section pair
-    const classConditions = mappings.map(m =>
-      and(eq(students.class, m.className), eq(students.section, m.section))
-    );
-
-    const whereConditions: any[] = [
-      eq(studentLeaveRequests.schoolId, schoolId),
-      eq(studentLeaveRequests.sessionId, sessionId),
-      eq(studentLeaveRequests.status, "pending_teacher"),
-      or(...classConditions),
-    ];
+    const assignments = teacherStudentLeaveAssignments(teacher, mappings);
+    const scope = teacherStudentLeaveQueueSessionScope(schoolId, sessionId, assignments);
+    if (!scope) return [];
 
     const result = await db.select().from(studentLeaveRequests)
-      .innerJoin(students, eq(studentLeaveRequests.studentId, students.id))
-      .where(and(...whereConditions))
+      .innerJoin(enrollments, teacherStudentLeaveEnrollmentJoin())
+      .innerJoin(students, teacherStudentLeaveStudentJoin())
+      .where(scope)
       .orderBy(desc(studentLeaveRequests.createdAt));
 
-    // Deduplicate in case a student appears in multiple mappings for the same teacher
+    // Keep the legacy response shape, but report the selected-session placement.
     const seen = new Set<number>();
     return result
       .filter(r => { if (seen.has(r.student_leave_requests.id)) return false; seen.add(r.student_leave_requests.id); return true; })
@@ -3845,8 +3843,8 @@ export class DatabaseStorage {
         studentName: r.students.name,
         dsid: r.students.digitalStudentId,
         photoUrl: r.students.photoUrl ?? null,
-        class: r.students.class,
-        section: r.students.section,
+        class: r.enrollments.className,
+        section: r.enrollments.sectionName,
       }));
   }
 

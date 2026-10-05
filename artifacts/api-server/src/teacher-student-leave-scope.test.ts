@@ -4,7 +4,9 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import test from "node:test";
 import { storage } from "./storage";
 import {
+  teacherStudentLeaveAssignments,
   teacherStudentLeaveEnrollmentJoin,
+  teacherStudentLeaveQueueSessionScope,
   teacherStudentLeaveSessionScope,
   teacherStudentLeaveStudentJoin,
 } from "./teacher-student-leave-scope";
@@ -51,6 +53,31 @@ test("invalid tenant/session/cohort values fail closed", () => {
       schoolId, sessionId, className, sectionName,
     ));
   }
+});
+
+test("queue assignment and session scope uses enrollment placement, never current profile placement", () => {
+  const assignments = teacherStudentLeaveAssignments(
+    { assignedClass: "6", assignedSection: "C" },
+    [{ className: "7", section: "A" }, { className: "8", section: "B" }],
+  );
+  const query = dialect.sqlToQuery(teacherStudentLeaveQueueSessionScope(4, 21, assignments)!);
+
+  assert.match(query.sql, /enrollments.*class_name/);
+  assert.match(query.sql, /enrollments.*section_name/);
+  assert.equal(query.sql.includes('"students"."class"'), false);
+  assert.equal(query.sql.includes('"students"."section"'), false);
+  assert.deepEqual(query.params, [
+    4, 21, "pending_teacher", 4, 21, 4,
+    "6", "C", "7", "A", "8", "B",
+  ]);
+});
+
+test("queue scope returns no query for a Teacher with no existing assignment", () => {
+  assert.equal(teacherStudentLeaveQueueSessionScope(4, 21, []), undefined);
+  assert.deepEqual(
+    teacherStudentLeaveAssignments({}, []),
+    [],
+  );
 });
 
 test("storage applies the SQL scope and preserves the legacy response fields", async () => {

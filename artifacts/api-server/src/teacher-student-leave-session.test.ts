@@ -33,6 +33,9 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
     scopedLeaveReads: [] as Array<[number, number, string, string]>,
     mineReads: [] as Array<[number, number, number]>,
     existingLeaveReads: 0,
+    attendanceApprovals: [] as Array<Record<string, unknown>>,
+    statusUpdates: [] as unknown[][],
+    auditLogWrites: 0,
   };
   const leaves = [
     { id: 1, schoolId: 1, sessionId: 101, studentId: 11, class: "7", section: "A" },
@@ -84,9 +87,32 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
     calls.mineReads.push([teacherId, schoolId, sessionId]);
     return [{ id: 50, schoolId, sessionId }];
   });
-  replaceStorage("getStudentLeaveById", async () => {
+  replaceStorage("getStudentLeaveById", async (id: number, schoolId: number) => {
     calls.existingLeaveReads += 1;
-    return undefined;
+    if (schoolId !== 1 || ![1, 2, 3].includes(id)) return undefined;
+    return {
+      id,
+      studentId: 11,
+      schoolId,
+      sessionId: 101,
+      status: "pending_teacher",
+      startDate: "2026-06-01",
+      endDate: "2026-06-01",
+    };
+  });
+  replaceStorage("getStudentById", async (studentId: number) => studentId === 11
+    ? { id: studentId, schoolId: 1, class: "7", section: "A" }
+    : undefined);
+  replaceStorage("approveStudentLeaveWithAttendance", async (input: Record<string, unknown>) => {
+    calls.attendanceApprovals.push(input);
+    return { id: input.leaveId, schoolId: input.schoolId, sessionId: input.sessionId, status: "approved" };
+  });
+  replaceStorage("updateStudentLeaveStatus", async (...args: unknown[]) => {
+    calls.statusUpdates.push(args);
+    return { id: args[0], schoolId: args[1], sessionId: args[8], status: args[2] };
+  });
+  replaceStorage("createAuditLog", async () => {
+    calls.auditLogWrites += 1;
   });
 
   t.after(() => {
@@ -98,6 +124,7 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
   });
 
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => {
     const role = req.get("x-test-role") ?? "teacher";
     (req as any).session = role === "anonymous"
@@ -118,14 +145,16 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
   const baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   async function request(
     path: string,
-    options: { method?: string; sessionId?: number | string; role?: string } = {},
+    options: { method?: string; body?: unknown; sessionId?: number | string; role?: string } = {},
   ) {
     const response = await fetch(`${baseUrl}${path}`, {
       method: options.method ?? "GET",
       headers: {
+        ...(options.body === undefined ? {} : { "content-type": "application/json" }),
         ...(options.sessionId === undefined ? {} : { "x-view-session-id": String(options.sessionId) }),
         ...(options.role ? { "x-test-role": options.role } : {}),
       },
+      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
     });
     const text = await response.text();
     return { status: response.status, body: text ? JSON.parse(text) as any : null };
@@ -147,12 +176,17 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
   assert.deepEqual(historical.body.map((leave: any) => leave.id), [2]);
   assert.deepEqual(calls.scopedLeaveReads.at(-1), [1, 102, "7", "A"]);
 
-  const historicalWrite = await request("/api/student-leaves/31/approve", {
-    method: "PATCH",
-    sessionId: 102,
-  });
-  assert.equal(historicalWrite.status, 403, "historical reads must not grant approval capability");
-  assert.equal(calls.existingLeaveReads, 0, "historical approval is rejected before leave lookup");
+  for (const action of ["approve", "reject", "forward"]) {
+    const historicalWrite = await request(`/api/student-leaves/31/${action}`, {
+      method: "PATCH",
+      sessionId: 102,
+      body: action === "reject" ? { rejectionReason: "Not eligible" } : {},
+    });
+    assert.equal(historicalWrite.status, 403, `historical ${action} is rejected`);
+  }
+  assert.equal(calls.existingLeaveReads, 0, "historical writes are rejected before leave lookup");
+  assert.deepEqual(calls.attendanceApprovals, []);
+  assert.deepEqual(calls.statusUpdates, []);
 
   const readsBeforeUnassigned = calls.scopedLeaveReads.length;
   assert.equal((await request("/api/student-leaves/1/8/A", { sessionId: 101 })).status, 403);
@@ -164,8 +198,54 @@ test("legacy Student Leave route requires tenant, selected session, assignment a
   assert.deepEqual(calls.scopedLeaveReads.at(-1), [1, 101, "6", "C"]);
   assert.equal(calls.activeFallback.length, 0, "the route never substitutes the active session");
 
+  assert.equal((await request("/api/student-leaves/teacher/mine")).status, 400);
   const mine = await request("/api/student-leaves/teacher/mine", { sessionId: 101 });
   assert.equal(mine.status, 200);
   assert.deepEqual(mine.body, [{ id: 50, schoolId: 1, sessionId: 101 }]);
-  assert.deepEqual(calls.mineReads, [[9, 1, 101]], "the current Teacher Leave queue remains unchanged");
+  const historicalMine = await request("/api/student-leaves/teacher/mine", { sessionId: 102 });
+  assert.equal(historicalMine.status, 200, "the same queue remains readable for a selected historical session");
+  assert.deepEqual(historicalMine.body, [{ id: 50, schoolId: 1, sessionId: 102 }]);
+  assert.equal((await request("/api/student-leaves/teacher/mine", { sessionId: 201 })).status, 403);
+  assert.deepEqual(calls.mineReads, [[9, 1, 101], [9, 1, 102]]);
+  assert.equal(calls.activeFallback.length, 0, "the queue never substitutes the active session");
+
+  const activeApproval = await request("/api/student-leaves/1/approve", {
+    method: "PATCH",
+    sessionId: 101,
+    body: { teacherComment: "Verified" },
+  });
+  assert.equal(activeApproval.status, 200);
+  assert.equal(calls.attendanceApprovals.length, 1);
+  assert.deepEqual(calls.attendanceApprovals[0], {
+    leaveId: 1,
+    studentId: 11,
+    teacherId: 9,
+    schoolId: 1,
+    sessionId: 101,
+    expectedStatus: "pending_teacher",
+    reviewedBy: 9,
+    reviewerRole: "teacher",
+    teacherComment: "Verified",
+  });
+
+  const activeRejection = await request("/api/student-leaves/2/reject", {
+    method: "PATCH",
+    sessionId: 101,
+    body: { rejectionReason: "Not eligible" },
+  });
+  assert.equal(activeRejection.status, 200);
+  assert.deepEqual(calls.statusUpdates[0], [
+    2, 1, "rejected", 9, "teacher", "Not eligible", undefined, undefined, 101,
+  ]);
+
+  const activeForward = await request("/api/student-leaves/3/forward", {
+    method: "PATCH",
+    sessionId: 101,
+    body: { teacherComment: "Please review" },
+  });
+  assert.equal(activeForward.status, 200);
+  assert.deepEqual(calls.statusUpdates[1], [
+    3, 1, "forwarded_to_admin", 9, "teacher", undefined, undefined, "Please review", 101,
+  ]);
+  assert.equal(calls.auditLogWrites, 3);
 });

@@ -9,6 +9,10 @@ Node 20 cannot execute the API server's TypeScript tests directly, and the API p
 
 **How to apply:** For API TypeScript tests, use the package's existing esbuild tooling to create an ignored CommonJS test bundle and execute it with Node's built-in test runner rather than adding a new runtime dependency.
 
+**Why:** `pnpm --filter ... exec` invokes the target directly and does not expand a `*.cjs` test-file glob.
+
+**How to apply:** After bundling through the filtered API package command, run `node --test` from the workspace root with the artifact-relative bundle glob, or use an explicit shell command to expand it.
+
 For test bundles that import `sharp`, externalize that package and emit the CommonJS bundle under the API package's ignored `node_modules/.cache`, rather than under `/tmp`.
 
 **Why:** Bundling `sharp` as CommonJS rewrites its `import.meta.url` to an undefined value used by `createRequire`. Externalizing it fixes that, but a bundle under `/tmp` cannot resolve the API package's installed `sharp`.
