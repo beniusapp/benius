@@ -49,12 +49,15 @@ export function feesAreasForRequest(method: string, requestPath: string): FeesAr
   if (path !== feesRoot && !path.startsWith(`${feesRoot}/`)) return null;
   const suffix = path.slice(feesRoot.length) || "/";
 
+  if (/^\/structures\/\d+\/generate-invoices$/.test(suffix)) {
+    return verb === "POST" ? [FEES_AREAS.FEE_STRUCTURES] : null;
+  }
+
   // These remain explicitly Principal/Admin-only, including refund eligibility.
   if (
     suffix.startsWith("/external-settings") ||
     suffix.startsWith("/external-portal") ||
     suffix === "/bulk-delete" ||
-    /^\/structures\/\d+\/generate-invoices$/.test(suffix) ||
     /^\/payments\/\d+\/(?:refund-eligibility|refunds)$/.test(suffix)
   ) {
     return null;

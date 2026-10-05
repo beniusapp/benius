@@ -1,0 +1,202 @@
+# BENIUS — FEES & PAYMENTS
+## SUPPORT STAFF — BULK INVOICE GENERATION CORRECTION
+
+This is a SMALL follow-up to the completed Fees & Payments Support Staff permission work.
+
+Do NOT modify any other module.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+## PRODUCT DECISION
+
+**Bulk Invoice Generation is NOT Principal/Admin-only.**
+
+If a Support Staff member has the appropriate granted Fees & Payments area permission, that Support Staff member must be able to perform the existing **Bulk Invoice Generation** operation in the same normal way as Principal/Admin.
+
+---
+
+## FIRST — LOCATE THE EXISTING FUNCTION
+
+Before changing authorization, identify exactly:
+
+- where Bulk Invoice Generation exists in the current Fees & Payments Web UI;
+- which Fees tab/functional area owns it;
+- which frontend action/button triggers it;
+- which API endpoint performs it;
+- which backend authorization currently makes it Admin-only.
+
+Do NOT create a new Bulk Invoice Generation tab.
+
+Do NOT create a new Support Staff permission merely because of this correction.
+
+Use the existing Fees functional-area permission that actually owns this operation.
+
+For example, if the existing implementation proves that Bulk Invoice Generation belongs to **Ledger & Transactions**, then:
+
+> `Ledger & Transactions` granted → Bulk Invoice Generation allowed.
+
+Do not assume this example; verify the actual implementation.
+
+---
+
+## REQUIRED BEHAVIOR
+
+### Principal/Admin
+
+Existing Bulk Invoice Generation behavior remains unchanged.
+
+### Support Staff WITH the owning Fees permission
+
+Bulk Invoice Generation:
+
+**ALLOW**
+
+Support Staff should be able to perform the existing operation normally.
+
+### Support Staff WITHOUT the owning Fees permission
+
+Bulk Invoice Generation:
+
+**REJECT**
+
+Both UI and backend must enforce this.
+
+---
+
+## SECURITY
+
+Do NOT simply remove the Admin guard.
+
+Authorize Support Staff only when:
+
+- authenticated as Support Staff;
+- Support Staff belongs to the same school/tenant;
+- required Fees & Payments functional-area permission is granted;
+- requested data/resources belong to that school;
+- existing Academic Session rules are satisfied.
+
+School A Support Staff must NEVER generate invoices for School B.
+
+Previous/inactive Academic Sessions must remain read-only wherever the existing invoice operation is session-specific.
+
+---
+
+## EXTERNAL PORTAL
+
+NO CHANGE.
+
+External Portal remains:
+
+**PRINCIPAL/ADMIN ONLY.**
+
+Giving Support Staff Bulk Invoice Generation access must NOT provide External Portal access.
+
+---
+
+## DO NOT CHANGE YET
+
+Do NOT change:
+
+- Refund authorization
+- Single-record deletion authorization
+- Bulk deletion authorization
+
+Those are separate product decisions.
+
+Only correct **Bulk Invoice Generation** in this step.
+
+---
+
+## PERMISSION UI
+
+Keep the existing five Support Staff Fees permissions:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+
+Do NOT add:
+
+- Bulk Invoice Generation
+
+as a sixth permission.
+
+It should inherit the permission of the Fees functional area where the existing operation actually belongs.
+
+External Portal must remain absent from Support Staff permissions.
+
+---
+
+## VALIDATION
+
+Verify:
+
+1. Principal/Admin can still generate bulk invoices.
+2. Support Staff WITH the correct Fees permission can generate bulk invoices.
+3. Support Staff WITHOUT that permission cannot generate bulk invoices.
+4. Direct API call without permission is rejected.
+5. Cross-school attempt is rejected.
+6. Existing Academic Session protections remain.
+7. External Portal remains Admin-only.
+8. No other Fees authorization changes.
+9. No other Support Staff modules change.
+
+---
+
+# FINAL REPORT
+
+Return:
+
+## BULK INVOICE GENERATION — SUPPORT STAFF CORRECTION
+
+**Existing UI location:**
+
+**Owning Fees area:**
+
+**Existing frontend action:**
+
+**API endpoint:**
+
+**Previous authorization:**
+
+**New authorization:**
+
+**Support Staff required permission:**
+
+**Support Staff with permission:** ALLOW/REJECT
+
+**Support Staff without permission:** ALLOW/REJECT
+
+**Principal/Admin:** ALLOW/REJECT
+
+**Cross-school attempt:** ALLOW/REJECT
+
+**Historical-session write:** ALLOW/REJECT/NOT APPLICABLE
+
+**External Portal changed:** YES/NO
+
+**Refund authorization changed:** YES/NO
+
+**Deletion authorization changed:** YES/NO
+
+**Other modules changed:** YES/NO
+
+**Database/schema changes:** NONE
+
+**Mobile changes:** NONE
+
+**Deployment:** NONE
+
+**Tests/builds:**
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.

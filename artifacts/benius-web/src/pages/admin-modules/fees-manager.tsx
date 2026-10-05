@@ -6861,7 +6861,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
         </div>
       )}
       {displayedTab === "ledger"     && <LedgerTab canRecord={canRecord} canViewReminders={canViewReminders} canInitiateRefund={isAdmin} showRegistryCount={isAdmin} isArchiveMode={isArchiveMode} students={isAdmin ? students : []} viewSessionId={viewSessionId} />}
-      {displayedTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} canGenerateInvoices={isAdmin} />}
+      {displayedTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} canGenerateInvoices={hasArea("fee-structures")} />}
       {displayedTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
       {displayedTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
       {displayedTab === "external"   && <ExternalPortalTab onReauthRequired={clearExternalPortalAccess} />}

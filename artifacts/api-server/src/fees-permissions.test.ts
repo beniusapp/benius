@@ -82,14 +82,67 @@ test("Support Staff must have a valid session identity and the matching Fees are
   assert.equal(missingSchoolResponse.result.statusCode, 403);
 });
 
+test("bulk invoice generation uses the existing Fee Structures permission", () => {
+  const endpoint = "/api/admin/fees/structures/12/generate-invoices";
+  const makeResponse = () => {
+    const result: { statusCode: number; body: unknown } = { statusCode: 200, body: null };
+    return {
+      result,
+      response: {
+        status(code: number) {
+          result.statusCode = code;
+          return this;
+        },
+        json(body: unknown) {
+          result.body = body;
+          return this;
+        },
+      },
+    };
+  };
+  const withStructureGrant = makeResponse();
+  assert.equal(feesRequestGuard({
+    method: "POST",
+    path: endpoint,
+    session: {
+      userId: -14,
+      staffId: 14,
+      schoolId: 8,
+      userRole: "support_staff",
+      allowedModules: ["fees-manager", "fees-manager:fee-structures"],
+    },
+  }, withStructureGrant.response), true);
+
+  const withoutStructureGrant = makeResponse();
+  assert.equal(feesRequestGuard({
+    method: "POST",
+    path: endpoint,
+    session: {
+      userId: -14,
+      staffId: 14,
+      schoolId: 8,
+      userRole: "support_staff",
+      allowedModules: ["fees-manager", "fees-manager:ledger-transactions"],
+    },
+  }, withoutStructureGrant.response), false);
+  assert.equal(withoutStructureGrant.result.statusCode, 403);
+
+  const adminResponse = makeResponse();
+  assert.equal(feesRequestGuard({
+    method: "POST",
+    path: endpoint,
+    session: { userId: 3, schoolId: 8, userRole: "admin" },
+  }, adminResponse.response), true);
+});
+
 test("External Portal, refunds, and unknown Fees routes stay outside Support Staff areas", () => {
   assert.equal(feesAreasForRequest("GET", "/api/admin/fees/external-settings"), null);
   assert.equal(feesAreasForRequest("POST", "/api/admin/fees/payments/12/refunds"), null);
   assert.equal(feesAreasForRequest("GET", "/api/admin/fees/payments/12/refund-eligibility"), null);
-  assert.equal(feesAreasForRequest("POST", "/api/admin/fees/structures/12/generate-invoices"), null);
   assert.equal(feesAreasForRequest("POST", "/api/admin/fees/bulk-delete"), null);
   assert.equal(feesAreasForRequest("DELETE", "/api/admin/fees/12"), null);
   assert.deepEqual(feesAreasForRequest("PATCH", "/api/admin/fees/12"), [FEES_AREAS.LEDGER_TRANSACTIONS]);
+  assert.equal(feesAreasForRequest("GET", "/api/admin/fees/structures/12/generate-invoices"), null);
   assert.deepEqual(feesAreasForRequest("GET", "/api/admin/fees/class-options"), [
     FEES_AREAS.FEE_STRUCTURES,
     FEES_AREAS.LEDGER_TRANSACTIONS,
