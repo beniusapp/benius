@@ -135,9 +135,11 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
 
   // ── Fees & Payments ────────────────────────────────────────────────────────
   "fees-manager": [
-    { id: "view",   label: "View Fee Records" },
-    { id: "record", label: "Record Payments" },
-    { id: "export", label: "Export Reports" },
+    { id: "financial-analytics", label: "Financial Analytics" },
+    { id: "fee-structures", label: "Fee Structures" },
+    { id: "ledger-transactions", label: "Ledger & Transactions" },
+    { id: "reminders", label: "Reminders" },
+    { id: "audit-log", label: "Audit Log" },
   ],
 
   // ── Performance Analytics ──────────────────────────────────────────────────
@@ -178,20 +180,31 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
 };
 
 /**
- * Backwards-compat helper: old records that have only module IDs (no sub-IDs)
- * get all sub-module keys auto-populated so the permissions modal loads correctly.
+ * Backwards-compat helper: old module-only grants still populate submodules,
+ * while legacy Fees grants map only to Ledger & Transactions.
  */
 export function expandModulesWithSubs(allowedModules: string[]): string[] {
-  const result = [...allowedModules];
+  const legacyFeeGrants = ["fees-manager:view", "fees-manager:record", "fees-manager:export"];
+  const hasCompleteLegacyFeeGrant = legacyFeeGrants.every(grant => allowedModules.includes(grant));
+  const result = hasCompleteLegacyFeeGrant
+    ? allowedModules.filter(key => !legacyFeeGrants.includes(key))
+    : [...allowedModules];
   allowedModules.forEach(key => {
     if (key.includes(":")) return;
     const hasSub = allowedModules.some(k => k.startsWith(key + ":"));
     if (!hasSub) {
-      (MODULE_SUB_MODULES[key] ?? []).forEach(sub => {
+      const subs = key === "fees-manager"
+        ? MODULE_SUB_MODULES[key]?.filter(sub => sub.id === "ledger-transactions")
+        : MODULE_SUB_MODULES[key];
+      (subs ?? []).forEach(sub => {
         const subKey = `${key}:${sub.id}`;
         if (!result.includes(subKey)) result.push(subKey);
       });
     }
   });
+  if (hasCompleteLegacyFeeGrant) {
+    const ledgerGrant = "fees-manager:ledger-transactions";
+    if (result.includes("fees-manager") && !result.includes(ledgerGrant)) result.push(ledgerGrant);
+  }
   return result;
 }

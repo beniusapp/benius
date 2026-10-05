@@ -27,6 +27,7 @@ import { registerMobileAuthRoutes } from "../mobile-auth-routes";
 import { registerStudentPasswordRecoveryRoutes } from "../student-password-recovery-routes";
 import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
 import { registerFeesRoutes } from "../fees-routes";
+import { FEES_AREAS, feesAreaGuard } from "../fees-permissions";
 import { requireStudentFeeSession } from "../student-fee-session-context";
 import { resolveStudentExaminationSession } from "../student-examination-session";
 import { resolveStudentAcademicSession } from "../student-academic-session";
@@ -4610,7 +4611,7 @@ export async function registerRoutes(
   // populate the multi-select filter panel. Must be registered BEFORE the
   // dynamic /:id routes.
   app.get("/api/admin/fees/filter-options", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!feesAreaGuard(req, res, FEES_AREAS.LEDGER_TRANSACTIONS)) return res;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
@@ -4709,7 +4710,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/fees", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!feesAreaGuard(req, res, FEES_AREAS.LEDGER_TRANSACTIONS)) return res;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const pageSize = 20;
@@ -4890,7 +4891,7 @@ export async function registerRoutes(
   });
 
   app.post("/api/admin/fees", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!feesAreaGuard(req, res, FEES_AREAS.LEDGER_TRANSACTIONS)) return res;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const parsed = manualInvoiceBodySchema.safeParse(req.body);
@@ -4923,7 +4924,7 @@ export async function registerRoutes(
         context: invoiceContext,
         studentId: parsed.data.studentId,
         notes: parsed.data.notes,
-        createdBy: req.session.userId,
+        createdBy: req.session.userRole === "support_staff" ? null : req.session.userId,
         afterCreate: async (tx, record) => {
           await appendFeeAudit({
             schoolId,
@@ -4958,7 +4959,7 @@ export async function registerRoutes(
   });
 
   app.patch("/api/admin/fees/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!feesAreaGuard(req, res, FEES_AREAS.LEDGER_TRANSACTIONS)) return res;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
@@ -5174,8 +5175,7 @@ export async function registerRoutes(
   //           OR   ?q=             (name / DSID of students in this school only)
   // Sending both → 400. Must NOT be registered after any /:id wildcard.
   app.get("/api/admin/fees/students/search", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!feesAreaGuard(req, res, FEES_AREAS.LEDGER_TRANSACTIONS)) return res;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
 

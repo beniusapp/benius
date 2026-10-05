@@ -1795,7 +1795,17 @@ export default function AdminDashboard() {
 
   function getSubsFor(moduleId: string): string[] | undefined {
     if (me?.role !== "support_staff") return undefined;
-    return (me.allowedModules ?? [])
+    const allowedModules = me.allowedModules ?? [];
+    if (moduleId === "fees-manager") {
+      const legacyFeeGrants = ["fees-manager:view", "fees-manager:record", "fees-manager:export"];
+      const feeGrants = allowedModules.filter((key: string) => key.startsWith("fees-manager:"));
+      const areaGrants = feeGrants.map((key: string) => key.split(":")[1]);
+      if (feeGrants.length === 0 || legacyFeeGrants.every(key => allowedModules.includes(key))) {
+        if (!areaGrants.includes("ledger-transactions")) areaGrants.push("ledger-transactions");
+      }
+      return areaGrants;
+    }
+    return allowedModules
       .filter((k: string) => k.startsWith(moduleId + ":"))
       .map((k: string) => k.split(":")[1]);
   }

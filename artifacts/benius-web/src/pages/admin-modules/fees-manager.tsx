@@ -2296,8 +2296,9 @@ function ExportLedgerDialog({
 
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
-function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
-  canRecord: boolean; isArchiveMode: boolean; students: StudentItem[]; viewSessionId: number | null;
+function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistryCount, isArchiveMode, students, viewSessionId }: {
+  canRecord: boolean; canViewReminders: boolean; canInitiateRefund: boolean; showRegistryCount: boolean;
+  isArchiveMode: boolean; students: StudentItem[]; viewSessionId: number | null;
 }) {
   const { toast } = useToast();
   const { selectedSession } = useSessionView();
@@ -2406,30 +2407,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   // NOTE: we intentionally do NOT clear selectedIds on page change —
   // selections persist across pagination (see task #272).
 
-  // Fee structures remain the source for historical display-name fallbacks.
-  const { data: feeStructures = [] } = useQuery<FeeStructure[]>({
-    queryKey: ["/api/admin/fees/structures"],
-    staleTime: 300_000,
-  });
-  const activeStructures = useMemo(() => feeStructures, [feeStructures]);
-  // Map feeType (normalized: trim+lowercase) → structure name.
-  // Used as a client-side fallback when the server-side feeName field is absent
-  // (e.g. stale React Query cache from before the field was added).
-  const feeTypeToName = useMemo(() => {
-    const m = new Map<string, string>();
-    activeStructures.forEach(s => {
-      const key = s.feeType.trim().toLowerCase();
-      if (!m.has(key)) m.set(key, s.name);
-    });
-    return m;
-  }, [activeStructures]);
-
-  // Resolve display name for a fee record: prefer server-supplied feeName,
-  // fall back to client-side map, then raw feeType. || catches empty strings too.
   const resolveFeeDisplayName = useCallback(
-    (rec: { feeType: string; feeName?: string }) =>
-      rec.feeName || feeTypeToName.get(rec.feeType.trim().toLowerCase()) || rec.feeType || "—",
-    [feeTypeToName],
+    (rec: { feeType: string; feeName?: string }) => rec.feeName || rec.feeType || "—",
+    [],
   );
 
   // ── Accordion callbacks ────────────────────────────────────────────────────
@@ -2589,6 +2569,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       return r.json();
     },
     staleTime: 30_000,
+    enabled: canViewReminders,
   });
 
   // Dunning counts — per-student reminder counts for the bell badge
@@ -2600,6 +2581,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       return r.json();
     },
     staleTime: 30_000,
+    enabled: canViewReminders,
   });
 
   // Payment records are retained here to select the correct receipt route.
@@ -2794,19 +2776,15 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
   });
 
   const { data: ledgerSchoolConfig } = useQuery<{ classes: string[] }>({
-    queryKey: ["/api/admin/school-config"],
+    queryKey: ["/api/admin/fees/class-options"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/school-config", { credentials: "include" });
-      if (!r.ok) return { classes: [] };
+      const r = await sessionFetch("/api/admin/fees/class-options");
+      if (!r.ok) throw new Error("Failed to load Fees class options");
       return r.json();
     },
     staleTime: 300_000,
   });
-  // Prefer school-setup classes; fall back to distinct classes of enrolled students
-  const studentClasses: string[] = (ledgerSchoolConfig?.classes ?? []).length > 0
-    ? ledgerSchoolConfig!.classes
-    : [...new Set(students.filter(s => s.isActive).map(s => s.class))].sort();
-  const classes = studentClasses;
+  const classes = ledgerSchoolConfig?.classes ?? [];
   const { data: ledgerFilterOptions } = useQuery<{
     classes: string[]; sections: string[]; feeNames: string[]; feeTypes: string[]; feePeriods: Array<{ value: string; label: string }>;
     frequencies: string[]; statuses: string[]; paymentMethods: string[]; academicYears: string[];
@@ -2945,15 +2923,13 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
     ? Math.max(0, ledgerTotal - excludedIds.size)
     : selectedIds.size;
 
-  // Distinct fee names/types come from fee structures so pagination does not
-  // remove filter options that are not present on the current page.
   const allFeeNames = useMemo(() =>
-    [...new Set([...activeStructures.map(s => s.name), ...feeRecords.map(r => resolveFeeDisplayName(r))])].filter(Boolean).sort(),
-    [activeStructures, feeRecords, resolveFeeDisplayName]);
+    [...new Set([...(ledgerFilterOptions?.feeNames ?? []), ...feeRecords.map(r => resolveFeeDisplayName(r))])].filter(Boolean).sort(),
+    [ledgerFilterOptions, feeRecords, resolveFeeDisplayName]);
 
   const allFeeTypes = useMemo(() =>
-    [...new Set([...activeStructures.map(s => s.feeType), ...feeRecords.map(r => r.feeType)])].sort(),
-    [activeStructures, feeRecords]);
+    [...new Set([...(ledgerFilterOptions?.feeTypes ?? []), ...feeRecords.map(r => r.feeType)])].sort(),
+    [ledgerFilterOptions, feeRecords]);
 
   function openCreate() {
     setEditing(null);
@@ -2970,7 +2946,11 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
       dueDate: rec.dueDate, status: rec.status as any, paidDate: rec.paidDate ?? "",
       receiptNumber: rec.receiptNumber ?? "", notes: rec.notes ?? "", academicYear: rec.academicYear ?? "",
     });
-    setSelectedStudent(students.find(s => s.id === rec.studentId) ?? null);
+    setSelectedStudent(
+      rec.student
+        ? { ...rec.student, id: rec.studentId, isActive: true }
+        : students.find(s => s.id === rec.studentId) ?? null,
+    );
     setStudentSearchQ(""); setStudentResults(null); setInvoiceBreakdown([]);
     setShowForm(true);
   }
@@ -3254,7 +3234,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                     <td className="px-4 py-3 text-center text-white/50 text-xs">{rec.academicYear ?? "—"}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        {(() => {
+                        {canViewReminders && (() => {
                           const dCount = dunningCounts[rec.id] ?? 0;
                           const hasDunning = dCount > 0;
                           return (
@@ -3272,6 +3252,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                           );
                         })()}
                         {(() => {
+                          if (!canViewReminders) return null;
                           const failedInfo = failedCounts[rec.id];
                           if (!failedInfo || failedInfo.count === 0) return null;
                           return (
@@ -3409,9 +3390,9 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
                                             <p className="text-white/30 text-[10px] mb-0.5">HMAC Signature</p>
                                             <p className="text-white/35 font-mono text-[9px] break-all leading-tight">{pay.razorpaySignature ?? "—"}</p>
                                           </div>
-                                           <div className="pt-2">
+                                           {canInitiateRefund && <div className="pt-2">
                                              <RefundPaymentDialog payment={pay} onSaved={() => { void fetchDetail(rec.id, true); }} />
-                                           </div>
+                                           </div>}
                                         </div>
                                       </div>
                                     ) : (
@@ -3678,10 +3659,10 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
       {/* Summary strip — updates live as filters change */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-        <span className="text-white/30">
+        {showRegistryCount && <span className="text-white/30">
           <span className="text-white/50 font-semibold">{students.length}</span> active student{students.length !== 1 ? "s" : ""} in registry
-        </span>
-        <span className="text-white/20">·</span>
+        </span>}
+        {showRegistryCount && <span className="text-white/20">·</span>}
         <span className="text-white/30">
           <span className="text-white/50 font-semibold">{new Set(filtered.map(r => r.studentId)).size}</span> student{new Set(filtered.map(r => r.studentId)).size !== 1 ? "s" : ""} in view
         </span>
@@ -3719,12 +3700,12 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
         selectAllMatching={selectAllMatching}
         excludedIds={excludedIds}
       />
-      <NotificationHistoryModal
+      {canViewReminders && <NotificationHistoryModal
         open={showNotifModal}
         onClose={() => { setShowNotifModal(false); setNotifStudentId(null); setNotifStudentName(null); }}
         studentId={notifStudentId}
         studentName={notifStudentName}
-      />
+      />}
 
       {/* Add / Edit Dialog */}
       <Dialog open={showForm} onOpenChange={v => { if (!v) { setShowForm(false); setEditing(null); setAddFeeSuccessId(null); } }}>
@@ -4212,7 +4193,7 @@ function LedgerTab({ canRecord, isArchiveMode, students, viewSessionId }: {
 
 // ─── Structures Tab ───────────────────────────────────────────────────────────
 
-function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
+function StructuresTab({ isArchiveMode, canGenerateInvoices }: { isArchiveMode: boolean; canGenerateInvoices: boolean }) {
   const { toast } = useToast();
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<FeeStructure | null>(null);
@@ -4253,10 +4234,10 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
   });
 
   const { data: schoolConfig } = useQuery<{ classes: string[] }>({
-    queryKey: ["/api/admin/school-config"],
+    queryKey: ["/api/admin/fees/class-options"],
     queryFn: async () => {
-      const r = await fetch("/api/admin/school-config", { credentials: "include" });
-      if (!r.ok) return { classes: [] };
+      const r = await sessionFetch("/api/admin/fees/class-options");
+      if (!r.ok) throw new Error("Failed to load Fees class options");
       return r.json();
     },
     staleTime: 300_000,
@@ -4591,10 +4572,10 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
               </div>
               {!isArchiveMode && (
                 <div className="space-y-1 pt-1 border-t border-white/10">
-                  <Button size="sm" variant="ghost" onClick={() => openGenInvoices(s)}
+                  {canGenerateInvoices && <Button size="sm" variant="ghost" onClick={() => openGenInvoices(s)}
                     className="w-full text-cyan-400 hover:bg-cyan-900/30 text-xs h-7 gap-1 border border-cyan-700/30">
                     <Printer className="w-3 h-3" /> Generate Invoices
-                  </Button>
+                  </Button>}
                   <div className="flex gap-1">
                     <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="flex-1 text-white/50 hover:text-white text-xs h-7 gap-1">
                       <Pencil className="w-3 h-3" /> Edit
@@ -4908,7 +4889,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
       </Dialog>
 
       {/* Generate Invoices Dialog */}
-      <Dialog open={genTarget !== null} onOpenChange={v => { if (!v) { setGenTarget(null); setGenResult(null); } }}>
+      {canGenerateInvoices && <Dialog open={genTarget !== null} onOpenChange={v => { if (!v) { setGenTarget(null); setGenResult(null); } }}>
         <DialogContent className="bg-[#1A2942] border-white/10 text-white max-w-md">
           <DialogHeader>
             <DialogTitle className="text-cyan-400 flex items-center gap-2">
@@ -5075,7 +5056,7 @@ function StructuresTab({ isArchiveMode }: { isArchiveMode: boolean }) {
             </div>
           )}
         </DialogContent>
-      </Dialog>
+      </Dialog>}
     </div>
   );
 }
@@ -6734,11 +6715,27 @@ const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: st
 ];
 
 export default function FeesManager({ schoolId, allowedSubs }: { schoolId: number; allowedSubs?: string[] }) {
-  const canRecord = allowedSubs === undefined || allowedSubs.includes("record");
-  const canExport  = allowedSubs === undefined || allowedSubs.includes("export");
+  const isAdmin = allowedSubs === undefined;
+  const hasArea = (area: string) => isAdmin || allowedSubs?.includes(area) === true;
+  const canRecord = hasArea("ledger-transactions");
+  const canViewReminders = hasArea("reminders");
+  const visibleTabs = TABS.filter(({ id }) => {
+    if (id === "external") return isAdmin;
+    const areaByTab: Partial<Record<Tab, string>> = {
+      analytics: "financial-analytics",
+      structures: "fee-structures",
+      ledger: "ledger-transactions",
+      reminders: "reminders",
+      audit: "audit-log",
+    };
+    return hasArea(areaByTab[id] ?? "");
+  });
   const { isArchiveMode, selectedSession } = useSessionView();
   const viewSessionId = selectedSession?.id ?? null;
   const [activeTab, setActiveTab] = useState<Tab>("ledger");
+  const displayedTab: Tab | null = visibleTabs.some(tab => tab.id === activeTab)
+    ? activeTab
+    : visibleTabs[0]?.id ?? null;
   const queryClient = useQueryClient();
   const [externalVerificationOpen, setExternalVerificationOpen] = useState(false);
   const [externalAccessExpiry, setExternalAccessExpiry] = useState<number | null>(null);
@@ -6758,6 +6755,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   }, [clearExternalPortalAccess, externalAccessExpiry]);
 
   const openTab = useCallback((tab: Tab) => {
+    if (!visibleTabs.some(visibleTab => visibleTab.id === tab)) return;
     if (tab !== "external") {
       setActiveTab(tab);
       return;
@@ -6771,7 +6769,7 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
     }
     clearExternalPortalAccess();
     setExternalVerificationOpen(true);
-  }, [clearExternalPortalAccess, externalAccessExpiry]);
+  }, [clearExternalPortalAccess, externalAccessExpiry, visibleTabs]);
 
   const handleExternalPortalVerified = useCallback((expiresAt: string) => {
     const parsedExpiry = Date.parse(expiresAt);
@@ -6810,7 +6808,8 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
   }, [queryClient]);
 
   const { data: students = [] } = useQuery<StudentItem[]>({
-    queryKey: ["/api/schools", schoolId, "students"],
+    queryKey: ["/api/schools", schoolId, "students", isAdmin ? "admin" : "support-staff"],
+    enabled: isAdmin,
     queryFn: async () => {
       const r = await fetch(`/api/schools/${schoolId}/students`, { credentials: "include" });
       if (!r.ok) return [];
@@ -6843,8 +6842,8 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
 
       {/* Tab nav */}
       <div className="flex min-w-0 max-w-full gap-1 overflow-x-auto rounded-xl border border-white/10 bg-[#1A2942] p-1">
-        {TABS.map(({ id, label, Icon }) => {
-          const active = activeTab === id;
+        {visibleTabs.map(({ id, label, Icon }) => {
+          const active = displayedTab === id;
           return (
             <button key={id} onClick={() => openTab(id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${active ? "bg-cyan-600 text-white shadow-sm" : "text-white/50 hover:text-white hover:bg-white/5"}`}>
@@ -6856,17 +6855,22 @@ export default function FeesManager({ schoolId, allowedSubs }: { schoolId: numbe
       </div>
 
       {/* Content */}
-      {activeTab === "ledger"     && <LedgerTab canRecord={canRecord} isArchiveMode={isArchiveMode} students={students} viewSessionId={viewSessionId} />}
-      {activeTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
-      {activeTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
-      {activeTab === "external"   && <ExternalPortalTab onReauthRequired={clearExternalPortalAccess} />}
-      {activeTab === "audit"      && <AuditLogTab viewSessionId={viewSessionId} />}
-      <ExternalPortalVerificationDialog
+      {!displayedTab && (
+        <div className="rounded-xl border border-white/10 bg-[#1A2942] px-5 py-8 text-center text-sm text-white/50">
+          No Fees &amp; Payments areas are assigned to this account.
+        </div>
+      )}
+      {displayedTab === "ledger"     && <LedgerTab canRecord={canRecord} canViewReminders={canViewReminders} canInitiateRefund={isAdmin} showRegistryCount={isAdmin} isArchiveMode={isArchiveMode} students={isAdmin ? students : []} viewSessionId={viewSessionId} />}
+      {displayedTab === "structures" && <StructuresTab isArchiveMode={isArchiveMode} canGenerateInvoices={isAdmin} />}
+      {displayedTab === "analytics"  && <AnalyticsTab viewSessionId={viewSessionId} />}
+      {displayedTab === "reminders"  && <RemindersTab isArchiveMode={isArchiveMode} />}
+      {displayedTab === "external"   && <ExternalPortalTab onReauthRequired={clearExternalPortalAccess} />}
+      {displayedTab === "audit"      && <AuditLogTab viewSessionId={viewSessionId} />}
+      {isAdmin && <ExternalPortalVerificationDialog
         open={externalVerificationOpen}
         onOpenChange={setExternalVerificationOpen}
         onVerified={handleExternalPortalVerified}
-      />
+      />}
     </div>
   );
 }

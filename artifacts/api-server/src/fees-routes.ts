@@ -98,6 +98,7 @@ import {
   type LedgerFilterFields,
 } from "./ledger-filter-sql";
 import { feePeriodLabel } from "./fee-period";
+import { feesRequestGuard, FEES_AREAS, feesAreaGuard } from "./fees-permissions";
 import {
   appendFeeAudit,
   describeFeeAuditChanges,
@@ -601,15 +602,7 @@ export function registerFeesRoutes(app: Express) {
   }
 
   function adminGuard(req: any, res: any): boolean {
-    if (!req.session?.userId || req.session.userRole !== "admin") {
-      res.status(403).json({ message: "Admin access required" });
-      return false;
-    }
-    if (!req.session.schoolId) {
-      res.status(403).json({ message: "No school in session" });
-      return false;
-    }
-    return true;
+    return feesRequestGuard(req, res);
   }
 
   /**
@@ -984,6 +977,18 @@ export function registerFeesRoutes(app: Express) {
 
   // ── Fee Structures ────────────────────────────────────────────────────────
 
+  // Fee-scoped class options for structures and ledger filters. Do not loosen
+  // the general school-config or student-roster endpoints for Support Staff.
+  app.get("/api/admin/fees/class-options", async (req, res) => {
+    if (!feesAreaGuard(req, res, [FEES_AREAS.FEE_STRUCTURES, FEES_AREAS.LEDGER_TRANSACTIONS])) return;
+    const schoolId = req.session.schoolId as number;
+    const metadata = await storage.getAllSchoolMetadata(schoolId);
+    const classes = Array.isArray(metadata.classes)
+      ? metadata.classes.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    res.json({ classes });
+  });
+
   const breakdownItemSchema = z.object({
     name:    z.string().min(1).max(100),
     purpose: z.string().max(300).default(""),
@@ -1068,7 +1073,11 @@ export function registerFeesRoutes(app: Express) {
     const actor = await resolveFeeAuditActor(req, schoolId);
     const rec = await db.transaction(async tx => {
       const created = await storage.createFeeStructure(
-        { ...parsed.data, schoolId, createdBy: req.session.userId },
+        {
+          ...parsed.data,
+          schoolId,
+          createdBy: req.session.userRole === "support_staff" ? null : req.session.userId,
+        },
         tx,
       );
       await appendFeeAudit({
@@ -1593,7 +1602,7 @@ export function registerFeesRoutes(app: Express) {
               ${safeAllocation},
               ${paymentData.cashierNotes ?? null},
               ${idempotencyKey ? `${idempotencyKey}-${step.invoiceId}` : null},
-              ${req.session.userId ?? null}, ${opReceipt}, ${step.lateFeeAmount}
+              ${req.session.userRole === "support_staff" ? null : req.session.userId ?? null}, ${opReceipt}, ${step.lateFeeAmount}
             )
           `);
 
@@ -1837,7 +1846,7 @@ export function registerFeesRoutes(app: Express) {
               ${paymentOnly.amount},
               ${paymentOnly.cashierNotes ?? null},
               ${idempotencyKey ?? null},
-              ${req.session.userId ?? null},
+              ${req.session.userRole === "support_staff" ? null : req.session.userId ?? null},
               ${opReceipt},
               ${paymentOnly.feeRecordId != null ? lateFeeForOfflineInsert : (paymentData.lateFeePaid ?? 0)},
               ${denomBreakdownJson}::jsonb,
@@ -4174,7 +4183,7 @@ export function registerFeesRoutes(app: Express) {
         context: invoiceContext,
         studentId: enrollment.studentId,
         duplicateIndex,
-        createdBy: req.session.userId,
+        createdBy: req.session.userRole === "support_staff" ? null : req.session.userId,
         afterCreate: async (tx, record) => {
           const studentName = studentNameById.get(enrollment.studentId) ?? null;
           await appendFeeAudit({
