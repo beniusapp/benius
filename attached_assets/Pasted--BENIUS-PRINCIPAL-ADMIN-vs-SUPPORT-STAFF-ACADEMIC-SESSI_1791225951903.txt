@@ -1,0 +1,445 @@
+# BENIUS — PRINCIPAL/ADMIN vs SUPPORT STAFF
+# ACADEMIC SESSION CONSISTENCY AUDIT
+
+## READ-ONLY AUDIT ONLY
+
+DO NOT CHANGE CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT CHANGE PERMISSIONS.
+
+DO NOT MODIFY MOBILE.
+
+DO NOT DEPLOY.
+
+I want to verify whether Support Staff uses the SAME Academic Session foundation and rules as Principal/Admin.
+
+---
+
+# PRODUCT RULE
+
+Principal/Admin and Support Staff belong to the same school.
+
+Therefore they must use the SAME school's Academic Session system.
+
+Example:
+
+```text
+School A
+├── Academic Session 2025–2026
+└── Academic Session 2026–2027
+```
+
+Both Principal/Admin and Support Staff must resolve these SAME Academic Session records/IDs.
+
+Support Staff must NOT have:
+
+- a separate Academic Session system;
+- a separate active session;
+- different session IDs;
+- a different historical-session rule;
+- fallback to another school's session.
+
+---
+
+# IMPORTANT — DO NOT CONFUSE THIS WITH LIVE UI SYNCHRONIZATION
+
+I am NOT requiring:
+
+> Principal changes the selected session in their browser → Support Staff browser instantly changes too.
+
+Each logged-in user may have their own currently selected session in their browser/session context.
+
+That is fine.
+
+What MUST be shared is:
+
+- same school Academic Session records;
+- same Academic Session IDs;
+- same active Academic Session;
+- same ownership validation;
+- same selected-session business rules;
+- same historical-session read-only rules.
+
+---
+
+# BENIUS PERMANENT SESSION RULE
+
+For session-specific academic/operational data:
+
+### Active Academic Session
+
+READ → allowed according to module permission.
+
+WRITE → allowed according to module permission/business rule.
+
+### Previous/inactive Academic Session
+
+READ → allowed where the module supports historical viewing and the user has permission.
+
+WRITE → STRICTLY REJECTED.
+
+No:
+
+- create
+- edit
+- delete
+- approve
+- reject
+- publish
+- correction
+- status mutation
+- other operational mutation
+
+against an inactive Academic Session.
+
+A historical write must NEVER silently redirect to the active session.
+
+---
+
+# AUDIT PRINCIPAL SESSION FOUNDATION
+
+Trace how Principal/Admin:
+
+1. gets the school's Academic Sessions;
+2. identifies the active Academic Session;
+3. selects another Academic Session;
+4. stores/transmits selected Academic Session ID;
+5. sends selected session to APIs;
+6. validates that selected session belongs to authenticated school;
+7. handles previous Academic Sessions;
+8. handles writes while a historical session is selected.
+
+Identify:
+
+- frontend state/context;
+- headers/query parameters;
+- backend resolver/middleware;
+- database ownership validation.
+
+---
+
+# AUDIT SUPPORT STAFF SESSION FOUNDATION
+
+Then trace the EXACT same things for Support Staff:
+
+1. Which Academic Sessions can Support Staff see?
+2. Where do those sessions come from?
+3. Does Support Staff use the authenticated school's sessions?
+4. Does Support Staff use the SAME Academic Session IDs as Principal?
+5. Does Support Staff use the SAME active session?
+6. How is selected Academic Session stored?
+7. How is it sent to APIs?
+8. Does backend validate session ownership?
+9. What happens when Support Staff selects an old session?
+10. Are historical writes rejected?
+
+---
+
+# CRITICAL TENANT TEST
+
+Verify:
+
+```text
+Support Staff → School A
+
+School A Session → ALLOW
+
+School B Session → REJECT
+```
+
+A Support Staff member must NEVER be able to supply another school's Academic Session ID and access/mutate data.
+
+Do not trust a client-provided school ID or session ID without server validation.
+
+---
+
+# COMPARE PRINCIPAL vs SUPPORT STAFF
+
+Create a comparison table:
+
+| Session behavior | Principal/Admin | Support Staff | Same? |
+|---|---|---|---|
+| Session source | | | |
+| Active session | | | |
+| Available sessions | | | |
+| Session IDs | | | |
+| Selected-session mechanism | | | |
+| API header/query | | | |
+| School ownership validation | | | |
+| Historical reads | | | |
+| Historical writes | | | |
+| Active-session writes | | | |
+| Cross-school session rejection | | | |
+
+---
+
+# CHECK SUPPORT STAFF GRANTED MODULES
+
+Support Staff only has access to modules granted by Principal.
+
+Academic Session selection must NOT bypass module permissions.
+
+Example:
+
+Support Staff has:
+
+```text
+Fees & Payments ✅
+Exam Controller ❌
+```
+
+Selecting an Academic Session must NOT suddenly give Support Staff Exam Controller access.
+
+Session authorization and module authorization are separate protections.
+
+Both must pass.
+
+---
+
+# FEES & PAYMENTS — VERIFY CURRENT WORK
+
+We just completed Support Staff Fees & Payments permission work.
+
+Verify specifically that Principal/Admin and authorized Support Staff use the same Academic Session foundation for Fees.
+
+Check:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+- Generate Invoices
+
+External Portal remains Principal/Admin-only and is not part of Support Staff access.
+
+Do NOT change Fees code during this audit.
+
+Report any inconsistency only.
+
+---
+
+# SESSION-SPECIFIC vs GLOBAL DATA
+
+Do NOT force Academic Session filtering onto data that is intentionally global.
+
+Identify which Admin/Support Staff modules/data are:
+
+### Session-specific
+
+and which are:
+
+### Global/current-school
+
+The goal is not to make every database table session-scoped.
+
+The goal is:
+
+> Wherever Principal uses Academic Session context, authorized Support Staff must follow the SAME correct session semantics.
+
+---
+
+# CHECK FOR DANGEROUS DIFFERENCES
+
+Specifically search for:
+
+### 1. Support Staff silently using active session
+
+Example:
+
+Principal selected 2025–26.
+
+Support Staff selected 2025–26.
+
+But Support Staff API ignores selection and silently loads 2026–27 active-session data.
+
+Report as:
+
+**SESSION DRIFT**
+
+---
+
+### 2. Historical write redirected to active session
+
+Example:
+
+Support Staff selected 2025–26.
+
+Support Staff clicks an operation.
+
+Backend writes into active 2026–27 instead.
+
+Report as:
+
+**CRITICAL SESSION BUG**
+
+---
+
+### 3. Historical mutation allowed
+
+Support Staff can modify old-session data.
+
+Report as:
+
+**CRITICAL SESSION BUG**
+
+---
+
+### 4. Cross-school session accepted
+
+Support Staff School A supplies School B Academic Session ID.
+
+If accepted:
+
+**CRITICAL TENANT/SESSION BUG**
+
+---
+
+### 5. Different active-session resolution
+
+Principal and Support Staff resolve different active sessions for the same school.
+
+Report as:
+
+**SESSION DRIFT**
+
+---
+
+# DO NOT FIX
+
+Even if you find problems:
+
+DO NOT FIX THEM.
+
+This is a read-only audit.
+
+I will decide corrections after reviewing the result.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# PRINCIPAL vs SUPPORT STAFF ACADEMIC SESSION AUDIT
+
+## Overall verdict
+
+Choose:
+
+- PASS — SAME SESSION FOUNDATION
+- MINOR DIFFERENCES
+- SESSION DRIFT FOUND
+- CRITICAL SESSION/TENANT ISSUES FOUND
+
+## Simple explanation
+
+Explain in simple language whether Principal and Support Staff are using the same Academic Session system.
+
+## Principal/Admin session flow
+
+Explain briefly.
+
+## Support Staff session flow
+
+Explain briefly.
+
+## Comparison matrix
+
+Provide the requested Principal vs Support Staff table.
+
+## Same Academic Session records?
+
+YES / NO
+
+## Same active Academic Session?
+
+YES / NO
+
+## Same Academic Session IDs?
+
+YES / NO
+
+## Independent browser selection allowed?
+
+YES / NO
+
+This should normally be YES.
+
+## Historical session
+
+Report:
+
+Principal historical READ:
+ALLOW / REJECT / MODULE DEPENDENT
+
+Principal historical WRITE:
+ALLOW / REJECT / MODULE DEPENDENT
+
+Support Staff historical READ:
+ALLOW / REJECT / MODULE DEPENDENT
+
+Support Staff historical WRITE:
+ALLOW / REJECT / MODULE DEPENDENT
+
+## Cross-school session test
+
+School A Support Staff → School A Session:
+ALLOW / REJECT
+
+School A Support Staff → School B Session:
+ALLOW / REJECT
+
+## Fees & Payments session result
+
+Report specifically whether the newly corrected Support Staff Fees implementation follows the same session rules as Principal.
+
+## Module permission interaction
+
+Confirm selecting a session does NOT bypass `allowedModules`.
+
+## Session-specific vs global modules
+
+List what you confirmed from the current implementation.
+
+## Problems found
+
+For every problem provide:
+
+- severity;
+- frontend file;
+- backend route;
+- exact behavior;
+- Principal behavior;
+- Support Staff behavior;
+- whether data exposure or mutation is possible.
+
+DO NOT FIX.
+
+## Code changes
+
+NONE
+
+## Database changes
+
+NONE
+
+## Mobile changes
+
+NONE
+
+## Deployment
+
+NONE
+
+## FINAL ANSWER
+
+Answer explicitly:
+
+**Are Principal/Admin and Support Staff currently using the same school Academic Session foundation and the same session protection rules?**
+
+YES / NO / PARTIALLY
+
+STOP after the report.
