@@ -1,0 +1,733 @@
+BENIUS — TEACHER PORTAL
+
+WEB ↔ MOBILE BUSINESS LOGIC PARITY AUDIT
+
+READ-ONLY AUDIT ONLY
+
+DO NOT CHANGE CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT CHANGE UI.
+
+DO NOT DEPLOY OR PUBLISH.
+
+We have identified an important architectural concern:
+
+The BENIUS Web application is the established product/source of truth.
+
+The Mobile application is intended to replicate the same BENIUS functionality using the same backend/database.
+
+Mobile must NOT independently invent different business rules.
+
+The ideal architecture is:
+
+BENIUS PRODUCT RULE
+→ SHARED BACKEND ENFORCEMENT
+→ WEB + MOBILE
+→ SAME BUSINESS RESULT
+
+Web and Mobile may have different UI implementations and authentication mechanisms, but equivalent operations should follow the same business rules unless a difference was explicitly designed.
+
+---
+
+IMPORTANT PRODUCT DECISIONS ALREADY CONFIRMED
+
+Treat these as authoritative.
+
+ATTENDANCE
+
+Any authenticated Teacher belonging to the school may mark Student Attendance for any valid class/section within that SAME school.
+
+Teacher class assignment is NOT required for Attendance.
+
+School A Teacher
+→ School A valid class → ALLOWED.
+
+School A Teacher
+→ School B → REJECTED.
+
+Academic Session and Student enrollment isolation still apply.
+
+---
+
+HOMEWORK
+
+Any authenticated Teacher belonging to the school may give Homework to any valid class/section/subject within that SAME school.
+
+Teacher assignment is NOT required.
+
+School/tenant and Academic Session isolation remain mandatory.
+
+---
+
+CLASSWORK
+
+Same rule as Homework.
+
+Any authenticated Teacher belonging to the school may give Classwork to any valid class/section/subject within that SAME school.
+
+Teacher assignment is NOT required.
+
+---
+
+EXAMINATION
+
+Different rule.
+
+Examination operations ARE Teacher-assignment restricted according to the existing BENIUS Examination design.
+
+A Teacher must have the appropriate existing class/section/subject permission for the Examination operation.
+
+Do NOT change this rule during the audit.
+
+Step 12B was intentionally skipped for now, so the known Web Examination assignment-enforcement gap remains OPEN.
+
+---
+
+STUDENT LEAVE
+
+Preserve the existing BENIUS Student Leave permission model.
+
+Do NOT reinterpret Student Leave as school-wide Teacher access.
+
+Step 12A hardened the legacy Student Leave route.
+
+Step 12D corrected historical Student placement using selected-session enrollment.
+
+Do not undo either correction.
+
+---
+
+PRIMARY OBJECTIVE
+
+Audit the COMPLETE Teacher Portal and identify where:
+
+1. Web and Mobile implement the SAME intended business rule.
+2. Web and Mobile implement DIFFERENT business rules.
+3. Mobile introduced additional restrictions that do not exist in established BENIUS behavior.
+4. Web lacks backend enforcement of an intended restriction.
+5. Web and Mobile use different API routes/helpers that have drifted in authorization behavior.
+6. Business rules exist primarily in frontend code instead of being enforced by the backend.
+7. Equivalent Web/Mobile operations produce different authorization outcomes.
+
+DO NOT FIX ANYTHING.
+
+Report first.
+
+---
+
+MODULE INVENTORY
+
+Inspect actual source code and include every Teacher module.
+
+At minimum investigate actual implementations of:
+
+- Dashboard
+- Attendance
+- Homework
+- Classwork
+- Timetable
+- Noticeboard
+- Examination
+- Results
+- Reports
+- Complaint
+- Leave
+- Approval Center
+- Student Profiles
+- Teacher Profile
+- Gallery
+- Faculty Information
+- School Calendar
+- Library
+
+Include any other Teacher module actually present in code.
+
+Do not invent modules.
+
+---
+
+FOR EACH MODULE COMPARE
+
+For every equivalent Web/Mobile operation document:
+
+WEB
+
+- Web page/component
+- API route called
+- authentication mechanism
+- selected Academic Session transport
+- school/tenant validation
+- Teacher assignment validation
+- Student enrollment validation
+- write authorization
+- historical-session behavior
+
+MOBILE
+
+- Mobile screen/service
+- API route called
+- authentication mechanism
+- selected Academic Session transport
+- school/tenant validation
+- Teacher assignment validation
+- Student enrollment validation
+- write authorization
+- historical-session behavior
+
+Then determine:
+
+MATCH / DIFFERENT / NOT APPLICABLE
+
+---
+
+VERY IMPORTANT — API ARCHITECTURE
+
+Determine whether Web and Mobile:
+
+A. call the exact same backend route,
+
+B. call separate Web/Mobile backend routes but share authorization/business helpers,
+
+or
+
+C. call separate routes containing duplicated business logic.
+
+Identify cases of C clearly.
+
+Duplicated authorization/business logic is a major drift risk.
+
+Do NOT refactor it yet.
+
+---
+
+BACKEND AS ENFORCEMENT LAYER
+
+For each business rule determine where it is currently enforced:
+
+- Web frontend only
+- Mobile frontend only
+- Web backend route
+- Mobile backend route
+- shared backend helper
+- storage layer
+- database constraint
+
+Highlight cases where security/business authorization exists only in frontend code.
+
+Frontend hiding/disabling is NOT sufficient security.
+
+---
+
+ATTENDANCE — SPECIAL AUDIT
+
+Confirmed intended rule:
+
+ANY authenticated Teacher of the same school may mark Attendance for any valid class/section.
+
+Audit why Mobile currently appears more assignment-restricted.
+
+Identify exact:
+
+- Mobile frontend restriction
+- Mobile API restriction
+- shared/backend restriction
+- class/section lookup
+- enrollment validation
+
+Compare with Web.
+
+Do NOT change anything.
+
+Recommend later how Mobile can match the established rule without weakening:
+
+- tenant isolation
+- selected Academic Session
+- Student enrollment
+- historical read-only behavior.
+
+---
+
+HOMEWORK — SPECIAL AUDIT
+
+Confirmed intended rule:
+
+ANY authenticated Teacher of the same school may give Homework for any valid school class/section/subject.
+
+Audit Web vs Mobile.
+
+Identify exactly where Mobile applies Teacher-assignment restrictions.
+
+Do NOT remove them yet.
+
+Preserve:
+
+- school isolation
+- selected Academic Session
+- active-session write restriction
+- ownership rules for edit/delete if those are intentionally separate.
+
+Important:
+
+School-wide CREATE permission does NOT automatically mean any Teacher can edit/delete another Teacher's Homework.
+
+Audit this distinction.
+
+---
+
+CLASSWORK — SPECIAL AUDIT
+
+Same product rule as Homework.
+
+Any same-school Teacher may create Classwork for valid school cohorts/subjects.
+
+Audit Mobile assignment restrictions versus Web.
+
+Also separately document existing edit/delete ownership rules.
+
+Do NOT change anything.
+
+---
+
+EXAMINATION — SPECIAL AUDIT
+
+Confirmed intended rule:
+
+Teacher assignment DOES matter.
+
+Audit why Mobile enforces assignment but some Web Examination APIs do not.
+
+Document the exact divergence.
+
+Do NOT implement Step 12B.
+
+Keep it OPEN.
+
+Also preserve:
+
+- selected Academic Session
+- Student enrollment
+- historical read-only
+- score formulas
+- grading
+- publication logic
+- promotion behavior.
+
+---
+
+TIMETABLE
+
+Compare Web and Mobile:
+
+- read scope
+- write scope
+- Teacher assignment
+- selected session
+- historical behavior
+- current-day/current-period behavior.
+
+Do not assume Attendance/Homework rules apply to Timetable.
+
+Determine actual established Web behavior.
+
+---
+
+NOTICEBOARD
+
+Compare:
+
+- audience permissions
+- create permissions
+- edit/delete ownership
+- selected session
+- historical behavior
+- Dashboard badge/count integration.
+
+Do not invent new audience rules.
+
+---
+
+COMPLAINT
+
+Compare:
+
+- Teacher access
+- Student relationship/assignment checks
+- review permissions
+- selected session
+- historical behavior
+- attachments.
+
+Do not modify "/uploads".
+
+---
+
+LEAVE
+
+Audit separately:
+
+1. Teacher's own Leave
+2. Student Leave review
+3. Approval/reject/forward
+4. history
+5. Attendance synchronization
+
+Confirm Web and Mobile parity after Steps 12A and 12D.
+
+Do NOT redesign permissions.
+
+---
+
+APPROVAL CENTER + STUDENT PROFILE
+
+Compare Web/Mobile:
+
+- selected-session approval queues
+- Student enrollment
+- Teacher permission/assignment
+- historical read-only
+- current/global Student identity fields
+- session-specific class/section/roll
+- photo-only review behavior.
+
+Preserve Step 11.
+
+Student Portal Profile remains CURRENT and is outside this correction.
+
+---
+
+GLOBAL/CURRENT MODULES
+
+Audit:
+
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Determine whether Web and Mobile treat them consistently as global/current where intended.
+
+Do NOT make them session-specific merely for symmetry.
+
+---
+
+AUTHENTICATION DIFFERENCE IS EXPECTED
+
+Web:
+
+server session / HTTP-only cookie.
+
+Mobile:
+
+bearer access/refresh authentication.
+
+This difference is intentional.
+
+Do NOT report different authentication mechanisms themselves as a business-logic bug.
+
+Instead verify both mechanisms eventually authorize against the same:
+
+- Teacher identity
+- school
+- role
+- relevant resource.
+
+---
+
+ACADEMIC SESSION
+
+For session-sensitive operations both platforms should ultimately obey the same rules:
+
+Selected session read
+→ selected session data.
+
+Active selected session
+→ writes where existing business rules permit.
+
+Historical selected session
+→ read-only.
+
+Foreign-school session
+→ reject.
+
+Missing required selected session
+→ reject.
+
+No silent active-session fallback.
+
+---
+
+TENANT ISOLATION
+
+This must NEVER differ between Web and Mobile.
+
+School A Teacher must never access School B:
+
+- Students
+- Attendance
+- Homework
+- Classwork
+- Examination
+- Leave
+- Complaints
+- Profiles
+- Notices
+- Timetable
+- or other tenant data.
+
+Flag any difference as HIGH/CRITICAL.
+
+---
+
+STUDENT PLACEMENT
+
+For session-sensitive academic placement:
+
+use selected-session "enrollments".
+
+Do not use current Student class/section/roll for historical placement.
+
+Student Portal Profile's intentionally current behavior is separate and should remain unchanged.
+
+---
+
+OWNERSHIP VS CREATION PERMISSION
+
+Be careful not to confuse:
+
+"Any Teacher can CREATE"
+
+with:
+
+"Any Teacher can EDIT/DELETE another Teacher's content."
+
+For Homework/Classwork and similar modules, audit these separately:
+
+- view
+- create
+- edit
+- delete.
+
+Preserve established Web ownership behavior unless explicitly changed later.
+
+---
+
+IST
+
+Compare Web and Mobile date/time behavior against BENIUS standard:
+
+Asia/Kolkata / IST.
+
+Report differences.
+
+Do NOT fix during this audit.
+
+---
+
+KNOWN SEPARATE ISSUES
+
+Report but DO NOT fix:
+
+Public "/uploads"
+
+Known separate security workstream.
+
+Promotion ledger
+
+Known session unique-key/schema limitation.
+
+Web Examination assignment gap
+
+Known OPEN issue because Step 12B was skipped.
+
+---
+
+REQUIRED OUTPUT TABLE
+
+Create a clear matrix:
+
+| Teacher Module | Operation | Intended Rule | Web Rule | Mobile Rule | Backend Enforcement | Match? | Severity |
+
+Use simple language.
+
+Examples of operations:
+
+- View
+- Create
+- Edit
+- Delete
+- Approve
+- Reject
+- Publish
+- Mark Attendance
+
+Do not combine operations if their permissions differ.
+
+---
+
+ALSO CREATE
+
+BUSINESS RULE DRIFT LIST
+
+For every mismatch state:
+
+Module
+
+Web behavior
+
+Mobile behavior
+
+Established BENIUS rule
+
+Which side is incorrect
+
+Choose:
+
+- WEB
+- MOBILE
+- BOTH
+- UNCLEAR
+
+Why
+
+Recommended future correction
+
+DO NOT IMPLEMENT.
+
+---
+
+SHARED BACKEND OPPORTUNITIES
+
+Identify where duplicated Web/Mobile authorization could eventually be consolidated into shared backend helpers.
+
+Examples:
+
+"canTeacherMarkAttendance(...)"
+
+"canTeacherCreateHomework(...)"
+
+These are examples only.
+
+Do NOT create helpers during this audit.
+
+Recommend consolidation only where it genuinely reduces drift.
+
+---
+
+TEST REVIEW
+
+Review existing Web/API/Mobile tests and identify whether tests accidentally encode conflicting Web/Mobile rules.
+
+Example:
+
+If Mobile Attendance tests currently assert:
+
+"unassigned Teacher must be rejected"
+
+but established BENIUS rule is:
+
+"any same-school Teacher may mark Attendance"
+
+flag that test as encoding the wrong product rule.
+
+Do NOT modify tests yet.
+
+---
+
+FINAL REPORT FORMAT
+
+Return:
+
+TEACHER WEB ↔ MOBILE PARITY AUDIT
+
+Overall verdict
+
+Choose:
+
+- FULL PARITY
+- MINOR DRIFT
+- MATERIAL BUSINESS-RULE DRIFT
+
+Architecture summary
+
+Explain whether Web/Mobile mainly:
+
+- share routes,
+- use separate routes with shared helpers,
+- or duplicate logic.
+
+Complete Teacher module matrix
+
+Confirmed matching modules
+
+Confirmed mismatches
+
+Attendance finding
+
+Homework finding
+
+Classwork finding
+
+Examination finding
+
+Leave finding
+
+Approval Center / Student Profile finding
+
+Session parity
+
+Tenant isolation parity
+
+Historical read-only parity
+
+Ownership parity
+
+IST/date parity
+
+Tests encoding wrong rules
+
+Shared-backend consolidation opportunities
+
+Known separate security issues
+
+Recommended correction order
+
+Rank only the confirmed mismatches.
+
+Code changes
+
+Must be NONE.
+
+Database changes
+
+Must be NONE.
+
+Deployment
+
+Must be NONE.
+
+FINAL QUESTION
+
+Answer:
+
+Are Web and Mobile currently following the same BENIUS Teacher business rules? YES / NO
+
+If NO, list exactly which modules differ.
+
+---
+
+IMPORTANT:
+
+DO NOT FIX ANYTHING.
+
+DO NOT CHANGE BUSINESS LOGIC.
+
+DO NOT ASSUME MOBILE IS CORRECT JUST BECAUSE IT HAS MORE RESTRICTIONS.
+
+DO NOT ASSUME WEB IS CORRECT IF IT CONTRADICTS AN EXPLICIT PRODUCT DECISION ABOVE.
+
+The established BENIUS product decisions in this prompt are authoritative.
+
+Audit first and STOP.
