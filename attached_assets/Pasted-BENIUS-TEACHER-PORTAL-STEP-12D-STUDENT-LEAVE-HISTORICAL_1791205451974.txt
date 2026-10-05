@@ -1,0 +1,383 @@
+BENIUS — TEACHER PORTAL
+
+STEP 12D — STUDENT LEAVE HISTORICAL PLACEMENT CORRECTION
+
+Step 12A is COMPLETE and PASS.
+
+Now work ONLY on the confirmed audit finding involving the current Teacher Student Leave queue:
+
+"/api/student-leaves/teacher/mine"
+
+IMPORTANT:
+
+Do NOT redesign Student Leave permissions.
+
+Do NOT change who is allowed to approve/reject/forward Student Leave.
+
+Preserve the existing BENIUS Student Leave authorization model.
+
+This correction is ONLY about using the correct Student academic placement for the explicitly selected Academic Session.
+
+---
+
+CONFIRMED PROBLEM
+
+The final Teacher Portal audit found that:
+
+"getStudentLeavesByTeacher"
+
+filters Leave requests to the selected Academic Session, but Student class/section matching can rely on the Student's CURRENT:
+
+- class
+- section
+
+instead of the Student's enrollment for the selected Academic Session.
+
+This can produce incorrect historical results after a Student is promoted or moved.
+
+Example:
+
+2025–26:
+Rahul → Class 7A
+
+2026–27:
+Rahul → Class 8B
+
+Rahul has a Student Leave request belonging to 2025–26.
+
+When Teacher selects:
+
+2025–26
+
+BENIUS must evaluate Rahul using:
+
+2025–26 enrollment → 7A
+
+NOT:
+
+current Student record → 8B.
+
+---
+
+FIRST — AUDIT BEFORE EDITING
+
+Inspect the exact current implementation of:
+
+- "/api/student-leaves/teacher/mine"
+- "getStudentLeavesByTeacher"
+- related storage/query helpers
+- Teacher faculty mappings
+- legacy "assignedClass" / "assignedSection" fallback
+- Student enrollment lookup
+- Leave review actions
+
+Confirm the root cause before changing code.
+
+Make the smallest safe correction.
+
+---
+
+PRESERVE EXISTING PERMISSION LOGIC
+
+This step MUST NOT invent a new Student Leave permission model.
+
+Preserve the existing Teacher Student Leave rules already implemented by BENIUS.
+
+Do NOT convert Student Leave into:
+
+"Every Teacher can review every Student Leave in the school"
+
+unless that was already the actual existing rule.
+
+Likewise, do NOT make permissions more restrictive than they currently are.
+
+Only correct how Student class/section placement is determined for the selected session.
+
+---
+
+REQUIRED PLACEMENT RULE
+
+For session-sensitive Student academic placement use:
+
+"enrollments"
+
+scoped by:
+
+authenticated school
++
+Student
++
+explicitly selected Academic Session.
+
+Use the enrollment's:
+
+- class
+- section
+- other placement field only if actually required by existing Leave logic.
+
+Do NOT use current:
+
+"students.class"
+"students.section"
+
+for historical placement decisions.
+
+---
+
+SESSION ISOLATION
+
+Preserve existing selected-session behavior.
+
+Selected Session A
+→ only Session A Student Leave requests.
+
+Selected Session B
+→ only Session B Student Leave requests.
+
+NULL-session Leave
+→ must NOT silently become part of the selected session.
+
+Foreign-school session
+→ reject.
+
+No active-session fallback.
+
+---
+
+HISTORICAL READ-ONLY
+
+Historical same-school Student Leave information may be viewed according to existing Teacher permissions.
+
+Historical session:
+
+View permitted Leave → YES.
+
+Approve → NO.
+
+Reject → NO.
+
+Forward → NO.
+
+Any other status mutation → NO.
+
+Do not change the Step 9/12A historical-write protection.
+
+---
+
+CURRENT SESSION
+
+For the active selected session, existing Student Leave review workflow must continue working normally.
+
+Do NOT change:
+
+- approval stages
+- approve logic
+- reject logic
+- forward logic
+- Leave status rules
+- Attendance integration
+- Leave policy/balance behavior.
+
+---
+
+LEGACY ASSIGNMENT FALLBACK
+
+The audit noted:
+
+The current queue may return empty when the Teacher has no faculty-mapping rows even where review actions support a legacy:
+
+"assignedClass"
++
+"assignedSection"
+
+fallback.
+
+Audit this carefully.
+
+IMPORTANT:
+
+Do NOT automatically change this fallback behavior unless it is necessary to make the queue consistent with the EXISTING Student Leave authorization model.
+
+If queue and review actions are inconsistent, report the exact inconsistency.
+
+If the intended existing logic is unambiguous from the code, make only the minimum consistency correction.
+
+Do NOT invent new Teacher permissions.
+
+---
+
+TENANT ISOLATION
+
+Preserve:
+
+School A Teacher
+→ only School A Students/Leave.
+
+School A Teacher
+→ School B Student/Leave ❌
+
+Selected-session enrollment must also belong to the authenticated school.
+
+Do not trust request-supplied school/Teacher/Student identifiers as authorization.
+
+---
+
+STEP 12A REGRESSION
+
+Step 12A hardened:
+
+"GET /api/student-leaves/:schoolId/:class/:section"
+
+Do NOT weaken or undo Step 12A.
+
+Its:
+
+- school isolation
+- explicit session enforcement
+- enrollment isolation
+- NULL-session exclusion
+- historical read behavior
+
+must remain intact.
+
+---
+
+DO NOT TOUCH
+
+Do NOT change:
+
+- Examination assignment behavior (12B was skipped)
+- Homework/Classwork assignment behavior
+- public "/uploads"
+- Homework due-date validation
+- Attendance permissions
+- Timetable/Calendar timezone behavior
+- generic Student search
+- promotion ledger
+- Student Portal Profile
+- Admin Portal
+- database schema.
+
+---
+
+DATABASE
+
+NO schema changes.
+
+NO migration.
+
+NO backfill.
+
+NO deletion or modification of historical Leave data.
+
+Existing data remains exactly where it is.
+
+---
+
+TESTS
+
+At minimum verify:
+
+1. Student in 2025–26 Class 7A and 2026–27 Class 8B.
+
+2. Selecting 2025–26 evaluates that Student as 7A.
+
+3. Selecting 2026–27 evaluates that Student as 8B.
+
+4. Current Student class/section cannot override historical enrollment.
+
+5. Session A Leave does not appear in Session B.
+
+6. NULL-session Leave does not leak into selected session.
+
+7. Foreign-school Student/Leave rejected or excluded.
+
+8. Existing Teacher Student Leave permission behavior remains unchanged.
+
+9. Historical session Leave remains read-only.
+
+10. Active-session existing review workflow still works.
+
+11. Step 12A tests remain passing.
+
+12. Student Leave → Attendance integration is not regressed.
+
+13. No Student/Admin regression.
+
+14. No active-session fallback.
+
+---
+
+FINAL REPORT
+
+Return:
+
+STEP 12D — STUDENT LEAVE HISTORICAL PLACEMENT
+
+Existing problem confirmed
+
+YES / NO
+
+Root cause
+
+Existing Student Leave Teacher permission model
+
+Explain what the code actually implements.
+
+Correction implemented
+
+Selected-session enrollment behavior
+
+Historical placement example
+
+Show:
+2025–26 → old placement
+2026–27 → current/new placement.
+
+Teacher assignment/faculty mapping behavior
+
+State whether anything changed.
+
+Historical read-only behavior
+
+Tenant isolation
+
+NULL-session behavior
+
+Step 12A regression
+
+Leave → Attendance regression
+
+Business logic changes
+
+Should be NONE other than correcting session-specific Student placement.
+
+Database changes
+
+Must be NONE.
+
+UI changes
+
+Must be NONE unless unexpectedly required.
+
+Tests
+
+Exact results.
+
+Builds/typechecks
+
+Files changed
+
+Exact list.
+
+Verdict
+
+PASS / FAIL
+
+Do NOT publish.
+
+Do NOT deploy.
+
+After Step 12D is complete, STOP.
+
+Do NOT automatically start another correction.
