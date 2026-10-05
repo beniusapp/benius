@@ -1,0 +1,465 @@
+# BENIUS — SUPPORT STAFF SECURITY
+## NOTICEBOARD TENANT-ISOLATION CORRECTION
+
+We completed the Support Staff → Principal shared-data audit.
+
+A **CRITICAL tenant-isolation issue** was confirmed in the Web Noticeboard APIs.
+
+I authorize correction of THIS SECURITY ISSUE ONLY.
+
+Do NOT perform the full Support Staff Noticeboard permission redesign yet.
+
+Do NOT modify other modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# CONFIRMED PROBLEM
+
+An authenticated Support Staff member belongs to one specific school.
+
+Example:
+
+```text
+Support Staff X
+→ School A
+```
+
+However, the current Web Noticeboard routes can accept a client-supplied `schoolId` without consistently validating it against the authenticated Support Staff's school.
+
+The audit specifically identified:
+
+- `GET /api/notices/:schoolId`
+- `GET /api/notices/:schoolId/all`
+- `POST /api/notices`
+
+For Support Staff, the negative compatibility `userId` can satisfy older truthy authentication checks.
+
+Therefore a School A Support Staff session may potentially request or create Noticeboard data against School B.
+
+This violates BENIUS's permanent multi-tenant rule.
+
+---
+
+# NON-NEGOTIABLE PRODUCT RULE
+
+A Support Staff account belongs to ONE school.
+
+Therefore:
+
+```text
+Support Staff → School A
+
+School A Noticeboard
+→ potentially allowed according to authorization/permissions
+
+School B Noticeboard
+→ ALWAYS REJECT
+```
+
+Support Staff must NEVER:
+
+- read School B notices;
+- create a notice for School B;
+- edit School B notices;
+- delete School B notices;
+- use School B students/classes/sections as Notice targets;
+- obtain School B Noticeboard data through manipulated URL/body/query values.
+
+---
+
+# IMPORTANT — SERVER IDENTITY IS AUTHORITATIVE
+
+For Support Staff:
+
+Resolve:
+
+- `staffId`
+- `userRole`
+- authenticated `schoolId`
+
+from the server-side authenticated Support Staff session/account.
+
+Do NOT trust:
+
+- URL `schoolId`
+- request-body `schoolId`
+- query `schoolId`
+
+as authorization authority.
+
+A supplied school ID may be used as a selector only after proving it equals the authenticated school.
+
+---
+
+# READ ROUTES
+
+Correct:
+
+`GET /api/notices/:schoolId`
+
+and
+
+`GET /api/notices/:schoolId/all`
+
+For Support Staff:
+
+1. Authenticate the Support Staff session.
+2. Resolve their actual school from the authenticated server identity.
+3. Compare the requested `:schoolId` against the authenticated school.
+4. Same school → continue with existing Noticeboard behavior.
+5. Different school → REJECT before querying/returning Notice data.
+
+Do not return School B data.
+
+Use the project's established safe error behavior.
+
+---
+
+# CREATE ROUTE
+
+Correct:
+
+`POST /api/notices`
+
+The request body currently contains/accepts a `schoolId`.
+
+For Support Staff:
+
+- derive/validate school from authenticated Support Staff identity;
+- never allow a body `schoolId` to move the operation into another school;
+- same-school request may continue according to existing Noticeboard authorization;
+- foreign-school request must be rejected.
+
+Any active Academic Session lookup must use the authenticated/validated school.
+
+Example:
+
+```text
+Authenticated Support Staff:
+School A
+
+Body:
+schoolId = School B
+
+Result:
+REJECT
+```
+
+Never create a School B notice.
+
+---
+
+# EDIT / DELETE
+
+The previous audit indicated edit/delete were already scoped to the Support Staff member's own school.
+
+Re-verify them.
+
+Do NOT unnecessarily rewrite them if they are already safe.
+
+Confirm:
+
+```text
+School A Support Staff
+→ School A notice → existing behavior
+
+School A Support Staff
+→ School B notice → REJECT
+```
+
+---
+
+# NOTICE TARGETS
+
+If Notice creation references:
+
+- students
+- classes
+- sections
+- other target entities
+
+verify those target resources cannot be resolved from another school.
+
+A School A Support Staff notice must never target School B entities.
+
+Do not redesign Noticeboard targeting behavior; only enforce existing tenant boundaries.
+
+---
+
+# ACADEMIC SESSION
+
+Preserve the existing BENIUS Academic Session rules.
+
+Where Noticeboard is session-specific:
+
+- selected/active session must belong to authenticated school;
+- historical session reads may remain according to existing rules;
+- historical writes must remain rejected;
+- no historical write may silently redirect to active session.
+
+If the existing Noticeboard implementation has a separate session problem, REPORT it.
+
+Do not broaden this task into an unrelated session redesign unless required to prevent a cross-school write.
+
+---
+
+# MODULE PERMISSION — DO NOT REDESIGN YET
+
+The previous audit also found that Noticeboard `allowedModules` enforcement is inconsistent.
+
+That will be handled separately when we reach the Support Staff Noticeboard module.
+
+For THIS correction:
+
+> Fix the tenant-isolation vulnerability first.
+
+Do NOT use this task to redesign:
+
+- Noticeboard `view`
+- Noticeboard `create`
+- Noticeboard `bulk-delete`
+
+permissions.
+
+Do not change the Support Staff permission tree.
+
+However, do NOT weaken any existing permission checks.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin behavior must remain unchanged for their own school.
+
+This fix must NOT break normal Principal Noticeboard functionality.
+
+Principal/Admin must also remain tenant-isolated.
+
+---
+
+# TEACHERS
+
+Do not change Teacher Noticeboard business logic or permissions.
+
+Only make changes necessary to preserve tenant isolation if a shared helper is used.
+
+---
+
+# SUPPORT STAFF ACTOR ATTRIBUTION
+
+The audit also identified some Noticeboard actor-attribution issues.
+
+Do NOT redesign actor attribution in this task.
+
+The immediate priority is:
+
+**School A cannot access/write School B.**
+
+Report the existing attribution behavior in the final report if relevant, but do not broaden this fix.
+
+---
+
+# NEGATIVE SUPPORT STAFF USER ID
+
+Do not rely on:
+
+`userId = -staffId`
+
+as proof of Admin identity or school ownership.
+
+A truthy negative ID must not authorize a school.
+
+Use the authenticated Support Staff identity and authenticated school.
+
+Do not globally remove/change the compatibility negative-ID architecture in this task.
+
+---
+
+# REQUIRED SECURITY TESTS
+
+Add focused regression coverage.
+
+At minimum verify:
+
+### Support Staff reads
+
+School A Support Staff:
+
+`GET School A notices`
+→ ALLOW according to existing authorization.
+
+School A Support Staff:
+
+`GET School B notices`
+→ REJECT.
+
+Test both identified read routes.
+
+### Support Staff create
+
+School A Support Staff:
+
+Create School A notice
+→ existing behavior.
+
+School A Support Staff:
+
+Create notice with body `schoolId = School B`
+→ REJECT.
+
+Verify no School B notice is created.
+
+### Edit/delete
+
+School A Support Staff:
+
+Edit/delete School B notice
+→ REJECT.
+
+### Target resources
+
+Where practical, verify a School A Support Staff cannot create a notice targeting School B resources.
+
+### Principal regression
+
+Principal/Admin Noticeboard for own school
+→ existing behavior remains working.
+
+---
+
+# DO NOT TOUCH
+
+Do NOT modify:
+
+- Fees & Payments
+- Academic Session selector
+- Student Registry
+- Teacher Registry
+- Visitor Log
+- Attendance
+- Examination
+- Support Staff management
+- Principal Profile
+- Support Staff Profile behavior
+- other modules
+- Mobile
+- database schema
+- unrelated database data
+- `/uploads`
+- promotion ledger
+
+No broad refactor.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## NOTICEBOARD SUPPORT STAFF TENANT-ISOLATION CORRECTION
+
+### Confirmed vulnerability before fix
+
+Explain briefly.
+
+### Root cause
+
+Explain how client-supplied school ID / negative compatibility identity allowed the boundary problem.
+
+### Files changed
+
+### `GET /api/notices/:schoolId`
+
+School A Staff → School A:
+ALLOW / REJECT
+
+School A Staff → School B:
+ALLOW / REJECT
+
+### `GET /api/notices/:schoolId/all`
+
+School A Staff → School A:
+ALLOW / REJECT
+
+School A Staff → School B:
+ALLOW / REJECT
+
+### `POST /api/notices`
+
+School A Staff → School A:
+ALLOW / REJECT
+
+School A Staff → body School B:
+ALLOW / REJECT
+
+### Edit/delete tenant isolation
+
+PASS / FAIL
+
+### Notice target tenant isolation
+
+PASS / FAIL / NOT APPLICABLE
+
+Explain.
+
+### Academic Session protections
+
+UNCHANGED / CHANGED
+
+Explain any required security change.
+
+### Principal/Admin regression
+
+PASS / FAIL
+
+### Teacher behavior
+
+UNCHANGED / CHANGED
+
+### Noticeboard module permissions
+
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED.
+
+### Actor attribution
+
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED for this task.
+
+### Negative-ID architecture
+
+GLOBALLY UNCHANGED / CHANGED
+
+Expected: GLOBALLY UNCHANGED.
+
+### Cross-school Noticeboard access after fix
+
+POSSIBLE / REJECTED
+
+Expected: REJECTED.
+
+### Tests/builds performed
+
+### Database/schema changes
+
+NONE
+
+### Mobile changes
+
+NONE
+
+### Deployment
+
+NONE
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
