@@ -1,0 +1,489 @@
+# BENIUS — SUPPORT STAFF PERMISSIONS
+# STEP 1 — FEES & PAYMENTS ONLY
+
+We completed a read-only Support Staff capability audit.
+
+I now want to make the FIRST correction.
+
+## IMPORTANT SCOPE
+
+Work ONLY on:
+
+**Admin/Principal → Support Staff → Module Access Control → Fees & Payments**
+
+and the Web/backend authorization required for Support Staff to use the granted Fees & Payments areas.
+
+DO NOT modify any other Support Staff module yet.
+
+DO NOT modify Mobile.
+
+DO NOT perform a broad authorization refactor.
+
+DO NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+Support Staff is an operational assistant to the Principal/Admin.
+
+Principal decides exactly which areas of Fees & Payments the Support Staff may access.
+
+The existing Fees & Payments Support Staff permissions are currently:
+
+- View Fee Records
+- Record Payments
+- Export Reports
+
+These DO NOT match the actual Fees & Payments module structure.
+
+Replace these Fees & Payments sub-permissions with the actual functional areas of the Web Fees & Payments module.
+
+The new grantable permissions must be:
+
+1. **Financial Analytics**
+2. **Fee Structures**
+3. **Ledger & Transactions**
+4. **Reminders**
+5. **Audit Log**
+
+---
+
+# EXTERNAL PORTAL — PRINCIPAL ONLY
+
+The actual Fees & Payments module also contains:
+
+**External Portal**
+
+This must NOT be grantable to Support Staff.
+
+External Portal is strictly:
+
+> PRINCIPAL / ADMIN ONLY
+
+Therefore:
+
+- Do NOT add External Portal to Support Staff Module Access Control.
+- Support Staff must NOT see the External Portal tab.
+- Support Staff must NOT access External Portal through direct navigation.
+- Support Staff must NOT access External Portal APIs/actions.
+- Existing Principal/Admin External Portal behavior must remain unchanged.
+
+---
+
+# EXPECTED MODULE ACCESS CONTROL UI
+
+Under:
+
+Admin/Principal
+→ Support Staff
+→ Create/Edit Support Staff
+→ Module Access Control
+→ Fees & Payments
+
+show:
+
+```text
+Fees & Payments
+   □ Financial Analytics
+   □ Fee Structures
+   □ Ledger & Transactions
+   □ Reminders
+   □ Audit Log
+```
+
+Do NOT show:
+
+```text
+External Portal
+```
+
+Remove/replace the old Fees sub-permissions:
+
+- View Fee Records
+- Record Payments
+- Export Reports
+
+with the five functional-area permissions above.
+
+Use stable permission keys consistent with the existing BENIUS permission architecture.
+
+Before changing existing stored permission keys, inspect compatibility with existing Support Staff records and avoid unnecessarily breaking existing data.
+
+If migration/backward compatibility is required, implement the smallest safe solution and report exactly what was done.
+
+---
+
+# PERMISSION BEHAVIOR
+
+The selected permissions must control the actual Fees & Payments tabs.
+
+Example:
+
+Principal grants:
+
+```text
+Fees & Payments
+☑ Fee Structures
+☑ Ledger & Transactions
+☐ Financial Analytics
+☐ Reminders
+☐ Audit Log
+```
+
+When that Support Staff logs in:
+
+### Fees & Payments module
+Accessible.
+
+### Fee Structures
+VISIBLE and ACCESSIBLE.
+
+### Ledger & Transactions
+VISIBLE and ACCESSIBLE.
+
+### Financial Analytics
+NOT accessible.
+
+### Reminders
+NOT accessible.
+
+### Audit Log
+NOT accessible.
+
+### External Portal
+NEVER accessible to Support Staff.
+
+---
+
+# VERY IMPORTANT — GRANTED AREA MUST ACTUALLY WORK
+
+Do NOT only hide/show tabs.
+
+If Principal grants an area, Support Staff must be able to perform the normal operational work that Principal/Admin can perform INSIDE THAT GRANTED Fees area.
+
+Example:
+
+If **Fee Structures** is granted:
+
+Support Staff should be able to perform the normal Fee Structures operations that Principal can perform in that area, including create/edit/delete or other existing Fee Structure operations where those are part of that area.
+
+If **Ledger & Transactions** is granted:
+
+Support Staff should be able to perform the normal operational Ledger & Transactions actions available in that area.
+
+If **Reminders** is granted:
+
+Support Staff should be able to perform the existing normal Reminder operations.
+
+If **Financial Analytics** is granted:
+
+Support Staff should be able to use the existing analytics functionality.
+
+If **Audit Log** is granted:
+
+Support Staff should be able to use the Fees & Payments Audit Log functionality.
+
+Do NOT invent new Fees functionality.
+
+The requirement is:
+
+> Granted Support Staff should have the same normal operational capability as Principal/Admin inside that granted Fees & Payments area.
+
+The exception is External Portal, which remains Principal/Admin-only.
+
+---
+
+# BACKEND AUTHORIZATION IS REQUIRED
+
+The previous audit found that Fees APIs currently use Admin-only guards, meaning Support Staff can receive the permission in the UI but still cannot actually perform the operation.
+
+Correct this ONLY for Fees & Payments.
+
+Do NOT simply remove Admin authorization.
+
+Implement proper authorization:
+
+### Principal/Admin
+Continue to have existing Fees & Payments access.
+
+### Support Staff
+Allow the Fees operation ONLY when:
+
+1. authenticated as Support Staff;
+2. belongs to the same school/tenant;
+3. has the required Fees & Payments parent/sub-permission for that functional area;
+4. satisfies existing Academic Session/business rules where applicable.
+
+### Support Staff without permission
+REJECT at backend.
+
+Hiding a tab is NOT sufficient.
+
+Direct API calls must also be rejected.
+
+---
+
+# TENANT ISOLATION — NON-NEGOTIABLE
+
+Support Staff from School A must NEVER access or mutate Fees data belonging to School B.
+
+Do not trust client-supplied:
+
+- schoolId
+- staffId
+- userId
+
+as authorization authority.
+
+Resolve authenticated Support Staff and school from the server-side session and validate all requested resources against that school.
+
+Principal/Admin tenant behavior must remain unchanged.
+
+---
+
+# ACADEMIC SESSION RULES
+
+Do NOT weaken existing Fees Academic Session behavior.
+
+For session-specific Fees data:
+
+- validate selected Academic Session belongs to authenticated school;
+- reads use the correct selected session;
+- previous/inactive Academic Sessions remain READ-ONLY;
+- writes only occur where existing active-session rules permit;
+- never silently redirect a historical write into the active session.
+
+Keep existing BENIUS session semantics.
+
+---
+
+# EXTERNAL PORTAL SECURITY
+
+External Portal must remain protected by the existing Principal/Admin authorization.
+
+Do NOT change External Portal APIs to accept Support Staff.
+
+Even if Support Staff has every five grantable Fees permission:
+
+```text
+Financial Analytics
+Fee Structures
+Ledger & Transactions
+Reminders
+Audit Log
+```
+
+they still MUST NOT gain External Portal access.
+
+---
+
+# FRONTEND
+
+Update Fees & Payments Web UI so Support Staff sees ONLY the Fees tabs granted by Principal.
+
+Principal/Admin must continue seeing the complete Fees & Payments interface, including External Portal.
+
+Do not change Principal behavior.
+
+If Support Staff directly navigates to a Fees area they do not have permission for:
+
+→ reject/redirect safely.
+
+Do not render unauthorized financial data before redirecting.
+
+---
+
+# EXISTING SUPPORT STAFF RECORDS
+
+Inspect the current stored keys:
+
+- fees-manager:view
+- fees-manager:record
+- fees-manager:export
+
+or the actual keys found in code/database.
+
+Because this is a development environment, keep the solution simple, but do not silently create inconsistent permission state.
+
+Report whether:
+
+- old permissions were mapped,
+- old permissions were replaced,
+- or no migration was required.
+
+Do NOT perform an unrelated database/schema migration.
+
+---
+
+# TEST THIS EXACT SCENARIO
+
+Create/use a safe development test scenario if the existing test infrastructure permits it.
+
+Principal grants Support Staff:
+
+```text
+Fees & Payments
+☑ Fee Structures
+☑ Ledger & Transactions
+
+NOT:
+Financial Analytics
+Reminders
+Audit Log
+```
+
+Verify:
+
+### Support Staff
+
+Fees & Payments → accessible
+
+Fee Structures → visible + operational
+
+Ledger & Transactions → visible + operational
+
+Financial Analytics → hidden/rejected
+
+Reminders → hidden/rejected
+
+Audit Log → hidden/rejected
+
+External Portal → hidden/rejected
+
+Direct API call for an unauthorized Fees area → rejected
+
+Cross-school Fees request → rejected
+
+### Principal/Admin
+
+All existing Fees tabs continue to work:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- External Portal
+- Audit Log
+
+No Principal functionality should regress.
+
+---
+
+# DO NOT TOUCH
+
+Do NOT modify:
+
+- Student Registry permissions
+- Teacher Registry permissions
+- Visitor Log permissions
+- Noticeboard permissions
+- Attendance permissions
+- Examination permissions
+- other Support Staff module permissions
+- Principal Profile
+- Support Staff Profile behavior
+- Mobile
+- unrelated APIs
+- `/uploads`
+- promotion ledger
+- unrelated Academic Session logic
+
+This step is FEES & PAYMENTS ONLY.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## SUPPORT STAFF — FEES & PAYMENTS CORRECTION
+
+### Files changed
+
+### Previous permission structure
+
+### New permission structure
+
+Confirm it is:
+
+- Financial Analytics
+- Fee Structures
+- Ledger & Transactions
+- Reminders
+- Audit Log
+
+### External Portal
+
+Confirm:
+
+**Principal/Admin only: YES/NO**
+
+### Principal behavior
+
+Confirm existing Principal Fees functionality remains unchanged.
+
+### Support Staff behavior
+
+For each area report:
+
+| Fees area | Granted | Not granted |
+|---|---|---|
+| Financial Analytics | ? | ? |
+| Fee Structures | ? | ? |
+| Ledger & Transactions | ? | ? |
+| Reminders | ? | ? |
+| Audit Log | ? | ? |
+| External Portal | NEVER | NEVER |
+
+### Backend authorization
+
+Explain how each Fees area checks Support Staff permission.
+
+### Tenant isolation
+
+School A → School A Fees: expected behavior
+
+School A → School B Fees: expected behavior
+
+### Academic Session protection
+
+Confirm existing rules preserved.
+
+### Existing permission compatibility
+
+Explain what happened to the old:
+
+- View Fee Records
+- Record Payments
+- Export Reports
+
+permissions.
+
+### Tests/builds performed
+
+### Database/schema changes
+
+### Mobile changes
+
+Must be:
+
+**NONE**
+
+### Deployment
+
+Must be:
+
+**NONE**
+
+### Final verdict
+
+Choose:
+
+**PASS**
+
+or
+
+**NEEDS CHANGES**
+
+STOP after this report.
