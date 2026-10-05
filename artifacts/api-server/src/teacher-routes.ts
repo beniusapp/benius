@@ -119,6 +119,45 @@ function getTeacherNoticeContext(req: Request, res: Response): TeacherNoticeCont
   return context;
 }
 
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+async function resolveAuthenticatedNoticeSchoolId(req: Request, res: Response): Promise<number | null> {
+  const session = req.session;
+  if (!isPositiveSafeInteger(session.schoolId)) {
+    res.status(403).json({ message: "Not authorized for this school." });
+    return null;
+  }
+
+  if (session.userRole === "support_staff") {
+    if (!isPositiveSafeInteger(session.staffId)) {
+      res.status(403).json({ message: "Not authorized for this school." });
+      return null;
+    }
+
+    let staff: Awaited<ReturnType<typeof storage.getNonTeachingStaffById>>;
+    try {
+      staff = await storage.getNonTeachingStaffById(session.staffId);
+    } catch {
+      res.status(503).json({ message: "Unable to verify school access." });
+      return null;
+    }
+    if (!staff || !staff.isActive || staff.schoolId !== session.schoolId) {
+      res.status(403).json({ message: "Not authorized for this school." });
+      return null;
+    }
+    return staff.schoolId;
+  }
+
+  if (session.userRole === "admin" && isPositiveSafeInteger(session.userId)) {
+    return session.schoolId;
+  }
+
+  res.status(403).json({ message: "Not authorized for this school." });
+  return null;
+}
+
 const homeworkCreateBodySchema = z.object({
   class: z.string().optional(),
   section: z.string().optional(),
@@ -1409,6 +1448,19 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(400).json({ message: "Invalid schoolId." });
     }
 
+    if (!teacherContext) {
+      const authenticatedSchoolId = await resolveAuthenticatedNoticeSchoolId(req, res);
+      if (authenticatedSchoolId === null) {
+        removeStagedNoticeUpload(req);
+        return;
+      }
+      if (schoolId !== authenticatedSchoolId) {
+        removeStagedNoticeUpload(req);
+        return res.status(403).json({ message: "Not authorized for this school." });
+      }
+      schoolId = authenticatedSchoolId;
+    }
+
     const creatorRole = teacherContext ? "teacher" : "admin";
     const createdById = teacherContext?.teacher.id ?? req.session.userId;
     const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
@@ -1475,6 +1527,7 @@ export function registerTeacherRoutes(app: Express) {
       ? req.params.schoolId[0] ?? ""
       : req.params.schoolId;
     const sid = parseInt(schoolIdParam, 10);
+    if (!isPositiveSafeInteger(sid)) return res.status(400).json({ message: "Invalid schoolId." });
 
     if (req.session.teacherId) {
       const targetType = (req.query.target as string) || "teacher";
@@ -1504,6 +1557,12 @@ export function registerTeacherRoutes(app: Express) {
       return res.json(ids.map(({ id }) => ({ id })));
     }
 
+    const authenticatedSchoolId = await resolveAuthenticatedNoticeSchoolId(req, res);
+    if (authenticatedSchoolId === null) return;
+    if (sid !== authenticatedSchoolId) {
+      return res.status(403).json({ message: "Not authorized for this school." });
+    }
+
     const targetType = (req.query.target as string) || "teacher";
 
     const noticeSessionId: number | null = (req as any).viewSessionId ?? null;
@@ -1520,6 +1579,12 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Teachers cannot access the full-school notice feed." });
     }
     const sid = parseInt(req.params.schoolId);
+    if (!isPositiveSafeInteger(sid)) return res.status(400).json({ message: "Invalid schoolId." });
+    const authenticatedSchoolId = await resolveAuthenticatedNoticeSchoolId(req, res);
+    if (authenticatedSchoolId === null) return;
+    if (sid !== authenticatedSchoolId) {
+      return res.status(403).json({ message: "Not authorized for this school." });
+    }
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(sid))?.id ?? null;
     const list = await storage.getAllSchoolNotices(sid, 500, sessionFilter);
@@ -1589,7 +1654,12 @@ export function registerTeacherRoutes(app: Express) {
       if (!deleted) return res.status(404).json({ message: "Notice not found in the selected session." });
       return res.json({ message: "Notice deleted" });
     }
-    await storage.deleteNotice(id, req.session.schoolId!);
+    if (!isPositiveSafeInteger(req.session.schoolId)) {
+      return res.status(403).json({ message: "Not authorized for this school." });
+    }
+    const notice = await storage.getNoticeByIdForSchool(id, req.session.schoolId);
+    if (!notice) return res.status(404).json({ message: "Notice not found" });
+    await storage.deleteNotice(id, req.session.schoolId);
     return res.json({ message: "Notice deleted" });
   });
 

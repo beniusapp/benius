@@ -1703,6 +1703,12 @@ export class DatabaseStorage {
     return n ?? null;
   }
 
+  async getNoticeByIdForSchool(id: number, schoolId: number): Promise<Notice | null> {
+    const [n] = await db.select().from(notices)
+      .where(and(eq(notices.id, id), eq(notices.schoolId, schoolId)));
+    return n ?? null;
+  }
+
   async deleteNotice(id: number, schoolId: number): Promise<void> {
     await db.delete(notices).where(and(eq(notices.id, id), eq(notices.schoolId, schoolId)));
   }
