@@ -1,0 +1,827 @@
+BENIUS — TEACHER PORTAL
+
+STEP 11 — APPROVAL CENTER + STUDENT PROFILES
+
+Completed Teacher work:
+
+- Step 1 — Academic Session Foundation: COMPLETE
+- Step 2 — Timetable: COMPLETE
+- Step 3 — Attendance: COMPLETE
+- Step 4 — Examination / Results / Reports: COMPLETE
+- Step 5 — Homework: COMPLETE
+- Step 6 — Classwork: COMPLETE
+- Step 7 — Noticeboard: COMPLETE
+- Step 8 — Complaint: COMPLETE
+- Step 9 — Leave: COMPLETE
+- Step 10 — Dashboard: COMPLETE
+
+Now work ONLY on:
+
+TEACHER APPROVAL CENTER + TEACHER-SIDE STUDENT PROFILES
+
+Do NOT start or redesign any other Teacher module.
+
+---
+
+PRIMARY GOAL
+
+Audit and correct the Teacher Approval Center and the Student information/profile views reached from it so they respect:
+
+Authenticated Teacher
+→ real school
+→ explicitly selected Academic Session
+→ existing Teacher assignment/permission
+→ Student enrollment in that selected session
+→ permitted request/profile
+
+The permanent BENIUS rule remains:
+
+Previous/inactive Academic Session = STRICTLY READ-ONLY for session-specific academic operational data.
+
+---
+
+IMPORTANT — AUDIT FIRST
+
+Before changing anything, inspect the actual Web, Mobile, API, storage and schema implementation.
+
+Do NOT assume what Approval Center contains.
+
+Identify every actual approval/request type available to Teachers.
+
+Examples may include:
+
+- Student Profile update requests
+- Student information requests
+- Student Leave
+- other Student requests
+- approval/rejection/forwarding
+- pending/reviewed/history
+- Student detail/profile opening
+
+Only work with features that actually exist.
+
+Do NOT invent new approval types or permissions.
+
+---
+
+IMPORTANT STEP 9 BOUNDARY
+
+Teacher Leave Step 9 already corrected the Teacher-facing pending Student Leave queue and its existing approve/forward/reject actions.
+
+Do NOT independently rewrite that completed Leave workflow.
+
+If Approval Center surfaces the same Student Leave information:
+
+- verify it consumes the same correct session behavior
+- correct only Approval Center integration if necessary
+
+Do not create conflicting rules.
+
+---
+
+CLASSIFY EVERYTHING FOUND
+
+For each Approval Center / Student Profile item classify it as:
+
+1. GLOBAL/CURRENT
+2. SELECTED-SESSION READ
+3. CURRENT-SESSION WRITE
+4. TEACHER-ASSIGNMENT RESTRICTED
+5. STUDENT-ENROLLMENT RESTRICTED
+6. APPROVAL/STATUS WORKFLOW
+7. HISTORICAL READ-ONLY
+8. ATTACHMENT/DOCUMENT RELATED
+
+Do NOT force global/current Student information into historical versioning unless BENIUS actually stores historical versions.
+
+---
+
+SESSION FOUNDATION
+
+Reuse:
+
+"teacher-academic-session.ts"
+
+Do NOT create another Teacher session resolver.
+
+Normally:
+
+"SELECTED_SESSION_REQUIRED"
+→ session-specific Approval Center reads.
+
+"CURRENT_SESSION_WRITE"
+→ approval/rejection/forwarding or other session-specific mutations.
+
+Use actual product behavior to determine the correct mode.
+
+No selected historical session may silently fall back to active.
+
+---
+
+APPROVAL CENTER READS
+
+When Teacher selects Session A:
+
+→ show only permitted Session A approval/request records.
+
+When Teacher selects Session B:
+
+→ show only permitted Session B records.
+
+No A/B mixing.
+
+Historical same-school requests may remain viewable where existing behavior allows.
+
+Selecting a historical session must NOT load active-session pending approvals instead.
+
+---
+
+APPROVAL CENTER WRITES
+
+Audit every actual Teacher mutation, such as:
+
+- approve
+- reject
+- forward
+- review
+- acknowledge
+- other status changes
+
+Only preserve actions that actually exist.
+
+For session-specific operational approvals:
+
+Active selected session
+→ existing permitted action works.
+
+Previous/inactive selected session
+→ mutation rejected.
+
+Backend enforcement is mandatory.
+
+Disabling a button in the UI alone is NOT sufficient.
+
+No historical action may silently write into the active session.
+
+---
+
+TEACHER ASSIGNMENT / PERMISSION
+
+This is critical.
+
+A Teacher must NOT gain access merely because they know:
+
+- Student ID
+- Request ID
+- Approval ID
+
+The backend must verify the existing Teacher relationship/assignment required by BENIUS.
+
+Conceptually:
+
+Authenticated Teacher
++
+real school
++
+selected Academic Session
++
+Student enrollment
++
+existing Teacher assignment/permission
++
+request relationship
+
+allowed
+
+Do NOT create a new universal Teacher permission rule.
+
+Preserve the existing module-specific assignment rules.
+
+---
+
+STUDENT PLACEMENT — VERY IMPORTANT
+
+For session-sensitive Student placement, use:
+
+"enrollments"
+
+scoped by:
+
+- authenticated school
+- Student
+- selected Academic Session
+
+Do NOT use current Student placement fields to represent historical placement.
+
+Example:
+
+2025–26:
+Student = Class 7A, Roll 12
+
+2026–27:
+Student = Class 8B, Roll 8
+
+Teacher selects 2025–26:
+
+If Approval Center needs the Student's academic placement, show/use:
+
+Class 7A
+Roll 12
+
+NOT:
+
+Class 8B
+Roll 8
+
+This applies to:
+
+- class
+- section
+- roll number
+- Student roster membership
+- Teacher/student assignment checks
+
+where those values are session-sensitive.
+
+---
+
+IMPORTANT — STUDENT PROFILE PRODUCT DECISION
+
+BENIUS already has an accepted product decision:
+
+Student Portal → Profile always shows CURRENT Student information, regardless of selected Academic Session.
+
+Do NOT change Student Portal Profile.
+
+Teacher-side Student Profile may contain a mixture of:
+
+- current/global Student identity/profile information
+- selected-session academic placement
+
+Audit the actual Teacher-side profile carefully.
+
+Do NOT blindly make the entire Student profile historical.
+
+For example, if current/global:
+
+- Student name
+- contact information
+- guardian information
+- profile photo
+- other non-session-versioned information
+
+should remain current if that is existing architecture.
+
+But if Teacher-side view displays academic placement such as:
+
+- Class
+- Section
+- Roll Number
+
+for the selected Academic Session, use enrollment for that session where the workflow is session-sensitive.
+
+Document this distinction clearly.
+
+---
+
+HISTORICAL SESSION
+
+When Teacher selects an inactive Academic Session:
+
+Permitted historical request list/detail
+→ readable.
+
+Historical Student academic placement
+→ selected-session enrollment where required.
+
+Approval/rejection/forward/status mutation
+→ rejected for session-specific operational records.
+
+Profile/global identity information
+→ remains current if BENIUS does not historically version it.
+
+Do NOT manufacture historical profile snapshots.
+
+---
+
+TENANT ISOLATION
+
+Explicitly verify:
+
+School A Teacher
+→ School A Student/request only according to permissions.
+
+School A Teacher + School B session
+→ rejected.
+
+School A Teacher + School B Student ID
+→ rejected.
+
+School A Teacher + School B request/approval ID
+→ rejected.
+
+Client-supplied:
+
+- schoolId
+- teacherId
+- studentId
+- requestId
+- sessionId
+
+must never override authenticated/server-derived authorization.
+
+---
+
+DIRECT-ID SECURITY
+
+Test direct URL/API access.
+
+Knowing:
+
+"studentId = X"
+
+or
+
+"requestId = Y"
+
+must NOT be sufficient authorization.
+
+Every detail/action route must reconstruct authorization from the authenticated Teacher and database relationships.
+
+Do not rely on the frontend hiding records.
+
+---
+
+NULL SESSION RECORDS
+
+Audit whether approval/request records have nullable "session_id".
+
+If legacy NULL-session records exist:
+
+- do not migrate
+- do not delete
+- do not silently assign active session
+- do not silently expose them in every session
+
+Document existing behavior and apply the minimum safe session-specific handling.
+
+---
+
+ATTACHMENTS / DOCUMENTS
+
+If Approval Center or Student requests contain attachments/documents:
+
+Do NOT modify "/uploads".
+
+The known "/uploads" authorization issue remains a separate security workstream.
+
+However, API-level metadata/detail/actions must still be authorized through the parent request/student relationship.
+
+Do not redesign file storage.
+
+---
+
+WEB
+
+Web remains source of truth for existing behavior.
+
+Preserve:
+
+- Approval Center UI
+- Student Profile UI
+- buttons
+- statuses
+- labels
+- navigation
+- existing permissions
+- existing workflows
+
+Correct only session/security/data behavior.
+
+Web continues using cookie authentication.
+
+For session-dependent data:
+
+- send explicit selected session
+- include session in React Query/cache keys
+- no active fallback
+
+---
+
+MOBILE
+
+Audit actual Mobile Approval Center / Student Profile implementation.
+
+Mobile continues using bearer authentication.
+
+For session-sensitive data:
+
+- send/use selected Academic Session
+- use the same backend authorization
+- isolate state/cache by session
+
+Do NOT introduce Web-cookie dependency into native API calls.
+
+Preserve existing Mobile UI.
+
+---
+
+SESSION A → B → A
+
+Verify:
+
+Session A
+→ Approval A + correct Student placement A
+
+Session B
+→ Approval B + correct Student placement B
+
+Session A again
+→ Approval A + Student placement A
+
+No stale:
+
+- approval counts
+- request lists
+- Student placement
+- detail data
+- pending status
+
+from Session B may remain when returning to A.
+
+---
+
+DASHBOARD INTEGRATION
+
+Step 10 already corrected Dashboard approval counts to use selected Academic Session.
+
+Do NOT rewrite Dashboard.
+
+Only verify that:
+
+Dashboard approval count
+→ Approval Center list
+
+represents the same selected Academic Session.
+
+Example:
+
+Dashboard says:
+3 pending approvals in Session A
+
+Opening Approval Center in Session A must not suddenly show Session B approvals.
+
+Correct only minimal integration inconsistencies if found.
+
+---
+
+IST
+
+BENIUS remains:
+
+Asia/Kolkata / IST
+
+Preserve existing:
+
+- request timestamps
+- approval timestamps
+- Student/session date handling
+- status dates
+
+Do not introduce UTC date shifts.
+
+---
+
+DO NOT CHANGE BUSINESS WORKFLOW
+
+Do NOT invent:
+
+- new Teacher approval permissions
+- new approval stages
+- new Student fields
+- new historical profile snapshots
+- new assignment semantics
+
+The goal is session/security correction, NOT product redesign.
+
+---
+
+REGRESSION
+
+Regression-check relevant completed Teacher work:
+
+- Dashboard
+- Leave
+- Complaint
+- Noticeboard
+- Classwork
+- Homework
+- Attendance
+- Timetable
+- Examination/Results/Reports
+
+Especially verify:
+
+Dashboard Approval count
+→ Approval Center selected-session list
+
+and:
+
+Teacher Leave Student approval workflow
+→ remains consistent with Step 9.
+
+---
+
+STILL DEFERRED
+
+Do NOT fix:
+
+1. Promotion-ledger conflict identity missing Academic Session.
+2. "/uploads" legacy authorization concern.
+
+---
+
+DO NOT TOUCH
+
+Do NOT redesign:
+
+- Teacher Dashboard
+- Teacher Leave
+- Teacher Complaint
+- Teacher Noticeboard
+- Teacher Attendance
+- Teacher Homework
+- Teacher Classwork
+- Teacher Timetable
+- Teacher Examination/Results/Reports
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+Do NOT modify Student Portal Profile behavior.
+
+Do NOT modify Admin Portal.
+
+Do NOT modify Admin Exam Controller.
+
+Do NOT modify "/uploads".
+
+Minimal integration corrections are allowed only where Step 11 requires them.
+
+---
+
+DATABASE
+
+Expected:
+
+NO DATABASE SCHEMA CHANGE
+
+If a schema change is required:
+
+STOP.
+
+Explain exactly why.
+
+Wait for approval.
+
+Do not create migrations or backfill data.
+
+---
+
+UI
+
+Expected:
+
+NO UI/UX REDESIGN
+
+Existing screens should look the same.
+
+---
+
+REQUIRED TESTING
+
+Test applicable actual features:
+
+1. Active selected-session Approval Center list.
+2. Historical same-school Approval Center list.
+3. Session A/B isolation.
+4. A → B → A cache/data isolation.
+5. Foreign-school session rejected.
+6. Cross-school Student rejected.
+7. Cross-school request/approval ID rejected.
+8. Direct Student ID cannot bypass Teacher permission.
+9. Direct request ID cannot bypass Teacher permission.
+10. Spoofed schoolId ineffective.
+11. Spoofed teacherId ineffective.
+12. Spoofed sessionId ineffective.
+13. Active-session approval action succeeds where already permitted.
+14. Historical approval action rejected.
+15. Historical rejection/forward/status mutation rejected where applicable.
+16. Existing Teacher assignment restriction preserved.
+17. Selected-session Student enrollment used for academic placement where applicable.
+18. Historical class/section/roll reflects selected-session enrollment where required.
+19. Current/global Student profile information remains current where intended.
+20. Student Portal Profile remains unchanged.
+21. NULL-session behavior tested/documented.
+22. Attachment metadata/actions parent-authorized where applicable.
+23. "/uploads" unchanged.
+24. Web cache/query keys session-isolated.
+25. Mobile bearer auth preserved.
+26. Web cookie auth preserved.
+27. Dashboard Approval count agrees with selected-session Approval Center.
+28. Step 9 Student Leave approval behavior remains correct.
+29. Historical viewing performs no operational writes.
+30. IST unchanged.
+31. Student Portal otherwise unchanged.
+32. Admin Portal unchanged.
+33. Previous Teacher module regressions relevant to changed code.
+
+Only test features that actually exist.
+
+---
+
+STEP 10 CONTEXT
+
+Teacher Step 10 Dashboard reported:
+
+- Web Approval count now selected-session scoped.
+- Web Noticeboard count now selected-session scoped.
+- Web cache keys include selected session.
+- Mobile Approval count uses selected session.
+- API rejects missing/foreign-school session before counts.
+- Web Attendance "today" remains tied to active session while viewing archive.
+- Teacher identity/assignment summaries remain current/global.
+- Approval Center and Student Profile modules were NOT changed.
+- targeted API tests PASS
+- 32 Mobile tests PASS
+- Mobile typecheck PASS
+- Web source smoke check PASS
+- A → B → A cache-key check PASS
+- Web Vitest unavailable in workspace
+- broad existing API/Web TypeScript diagnostics remain
+- API workflow/schema check PASS
+
+Use actual current diagnostics/test counts and report them.
+
+---
+
+FINAL REPORT
+
+Return:
+
+TEACHER STEP 11 — APPROVAL CENTER + STUDENT PROFILES
+
+Existing architecture found
+
+Approval types found
+
+List actual types only.
+
+Classification
+
+Global/current vs session-specific vs assignment/enrollment restricted.
+
+Problems found
+
+Corrections implemented
+
+Academic Session foundation
+
+Explain reuse of "teacher-academic-session.ts".
+
+Approval Center reads
+
+Approval Center writes
+
+Historical read-only
+
+Explicitly confirm.
+
+Teacher permission/assignment
+
+Student enrollment / placement
+
+Explain Class/Section/Roll behavior.
+
+Teacher-side Student Profile
+
+Explain current/global information vs session-sensitive placement.
+
+Tenant isolation
+
+Direct-ID authorization
+
+NULL-session behavior
+
+Attachments
+
+Confirm "/uploads" unchanged.
+
+Dashboard integration
+
+Confirm selected-session Dashboard count matches Approval Center.
+
+Leave integration
+
+Confirm Step 9 behavior preserved.
+
+Web
+
+Session transport/cache behavior.
+
+Mobile
+
+Bearer/session/cache behavior.
+
+Session A → B → A
+
+PASS/FAIL.
+
+IST
+
+Tests
+
+Exact counts.
+
+Regression results
+
+Diagnostics
+
+API before/after.
+Web before/after.
+Mobile before/after.
+
+Builds
+
+PASS/FAIL.
+
+Database changes
+
+Expected NONE.
+
+UI changes
+
+Expected NONE.
+
+Student Portal changes
+
+Must be NONE.
+
+Admin Portal changes
+
+Must be NONE.
+
+"/uploads" changes
+
+Must be NONE.
+
+Files changed
+
+Exact list.
+
+Deferred issues
+
+Recommended next step
+
+Recommend the next single Teacher workstream after Step 11.
+
+---
+
+FINAL EXPECTATION
+
+Approval Center must follow:
+
+Authenticated Teacher
+→ real school
+→ explicit selected Academic Session
+→ existing Teacher assignment/permission
+→ Student enrollment in selected session
+→ permitted approval/request.
+
+For historical sessions:
+
+View permitted historical information ✅
+
+Approve/reject/forward/change session-specific operational data ❌
+
+For Student information:
+
+Current/global profile data stays current where BENIUS does not version it.
+
+Session-sensitive academic placement uses the selected session's enrollment.
+
+No cross-school access.
+
+No cross-session leakage.
+
+No direct-ID authorization bypass.
+
+No silent active-session fallback.
+
+No database schema change.
+
+No UI redesign.
+
+No Student/Admin redesign.
