@@ -1,0 +1,656 @@
+BENIUS — TEACHER PORTAL
+
+FINAL ACADEMIC SESSION + SECURITY REGRESSION AUDIT
+
+Teacher session-boundary work completed:
+
+- Step 1 — Academic Session Foundation
+- Step 2 — Timetable
+- Step 3 — Attendance
+- Step 4 — Examination / Results / Reports
+- Step 5 — Homework
+- Step 6 — Classwork
+- Step 7 — Noticeboard
+- Step 8 — Complaint
+- Step 9 — Leave
+- Step 10 — Dashboard
+- Step 11 — Approval Center + Teacher-side Student Profiles
+
+Now perform a FINAL READ-ONLY AUDIT of the complete Teacher Portal.
+
+IMPORTANT:
+
+DO NOT CHANGE CODE YET.
+
+This is an audit only.
+
+If you find a problem, report it first.
+
+Do not automatically fix it.
+
+---
+
+PRIMARY GOAL
+
+Determine whether the Teacher Portal is now consistently safe and correct across:
+
+- Academic Sessions
+- multi-school tenant isolation
+- Teacher authorization
+- Teacher assignments
+- Student enrollment
+- historical read-only behavior
+- Web session transport
+- Mobile session transport
+- cache isolation
+- IST/date handling
+
+Also determine whether any Teacher module or route was missed during Steps 1–11.
+
+---
+
+PERMANENT BENIUS RULE
+
+For session-specific academic operational data:
+
+Previous/inactive Academic Session = STRICTLY READ-ONLY.
+
+Historical session:
+
+READ → allowed where Teacher already has permission.
+
+WRITE → rejected.
+
+No historical action may silently redirect to the active session.
+
+---
+
+1 — INVENTORY THE ENTIRE TEACHER PORTAL
+
+Inspect actual code and list every Teacher Portal module/page/route.
+
+Classify every module as:
+
+A. SESSION-SPECIFIC
+
+Examples may include:
+
+- Timetable
+- Attendance
+- Homework
+- Classwork
+- Noticeboard
+- Examination
+- Results
+- Reports
+- Complaint
+- Leave
+- Approval Center
+
+B. HYBRID
+
+Contains both session-specific and current/global information.
+
+Examples may include:
+
+- Dashboard
+- Student Profiles
+
+C. GLOBAL/CURRENT
+
+Examples may include:
+
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+
+These are examples only.
+
+Use the actual code.
+
+The purpose is to confirm that NO Teacher module was forgotten.
+
+---
+
+2 — SESSION FOUNDATION
+
+Audit all session-sensitive Teacher routes.
+
+Confirm they use the accepted Teacher Academic Session architecture:
+
+"teacher-academic-session.ts"
+
+Confirm appropriate use of:
+
+- SELECTED_SESSION_REQUIRED
+- SELECTED_OR_ACTIVE_SESSION only where intentionally required
+- CURRENT_SESSION_WRITE
+
+Identify any remaining Teacher route that:
+
+- independently loads active session
+- falls back to active session unexpectedly
+- trusts raw client session IDs
+- does not verify school ownership
+- ignores selected session
+- performs an unscoped session-sensitive query
+
+Report exact file + route/function.
+
+Do not fix.
+
+---
+
+3 — HISTORICAL READ-ONLY AUDIT
+
+For EVERY session-specific Teacher module verify:
+
+Historical session:
+
+- GET/read → permitted according to existing permissions
+- POST → rejected
+- PUT/PATCH → rejected
+- DELETE → rejected
+- approve/reject/forward → rejected
+- publish → rejected
+- correction → rejected
+- upload/attachment mutation → rejected where applicable
+
+Check backend enforcement.
+
+Do NOT count disabled buttons as sufficient protection.
+
+Explicitly identify any route capable of writing historical data.
+
+---
+
+4 — ACTIVE-SESSION FALLBACK AUDIT
+
+Search Teacher code for patterns where:
+
+selected historical session
+→ gets replaced by active session.
+
+This must NOT happen for session-specific academic data.
+
+Check Web, Mobile, API and storage.
+
+Report every intentional fallback separately from suspicious fallback.
+
+Do not change code.
+
+---
+
+5 — MULTI-TENANT SECURITY
+
+Verify Teacher routes derive school from authenticated identity.
+
+Test/review:
+
+School A Teacher
+→ School A resources according to permission.
+
+School A Teacher
+→ School B Academic Session ❌
+
+School A Teacher
+→ School B Student ❌
+
+School A Teacher
+→ School B Homework/Classwork/etc. ❌
+
+School A Teacher
+→ direct foreign resource ID ❌
+
+Search for any Teacher route trusting request-supplied:
+
+- schoolId
+- teacherId
+- sessionId
+- studentId
+- resource ID
+
+without reconstructing authorization server-side.
+
+Report exact findings.
+
+---
+
+6 — STUDENT ENROLLMENT
+
+Where Student academic placement is session-sensitive, verify use of:
+
+"enrollments"
+
+scoped by:
+
+school
++
+student
++
+selected Academic Session.
+
+Audit against accidental use of current:
+
+- students.class
+- students.section
+- students.roll_number
+
+for historical academic placement.
+
+Remember:
+
+Student Portal Profile intentionally remains CURRENT.
+
+Do NOT change that decision.
+
+---
+
+7 — TEACHER ASSIGNMENT
+
+Audit how Teacher class/section/subject assignment affects:
+
+- Attendance
+- Homework
+- Classwork
+- Examination
+- Approval Center
+- Student Profile
+- other relevant modules
+
+Do NOT require historical assignment snapshots if BENIUS does not store them.
+
+Instead report:
+
+- current assignment used
+- session-aware assignment used
+- no assignment restriction
+- module-specific rule
+
+Identify inconsistencies that could cause unauthorized access.
+
+---
+
+8 — DASHBOARD CONSISTENCY
+
+Verify Dashboard session-sensitive information matches underlying modules.
+
+Especially:
+
+Dashboard Approval count
+→ Approval Center selected-session records.
+
+Dashboard Noticeboard count
+→ Noticeboard selected-session records.
+
+Check any other actual Dashboard aggregates.
+
+A Dashboard count must not use different session logic from the page it opens.
+
+---
+
+9 — SESSION SWITCHING / CACHE
+
+Audit Web and Mobile:
+
+Session A
+→ data A
+
+Session B
+→ data B
+
+Session A
+→ data A again
+
+Check:
+
+- React Query keys
+- state
+- derived state
+- cached counts
+- selected Student/request state
+- Mobile cache/state
+- API headers
+
+Report any possible A/B leakage.
+
+---
+
+10 — WEB AUTHENTICATION
+
+Preserve existing Web cookie/session authentication.
+
+Audit that session-sensitive Web Teacher requests send the selected Academic Session where required.
+
+Do not redesign authentication.
+
+---
+
+11 — MOBILE AUTHENTICATION
+
+Preserve Mobile bearer authentication.
+
+Audit that session-sensitive Mobile Teacher requests carry the correct selected Academic Session.
+
+Do not introduce Web-cookie dependencies into native API requests.
+
+---
+
+12 — GLOBAL/CURRENT MODULES
+
+Audit:
+
+- Teacher Profile
+- Gallery
+- Faculty Info
+- School Calendar
+- Library
+- any other Teacher module classified global/current
+
+Confirm whether they genuinely should remain global/current.
+
+Do NOT automatically make them Academic Session-specific.
+
+If any of these actually contains session-specific academic operational data, flag it.
+
+---
+
+13 — TODAY / CURRENT OPERATIONAL DATA
+
+Audit features using concepts such as:
+
+- Today
+- current day
+- today's Attendance
+- today's timetable
+- current assignment
+
+Confirm they intentionally remain current/active where appropriate even while viewing an archive.
+
+Do not force historical semantics onto genuinely current-day widgets.
+
+Document them.
+
+---
+
+14 — NULL SESSION DATA
+
+Across Teacher session-specific tables, identify nullable "session_id" behavior.
+
+Report:
+
+- which tables allow NULL
+- how reads treat NULL
+- whether new records can become NULL
+- whether NULL silently means active
+- whether NULL records are excluded
+
+Do NOT migrate/backfill/delete anything.
+
+---
+
+15 — IST
+
+Audit date-sensitive Teacher functionality for:
+
+Asia/Kolkata / IST
+
+Especially:
+
+- Attendance dates
+- Leave dates
+- Homework/Classwork dates
+- Timetable day
+- Complaint timestamps
+- Examination dates
+- Dashboard today indicators
+
+Report any remaining UTC/local-time mismatch risk.
+
+---
+
+16 — DIRECT-ID AUTHORIZATION
+
+Audit detail/action routes.
+
+Knowing a resource ID must NOT automatically grant access.
+
+Check examples such as:
+
+- studentId
+- homeworkId
+- classworkId
+- complaintId
+- leaveId
+- approvalId
+- examination/result identifiers
+
+Authorization should reconstruct:
+
+authenticated Teacher
+→ school
+→ selected session where applicable
+→ assignment/relationship
+→ resource.
+
+Report vulnerabilities.
+
+---
+
+17 — ATTACHMENTS
+
+Do NOT modify "/uploads".
+
+Simply confirm where Teacher modules still depend on the known legacy public attachment path.
+
+List affected Teacher modules.
+
+Keep this as a separate security workstream.
+
+---
+
+18 — PROMOTION LEDGER
+
+Do NOT modify it.
+
+Confirm the previously deferred issue:
+
+promotion-ledger conflict identity does not include Academic Session.
+
+State whether existing protection still fails safely rather than overwriting another session.
+
+Keep migration deferred.
+
+---
+
+19 — BUSINESS LOGIC REGRESSION
+
+Verify Steps 1–11 did NOT unintentionally change:
+
+- formulas
+- grading logic
+- Attendance rules
+- Leave policy formulas
+- approval stages
+- Teacher permissions
+- Noticeboard audience rules
+- Complaint permissions
+- Timetable behavior
+- Examination behavior
+- Student Portal Profile behavior
+
+Report any detected unintended business-rule change.
+
+---
+
+20 — DATABASE / SCHEMA
+
+READ-ONLY AUDIT.
+
+Do NOT:
+
+- create migrations
+- change schema
+- backfill data
+- delete legacy rows
+- alter production/development records
+
+If future schema work is advisable, report it separately.
+
+---
+
+21 — TEST/BUILD REVIEW
+
+Review the existing regression coverage from Steps 1–11.
+
+Run safe existing tests/build/typechecks where appropriate.
+
+Do NOT modify application code merely to make unrelated historical diagnostics disappear.
+
+Report:
+
+- API tests
+- Web tests
+- Mobile tests
+- API build
+- Web build
+- Mobile typecheck
+- API diagnostics
+- Web diagnostics
+- Mobile diagnostics
+
+Explicitly distinguish:
+
+NEW regression
+
+from
+
+PRE-EXISTING project-wide technical debt.
+
+Also mention that Web Vitest has previously been unavailable if still true.
+
+---
+
+FINAL REPORT FORMAT
+
+Return:
+
+TEACHER PORTAL — FINAL AUDIT
+
+Overall verdict
+
+Choose:
+
+- PASS
+- PASS WITH DEFERRED ITEMS
+- NEEDS CHANGES
+
+Complete Teacher module inventory
+
+Session-specific modules
+
+Hybrid modules
+
+Global/current modules
+
+Missed modules/routes
+
+Explicitly state NONE if none.
+
+Academic Session foundation audit
+
+Historical read-only audit
+
+Active-session fallback audit
+
+Tenant isolation audit
+
+Student enrollment audit
+
+Teacher assignment audit
+
+Dashboard consistency
+
+Web session/cache audit
+
+Mobile session/cache audit
+
+Global/current module audit
+
+Current-day behavior
+
+NULL-session audit
+
+IST audit
+
+Direct-ID authorization audit
+
+Attachment exposure
+
+Report only; DO NOT FIX.
+
+Promotion-ledger deferred issue
+
+Report only; DO NOT FIX.
+
+Business logic regression audit
+
+Tests/builds/typechecks
+
+New regressions
+
+Explicitly state NONE if none.
+
+Existing technical debt
+
+Database changes
+
+Must be NONE.
+
+Code changes
+
+Must be NONE for this audit.
+
+Final remaining issues
+
+Rank:
+
+- CRITICAL
+- HIGH
+- MEDIUM
+- LOW
+- DEFERRED
+
+Recommendation
+
+Answer clearly:
+
+Is the Teacher Portal Academic Session correction work complete? YES / NO
+
+If NO:
+List the exact remaining corrections and propose the smallest next correction step.
+
+If YES:
+State which separate security/technical-debt workstreams remain, without mixing them into the completed Academic Session project.
+
+---
+
+IMPORTANT
+
+THIS IS A READ-ONLY AUDIT.
+
+DO NOT CHANGE CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT CHANGE UI.
+
+DO NOT PUBLISH.
+
+DO NOT DEPLOY.
+
+DO NOT START A NEW FEATURE.
+
+First tell me whether the Teacher Portal as a whole is now correct.
