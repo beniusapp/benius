@@ -15,3 +15,4 @@
 - [Teacher Dashboard session boundaries](teacher-dashboard-session-boundaries.md) — badges follow the selected session; the current-day Attendance status follows the active session.
 - [Teacher profile photo review](teacher-profile-photo-review.md) — photo-only review must not rewrite full-profile verification state or its approval history.
 - [Shared Support Staff academic-session foundation](support-staff-academic-session-foundation.md) — Support Staff share school sessions and the active session, but session viewing does not grant module access.
+- [Support Staff Admin Profile boundary](support-staff-admin-profile-boundary.md) — keep Principal/Admin profile and account controls unavailable to Support Staff while retaining their own header identity and logout.
