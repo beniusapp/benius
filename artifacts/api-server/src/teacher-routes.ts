@@ -3556,9 +3556,35 @@ export function registerTeacherRoutes(app: Express) {
   // during any session creation, activation, or rollover operation.
   // Tables: teachers, faculty_mappings (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/faculty/:schoolId", async (req, res) => {
-    if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
-    const list = await storage.getFacultyBySchoolWithMappings(parseInt(req.params.schoolId));
-    res.json(list);
+    const teacherId = req.session.teacherId;
+    const isTeacherSession = teacherId != null || req.session.userRole === "teacher";
+    if (teacherId == null && req.session.userId == null) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    let authenticatedSchoolId: number | undefined;
+    if (isTeacherSession) {
+      if (teacherId == null) return res.status(401).json({ message: "Not authenticated" });
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher) return res.status(401).json({ message: "Not authenticated" });
+      authenticatedSchoolId = teacher.schoolId;
+    } else {
+      // Non-teacher sessions keep their existing same-school access, but the
+      // school scope comes from the server-side session rather than the URL.
+      authenticatedSchoolId = req.session.schoolId;
+    }
+
+    const requestedSchoolId = parsePositiveSafeIntegerPathParam(req.params.schoolId);
+    if (requestedSchoolId === null) return res.status(400).json({ message: "Invalid school ID" });
+    if (typeof authenticatedSchoolId !== "number"
+      || !Number.isSafeInteger(authenticatedSchoolId)
+      || authenticatedSchoolId <= 0
+      || requestedSchoolId !== authenticatedSchoolId) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const list = await storage.getFacultyBySchoolWithMappings(authenticatedSchoolId);
+    return res.json(list);
   });
 
   // ===== PAGINATED STUDENTS (Big Data) =====
