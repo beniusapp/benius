@@ -1,0 +1,231 @@
+# BENIUS — SUPPORT STAFF / PRINCIPAL PROFILE ACCESS AUDIT
+
+## READ-ONLY AUDIT FIRST — DO NOT CHANGE CODE
+
+I have identified a possible privacy/authorization issue in the Web application.
+
+### CURRENT FLOW
+
+Principal/Admin can create Support Staff accounts.
+
+Support Staff then logs in through the existing Principal/Admin login portal.
+
+After Support Staff logs in, the top-right account/profile area currently appears to expose the Principal/Admin Profile interface.
+
+The Profile area contains information/settings such as:
+
+- Principal/Admin profile
+- Admin email
+- Admin phone
+- Recovery email
+- Recovery phone
+- Password settings
+- PIN settings
+- potentially other Principal/Admin account/security information
+
+This is NOT the intended behavior.
+
+---
+
+# INTENDED PRODUCT RULE
+
+Support Staff may authenticate through the Principal/Admin login portal.
+
+However:
+
+**Support Staff is NOT the Principal/Admin.**
+
+Therefore a Support Staff account must NOT be able to see, retrieve, edit, or manage the Principal/Admin's personal profile/security information.
+
+This includes Principal/Admin:
+
+- Profile
+- personal/admin email
+- phone
+- recovery email
+- recovery phone
+- password-management information
+- PIN-management information
+- other Principal-specific account/security settings
+
+Do not solve this by only hiding the UI.
+
+The backend authorization/data exposure must also be checked.
+
+---
+
+# IMPORTANT
+
+DO NOT CHANGE ANY CODE YET.
+
+DO NOT modify database schema.
+
+DO NOT modify Mobile.
+
+Mobile remains frozen.
+
+DO NOT deploy.
+
+This is Web + backend audit only.
+
+---
+
+# AUDIT THE CURRENT IMPLEMENTATION
+
+Trace exactly what happens when:
+
+1. Principal/Admin creates Support Staff.
+2. Support Staff logs in through Principal/Admin login.
+3. Backend establishes the authenticated session.
+4. Web determines the logged-in account type/role.
+5. Header/top-right account menu is rendered.
+6. Profile drawer/modal/page is opened.
+7. Profile/account information is requested from backend.
+8. Password and PIN sections are loaded.
+9. Recovery information is loaded/saved.
+
+Determine whether Support Staff and Principal/Admin currently share the same authenticated Principal/Admin identity/session object or whether Support Staff has its own authenticated identity with delegated permissions.
+
+---
+
+# CRITICAL SECURITY CHECK
+
+Do not only inspect the frontend.
+
+Check every backend API used by this Profile interface.
+
+Determine whether a Support Staff session can directly call an API and obtain Principal/Admin:
+
+- email
+- phone
+- recovery details
+- PIN-related data/state
+- password/security settings
+- account/profile information
+
+even if the frontend Profile tab were hidden.
+
+Also determine whether Support Staff can directly call APIs to MODIFY those values.
+
+---
+
+# REQUIRED AUTHORIZATION MODEL
+
+The intended distinction is:
+
+### PRINCIPAL / ADMIN
+
+May access their own authorized account Profile/security settings.
+
+### SUPPORT STAFF
+
+May access only the school modules/actions granted to that Support Staff account.
+
+Support Staff must NOT automatically gain Principal/Admin personal account/profile/security access simply because they use the same login portal or operate within the Principal portal UI.
+
+Portal used for login != account identity/authorization.
+
+---
+
+# TENANT ISOLATION
+
+Preserve strict school isolation.
+
+Support Staff for School A must never access School B information.
+
+Do not weaken any existing school/tenant checks.
+
+---
+
+# DO NOT ASSUME THE FIX
+
+First determine the root cause.
+
+For example, investigate whether:
+
+- frontend assumes every Principal-portal user is Principal/Admin;
+- backend session represents Support Staff as Admin;
+- Profile API trusts school/admin identifiers incorrectly;
+- Support Staff permission model accidentally includes account-management permissions;
+- Profile component loads school Admin information rather than authenticated-user information;
+- or another cause exists.
+
+Report the actual implementation.
+
+---
+
+# REQUIRED REPORT
+
+Return:
+
+## SUPPORT STAFF / PRINCIPAL PROFILE AUDIT
+
+### Vulnerability confirmed?
+YES / NO
+
+### Current Support Staff authentication flow
+Explain simply.
+
+### Current authenticated identity
+Explain what identity/role is stored server-side after Support Staff login.
+
+### Why Support Staff sees Principal Profile
+Give exact root cause.
+
+### Frontend exposure
+List the Profile tabs/options currently visible to Support Staff.
+
+### Backend exposure
+List exact APIs Support Staff can call that return Principal/Admin personal/security information.
+
+### Mutation exposure
+Can Support Staff modify any Principal/Admin:
+
+- profile data
+- recovery details
+- password
+- PIN
+- security settings?
+
+YES/NO for each, with route/file evidence.
+
+### Permission model
+Explain whether Support Staff permissions currently distinguish module permissions from Principal account/security permissions.
+
+### Tenant isolation
+Confirm whether school isolation remains enforced.
+
+### Recommended smallest safe correction
+
+The desired outcome is:
+
+**Principal/Admin → Profile available**
+
+**Support Staff → Principal/Admin Profile unavailable**
+
+And backend must reject Support Staff attempts to access Principal/Admin-only account/security APIs.
+
+Do not implement the correction yet.
+
+### Files that would need modification
+
+### Database change required?
+YES / NO
+
+### Mobile impact
+NONE — Mobile is frozen.
+
+### Final severity
+Choose:
+- LOW
+- MEDIUM
+- HIGH
+- CRITICAL
+
+### Code changes
+NONE
+
+### Deployment
+NONE
+
+STOP after the audit.
