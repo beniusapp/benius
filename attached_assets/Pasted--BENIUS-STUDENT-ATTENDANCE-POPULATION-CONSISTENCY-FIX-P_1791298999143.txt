@@ -1,0 +1,609 @@
+# BENIUS — STUDENT ATTENDANCE POPULATION CONSISTENCY FIX
+
+Proceed with the correction based strictly on the completed audit.
+
+This is a focused Web/backend attendance correction.
+
+## IMPORTANT
+
+Do NOT:
+
+- delete inactive Students
+- delete old/current enrollment rows
+- delete historical attendance
+- modify Student Registry business logic
+- change Student deactivation behavior in this task
+- change MIS-0003 placement manually
+- modify Mobile
+- modify database schema
+- deploy
+
+Mobile remains FROZEN.
+
+---
+
+# BUG 1 — INACTIVE STUDENTS APPEAR IN LIVE ATTENDANCE
+
+The audit confirmed that the live Teacher Attendance roster currently selects students from session enrollments but does not require:
+
+```text
+students.is_active = true
+```
+
+and does not enforce the active enrollment state.
+
+This caused inactive students:
+
+- MIS-0004
+- MIS-0006
+- MIS-0007
+
+to remain visible and markable in Class 1/A.
+
+## CORRECT LIVE ATTENDANCE ELIGIBILITY
+
+For normal/live Student Attendance, a Student is eligible only when ALL applicable conditions are true:
+
+```text
+authenticated school
++
+selected Academic Session
++
+matching enrollment for selected session
++
+matching Class
++
+matching Section
++
+students.is_active = true
++
+enrollment is Active
+```
+
+Implement this as the canonical live-attendance roster eligibility rule.
+
+Do not use current `students.class/section` for session-specific placement when a selected-session enrollment is available.
+
+The selected-session `enrollments` row remains authoritative for academic placement.
+
+---
+
+# APPLY THE SAME RULE TO READ AND WRITE
+
+This is critical.
+
+Do NOT fix only the frontend list.
+
+The exact same eligibility rule must protect:
+
+## Teacher Attendance roster GET
+
+Inactive/ineligible Students must not appear.
+
+## Attendance POST/write validation
+
+The backend must independently reject attendance submission for a Student who is not eligible under the canonical live-attendance rule.
+
+A manipulated request must NOT allow an inactive Student to be marked simply because the client sends the Student ID.
+
+Example:
+
+```text
+Student enrollment exists
+but
+students.is_active = false
+
+→ roster GET: EXCLUDE
+→ attendance POST: REJECT
+```
+
+Likewise:
+
+```text
+Student active
+but
+selected-session enrollment is not Active
+
+→ EXCLUDE / REJECT
+```
+
+Do not rely on UI hiding for security or correctness.
+
+---
+
+# HISTORICAL ATTENDANCE MUST NOT BE DESTROYED
+
+This correction applies to the **live/current attendance eligibility population**.
+
+Existing historical attendance records for inactive/deactivated Students must remain stored.
+
+For example, the existing attendance records for:
+
+- MIS-0004
+- MIS-0006
+- MIS-0007
+
+must NOT be deleted.
+
+Historical reports should continue to be capable of representing legitimate historical attendance according to their existing historical semantics.
+
+Do not globally add `students.is_active=true` to every historical attendance query if that would make previously valid historical attendance disappear.
+
+Separate:
+
+```text
+LIVE ATTENDANCE ELIGIBILITY
+```
+
+from:
+
+```text
+HISTORICAL ATTENDANCE REPORTING
+```
+
+---
+
+# BUG 2 — DAILY PRESENCE POPULATION
+
+The audit confirmed Daily Presence currently discovers class/sections from attendance records that already exist for the selected date.
+
+This is incorrect for a school-wide Daily Presence calculation because an eligible class/section can disappear simply because nobody has marked attendance yet.
+
+Example from Development:
+
+```text
+Class 1/A
+attendance records exist
+→ included
+
+Class 2/B
+eligible active student MIS-0003 exists
+but no attendance record
+→ currently not discovered
+```
+
+Fix this.
+
+---
+
+# DAILY PRESENCE SOURCE OF TRUTH
+
+For the selected:
+
+```text
+authenticated school
++
+selected Academic Session
++
+attendance date
+```
+
+derive the eligible student population/class-section population from the **selected-session enrollment roster**, not from existing attendance records alone.
+
+Eligibility must use:
+
+```text
+students.is_active = true
++
+selected-session enrollment
++
+enrollment Active
++
+same authenticated school
+```
+
+Then join/compare attendance records for the requested date.
+
+Existing attendance rows should provide attendance STATUS.
+
+They must NOT determine which students/classes exist.
+
+---
+
+# IMPORTANT — DATE APPLICABILITY
+
+Do not blindly count every active enrolled Student as absent on every calendar date.
+
+Use the existing BENIUS attendance working-day/calendar/policy semantics to determine whether the date is applicable.
+
+If the existing code cannot reliably determine whether an entirely unmarked class/section should be counted on that date, do NOT invent a new business rule.
+
+Instead:
+
+1. inspect the existing school attendance working-day/calendar/policy source;
+2. use the authoritative existing rule if one exists;
+3. if no authoritative rule exists, report the limitation before introducing new attendance semantics.
+
+Do not derive “working day” solely from the existence of attendance records.
+
+---
+
+# EXPECTED DEVELOPMENT DATA RESULT
+
+Based on the audited Development data:
+
+Active Students are:
+
+```text
+MIS-0001
+MIS-0002
+MIS-0003
+```
+
+Inactive Students are:
+
+```text
+MIS-0004
+MIS-0006
+MIS-0007
+```
+
+For Class 1/A specifically, the live Teacher Attendance roster should therefore contain only the eligible active Students enrolled in 1/A.
+
+From the audit that should be:
+
+```text
+MIS-0001
+MIS-0002
+```
+
+Therefore:
+
+```text
+Class 1/A live roster
+BEFORE = 5
+AFTER  = 2
+```
+
+MIS-0004, MIS-0006 and MIS-0007 must no longer appear in the normal live attendance roster.
+
+---
+
+# EXISTING ATTENDANCE RECORDS FOR INACTIVE STUDENTS
+
+There are already attendance records created after those Students were deactivated.
+
+Do NOT delete or rewrite those rows automatically.
+
+However, those ineligible records must NOT continue inflating the **current/live Daily Presence summary** merely because they exist.
+
+The Daily Presence calculation should evaluate the current eligible population for the requested live/current context and associate attendance statuses only with eligible Students.
+
+Report clearly how existing ineligible attendance rows are handled by the corrected Daily Presence calculation.
+
+---
+
+# MIS-0003 — DO NOT FIX PLACEMENT IN THIS TASK
+
+The audit found:
+
+```text
+Student profile:
+MIS-0003 → Class 2/A
+
+Selected-session enrollment:
+MIS-0003 → Class 2/B
+```
+
+This is a separate data/placement issue.
+
+For session-sensitive academic operations such as Attendance, BENIUS's established rule is:
+
+```text
+selected Academic Session enrollment
+= authoritative academic placement
+```
+
+Therefore Attendance should treat MIS-0003 according to its selected-session enrollment:
+
+```text
+Class 2/B
+```
+
+Do NOT change it to 2/A.
+
+Do NOT modify its Student profile.
+
+Do NOT modify its enrollment.
+
+We will review that mismatch separately if necessary.
+
+---
+
+# STUDENT REGISTRY
+
+Do NOT change Student Registry.
+
+It is intentionally a school-wide/current Student management module.
+
+It currently reports:
+
+```text
+3 active students
+```
+
+That is correct for the audited Development data.
+
+---
+
+# DASHBOARD TOTAL STUDENTS
+
+Do NOT change Dashboard Total Students in this correction.
+
+It currently counts:
+
+```text
+students.is_active = true
+```
+
+for the authenticated school and reports:
+
+```text
+3
+```
+
+That agrees with Student Registry.
+
+---
+
+# DAILY PRESENCE EXPECTATION
+
+After correction, Daily Presence must no longer show:
+
+```text
+4/5 present
+```
+
+based on three inactive Students.
+
+But DO NOT hard-code an expected percentage such as 2/3 until the date-applicability rule has been correctly evaluated.
+
+For example:
+
+If all three active enrolled Students are applicable for the selected date and MIS-0003 has no attendance mark, the summary must handle that according to the existing BENIUS attendance semantics.
+
+If only a subset is applicable, calculate accordingly.
+
+The important rule is:
+
+**inactive Students must never inflate the live Daily Presence numerator or denominator.**
+
+---
+
+# TENANT ISOLATION
+
+Preserve strict tenant isolation.
+
+All eligibility queries must derive/use the authenticated school.
+
+Never trust:
+
+- client schoolId
+- Student schoolId supplied in request
+- enrollment schoolId supplied by client
+
+A Student/enrollment from another school must never enter:
+
+- Teacher Attendance roster
+- attendance write validation
+- Daily Presence
+
+---
+
+# ACADEMIC SESSION
+
+Preserve the existing selected-session foundation.
+
+Teacher Attendance and Daily Presence must remain scoped to:
+
+```text
+authenticated school
++
+x-view-session-id / validated selected session
+```
+
+Do not silently redirect a selected historical session to the active session.
+
+Preserve existing archived-session read/write protections.
+
+Do not weaken the global rule:
+
+**Previous/inactive Academic Session is read-only for session-specific academic operational data.**
+
+---
+
+# DEACTIVATION / ENROLLMENT
+
+Do NOT change Student deactivation to delete or mutate enrollment rows in this task.
+
+The current stale Active enrollment state is useful evidence that live eligibility must not depend solely on enrollment.
+
+The live attendance query must be safe even when:
+
+```text
+enrollment.status = Active
+students.is_active = false
+```
+
+That Student must be excluded.
+
+Any broader enrollment-lifecycle cleanup should be a separate decision.
+
+---
+
+# REQUIRED REGRESSION TESTS
+
+Add focused tests for at least:
+
+### Test 1 — Active Student + Active Enrollment
+
+```text
+Student active
+Enrollment active
+Correct school/session/class/section
+
+→ roster included
+→ attendance write allowed
+```
+
+### Test 2 — Inactive Student + Active Enrollment
+
+```text
+Student inactive
+Enrollment still active
+
+→ roster excluded
+→ attendance write rejected
+```
+
+This reproduces MIS-0004/MIS-0006/MIS-0007.
+
+### Test 3 — Active Student + Inactive Enrollment
+
+```text
+Student active
+Enrollment inactive
+
+→ roster excluded
+→ attendance write rejected
+```
+
+### Test 4 — Wrong Academic Session
+
+→ excluded/rejected.
+
+### Test 5 — Wrong school
+
+→ excluded/rejected.
+
+### Test 6 — Daily Presence inactive records
+
+Create:
+
+```text
+active eligible students
++
+inactive student with existing attendance record
+```
+
+Verify inactive Student does not contribute to current/live Daily Presence numerator or denominator.
+
+### Test 7 — Eligible unmarked class/section
+
+Create an eligible active Student in another class/section with no attendance record for the date.
+
+Verify Daily Presence population discovery does not depend solely on pre-existing attendance rows.
+
+Respect the existing date-applicability semantics.
+
+### Test 8 — Historical preservation
+
+Verify the correction does not delete or rewrite existing historical attendance records simply because a Student is now inactive.
+
+---
+
+# MOBILE
+
+Mobile remains FROZEN.
+
+Do not:
+
+- modify Mobile source
+- synchronize Mobile Attendance
+- refactor Mobile APIs
+- change Mobile permissions
+
+If the shared backend change has a possible future Mobile impact, REPORT it only.
+
+---
+
+# DATABASE
+
+No schema migration.
+
+No data deletion.
+
+No manual cleanup.
+
+No rewriting existing attendance rows.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# STUDENT ATTENDANCE POPULATION CONSISTENCY CORRECTION
+
+## Root cause
+Briefly confirm.
+
+## Teacher Attendance roster
+- Active Student + Active Enrollment: PASS/FAIL
+- Inactive Student excluded: PASS/FAIL
+- Inactive Enrollment excluded: PASS/FAIL
+- Selected-session placement used: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+## Attendance write validation
+- Inactive Student rejected: PASS/FAIL
+- Inactive Enrollment rejected: PASS/FAIL
+- Wrong school rejected: PASS/FAIL
+- Wrong session rejected: PASS/FAIL
+
+## Development Class 1/A
+Before: 5
+After: report actual corrected eligible count.
+
+List eligible DSIDs.
+
+## Daily Presence
+- Population derived independently of existing attendance rows: PASS/FAIL
+- Inactive Students excluded: PASS/FAIL
+- Existing ineligible attendance rows ignored for live summary: PASS/FAIL
+- Eligible unmarked class/section handled: PASS/FAIL
+- Working-day/date applicability preserved: PASS/FAIL
+
+Report the corrected Development Daily Presence result for 2026-10-06 and explain numerator/denominator.
+
+## Historical attendance
+PRESERVED / NOT PRESERVED
+
+## Student Registry
+UNCHANGED / CHANGED
+
+## Dashboard Total Students
+UNCHANGED / CHANGED
+
+## MIS-0003 placement
+UNCHANGED / CHANGED
+
+Confirm Attendance uses selected-session enrollment placement.
+
+## Academic Session protections
+PASS/FAIL
+
+## Tenant isolation
+PASS/FAIL
+
+## Student deactivation behavior
+UNCHANGED / CHANGED
+
+## Database/schema
+NONE / explain
+
+## Existing data modified
+NONE / explain
+
+## Mobile
+FROZEN
+
+## Deployment
+NONE
+
+## Tests/builds performed
+
+## FINAL VERDICT
+PASS / NEEDS CHANGES
+
+STOP.
