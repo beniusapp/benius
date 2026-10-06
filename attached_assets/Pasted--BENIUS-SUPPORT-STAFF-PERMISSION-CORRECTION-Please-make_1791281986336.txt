@@ -1,0 +1,495 @@
+# BENIUS — SUPPORT STAFF PERMISSION CORRECTION
+
+Please make this focused correction for:
+
+1. Approval Center
+2. Leave Requests
+3. Support Staff Management
+
+Do NOT modify unrelated modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# 1. APPROVAL CENTER
+
+For Approval Center, I DO want submodule permissions, but ONLY the REAL functional modules visible inside the actual Approval Center.
+
+The actual Approval Center contains:
+
+- Gallery Hub
+- E-Book Library
+
+Therefore Support Staff permission control must show exactly:
+
+```text
+☐ Approval Center
+   ☐ Gallery Hub
+   ☐ E-Book Library
+```
+
+Do NOT add artificial permissions for individual buttons/actions.
+
+For example, do NOT create separate permissions such as:
+
+- View
+- Approve
+- Reject
+- Upload
+- Delete
+- History
+
+The permission boundary is the REAL submodule.
+
+---
+
+## Gallery Hub
+
+If Support Staff is granted:
+
+**Approval Center → Gallery Hub**
+
+then Support Staff gets the complete normal Principal/Admin operational functionality inside Gallery Hub.
+
+Whatever Principal/Admin can normally manage inside Gallery Hub should be available to that Support Staff member, subject to normal security/business rules.
+
+If Gallery Hub is NOT granted:
+
+- do not expose Gallery Hub
+- direct URL/access must be blocked
+- Gallery Hub management APIs must reject Support Staff
+
+---
+
+## E-Book Library
+
+If Support Staff is granted:
+
+**Approval Center → E-Book Library**
+
+then Support Staff gets the complete normal Principal/Admin operational functionality inside E-Book Library.
+
+Example:
+
+```text
+Approval Center
+   Gallery Hub      ❌
+   E-Book Library   ✅
+```
+
+Support Staff should be able to fully manage the normal E-Book Library workflow like Principal/Admin, but should NOT gain Gallery Hub access.
+
+If E-Book Library is not granted, its UI/direct access/protected APIs must reject Support Staff.
+
+---
+
+# 2. LEAVE REQUESTS
+
+The actual Leave Requests module contains:
+
+- Teacher Leave
+- Student Leave
+- Leave Approval History
+
+Therefore the permission editor should show exactly:
+
+```text
+☐ Leave Requests
+   ☐ Teacher Leave
+   ☐ Student Leave
+   ☐ Leave Approval History
+```
+
+Again, these are the REAL functional sections.
+
+Do NOT create individual permissions for:
+
+- View
+- Approve
+- Reject
+- Update
+- Delete
+- History actions
+
+The real Leave submodule itself is the permission boundary.
+
+---
+
+## Teacher Leave
+
+If granted:
+
+**Leave Requests → Teacher Leave**
+
+Support Staff gets the complete normal Principal/Admin Teacher Leave functionality.
+
+That includes the normal review/approval/rejection/management functionality that Principal/Admin has inside Teacher Leave.
+
+If not granted, Support Staff must not access Teacher Leave UI or APIs.
+
+---
+
+## Student Leave
+
+If granted:
+
+**Leave Requests → Student Leave**
+
+Support Staff gets the complete normal Principal/Admin Student Leave functionality.
+
+Example:
+
+```text
+Teacher Leave          ❌
+Student Leave          ✅
+Leave Approval History ❌
+```
+
+Support Staff can fully manage Student Leave but receives no Teacher Leave or Leave History access.
+
+---
+
+## Leave Approval History
+
+If granted:
+
+**Leave Requests → Leave Approval History**
+
+Support Staff gets the same normal historical visibility available to Principal/Admin.
+
+This is history access.
+
+Do NOT introduce edit/delete capabilities merely because the Support Staff has History permission if Principal/Admin history itself is read-only.
+
+---
+
+# IMPORTANT — LEAVE SESSION RULES
+
+Preserve BENIUS Academic Session behavior.
+
+Where Leave data is session-specific:
+
+**Authenticated School + Selected Academic Session**
+
+must remain authoritative.
+
+Historical/inactive Academic Sessions remain STRICTLY READ-ONLY.
+
+For example:
+
+```text
+Support Staff
+Student Leave granted
+
+Active Session
+→ normal permitted management
+
+Archived Session
+→ historical viewing where allowed
+→ approve/reject/edit/write ❌
+```
+
+Never redirect a historical write silently into the active session.
+
+---
+
+# 3. REMOVE SUPPORT STAFF MANAGEMENT COMPLETELY
+
+This is a permanent product decision:
+
+> Support Staff must NEVER manage other Support Staff accounts.
+
+The **Support Staff** module must be completely removed from the Support Staff Module Access Control.
+
+Currently it contains permissions such as:
+
+- View Staff
+- Add Staff
+- Edit Staff
+- Edit Permissions
+
+Remove the ENTIRE Support Staff module from the permissions available to Support Staff.
+
+The Support Staff permission editor must NOT show:
+
+```text
+Support Staff
+```
+
+at all.
+
+Not even as an unchecked option.
+
+---
+
+# SUPPORT STAFF MANAGEMENT = PRINCIPAL/ADMIN ONLY
+
+Only Principal/Admin may:
+
+- view/manage Support Staff accounts through the Support Staff management module
+- create Support Staff
+- edit Support Staff
+- deactivate/delete Support Staff where supported
+- grant permissions
+- revoke permissions
+- edit `allowedModules`
+- manage Support Staff account/security settings
+
+A Support Staff member must NEVER be able to grant themselves or another Support Staff member permissions.
+
+---
+
+# LEGACY SUPPORT STAFF MANAGEMENT GRANTS
+
+Existing Support Staff accounts may already contain old grants such as:
+
+- support-staff parent permission
+- view staff
+- add staff
+- edit staff
+- edit permissions
+
+These legacy values must NOT authorize anything.
+
+Do NOT automatically trust them.
+
+When permissions are subsequently saved, remove/canonicalize these obsolete Support Staff-management grants.
+
+No database migration is necessary unless technically unavoidable.
+
+---
+
+# SERVER-SIDE SECURITY IS REQUIRED
+
+Do NOT make this only a UI change.
+
+Even if Support Staff manually calls the API or enters a URL:
+
+```text
+Support Staff
+→ Support Staff Management
+→ REJECT
+```
+
+Support Staff management APIs must remain Principal/Admin-only.
+
+This includes permission-editing APIs.
+
+---
+
+# SCHOOL/TENANT SECURITY
+
+For Approval Center and Leave Requests:
+
+Support Staff may operate only on their authenticated school.
+
+```text
+Support Staff — School A
+
+School A Gallery/E-Books/Leave → according to granted submodule
+
+School B data → ALWAYS REJECT
+```
+
+Do not trust client-supplied school IDs as authorization.
+
+---
+
+# ACTOR ATTRIBUTION
+
+When Support Staff performs an approval/rejection/management action:
+
+Do NOT falsely record the action as performed by Principal/Admin.
+
+Do NOT write the negative compatibility `userId = -staffId` into an Admin-only foreign key.
+
+Use the existing safe Support Staff-aware audit/actor mechanism where available.
+
+If an existing schema prevents safe Support Staff attribution for a specific operation, REPORT the limitation instead of creating unsafe attribution.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin functionality must remain completely unchanged.
+
+Principal/Admin continues to have:
+
+- complete Approval Center
+- complete Leave Requests
+- complete Support Staff Management
+
+---
+
+# MOBILE REMAINS FROZEN
+
+Do NOT modify:
+
+- Mobile source
+- Mobile permissions
+- Mobile APIs
+- Mobile business logic
+
+If you discover an existing Mobile authority issue, report it only.
+
+Do not fix Mobile in this task.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT modify:
+
+- School Setup
+- Timetable Master
+- School Calendar
+- Attendance Overview
+- Exam Controller
+- Complaint Hub
+- Noticeboard
+- Performance Analytics
+- Audit Logs
+- Visitor Log
+- ID Card Gen
+- Assets & Inventory
+- Fees & Payments
+- Academic Session selector
+- Student/Teacher Portal
+- unrelated database/schema
+- deployment
+
+---
+
+# REQUIRED VALIDATION
+
+## Approval Center permission editor
+
+Must show exactly:
+
+```text
+Approval Center
+├── Gallery Hub
+└── E-Book Library
+```
+
+Test each independently.
+
+Gallery only:
+- Gallery works
+- E-Book denied
+
+E-Book only:
+- E-Book works
+- Gallery denied
+
+Neither:
+- Approval Center inaccessible
+
+---
+
+## Leave Requests permission editor
+
+Must show exactly:
+
+```text
+Leave Requests
+├── Teacher Leave
+├── Student Leave
+└── Leave Approval History
+```
+
+Test independently.
+
+Teacher Leave only:
+- Teacher Leave works
+- Student Leave denied
+- History denied
+
+Student Leave only:
+- Student Leave works
+- Teacher Leave denied
+- History denied
+
+History only:
+- History works
+- Teacher/Student management denied
+
+Verify archived-session writes remain rejected.
+
+---
+
+## Support Staff Management
+
+Verify:
+
+- Support Staff module absent from Support Staff permission editor
+- Support Staff cannot open management page
+- Support Staff cannot list/manage other Support Staff through protected management APIs
+- Support Staff cannot create another Support Staff
+- Support Staff cannot edit another Support Staff
+- Support Staff cannot change another Support Staff's permissions
+- legacy grants do not bypass this restriction
+- Principal/Admin management remains working
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## APPROVAL CENTER / LEAVE REQUESTS / SUPPORT STAFF MANAGEMENT CORRECTION
+
+### Approval Center
+- Real submodules only: PASS/FAIL
+- Gallery Hub full functionality when granted: PASS/FAIL
+- E-Book Library full functionality when granted: PASS/FAIL
+- Independent submodule isolation: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+### Leave Requests
+- Real submodules only: PASS/FAIL
+- Teacher Leave full functionality: PASS/FAIL
+- Student Leave full functionality: PASS/FAIL
+- Leave Approval History: PASS/FAIL
+- Independent submodule isolation: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Academic Session protection: PASS/FAIL
+- Archived-session writes rejected: PASS/FAIL
+
+### Support Staff Management
+- Removed from Support Staff permission editor: PASS/FAIL
+- Direct UI access blocked: PASS/FAIL
+- Management APIs Admin-only: PASS/FAIL
+- Legacy grants ignored: PASS/FAIL
+- Support Staff cannot edit permissions: PASS/FAIL
+
+### Actor attribution
+PASS / LIMITATION FOUND
+
+Explain.
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Other modules
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE / explain
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
