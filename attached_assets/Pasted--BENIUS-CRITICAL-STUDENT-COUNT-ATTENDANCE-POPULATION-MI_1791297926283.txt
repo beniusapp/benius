@@ -1,0 +1,598 @@
+# BENIUS — CRITICAL STUDENT COUNT / ATTENDANCE POPULATION MISMATCH
+
+## PHASE 1 — READ-ONLY ROOT-CAUSE AUDIT ONLY
+
+DO NOT CHANGE CODE YET.
+
+DO NOT CHANGE DATABASE DATA.
+
+DO NOT DELETE STUDENTS OR ENROLLMENTS.
+
+DO NOT MODIFY MOBILE.
+
+DO NOT DEPLOY.
+
+We have a serious data-consistency problem between:
+
+1. Principal Dashboard
+2. Student Registry
+3. Principal Dashboard Daily Presence
+4. Teacher → Student Attendance
+
+I want the exact root cause BEFORE any correction is made.
+
+---
+
+# OBSERVED BEHAVIOR
+
+Current screenshots show:
+
+## Principal Dashboard
+
+```text
+Total Students: 3
+Faculty Strength: 3
+Daily Presence: 80%
+4/5 present
+```
+
+This is already suspicious.
+
+If there are only 3 active students in the relevant school/session population, Daily Presence should not have a denominator of 5.
+
+---
+
+## Student Registry
+
+Student Registry shows:
+
+```text
+3 active students
+```
+
+The visible students are approximately:
+
+```text
+MIS-0001
+MIS-0002
+MIS-0003
+```
+
+So Principal Dashboard Total Students and Student Registry currently agree:
+
+```text
+Total Students = 3
+Student Registry = 3
+```
+
+---
+
+## Teacher Attendance
+
+When Teacher opens Student Attendance for a class/section, for example:
+
+```text
+Class 1
+Section a
+06-10-2026
+```
+
+the attendance screen shows **5 students**.
+
+Visible examples include:
+
+```text
+student1mis       MIS-0001
+student2mis       MIS-0002
+bysupportstaff    MIS-0004
+bysupportstaff2   MIS-0006
+bysupportstaff3   MIS-0007
+```
+
+Therefore Teacher Attendance is using a population that does NOT match Student Registry.
+
+---
+
+# CRITICAL QUESTION
+
+Why does BENIUS currently have:
+
+```text
+Student Registry active population = 3
+
+but
+
+Teacher Attendance population = 5
+
+and
+
+Dashboard Daily Presence denominator = 5?
+```
+
+Find the exact source of truth used by EACH feature.
+
+---
+
+# 1. TRACE STUDENT REGISTRY
+
+Find exactly how Student Registry determines its student population.
+
+Report:
+
+- API endpoint
+- route handler
+- storage/query function
+- database tables
+- `students.is_active` filtering
+- Academic Session filtering
+- `enrollments` usage
+- class/section filtering
+- school/tenant filtering
+
+Answer:
+
+### Why does Student Registry return exactly 3?
+
+List the exact qualifying conditions.
+
+---
+
+# 2. TRACE PRINCIPAL DASHBOARD TOTAL STUDENTS
+
+Find exactly how:
+
+```text
+Total Students = 3
+```
+
+is calculated.
+
+Report:
+
+- endpoint
+- query
+- tables
+- active/inactive filtering
+- Academic Session handling
+- enrollment handling
+- school filtering
+
+Determine whether Dashboard Total Students and Student Registry intentionally use the same population.
+
+---
+
+# 3. TRACE TEACHER ATTENDANCE STUDENT POPULATION
+
+This is the most important part.
+
+Find exactly how Teacher Attendance determines which students appear after selecting:
+
+```text
+Class
+Section
+Selected Academic Session
+```
+
+Report:
+
+- frontend request
+- API endpoint
+- route
+- storage/query
+- database tables
+- school filter
+- session filter
+- class filter
+- section filter
+- active/inactive filter
+- enrollment filter
+
+For EACH displayed student, determine why they qualify.
+
+Especially inspect:
+
+```text
+MIS-0001
+MIS-0002
+MIS-0004
+MIS-0006
+MIS-0007
+```
+
+Do NOT modify these records.
+
+Explain why MIS-0004, MIS-0006 and MIS-0007 appear in Teacher Attendance while Student Registry reports only 3 active students overall.
+
+---
+
+# 4. CHECK ACTIVE / INACTIVE STUDENT STATE
+
+For the affected records, inspect source-level/database relationships if accessible.
+
+Determine whether the extra students are:
+
+- active students
+- inactive/deactivated students
+- deleted/legacy students
+- students missing from current Registry query
+- students with stale enrollment rows
+- students from another Academic Session
+- students whose current `students.class/section` differs from enrollment
+- students created through an older Support Staff route
+- something else
+
+DO NOT assume.
+
+Report the actual reason.
+
+---
+
+# 5. CHECK ENROLLMENTS
+
+This is critical.
+
+BENIUS uses `enrollments` for session-sensitive student academic placement.
+
+Audit the relevant enrollment rows conceptually/query-wise for the affected students.
+
+For each student determine:
+
+```text
+student ID
+DSID
+students.is_active
+students.class
+students.section
+
+enrollment exists?
+enrollment.school_id
+enrollment.academic_session_id
+enrollment.class
+enrollment.section
+enrollment status/active field if any
+```
+
+Determine whether Teacher Attendance is selecting students from enrollment rows without also checking whether the underlying Student is currently active.
+
+---
+
+# 6. ACADEMIC SESSION
+
+Current selected session in the screenshots is:
+
+```text
+2026-2027 · Active
+```
+
+Verify all three calculations against the SAME Academic Session:
+
+- Dashboard Total Students
+- Daily Presence
+- Teacher Attendance
+
+Determine whether any endpoint:
+
+- ignores `x-view-session-id`
+- falls back to active session
+- uses current `students.class/section`
+- uses selected-session `enrollments`
+- mixes active and historical sessions
+
+Report any mismatch.
+
+---
+
+# 7. TENANT ISOLATION
+
+Verify all student population queries are scoped to:
+
+```text
+authenticated school
+```
+
+Ensure the five Attendance students are all from the same school.
+
+If any student from another school can enter the Attendance population, classify it as a CRITICAL tenant-isolation issue.
+
+Do NOT fix yet.
+
+---
+
+# 8. TRACE DAILY PRESENCE — 4/5
+
+Find exactly how Principal Dashboard calculates:
+
+```text
+Daily Presence = 80%
+4/5 present
+```
+
+Report:
+
+- numerator source
+- denominator source
+- endpoint
+- query
+- school filter
+- Academic Session filter
+- active student filter
+- enrollment filter
+- attendance-date handling
+- IST handling
+
+Explain exactly why the denominator is currently **5**.
+
+Also explain why the numerator is **4**.
+
+---
+
+# 9. DEFINE THE CORRECT PRODUCT POPULATION
+
+Do NOT implement yet, but compare current code against this BENIUS requirement:
+
+For a selected Academic Session, attendance population should normally represent:
+
+```text
+Authenticated School
++
+Selected Academic Session
++
+Selected Class
++
+Selected Section
++
+valid student enrollment for that session/class/section
++
+student eligible to participate in current attendance
+```
+
+An inactive/deactivated Student should NOT silently remain markable in normal attendance merely because an old enrollment row still exists, unless an existing explicit BENIUS business rule says otherwise.
+
+For school-wide Daily Presence, the denominator should be derived from the same authoritative attendance-eligible population for that school/session, rather than an unrelated student count.
+
+Determine whether current code follows this rule.
+
+---
+
+# 10. VERY IMPORTANT — DO NOT “FIX” BY DELETING DATA
+
+Do NOT solve this by:
+
+- deleting MIS-0004/MIS-0006/MIS-0007
+- deleting enrollment rows
+- changing student active flags
+- manually modifying attendance records
+- changing Academic Sessions
+
+This audit must determine whether the problem is:
+
+```text
+DATA problem
+```
+
+or
+
+```text
+QUERY / BUSINESS-LOGIC problem
+```
+
+or both.
+
+---
+
+# 11. CHECK WHETHER SUPPORT STAFF REGISTRATION CAUSED DATA DRIFT
+
+Because some visible students have names such as:
+
+```text
+bysupportstaff
+bysupportstaff2
+bysupportstaff3
+```
+
+inspect whether previous Support Staff Student Registry operations created records/enrollments differently from Principal-created students.
+
+Determine whether Support Staff Add Student:
+
+- creates the same `students` record structure
+- creates the same active-session enrollment
+- sets `is_active` identically
+- sets class/section identically
+- uses the same school
+- uses the same session
+
+Do NOT change Support Staff permissions.
+
+I only want to know whether these records expose a registration-path inconsistency.
+
+---
+
+# REQUIRED OUTPUT
+
+Return:
+
+# STUDENT POPULATION / ATTENDANCE CONSISTENCY AUDIT
+
+## Overall Verdict
+
+DATA ISSUE / QUERY LOGIC ISSUE / BOTH / NO ISSUE
+
+---
+
+## Student Registry
+
+Current count:
+
+`3`
+
+Source of truth:
+
+Explain exact table/query/filter.
+
+Why exactly 3?
+
+Explain.
+
+---
+
+## Dashboard Total Students
+
+Current count:
+
+`3`
+
+Explain exact calculation.
+
+Does it match Student Registry population?
+
+YES / NO
+
+---
+
+## Teacher Attendance
+
+Current count:
+
+`5`
+
+Explain exact calculation.
+
+### Students included
+
+Provide a table:
+
+| Student / DSID | Student active? | Selected-session enrollment? | Class/Section | Why Attendance includes them | Should they currently be included? |
+|---|---|---|---|---|---|
+
+Include at least:
+
+- MIS-0001
+- MIS-0002
+- MIS-0004
+- MIS-0006
+- MIS-0007
+
+---
+
+## Extra Students Root Cause
+
+Why are:
+
+- MIS-0004
+- MIS-0006
+- MIS-0007
+
+visible in Teacher Attendance while Student Registry reports only 3 active students?
+
+Explain EXACTLY.
+
+---
+
+## Dashboard Daily Presence
+
+Why:
+
+`4/5 present`
+
+Explain:
+
+- numerator 4
+- denominator 5
+
+State exactly which students constitute the denominator.
+
+---
+
+## Academic Session Consistency
+
+Student Registry:
+Explain.
+
+Teacher Attendance:
+Explain.
+
+Dashboard Daily Presence:
+Explain.
+
+Any mismatch?
+
+YES / NO
+
+---
+
+## Active/Inactive Filtering
+
+Is Teacher Attendance currently including inactive/deactivated students?
+
+YES / NO
+
+If YES, identify exact code/query reason.
+
+---
+
+## Enrollment Integrity
+
+Are stale/current/historical enrollment rows contributing to this mismatch?
+
+YES / NO
+
+Explain.
+
+---
+
+## Support Staff Registration Path
+
+Did Support Staff-created students use the same canonical student + enrollment creation logic?
+
+YES / NO / PARTIALLY
+
+Explain.
+
+---
+
+## Tenant Isolation
+
+PASS / CRITICAL ISSUE
+
+---
+
+## Correct Source-of-Truth Recommendation
+
+Recommend the MINIMUM correction needed so that:
+
+```text
+Student Registry
+Dashboard Total Students
+Teacher Attendance
+Dashboard Daily Presence
+```
+
+use logically consistent populations while still respecting the different purpose of each screen.
+
+Do NOT implement it.
+
+---
+
+## Files / Routes Responsible
+
+List exact files, endpoints and functions involved.
+
+---
+
+## Code changes
+
+NONE
+
+## Database changes
+
+NONE
+
+## Mobile changes
+
+NONE
+
+## Deployment
+
+NONE
+
+STOP.
