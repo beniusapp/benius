@@ -154,7 +154,18 @@ test("School Setup policy APIs deny Support Staff with legacy grants and preserv
     method: "DELETE",
   })).status, 200);
 
-  const legacyGrants = ["school-setup", "school-setup:classes", "attendance", "fees-manager"];
+  const legacyGrants = [
+    "school-setup",
+    "school-setup:classes",
+    "timetable",
+    "timetable:schedule",
+    "timetable:structure",
+    "school-calendar",
+    "school-calendar:events",
+    "school-calendar:holidays",
+    "attendance",
+    "fees-manager",
+  ];
   const createStaffResponse = await request("/api/admin/non-teaching-staff", {
     role: "admin",
     method: "POST",
@@ -166,7 +177,12 @@ test("School Setup policy APIs deny Support Staff with legacy grants and preserv
     },
   });
   assert.equal(createStaffResponse.status, 201);
-  assert.deepEqual(calls.staffCreates[0].allowedModules, ["attendance", "fees-manager"]);
+  assert.deepEqual(calls.staffCreates[0].allowedModules, [
+    "timetable",
+    "school-calendar",
+    "attendance",
+    "fees-manager",
+  ]);
 
   const updateStaffResponse = await request("/api/admin/non-teaching-staff/2", {
     role: "admin",
@@ -174,5 +190,10 @@ test("School Setup policy APIs deny Support Staff with legacy grants and preserv
     body: { allowedModules: legacyGrants },
   });
   assert.equal(updateStaffResponse.status, 200);
-  assert.deepEqual(calls.staffUpdates[0].update.allowedModules, ["attendance", "fees-manager"]);
+  assert.deepEqual(calls.staffUpdates[0].update.allowedModules, [
+    "timetable",
+    "school-calendar",
+    "attendance",
+    "fees-manager",
+  ]);
 });

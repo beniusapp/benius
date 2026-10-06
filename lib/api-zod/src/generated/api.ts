@@ -18,6 +18,26 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Get school metadata required by the Timetable Master
+ */
+export const GetAdminTimetableContextResponse = zod.object({
+  "classes": zod.array(zod.string()),
+  "sections": zod.array(zod.string()),
+  "subjects": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Get school metadata required by the School Calendar
+ */
+export const GetAdminCalendarContextResponse = zod.object({
+  "classes": zod.array(zod.string()),
+  "sections": zod.array(zod.string()),
+  "classSections": zod.record(zod.string(), zod.array(zod.string()))
+})
+
+
+/**
  * Uses a short-lived single-purpose challenge and returns no authenticated session.
  * @summary Complete a teacher's required first-login password change
  */

@@ -420,7 +420,13 @@ function AudiencePicker({
   );
 }
 
-export default function SchoolCalendar({ allowedSubs }: { allowedSubs?: string[] } = {}) {
+export default function SchoolCalendar({
+  schoolId,
+  allowedSubs,
+}: {
+  schoolId: number;
+  allowedSubs?: string[];
+}) {
   const canEvents = allowedSubs === undefined || allowedSubs.includes("events");
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
@@ -439,9 +445,9 @@ export default function SchoolCalendar({ allowedSubs }: { allowedSubs?: string[]
   const [editForm, setEditForm] = useState(EMPTY_EDIT);
 
   const { data: schoolConfig } = useQuery<SchoolConfigData>({
-    queryKey: ["/api/admin/school-config"],
+    queryKey: ["/api/admin/calendar/context", schoolId],
     queryFn: async () => {
-      const r = await fetch("/api/admin/school-config", { credentials: "include" });
+      const r = await fetch("/api/admin/calendar/context", { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load school config");
       return r.json();
     },
@@ -458,7 +464,7 @@ export default function SchoolCalendar({ allowedSubs }: { allowedSubs?: string[]
   }
 
   const { data: events = [], isLoading, refetch, isFetching } = useQuery<CalendarEvent[]>({
-    queryKey: ["/api/admin/calendar", month + 1, year],
+    queryKey: ["/api/admin/calendar", schoolId, month + 1, year],
     queryFn: async () => {
       const r = await fetch(`/api/admin/calendar?month=${month + 1}&year=${year}`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load events");

@@ -179,6 +179,15 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
   ],
 };
 
+export const SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS = [
+  "timetable",
+  "school-calendar",
+] as const;
+
+export function isSupportStaffParentOnlyModule(moduleId: string): boolean {
+  return (SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS as readonly string[]).includes(moduleId);
+}
+
 /**
  * Backwards-compat helper: old module-only grants still populate submodules,
  * while legacy Fees grants map only to Ledger & Transactions.
@@ -191,6 +200,7 @@ export function expandModulesWithSubs(allowedModules: string[]): string[] {
     : [...allowedModules];
   allowedModules.forEach(key => {
     if (key.includes(":")) return;
+    if (isSupportStaffParentOnlyModule(key)) return;
     const hasSub = allowedModules.some(k => k.startsWith(key + ":"));
     if (!hasSub) {
       const subs = key === "fees-manager"
@@ -217,6 +227,15 @@ export function filterSupportStaffGrants(
   allowedModules: readonly string[] | null | undefined,
 ): string[] {
   return (allowedModules ?? []).filter(grant => !isSchoolSetupGrant(grant));
+}
+
+export function canonicalizeSupportStaffGrants(
+  allowedModules: readonly string[] | null | undefined,
+): string[] {
+  return filterSupportStaffGrants(allowedModules).filter(grant => {
+    const separator = grant.indexOf(":");
+    return separator < 0 || !isSupportStaffParentOnlyModule(grant.slice(0, separator));
+  });
 }
 
 export function hasSupportStaffModuleGrant(

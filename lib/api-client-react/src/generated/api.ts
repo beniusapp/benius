@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminCalendarContext,
+  AdminTimetableContext,
   HealthStatus,
   MobileTeacherFirstLoginPasswordChange,
   MobileTeacherFirstLoginPasswordChanged
@@ -118,6 +120,160 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminTimetableContextUrl = () => {
+
+
+
+
+  return `/api/admin/timetable/context`
+}
+
+/**
+ * @summary Get school metadata required by the Timetable Master
+ */
+export const getAdminTimetableContext = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminTimetableContext> => {
+
+  return customFetch<AdminTimetableContext>(getGetAdminTimetableContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminTimetableContextQueryKey = () => {
+    return [
+    `/api/admin/timetable/context`
+    ] as const;
+    }
+
+
+export const getGetAdminTimetableContextQueryOptions = <TData = Awaited<ReturnType<typeof getAdminTimetableContext>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminTimetableContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminTimetableContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminTimetableContext>>> = ({ signal }) => getAdminTimetableContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminTimetableContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminTimetableContextQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminTimetableContext>>>
+export type GetAdminTimetableContextQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get school metadata required by the Timetable Master
+ */
+
+export function useGetAdminTimetableContext<TData = Awaited<ReturnType<typeof getAdminTimetableContext>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminTimetableContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminTimetableContextQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminCalendarContextUrl = () => {
+
+
+
+
+  return `/api/admin/calendar/context`
+}
+
+/**
+ * @summary Get school metadata required by the School Calendar
+ */
+export const getAdminCalendarContext = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminCalendarContext> => {
+
+  return customFetch<AdminCalendarContext>(getGetAdminCalendarContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminCalendarContextQueryKey = () => {
+    return [
+    `/api/admin/calendar/context`
+    ] as const;
+    }
+
+
+export const getGetAdminCalendarContextQueryOptions = <TData = Awaited<ReturnType<typeof getAdminCalendarContext>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminCalendarContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminCalendarContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminCalendarContext>>> = ({ signal }) => getAdminCalendarContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminCalendarContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminCalendarContextQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminCalendarContext>>>
+export type GetAdminCalendarContextQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get school metadata required by the School Calendar
+ */
+
+export function useGetAdminCalendarContext<TData = Awaited<ReturnType<typeof getAdminCalendarContext>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminCalendarContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminCalendarContextQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

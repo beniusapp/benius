@@ -24,6 +24,34 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /admin/timetable/context:
+    get:
+      operationId: getAdminTimetableContext
+      tags: [admin-timetable]
+      summary: Get school metadata required by the Timetable Master
+      responses:
+        "200":
+          description: Timetable setup values for the authenticated school
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTimetableContext"
+        "403":
+          description: Admin access or the Support Staff Timetable Master grant is required
+  /admin/calendar/context:
+    get:
+      operationId: getAdminCalendarContext
+      tags: [admin-calendar]
+      summary: Get school metadata required by the School Calendar
+      responses:
+        "200":
+          description: Calendar targeting values for the authenticated school
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCalendarContext"
+        "403":
+          description: Admin access or the Support Staff School Calendar grant is required
   /mobile/auth/teacher/change-password:
     post:
       operationId: mobileTeacherFirstLoginChangePassword
@@ -60,6 +88,40 @@ components:
           type: string
       required:
         - status
+    AdminTimetableContext:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            type: string
+        sections:
+          type: array
+          items:
+            type: string
+        subjects:
+          type: array
+          items:
+            type: string
+      required: [classes, sections, subjects]
+    AdminCalendarContext:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            type: string
+        sections:
+          type: array
+          items:
+            type: string
+        classSections:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      required: [classes, sections, classSections]
     MobileTeacherFirstLoginPasswordChange:
       type: object
       additionalProperties: false

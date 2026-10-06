@@ -50,7 +50,28 @@ import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
 import { authenticationAttemptIsRevoked } from "./session-revocation";
-import { filterSupportStaffAllowedModules } from "./support-staff-module-permissions";
+import {
+  adminModuleAccessAllowed,
+  canonicalizeSupportStaffAllowedModules,
+  supportStaffModuleAccessAllowed,
+} from "./support-staff-module-permissions";
+
+function requireSupportStaffModule(
+  req: Request,
+  res: Response,
+  moduleId: string,
+  moduleLabel: string,
+): boolean {
+  if (supportStaffModuleAccessAllowed(
+    req.session.userRole,
+    req.session.allowedModules,
+    moduleId,
+  )) {
+    return true;
+  }
+  res.status(403).json({ message: `${moduleLabel} permission required` });
+  return false;
+}
 
 type TeacherHomeworkContext = {
   teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>;
@@ -2535,6 +2556,7 @@ export function registerTeacherRoutes(app: Express) {
   // ===== CALENDAR =====
   app.post("/api/calendar", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "school-calendar", "School Calendar")) return;
     const { title, date, eventType, schoolId } = req.body;
     if (!title || !date || !eventType || !schoolId) return res.status(400).json({ message: "All fields required" });
     const requestedSchoolId = Number(schoolId);
@@ -2547,6 +2569,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/calendar/:schoolId", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "school-calendar", "School Calendar")) return;
     const schoolId = Number(req.params.schoolId);
     if (!Number.isSafeInteger(schoolId) || schoolId !== req.session.schoolId) {
       return res.status(403).json({ message: "School access denied" });
@@ -2558,6 +2581,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/calendar/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "school-calendar", "School Calendar")) return;
     const deleted = await storage.deleteCalendarEventBySchool(parseInt(req.params.id), req.session.schoolId!);
     if (!deleted) return res.status(404).json({ message: "Event not found" });
     res.json({ message: "Event deleted" });
@@ -3154,8 +3178,34 @@ export function registerTeacherRoutes(app: Express) {
 
 
   // ===== TIMETABLE =====
+  app.get("/api/admin/timetable/context", async (req, res) => {
+    if (
+      !req.session.userId ||
+      !adminModuleAccessAllowed(
+        req.session.userRole,
+        req.session.allowedModules,
+        "timetable",
+      )
+    ) {
+    res.status(403).json({ message: "Timetable Master access required" });
+    return;
+    }
+    const schoolId = req.session.schoolId;
+  if (!schoolId) {
+    res.status(403).json({ message: "School access denied" });
+    return;
+  }
+    const metadata = await storage.getAllSchoolMetadata(schoolId);
+    res.json({
+      classes: metadata.classes ?? [],
+      sections: metadata.sections ?? [],
+      subjects: metadata.subjects ?? [],
+    });
+  });
+
   app.post("/api/timetable", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const { teacherId, dayOfWeek, period, class: cls, section, subject } = req.body;
     if (teacherId === undefined || dayOfWeek === undefined || period === undefined || !cls || !section || !subject)
       return res.status(400).json({ message: "All fields required" });
@@ -3184,6 +3234,7 @@ export function registerTeacherRoutes(app: Express) {
       const list = await storage.getTimetableByTeacher(context.schoolId, context.sessionId, context.teacher.id);
       return res.json(list);
     }
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const tid = parseInt(req.params.teacherId);
     // Teachers can only view their own timetable
@@ -3200,6 +3251,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/timetable/school/:schoolId", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const requestedSchoolId = parseInt(req.params.schoolId);
     if (requestedSchoolId !== req.session.schoolId)
       return res.status(403).json({ message: "Not authorized" });
@@ -3211,6 +3263,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/timetable/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
     if (timetableSessionId === null) return;
     // Pass schoolId to enforce tenant isolation at storage query level
@@ -3373,6 +3426,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/timetable/publish", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const { class: cls, section } = req.body;
     if (!cls || !section) return res.status(400).json({ message: "class and section required" });
     const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!, true);
@@ -3383,6 +3437,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/timetable/class-status", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const timetableSessionId = await resolveTimetableSessionId(req, res, req.session.schoolId!);
     if (timetableSessionId === null) return;
     const statuses = await storage.getClassSectionStatus(req.session.schoolId!, timetableSessionId);
@@ -3401,6 +3456,7 @@ export function registerTeacherRoutes(app: Express) {
       const structure = await storage.getTimetableStructure(context.schoolId, context.sessionId, cls);
       return res.json({ entries: list, structure });
     }
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     let schoolId: number;
     if (req.session.teacherId) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
@@ -3432,6 +3488,7 @@ export function registerTeacherRoutes(app: Express) {
       if (!occupancy) return res.json({ taken: false });
       return res.json({ taken: true, teacherName: occupancy.teacherName, subject: occupancy.subject });
     }
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     let schoolId: number;
     let excludeTeacherId: number | undefined;
     if (req.session.teacherId) {
@@ -3454,6 +3511,7 @@ export function registerTeacherRoutes(app: Express) {
   // ===== ADMIN BATCH SAVE =====
   app.post("/api/timetable/admin/save-batch", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
     const { changes } = req.body as {
@@ -3557,6 +3615,7 @@ export function registerTeacherRoutes(app: Express) {
       const rows = await storage.getTimetableStructure(context.schoolId, context.sessionId, cls);
       return res.json(rows);
     }
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     // Allow admin, teacher, and student sessions
     let schoolId: number | undefined;
     if (req.session.teacherId) {
@@ -3583,6 +3642,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.post("/api/timetable/structure", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "School session missing — please log in again" });
     const { class: cls, rows } = req.body as {
@@ -3611,6 +3671,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.delete("/api/timetable/structure/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
     const schoolId = req.session.schoolId!;
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
@@ -5569,7 +5630,7 @@ Thank you for your prompt attention to this matter.
         email: parsed.data.email,
         phone: parsed.data.phone || "",
         designation: parsed.data.designation,
-        allowedModules: filterSupportStaffAllowedModules(parsed.data.allowedModules),
+        allowedModules: canonicalizeSupportStaffAllowedModules(parsed.data.allowedModules),
         isActive: true,
         ...(passwordHash ? { passwordHash } : {}),
       });
@@ -5601,7 +5662,7 @@ Thank you for your prompt attention to this matter.
       if (parsed.data.phone !== undefined) updateData.phone = parsed.data.phone;
       if (parsed.data.designation !== undefined) updateData.designation = parsed.data.designation;
       if (parsed.data.allowedModules !== undefined) {
-        updateData.allowedModules = filterSupportStaffAllowedModules(parsed.data.allowedModules);
+        updateData.allowedModules = canonicalizeSupportStaffAllowedModules(parsed.data.allowedModules);
       }
       if (parsed.data.password) {
         updateData.passwordHash = await bcrypt.hash(parsed.data.password, 10);

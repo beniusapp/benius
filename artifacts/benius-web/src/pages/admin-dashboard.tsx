@@ -29,8 +29,10 @@ import {
   type SessionDropdownPlacement,
 } from "@/lib/admin-session-view";
 import {
+  MODULE_SUB_MODULES,
   filterSupportStaffGrants,
   hasSupportStaffModuleGrant,
+  isSupportStaffParentOnlyModule,
 } from "@/lib/admin-tiles";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
@@ -1645,6 +1647,23 @@ export default function AdminDashboard() {
     enabled: !!me?.schoolId,
   });
 
+  const { data: supportStaffTimetableContext } = useQuery<{
+    classes: string[];
+    sections: string[];
+    subjects: string[];
+  }>({
+    queryKey: ["/api/admin/timetable/context", me?.schoolId],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/timetable/context", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load timetable setup");
+      return r.json();
+    },
+    enabled: me?.role === "support_staff" &&
+      !!me?.schoolId &&
+      hasSupportStaffModuleGrant(me.allowedModules, "timetable"),
+    staleTime: 60_000,
+  });
+
   // sessionFetch is used for every custom queryFn so that x-view-session-id is
   // automatically attached to the request and the backend checkSessionContext
   // middleware can set req.viewSessionId for any optional session-scoped filtering.
@@ -1800,6 +1819,11 @@ export default function AdminDashboard() {
 
   function getSubsFor(moduleId: string): string[] | undefined {
     if (me?.role !== "support_staff") return undefined;
+    if (isSupportStaffParentOnlyModule(moduleId)) {
+      return hasSupportStaffModuleGrant(me.allowedModules, moduleId)
+        ? (MODULE_SUB_MODULES[moduleId] ?? []).map(sub => sub.id)
+        : [];
+    }
     const allowedModules = filterSupportStaffGrants(me.allowedModules);
     if (moduleId === "fees-manager") {
       const legacyFeeGrants = ["fees-manager:view", "fees-manager:record", "fees-manager:export"];
@@ -1851,10 +1875,10 @@ export default function AdminDashboard() {
       case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
       case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
       case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} allowedSubs={getSubsFor("noticeboard")} />;
-      case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} allowedSubs={getSubsFor("timetable")} />;
+       case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffTimetableContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffTimetableContext?.sections ?? []) : meta.sections} subjects={me.role === "support_staff" ? (supportStaffTimetableContext?.subjects ?? []) : meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} allowedSubs={getSubsFor("timetable")} />;
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} allowedSubs={getSubsFor("id-card-gen")} />;
       case "assets":            return <AssetsInventory schoolId={me.schoolId} allowedSubs={getSubsFor("assets")} />;
-      case "school-calendar":   return <SchoolCalendar allowedSubs={getSubsFor("school-calendar")} />;
+      case "school-calendar":   return <SchoolCalendar schoolId={me.schoolId} allowedSubs={getSubsFor("school-calendar")} />;
       case "fees-manager":      return <FeesManager schoolId={me.schoolId} allowedSubs={getSubsFor("fees-manager")} />;
       case "removed-teacher-history": return <RemovedTeacherHistory schoolId={me.schoolId} onBack={() => goToModule("teacher-registry")} />;
       default: return null;

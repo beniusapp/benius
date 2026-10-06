@@ -9,6 +9,20 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface AdminTimetableContext {
+  classes: string[];
+  sections: string[];
+  subjects: string[];
+}
+
+export type AdminCalendarContextClassSections = {[key: string]: string[]};
+
+export interface AdminCalendarContext {
+  classes: string[];
+  sections: string[];
+  classSections: AdminCalendarContextClassSections;
+}
+
 export interface MobileTeacherFirstLoginPasswordChange {
   challengeToken: string;
   currentPassword: string;

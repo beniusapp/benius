@@ -17,8 +17,9 @@ import {
   ADMIN_TILE_DEFS,
   MODULE_SUB_MODULES,
   SUPPORT_STAFF_PERMISSION_MODULES,
+  canonicalizeSupportStaffGrants,
   expandModulesWithSubs,
-  filterSupportStaffGrants,
+  isSupportStaffParentOnlyModule,
 } from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
 
@@ -98,14 +99,17 @@ function ModulePermissionTree({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const safeSelected = filterSupportStaffGrants(selected);
+  const safeSelected = canonicalizeSupportStaffGrants(selected);
   const isModuleChecked = (moduleId: string) => safeSelected.includes(moduleId);
   const isSubChecked = (moduleId: string, subId: string) => safeSelected.includes(`${moduleId}:${subId}`);
 
   const getSubKeys = (moduleId: string) =>
-    (MODULE_SUB_MODULES[moduleId] ?? []).map(s => `${moduleId}:${s.id}`);
+    isSupportStaffParentOnlyModule(moduleId)
+      ? []
+      : (MODULE_SUB_MODULES[moduleId] ?? []).map(s => `${moduleId}:${s.id}`);
 
   const getSubState = (moduleId: string): "all" | "partial" | "none" => {
+    if (isSupportStaffParentOnlyModule(moduleId)) return "all";
     const subs = MODULE_SUB_MODULES[moduleId] ?? [];
     if (!subs.length) return "all";
     const checked = subs.filter(s => safeSelected.includes(`${moduleId}:${s.id}`)).length;
@@ -162,10 +166,16 @@ function ModulePermissionTree({
       const all: string[] = [];
       SUPPORT_STAFF_PERMISSION_MODULES.forEach(m => {
         all.push(m.id);
-        (MODULE_SUB_MODULES[m.id] ?? []).forEach(s => all.push(`${m.id}:${s.id}`));
+        if (!isSupportStaffParentOnlyModule(m.id)) {
+          (MODULE_SUB_MODULES[m.id] ?? []).forEach(s => all.push(`${m.id}:${s.id}`));
+        }
       });
       onChange(all);
-      setExpanded(new Set(SUPPORT_STAFF_PERMISSION_MODULES.map(m => m.id)));
+      setExpanded(new Set(
+        SUPPORT_STAFF_PERMISSION_MODULES
+          .filter(m => !isSupportStaffParentOnlyModule(m.id))
+          .map(m => m.id),
+      ));
     }
   };
 
@@ -184,7 +194,9 @@ function ModulePermissionTree({
       <div className="space-y-1 max-h-80 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
         {SUPPORT_STAFF_PERMISSION_MODULES.map(mod => {
           const checked = isModuleChecked(mod.id);
-          const subs = MODULE_SUB_MODULES[mod.id] ?? [];
+          const subs = isSupportStaffParentOnlyModule(mod.id)
+            ? []
+            : MODULE_SUB_MODULES[mod.id] ?? [];
           const isExp = expanded.has(mod.id);
           const subState = getSubState(mod.id);
 
@@ -338,7 +350,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
       const designation = (d.designation === "Other" && d.customDesignation) ? d.customDesignation : d.designation;
       const r = await apiRequest("POST", "/api/admin/non-teaching-staff", {
         fullName: d.fullName, email: d.email, phone: d.phone || "",
-        designation, password: d.password, allowedModules: filterSupportStaffGrants(addModules),
+        designation, password: d.password, allowedModules: canonicalizeSupportStaffGrants(addModules),
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
       const created = await r.json();
@@ -384,7 +396,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   const permsMutation = useMutation({
     mutationFn: async (mods: string[]) => {
       const r = await apiRequest("PATCH", `/api/admin/non-teaching-staff/${permTarget!.id}`, {
-        allowedModules: filterSupportStaffGrants(mods),
+        allowedModules: canonicalizeSupportStaffGrants(mods),
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
       return r.json();
@@ -410,7 +422,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   });
 
   const openPerms = (s: NonTeachingStaff) => {
-    setPermsSelected(expandModulesWithSubs(filterSupportStaffGrants(s.allowedModules)));
+    setPermsSelected(expandModulesWithSubs(canonicalizeSupportStaffGrants(s.allowedModules)));
     setPermTarget(s);
   };
 
@@ -490,7 +502,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   const isOtherAdd = addForm.watch("designation") === "Other";
   const isOtherEdit = editForm.watch("designation") === "Other";
 
-  const safeStaffGrants = (s: NonTeachingStaff) => filterSupportStaffGrants(s.allowedModules);
+  const safeStaffGrants = (s: NonTeachingStaff) => canonicalizeSupportStaffGrants(s.allowedModules);
   const moduleCount = (s: NonTeachingStaff) =>
     safeStaffGrants(s).filter(m => !m.includes(":")).length;
 

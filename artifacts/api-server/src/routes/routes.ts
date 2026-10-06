@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
+import { registerAdminCalendarRoutes } from "../admin-calendar-routes";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
@@ -2482,120 +2483,7 @@ export async function registerRoutes(
 
   // ===== ADMIN CALENDAR ROUTES =====
 
-  app.get("/api/admin/calendar", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
-    const { month, year } = req.query;
-    if (month && year) {
-      const m = parseInt(month as string);
-      const y = parseInt(year as string);
-      const startDate = `${y}-${String(m).padStart(2, "0")}-01`;
-      const lastDay = new Date(y, m, 0).getDate();
-      const endDate = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
-      const events = await storage.getCalendarEventsByRange(schoolId, startDate, endDate);
-      return res.json(events);
-    }
-    const events = await storage.getCalendarEvents(schoolId);
-    res.json(events);
-  });
-
-  app.post("/api/admin/calendar", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
-    const { title, description, eventType, startDate, endDate, isRecurring, colorCode, audienceScope, targetClass, targetSection } = req.body;
-    if (!title || !eventType || !startDate) return res.status(400).json({ message: "title, eventType, startDate required" });
-    let scopeValue: string = "All_School";
-    if (audienceScope === "Multi_Target") {
-      scopeValue = "Multi_Target";
-    } else if (targetClass && targetSection) {
-      scopeValue = "Specific_Section";
-    } else if (targetClass) {
-      scopeValue = "Entire_Class";
-    } else if (audienceScope === "Entire_Class") {
-      scopeValue = "Entire_Class";
-    } else if (audienceScope === "Specific_Section") {
-      scopeValue = "Specific_Section";
-    }
-    if (scopeValue !== "All_School" && !targetClass) {
-      return res.status(400).json({ message: "targetClass is required for class-targeted events" });
-    }
-    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
-
-    const baseInsert = {
-      schoolId, title, description: description || null, eventType, venue: null, colorCode: color,
-      isRecurring: !!isRecurring, audienceScope: scopeValue,
-      targetClass: scopeValue !== "All_School" ? (targetClass as string) : null,
-      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection as string) : null,
-    };
-    const entries: { schoolId: number; title: string; description: string | null; eventType: string; venue: null; colorCode: string; isRecurring: boolean; date: string; audienceScope: string; targetClass: string | null; targetSection: string | null }[] = [];
-
-    const start = new Date(startDate + "T00:00:00");
-    const end = endDate ? new Date(endDate + "T00:00:00") : start;
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      entries.push({ ...baseInsert, date: dateStr });
-    }
-
-    if (isRecurring) {
-      const CALENDAR_HORIZON = 2126;
-      const startYear = new Date(startDate + "T00:00:00").getFullYear();
-      const extraYears = Math.max(0, CALENDAR_HORIZON - startYear);
-      const baseEntries = [...entries];
-      for (let yearOffset = 1; yearOffset <= extraYears; yearOffset++) {
-        baseEntries.forEach(e => {
-          const origDate = new Date(e.date + "T00:00:00");
-          origDate.setFullYear(origDate.getFullYear() + yearOffset);
-          const futureDate = `${origDate.getFullYear()}-${String(origDate.getMonth() + 1).padStart(2, "0")}-${String(origDate.getDate()).padStart(2, "0")}`;
-          entries.push({ ...e, date: futureDate });
-        });
-      }
-    }
-
-    const created = await storage.createCalendarEvents(entries);
-    res.status(201).json(created);
-  });
-
-  app.patch("/api/admin/calendar/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const { title, description, eventType, date, venue, colorCode, isRecurring, audienceScope, targetClass, targetSection } = req.body;
-    if (!title || !eventType || !date) return res.status(400).json({ message: "title, eventType, date required" });
-    let scopeValue: string = "All_School";
-    if (audienceScope === "Multi_Target") {
-      scopeValue = "Multi_Target";
-    } else if (targetClass && targetSection) {
-      scopeValue = "Specific_Section";
-    } else if (targetClass) {
-      scopeValue = "Entire_Class";
-    } else if (audienceScope === "Entire_Class") {
-      scopeValue = "Entire_Class";
-    } else if (audienceScope === "Specific_Section") {
-      scopeValue = "Specific_Section";
-    }
-    const color = colorCode || (eventType === "holiday" ? "#ef4444" : eventType === "examination" ? "#3b82f6" : "#10b981");
-    const updated = await storage.updateCalendarEvent(id, schoolId, {
-      title, description: description || null, eventType, date, venue: venue || null, colorCode: color,
-      isRecurring: !!isRecurring, audienceScope: scopeValue,
-      targetClass: scopeValue !== "All_School" ? (targetClass || null) : null,
-      targetSection: (scopeValue === "Specific_Section" || scopeValue === "Multi_Target") ? (targetSection || null) : null,
-    });
-    if (!updated) return res.status(404).json({ message: "Event not found or access denied" });
-    res.json(updated);
-  });
-
-  app.delete("/api/admin/calendar/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
-    const schoolId = req.session.schoolId!;
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-    const ok = await storage.deleteCalendarEventBySchool(id, schoolId);
-    if (!ok) return res.status(404).json({ message: "Event not found or access denied" });
-    res.json({ message: "Deleted" });
-  });
-
-  // seed-holidays endpoint removed — all calendar entries must be created manually by the admin.
+  registerAdminCalendarRoutes(app);
 
   // ===== STUDENT CALENDAR ROUTES =====
   // GLOBAL MODULE — School Calendar is permanent school-wide data.
