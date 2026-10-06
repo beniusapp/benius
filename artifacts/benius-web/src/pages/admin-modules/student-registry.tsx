@@ -1199,10 +1199,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
               />
             </div>
 
-            {/* Admin Password */}
+            {/* Confirm the signed-in actor's password */}
             <div className="space-y-1">
               <label className="text-sm text-white/70 font-medium">
-                Confirm Your Admin Password <span className="text-red-400">*</span>
+                Confirm Your {allowedSubs !== undefined ? "Password" : "Admin Password"} <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <Input

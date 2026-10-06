@@ -56,6 +56,11 @@ import {
   canonicalizeSupportStaffAllowedModules,
   supportStaffModuleAccessAllowed,
 } from "./support-staff-module-permissions";
+import {
+  authenticateRegistryActorPassword,
+  requireRegistryAnyModuleAccess,
+  requireRegistryModuleAccess,
+} from "./registry-access";
 
 function requireSupportStaffModule(
   req: Request,
@@ -706,13 +711,18 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/schools/:schoolId/teachers", async (req, res) => {
-    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
     if (req.session.userRole === "support_staff") {
-      if (!requireAdminModuleAccess(req, res, "id-card-gen", "ID Card Gen")) return;
+      if (!requireRegistryAnyModuleAccess(
+        req,
+        res,
+        ["faculty-mapping", "id-card-gen"],
+        "Faculty Mapping or ID Card Gen",
+      )) return;
       if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
     } else {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const userData = await storage.getUserWithSchool(req.session.userId);
       if (!userData || userData.school.id !== schoolId || userData.user.role !== "admin")
         return res.status(403).json({ message: "Admin access required" });
@@ -3957,6 +3967,10 @@ export function registerTeacherRoutes(app: Express) {
       if (!teacher) return res.status(401).json({ message: "Not authenticated" });
       authenticatedSchoolId = teacher.schoolId;
     } else {
+      if (
+        req.session.userRole === "support_staff"
+        && !requireRegistryModuleAccess(req, res, "faculty-mapping", "Faculty Mapping")
+      ) return;
       // Non-teacher sessions keep their existing same-school access, but the
       // school scope comes from the server-side session rather than the URL.
       authenticatedSchoolId = req.session.schoolId;
@@ -3983,20 +3997,15 @@ export function registerTeacherRoutes(app: Express) {
   // x-view-session-id and MUST NOT be changed to do session filtering.
   // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     if (req.session.userRole === "support_staff") {
-      const grants = req.session.allowedModules ?? [];
-      const hasStudentRegistryGrant = grants.some(
-        grant => grant === "student-registry" || grant.startsWith("student-registry:"),
-      );
-      const hasIdCardGrant = adminModuleAccessAllowed(
-        req.session.userRole,
-        grants,
-        "id-card-gen",
-      );
-      if (!hasStudentRegistryGrant && !hasIdCardGrant) {
-        return res.status(403).json({ message: "Student Registry or ID Card Gen permission required" });
-      }
+      if (!requireRegistryAnyModuleAccess(
+        req,
+        res,
+        ["student-registry", "id-card-gen"],
+        "Student Registry or ID Card Gen",
+      )) return;
+    } else if (!req.session.userId) {
+      return res.status(403).json({ message: "Admin access required" });
     }
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
@@ -4026,7 +4035,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/schools/:schoolId/students/export", async (req, res) => {
     try {
-      if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
       const schoolId = parseInt(req.params.schoolId);
       if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
 
@@ -4128,8 +4137,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
 
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
@@ -4741,7 +4749,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== PAGINATED TEACHERS (Big Data) =====
   app.get("/api/schools/:schoolId/teachers/paginated", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, page } = req.query;
     const result = await storage.getTeachersPaginated(parseInt(req.params.schoolId), {
@@ -5746,10 +5754,7 @@ Thank you for your prompt attention to this matter.
   // x-view-session-id and MUST NOT be changed to do session filtering.
   // Tables: teachers, users (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/teachers", async (req, res) => {
-    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
-    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
-      (req.session.allowedModules ?? []).some((m: string) => m === "teacher-registry" || m.startsWith("teacher-registry:")));
-    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const q = (req.query.q as string) || "";
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
@@ -5765,19 +5770,16 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/teachers", async (req, res) => {
-    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
-    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
-      (req.session.allowedModules ?? []).includes("teacher-registry:add"));
-    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const parsed = createTeacherSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
       const existing = await storage.getUserByEmail(parsed.data.email);
       if (existing) return res.status(409).json({ message: "A user with this email already exists" });
-      const userData = await storage.getUserWithSchool(req.session.userId!);
-      if (!userData) return res.status(403).json({ message: "School not found" });
-      const schoolCode = userData.school.code;
+      const school = await storage.getSchool(schoolId);
+      if (!school) return res.status(403).json({ message: "School not found" });
+      const schoolCode = school.code;
       const serial = await storage.issueNextIdSerial(schoolId, "dtid");
       const dtid = `${schoolCode}-T${String(serial).padStart(3, "0")}`;
       const passwordHash = await bcrypt.hash(parsed.data.password, 10);
@@ -5806,10 +5808,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.patch("/api/admin/teachers/:id", async (req, res) => {
-    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
-    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
-      (req.session.allowedModules ?? []).includes("teacher-registry:edit"));
-    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5862,10 +5861,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/teachers/:id", async (req, res) => {
-    const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
-    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
-      (req.session.allowedModules ?? []).includes("teacher-registry:deactivate"));
-    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5878,12 +5874,10 @@ Thank you for your prompt attention to this matter.
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
     try {
-      // Verify admin password
-      const adminUserId = req.session.userId ?? req.session.staffId;
-      const adminUser = await storage.getUserById(adminUserId!);
-      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
-      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
-      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      // Verify the signed-in Admin or Staff account; the compatibility userId
+      // on Support Staff sessions is not a users-table identity.
+      const actor = await authenticateRegistryActorPassword(req, parsed.data.adminPassword);
+      if (!actor) return res.status(401).json({ message: "Incorrect password" });
 
       const teacher = await storage.getTeacherById(teacherId);
       if (!teacher || teacher.schoolId !== schoolId)
@@ -5927,7 +5921,7 @@ Thank you for your prompt attention to this matter.
         joiningDate: teacher.joiningDate ?? null,
         qualifications: teacher.qualifications ?? null,
         removalReason: parsed.data.reason,
-        removedByEmail: adminUser.email,
+        removedByEmail: actor.email ?? null,
       });
 
       await storage.deleteTeacher(teacherId, schoolId);
@@ -5939,8 +5933,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== REMOVED TEACHER HISTORY =====
   app.get("/api/admin/teachers/removed-history", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const page = Math.max(1, parseInt(String(req.query.page ?? "1")));
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"))));
@@ -5955,8 +5948,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== DEACTIVATE / REACTIVATE TEACHER ID =====
   app.post("/api/admin/teachers/:id/deactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5966,11 +5958,8 @@ Thank you for your prompt attention to this matter.
     }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
-      // Verify admin password
-      const adminUser = await storage.getUserById(req.session.userId);
-      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
-      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
-      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const actor = await authenticateRegistryActorPassword(req, parsed.data.adminPassword);
+      if (!actor) return res.status(401).json({ message: "Incorrect password" });
       const updated = await storage.deactivateTeacher(teacherId, schoolId, parsed.data.reason);
       if (!updated) return res.status(404).json({ message: "Teacher not found" });
       res.json(updated);
@@ -5980,8 +5969,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/teachers/:id/reactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5990,10 +5978,8 @@ Thank you for your prompt attention to this matter.
     }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     try {
-      const adminUser = await storage.getUserById(req.session.userId);
-      if (!adminUser) return res.status(403).json({ message: "Admin not found" });
-      const valid = await bcrypt.compare(parsed.data.adminPassword, adminUser.passwordHash);
-      if (!valid) return res.status(401).json({ message: "Incorrect password" });
+      const actor = await authenticateRegistryActorPassword(req, parsed.data.adminPassword);
+      if (!actor) return res.status(401).json({ message: "Incorrect password" });
       const updated = await storage.reactivateTeacher(teacherId, schoolId);
       if (!updated) return res.status(404).json({ message: "Teacher not found" });
       res.json(updated);
@@ -6146,8 +6132,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== FACULTY MAPPINGS (admin) =====
   app.get("/api/admin/faculty-mappings", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "faculty-mapping", "Faculty Mapping")) return;
     try {
       const mappings = await storage.getFacultyMappingsBySchool(req.session.schoolId!);
       res.json(mappings);
@@ -6162,8 +6147,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/faculty-mappings", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "faculty-mapping", "Faculty Mapping")) return;
     const parsed = facultyMappingSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
     const schoolId = req.session.schoolId!;
@@ -6179,12 +6163,16 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/faculty-mappings/:teacherId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "faculty-mapping", "Faculty Mapping")) return;
     const teacherId = parseInt(req.params.teacherId);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    const schoolId = req.session.schoolId!;
     try {
-      await storage.deleteFacultyMappingsByTeacher(teacherId, req.session.schoolId!);
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId) {
+        return res.status(404).json({ message: "Teacher not found" });
+      }
+      await storage.deleteFacultyMappingsByTeacher(teacherId, schoolId);
       res.json({ message: "Mappings cleared" });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to delete mappings" });

@@ -23,6 +23,9 @@ export const SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS = [
   "visitor-log",
   "id-card-gen",
   "assets",
+  "faculty-mapping",
+  "teacher-registry",
+  "student-registry",
 ] as const;
 
 export function hasSupportStaffModuleAccess(

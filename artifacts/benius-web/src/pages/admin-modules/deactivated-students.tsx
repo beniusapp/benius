@@ -46,6 +46,7 @@ type Me = {
   schoolId: number;
   schoolName: string;
   role: string;
+  allowedModules?: string[];
 };
 
 function SkeletonRow({ compact, cols }: { compact: boolean; cols: number }) {
@@ -114,6 +115,8 @@ export default function DeactivatedStudentsPage() {
     },
   });
   const schoolId = me?.schoolId;
+  const lacksStudentRegistryAccess = me?.role === "support_staff"
+    && !(me.allowedModules ?? []).includes("student-registry");
 
   // ── Data ───────────────────────────────────────────────────────────────────
   const { data: allStudents, isLoading, isError, error, refetch } = useQuery<DeactivatedStudent[]>({
@@ -126,7 +129,7 @@ export default function DeactivatedStudentsPage() {
       }
       return r.json();
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && !lacksStudentRegistryAccess,
     staleTime: 0,       // always re-fetch on mount for this page
     retry: 1,
   });
@@ -235,6 +238,23 @@ export default function DeactivatedStudentsPage() {
   // Normal: DSID Name Gender Phone Email BatchYear Guardian Father Mother AadharNo Address DOB Admission Blood DeactivatedOn Reason Comments View Status = 19
   // Compact: DSID Name Gender Phone BatchYear View Status = 7
   const colCount = compact ? 7 : 19;
+
+  if (lacksStudentRegistryAccess) {
+    return (
+      <main className="min-h-screen bg-[#07101D] text-white flex items-center justify-center p-6">
+        <div className="max-w-md rounded-xl border border-white/10 bg-[#101C2D] p-6 text-center">
+          <AlertCircle className="mx-auto mb-3 h-8 w-8 text-amber-400" />
+          <h1 className="text-lg font-semibold">Student Registry access required</h1>
+          <p className="mt-2 text-sm text-white/60">
+            Your Support Staff account does not have access to this page.
+          </p>
+          <Button className="mt-5" onClick={() => navigate("/admin-dashboard")}>
+            Back to dashboard
+          </Button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen" style={{ background: "#080c14" }}>

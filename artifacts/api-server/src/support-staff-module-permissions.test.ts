@@ -144,3 +144,16 @@ test("canonicalizes legacy child grants for parent-only modules without changing
     [],
   );
 });
+
+test("Faculty Mapping, Teacher Registry, and Student Registry require exact parent grants", () => {
+  for (const moduleId of ["faculty-mapping", "teacher-registry", "student-registry"]) {
+    assert.equal(hasSupportStaffModuleAccess([moduleId], moduleId), true);
+    assert.equal(hasSupportStaffModuleAccess([`${moduleId}:legacy-child`], moduleId), false);
+    assert.equal(
+      canonicalizeSupportStaffAllowedModules([moduleId, `${moduleId}:legacy-child`]).join(","),
+      moduleId,
+    );
+    assert.equal(adminModuleAccessAllowed("admin", [], moduleId), true);
+    assert.equal(adminModuleAccessAllowed("teacher", [moduleId], moduleId), false);
+  }
+});

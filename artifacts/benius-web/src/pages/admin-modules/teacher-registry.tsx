@@ -840,10 +840,10 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                 )}
               </div>
 
-              {/* Admin Password */}
+              {/* Confirm the signed-in actor's password */}
               <div className="space-y-1.5">
                 <label className="text-white/70 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
-                  <Lock className="w-3 h-3" /> Admin Password <span className="text-red-400">*</span>
+                  <Lock className="w-3 h-3" /> {allowedSubs !== undefined ? "Your Password" : "Admin Password"} <span className="text-red-400">*</span>
                 </label>
                 <Input
                   type="password"

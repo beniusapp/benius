@@ -155,9 +155,25 @@ test("parent-only modules are single grants in the editor and old child grants a
     assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
     assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
   }
-  assert.equal(isSupportStaffParentOnlyModule("student-registry"), false);
+  assert.equal(isSupportStaffParentOnlyModule("student-registry"), true);
   assert.deepEqual(
     canonicalizeSupportStaffGrants(["student-registry:view"]),
-    ["student-registry:view"],
+    [],
   );
+});
+
+test("Faculty Mapping, Teacher Registry, and Student Registry use only parent grants", () => {
+  for (const moduleId of ["faculty-mapping", "teacher-registry", "student-registry"]) {
+    assert.equal(isSupportStaffParentOnlyModule(moduleId), true);
+    assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
+    assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
+    assert.deepEqual(
+      canonicalizeSupportStaffGrants([moduleId, `${moduleId}:legacy-child`]),
+      [moduleId],
+    );
+    assert.deepEqual(
+      expandModulesWithSubs([moduleId]).filter(grant => grant.startsWith(`${moduleId}:`)),
+      [],
+    );
+  }
 });

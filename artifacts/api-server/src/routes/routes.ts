@@ -3,6 +3,11 @@ import { type Server } from "http";
 import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
 import { registerAdminCalendarRoutes } from "../admin-calendar-routes";
 import { adminModuleAccessAllowed } from "../support-staff-module-permissions";
+import {
+  authenticateRegistryActorPassword,
+  requireRegistryAnyModuleAccess,
+  requireRegistryModuleAccess,
+} from "../registry-access";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
@@ -1186,19 +1191,18 @@ export async function registerRoutes(
 
   app.post("/api/schools/:schoolId/students/upload", upload.single("file"), async (req, res) => {
     try {
-      if (!req.session.userId) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
+      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
 
-      const schoolId = parseInt(req.params.schoolId as string);
-      if (isNaN(schoolId)) {
+      const requestedSchoolId = parseInt(req.params.schoolId as string);
+      if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId <= 0) {
         return res.status(400).json({ message: "Invalid school ID" });
       }
-
-      const userData = await storage.getUserWithSchool(req.session.userId);
-      if (!userData || userData.school.id !== schoolId) {
+      const schoolId = req.session.schoolId!;
+      if (requestedSchoolId !== schoolId) {
         return res.status(403).json({ message: "Access denied" });
       }
+      const school = await storage.getSchool(schoolId);
+      if (!school) return res.status(403).json({ message: "Access denied" });
 
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
@@ -1209,7 +1213,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "The uploaded file contains no data rows" });
       }
 
-      const schoolCode = userData.school.code;
+      const schoolCode = school.code;
 
       const warnings: string[] = [];
       const validStudents: {
@@ -1317,19 +1321,18 @@ export async function registerRoutes(
 
   app.post("/api/schools/:schoolId/students", async (req, res) => {
     try {
-      if (!req.session.userId) {
-        return res.status(401).json({ message: "Not authenticated" });
-      }
+      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
 
-      const schoolId = parseInt(req.params.schoolId);
-      if (isNaN(schoolId)) {
+      const requestedSchoolId = parseInt(req.params.schoolId);
+      if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId <= 0) {
         return res.status(400).json({ message: "Invalid school ID" });
       }
-
-      const userData = await storage.getUserWithSchool(req.session.userId);
-      if (!userData || userData.school.id !== schoolId) {
+      const schoolId = req.session.schoolId!;
+      if (requestedSchoolId !== schoolId) {
         return res.status(403).json({ message: "Access denied" });
       }
+      const school = await storage.getSchool(schoolId);
+      if (!school) return res.status(403).json({ message: "Access denied" });
 
       const parsed = manualStudentSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1355,7 +1358,7 @@ export async function registerRoutes(
         }
       }
 
-      const schoolCode = userData.school.code;
+      const schoolCode = school.code;
       const serial = await storage.issueNextIdSerial(schoolId, "dsid");
       const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
       const passwordHash = await bcrypt.hash(dsid, 10);
@@ -1677,20 +1680,16 @@ export async function registerRoutes(
 
   // ===== ADMIN PASSWORD VERIFICATION (for Double-Lock Modal) =====
   app.post("/api/admin/verify-password", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const { password } = req.body;
     if (!password) return res.status(400).json({ message: "Password is required" });
-    const ok = await storage.verifyAdminPassword(req.session.userId, password);
-    res.json({ valid: ok });
+    const actor = await authenticateRegistryActorPassword(req, password);
+    res.json({ valid: actor !== null });
   });
 
   // ===== STUDENT DEACTIVATION =====
   app.post("/api/schools/:schoolId/students/:studentId/deactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     const studentId = parseInt(req.params.studentId);
     if (isNaN(schoolId) || isNaN(studentId)) return res.status(400).json({ message: "Invalid ID" });
@@ -1700,8 +1699,8 @@ export async function registerRoutes(
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
 
-    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
-    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+    const actor = await authenticateRegistryActorPassword(req, password);
+    if (!actor) return res.status(401).json({ message: "Incorrect password" });
 
     const student = await storage.getStudentById(studentId);
     if (!student || student.schoolId !== schoolId) return res.status(404).json({ message: "Student not found" });
@@ -1716,8 +1715,8 @@ export async function registerRoutes(
       actionType: "deactivate",
       entityType: "student",
       entityId: studentId,
-      actionBy: req.session.userId!,
-      actionByRole: "admin",
+      actionBy: actor.id,
+      actionByRole: actor.role,
       details: detailParts1.join(". "),
     });
     res.json({ message: "Student deactivated successfully" });
@@ -1725,9 +1724,7 @@ export async function registerRoutes(
 
   // ===== TEACHER DEACTIVATION =====
   app.post("/api/schools/:schoolId/teachers/:teacherId/deactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
+    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     const teacherId = parseInt(req.params.teacherId);
     if (isNaN(schoolId) || isNaN(teacherId)) return res.status(400).json({ message: "Invalid ID" });
@@ -1737,8 +1734,8 @@ export async function registerRoutes(
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
 
-    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
-    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+    const actor = await authenticateRegistryActorPassword(req, password);
+    if (!actor) return res.status(401).json({ message: "Incorrect password" });
 
     const teacher = await storage.getTeacherById(teacherId);
     if (!teacher || teacher.schoolId !== schoolId) return res.status(404).json({ message: "Teacher not found" });
@@ -1749,8 +1746,8 @@ export async function registerRoutes(
       actionType: "deactivate",
       entityType: "teacher",
       entityId: teacherId,
-      actionBy: req.session.userId!,
-      actionByRole: "admin",
+      actionBy: actor.id,
+      actionByRole: actor.role,
       details: `Teacher ${teacher.fullName} deactivated. Reason: ${reason}`,
     });
     res.json({ message: "Teacher deactivated successfully" });
@@ -1758,9 +1755,7 @@ export async function registerRoutes(
 
   // ===== PATCH ALIASES (canonical contract) =====
   app.patch("/api/students/:studentId/deactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") {
-      return res.status(403).json({ message: "Admin access required" });
-    }
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
 
@@ -1768,8 +1763,8 @@ export async function registerRoutes(
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
 
-    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
-    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+    const actor = await authenticateRegistryActorPassword(req, password);
+    if (!actor) return res.status(401).json({ message: "Incorrect password" });
 
     const student = await storage.getStudentById(studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
@@ -1785,8 +1780,8 @@ export async function registerRoutes(
       actionType: "deactivate",
       entityType: "student",
       entityId: studentId,
-      actionBy: req.session.userId!,
-      actionByRole: "admin",
+      actionBy: actor.id,
+      actionByRole: actor.role,
       details: detailParts.join(". "),
     });
     res.json({ message: "Student deactivated successfully" });
@@ -2862,7 +2857,12 @@ export async function registerRoutes(
   // Tables: school_metadata, attendance_policies, leave_policies, exam_policy_tiers,
   //         grading_tiers, grading_rules (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/school-config", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryAnyModuleAccess(
+      req,
+      res,
+      ["teacher-registry", "faculty-mapping"],
+      "Teacher Registry or Faculty Mapping",
+    )) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     try {
@@ -4243,7 +4243,7 @@ export async function registerRoutes(
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
@@ -4273,7 +4273,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: ACTIVE STUDENT EXPORT (Excel) =====
   app.get("/api/schools/:schoolId/students/export", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     try {
@@ -4348,7 +4348,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: STUDENT GENDER STATS =====
   app.get("/api/schools/:schoolId/students/stats", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const { cls, section } = req.query as { cls?: string; section?: string };
@@ -4358,7 +4358,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: AUTO-ASSIGN ROLL NUMBERS =====
   app.post("/api/schools/:schoolId/students/auto-assign-roll", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const { cls, section } = req.body;
@@ -4370,7 +4370,7 @@ export async function registerRoutes(
   // ===== ADMIN: DEACTIVATED STUDENTS — EXPORT =====
   app.get("/api/schools/:schoolId/students/deactivated/export", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
       const schoolId = parseInt(req.params.schoolId);
       if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
 
@@ -4470,7 +4470,7 @@ export async function registerRoutes(
   // ===== ADMIN: DEACTIVATED STUDENT HISTORY =====
   app.get("/api/schools/:schoolId/students/deactivated", async (req, res) => {
     try {
-      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
       const schoolId = parseInt(req.params.schoolId);
       if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
       const rows = await storage.getDeactivatedStudents(schoolId);
@@ -4483,7 +4483,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
   app.post("/api/schools/:schoolId/students/bulk-deactivate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const { ids, reason, batchYear, comments, password } = req.body;
@@ -4491,8 +4491,8 @@ export async function registerRoutes(
     if (!reason) return res.status(400).json({ message: "Reason is required" });
     if (!batchYear) return res.status(400).json({ message: "Batch year is required" });
     if (!password) return res.status(400).json({ message: "Admin password confirmation is required" });
-    const passwordOk = await storage.verifyAdminPassword(req.session.userId, password);
-    if (!passwordOk) return res.status(401).json({ message: "Incorrect password" });
+    const actor = await authenticateRegistryActorPassword(req, password);
+    if (!actor) return res.status(401).json({ message: "Incorrect password" });
     const numIds = ids.map(Number).filter(n => !isNaN(n));
     const deactivatedStudents = await storage.bulkDeactivateStudents(numIds, schoolId);
     // Write one per-student audit log (same format as single deactivation) so the
@@ -4505,8 +4505,8 @@ export async function registerRoutes(
           actionType: "deactivate",
           entityType: "student",
           entityId: s.id,
-          actionBy: req.session.userId!,
-          actionByRole: "admin",
+          actionBy: actor.id,
+          actionByRole: actor.role,
           details: `Student ${s.name} (${s.digitalStudentId}) deactivated. Reason: ${reason}. Batch: ${batchYear}${commentsPart}`,
         })
       )

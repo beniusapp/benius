@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import bcrypt from "bcryptjs";
 import { createServer } from "node:http";
 import express from "express";
 import test from "node:test";
@@ -6,7 +7,7 @@ import { db } from "./db";
 import { registerRoutes } from "./routes/routes";
 import { storage } from "./storage";
 
-test("Support Staff parent grants gate the five enterprise modules and retain school/session scope", async (t) => {
+test("Support Staff parent grants gate enterprise modules and registry operations with school/session scope", async (t) => {
   const replacements: Array<{ target: any; name: string; hadOwn: boolean; original: unknown }> = [];
   const replace = (target: any, name: string, implementation: (...args: any[]) => any) => {
     replacements.push({
@@ -32,6 +33,62 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   const assetAuditEntries: any[] = [];
   const studentReads: any[] = [];
   const teacherReads: number[] = [];
+  const teacherRegistryReads: any[] = [];
+  const teacherCreates: any[] = [];
+  const teacherUpdates: any[] = [];
+  const teacherDeactivations: any[] = [];
+  const facultyMappingReads: number[] = [];
+  const facultyMappingWrites: any[] = [];
+  const facultyMappingDeletes: any[] = [];
+  const facultyMappingsBySchool: Record<number, any[]> = {};
+  const studentUpdates: any[] = [];
+  const studentDeactivations: any[] = [];
+  const studentCreates: any[] = [];
+  const studentImports: any[] = [];
+  const studentEnrollments: any[] = [];
+  const studentBulkDeactivations: any[] = [];
+  const studentRecords: Record<number, any> = {
+    31: {
+      id: 31,
+      schoolId: 1,
+      name: "School A Student",
+      digitalStudentId: "A-0031",
+      isActive: true,
+    },
+    32: {
+      id: 32,
+      schoolId: 2,
+      name: "School B Student",
+      digitalStudentId: "B-0032",
+      isActive: true,
+    },
+  };
+  const staffPassword = "support-staff-registry-test";
+  const staffPasswordHash = await bcrypt.hash(staffPassword, 4);
+  const teachersById: Record<number, any> = {
+    11: {
+      id: 11,
+      schoolId: 1,
+      fullName: "School A Teacher",
+      subject: "Mathematics",
+      assignedClass: "5",
+      assignedSection: "A",
+      phone: "1234567890",
+      userId: 111,
+      digitalTeacherId: "A-T011",
+    },
+    12: {
+      id: 12,
+      schoolId: 2,
+      fullName: "School B Teacher",
+      subject: "Science",
+      assignedClass: "6",
+      assignedSection: "B",
+      phone: "1234567891",
+      userId: 112,
+      digitalTeacherId: "B-T012",
+    },
+  };
 
   replace(storage, "getActiveSession", async (schoolId: number) =>
     ({ id: 101, schoolId, isActive: true }),
@@ -132,7 +189,13 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   });
   replace(storage, "getStudentsPaginated", async (schoolId: number, options: any) => {
     studentReads.push([schoolId, options]);
-    return { data: [], total: 0 };
+    return {
+      data: [
+        studentRecords[31],
+        ...studentCreates.filter(student => student.schoolId === schoolId),
+      ],
+      total: 1 + studentCreates.filter(student => student.schoolId === schoolId).length,
+    };
   });
   replace(storage, "getUserWithSchool", async (userId: number) => ({
     user: { id: userId, role: "admin" },
@@ -141,6 +204,94 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   replace(storage, "getTeachersBySchool", async (schoolId: number) => {
     teacherReads.push(schoolId);
     return [{ id: 11, schoolId, fullName: "Teacher" }];
+  });
+  replace(storage, "getTeachersBySchoolPaginated", async (
+    schoolId: number,
+    query: string,
+    page: number,
+    pageSize: number,
+  ) => {
+    teacherRegistryReads.push([schoolId, query, page, pageSize]);
+    const records = [
+      teachersById[schoolId === 1 ? 11 : 12],
+      ...teacherCreates.filter(teacher => teacher.schoolId === schoolId),
+    ];
+    return { data: records, total: records.length };
+  });
+  replace(storage, "getUserByEmail", async (_email: string) => null);
+  replace(storage, "createTeacher", async (data: any, email: string, passwordHash: string) => {
+    const created = { id: 13, ...data, email, passwordHash };
+    teacherCreates.push(created);
+    return created;
+  });
+  replace(storage, "getTeacherById", async (id: number) => teachersById[id] ?? null);
+  replace(storage, "updateTeacherAssignment", async (id: number, schoolId: number, data: any) => {
+    teacherUpdates.push([id, schoolId, data]);
+    if (teachersById[id]?.schoolId !== schoolId) return null;
+    teachersById[id] = { ...teachersById[id], ...data };
+    return teachersById[id];
+  });
+  replace(storage, "deactivateTeacher", async (id: number, schoolId: number, reason: string) => {
+    teacherDeactivations.push([id, schoolId, reason]);
+    return teachersById[id]?.schoolId === schoolId
+      ? { ...teachersById[id], isActive: false }
+      : null;
+  });
+  replace(storage, "getFacultyMappingsBySchool", async (schoolId: number) => {
+    facultyMappingReads.push(schoolId);
+    return facultyMappingsBySchool[schoolId] ?? [];
+  });
+  replace(storage, "replaceFacultyMappings", async (teacherId: number, schoolId: number, mappings: any[]) => {
+    facultyMappingWrites.push([teacherId, schoolId, mappings]);
+    facultyMappingsBySchool[schoolId] = mappings.map(mapping => ({ ...mapping, teacherId, schoolId }));
+    return facultyMappingsBySchool[schoolId];
+  });
+  replace(storage, "deleteFacultyMappingsByTeacher", async (teacherId: number, schoolId: number) => {
+    facultyMappingDeletes.push([teacherId, schoolId]);
+    facultyMappingsBySchool[schoolId] = (facultyMappingsBySchool[schoolId] ?? [])
+      .filter(mapping => mapping.teacherId !== teacherId);
+  });
+  replace(storage, "getNonTeachingStaffById", async (id: number) => ({
+    id,
+    schoolId: 1,
+    email: "accountant@example.test",
+    passwordHash: staffPasswordHash,
+    isActive: true,
+  }));
+  replace(storage, "getStudentById", async (id: number) => studentRecords[id] ?? null);
+  replace(storage, "deactivateStudent", async (id: number, schoolId: number) => {
+    studentDeactivations.push([id, schoolId]);
+    return studentRecords[id]?.schoolId === schoolId ? { ...studentRecords[id], isActive: false } : null;
+  });
+  replace(storage, "bulkDeactivateStudents", async (ids: number[], schoolId: number) => {
+    studentBulkDeactivations.push([ids, schoolId]);
+    return ids
+      .map(id => studentRecords[id])
+      .filter(student => student?.schoolId === schoolId)
+      .map(student => ({ ...student, isActive: false }));
+  });
+  replace(storage, "updateStudent", async (id: number, schoolId: number, data: any) => {
+    studentUpdates.push([id, schoolId, data]);
+    if (studentRecords[id]?.schoolId !== schoolId) return null;
+    studentRecords[id] = { ...studentRecords[id], ...data };
+    return studentRecords[id];
+  });
+  replace(storage, "getSchool", async (schoolId: number) => ({ id: schoolId, code: schoolId === 1 ? "SCHA" : "SCHB" }));
+  replace(storage, "issueNextIdSerial", async (_schoolId: number, _kind: string) => 41);
+  replace(storage, "createStudent", async (data: any) => {
+    const created = { id: 41, ...data };
+    studentCreates.push(created);
+    return created;
+  });
+  replace(storage, "bulkCreateStudents", async (data: any[]) => {
+    studentImports.push(data);
+    const imported = data.map((student, index) => ({ id: 51 + index, ...student }));
+    studentCreates.push(...imported);
+    return imported;
+  });
+  replace(storage, "createEnrollment", async (data: any) => {
+    studentEnrollments.push(data);
+    return { id: 141, ...data };
   });
   replace(storage, "getNonTeachingStaffBySchool", async (schoolId: number) => [{
     id: 8,
@@ -155,11 +306,21 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   }]);
 
   const dbTarget = db as any;
-  replace(dbTarget, "select", () => ({
-    from: () => ({
-      where: async () => [],
-    }),
-  }));
+  replace(dbTarget, "select", () => {
+    const rows: any[] = [];
+    const query: any = {
+      from: () => query,
+      where: () => query,
+      orderBy: () => query,
+      limit: () => query,
+      offset: () => query,
+      groupBy: () => query,
+      leftJoin: () => query,
+      innerJoin: () => query,
+      then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject),
+    };
+    return query;
+  });
 
   t.after(() => {
     for (const { target, name, hadOwn, original } of replacements.reverse()) {
@@ -200,6 +361,7 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
     options: {
       method?: string;
       body?: unknown;
+      formData?: FormData;
       role?: "admin" | "support_staff";
       grants?: string[];
       schoolId?: number;
@@ -210,7 +372,9 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
     const response = await fetch(`${baseUrl}${path}`, {
       method: options.method ?? "GET",
       headers: {
-        ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+        ...(options.body === undefined || options.formData
+          ? {}
+          : { "content-type": "application/json" }),
         ...(options.role ? { "x-test-role": options.role } : {}),
         ...(options.grants ? { "x-test-grants": options.grants.join(",") } : {}),
         ...(options.schoolId ? { "x-test-school": String(options.schoolId) } : {}),
@@ -219,10 +383,22 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
           ? {}
           : { "x-view-session-id": String(options.viewSessionId) }),
       },
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(options.formData
+        ? { body: options.formData }
+        : options.body === undefined
+          ? {}
+          : { body: JSON.stringify(options.body) }),
     });
     const text = await response.text();
-    return { status: response.status, body: text ? JSON.parse(text) as any : null };
+    let body: any = null;
+    if (text) {
+      try { body = JSON.parse(text); } catch { body = text; }
+    }
+    return {
+      status: response.status,
+      body,
+      contentType: response.headers.get("content-type"),
+    };
   }
 
   const analyticsPath = "/api/admin/analytics/sections?class=5";
@@ -401,7 +577,8 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   assert.equal((await request(studentsPath)).status, 403);
   assert.equal((await request(studentsPath, { grants: ["id-card-gen:search"] })).status, 403);
   assert.equal((await request(studentsPath, { grants: ["id-card-gen"] })).status, 200);
-  assert.equal((await request(studentsPath, { grants: ["student-registry:view"] })).status, 200);
+  assert.equal((await request(studentsPath, { grants: ["student-registry:view"] })).status, 403);
+  assert.equal((await request(studentsPath, { grants: ["student-registry"] })).status, 200);
   assert.equal((await request("/api/schools/2/students/paginated?page=1", {
     grants: ["id-card-gen"],
   })).status, 403);
@@ -431,4 +608,293 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   const adminStaff = await request("/api/admin/non-teaching-staff", { role: "admin" });
   assert.equal(adminStaff.status, 200);
   assert.equal(adminStaff.body[0].passwordHash, "must-not-leak");
+
+  assert.equal((await request("/api/admin/teachers")).status, 403);
+  assert.equal((await request("/api/admin/teachers", {
+    grants: ["teacher-registry:view"],
+  })).status, 403);
+  const teacherList = await request("/api/admin/teachers", { grants: ["teacher-registry"] });
+  assert.equal(teacherList.status, 200);
+  assert.equal(teacherList.body.data[0].id, 11);
+  assert.equal(teacherRegistryReads.at(-1)[0], 1);
+  assert.equal((await request("/api/schools/2/teachers/paginated", {
+    grants: ["teacher-registry"],
+  })).status, 403, "School A Staff cannot read School B teachers by changing the URL");
+
+  const teacherCreateBody = {
+    fullName: "New Registry Teacher",
+    email: "new.teacher@example.test",
+    password: "teacher-password-123",
+    phone: "1234567890",
+    subject: "Mathematics",
+    assignedClass: "5",
+    assignedSection: "A",
+  };
+  assert.equal((await request("/api/admin/teachers", {
+    method: "POST",
+    grants: ["teacher-registry:add"],
+    body: teacherCreateBody,
+  })).status, 403);
+  const createdTeacher = await request("/api/admin/teachers", {
+    method: "POST",
+    grants: ["teacher-registry"],
+    body: teacherCreateBody,
+  });
+  assert.equal(createdTeacher.status, 201);
+  assert.equal(teacherCreates.at(-1).schoolId, 1);
+
+  const teacherEditBody = { fullName: "Updated School A Teacher" };
+  assert.equal((await request("/api/admin/teachers/12", {
+    method: "PATCH",
+    grants: ["teacher-registry"],
+    body: teacherEditBody,
+  })).status, 404, "School A Staff cannot edit a School B teacher");
+  assert.equal(teacherUpdates.length, 0);
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "PATCH",
+    grants: ["teacher-registry"],
+    body: teacherEditBody,
+  })).status, 200);
+  assert.equal(teacherUpdates.at(-1)[1], 1);
+
+  const passwordBody = { reason: "No longer employed", password: staffPassword };
+  assert.equal((await request("/api/schools/2/teachers/12/deactivate", {
+    method: "POST",
+    grants: ["teacher-registry"],
+    body: passwordBody,
+  })).status, 403, "A manipulated schoolId cannot reach another school's teacher");
+  assert.equal((await request("/api/schools/1/teachers/12/deactivate", {
+    method: "POST",
+    grants: ["teacher-registry"],
+    body: passwordBody,
+  })).status, 404, "School A Staff cannot deactivate a School B teacher");
+  assert.equal(teacherDeactivations.length, 0);
+  assert.equal((await request("/api/schools/1/teachers/11/deactivate", {
+    method: "POST",
+    grants: ["teacher-registry"],
+    body: passwordBody,
+  })).status, 200);
+  assert.deepEqual(teacherDeactivations.at(-1), [11, 1, "No longer employed"]);
+  assert.equal(visitorAuditEntries.at(-1).entityType, "teacher");
+  assert.equal(visitorAuditEntries.at(-1).actionBy, 7);
+  assert.equal(visitorAuditEntries.at(-1).actionByRole, "support_staff");
+
+  assert.equal((await request("/api/admin/faculty-mappings")).status, 403);
+  assert.equal((await request("/api/admin/faculty-mappings", {
+    grants: ["faculty-mapping:assign"],
+  })).status, 403);
+  const mappings = await request("/api/admin/faculty-mappings?schoolId=2", {
+    grants: ["faculty-mapping"],
+  });
+  assert.equal(mappings.status, 200);
+  assert.equal(facultyMappingReads.at(-1), 1, "Mapping reads use the authenticated school, not a query parameter");
+  const mappingBody = {
+    teacherId: 11,
+    mappings: [{ className: "5", section: "A", subject: "Mathematics" }],
+  };
+  assert.equal((await request("/api/admin/faculty-mappings", {
+    method: "POST",
+    grants: ["faculty-mapping:assign"],
+    body: mappingBody,
+  })).status, 403);
+  assert.equal((await request("/api/admin/faculty-mappings", {
+    method: "POST",
+    grants: ["faculty-mapping"],
+    body: { ...mappingBody, teacherId: 12 },
+  })).status, 404, "School A Staff cannot change a School B teacher's mapping");
+  assert.equal(facultyMappingWrites.length, 0);
+  assert.equal((await request("/api/admin/faculty-mappings", {
+    method: "POST",
+    grants: ["faculty-mapping"],
+    body: mappingBody,
+  })).status, 200);
+  assert.equal(facultyMappingWrites.at(-1)[1], 1);
+  const principalMappings = await request("/api/admin/faculty-mappings", { role: "admin" });
+  assert.equal(principalMappings.status, 200);
+  assert.equal(principalMappings.body[0].teacherId, 11);
+  assert.equal(principalMappings.body[0].schoolId, 1);
+  assert.equal((await request("/api/admin/faculty-mappings/12", {
+    method: "DELETE",
+    grants: ["faculty-mapping"],
+  })).status, 404);
+  assert.equal(facultyMappingDeletes.length, 0);
+  assert.equal((await request("/api/admin/faculty-mappings/11", {
+    method: "DELETE",
+    grants: ["faculty-mapping"],
+  })).status, 200);
+  assert.deepEqual(facultyMappingDeletes.at(-1), [11, 1]);
+  assert.equal((await request("/api/schools/1/teachers", {
+    grants: ["faculty-mapping"],
+  })).status, 200);
+  assert.equal((await request("/api/schools/2/teachers", {
+    grants: ["faculty-mapping"],
+  })).status, 403);
+
+  const studentCreateBody = {
+    email: "registry.student@example.test",
+    name: "Registry Student",
+    class: "5",
+    section: "A",
+    phone: "9876543210",
+    dob: "2000-01-01",
+  };
+  assert.equal((await request("/api/schools/1/students", {
+    method: "POST",
+    grants: ["student-registry:add"],
+    body: studentCreateBody,
+  })).status, 403);
+  const createdStudent = await request("/api/schools/1/students", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: studentCreateBody,
+  });
+  assert.equal(createdStudent.status, 201);
+  assert.equal(studentCreates.at(-1).schoolId, 1);
+  assert.equal(studentEnrollments.at(-1).schoolId, 1);
+  assert.equal(studentEnrollments.at(-1).sessionId, 101);
+  assert.equal((await request("/api/schools/2/students", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: studentCreateBody,
+  })).status, 403, "School A Staff cannot register a student against School B");
+  const childImport = new FormData();
+  childImport.append(
+    "file",
+    new Blob(["name,class,section,phone,dob,email\nImported Student,5,A,9876543211,2008-04-02,imported.student@example.test\n"], {
+      type: "text/csv",
+    }),
+    "students.csv",
+  );
+  assert.equal((await request("/api/schools/1/students/upload", {
+    method: "POST",
+    grants: ["student-registry:add"],
+    formData: childImport,
+  })).status, 403);
+  const validImport = new FormData();
+  validImport.append(
+    "file",
+    new Blob(["name,class,section,phone,dob,email\nImported Student,5,A,9876543211,2008-04-02,imported.student@example.test\n"], {
+      type: "text/csv",
+    }),
+    "students.csv",
+  );
+  const importedStudents = await request("/api/schools/1/students/upload", {
+    method: "POST",
+    grants: ["student-registry"],
+    formData: validImport,
+  });
+  assert.ok(importedStudents.status >= 200 && importedStudents.status < 300);
+  assert.equal(studentImports.at(-1)[0].schoolId, 1);
+
+  const studentList = await request(studentsPath, { grants: ["student-registry"] });
+  assert.equal(studentList.status, 200);
+  assert.equal(studentList.body.data[0].id, 31);
+  assert.ok(studentList.body.data.some((student: any) => student.id === 41));
+  const principalStudentList = await request(studentsPath, { role: "admin" });
+  assert.equal(principalStudentList.status, 200);
+  assert.equal(principalStudentList.body.data[0].id, 31, "Principal sees the same school-wide student record");
+  assert.ok(principalStudentList.body.data.some((student: any) => student.id === 41), "Principal sees Staff-created students");
+  assert.equal((await request("/api/schools/2/students/paginated?page=1", {
+    grants: ["student-registry"],
+  })).status, 403, "School A Staff cannot read School B students by changing the URL");
+
+  const studentEditBody = {
+    name: "Updated Student",
+    class: "5",
+    section: "A",
+    phone: "9876543210",
+    dob: "2008-04-01",
+    email: "updated.student@example.test",
+  };
+  assert.equal((await request("/api/admin/students/32", {
+    method: "PATCH",
+    grants: ["student-registry"],
+    body: studentEditBody,
+  })).status, 404, "School A Staff cannot edit a School B student");
+  assert.deepEqual(studentUpdates.at(-1).slice(0, 2), [32, 1]);
+  assert.equal((await request("/api/admin/students/31", {
+    method: "PATCH",
+    grants: ["student-registry"],
+    body: studentEditBody,
+  })).status, 200);
+  const principalUpdatedStudents = await request(studentsPath, { role: "admin" });
+  assert.equal(
+    principalUpdatedStudents.body.data.find((student: any) => student.id === 31).name,
+    "Updated Student",
+  );
+
+  assert.equal((await request("/api/schools/1/students/32/deactivate", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: { reason: "Transferred", password: staffPassword },
+  })).status, 404, "School A Staff cannot deactivate a School B student");
+  assert.equal(studentDeactivations.length, 0);
+  assert.equal((await request("/api/schools/1/students/31/deactivate", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: { reason: "Transferred", password: staffPassword },
+  })).status, 200);
+  assert.deepEqual(studentDeactivations.at(-1), [31, 1]);
+  assert.equal(visitorAuditEntries.at(-1).actionBy, 7);
+  assert.equal(visitorAuditEntries.at(-1).actionByRole, "support_staff");
+
+  assert.equal((await request("/api/schools/1/students/bulk-deactivate", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: {
+      ids: [31, 32],
+      reason: "Graduated",
+      batchYear: "2025",
+      password: staffPassword,
+    },
+  })).status, 200);
+  assert.deepEqual(studentBulkDeactivations.at(-1), [[31, 32], 1]);
+  assert.equal(visitorAuditEntries.at(-1).entityId, 31);
+  assert.equal(visitorAuditEntries.at(-1).actionBy, 7);
+  assert.equal(visitorAuditEntries.at(-1).actionByRole, "support_staff");
+
+  assert.equal((await request("/api/schools/1/students/export", {
+    grants: ["student-registry:export"],
+  })).status, 403);
+  const studentExport = await request("/api/schools/1/students/export", {
+    grants: ["student-registry"],
+  });
+  assert.equal(studentExport.status, 200);
+  assert.match(studentExport.contentType ?? "", /spreadsheetml/);
+  assert.equal((await request("/api/schools/2/students/export", {
+    grants: ["student-registry"],
+  })).status, 403);
+
+  assert.equal((await request("/api/admin/verify-password", {
+    method: "POST",
+    grants: ["student-registry:deactivate"],
+    body: { password: staffPassword },
+  })).status, 403);
+  const passwordCheck = await request("/api/admin/verify-password", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: { password: staffPassword },
+  });
+  assert.equal(passwordCheck.status, 200);
+  assert.equal(passwordCheck.body.valid, true);
+
+  const principalTeachers = await request("/api/admin/teachers", { role: "admin" });
+  assert.equal(principalTeachers.status, 200);
+  assert.ok(principalTeachers.body.data.some((teacher: any) => teacher.id === 13), "Principal sees Staff-created teachers");
+  assert.equal(
+    principalTeachers.body.data.find((teacher: any) => teacher.id === 11).fullName,
+    "Updated School A Teacher",
+  );
+  assert.equal((await request("/api/admin/faculty-mappings", { role: "admin" })).status, 200);
+  assert.equal((await request("/api/admin/school-config")).status, 403);
+  assert.equal((await request("/api/admin/school-config", {
+    grants: ["school-setup"],
+  })).status, 403, "School Setup grants do not expose its configuration through registry APIs");
+  assert.equal((await request("/api/admin/school-config", {
+    grants: ["teacher-registry"],
+  })).status, 200);
+  assert.equal((await request("/api/admin/school-config", {
+    grants: ["faculty-mapping"],
+  })).status, 200);
+  assert.equal((await request("/api/admin/school-config", { role: "admin" })).status, 200);
 });
