@@ -1,0 +1,1030 @@
+# BENIUS — PROMOTION + ACADEMIC SESSION ENROLLMENT FOCUSED AUDIT
+
+## READ-ONLY AUDIT — DO NOT MODIFY ANYTHING
+
+We are now moving to the next Student Placement workstream:
+
+**Student Promotion + Academic Session Enrollment + strict Academic Session isolation**
+
+This is an AUDIT ONLY.
+
+Do NOT modify code.
+
+Do NOT modify database data.
+
+Do NOT create/delete/update enrollments.
+
+Do NOT modify Promotion decisions.
+
+Do NOT modify Exam Controller.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# EXISTING CONFIRMED BENIUS ARCHITECTURE
+
+BENIUS now follows this rule for current Student placement:
+
+```text
+Student Registry
+=
+human-managed current Student placement
+
+Academic Session Enrollment
+=
+Student's Class / Section / Roll / status
+for a specific Academic Session
+```
+
+Manual Add/Edit and CSV Import have already been corrected so that current placement and active-session enrollment remain synchronized.
+
+Teacher Attendance correctly uses selected-session enrollment.
+
+Do NOT undo those completed corrections.
+
+---
+
+# PROMOTION TARGET BEHAVIOR
+
+Promotion is different from ordinary Student Registry Edit.
+
+Example:
+
+Current session:
+
+```text
+2026-2027
+
+MIS-0003
+Class 2/A
+Roll 3
+```
+
+Promotion to next session:
+
+```text
+2027-2028
+
+Class 3/A
+Roll 5
+```
+
+The required conceptual result is:
+
+```text
+Student Registry CURRENT placement
+→ Class 3/A, Roll 5
+
+Enrollment history:
+
+2026-2027
+→ Class 2/A, Roll 3
+→ PRESERVED
+
+2027-2028
+→ Class 3/A, Roll 5
+→ NEW enrollment
+```
+
+Promotion must NEVER rewrite:
+
+```text
+2026-2027 enrollment
+```
+
+to:
+
+```text
+Class 3/A
+```
+
+Historical Academic Session enrollment must remain historical.
+
+---
+
+# VERY IMPORTANT — DO NOT IMPLEMENT THAT TARGET YET
+
+First determine exactly how BENIUS currently handles Promotion.
+
+We need to know:
+
+- source Academic Session
+- target Academic Session
+- promotion decisions
+- Student profile update
+- enrollment creation/update
+- academic history
+- Exam Controller
+- overrides
+- execution
+- roll number
+- failure behavior
+- tenant isolation
+- large-cohort behavior
+
+---
+
+# AUDIT 1 — MAP THE COMPLETE PROMOTION FLOW
+
+Trace the entire Web/backend Promotion flow from UI to database.
+
+Identify:
+
+1. Web page/component.
+2. API calls.
+3. effective Express routes.
+4. storage/service functions.
+5. database tables.
+6. transaction boundaries.
+7. Student profile writes.
+8. enrollment reads/writes.
+9. promotion-decision reads/writes.
+10. academic-history writes.
+11. Exam Controller state involved.
+12. override state involved.
+
+Return a simple flow such as:
+
+```text
+Exam Controller UI
+      ↓
+Promotion decision
+      ↓
+POST ...
+      ↓
+storage function
+      ↓
+transaction
+      ↓
+Student / history / decision / enrollment
+```
+
+Use exact file names, routes and functions.
+
+---
+
+# AUDIT 2 — SOURCE ACADEMIC SESSION
+
+Determine how Promotion currently knows:
+
+```text
+FROM which Academic Session is this Student being promoted?
+```
+
+Check whether the source session comes from:
+
+- `x-view-session-id`
+- request body
+- current active session
+- promotion decision
+- exam score rows
+- inferred class/term
+- another source
+
+Verify whether the source session is validated against:
+
+```text
+authenticated school
+```
+
+Report:
+
+```text
+Source session explicit: YES/NO
+Source session validated: YES/NO
+Source session school-scoped: YES/NO
+```
+
+---
+
+# AUDIT 3 — TARGET ACADEMIC SESSION
+
+This is critical.
+
+Determine how Promotion currently knows:
+
+```text
+TO which Academic Session is the Student being promoted?
+```
+
+Example:
+
+```text
+FROM:
+2026-2027
+
+TO:
+2027-2028
+```
+
+Does current Promotion:
+
+- explicitly require target session ID?
+- automatically find a next session?
+- use active session?
+- not use a target session at all?
+- only update Student profile?
+
+Report exact current behavior.
+
+Do NOT invent a target-session rule.
+
+---
+
+# AUDIT 4 — ACTIVE SESSION TIMING PROBLEM
+
+Consider this realistic workflow:
+
+```text
+Current active session:
+2026-2027
+
+School completes exams.
+
+Principal prepares promotion to:
+2027-2028
+```
+
+At the moment Promotion is executed, `2027-2028` may or may not already be active.
+
+Determine whether current architecture assumes:
+
+```text
+target session = active session
+```
+
+If so, report it.
+
+We need to know whether Promotion should be able to prepare/create next-session enrollment BEFORE the target session becomes active.
+
+AUDIT ONLY.
+
+---
+
+# AUDIT 5 — STUDENT PROFILE WRITE
+
+The previous audit reported:
+
+```text
+POST /api/admin/promote
+```
+
+updates:
+
+```text
+students.class
+students.section
+```
+
+Inspect and confirm.
+
+Determine exactly:
+
+- when Student profile changes;
+- which fields change;
+- whether roll number changes;
+- whether school filter is applied;
+- whether Student active status matters;
+- whether the update happens before/after history creation;
+- whether it is inside a transaction.
+
+Report exact behavior.
+
+---
+
+# AUDIT 6 — ENROLLMENT BEHAVIOR
+
+Determine whether Promotion currently:
+
+- reads source-session enrollment;
+- modifies source enrollment;
+- creates target-session enrollment;
+- updates an existing target-session enrollment;
+- ignores enrollment completely.
+
+For a Student currently:
+
+```text
+2026-27 enrollment → 2/A
+```
+
+and promoted to:
+
+```text
+3/A
+```
+
+state exactly what current code produces.
+
+Do not infer.
+
+---
+
+# AUDIT 7 — PROMOTION DECISIONS
+
+Inspect the promotion-decision table/schema and all effective reads/writes.
+
+Determine whether each decision is keyed/scoped by:
+
+```text
+school_id
++
+academic_session_id
++
+student_id
+```
+
+or whether it relies on:
+
+```text
+school
+class
+section
+term
+student
+```
+
+without Academic Session.
+
+Check:
+
+- uniqueness
+- reads
+- writes
+- overrides
+- execution update
+- reset/cleanup
+- history
+
+Report every path where Academic Session ID is missing.
+
+---
+
+# AUDIT 8 — ACADEMIC HISTORY
+
+Inspect the academic/promotion history table and writes.
+
+Determine whether promotion history records:
+
+- school ID
+- Student ID
+- source session ID
+- target session ID
+- previous class
+- previous section
+- previous roll
+- promoted class
+- promoted section
+- promoted roll
+- actor
+- timestamp
+- decision/result
+
+Report exactly what exists.
+
+The previous audit suggested promotion history rows may omit `sessionId`.
+
+Confirm precisely.
+
+Do NOT modify schema.
+
+---
+
+# AUDIT 9 — EXAM CONTROLLER SESSION ISOLATION
+
+This is a permanent BENIUS requirement:
+
+**The entire Admin Exam Controller operational state must be strongly scoped to authenticated School + selected Academic Session ID.**
+
+Audit Promotion-related Exam Controller operations.
+
+Check:
+
+- promotion decision calculation
+- promotion decision save
+- override
+- execution
+- history linkage
+- reset/recalculate
+- score aggregation used for promotion
+- any status indicating promotion completed
+- any operational state reused across sessions
+
+For each, report whether it is explicitly scoped by:
+
+```text
+authenticated school
++
+selected Academic Session ID
+```
+
+Return PASS/FAIL.
+
+---
+
+# AUDIT 10 — PREVIOUS SESSION READ-ONLY PROTECTION
+
+Permanent rule:
+
+```text
+Previous/inactive Academic Session
+=
+STRICTLY READ-ONLY
+```
+
+Audit whether someone can select an old session and execute:
+
+- Promotion
+- override
+- decision change
+- recalculation that persists data
+- reset
+- Student profile placement mutation
+
+If yes, identify exact route/function.
+
+Historical reads are allowed.
+
+Historical operational writes are not.
+
+---
+
+# AUDIT 11 — PROMOTION vs STUDENT REGISTRY SYNC
+
+Now that Student Registry current-placement Edit automatically synchronizes the ACTIVE session enrollment, determine whether Promotion currently calls:
+
+- the new canonical placement helper;
+- `storage.updateStudent()` directly;
+- another helper.
+
+This matters because Promotion must NOT accidentally use ordinary current-session Edit behavior if it is creating placement for a FUTURE session.
+
+Example:
+
+```text
+Active = 2026-27
+
+Promoting to 2027-28
+```
+
+Promotion must NOT cause:
+
+```text
+2026-27 enrollment → Class 3/A
+```
+
+just because Student Registry synchronization targets the active session.
+
+Explicitly verify whether the recently added Student Registry synchronization could interact with Promotion.
+
+Report:
+
+```text
+Risk of Promotion accidentally rewriting source active enrollment:
+YES / NO
+```
+
+Explain why.
+
+---
+
+# AUDIT 12 — ROLL NUMBER DURING PROMOTION
+
+Determine how roll numbers work during Promotion.
+
+Questions:
+
+- Does Promotion carry the old roll forward?
+- Does it assign a new roll?
+- Is new roll entered manually?
+- Is roll assigned later?
+- Does target enrollment get a roll?
+- Does Student Registry roll change?
+- Could profile roll and target-session enrollment roll diverge?
+
+Report current behavior only.
+
+---
+
+# AUDIT 13 — PROMOTED / RETAINED / FAILED STUDENTS
+
+Determine how current BENIUS handles different outcomes.
+
+At minimum inspect whether Promotion supports concepts such as:
+
+```text
+Promoted
+Retained
+Failed
+Not Eligible
+Override
+```
+
+For each actual supported outcome, determine what happens to:
+
+```text
+Student profile
+Source enrollment
+Target enrollment
+Promotion decision
+Academic history
+```
+
+Do not invent statuses that BENIUS does not actually support.
+
+---
+
+# AUDIT 14 — STUDENT DEACTIVATION
+
+Determine what happens if a Student is:
+
+```text
+is_active = false
+```
+
+but has a promotion decision.
+
+Can an inactive Student be promoted?
+
+Can target enrollment be created?
+
+Does execution validate active status?
+
+Report.
+
+Do NOT change deactivation behavior.
+
+---
+
+# AUDIT 15 — TENANT ISOLATION
+
+Strictly audit Promotion.
+
+Verify:
+
+```text
+Authenticated school
+=
+Student school
+=
+source session school
+=
+target session school
+=
+promotion decision school
+=
+history school
+=
+source enrollment school
+=
+target enrollment school
+```
+
+where applicable.
+
+Never trust Student IDs supplied by the client.
+
+The previous audit identified a concern that promotion history could be inserted using request-supplied Student IDs before Student ownership is fully validated.
+
+Confirm or reject this finding.
+
+Classify:
+
+```text
+PASS
+FAIL
+PARTIAL
+```
+
+and identify exact vulnerable path if present.
+
+---
+
+# AUDIT 16 — TRANSACTION ATOMICITY
+
+Promotion should not leave:
+
+```text
+Student Registry → new class
+
+BUT
+
+target enrollment → missing
+```
+
+or:
+
+```text
+history → says promoted
+
+BUT
+
+Student was not actually promoted
+```
+
+Audit current transaction boundaries.
+
+Determine whether these operations are atomic:
+
+- validate Student
+- validate source session
+- validate target session
+- preserve source enrollment
+- create/update target enrollment
+- update current Student profile when appropriate
+- create academic history
+- mark decision executed
+- audit actor
+
+Report which operations are inside/outside the transaction.
+
+---
+
+# AUDIT 17 — REPEATED EXECUTION / IDEMPOTENCY
+
+Determine what happens if:
+
+```text
+Promote
+```
+
+is clicked twice, retried after timeout, or the client resends the request.
+
+Can BENIUS:
+
+- create duplicate history?
+- update Student twice?
+- create conflicting target enrollment?
+- mark already-promoted Student again?
+- return safe existing result?
+
+Report current protection.
+
+Do NOT implement new idempotency yet.
+
+---
+
+# AUDIT 18 — PARTIAL COHORT FAILURE
+
+Promotion may process many Students.
+
+Determine current behavior if:
+
+```text
+Student 1 succeeds
+Student 2 succeeds
+Student 3 fails
+Student 4...
+```
+
+Is the entire cohort one transaction?
+
+Per Student?
+
+Per class?
+
+Can partial promotion occur?
+
+How is failure reported?
+
+Report exact behavior.
+
+---
+
+# AUDIT 19 — 100,000+ STUDENT SCALE
+
+Do NOT run a large load test.
+
+Inspect the implementation for scalability.
+
+Check:
+
+- per-Student queries
+- N+1 behavior
+- transaction size
+- whole-school arrays
+- class/cohort-sized processing
+- score aggregation
+- promotion decision calculations
+- enrollment writes
+- history writes
+- indexes used by promotion queries
+
+Categorize:
+
+```text
+GOOD
+ACCEPTABLE FOR NOW
+NEEDS CHANGE BEFORE LARGE SCALE
+```
+
+Do not over-engineer.
+
+---
+
+# AUDIT 20 — NEW SESSION LIFECYCLE
+
+Explain how these currently relate:
+
+```text
+Create next Academic Session
+        ↓
+Promotion
+        ↓
+Enrollment creation
+        ↓
+Activate next Academic Session
+        ↓
+Student Registry current placement
+```
+
+If BENIUS currently has no coherent relationship, state that clearly.
+
+We need to determine the safest future lifecycle.
+
+Do NOT implement one yet.
+
+---
+
+# AUDIT 21 — PROMOTION AND EXISTING TARGET ENROLLMENT
+
+Consider:
+
+```text
+Student already has an enrollment in target session.
+```
+
+Determine what current Promotion does.
+
+Also determine what the future fix would need to distinguish between:
+
+```text
+No target enrollment
+Existing matching target enrollment
+Existing conflicting target enrollment
+```
+
+AUDIT ONLY.
+
+Do NOT overwrite anything.
+
+---
+
+# AUDIT 22 — ACTOR / AUDIT ATTRIBUTION
+
+Determine whether Promotion records who performed it.
+
+Check Admin and Support Staff separately if Support Staff can access the relevant functionality.
+
+Report:
+
+- actor ID
+- actor role
+- school
+- action
+- Student
+- session
+- before/after placement
+
+Do not invent audit fields.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return exactly:
+
+# BENIUS PROMOTION + ACADEMIC SESSION ENROLLMENT AUDIT
+
+## Overall Verdict
+
+Choose:
+
+- PASS
+- NEEDS CHANGES
+- CRITICAL SESSION ISOLATION GAP
+
+---
+
+## Current Promotion Flow
+
+Show the actual current flow from UI → API → storage → DB.
+
+---
+
+## Source Academic Session
+
+- Source:
+- Explicit Session ID: YES/NO
+- School validated: YES/NO
+- Correctly scoped: PASS/FAIL
+
+---
+
+## Target Academic Session
+
+- How determined:
+- Explicit target Session ID: YES/NO
+- School validated: YES/NO
+- Can target future/inactive session: YES/NO
+
+---
+
+## Student Profile
+
+Explain exactly what Promotion currently changes.
+
+---
+
+## Source Enrollment
+
+Explain exactly what happens.
+
+---
+
+## Target Enrollment
+
+Explain exactly what happens.
+
+---
+
+## Promotion Decisions
+
+- Session ID stored:
+- Session ID used in reads:
+- Session ID used in writes:
+- Session ID used during execution:
+- uniqueness/session isolation:
+- Verdict:
+
+---
+
+## Academic / Promotion History
+
+List fields actually persisted.
+
+State whether source and target session are recorded.
+
+---
+
+## Exam Controller Session Isolation
+
+Provide:
+
+| Operation | School Scoped | Session Scoped | Verdict |
+|---|---:|---:|---|
+| Decision calculation | | | |
+| Decision save | | | |
+| Override | | | |
+| Execution | | | |
+| History | | | |
+| Reset/recalculate | | | |
+
+---
+
+## Historical Read-Only Protection
+
+PASS/FAIL
+
+List any historical mutation route.
+
+---
+
+## Interaction With New Student Registry Synchronization
+
+State whether Promotion can accidentally invoke active-session synchronization and overwrite the source enrollment.
+
+---
+
+## Roll Number
+
+Explain current behavior and drift risk.
+
+---
+
+## Outcome Handling
+
+For each actually supported outcome, explain Profile / source enrollment / target enrollment / history behavior.
+
+---
+
+## Inactive Students
+
+Explain current behavior.
+
+---
+
+## Tenant Isolation
+
+PASS / PARTIAL / FAIL
+
+Explain exact findings.
+
+---
+
+## Transaction Safety
+
+List operations inside and outside current transaction.
+
+---
+
+## Repeated Execution
+
+Explain current protection and risks.
+
+---
+
+## Partial Cohort Failure
+
+Explain exact behavior.
+
+---
+
+## 100,000+ Scalability
+
+### GOOD
+
+### ACCEPTABLE FOR NOW
+
+### NEEDS CHANGE BEFORE LARGE SCALE
+
+---
+
+## New Session Lifecycle
+
+Explain current behavior.
+
+---
+
+## Existing Target Enrollment
+
+Explain current behavior and conflict risk.
+
+---
+
+## Actor / Audit Attribution
+
+Explain exact existing behavior.
+
+---
+
+# REQUIRED ROOT PROBLEMS
+
+List only CONFIRMED problems.
+
+Do not speculate.
+
+---
+
+# RECOMMENDED MINIMUM FUTURE DESIGN
+
+Recommend the smallest safe Promotion architecture that would achieve:
+
+```text
+Source enrollment
+→ preserved forever
+
+Target enrollment
+→ created for explicit target Academic Session
+
+Student Registry current placement
+→ updated at the correct lifecycle point
+
+Promotion decision/history
+→ strongly School + Academic Session scoped
+```
+
+Also explain when the Student Registry should change:
+
+```text
+At promotion execution?
+At target-session activation?
+Another existing lifecycle point?
+```
+
+Base the recommendation on the actual BENIUS architecture found.
+
+DO NOT IMPLEMENT.
+
+---
+
+## Changes Made
+
+Code: NONE
+
+Database: NONE
+
+Mobile: NONE
+
+Deployment: NONE
+
+---
+
+# FINAL VERDICT
+
+AUDIT COMPLETE / AUDIT INCOMPLETE
+
+STOP.
