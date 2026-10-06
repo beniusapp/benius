@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, type KeyboardEvent } from "react";
+import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -49,6 +49,17 @@ const addSchema = z.object({
   email: z.string().trim().min(1, "Student email is required").email("Invalid email format"),
 });
 type AddForm = z.infer<typeof addSchema>;
+
+interface StudentImportResult {
+  total?: number;
+  count?: number;
+  imported?: number;
+  skipped?: number;
+  failed?: number;
+  warnings?: string[];
+  errorsTruncated?: boolean;
+  message: string;
+}
 
 const editSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -115,6 +126,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
   const [isExporting, setIsExporting] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [importResult, setImportResult] = useState<StudentImportResult | null>(null);
   const [bulkReason, setBulkReason]       = useState("");
   const [bulkBatchYear, setBulkBatchYear] = useState("");
   const [bulkComments, setBulkComments]   = useState("");
@@ -193,7 +205,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
-  const uploadRef = { current: null as HTMLInputElement | null };
+  const uploadRef = useRef<HTMLInputElement>(null);
 
   const form = useForm<AddForm>({
     resolver: zodResolver(addSchema),
@@ -227,14 +239,25 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     mutationFn: async (file: File) => {
       const fd = new FormData(); fd.append("file", file);
       const r = await fetch(`/api/schools/${schoolId}/students/upload`, { method: "POST", body: fd, credentials: "include" });
-      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
-      return r.json();
+      const result = await r.json().catch(() => ({ message: "Failed to process the uploaded file." }));
+      if (!r.ok) {
+        const error = new Error(result.message || "Failed to process the uploaded file.") as Error & {
+          importResult?: StudentImportResult;
+        };
+        error.importResult = result;
+        throw error;
+      }
+      return result as StudentImportResult;
     },
     onSuccess: (d) => {
       toast({ title: "Upload Complete", description: d.message });
+      setImportResult(d);
       queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
     },
-    onError: (e: Error) => toast({ title: "Upload Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error & { importResult?: StudentImportResult }) => {
+      if (e.importResult) setImportResult(e.importResult);
+      toast({ title: "Upload Failed", description: e.message, variant: "destructive" });
+    },
   });
 
   const editForm = useForm<EditForm>({
@@ -424,6 +447,35 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             </Button>
           )}
           {canAdd && (
+            <>
+              <input
+                ref={uploadRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+                data-testid="input-student-import-file"
+                onChange={event => {
+                  const file = event.currentTarget.files?.[0];
+                  if (file) uploadMutation.mutate(file);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-blue-400/40 text-blue-300 hover:bg-blue-400/10 h-11"
+                onClick={() => uploadRef.current?.click()}
+                disabled={isArchiveMode || uploadMutation.isPending}
+                data-testid="button-import-students"
+              >
+                {uploadMutation.isPending
+                  ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  : <Upload className="w-4 h-4 mr-1" />}
+                {uploadMutation.isPending ? "Importing…" : "Import"}
+              </Button>
+            </>
+          )}
+          {canAdd && (
             <Button size="sm" className="bg-[#D4AF37] hover:bg-[#B8962E] text-[#0A1628] font-semibold h-11"
               onClick={() => setShowForm(!showForm)} disabled={isArchiveMode} data-testid="button-add-student-toggle">
               <UserPlus className="w-4 h-4 mr-1" /> Add Student
@@ -431,6 +483,55 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
           )}
         </div>
       </div>
+
+      {importResult && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="student-import-result-title">
+          <button
+            type="button"
+            aria-label="Close import results"
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setImportResult(null)}
+          />
+          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-white/15 bg-[#14233B] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 id="student-import-result-title" className="text-lg font-bold text-white">Student Import Results</h3>
+                <p className="mt-1 text-sm text-white/60">{importResult.message}</p>
+              </div>
+              <button type="button" className="rounded p-1 text-white/60 hover:bg-white/10 hover:text-white" onClick={() => setImportResult(null)} aria-label="Close">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                ["Rows", importResult.total ?? 0],
+                ["Imported", importResult.imported ?? importResult.count ?? 0],
+                ["Skipped", importResult.skipped ?? 0],
+                ["Failed", importResult.failed ?? 0],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border border-white/10 bg-[#0A1628] px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-white/45">{label}</div>
+                  <div className="text-lg font-semibold text-white">{value}</div>
+                </div>
+              ))}
+            </div>
+            {!!importResult.warnings?.length && (
+              <div className="mt-4 max-h-64 overflow-y-auto rounded-lg border border-amber-400/20 bg-[#0A1628] p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-300">Rows needing attention</p>
+                <ul className="space-y-1.5 text-sm text-white/75">
+                  {importResult.warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
+                </ul>
+                {importResult.errorsTruncated && (
+                  <p className="mt-3 text-xs text-white/45">Only the first 100 row messages are shown.</p>
+                )}
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <Button onClick={() => setImportResult(null)} className="bg-[#D4AF37] text-[#0A1628] hover:bg-[#B8962E]">Close</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Analytics Cards */}
       <div className="grid grid-cols-3 gap-3">

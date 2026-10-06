@@ -148,10 +148,12 @@ export class AttendanceLeaveMutationError extends Error {
 export class StudentRegistryPlacementSessionError extends Error {
   readonly status = 409;
 
-  constructor(readonly code: "NO_ACTIVE_SESSION" | "MULTIPLE_ACTIVE_SESSIONS") {
+  constructor(readonly code: "NO_ACTIVE_SESSION" | "MULTIPLE_ACTIVE_SESSIONS" | "ACTIVE_SESSION_CHANGED") {
     super(code === "NO_ACTIVE_SESSION"
       ? "An active academic session is required to add a Student or change an active Student's placement."
-      : "Student placement cannot be synchronized because more than one academic session is active.");
+      : code === "MULTIPLE_ACTIVE_SESSIONS"
+        ? "Student placement cannot be synchronized because more than one academic session is active."
+        : "The active academic session changed during this import. No further Students were added.");
     this.name = "StudentRegistryPlacementSessionError";
   }
 }
@@ -631,6 +633,70 @@ export class DatabaseStorage {
     return result.rows[0].last_issued;
   }
 
+  /**
+   * Atomically reserve a bounded serial range for bulk Student imports.
+   * The upsert preserves the same per-school sequence used by single-row adds.
+   */
+  async issueNextIdSerialRange(schoolId: number, type: "dtid" | "dsid", count: number): Promise<number[]> {
+    if (!Number.isSafeInteger(count) || count < 1 || count > 100) {
+      throw new Error("Student ID serial ranges must contain between 1 and 100 IDs.");
+    }
+    const result = await pool.query<{ first_issued: number; last_issued: number }>(
+      `INSERT INTO id_sequences (school_id, type, last_issued)
+         VALUES ($1, $2, $3)
+       ON CONFLICT (school_id, type) DO UPDATE
+         SET last_issued = id_sequences.last_issued + EXCLUDED.last_issued
+       RETURNING last_issued - $3 + 1 AS first_issued, last_issued`,
+      [schoolId, type, count],
+    );
+    const first = Number(result.rows[0]?.first_issued);
+    if (!Number.isSafeInteger(first) || first < 1) {
+      throw new Error("Unable to reserve Student ID serials.");
+    }
+    return Array.from({ length: count }, (_unused, index) => first + index);
+  }
+
+  async getStudentRegistryImportContext(schoolId: number): Promise<{
+    sessionId: number;
+    placementMetadata: Array<{ metaKey: string; metaValue: string }>;
+  }> {
+    const activeSessions = await db
+      .select({ id: academicSessions.id })
+      .from(academicSessions)
+      .where(and(
+        eq(academicSessions.schoolId, schoolId),
+        eq(academicSessions.isActive, true),
+      ))
+      .limit(2);
+    if (activeSessions.length === 0) {
+      throw new StudentRegistryPlacementSessionError("NO_ACTIVE_SESSION");
+    }
+    if (activeSessions.length !== 1) {
+      throw new StudentRegistryPlacementSessionError("MULTIPLE_ACTIVE_SESSIONS");
+    }
+
+    const placementMetadata = await db
+      .select({ metaKey: schoolMetadata.metaKey, metaValue: schoolMetadata.metaValue })
+      .from(schoolMetadata)
+      .where(and(
+        eq(schoolMetadata.schoolId, schoolId),
+        inArray(schoolMetadata.metaKey, ["classes", "sections", "class_sections"]),
+      ));
+    return { sessionId: activeSessions[0].id, placementMetadata };
+  }
+
+  async findExistingStudentDsids(schoolId: number, dsids: string[]): Promise<Set<string>> {
+    if (dsids.length === 0) return new Set();
+    const existing = await db
+      .select({ digitalStudentId: students.digitalStudentId })
+      .from(students)
+      .where(and(
+        eq(students.schoolId, schoolId),
+        inArray(students.digitalStudentId, dsids),
+      ));
+    return new Set(existing.map(student => student.digitalStudentId));
+  }
+
   /** @deprecated Use issueNextIdSerial instead */
   async getMaxDsidSerialForSchool(_schoolCode: string): Promise<number> {
     throw new Error("getMaxDsidSerialForSchool is deprecated — use issueNextIdSerial");
@@ -658,13 +724,40 @@ export class DatabaseStorage {
    * enrollment together. A missing or ambiguous active session is a conflict,
    * not a reason to create an unenrolled Student.
    */
-  async createStudentWithActiveSessionEnrollment(insertStudent: InsertStudent): Promise<Student> {
+  async createStudentWithActiveSessionEnrollment(
+    insertStudent: InsertStudent,
+    expectedSessionId?: number,
+  ): Promise<Student> {
+    const [student] = await this.bulkCreateStudentsWithActiveSessionEnrollment(
+      insertStudent.schoolId,
+      [insertStudent],
+      expectedSessionId,
+    );
+    if (!student) throw new Error("Student creation did not return a record.");
+    return student;
+  }
+
+  /**
+   * Web Student Registry import/add: each supplied chunk commits Student
+   * profiles and matching active-session enrollments in the same transaction.
+   * expectedSessionId pins multi-chunk imports to the session resolved up front.
+   */
+  async bulkCreateStudentsWithActiveSessionEnrollment(
+    schoolId: number,
+    insertStudents: InsertStudent[],
+    expectedSessionId?: number,
+  ): Promise<Student[]> {
+    if (insertStudents.length === 0) return [];
+    if (insertStudents.some(student => student.schoolId !== schoolId)) {
+      throw new Error("Student import school does not match the authenticated school.");
+    }
+
     return db.transaction(async (tx) => {
       const activeSessions = await tx
         .select({ id: academicSessions.id })
         .from(academicSessions)
         .where(and(
-          eq(academicSessions.schoolId, insertStudent.schoolId),
+          eq(academicSessions.schoolId, schoolId),
           eq(academicSessions.isActive, true),
         ))
         .limit(2)
@@ -676,29 +769,37 @@ export class DatabaseStorage {
       if (activeSessions.length !== 1) {
         throw new StudentRegistryPlacementSessionError("MULTIPLE_ACTIVE_SESSIONS");
       }
+      if (expectedSessionId !== undefined && activeSessions[0].id !== expectedSessionId) {
+        throw new StudentRegistryPlacementSessionError("ACTIVE_SESSION_CHANGED");
+      }
 
       const placementMetadata = await tx
         .select({ metaKey: schoolMetadata.metaKey, metaValue: schoolMetadata.metaValue })
         .from(schoolMetadata)
         .where(and(
-          eq(schoolMetadata.schoolId, insertStudent.schoolId),
+          eq(schoolMetadata.schoolId, schoolId),
           inArray(schoolMetadata.metaKey, ["classes", "sections", "class_sections"]),
         ));
-      if (!isConfiguredStudentPlacement(placementMetadata, insertStudent.class, insertStudent.section)) {
-        throw new StudentRegistryPlacementValidationError();
+      for (const insertStudent of insertStudents) {
+        if (!isConfiguredStudentPlacement(placementMetadata, insertStudent.class, insertStudent.section)) {
+          throw new StudentRegistryPlacementValidationError();
+        }
       }
 
-      const [student] = await tx.insert(students).values(insertStudent).returning();
-      await tx.insert(enrollments).values({
-        schoolId: insertStudent.schoolId,
+      const insertedStudents = await tx.insert(students).values(insertStudents).returning();
+      if (insertedStudents.length !== insertStudents.length) {
+        throw new Error("Student import did not create every requested profile.");
+      }
+      await tx.insert(enrollments).values(insertedStudents.map(student => ({
+        schoolId,
         studentId: student.id,
         sessionId: activeSessions[0].id,
         className: student.class,
         sectionName: student.section,
         rollNo: student.rollNumber ?? null,
         status: "Active",
-      });
-      return student;
+      })));
+      return insertedStudents;
     });
   }
 

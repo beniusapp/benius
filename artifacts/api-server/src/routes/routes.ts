@@ -15,6 +15,12 @@ import {
   StudentRegistryPlacementValidationError,
   storage,
 } from "../storage";
+import {
+  prepareStudentImportCandidates,
+  persistStudentImportCandidates,
+  STUDENT_IMPORT_MAX_ROWS,
+  StudentImportIssueCollector,
+} from "../student-registry-import";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
 import { getWorkingDays, parseWorkingDays, saveWorkingDays } from "../teacher-working-days";
@@ -1195,114 +1201,134 @@ export async function registerRoutes(
     res.json(studentList);
   });
 
-  app.post("/api/schools/:schoolId/students/upload", upload.single("file"), async (req, res) => {
+  app.post("/api/schools/:schoolId/students/upload", upload.single("file"), async (req, res): Promise<void> => {
+    let totalRows = 0;
     try {
       if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "add", "Add Student")) return;
 
       const requestedSchoolId = parseInt(req.params.schoolId as string);
       if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId <= 0) {
-        return res.status(400).json({ message: "Invalid school ID" });
+        res.status(400).json({ message: "Invalid school ID" });
+        return;
       }
       const schoolId = req.session.schoolId!;
       if (requestedSchoolId !== schoolId) {
-        return res.status(403).json({ message: "Access denied" });
+        res.status(403).json({ message: "Access denied" });
+        return;
       }
       const school = await storage.getSchool(schoolId);
-      if (!school) return res.status(403).json({ message: "Access denied" });
+      if (!school) {
+        res.status(403).json({ message: "Access denied" });
+        return;
+      }
 
       if (!req.file) {
-        return res.status(400).json({ message: "No file uploaded" });
+        res.status(400).json({ message: "No file uploaded" });
+        return;
       }
 
       const rows = parseUploadedFile(req.file.buffer, req.file.originalname);
       if (rows.length === 0) {
-        return res.status(400).json({ message: "The uploaded file contains no data rows" });
+        res.status(400).json({ message: "The uploaded file contains no data rows" });
+        return;
       }
-
-      const schoolCode = school.code;
-
-      const warnings: string[] = [];
-      const validStudents: {
-        schoolId: number;
-        digitalStudentId: string;
-        name: string;
-        class: string;
-        section: string;
-        phone: string;
-        dob: string;
-        passwordHash: string;
-        isActivated: boolean;
-        email: string;
-      }[] = [];
-
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const rowNum = i + 2;
-
-        const name = row["name"] || "";
-        const cls = row["class"] || "";
-        const section = row["section"] || "";
-        const phone = row["phone"] || row["phonenumber"] || row["mobile"] || row["contact"] || "";
-        const dobRaw = row["dob"] || row["dateofbirth"] || row["birthdate"] || "";
-        const emailRaw = (row["email"] || row["studentemail"] || row["emailaddress"] || "").trim();
-
-        if (!name) {
-          warnings.push(`Row ${rowNum}: Skipped — missing Name`);
-          continue;
-        }
-
-        if (!phone || !isValidPhone(phone)) {
-          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid phone number`);
-          continue;
-        }
-
-        if (!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
-          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing or invalid student email`);
-          continue;
-        }
-
-        if (!dobRaw) {
-          warnings.push(`Row ${rowNum}: Skipped "${name}" — missing Date of Birth`);
-          continue;
-        }
-
-        const dob = parseDate(dobRaw);
-        if (!dob) {
-          warnings.push(`Row ${rowNum}: Skipped "${name}" — invalid date format "${dobRaw}"`);
-          continue;
-        }
-
-        const serial = await storage.issueNextIdSerial(schoolId, "dsid");
-        const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
-        const passwordHash = await bcrypt.hash(dsid, 10);
-
-        validStudents.push({
-          schoolId,
-          digitalStudentId: dsid,
-          name,
-          class: cls,
-          section,
-          phone,
-          dob,
-          passwordHash,
-          isActivated: false,
-          email: emailRaw,
+      totalRows = rows.length;
+      if (rows.length > STUDENT_IMPORT_MAX_ROWS) {
+        res.status(413).json({
+          message: `A single import can contain at most ${STUDENT_IMPORT_MAX_ROWS.toLocaleString()} data rows.`,
+          total: rows.length,
+          count: 0,
+          imported: 0,
+          skipped: 0,
+          failed: rows.length,
+          warnings: [],
+          errorsTruncated: true,
         });
+        return;
       }
 
-      if (validStudents.length > 0) {
-        await storage.bulkCreateStudents(validStudents);
+      const issueCollector = new StudentImportIssueCollector();
+      let importContext;
+      try {
+        importContext = await storage.getStudentRegistryImportContext(schoolId);
+      } catch (error) {
+        if (error instanceof StudentRegistryPlacementSessionError) {
+          for (let rowNumber = 2; rowNumber < rows.length + 2; rowNumber += 1) {
+            issueCollector.add(rowNumber, error.message);
+          }
+          const warnings = issueCollector.issues.map(issue => `Row ${issue.row}: ${issue.reason}`);
+          res.status(error.status).json({
+            message: error.message,
+            total: rows.length,
+            count: 0,
+            imported: 0,
+            skipped: 0,
+            failed: rows.length,
+            warnings,
+            errorsTruncated: issueCollector.truncated,
+          });
+          return;
+        }
+        throw error;
       }
 
+      const plan = prepareStudentImportCandidates(rows, importContext.placementMetadata, issueCollector, {
+        parseDate,
+        isValidPhone,
+      });
+      // The raw parser rows are no longer needed; retain only validated rows.
+      rows.length = 0;
+
+      const persistence = await persistStudentImportCandidates(
+        plan.candidates,
+        { schoolId, schoolCode: school.code, sessionId: importContext.sessionId },
+        issueCollector,
+        {
+          allocateSerials: count => storage.issueNextIdSerialRange(schoolId, "dsid", count),
+          hashPassword: dsid => bcrypt.hash(dsid, 10),
+          findExistingDsids: dsids => storage.findExistingStudentDsids(schoolId, dsids),
+          insertBatch: (_authenticatedSchoolId, sessionId, records) =>
+            storage.bulkCreateStudentsWithActiveSessionEnrollment(schoolId, records, sessionId),
+          insertOne: (_authenticatedSchoolId, sessionId, record) =>
+            storage.createStudentWithActiveSessionEnrollment(record, sessionId),
+        },
+      );
+
+      const warnings = issueCollector.issues.map(issue => `Row ${issue.row}: ${issue.reason}`);
       res.json({
-        count: validStudents.length,
-        skipped: rows.length - validStudents.length,
+        count: persistence.imported,
+        imported: persistence.imported,
+        total: totalRows,
+        skipped: plan.skipped,
+        failed: persistence.failed,
         warnings,
-        message: `Successfully generated ${validStudents.length} student IDs`,
+        errorsTruncated: issueCollector.truncated,
+        message: `Successfully generated ${persistence.imported} student ID${persistence.imported === 1 ? "" : "s"}; ${plan.skipped} skipped and ${persistence.failed} failed.`,
       });
     } catch (error: any) {
-      console.error("Upload error:", error);
-      res.status(500).json({ message: error.message || "Failed to process the uploaded file" });
+      (req as any).log?.error?.(
+        { schoolId: req.session.schoolId, rowCount: totalRows },
+        "Student Registry file import failed",
+      );
+      const sessionOrPlacementError = error instanceof StudentRegistryPlacementSessionError
+        || error instanceof StudentRegistryPlacementValidationError;
+      const message = sessionOrPlacementError
+        ? error.message
+        : "Failed to process the uploaded file. No sensitive Student data was included in the error response.";
+      const issueCollector = new StudentImportIssueCollector();
+      for (let rowNumber = 2; rowNumber < totalRows + 2; rowNumber += 1) {
+        issueCollector.add(rowNumber, message);
+      }
+      res.status(sessionOrPlacementError ? error.status : 500).json({
+        message,
+        total: totalRows,
+        count: 0,
+        imported: 0,
+        skipped: 0,
+        failed: totalRows,
+        warnings: issueCollector.issues.map(issue => `Row ${issue.row}: ${issue.reason}`),
+        errorsTruncated: issueCollector.truncated,
+      });
     }
   });
 

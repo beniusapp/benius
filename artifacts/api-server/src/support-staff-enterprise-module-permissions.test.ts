@@ -303,8 +303,59 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     studentRecords[id] = { ...studentRecords[id], ...data };
     return studentRecords[id];
   });
+  replace(storage, "updateStudentWithActiveSessionEnrollment", async (id: number, schoolId: number, data: any) => {
+    studentUpdates.push([id, schoolId, data]);
+    if (studentRecords[id]?.schoolId !== schoolId) return null;
+    studentRecords[id] = { ...studentRecords[id], ...data };
+    return studentRecords[id];
+  });
   replace(storage, "getSchool", async (schoolId: number) => ({ id: schoolId, code: schoolId === 1 ? "SCHA" : "SCHB" }));
   replace(storage, "issueNextIdSerial", async (_schoolId: number, _kind: string) => 41);
+  replace(storage, "issueNextIdSerialRange", async (_schoolId: number, _kind: string, count: number) =>
+    Array.from({ length: count }, (_unused, index) => 41 + index),
+  );
+  replace(storage, "getStudentRegistryImportContext", async () => ({
+    sessionId: 101,
+    placementMetadata: [
+      { metaKey: "classes", metaValue: JSON.stringify(["5"]) },
+      { metaKey: "sections", metaValue: JSON.stringify(["A"]) },
+      { metaKey: "class_sections", metaValue: JSON.stringify({ "5": ["A"] }) },
+    ],
+  }));
+  replace(storage, "findExistingStudentDsids", async () => new Set<string>());
+  replace(storage, "createStudentWithActiveSessionEnrollment", async (data: any, sessionId: number) => {
+    const created = { id: 41 + studentCreates.length, ...data };
+    studentCreates.push(created);
+    studentEnrollments.push({
+      schoolId: data.schoolId,
+      studentId: created.id,
+      sessionId: sessionId ?? 101,
+      className: data.class,
+      sectionName: data.section,
+      rollNo: data.rollNumber ?? null,
+      status: "Active",
+    });
+    return created;
+  });
+  replace(storage, "bulkCreateStudentsWithActiveSessionEnrollment", async (
+    schoolId: number,
+    records: any[],
+    sessionId: number,
+  ) => {
+    studentImports.push(records);
+    const imported = records.map((student, index) => ({ id: 51 + index, ...student, schoolId }));
+    studentCreates.push(...imported);
+    studentEnrollments.push(...imported.map(student => ({
+      schoolId,
+      studentId: student.id,
+      sessionId,
+      className: student.class,
+      sectionName: student.section,
+      rollNo: student.rollNumber ?? null,
+      status: "Active",
+    })));
+    return imported;
+  });
   replace(storage, "createStudent", async (data: any) => {
     const created = { id: 41, ...data };
     studentCreates.push(created);
@@ -934,7 +985,11 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   const validImport = new FormData();
   validImport.append(
     "file",
-    new Blob(["name,class,section,phone,dob,email\nImported Student,5,A,9876543211,2008-04-02,imported.student@example.test\n"], {
+    new Blob([
+      "name,class,section,phone,dob,email,roll number\n" +
+      "Imported Student,5,A,9876543211,2008-04-02,imported.student@example.test,1\n" +
+      "Second Imported Student,5,A,9876543213,2008-04-03,second.imported@example.test,2\n",
+    ], {
       type: "text/csv",
     }),
     "students.csv",
@@ -945,7 +1000,12 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     formData: validImport,
   });
   assert.ok(importedStudents.status >= 200 && importedStudents.status < 300);
+  assert.equal(importedStudents.body.imported, 2);
+  assert.equal(importedStudents.body.failed, 0);
+  assert.equal(studentImports.at(-1).length, 2);
   assert.equal(studentImports.at(-1)[0].schoolId, 1);
+  assert.equal(studentEnrollments.at(-1).sessionId, 101);
+  assert.equal(studentEnrollments.at(-1).status, "Active");
 
   const studentList = await request(studentsPath, { grants: ["student-registry"] });
   assert.equal(studentList.status, 200);
