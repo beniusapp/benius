@@ -41,6 +41,7 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   const teacherPhysicalDeletes: any[] = [];
   const teacherUserPhysicalDeletes: any[] = [];
   const removedTeacherHistoryEntries: any[] = [];
+  const removedTeacherHistorySchoolReads: number[] = [];
   const facultyMappingReads: number[] = [];
   const facultyMappingWrites: any[] = [];
   const facultyMappingDeletes: any[] = [];
@@ -1094,9 +1095,25 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal((await request("/api/admin/school-config", { role: "admin" })).status, 200);
 
   replace(storage, "getRemovedTeachersLog", async (schoolId: number) => {
+    removedTeacherHistorySchoolReads.push(schoolId);
     const entries = removedTeacherHistoryEntries.filter(entry => entry.schoolId === schoolId);
     return { data: entries, total: entries.length, page: 1, limit: 20 };
   });
+
+  const parentOnlyHistoryRead = await request(
+    "/api/admin/teachers/removed-history?schoolId=2",
+    { grants: ["teacher-registry"], schoolId: 1 },
+  );
+  assert.equal(parentOnlyHistoryRead.status, 200, "Teacher Registry parent permission alone allows read-only Removed History");
+  assert.equal(removedTeacherHistorySchoolReads.at(-1), 1, "history is scoped to the authenticated school, not the query string");
+  assert.equal((await request("/api/admin/teachers/removed-history", {
+    grants: [],
+    schoolId: 1,
+  })).status, 403, "Removed History API rejects Support Staff without the parent permission");
+  assert.equal((await request("/api/admin/teachers/removed-history", {
+    grants: ["teacher-registry:delete"],
+    schoolId: 1,
+  })).status, 403, "a legacy child permission alone does not authorize Removed History");
 
   captureTeacherSnapshotInDb = true;
   const supportStaffDelete = await request("/api/admin/teachers/11", {

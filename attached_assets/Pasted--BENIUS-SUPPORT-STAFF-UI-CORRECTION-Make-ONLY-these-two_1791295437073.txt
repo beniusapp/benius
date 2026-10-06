@@ -1,0 +1,353 @@
+# BENIUS — SUPPORT STAFF UI CORRECTION
+
+Make ONLY these two focused Web corrections.
+
+Do NOT change Teacher Delete logic.
+
+Do NOT change Teacher Registry granular permissions.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# 1. HIDE UPPER DASHBOARD SUMMARY CARDS FOR SUPPORT STAFF
+
+Currently Support Staff sees the upper dashboard summary section containing:
+
+- Total Students
+- Faculty Strength
+- Daily Presence
+- Action Required
+
+I do NOT want Support Staff to see this section anywhere in the Admin/Principal dashboard shell.
+
+For:
+
+`userRole === "support_staff"`
+
+hide/remove the ENTIRE summary-card section.
+
+Expected Support Staff dashboard/module layout:
+
+```text
+Header / Navigation
+        ↓
+Module content
+```
+
+NOT:
+
+```text
+Total Students | Faculty Strength | Daily Presence | Action Required
+                         ↓
+                    Module content
+```
+
+Do not merely hide the numbers.
+
+Do not leave an empty blank container/space.
+
+The entire summary-card row/container should not render for Support Staff.
+
+### Principal/Admin
+
+Principal/Admin behavior must remain unchanged.
+
+Principal should continue seeing:
+
+- Total Students
+- Faculty Strength
+- Daily Presence
+- Action Required
+
+Do not remove or modify their cards.
+
+---
+
+# 2. FIX TEACHER REGISTRY → REMOVED HISTORY FOR SUPPORT STAFF
+
+Teacher Registry currently contains the:
+
+**Removed History**
+
+button.
+
+Support Staff with the **Teacher Registry parent permission** can see/use the Teacher Registry.
+
+When Support Staff clicks **Removed History**, the page currently appears to navigate incorrectly / move outside the expected dashboard layout.
+
+Fix this.
+
+---
+
+# EXPECTED BEHAVIOR
+
+When Support Staff clicks:
+
+```text
+Teacher Registry
+      ↓
+Removed History
+```
+
+the Removed History screen must open normally **inside the existing BENIUS Admin dashboard shell/layout**, exactly like the corresponding Principal/Admin navigation experience.
+
+It must preserve:
+
+- sidebar/dashboard shell
+- header
+- breadcrumbs/navigation
+- normal page width/layout
+- Back/navigation behavior
+- Support Staff authenticated session
+
+It must NOT:
+
+- navigate outside the dashboard shell
+- redirect to public/login page
+- lose Support Staff session
+- open an incorrect standalone page
+- expose Principal Profile
+- bypass Teacher Registry permission
+
+---
+
+# REMOVED HISTORY ACCESS RULE
+
+Removed History is part of the **Teacher Registry base module access**.
+
+Therefore:
+
+```text
+Teacher Registry parent granted
+→ Teacher Registry read access ✅
+→ Removed History view access ✅
+```
+
+It does NOT require:
+
+- Add Teacher
+- Edit Teacher
+- Delete Teacher
+
+Those permissions control mutations only.
+
+Example:
+
+```text
+Teacher Registry ✅
+Add Teacher      ❌
+Edit Teacher     ❌
+Delete Teacher   ❌
+```
+
+Support Staff should still be able to:
+
+- view/search Teachers
+- view Teacher details
+- open Removed History
+
+but cannot Add/Edit/Delete.
+
+---
+
+# REMOVED HISTORY IS READ-ONLY
+
+Support Staff access to Removed History is for historical viewing.
+
+Do NOT add new restore/delete/edit functionality merely because Support Staff can view Removed History.
+
+Preserve whatever legitimate read-only behavior currently exists.
+
+---
+
+# TENANT ISOLATION
+
+Removed History must be strictly scoped to the authenticated Support Staff school.
+
+Example:
+
+```text
+Support Staff — School A
+
+School A Removed Teacher History ✅
+School B Removed Teacher History ❌
+```
+
+Do NOT trust a client-supplied school ID.
+
+Server-side authorization must derive/validate the authenticated school.
+
+---
+
+# DIRECT URL SECURITY
+
+If Support Staff has Teacher Registry parent permission:
+
+- direct navigation to the legitimate Removed History route → ALLOW
+
+If Support Staff does NOT have Teacher Registry parent permission:
+
+- Removed History button unavailable
+- direct URL → BLOCK
+- Removed History API → REJECT
+
+A legacy child permission alone must not authorize access.
+
+---
+
+# IMPORTANT — DO NOT CHANGE TEACHER DELETE
+
+Teacher Delete has just been restored to:
+
+```text
+Delete Teacher
+→ create Removed History snapshot
+→ hard-delete Teacher/User
+→ Teacher disappears from normal Registry
+```
+
+DO NOT modify this lifecycle.
+
+Removed History must continue showing those legitimate hard-delete snapshots.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin behavior must remain unchanged.
+
+Principal/Admin should:
+
+- continue seeing upper dashboard summary cards
+- continue accessing Teacher Registry
+- continue accessing Removed History normally
+- retain all existing Teacher Registry functionality
+
+---
+
+# MOBILE
+
+Mobile remains FROZEN.
+
+No Mobile source changes.
+
+No Mobile API changes.
+
+No Mobile permission changes.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- Teacher Add/Edit/Delete permissions
+- Teacher hard-delete lifecycle
+- Student Registry
+- Faculty Mapping
+- Support Staff permission structure
+- Academic Session behavior
+- other dashboard modules
+- database/schema
+- Mobile
+- deployment
+
+---
+
+# REQUIRED VALIDATION
+
+## Support Staff dashboard
+
+Verify:
+
+- Total Students card → NOT rendered
+- Faculty Strength card → NOT rendered
+- Daily Presence card → NOT rendered
+- Action Required card → NOT rendered
+- no empty summary-card container/space remains
+- normal dashboard/module layout remains correct
+
+## Principal dashboard
+
+Verify all four summary cards remain unchanged.
+
+---
+
+## Support Staff Teacher Registry
+
+With:
+
+```text
+Teacher Registry ✅
+Add Teacher      ❌
+Edit Teacher     ❌
+Delete Teacher   ❌
+```
+
+verify:
+
+- Teacher Registry opens
+- Removed History button available
+- Removed History opens correctly
+- page remains inside dashboard shell
+- authenticated session remains
+- only same-school Removed History returned
+- Add/Edit/Delete remain unavailable
+
+Without Teacher Registry parent permission:
+
+- Removed History unavailable
+- direct route rejected
+- API rejected
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## SUPPORT STAFF DASHBOARD / REMOVED HISTORY UI CORRECTION
+
+### Support Staff summary cards
+- Total Students hidden: PASS/FAIL
+- Faculty Strength hidden: PASS/FAIL
+- Daily Presence hidden: PASS/FAIL
+- Action Required hidden: PASS/FAIL
+- Empty space removed: PASS/FAIL
+
+### Principal/Admin summary cards
+UNCHANGED / CHANGED
+
+### Teacher Removed History
+- Support Staff navigation: PASS/FAIL
+- Opens inside dashboard shell: PASS/FAIL
+- Parent Teacher Registry permission sufficient: PASS/FAIL
+- Add/Edit/Delete permissions not required: PASS/FAIL
+- Same-school isolation: PASS/FAIL
+- Direct access without Teacher Registry blocked: PASS/FAIL
+
+### Teacher hard-delete lifecycle
+UNCHANGED / CHANGED
+
+### Teacher granular permissions
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE / explain
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.

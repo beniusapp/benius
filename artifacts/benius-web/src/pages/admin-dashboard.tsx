@@ -1526,6 +1526,9 @@ export default function AdminDashboard() {
     : matchedModule && moduleParams?.module
     ? (moduleParams.module as ActiveModule)
     : "grid";
+  const supportStaffPermissionModule = activeModule === "removed-teacher-history"
+    ? "teacher-registry"
+    : activeModule;
 
   const setupSection = matchedSetupSub ? (setupSubParams?.tab ?? undefined) : undefined;
   const [showProfile, setShowProfile] = useState(false);
@@ -1628,9 +1631,9 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!isLoading && me?.role === "support_staff" && activeModule !== "grid") {
-      if (!hasSupportStaffModuleGrant(me.allowedModules, activeModule)) setLocation("/admin-dashboard");
+      if (!hasSupportStaffModuleGrant(me.allowedModules, supportStaffPermissionModule)) setLocation("/admin-dashboard");
     }
-  }, [me, isLoading, activeModule]);
+  }, [me, isLoading, activeModule, supportStaffPermissionModule, setLocation]);
 
   const { data: schoolMeta } = useQuery<{
     classes: string[]; sections: string[]; subjects: string[]; exam_types: string[];
@@ -1881,7 +1884,7 @@ export default function AdminDashboard() {
   }
 
   const renderModule = () => {
-    if (me?.role === "support_staff" && activeModule !== "grid" && !hasSupportStaffModuleGrant(me.allowedModules, activeModule)) {
+    if (me?.role === "support_staff" && activeModule !== "grid" && !hasSupportStaffModuleGrant(me.allowedModules, supportStaffPermissionModule)) {
       return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
           <div className="w-16 h-16 rounded-full flex items-center justify-center"
@@ -2104,12 +2107,14 @@ export default function AdminDashboard() {
       </header>
 
       {/* ══════════ PREMIUM STATS BAR ══════════ */}
-      <div
-        className="relative z-10 border-b"
-        style={{ borderColor: "rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.018)" }}
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {me?.role !== "support_staff" && (
+        <div
+          className="relative z-10 border-b"
+          style={{ borderColor: "rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.018)" }}
+          data-testid="admin-dashboard-summary"
+        >
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
 
             {/* Total Students */}
             <div
@@ -2281,16 +2286,17 @@ export default function AdminDashboard() {
               </div>
             </div>}
 
-          </div>
+            </div>
 
-          {/* Date pill */}
-          <div className="mt-3 flex justify-end">
-            <span className="text-[11px] text-white/25 font-medium">
-              {formatDateOnly(todayInIST(), true)}
-            </span>
+            {/* Date pill */}
+            <div className="mt-3 flex justify-end">
+              <span className="text-[11px] text-white/25 font-medium">
+                {formatDateOnly(todayInIST(), true)}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ══════════ CONTENT ROW: sidebar + main ══════════ */}
       <div className="relative z-10 flex flex-1 min-h-0">
