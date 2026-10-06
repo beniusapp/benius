@@ -39,6 +39,7 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   const teacherDeactivations: any[] = [];
   const teacherReactivations: any[] = [];
   const teacherPhysicalDeletes: any[] = [];
+  const teacherUserPhysicalDeletes: any[] = [];
   const removedTeacherHistoryEntries: any[] = [];
   const facultyMappingReads: number[] = [];
   const facultyMappingWrites: any[] = [];
@@ -68,6 +69,8 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   };
   const staffPassword = "support-staff-registry-test";
   const staffPasswordHash = await bcrypt.hash(staffPassword, 4);
+  const adminPassword = "principal-teacher-delete-test";
+  const adminPasswordHash = await bcrypt.hash(adminPassword, 4);
   const teachersById: Record<number, any> = {
     11: {
       id: 11,
@@ -92,6 +95,7 @@ test("Support Staff parent grants gate enterprise modules and registry operation
       digitalTeacherId: "B-T012",
     },
   };
+  let nextCreatedTeacherId = 13;
 
   replace(storage, "getActiveSession", async (schoolId: number) =>
     ({ id: 101, schoolId, isActive: true }),
@@ -217,14 +221,16 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     teacherRegistryReads.push([schoolId, query, page, pageSize]);
     const records = [
       teachersById[schoolId === 1 ? 11 : 12],
-      ...teacherCreates.filter(teacher => teacher.schoolId === schoolId),
-    ];
+      ...teacherCreates.filter(teacher => teacher.schoolId === schoolId && teachersById[teacher.id]),
+    ].filter(Boolean);
     return { data: records, total: records.length };
   });
   replace(storage, "getUserByEmail", async (_email: string) => null);
   replace(storage, "createTeacher", async (data: any, email: string, passwordHash: string) => {
-    const created = { id: 13, ...data, email, passwordHash };
+    const id = nextCreatedTeacherId++;
+    const created = { id, userId: 100 + id, ...data, email, passwordHash };
     teacherCreates.push(created);
+    teachersById[created.id] = created;
     return created;
   });
   replace(storage, "getTeacherById", async (id: number) => teachersById[id] ?? null);
@@ -247,7 +253,11 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     return teachersById[id];
   });
   replace(storage, "deleteTeacher", async (id: number, schoolId: number) => {
+    const teacher = teachersById[id];
+    if (!teacher || teacher.schoolId !== schoolId) return false;
     teacherPhysicalDeletes.push([id, schoolId]);
+    teacherUserPhysicalDeletes.push(teacher.userId);
+    delete teachersById[id];
     return true;
   });
   replace(storage, "logRemovedTeacher", async (entry: any) => {
@@ -322,8 +332,19 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   }]);
 
   const dbTarget = db as any;
-  replace(dbTarget, "select", () => {
-    const rows: any[] = [];
+  let captureTeacherSnapshotInDb = false;
+  replace(dbTarget, "select", (selection: Record<string, unknown> = {}) => {
+    const fields = Object.keys(selection);
+    const rows: any[] = !captureTeacherSnapshotInDb
+      ? []
+      : fields.includes("email")
+        ? [{ email: "school-a-teacher@example.test" }]
+        : fields.includes("className")
+          ? [
+              { className: "5", section: "A", subject: "Mathematics" },
+              { className: "6", section: "B", subject: "Science" },
+            ]
+          : [];
     const query: any = {
       from: () => query,
       where: () => query,
@@ -648,6 +669,11 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   };
   assert.equal((await request("/api/admin/teachers", {
     method: "POST",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: teacherCreateBody,
+  })).status, 403, "Delete Teacher does not grant Add Teacher");
+  assert.equal((await request("/api/admin/teachers", {
+    method: "POST",
     grants: ["teacher-registry:add"],
     body: teacherCreateBody,
   })).status, 403);
@@ -684,15 +710,71 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   })).status, 200);
   assert.equal(teacherUpdates.at(-1)[1], 1);
   assert.equal((await request("/api/admin/teachers/11", {
+    method: "PATCH",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: teacherEditBody,
+  })).status, 403, "Delete Teacher does not grant Edit Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "PATCH",
+    grants: ["teacher-registry", "teacher-registry:add", "teacher-registry:edit"],
+    body: teacherEditBody,
+  })).status, 200, "Add plus Edit grants continue to allow Edit");
+  assert.equal(teacherUpdates.at(-1)[1], 1);
+  const allTeacherActions = [
+    "teacher-registry",
+    "teacher-registry:add",
+    "teacher-registry:edit",
+    "teacher-registry:delete",
+  ];
+  const allActionsTeacher = await request("/api/admin/teachers", {
+    method: "POST",
+    grants: allTeacherActions,
+    body: teacherCreateBody,
+  });
+  assert.equal(allActionsTeacher.status, 201, "all three actions include Add");
+  assert.equal(allActionsTeacher.body.id, 14);
+  assert.equal((await request("/api/admin/teachers/14", {
+    method: "PATCH",
+    grants: allTeacherActions,
+    body: teacherEditBody,
+  })).status, 200, "all three actions include Edit");
+  assert.equal((await request("/api/admin/teachers/11", {
     method: "DELETE",
     grants: ["teacher-registry"],
     body: { reason: "No longer employed", adminPassword: staffPassword },
   })).status, 403, "the Teacher Registry parent is read-only without Delete Teacher");
   assert.equal((await request("/api/admin/teachers/11", {
     method: "DELETE",
+    grants: ["teacher-registry:delete"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 403, "Delete Teacher without its parent module grant is rejected");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:add"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 403, "Add Teacher does not grant Delete Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:edit"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 403, "Edit Teacher does not grant Delete Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:add", "teacher-registry:edit"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 403, "Add plus Edit grants do not grant Delete Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
     grants: ["teacher-registry", "teacher-registry:delete"],
     body: {},
   })).status, 400, "Delete Teacher reaches request validation when explicitly granted");
+  assert.equal((await request("/api/admin/teachers/12", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 404, "School A Staff cannot delete a School B teacher");
+  assert.equal(teacherPhysicalDeletes.length, 0);
+  assert.equal(removedTeacherHistoryEntries.length, 0);
 
   const passwordBody = { reason: "No longer employed", password: staffPassword };
   assert.equal((await request("/api/schools/2/teachers/12/deactivate", {
@@ -720,21 +802,6 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal(visitorAuditEntries.at(-1).entityType, "teacher");
   assert.equal(visitorAuditEntries.at(-1).actionBy, 7);
   assert.equal(visitorAuditEntries.at(-1).actionByRole, "support_staff");
-  const softRemovedTeacher = await request("/api/admin/teachers/11", {
-    method: "DELETE",
-    grants: ["teacher-registry", "teacher-registry:delete"],
-    body: { reason: "No longer employed", adminPassword: staffPassword },
-  });
-  assert.equal(softRemovedTeacher.status, 200);
-  assert.equal(teachersById[11].isActive, false);
-  assert.deepEqual(teacherDeactivations.at(-1), [11, 1, "No longer employed"]);
-  assert.deepEqual(teacherPhysicalDeletes, [], "Teacher Delete must not delete the teacher/user rows");
-  assert.deepEqual(removedTeacherHistoryEntries, [], "soft deactivation must not create permanent-removal history");
-  assert.deepEqual(
-    [visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
-    [7, "support_staff"],
-    "Teacher deactivation audit uses the positive Staff ID and Support Staff role",
-  );
   assert.equal((await request("/api/admin/teachers/11/reactivate", {
     method: "POST",
     grants: ["teacher-registry"],
@@ -1025,4 +1092,115 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     grants: ["faculty-mapping"],
   })).status, 200);
   assert.equal((await request("/api/admin/school-config", { role: "admin" })).status, 200);
+
+  replace(storage, "getRemovedTeachersLog", async (schoolId: number) => {
+    const entries = removedTeacherHistoryEntries.filter(entry => entry.schoolId === schoolId);
+    return { data: entries, total: entries.length, page: 1, limit: 20 };
+  });
+
+  captureTeacherSnapshotInDb = true;
+  const supportStaffDelete = await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  });
+  captureTeacherSnapshotInDb = false;
+  assert.equal(supportStaffDelete.status, 200);
+  assert.equal(teachersById[11], undefined, "Support Staff Delete physically removes the Teacher row");
+  assert.deepEqual(teacherPhysicalDeletes, [[11, 1]]);
+  assert.deepEqual(teacherUserPhysicalDeletes, [111], "the existing delete path removes the linked User/Login row");
+  const supportStaffSnapshot = removedTeacherHistoryEntries.at(-1);
+  assert.ok(supportStaffSnapshot, "successful Teacher Delete creates a Removed History snapshot");
+  assert.deepEqual(
+    {
+      schoolId: supportStaffSnapshot.schoolId,
+      digitalTeacherId: supportStaffSnapshot.digitalTeacherId,
+      fullName: supportStaffSnapshot.fullName,
+      email: supportStaffSnapshot.email,
+      phone: supportStaffSnapshot.phone,
+      subject: supportStaffSnapshot.subject,
+      assignedClass: supportStaffSnapshot.assignedClass,
+      assignedSection: supportStaffSnapshot.assignedSection,
+      removalReason: supportStaffSnapshot.removalReason,
+      removedByEmail: supportStaffSnapshot.removedByEmail,
+    },
+    {
+      schoolId: 1,
+      digitalTeacherId: "A-T011",
+      fullName: "Updated School A Teacher",
+      email: "school-a-teacher@example.test",
+      phone: "1234567890",
+      subject: "Mathematics, Science",
+      assignedClass: "5-A, 6-B",
+      assignedSection: null,
+      removalReason: "No longer employed",
+      removedByEmail: "accountant@example.test",
+    },
+    "Removed History preserves the previous profile and Faculty Mapping snapshot",
+  );
+  assert.deepEqual(
+    [visitorAuditEntries.at(-1).actionType, visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
+    ["delete", 7, "support_staff"],
+    "Support Staff attribution uses the positive Staff ID and role-aware audit log",
+  );
+  const staffTeacherListAfterDelete = await request("/api/admin/teachers", {
+    grants: ["teacher-registry"],
+  });
+  assert.equal(staffTeacherListAfterDelete.status, 200);
+  assert.equal(
+    staffTeacherListAfterDelete.body.data.some((teacher: any) => teacher.id === 11),
+    false,
+    "a hard-deleted Teacher no longer appears in the normal Registry",
+  );
+  const principalHistory = await request("/api/admin/teachers/removed-history", { role: "admin" });
+  assert.equal(principalHistory.status, 200);
+  assert.equal(
+    principalHistory.body.data.some((entry: any) => entry.digitalTeacherId === "A-T011"),
+    true,
+    "Principal/Admin can see the Support Staff removal snapshot",
+  );
+
+  replace(storage, "getUserById", async (id: number) => id === 70
+    ? {
+        id: 70,
+        role: "admin",
+        email: "principal@example.test",
+        passwordHash: adminPasswordHash,
+      }
+    : undefined);
+  captureTeacherSnapshotInDb = true;
+  const principalDelete = await request("/api/admin/teachers/13", {
+    method: "DELETE",
+    role: "admin",
+    body: { reason: "Position ended", adminPassword },
+  });
+  captureTeacherSnapshotInDb = false;
+  assert.equal(principalDelete.status, 200);
+  assert.equal(teachersById[13], undefined, "Principal/Admin Delete physically removes the Teacher row");
+  assert.deepEqual(teacherPhysicalDeletes, [[11, 1], [13, 1]]);
+  assert.deepEqual(teacherUserPhysicalDeletes, [111, 113]);
+  const principalSnapshot = removedTeacherHistoryEntries.at(-1);
+  assert.ok(principalSnapshot, "Principal/Admin Delete creates a Removed History snapshot");
+  assert.equal(principalSnapshot.removedByEmail, "principal@example.test");
+  assert.deepEqual(
+    [visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
+    [70, "admin"],
+    "Principal/Admin attribution uses the real Admin user ID and role",
+  );
+
+  captureTeacherSnapshotInDb = true;
+  const allActionsDelete = await request("/api/admin/teachers/14", {
+    method: "DELETE",
+    grants: allTeacherActions,
+    body: { reason: "Duplicate record", adminPassword: staffPassword },
+  });
+  captureTeacherSnapshotInDb = false;
+  assert.equal(allActionsDelete.status, 200, "all three actions include Delete");
+  assert.equal(teachersById[14], undefined);
+  assert.deepEqual(teacherPhysicalDeletes, [[11, 1], [13, 1], [14, 1]]);
+  assert.deepEqual(teacherUserPhysicalDeletes, [111, 113, 114]);
+  assert.deepEqual(
+    [visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
+    [7, "support_staff"],
+  );
 });

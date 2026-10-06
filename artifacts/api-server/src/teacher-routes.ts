@@ -5861,41 +5861,109 @@ Thank you for your prompt attention to this matter.
     }
   });
 
-  app.delete("/api/admin/teachers/:id", async (req, res) => {
+  app.delete("/api/admin/teachers/:id", async (req, res): Promise<void> => {
     if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "delete", "Delete Teacher")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
-    if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
+    if (isNaN(teacherId)) {
+      res.status(400).json({ message: "Invalid teacher ID" });
+      return;
+    }
 
     // Validate reason + admin password
     const parsed = z.object({
       reason: z.string().min(5, "Please provide a reason (min 5 characters)"),
       adminPassword: z.string().min(1, "Admin password is required"),
     }).safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (!parsed.success) {
+      res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      return;
+    }
 
     try {
       // Verify the signed-in Admin or Staff account; the compatibility userId
       // on Support Staff sessions is not a users-table identity.
       const actor = await authenticateRegistryActorPassword(req, parsed.data.adminPassword);
-      if (!actor) return res.status(401).json({ message: "Incorrect password" });
+      if (!actor) {
+        res.status(401).json({ message: "Incorrect password" });
+        return;
+      }
 
-      const deactivated = await storage.deactivateTeacher(teacherId, schoolId, parsed.data.reason);
-      if (!deactivated)
-        return res.status(404).json({ message: "Teacher not found" });
+      const teacher = await storage.getTeacherById(teacherId);
+      if (!teacher || teacher.schoolId !== schoolId) {
+        res.status(404).json({ message: "Teacher not found" });
+        return;
+      }
+
+      const [teacherUser] = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, teacher.userId));
+
+      // Faculty mappings contain the actual class/section/subject assignment
+      // snapshot; use the legacy Teacher columns only when no mappings exist.
+      const mappings = await db
+        .select({
+          className: facultyMappings.className,
+          section: facultyMappings.section,
+          subject: facultyMappings.subject,
+        })
+        .from(facultyMappings)
+        .where(and(
+          eq(facultyMappings.teacherId, teacherId),
+          eq(facultyMappings.schoolId, schoolId),
+        ));
+
+      const snapshotClass = mappings.length
+        ? mappings.map(mapping => `${mapping.className}-${mapping.section}`).join(", ")
+        : (teacher.assignedClass && teacher.assignedSection
+            ? `${teacher.assignedClass}-${teacher.assignedSection}`
+            : (teacher.assignedClass || null));
+      const snapshotSubject = mappings.length
+        ? [...new Set(mappings.map(mapping => mapping.subject).filter(Boolean))].join(", ") || null
+        : (teacher.subject || null);
+
+      await storage.logRemovedTeacher({
+        schoolId,
+        digitalTeacherId: teacher.digitalTeacherId ?? null,
+        fullName: teacher.fullName,
+        email: teacherUser?.email ?? null,
+        phone: teacher.phone ?? null,
+        subject: snapshotSubject,
+        assignedClass: snapshotClass,
+        assignedSection: null,
+        designation: teacher.designation ?? null,
+        gender: teacher.gender ?? null,
+        dateOfBirth: teacher.dateOfBirth ?? null,
+        govtIdType: teacher.govtIdType ?? null,
+        govtIdNumber: teacher.govtIdNumber ?? null,
+        address: teacher.address ?? null,
+        joiningDate: teacher.joiningDate ?? null,
+        qualifications: teacher.qualifications ?? null,
+        removalReason: parsed.data.reason,
+        removedByEmail: actor.email ?? null,
+      });
+
+      // Keep the existing database FK behavior. A restrictive reference may
+      // reject this operation; do not bypass it by deleting dependent rows.
+      const deleted = await storage.deleteTeacher(teacherId, schoolId);
+      if (!deleted) {
+        res.status(404).json({ message: "Teacher not found" });
+        return;
+      }
 
       await storage.createAuditLog({
         schoolId,
-        actionType: "deactivate",
+        actionType: "delete",
         entityType: "teacher",
         entityId: teacherId,
         actionBy: actor.id,
         actionByRole: actor.role,
-        details: `Teacher ${deactivated.fullName} deactivated. Reason: ${parsed.data.reason}`,
+        details: `Teacher ${teacher.fullName} removed from registry. Reason: ${parsed.data.reason}`,
       });
-      res.json({ message: "Teacher deactivated", teacher: deactivated });
+      res.json({ message: "Teacher removed from registry" });
     } catch (err: any) {
-      res.status(500).json({ message: err.message || "Failed to deactivate teacher" });
+      res.status(500).json({ message: err.message || "Failed to delete teacher" });
     }
   });
 
