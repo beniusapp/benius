@@ -968,6 +968,7 @@ export const academicHistory = pgTable("academic_history", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
   sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "set null" }),
+  targetSessionId: integer("target_session_id").references(() => academicSessions.id, { onDelete: "set null" }),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   fromClass: text("from_class").notNull(),
   fromSection: text("from_section").notNull(),
@@ -982,7 +983,11 @@ export const academicHistory = pgTable("academic_history", {
   remarks: text("remarks"),
   snapshotJson: jsonb("snapshot_json"),
   archivedAt: timestamp("archived_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("academic_history_school_session_idx").on(table.schoolId, table.sessionId),
+  index("academic_history_school_target_session_idx").on(table.schoolId, table.targetSessionId),
+  index("academic_history_school_student_idx").on(table.schoolId, table.studentId),
+]);
 
 export const insertAcademicHistorySchema = createInsertSchema(academicHistory).omit({ id: true, archivedAt: true });
 export type InsertAcademicHistory = z.infer<typeof insertAcademicHistorySchema>;

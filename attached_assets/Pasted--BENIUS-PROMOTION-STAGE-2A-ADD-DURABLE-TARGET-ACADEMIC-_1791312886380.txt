@@ -1,0 +1,686 @@
+# BENIUS — PROMOTION STAGE 2A
+
+## ADD DURABLE TARGET ACADEMIC SESSION TO PROMOTION HISTORY
+
+This is a **small, controlled DATABASE MIGRATION task**.
+
+Do NOT implement the remaining Stage 2 Promotion behavior yet.
+
+---
+
+# CURRENT STATUS
+
+Completed:
+
+```text
+Stage 1  — Source-session + tenant isolation                 PASS
+Stage 1B — Promotion Override/Decision session identity      PASS
+```
+
+Stage 2 attempted and correctly stopped with:
+
+```text
+PARTIAL — SCHEMA MIGRATION REQUIRED
+```
+
+Confirmed blocker:
+
+```text
+academic_history
+```
+
+stores the source Academic Session through:
+
+```text
+session_id
+```
+
+but has no durable field for the **target Academic Session**.
+
+Promotion needs to represent:
+
+```text
+SOURCE SESSION
+2026–27 / Class 2-A
+        ↓
+PROMOTION
+        ↓
+TARGET SESSION
+2027–28 / Class 3-A
+```
+
+Therefore Promotion History must durably know both:
+
+```text
+source session
+target session
+```
+
+---
+
+# PRIMARY GOAL
+
+Add a proper:
+
+```text
+target_session_id
+```
+
+to `academic_history`.
+
+Conceptually:
+
+```text
+academic_history
+
+session_id
+= SOURCE Academic Session
+
+target_session_id
+= TARGET Academic Session
+```
+
+Do NOT rename or reinterpret the existing `session_id`.
+
+Its existing meaning remains the source Academic Session.
+
+---
+
+# IMPORTANT — INSPECT FIRST
+
+Before modifying anything, inspect:
+
+1. Current Drizzle definition of `academic_history`.
+2. Actual Development DB `academic_history` structure.
+3. Existing indexes.
+4. Existing foreign keys.
+5. Existing Promotion history rows.
+6. How `academic_history` is used outside Promotion.
+
+Do not assume every `academic_history` row necessarily represents Promotion unless the code/schema proves that.
+
+This is important because `target_session_id` may only be meaningful for Promotion-generated history.
+
+---
+
+# PRE-MIGRATION DATA REPORT
+
+Before applying the migration, report:
+
+```text
+academic_history total rows:
+rows by school:
+rows with session_id:
+rows with NULL session_id:
+
+Promotion-generated history rows:
+non-Promotion history rows if distinguishable:
+```
+
+Also report whether existing history rows can reliably determine a target Academic Session.
+
+---
+
+# LEGACY HISTORY RULE
+
+Do NOT guess the target Academic Session for existing rows.
+
+Never do:
+
+```text
+existing history
+→ target_session_id = current active session
+```
+
+Never infer it merely from:
+
+```text
+class
+section
+academic year text
+current Student placement
+next session ID
+session creation order
+```
+
+Historical meaning must not be fabricated.
+
+---
+
+# NULLABILITY
+
+Because existing historical rows may not have a reliably known target session, the safest migration will likely require:
+
+```text
+target_session_id nullable
+```
+
+for legacy compatibility.
+
+However, inspect the actual data and usage first.
+
+The key contract is:
+
+```text
+LEGACY HISTORY
+target_session_id may be NULL
+
+NEW STAGE 2 PROMOTION HISTORY
+target_session_id MUST be explicitly provided
+```
+
+Application-level Stage 2 logic will enforce target session for new Promotion execution.
+
+Do NOT make existing history invalid just to force a global DB NOT NULL constraint.
+
+---
+
+# FOREIGN KEY
+
+Add an appropriate FK:
+
+```text
+academic_history.target_session_id
+→ academic_sessions.id
+```
+
+Use the project's existing schema conventions.
+
+Before choosing `ON DELETE` behavior, inspect the existing Academic Session/history FK conventions.
+
+Promotion history should not be silently destroyed simply because an Academic Session is removed.
+
+Do not invent aggressive cascade behavior.
+
+Prefer historical preservation.
+
+Report the exact FK behavior chosen and why it matches existing BENIUS conventions.
+
+---
+
+# TENANT OWNERSHIP
+
+A normal FK proves that the session exists.
+
+It may NOT prove:
+
+```text
+academic_history.school_id
+=
+target academic session.school_id
+```
+
+Do not create an unnecessary broad composite-key redesign in this task.
+
+Instead document that Stage 2 application logic must validate:
+
+```text
+authenticated school
+=
+history school
+=
+source session school
+=
+target session school
+=
+Student school
+```
+
+before history insertion.
+
+If the current schema already supports a clean same-school composite FK pattern, report it before using it.
+
+Do not introduce a large relational redesign.
+
+---
+
+# INDEXING
+
+Inspect how Promotion History is queried.
+
+Add only useful indexes required for expected lookups.
+
+At minimum consider whether queries will need:
+
+```text
+school_id + session_id
+school_id + target_session_id
+student_id
+```
+
+Do not add duplicate/redundant indexes if equivalent indexes already exist.
+
+Do not redesign the entire history table.
+
+---
+
+# DRIZZLE SCHEMA
+
+Update the canonical schema:
+
+```text
+lib/db/src/schema/schema.ts
+```
+
+Add the new field using existing naming conventions.
+
+Example conceptually:
+
+```text
+targetSessionId
+→ database column target_session_id
+```
+
+Do not create a second competing schema definition.
+
+---
+
+# LEGACY / BOOTSTRAP SCHEMA
+
+Stage 1B modified:
+
+```text
+artifacts/api-server/src/legacy-index.ts
+```
+
+because this project has legacy/bootstrap schema handling.
+
+Inspect whether `academic_history` is also declared or created there.
+
+If yes, keep the Development/bootstrap schema consistent.
+
+If no, do not add unnecessary code.
+
+---
+
+# MIGRATION MECHANISM
+
+Use the project's existing Drizzle/database migration mechanism.
+
+This is DEVELOPMENT only.
+
+Do NOT touch Production.
+
+Do NOT use destructive force options.
+
+Do NOT drop/recreate `academic_history` if a safe ALTER is possible.
+
+Prefer:
+
+```text
+ALTER existing table
+ADD target_session_id
+```
+
+through the project's normal migration workflow.
+
+---
+
+# IMPORTANT STAGE 1B MIGRATION WARNING
+
+During Stage 1B, Drizzle successfully applied the Promotion DDL but then attempted to drop an unrelated sequence.
+
+PostgreSQL rejected that unrelated drop.
+
+For Stage 2A:
+
+- inspect the generated migration/DDL before applying;
+- do not approve unrelated destructive operations;
+- do not use force;
+- do not drop unrelated sequences/tables;
+- do not modify unrelated database objects merely to make Drizzle happy.
+
+If the normal push mechanism again proposes unrelated destructive changes, STOP and report them.
+
+Do not blindly approve.
+
+---
+
+# DEVELOPMENT DATA
+
+If existing `academic_history` rows exist:
+
+DO NOT delete them simply because `target_session_id` is unknown.
+
+Because the new field may safely be nullable for legacy rows, preserve them.
+
+This task should normally require:
+
+```text
+Student deletion: 0
+Enrollment deletion: 0
+Attendance deletion: 0
+Academic History deletion: 0
+```
+
+If migration cannot be completed without deleting history, STOP and report.
+
+---
+
+# DO NOT IMPLEMENT STAGE 2 YET
+
+Do NOT modify Promotion execution to create target enrollment.
+
+Do NOT add targetSessionId to the Promotion request yet.
+
+Do NOT add the Web target-session selector yet.
+
+Do NOT remove the existing Student Registry update yet.
+
+Do NOT implement target-enrollment conflict handling yet.
+
+Those belong to the resumed Stage 2 task after Stage 2A passes.
+
+---
+
+# DO NOT IMPLEMENT STAGE 3
+
+Do NOT modify Academic Session activation.
+
+Do NOT synchronize Student Registry from target enrollment.
+
+Do NOT automatically activate a target session.
+
+---
+
+# DO NOT CHANGE PROMOTION BUSINESS RULES
+
+Do not change:
+
+```text
+Promoted
+Retained
+Grace Pass
+Fail/Repeat
+```
+
+semantics.
+
+Do not change class progression logic.
+
+Do not create a roll allocation rule.
+
+We already confirmed:
+
+```text
+enrollments.roll_no is nullable
+```
+
+so target roll is not a Stage 2A blocker.
+
+---
+
+# MOBILE
+
+Mobile remains frozen.
+
+Do NOT modify:
+
+```text
+artifacts/benius-mobile/
+```
+
+No Mobile API alignment in Stage 2A.
+
+---
+
+# PRODUCTION
+
+Absolutely:
+
+```text
+Production migration: NO
+Production deployment: NO
+```
+
+Development only.
+
+---
+
+# REQUIRED DEVELOPMENT DB VERIFICATION
+
+After migration, inspect the actual Development database.
+
+Confirm:
+
+```text
+academic_history.target_session_id exists
+correct data type
+nullable as intended
+FK exists
+existing history rows preserved
+existing session_id unchanged
+```
+
+If safe, perform a rollback-only or transaction-based FK verification:
+
+```text
+valid academic session ID
+→ accepted structurally
+
+invalid target session ID
+→ FK rejected
+```
+
+Do not create permanent fake history.
+
+---
+
+# REQUIRED SCHEMA CONSISTENCY CHECK
+
+Confirm that these agree:
+
+```text
+Drizzle schema
+Development DB
+legacy/bootstrap schema if applicable
+```
+
+Do not report PASS if the code schema says one thing and the actual Development DB says another.
+
+---
+
+# REQUIRED REGRESSION
+
+Because this should be a narrow migration, run focused tests/build checks sufficient to prove no obvious breakage.
+
+At minimum verify existing:
+
+```text
+Stage 1 Promotion tests
+Stage 1B Promotion session-isolation tests
+API build
+```
+
+Do not unnecessarily rewrite unrelated modules.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return exactly:
+
+# BENIUS PROMOTION STAGE 2A REPORT
+
+## Overall Verdict
+
+Choose:
+
+- PASS
+- PARTIAL
+- NEEDS CHANGES
+- FAIL
+
+---
+
+## Pre-Migration History Data
+
+```text
+academic_history total:
+with source session:
+without source session:
+Promotion history:
+non-Promotion history:
+rows deleted:
+rows modified/backfilled:
+```
+
+---
+
+## Schema Change
+
+```text
+new field:
+database column:
+type:
+nullable:
+foreign key:
+ON DELETE behavior:
+indexes added:
+```
+
+Explain why nullable/non-nullable was selected.
+
+---
+
+## Legacy History Handling
+
+Confirm:
+
+```text
+Legacy target session guessed: NO
+Legacy history deleted: NO
+Legacy history preserved: YES/NO
+```
+
+Explain how legacy rows are represented.
+
+---
+
+## Source Session Meaning
+
+Confirm:
+
+```text
+academic_history.session_id
+still means SOURCE Academic Session: YES
+```
+
+No reinterpretation.
+
+---
+
+## Target Session Meaning
+
+Confirm:
+
+```text
+academic_history.target_session_id
+means TARGET Academic Session: YES
+```
+
+for new Stage 2 Promotion history.
+
+---
+
+## Development DB Verification
+
+Report actual catalog/database verification:
+
+```text
+column exists:
+FK exists:
+existing rows preserved:
+valid FK test:
+invalid FK test:
+```
+
+---
+
+## Schema Consistency
+
+```text
+Drizzle:
+Development DB:
+Legacy/bootstrap schema:
+```
+
+---
+
+## Unrelated Database Changes
+
+List any unrelated operation proposed by Drizzle.
+
+Confirm whether it was rejected/not applied.
+
+Especially report any sequence/table/drop operation.
+
+---
+
+## Data Safety
+
+```text
+Students deleted: 0
+Enrollments deleted: 0
+Attendance deleted: 0
+Academic History deleted: 0
+Historical enrollments rewritten: 0
+```
+
+---
+
+## Application Behavior
+
+Confirm:
+
+```text
+Promotion execution changed: NO
+Target enrollment creation implemented: NO
+Student Registry Promotion behavior changed: NO
+Session activation behavior changed: NO
+```
+
+---
+
+## Mobile
+
+```text
+Changed: NO
+```
+
+---
+
+## Production
+
+```text
+Production database touched: NO
+Production deployed: NO
+```
+
+---
+
+## Files Changed
+
+List exact files.
+
+---
+
+## Tests
+
+List PASS / FAIL / NOT TESTED.
+
+Do not hide existing baseline diagnostics.
+
+---
+
+# FINAL VERDICT
+
+State whether:
+
+```text
+academic_history.target_session_id
+```
+
+is now safely available and verified in Development, and whether we may resume **Promotion Stage 2 implementation**.
+
+STOP.
