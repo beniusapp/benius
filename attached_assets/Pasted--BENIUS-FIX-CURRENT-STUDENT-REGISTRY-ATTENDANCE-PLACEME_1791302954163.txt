@@ -1,0 +1,883 @@
+# BENIUS — FIX CURRENT STUDENT REGISTRY / ATTENDANCE PLACEMENT CONSISTENCY
+
+Proceed with a focused correction based on the completed Student Profile / Session Enrollment audit.
+
+BENIUS is currently in DEVELOPMENT.
+
+## CONFIRMED PRODUCT DECISION
+
+For the CURRENT / ACTIVE Academic Session:
+
+**Student Registry is the human-managed source for the Student's current academic placement.**
+
+When the current Student's:
+
+- Class
+- Section
+- Roll Number
+
+is created or changed through Student Registry, BENIUS must automatically keep that Student's **ACTIVE Academic Session enrollment** synchronized.
+
+Normal users must NOT have to separately manage an enrollment.
+
+However:
+
+**Session Enrollment remains the authoritative placement record used by session-sensitive academic modules such as Attendance.**
+
+Historical Academic Session enrollments must remain preserved.
+
+---
+
+# CURRENT PROBLEM
+
+Development Student:
+
+```text
+MIS-0003
+```
+
+currently has:
+
+```text
+Student Registry / Current Profile:
+Class 2
+Section A
+Roll 3
+
+Active Academic Session:
+2026-2027
+
+Active-session Enrollment:
+Class 2
+Section B
+Roll 1
+```
+
+Therefore Student Registry displays MIS-0003 under:
+
+```text
+2/A
+```
+
+while Teacher Attendance correctly reads the active-session enrollment and looks for MIS-0003 under:
+
+```text
+2/B
+```
+
+This causes Class 2/A Attendance to show:
+
+```text
+No students found
+```
+
+even though Student Registry shows an active Student in 2/A.
+
+We now want to remove this inconsistency.
+
+---
+
+# RULE 1 — CURRENT STUDENT REGISTRY PLACEMENT
+
+For the ACTIVE Academic Session, the current Student Registry placement must automatically synchronize to the Student's active-session enrollment.
+
+Conceptually:
+
+```text
+Student Registry
+
+Class
+Section
+Roll Number
+
+        ↓ SAVE
+
+ONE BACKEND OPERATION
+
+        ↓
+
+Current Student Profile
++
+Active Academic Session Enrollment
+```
+
+Both must agree after a successful operation.
+
+---
+
+# RULE 2 — SAME TRANSACTION
+
+This synchronization must be atomic.
+
+Do NOT do:
+
+```text
+Update Student
+→ success
+
+Update Enrollment
+→ failure
+
+Return success
+```
+
+Instead:
+
+```text
+BEGIN TRANSACTION
+
+Validate authenticated school
+Validate Student belongs to school
+Resolve active Academic Session
+Validate placement
+
+Update Student current placement
+Create/update active-session enrollment
+
+COMMIT
+```
+
+If either operation fails:
+
+```text
+ROLLBACK
+```
+
+The Student profile and active-session enrollment must never be left half-synchronized.
+
+---
+
+# RULE 3 — STUDENT REGISTRY EDIT
+
+Fix the effective Web Student Registry Edit path:
+
+```text
+PATCH /api/admin/students/:id
+```
+
+When Class, Section or Roll Number changes for a current active Student, synchronize the ACTIVE Academic Session enrollment in the same transaction.
+
+Example:
+
+Before:
+
+```text
+Profile:
+2/B, Roll 1
+
+Active-session enrollment:
+2/B, Roll 1
+```
+
+User edits Student Registry:
+
+```text
+2/B → 2/A
+Roll 1 → Roll 3
+```
+
+After successful save:
+
+```text
+Profile:
+2/A, Roll 3
+
+Active-session enrollment:
+2/A, Roll 3
+```
+
+---
+
+# RULE 4 — NON-PLACEMENT EDITS
+
+Do NOT unnecessarily modify enrollment when editing ordinary Student information such as:
+
+- Student name
+- phone
+- email
+- address
+- guardian information
+- photo
+- other non-academic profile information
+
+Enrollment synchronization is required when the current academic placement fields change:
+
+```text
+Class
+Section
+Roll Number
+```
+
+---
+
+# RULE 5 — ADD STUDENT
+
+Also fix the normal Web Student Registry Add flow.
+
+Principal/Admin and Support Staff with Add Student permission use the same canonical behavior.
+
+When adding a Student while an active Academic Session exists:
+
+```text
+BEGIN TRANSACTION
+
+Create Student
++
+Create active-session enrollment
+with the same:
+Class
+Section
+Roll
+
+COMMIT
+```
+
+Do NOT return successful Student creation if required active-session enrollment creation fails.
+
+This must prevent future Students from being created with:
+
+```text
+Student exists
+but
+active-session enrollment missing
+```
+
+---
+
+# NO ACTIVE SESSION
+
+Do NOT silently guess an Academic Session.
+
+If Student placement requires an active-session enrollment but no active Academic Session exists, handle it explicitly.
+
+Do not create an enrollment against an arbitrary or historical session.
+
+Report the behavior implemented.
+
+---
+
+# RULE 6 — SUPPORT STAFF
+
+Support Staff must NOT have separate synchronization logic.
+
+If Support Staff has the appropriate:
+
+```text
+Student Registry → Add Student
+```
+
+or:
+
+```text
+Student Registry → Edit Student
+```
+
+permission, the request must use the SAME canonical backend Student placement logic as Principal/Admin.
+
+Therefore:
+
+```text
+Admin Add/Edit
+        ↓
+same service
+
+Support Staff Add/Edit
+        ↓
+same service
+```
+
+Permission differences remain enforced.
+
+Business placement logic must not be duplicated.
+
+---
+
+# RULE 7 — ATTENDANCE REMAINS ENROLLMENT-BASED
+
+Do NOT undo the recently completed Teacher Attendance correction.
+
+Teacher Attendance must continue using:
+
+```text
+authenticated school
++
+validated selected Academic Session
++
+students.is_active = true
++
+Active selected-session enrollment
++
+enrollment Class/Section
+```
+
+Attendance should NOT be changed back to directly using:
+
+```text
+students.class
+students.section
+```
+
+The solution is to keep current Student Registry placement and active-session enrollment synchronized correctly.
+
+---
+
+# RULE 8 — HISTORICAL SESSIONS MUST NEVER CHANGE
+
+This is extremely important.
+
+Suppose:
+
+```text
+2025-26 enrollment → Class 1/B
+2026-27 enrollment → Class 2/A
+```
+
+Editing the current Student Registry during 2026-27 may synchronize:
+
+```text
+2026-27 enrollment
+```
+
+but must NEVER change:
+
+```text
+2025-26 enrollment
+```
+
+Previous Academic Sessions remain historical/read-only.
+
+No current Student Registry edit may rewrite historical placement.
+
+---
+
+# RULE 9 — DANGEROUS GET SIDE EFFECT
+
+The audit found:
+
+```text
+GET /api/student/exam/enrollment-history
+```
+
+can UPSERT the active-session enrollment using the current Student profile.
+
+This is unsafe.
+
+A GET/read request must NOT silently modify Student academic placement.
+
+Correct this.
+
+The enrollment-history GET must become READ-ONLY.
+
+It may read and return enrollment history.
+
+It must NOT:
+
+- create enrollment
+- update enrollment
+- overwrite Class
+- overwrite Section
+- change status
+- synchronize profile into enrollment
+
+Enrollment synchronization belongs only in explicit authorized write operations.
+
+---
+
+# CURRENT DEVELOPMENT MIS-0003 RECONCILIATION
+
+For this Development environment, we have now chosen the CURRENT Student Registry placement as the intended current placement for MIS-0003.
+
+Therefore synchronize:
+
+```text
+MIS-0003
+
+Current Student Registry:
+Class 2
+Section A
+Roll 3
+```
+
+to the ACTIVE 2026-2027 enrollment.
+
+Expected after approved Development correction:
+
+```text
+Student Profile:
+Class 2
+Section A
+Roll 3
+
+2026-2027 Enrollment:
+Class 2
+Section A
+Roll 3
+Status: Active
+```
+
+Do NOT modify any previous Academic Session enrollment.
+
+Before changing the Development row:
+
+- verify school
+- verify Student
+- verify active Academic Session
+- verify current profile placement
+- verify existing enrollment
+
+Then perform the reconciliation safely.
+
+This is an approved Development-data correction.
+
+---
+
+# EXPECTED ATTENDANCE RESULT
+
+After synchronization, Teacher Attendance for:
+
+```text
+Academic Session: 2026-2027
+Class: 2
+Section: A
+```
+
+should find:
+
+```text
+MIS-0003
+```
+
+assuming the Student remains active and the enrollment remains Active.
+
+Teacher Attendance for:
+
+```text
+Class 2
+Section B
+```
+
+should no longer include MIS-0003.
+
+Do NOT hard-code MIS-0003 into Attendance.
+
+The result must happen naturally because the active-session enrollment has been corrected.
+
+---
+
+# DAILY PRESENCE
+
+Do NOT redesign Daily Presence.
+
+The recently completed rule remains:
+
+```text
+NOT MARKED != ABSENT
+```
+
+After the Development Attendance cleanup, MIS-0003 should remain:
+
+```text
+Not Marked
+```
+
+until actual Attendance is submitted.
+
+Changing placement must NOT automatically create an Attendance record.
+
+---
+
+# DO NOT FIX CSV YET
+
+The audit found that CSV import currently creates Student profiles without active-session enrollments.
+
+That is important, but keep this task controlled.
+
+Do NOT redesign the large CSV import in this task.
+
+Report it as:
+
+```text
+OPEN — NEXT STEP
+```
+
+We will fix it separately with proper batching/scalability for 100,000+ Students.
+
+---
+
+# DO NOT FIX PROMOTION YET
+
+Promotion has larger Academic Session isolation problems.
+
+Do NOT patch Promotion casually as part of this task.
+
+Do NOT make Promotion copy the current profile into arbitrary enrollment rows.
+
+Leave Promotion for its dedicated session-aware correction.
+
+Report:
+
+```text
+PROMOTION PLACEMENT/SESSION FIX:
+OPEN — SEPARATE TASK
+```
+
+---
+
+# DO NOT MODIFY MOBILE
+
+Mobile remains FROZEN.
+
+Do not modify:
+
+- Mobile source
+- Mobile Student Registry
+- Mobile import
+- Mobile promotion
+- Mobile APIs specifically for synchronization
+
+If shared backend changes affect Mobile indirectly, REPORT that impact only.
+
+---
+
+# TENANT ISOLATION
+
+All Add/Edit/reconciliation operations must validate:
+
+```text
+authenticated school
+=
+Student school
+=
+active Academic Session school
+=
+Enrollment school
+```
+
+Do not trust client-supplied school ownership.
+
+School A must never modify School B Student enrollment.
+
+---
+
+# PERFORMANCE
+
+This operation must be efficient for future large-scale BENIUS installations.
+
+For an individual Student Registry Add/Edit:
+
+Do NOT:
+
+- scan all Students
+- scan all enrollments
+- reconcile the entire school
+- load large Student lists
+
+Use indexed Student/session/enrollment lookups for only the affected Student.
+
+The architecture must remain suitable when a school has 100,000+ Students.
+
+---
+
+# REQUIRED TESTS
+
+## Test 1 — Current placement edit
+
+Start:
+
+```text
+Profile = 2/B, Roll 1
+Enrollment = 2/B, Roll 1
+```
+
+Edit Registry:
+
+```text
+2/A, Roll 3
+```
+
+Expected:
+
+```text
+Profile = 2/A, Roll 3
+Enrollment = 2/A, Roll 3
+```
+
+PASS/FAIL.
+
+---
+
+## Test 2 — Enrollment update failure
+
+Simulate enrollment write failure.
+
+Expected:
+
+```text
+Student profile update also rolls back.
+```
+
+No half-update.
+
+PASS/FAIL.
+
+---
+
+## Test 3 — Historical protection
+
+Have:
+
+```text
+2025-26 → 1/B
+2026-27 → 2/A
+```
+
+Edit current Registry.
+
+Expected:
+
+```text
+2026-27 may update
+2025-26 remains unchanged
+```
+
+PASS/FAIL.
+
+---
+
+## Test 4 — Add Student
+
+Create new Student:
+
+```text
+Class 2/A
+Roll 10
+```
+
+Expected atomically:
+
+```text
+Student profile → 2/A, Roll 10
+Active-session enrollment → 2/A, Roll 10
+```
+
+PASS/FAIL.
+
+---
+
+## Test 5 — Add enrollment failure
+
+Simulate enrollment failure.
+
+Expected:
+
+```text
+Student creation rolls back.
+```
+
+PASS/FAIL.
+
+---
+
+## Test 6 — Support Staff Edit
+
+With proper Edit permission:
+
+Expected same synchronization as Admin.
+
+PASS/FAIL.
+
+Without permission:
+
+Expected denied.
+
+PASS/FAIL.
+
+---
+
+## Test 7 — Tenant isolation
+
+Attempt cross-school Student/enrollment modification.
+
+Expected:
+
+```text
+REJECTED
+```
+
+PASS/FAIL.
+
+---
+
+## Test 8 — Enrollment-history GET
+
+Call:
+
+```text
+GET /api/student/exam/enrollment-history
+```
+
+Expected:
+
+```text
+READ ONLY
+```
+
+Verify no Student/enrollment database mutation occurs.
+
+PASS/FAIL.
+
+---
+
+## Test 9 — Attendance integration
+
+After MIS-0003 reconciliation:
+
+```text
+2026-27
+Class 2/A
+```
+
+Teacher Attendance should return MIS-0003.
+
+Class 2/B should not.
+
+PASS/FAIL.
+
+---
+
+## Test 10 — Daily Presence regression
+
+Verify:
+
+```text
+NOT MARKED != ABSENT
+```
+
+and placement synchronization does not create Attendance records.
+
+PASS/FAIL.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS CURRENT STUDENT PLACEMENT / ATTENDANCE CONSISTENCY FIX
+
+## Canonical behavior
+
+Confirm:
+
+Student Registry manages current placement.
+
+Active-session enrollment automatically synchronizes.
+
+Historical enrollments remain preserved.
+
+PASS/FAIL
+
+## Student Edit
+
+- Profile synchronization: PASS/FAIL
+- Enrollment synchronization: PASS/FAIL
+- Class: PASS/FAIL
+- Section: PASS/FAIL
+- Roll: PASS/FAIL
+- Atomic transaction: PASS/FAIL
+
+## Add Student
+
+- Student + enrollment atomic: PASS/FAIL
+- Same placement: PASS/FAIL
+- Enrollment failure rolls back Student: PASS/FAIL
+
+## Support Staff
+
+- Uses same canonical logic: PASS/FAIL
+- Add permission preserved: PASS/FAIL
+- Edit permission preserved: PASS/FAIL
+
+## Enrollment-History GET
+
+READ-ONLY: PASS/FAIL
+
+Confirm no write side effect remains.
+
+## MIS-0003
+
+Before:
+
+Profile:
+Class 2/A, Roll 3
+
+Enrollment:
+Class 2/B, Roll 1
+
+After:
+
+Report exact profile and active-session enrollment.
+
+## Teacher Attendance
+
+2026-27 Class 2/A:
+List eligible DSIDs.
+
+Confirm MIS-0003 appears.
+
+2026-27 Class 2/B:
+Confirm MIS-0003 does not appear.
+
+## Historical Session Protection
+
+PASS/FAIL
+
+## Daily Presence Regression
+
+PASS/FAIL
+
+## Tenant Isolation
+
+PASS/FAIL
+
+## Performance
+
+Confirm individual Add/Edit does not perform school-wide reconciliation.
+
+## CSV Import
+
+OPEN — NEXT STEP
+
+Confirm unchanged.
+
+## Promotion
+
+OPEN — SEPARATE TASK
+
+Confirm unchanged.
+
+## Database Schema
+
+NONE / explain
+
+## Development Data Changed
+
+List exactly what was changed.
+
+## Mobile
+
+FROZEN
+
+## Deployment
+
+NONE
+
+## Tests/builds
+
+List results.
+
+# FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
