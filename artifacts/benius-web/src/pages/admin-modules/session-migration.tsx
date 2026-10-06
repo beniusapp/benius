@@ -17,7 +17,7 @@ import {
   AlertTriangle, AlertCircle, Loader2, Info,
   Globe, RefreshCw, GraduationCap, Shield, Archive,
 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { fmtDate } from "@/lib/dateUtils";
 
@@ -110,6 +110,13 @@ function StepBar({ current }: { current: 1 | 2 | 3 }) {
 export default function SessionMigrationPage() {
   const [, setLocation] = useLocation();
   const { toast }       = useToast();
+  const {
+    data: currentUser,
+    isLoading: isUserLoading,
+  } = useQuery<{ role: string } | null>({
+    queryKey: ["/api/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
 
   // ── Parse URL params ───────────────────────────────────────────────────────
   const search       = typeof window !== "undefined" ? window.location.search : "";
@@ -121,15 +128,21 @@ export default function SessionMigrationPage() {
   const srcSessionId = parseInt(srcIdStr) || null;
 
   useEffect(() => {
+    if (isUserLoading) return;
+    if (currentUser?.role === "support_staff") {
+      setLocation("/admin-dashboard");
+      return;
+    }
     if (!newName || !newStart || !newEnd) {
       toast({ title: "Invalid wizard state", description: "Please start again from the session form.", variant: "destructive" });
       setLocation("/admin-dashboard/academic-sessions");
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser?.role, isUserLoading, newName, newStart, newEnd, setLocation, toast]);
 
   // ── Source session info ────────────────────────────────────────────────────
   const { data: sessions = [] } = useQuery<Session[]>({
     queryKey: ["/api/admin/academic-sessions"],
+    enabled: !isUserLoading && currentUser?.role !== "support_staff",
   });
   const srcSession = srcSessionId ? (sessions.find(s => s.id === srcSessionId) ?? null) : null;
 
@@ -215,6 +228,31 @@ export default function SessionMigrationPage() {
             </p>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (isUserLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#0A1628" }}>
+        <Loader2 className="w-6 h-6 animate-spin text-cyan-300" aria-label="Checking access" />
+      </div>
+    );
+  }
+
+  if (currentUser?.role === "support_staff") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6 text-center" style={{ background: "#0A1628" }}>
+        <Shield className="w-10 h-10 text-red-400" />
+        <h1 className="text-xl font-bold text-white">Access Denied</h1>
+        <p className="max-w-sm text-sm text-white/50">School Setup is available to Principal and Admin accounts only.</p>
+        <button
+          type="button"
+          onClick={() => setLocation("/admin-dashboard")}
+          className="text-cyan-300 text-sm hover:underline"
+        >
+          Return to Dashboard
+        </button>
       </div>
     );
   }

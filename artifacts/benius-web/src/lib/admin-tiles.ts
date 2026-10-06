@@ -208,3 +208,24 @@ export function expandModulesWithSubs(allowedModules: string[]): string[] {
   }
   return result;
 }
+
+export function isSchoolSetupGrant(grant: string): boolean {
+  return grant === "school-setup" || grant.startsWith("school-setup:");
+}
+
+export function filterSupportStaffGrants(
+  allowedModules: readonly string[] | null | undefined,
+): string[] {
+  return (allowedModules ?? []).filter(grant => !isSchoolSetupGrant(grant));
+}
+
+export function hasSupportStaffModuleGrant(
+  allowedModules: readonly string[] | null | undefined,
+  moduleId: string,
+): boolean {
+  return !isSchoolSetupGrant(moduleId) && filterSupportStaffGrants(allowedModules).includes(moduleId);
+}
+
+export const SUPPORT_STAFF_PERMISSION_MODULES = ADMIN_TILE_DEFS.filter(
+  module => module.id !== "school-setup",
+);

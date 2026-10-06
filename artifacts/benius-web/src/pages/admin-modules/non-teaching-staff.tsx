@@ -13,7 +13,13 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ADMIN_TILE_DEFS, MODULE_SUB_MODULES, expandModulesWithSubs } from "@/lib/admin-tiles";
+import {
+  ADMIN_TILE_DEFS,
+  MODULE_SUB_MODULES,
+  SUPPORT_STAFF_PERMISSION_MODULES,
+  expandModulesWithSubs,
+  filterSupportStaffGrants,
+} from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
 
 // ── Crop utilities ────────────────────────────────────────────────────────────
@@ -92,8 +98,9 @@ function ModulePermissionTree({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const isModuleChecked = (moduleId: string) => selected.includes(moduleId);
-  const isSubChecked = (moduleId: string, subId: string) => selected.includes(`${moduleId}:${subId}`);
+  const safeSelected = filterSupportStaffGrants(selected);
+  const isModuleChecked = (moduleId: string) => safeSelected.includes(moduleId);
+  const isSubChecked = (moduleId: string, subId: string) => safeSelected.includes(`${moduleId}:${subId}`);
 
   const getSubKeys = (moduleId: string) =>
     (MODULE_SUB_MODULES[moduleId] ?? []).map(s => `${moduleId}:${s.id}`);
@@ -101,7 +108,7 @@ function ModulePermissionTree({
   const getSubState = (moduleId: string): "all" | "partial" | "none" => {
     const subs = MODULE_SUB_MODULES[moduleId] ?? [];
     if (!subs.length) return "all";
-    const checked = subs.filter(s => selected.includes(`${moduleId}:${s.id}`)).length;
+    const checked = subs.filter(s => safeSelected.includes(`${moduleId}:${s.id}`)).length;
     if (checked === 0) return "none";
     if (checked === subs.length) return "all";
     return "partial";
@@ -111,10 +118,10 @@ function ModulePermissionTree({
     const currently = isModuleChecked(moduleId);
     const subKeys = getSubKeys(moduleId);
     if (currently) {
-      onChange(selected.filter(s => s !== moduleId && !subKeys.includes(s)));
+      onChange(safeSelected.filter(s => s !== moduleId && !subKeys.includes(s)));
       setExpanded(prev => { const n = new Set(prev); n.delete(moduleId); return n; });
     } else {
-      const without = selected.filter(s => !subKeys.includes(s) && s !== moduleId);
+      const without = safeSelected.filter(s => !subKeys.includes(s) && s !== moduleId);
       onChange([...without, moduleId, ...subKeys]);
       setExpanded(prev => new Set([...prev, moduleId]));
     }
@@ -122,17 +129,17 @@ function ModulePermissionTree({
 
   const toggleSub = (moduleId: string, subId: string) => {
     const key = `${moduleId}:${subId}`;
-    const currently = selected.includes(key);
+    const currently = safeSelected.includes(key);
     if (currently) {
-      const next = selected.filter(s => s !== key);
+      const next = safeSelected.filter(s => s !== key);
       const anySubLeft = (MODULE_SUB_MODULES[moduleId] ?? [])
         .map(s => `${moduleId}:${s.id}`)
         .some(k => k !== key && next.includes(k));
       onChange(anySubLeft ? next : next.filter(s => s !== moduleId));
     } else {
       const adds = [key];
-      if (!selected.includes(moduleId)) adds.push(moduleId);
-      onChange([...selected, ...adds]);
+      if (!safeSelected.includes(moduleId)) adds.push(moduleId);
+      onChange([...safeSelected, ...adds]);
     }
   };
 
@@ -145,7 +152,7 @@ function ModulePermissionTree({
     });
   };
 
-  const allChecked = ADMIN_TILE_DEFS.every(m => isModuleChecked(m.id));
+  const allChecked = SUPPORT_STAFF_PERMISSION_MODULES.every(m => isModuleChecked(m.id));
 
   const handleSelectAll = () => {
     if (allChecked) {
@@ -153,17 +160,17 @@ function ModulePermissionTree({
       setExpanded(new Set());
     } else {
       const all: string[] = [];
-      ADMIN_TILE_DEFS.forEach(m => {
+      SUPPORT_STAFF_PERMISSION_MODULES.forEach(m => {
         all.push(m.id);
         (MODULE_SUB_MODULES[m.id] ?? []).forEach(s => all.push(`${m.id}:${s.id}`));
       });
       onChange(all);
-      setExpanded(new Set(ADMIN_TILE_DEFS.map(m => m.id)));
+      setExpanded(new Set(SUPPORT_STAFF_PERMISSION_MODULES.map(m => m.id)));
     }
   };
 
-  const modulesGranted = ADMIN_TILE_DEFS.filter(m => selected.includes(m.id)).length;
-  const subGranted = selected.filter(s => s.includes(":")).length;
+  const modulesGranted = SUPPORT_STAFF_PERMISSION_MODULES.filter(m => safeSelected.includes(m.id)).length;
+  const subGranted = safeSelected.filter(s => s.includes(":")).length;
 
   return (
     <div className="space-y-2">
@@ -175,7 +182,7 @@ function ModulePermissionTree({
       </div>
 
       <div className="space-y-1 max-h-80 overflow-y-auto pr-1 [scrollbar-width:thin] [scrollbar-color:#D4AF37_#0A1628]">
-        {ADMIN_TILE_DEFS.map(mod => {
+        {SUPPORT_STAFF_PERMISSION_MODULES.map(mod => {
           const checked = isModuleChecked(mod.id);
           const subs = MODULE_SUB_MODULES[mod.id] ?? [];
           const isExp = expanded.has(mod.id);
@@ -331,7 +338,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
       const designation = (d.designation === "Other" && d.customDesignation) ? d.customDesignation : d.designation;
       const r = await apiRequest("POST", "/api/admin/non-teaching-staff", {
         fullName: d.fullName, email: d.email, phone: d.phone || "",
-        designation, password: d.password, allowedModules: addModules,
+        designation, password: d.password, allowedModules: filterSupportStaffGrants(addModules),
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
       const created = await r.json();
@@ -377,7 +384,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   const permsMutation = useMutation({
     mutationFn: async (mods: string[]) => {
       const r = await apiRequest("PATCH", `/api/admin/non-teaching-staff/${permTarget!.id}`, {
-        allowedModules: mods,
+        allowedModules: filterSupportStaffGrants(mods),
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message || "Failed"); }
       return r.json();
@@ -403,7 +410,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   });
 
   const openPerms = (s: NonTeachingStaff) => {
-    setPermsSelected(expandModulesWithSubs(s.allowedModules ?? []));
+    setPermsSelected(expandModulesWithSubs(filterSupportStaffGrants(s.allowedModules)));
     setPermTarget(s);
   };
 
@@ -483,8 +490,9 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
   const isOtherAdd = addForm.watch("designation") === "Other";
   const isOtherEdit = editForm.watch("designation") === "Other";
 
+  const safeStaffGrants = (s: NonTeachingStaff) => filterSupportStaffGrants(s.allowedModules);
   const moduleCount = (s: NonTeachingStaff) =>
-    (s.allowedModules ?? []).filter(m => !m.includes(":")).length;
+    safeStaffGrants(s).filter(m => !m.includes(":")).length;
 
   return (
     <div className="space-y-4">
@@ -678,7 +686,8 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
                   )
                   : filtered.map(s => {
                     const mCount = moduleCount(s);
-                    const subCount = (s.allowedModules ?? []).filter(m => m.includes(":")).length;
+                    const visibleGrants = safeStaffGrants(s);
+                    const subCount = visibleGrants.filter(m => m.includes(":")).length;
                     return (
                       <tr key={s.id} className="border-b border-white/5 hover:bg-white/5 transition-colors" data-testid={`row-nts-${s.id}`}>
                         <td className="py-3 px-4 text-white font-medium">{s.fullName}</td>
@@ -695,7 +704,7 @@ export default function NonTeachingStaffModule({ schoolId, allowedSubs }: Props)
                               <span
                                 className="px-2 py-0.5 rounded-full text-xs border inline-flex w-fit"
                                 style={{ background: "rgba(212,175,55,0.10)", color: "#D4AF37", borderColor: "rgba(212,175,55,0.25)" }}
-                                title={(s.allowedModules ?? []).filter(m => !m.includes(":")).map(id => ADMIN_TILE_DEFS.find(t => t.id === id)?.label ?? id).join(", ")}
+                                title={visibleGrants.filter(m => !m.includes(":")).map(id => ADMIN_TILE_DEFS.find(t => t.id === id)?.label ?? id).join(", ")}
                               >
                                 {mCount} module{mCount !== 1 ? "s" : ""}
                               </span>

@@ -28,6 +28,10 @@ import {
   resolveAdminViewSession,
   type SessionDropdownPlacement,
 } from "@/lib/admin-session-view";
+import {
+  filterSupportStaffGrants,
+  hasSupportStaffModuleGrant,
+} from "@/lib/admin-tiles";
 import { formatDateOnly, formatDateTimeIST, todayInIST } from "@shared/ist-time";
 
 const SchoolSetup         = lazy(() => import("./admin-modules/school-setup"));
@@ -1622,7 +1626,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!isLoading && me?.role === "support_staff" && activeModule !== "grid") {
-      if (!me.allowedModules?.includes(activeModule)) setLocation("/admin-dashboard");
+      if (!hasSupportStaffModuleGrant(me.allowedModules, activeModule)) setLocation("/admin-dashboard");
     }
   }, [me, isLoading, activeModule]);
 
@@ -1791,12 +1795,12 @@ export default function AdminDashboard() {
   };
 
   const visibleTiles = me?.role === "support_staff"
-    ? TILES.filter(t => me.allowedModules?.includes(t.id))
+    ? TILES.filter(t => hasSupportStaffModuleGrant(me.allowedModules, t.id))
     : TILES;
 
   function getSubsFor(moduleId: string): string[] | undefined {
     if (me?.role !== "support_staff") return undefined;
-    const allowedModules = me.allowedModules ?? [];
+    const allowedModules = filterSupportStaffGrants(me.allowedModules);
     if (moduleId === "fees-manager") {
       const legacyFeeGrants = ["fees-manager:view", "fees-manager:record", "fees-manager:export"];
       const feeGrants = allowedModules.filter((key: string) => key.startsWith("fees-manager:"));
@@ -1812,7 +1816,7 @@ export default function AdminDashboard() {
   }
 
   const renderModule = () => {
-    if (me?.role === "support_staff" && activeModule !== "grid" && !me.allowedModules?.includes(activeModule)) {
+    if (me?.role === "support_staff" && activeModule !== "grid" && !hasSupportStaffModuleGrant(me.allowedModules, activeModule)) {
       return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
           <div className="w-16 h-16 rounded-full flex items-center justify-center"

@@ -14,5 +14,5 @@
 - [Teacher Leave session boundaries](teacher-leave-session-boundaries.md) — keep Teacher requests session-scoped while policies and renewal-period balances remain global/current.
 - [Teacher Dashboard session boundaries](teacher-dashboard-session-boundaries.md) — badges follow the selected session; the current-day Attendance status follows the active session.
 - [Teacher profile photo review](teacher-profile-photo-review.md) — photo-only review must not rewrite full-profile verification state or its approval history.
-- [Shared Support Staff academic-session foundation](support-staff-academic-session-foundation.md) — Support Staff share school sessions and the active session, but session viewing does not grant module access.
+- [Shared Support Staff academic-session foundation](support-staff-academic-session-foundation.md) — Support Staff may select sessions for granted modules but cannot use School Setup or manage sessions.
 - [Support Staff Admin Profile boundary](support-staff-admin-profile-boundary.md) — keep Principal/Admin profile and account controls unavailable to Support Staff while retaining their own header identity and logout.

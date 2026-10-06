@@ -29,6 +29,20 @@ test("authenticated Support Staff can read their school's sessions without a mod
   );
 });
 
+test("legacy School Setup grants do not change Support Staff academic-session selector access", () => {
+  const legacySupportSession = {
+    userId: -14,
+    userRole: "support_staff",
+    staffId: 14,
+    schoolId: 8,
+    allowedModules: ["school-setup", "school-setup:academic-sessions"],
+  };
+  assert.deepEqual(
+    resolveAcademicSessionListAccess(legacySupportSession),
+    { authorized: true, schoolId: 8 },
+  );
+});
+
 test("rejects Support Staff sessions with an invalid staff identity", () => {
   assert.deepEqual(
     resolveAcademicSessionListAccess({

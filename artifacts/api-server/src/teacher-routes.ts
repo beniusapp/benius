@@ -50,6 +50,7 @@ import { validateGradingRules } from "@shared/examination-calculation-engine";
 import { percentageToHundredths } from "@shared/grading-percentage";
 import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recovery-routes";
 import { authenticationAttemptIsRevoked } from "./session-revocation";
+import { filterSupportStaffAllowedModules } from "./support-staff-module-permissions";
 
 type TeacherHomeworkContext = {
   teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>;
@@ -2905,7 +2906,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.get("/api/admin/leave-policies", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const policies = await storage.getLeavePoliciesBySchool(schoolId);
@@ -2913,7 +2914,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.post("/api/admin/leave-policies", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const { name, annualLimit, targetRoles, renewalMonth, renewalDay, expiryBehavior, isActive } = req.body;
@@ -2945,7 +2946,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/admin/leave-policies/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const existing = await storage.getLeavePolicyById(id);
@@ -2976,7 +2977,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.delete("/api/admin/leave-policies/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
     const existing = await storage.getLeavePolicyById(id);
@@ -5568,7 +5569,7 @@ Thank you for your prompt attention to this matter.
         email: parsed.data.email,
         phone: parsed.data.phone || "",
         designation: parsed.data.designation,
-        allowedModules: parsed.data.allowedModules || [],
+        allowedModules: filterSupportStaffAllowedModules(parsed.data.allowedModules),
         isActive: true,
         ...(passwordHash ? { passwordHash } : {}),
       });
@@ -5599,7 +5600,9 @@ Thank you for your prompt attention to this matter.
       if (parsed.data.email !== undefined) updateData.email = parsed.data.email;
       if (parsed.data.phone !== undefined) updateData.phone = parsed.data.phone;
       if (parsed.data.designation !== undefined) updateData.designation = parsed.data.designation;
-      if (parsed.data.allowedModules !== undefined) updateData.allowedModules = parsed.data.allowedModules;
+      if (parsed.data.allowedModules !== undefined) {
+        updateData.allowedModules = filterSupportStaffAllowedModules(parsed.data.allowedModules);
+      }
       if (parsed.data.password) {
         updateData.passwordHash = await bcrypt.hash(parsed.data.password, 10);
       }
