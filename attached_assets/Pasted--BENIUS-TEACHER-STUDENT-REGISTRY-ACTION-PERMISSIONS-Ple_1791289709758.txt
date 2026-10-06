@@ -1,0 +1,580 @@
+# BENIUS — TEACHER & STUDENT REGISTRY ACTION PERMISSIONS
+
+Please make a SMALL focused change to the existing Support Staff permissions for:
+
+1. Teacher Registry
+2. Student Registry
+
+Do NOT redesign the whole Registry architecture.
+
+Do NOT modify Faculty Mapping.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+Teacher Registry and Student Registry will NO LONGER be completely parent-only permissions.
+
+The Principal/Admin must be able to separately decide whether Support Staff may:
+
+- Add
+- Edit
+- Delete
+
+teachers/students.
+
+The permissions must correspond EXACTLY to the actual UI buttons and backend actions.
+
+---
+
+# 1. TEACHER REGISTRY
+
+Support Staff permission editor should show:
+
+```text
+☐ Teacher Registry
+   ☐ Add Teacher
+   ☐ Edit Teacher
+   ☐ Delete Teacher
+```
+
+These are the ONLY Teacher Registry child permissions I want.
+
+Do NOT add:
+
+- View Teacher
+- Search Teacher
+- Export
+- Removed History
+- other artificial button-level permissions
+
+---
+
+# TEACHER REGISTRY BASE ACCESS
+
+If the Principal grants:
+
+**Teacher Registry**
+
+then Support Staff gets the normal base/read functionality of Teacher Registry:
+
+- open Teacher Registry
+- view same-school teachers
+- search/filter
+- view teacher details
+- normal read-only registry information
+
+The three child permissions control MUTATIONS.
+
+---
+
+# ADD TEACHER
+
+If:
+
+**Add Teacher = GRANTED**
+
+then:
+
+- `Add Teacher` button must be visible/enabled
+- Support Staff can complete the normal Add Teacher workflow
+- backend Add Teacher API must allow the operation
+
+If NOT granted:
+
+- Add Teacher button must be hidden or disabled
+- direct/manual API request must be rejected
+
+---
+
+# EDIT TEACHER
+
+If:
+
+**Edit Teacher = GRANTED**
+
+then:
+
+- Edit/pencil action must be available
+- normal Teacher edit workflow must work
+- backend update API must allow it
+
+If NOT granted:
+
+- Edit action must not be usable
+- direct update API must reject Support Staff
+
+---
+
+# DELETE TEACHER
+
+If:
+
+**Delete Teacher = GRANTED**
+
+then:
+
+- the existing red remove/delete/deactivate action must be available
+- the existing Principal/Admin removal/deactivation workflow must work for Support Staff
+- backend action must allow it
+
+IMPORTANT:
+
+Do NOT introduce hard database deletion if the existing Teacher Registry button actually performs deactivation/removal.
+
+“Delete Teacher” is the permission LABEL for the existing Principal/Admin red delete/remove/deactivate action.
+
+Preserve the current business behavior.
+
+If NOT granted:
+
+- delete/remove/deactivate button unavailable
+- direct API attempt rejected
+
+---
+
+# 2. STUDENT REGISTRY
+
+Support Staff permission editor should show:
+
+```text
+☐ Student Registry
+   ☐ Add Student
+   ☐ Edit Student
+   ☐ Delete Student
+```
+
+These are the ONLY Student Registry child permissions I want.
+
+Do NOT create separate permissions for:
+
+- View
+- Search
+- Export
+- Normal mode
+- other read-only functionality
+
+---
+
+# STUDENT REGISTRY BASE ACCESS
+
+If:
+
+**Student Registry = GRANTED**
+
+Support Staff gets normal base/read access:
+
+- open Student Registry
+- view students
+- search/filter
+- view student details
+- existing normal read functionality
+- existing Export behavior should remain as it currently works under the Registry parent grant
+
+The three children control Add/Edit/Delete mutations.
+
+---
+
+# ADD STUDENT
+
+If:
+
+**Add Student = GRANTED**
+
+then:
+
+- Add Student button available
+- normal Add Student workflow works
+- existing registration functionality works
+- backend create API allows it
+
+If CSV import is part of the existing Principal/Admin Add Student workflow, treat it as part of **Add Student**.
+
+If NOT granted:
+
+- Add Student UI unavailable
+- create/import APIs rejected
+
+---
+
+# EDIT STUDENT
+
+If:
+
+**Edit Student = GRANTED**
+
+then:
+
+- Edit/pencil action available
+- normal Student edit workflow works
+- backend update APIs allow it
+
+If NOT granted:
+
+- Edit UI unavailable
+- direct API update rejected
+
+---
+
+# DELETE STUDENT
+
+If:
+
+**Delete Student = GRANTED**
+
+then:
+
+- existing red delete/remove/deactivate action available
+- normal Principal/Admin removal/deactivation behavior works
+- backend action allows it
+
+If bulk deactivation/removal is part of the existing Student Registry delete/removal functionality, it must require **Delete Student** too.
+
+IMPORTANT:
+
+Do NOT convert an existing deactivation/removal operation into permanent database deletion.
+
+“Delete Student” is the permission label for the existing Principal/Admin delete/remove/deactivate behavior.
+
+If NOT granted:
+
+- delete/remove/deactivate actions unavailable
+- backend requests rejected
+
+---
+
+# EXACT PERMISSION COMBINATIONS
+
+This is VERY IMPORTANT.
+
+Permissions must work independently and accurately.
+
+Example:
+
+```text
+Teacher Registry ✅
+Add Teacher      ❌
+Edit Teacher     ✅
+Delete Teacher   ❌
+```
+
+Expected:
+
+View/Search Teacher ✅
+Add Teacher ❌
+Edit Teacher ✅
+Delete/Deactivate Teacher ❌
+```
+
+Another example:
+
+```text
+Student Registry ✅
+Add Student      ✅
+Edit Student     ✅
+Delete Student   ❌
+```
+
+Expected:
+
+View/Search Student ✅
+Add Student ✅
+Edit Student ✅
+Delete/Deactivate Student ❌
+```
+
+Another:
+
+```text
+Student Registry ✅
+Add Student      ❌
+Edit Student     ❌
+Delete Student   ❌
+```
+
+Expected:
+
+Registry/read access ✅
+Add ❌
+Edit ❌
+Delete ❌
+```
+
+Do NOT treat one child permission as granting another.
+
+---
+
+# PARENT MODULE RULE
+
+A child permission NEVER works without its parent.
+
+Example:
+
+```text
+Teacher Registry ❌
+Edit Teacher     legacy/stored ✅
+
+RESULT:
+Teacher Registry access ❌
+Edit Teacher ❌
+```
+
+Same for Student Registry.
+
+Parent module access is always required.
+
+---
+
+# UI AND API MUST MATCH
+
+This must NOT be a cosmetic UI-only implementation.
+
+For every action:
+
+```text
+Button permission
+        =
+Backend API permission
+```
+
+Examples:
+
+Edit Teacher not granted:
+
+- pencil unavailable ❌
+- manually calling update API ❌
+
+Delete Student not granted:
+
+- red removal button unavailable ❌
+- manually calling deactivate/delete API ❌
+
+This is mandatory.
+
+---
+
+# TENANT ISOLATION
+
+Preserve strict school isolation.
+
+School A Support Staff may only operate on School A teachers/students.
+
+Even with Add/Edit/Delete permission:
+
+```text
+School A Teacher/Student → according to permission
+School B Teacher/Student → ALWAYS REJECT
+```
+
+Never trust client-supplied school IDs or record IDs without ownership validation.
+
+---
+
+# ACTOR / NEGATIVE-ID SAFETY
+
+Preserve the corrections already made.
+
+Use the authenticated:
+
+- positive `staffId`
+- role `support_staff`
+- authenticated school
+
+where actor attribution exists.
+
+Do NOT write negative compatibility IDs into Admin foreign keys.
+
+Do NOT falsely attribute Staff mutations to Principal/Admin.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin Registry functionality remains completely unchanged.
+
+These granular permissions apply only to Support Staff.
+
+---
+
+# FACULTY MAPPING
+
+Faculty Mapping remains exactly as currently implemented:
+
+```text
+☐ Faculty Mapping
+```
+
+Parent-only.
+
+Do NOT change it.
+
+---
+
+# LEGACY PERMISSIONS
+
+The previous Registry model used parent-only access and older versions may also contain legacy action keys.
+
+Handle legacy values safely.
+
+Do NOT accidentally grant Add/Edit/Delete because an old parent grant exists.
+
+After this change:
+
+- parent Teacher Registry = base/read access
+- Add Teacher = add permission
+- Edit Teacher = edit permission
+- Delete Teacher = existing remove/deactivate permission
+
+And:
+
+- parent Student Registry = base/read access
+- Add Student = add permission
+- Edit Student = edit permission
+- Delete Student = existing remove/deactivate permission
+
+Do NOT automatically grant all three mutation permissions to existing Support Staff merely because the parent was previously granted.
+
+Principal should explicitly choose the new action permissions.
+
+---
+
+# MOBILE REMAINS FROZEN
+
+DO NOT modify:
+
+- Mobile source
+- Mobile permissions
+- Mobile APIs
+- Mobile business logic
+
+Web + required backend only.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT modify other Support Staff modules or permission structures.
+
+Do NOT change:
+
+- Faculty Mapping
+- Fees
+- Approval Center
+- Leave Requests
+- Timetable
+- Calendar
+- Attendance
+- Exam Controller
+- Complaint Hub
+- Noticeboard
+- Enterprise modules
+- School Setup
+- Academic Session foundation
+- Support Staff Management
+- database schema unless absolutely required and reported first
+- deployment
+
+---
+
+# REQUIRED TEST MATRIX
+
+Test Teacher Registry:
+
+| Parent | Add | Edit | Delete | Expected |
+|---|---|---|---|---|
+| ON | OFF | OFF | OFF | Read only |
+| ON | ON | OFF | OFF | Read + Add |
+| ON | OFF | ON | OFF | Read + Edit |
+| ON | OFF | OFF | ON | Read + Delete |
+| ON | ON | ON | OFF | Read + Add + Edit |
+| ON | ON | ON | ON | Full Registry |
+| OFF | ON | ON | ON | No access |
+
+Run equivalent coverage for Student Registry.
+
+Verify BOTH:
+
+- UI buttons/actions
+- backend API authorization
+
+Also verify cross-school attempts remain rejected.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## TEACHER / STUDENT REGISTRY GRANULAR ACTION PERMISSIONS
+
+### Permission Editor
+
+Teacher Registry:
+- Add Teacher: PRESENT/ABSENT
+- Edit Teacher: PRESENT/ABSENT
+- Delete Teacher: PRESENT/ABSENT
+
+Student Registry:
+- Add Student: PRESENT/ABSENT
+- Edit Student: PRESENT/ABSENT
+- Delete Student: PRESENT/ABSENT
+
+### Teacher Registry
+- Base/read with parent: PASS/FAIL
+- Add independently enforced: PASS/FAIL
+- Edit independently enforced: PASS/FAIL
+- Delete independently enforced: PASS/FAIL
+- UI/API alignment: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+### Student Registry
+- Base/read with parent: PASS/FAIL
+- Add independently enforced: PASS/FAIL
+- Edit independently enforced: PASS/FAIL
+- Delete independently enforced: PASS/FAIL
+- CSV import follows Add Student: PASS/FAIL
+- Bulk removal follows Delete Student: PASS/FAIL
+- Export/base behavior preserved: PASS/FAIL
+- UI/API alignment: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+### Parent requirement
+PASS/FAIL
+
+### Legacy permissions
+Explain exact handling.
+
+### Existing delete behavior
+Confirm whether Teacher/Student “Delete” maps to deactivation/removal rather than hard DB deletion.
+
+### Actor attribution / negative-ID safety
+PASS / LIMITATION
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Faculty Mapping
+UNCHANGED / CHANGED
+
+### Other modules
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE / explain
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+PASS / NEEDS CHANGES
+
+STOP.
