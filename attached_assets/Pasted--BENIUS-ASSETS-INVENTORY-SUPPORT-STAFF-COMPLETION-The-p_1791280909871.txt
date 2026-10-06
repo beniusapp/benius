@@ -1,0 +1,276 @@
+# BENIUS — ASSETS & INVENTORY SUPPORT STAFF COMPLETION
+
+The previous five-module permission task returned NEEDS CHANGES for ONLY:
+
+**Assets & Inventory**
+
+Do NOT revisit the other four modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+Assets & Inventory uses a parent-only Support Staff permission.
+
+```text id="zk1j6w"
+Assets & Inventory = GRANTED
+→ Full normal Principal/Admin operational functionality
+
+Assets & Inventory = NOT GRANTED
+→ Zero access
+```
+
+When granted, Support Staff must be able to:
+
+- View assets
+- Add assets
+- Edit assets
+- Delete assets
+
+subject to the same normal validation and security rules as Principal/Admin.
+
+---
+
+# CURRENT PROBLEM
+
+The previous implementation confirmed:
+
+- View → PASS
+- Add → PASS
+- Edit → FAIL for Support Staff
+- Delete → FAIL for Support Staff
+
+The reason reported was actor attribution/history currently expects an Admin `users.id`.
+
+Support Staff must NOT be blocked from legitimate edit/delete merely because they are not an Admin user.
+
+At the same time, DO NOT:
+
+- write negative compatibility `userId = -staffId` into a foreign key expecting `users.id`;
+- pretend Principal/Admin performed the action;
+- create fake Admin users;
+- weaken audit integrity.
+
+---
+
+# REQUIRED BEHAVIOR
+
+For authenticated Support Staff with:
+
+**Assets & Inventory parent grant**
+
+allow normal same-school:
+
+```text id="hm57w9"
+View   ✅
+Add    ✅
+Edit   ✅
+Delete ✅
+```
+
+Without the parent grant:
+
+```text id="hnbm66"
+View   ❌
+Add    ❌
+Edit   ❌
+Delete ❌
+```
+
+---
+
+# ACTOR ATTRIBUTION
+
+Use the safest existing Staff-aware actor/audit pattern already present in BENIUS if one exists.
+
+We already have examples elsewhere where Support Staff can be represented as:
+
+```text id="6st7mp"
+Actor:
+staffId = positive Support Staff ID
+role = support_staff
+```
+
+Prefer an existing established project pattern rather than inventing another identity model.
+
+The operational asset continues to belong to:
+
+**authenticated school**
+
+not to the Principal personally and not to the Support Staff personally.
+
+---
+
+# IMPORTANT — ASSET HISTORY / LOGGING
+
+Inspect the current Assets activity/history implementation.
+
+If the existing `asset_logs.user_id` strictly references Admin `users.id`, do NOT put a Support Staff ID or negative compatibility ID into that column unless the schema actually supports it.
+
+Instead, determine whether the existing architecture already has a safe Staff-aware audit mechanism that can record:
+
+- Support Staff actor
+- positive `staffId`
+- `support_staff` role
+- action
+- asset
+- authenticated school
+
+Reuse it if available.
+
+If safe attribution genuinely cannot be supported without a schema change, STOP and report the exact minimum schema change required BEFORE changing the schema.
+
+Do not silently redesign the database.
+
+---
+
+# TENANT ISOLATION
+
+Non-negotiable:
+
+```text id="a14xmq"
+Support Staff — School A
+
+View School A asset   ✅
+Add School A asset    ✅
+Edit School A asset   ✅
+Delete School A asset ✅
+
+View School B asset   ❌
+Edit School B asset   ❌
+Delete School B asset ❌
+```
+
+Asset lookup for edit/delete must be scoped to the authenticated school.
+
+Do not trust body/query/URL `schoolId` as authorization.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin Assets & Inventory behavior must remain unchanged.
+
+Do not weaken or replace existing Admin attribution.
+
+---
+
+# MOBILE
+
+Mobile remains FROZEN.
+
+No Mobile source changes.
+
+No Mobile permission synchronization.
+
+No Mobile API redesign.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- Performance Analytics
+- Audit Logs
+- Visitor Log
+- ID Card Gen
+- Fees
+- Timetable
+- Calendar
+- Attendance
+- Exam Controller
+- Complaint Hub
+- Noticeboard
+- School Setup
+- other Support Staff permissions
+- Academic Session foundation
+- database schema unless you STOP and report first
+- deployment
+
+---
+
+# FOCUSED VALIDATION
+
+Test Support Staff with Assets & Inventory granted:
+
+- View → ALLOW
+- Add → ALLOW
+- Edit same-school asset → ALLOW
+- Delete same-school asset → ALLOW
+
+Test without grant:
+
+- View → REJECT
+- Add → REJECT
+- Edit → REJECT
+- Delete → REJECT
+
+Test tenant isolation:
+
+- School A Staff editing School B asset → REJECT
+- School A Staff deleting School B asset → REJECT
+
+Test actor handling:
+
+- no negative Support Staff ID written into Admin FK
+- no false Principal/Admin attribution
+- Support Staff actor safely identified where supported
+
+Test Principal/Admin regression.
+
+---
+
+# REQUIRED REPORT
+
+Return:
+
+## ASSETS & INVENTORY SUPPORT STAFF COMPLETION
+
+### View
+PASS / FAIL
+
+### Add
+PASS / FAIL
+
+### Edit
+PASS / FAIL
+
+### Delete
+PASS / FAIL
+
+### Ungranted access
+PASS / FAIL
+
+### Tenant isolation
+PASS / FAIL
+
+### Actor attribution
+Explain exactly how Support Staff edit/delete actions are attributed.
+
+### Negative-ID safety
+PASS / FAIL
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE / CHANGE REQUIRED
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
