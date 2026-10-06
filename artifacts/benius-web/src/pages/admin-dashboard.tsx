@@ -1664,6 +1664,39 @@ export default function AdminDashboard() {
     staleTime: 60_000,
   });
 
+  const { data: supportStaffExamControllerContext } = useQuery<{
+    classes: string[];
+    sections: string[];
+    exam_types: string[];
+  }>({
+    queryKey: ["/api/admin/exam-controller/context", me?.schoolId],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/exam-controller/context", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load Exam Controller setup");
+      return r.json();
+    },
+    enabled: me?.role === "support_staff" &&
+      !!me?.schoolId &&
+      hasSupportStaffModuleGrant(me.allowedModules, "exam-controller"),
+    staleTime: 60_000,
+  });
+
+  const { data: supportStaffNoticeboardContext } = useQuery<{
+    classes: string[];
+    sections: string[];
+  }>({
+    queryKey: ["/api/admin/noticeboard/context", me?.schoolId],
+    queryFn: async () => {
+      const r = await fetch("/api/admin/noticeboard/context", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load Noticeboard setup");
+      return r.json();
+    },
+    enabled: me?.role === "support_staff" &&
+      !!me?.schoolId &&
+      hasSupportStaffModuleGrant(me.allowedModules, "noticeboard"),
+    staleTime: 60_000,
+  });
+
   // sessionFetch is used for every custom queryFn so that x-view-session-id is
   // automatically attached to the request and the backend checkSessionContext
   // middleware can set req.viewSessionId for any optional session-scoped filtering.
@@ -1872,9 +1905,9 @@ export default function AdminDashboard() {
       case "visitor-log":       return <VisitorLogModule schoolId={me.schoolId} allowedSubs={getSubsFor("visitor-log")} />;
       case "attendance":        return <AttendanceOverview schoolId={me.schoolId} viewSessionId={selectedViewSession?.id} onViewStudent={() => goToModule("student-registry")} />;
       case "analytics":         return <PerformanceAnalytics schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} subjects={meta.subjects} examTypes={meta.exam_types} classSections={meta.classSections} classSubjects={meta.classSubjects} classExamTypes={meta.classExamTypes} initialTab={analyticsSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/analytics/${t}`)} allowedSubs={getSubsFor("analytics")} />;
-      case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} examTypes={meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
+      case "exam-controller":   return <ExamController schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffExamControllerContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffExamControllerContext?.sections ?? []) : meta.sections} examTypes={me.role === "support_staff" ? (supportStaffExamControllerContext?.exam_types ?? []) : meta.exam_types} allowedSubs={getSubsFor("exam-controller")} />;
       case "complaint-hub":     return <ComplaintHub schoolId={me.schoolId} initialTab={complaintSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/complaint-hub/${t}`)} allowedSubs={getSubsFor("complaint-hub")} />;
-      case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={meta.classes} sections={meta.sections} adminUserId={me.id} allowedSubs={getSubsFor("noticeboard")} />;
+      case "noticeboard":       return <NoticeboardAdmin schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffNoticeboardContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffNoticeboardContext?.sections ?? []) : meta.sections} adminUserId={me.id} allowedSubs={getSubsFor("noticeboard")} />;
        case "timetable":         return <TimetableMaster schoolId={me.schoolId} classes={me.role === "support_staff" ? (supportStaffTimetableContext?.classes ?? []) : meta.classes} sections={me.role === "support_staff" ? (supportStaffTimetableContext?.sections ?? []) : meta.sections} subjects={me.role === "support_staff" ? (supportStaffTimetableContext?.subjects ?? []) : meta.subjects} initialTab={timetableSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/timetable/${t}`)} allowedSubs={getSubsFor("timetable")} />;
       case "id-card-gen":       return <IdCardGen schoolId={me.schoolId} schoolName={me.schoolName} classes={meta.classes} sections={meta.sections} initialTab={idCardSubParams?.tab} onNavigateTab={(t) => setLocation(`/admin-dashboard/id-card-gen/${t}`)} allowedSubs={getSubsFor("id-card-gen")} />;
       case "assets":            return <AssetsInventory schoolId={me.schoolId} allowedSubs={getSubsFor("assets")} />;

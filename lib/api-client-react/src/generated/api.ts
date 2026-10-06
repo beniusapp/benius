@@ -20,7 +20,10 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AdminAttendanceContext,
   AdminCalendarContext,
+  AdminExamControllerContext,
+  AdminNoticeboardContext,
   AdminTimetableContext,
   HealthStatus,
   MobileTeacherFirstLoginPasswordChange,
@@ -274,6 +277,237 @@ export function useGetAdminCalendarContext<TData = Awaited<ReturnType<typeof get
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetAdminCalendarContextQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminAttendanceContextUrl = () => {
+
+
+
+
+  return `/api/admin/attendance/context`
+}
+
+/**
+ * @summary Get school and attendance policy values required by Attendance Overview
+ */
+export const getAdminAttendanceContext = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminAttendanceContext> => {
+
+  return customFetch<AdminAttendanceContext>(getGetAdminAttendanceContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminAttendanceContextQueryKey = () => {
+    return [
+    `/api/admin/attendance/context`
+    ] as const;
+    }
+
+
+export const getGetAdminAttendanceContextQueryOptions = <TData = Awaited<ReturnType<typeof getAdminAttendanceContext>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAttendanceContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminAttendanceContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminAttendanceContext>>> = ({ signal }) => getAdminAttendanceContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminAttendanceContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminAttendanceContextQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminAttendanceContext>>>
+export type GetAdminAttendanceContextQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get school and attendance policy values required by Attendance Overview
+ */
+
+export function useGetAdminAttendanceContext<TData = Awaited<ReturnType<typeof getAdminAttendanceContext>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminAttendanceContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminAttendanceContextQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminExamControllerContextUrl = () => {
+
+
+
+
+  return `/api/admin/exam-controller/context`
+}
+
+/**
+ * @summary Get school metadata required by the Exam Controller
+ */
+export const getAdminExamControllerContext = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminExamControllerContext> => {
+
+  return customFetch<AdminExamControllerContext>(getGetAdminExamControllerContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminExamControllerContextQueryKey = () => {
+    return [
+    `/api/admin/exam-controller/context`
+    ] as const;
+    }
+
+
+export const getGetAdminExamControllerContextQueryOptions = <TData = Awaited<ReturnType<typeof getAdminExamControllerContext>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminExamControllerContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminExamControllerContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminExamControllerContext>>> = ({ signal }) => getAdminExamControllerContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminExamControllerContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminExamControllerContextQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminExamControllerContext>>>
+export type GetAdminExamControllerContextQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get school metadata required by the Exam Controller
+ */
+
+export function useGetAdminExamControllerContext<TData = Awaited<ReturnType<typeof getAdminExamControllerContext>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminExamControllerContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminExamControllerContextQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminNoticeboardContextUrl = () => {
+
+
+
+
+  return `/api/admin/noticeboard/context`
+}
+
+/**
+ * @summary Get school metadata required by the Noticeboard
+ */
+export const getAdminNoticeboardContext = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminNoticeboardContext> => {
+
+  return customFetch<AdminNoticeboardContext>(getGetAdminNoticeboardContextUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminNoticeboardContextQueryKey = () => {
+    return [
+    `/api/admin/noticeboard/context`
+    ] as const;
+    }
+
+
+export const getGetAdminNoticeboardContextQueryOptions = <TData = Awaited<ReturnType<typeof getAdminNoticeboardContext>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminNoticeboardContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminNoticeboardContextQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminNoticeboardContext>>> = ({ signal }) => getAdminNoticeboardContext({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminNoticeboardContext>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminNoticeboardContextQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminNoticeboardContext>>>
+export type GetAdminNoticeboardContextQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get school metadata required by the Noticeboard
+ */
+
+export function useGetAdminNoticeboardContext<TData = Awaited<ReturnType<typeof getAdminNoticeboardContext>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminNoticeboardContext>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminNoticeboardContextQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

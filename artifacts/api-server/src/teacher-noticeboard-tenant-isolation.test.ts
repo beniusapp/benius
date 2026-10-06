@@ -30,6 +30,7 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
     scopedNoticeReads: [] as Array<[number, number]>,
     deletes: [] as Array<[number, number]>,
     updates: [] as Array<[number, number, string]>,
+    bulkDeletes: [] as Array<[number, number]>,
     supportStaffReads: [] as number[],
   };
   const replacements: Array<{ name: string; hadOwn: boolean; original: unknown }> = [];
@@ -88,6 +89,10 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
     notices.set(id, updated);
     return updated;
   });
+  replaceStorage("bulkDeleteNotices", async (schoolId: number, olderThanDays: number) => {
+    calls.bulkDeletes.push([schoolId, olderThanDays]);
+    return 2;
+  });
   replaceStorage("getTeacherWithSchool", async (teacherId: number) => teacherId === teacher.id
     ? {
       teacher: { ...teacher },
@@ -112,6 +117,11 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
   app.use(express.json());
   app.use((req, _res, next) => {
     const role = req.get("x-test-role") ?? "support_staff";
+    const allowedModules = role === "no_noticeboard_grant"
+      ? []
+      : role === "legacy_noticeboard_child"
+        ? ["noticeboard:view"]
+        : ["noticeboard"];
     (req as any).session = role === "anonymous"
       ? {}
       : role === "admin"
@@ -119,10 +129,10 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
         : role === "teacher"
           ? { teacherId: teacher.id, userId: teacher.userId, userRole: "teacher", schoolId: 1 }
           : role === "mismatched_staff"
-            ? { userId: -staffAccount.id, staffId: staffAccount.id, userRole: "support_staff", schoolId: 2 }
+            ? { userId: -staffAccount.id, staffId: staffAccount.id, userRole: "support_staff", schoolId: 2, allowedModules }
           : role === "inactive_staff"
-            ? { userId: -8, staffId: 8, userRole: "support_staff", schoolId: 1 }
-            : { userId: -staffAccount.id, staffId: staffAccount.id, userRole: "support_staff", schoolId: 1 };
+            ? { userId: -8, staffId: 8, userRole: "support_staff", schoolId: 1, allowedModules }
+            : { userId: -staffAccount.id, staffId: staffAccount.id, userRole: "support_staff", schoolId: 1, allowedModules };
     next();
   });
   registerTeacherRoutes(app);
@@ -152,6 +162,30 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
     });
     const text = await response.text();
     return { status: response.status, body: text ? JSON.parse(text) as any : null };
+  }
+
+  for (const role of ["no_noticeboard_grant", "legacy_noticeboard_child"]) {
+    const deniedRequests = [
+      await request("/api/notices/1/all", { role }),
+      await request("/api/notices/1?target=student", { role }),
+      await request("/api/notices", {
+        role,
+        method: "POST",
+        body: { schoolId: 1, targetType: "whole_school", content: "Must be denied" },
+      }),
+      await request("/api/notices/11", { role, method: "PUT", body: { content: "Must be denied" } }),
+      await request("/api/notices/11", { role, method: "DELETE" }),
+      await request("/api/admin/notices/bulk", {
+        role,
+        method: "DELETE",
+        body: { olderThanDays: 30 },
+      }),
+    ];
+    assert.deepEqual(
+      deniedRequests.map(response => response.status),
+      Array(6).fill(403),
+      `${role} must not use protected Noticeboard APIs`,
+    );
   }
 
   const staffSchoolARead = await request("/api/notices/1?target=student&class=7&schoolId=2");
@@ -221,6 +255,13 @@ test("Web Noticeboard routes keep Support Staff and Admin within their authentic
   const staffDeleteOwn = await request("/api/notices/11", { method: "DELETE" });
   assert.equal(staffDeleteOwn.status, 200);
   assert.deepEqual(calls.deletes.at(-1), [11, 1]);
+
+  const staffBulkDelete = await request("/api/admin/notices/bulk", {
+    method: "DELETE",
+    body: { olderThanDays: 30, schoolId: 2 },
+  });
+  assert.equal(staffBulkDelete.status, 200);
+  assert.deepEqual(calls.bulkDeletes.at(-1), [1, 30], "bulk delete keeps the authenticated school, not a body override");
 
   const deletesBeforeForeignDelete = calls.deletes.length;
   const staffDeleteForeign = await request("/api/notices/22", { method: "DELETE" });

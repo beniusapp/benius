@@ -4,6 +4,7 @@ import {
   canonicalizeSupportStaffGrants,
   filterSupportStaffGrants,
   hasSupportStaffModuleGrant,
+  isSupportStaffParentOnlyModule,
   SUPPORT_STAFF_PERMISSION_MODULES,
   expandModulesWithSubs,
 } from "./admin-tiles";
@@ -46,24 +47,50 @@ test("the Support Staff permission editor excludes School Setup", () => {
   );
 });
 
-test("Timetable and School Calendar are parent-only grants in the editor", () => {
+test("parent-only modules are single grants in the editor and old child grants are removed on save", () => {
+  const parentOnlyModules = [
+    "timetable",
+    "school-calendar",
+    "attendance",
+    "exam-controller",
+    "complaint-hub",
+    "noticeboard",
+  ];
   const canonical = canonicalizeSupportStaffGrants([
     "timetable",
     "timetable:schedule",
-    "school-calendar:events",
+    "attendance",
     "attendance:students",
+    "exam-controller",
+    "exam-controller:ledger",
+    "complaint-hub",
+    "complaint-hub:private",
+    "noticeboard",
+    "noticeboard:bulk-delete",
+    "school-calendar:events",
   ]);
-  assert.deepEqual(canonical, ["timetable", "attendance:students"]);
+  assert.deepEqual(canonical, [
+    "timetable",
+    "attendance",
+    "exam-controller",
+    "complaint-hub",
+    "noticeboard",
+  ]);
   assert.deepEqual(expandModulesWithSubs(canonical), [
     "timetable",
-    "attendance:students",
+    "attendance",
+    "exam-controller",
+    "complaint-hub",
+    "noticeboard",
   ]);
-  assert.equal(
-    hasSupportStaffModuleGrant(["school-calendar:holidays"], "school-calendar"),
-    false,
-  );
-  assert.equal(
-    hasSupportStaffModuleGrant(["school-calendar"], "school-calendar"),
-    true,
+  for (const moduleId of parentOnlyModules) {
+    assert.equal(isSupportStaffParentOnlyModule(moduleId), true);
+    assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
+    assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
+  }
+  assert.equal(isSupportStaffParentOnlyModule("student-registry"), false);
+  assert.deepEqual(
+    canonicalizeSupportStaffGrants(["student-registry:view"]),
+    ["student-registry:view"],
   );
 });

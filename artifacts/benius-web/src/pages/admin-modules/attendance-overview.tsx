@@ -36,6 +36,7 @@ interface SchoolConfig {
   classes: string[];
   sections: string[];
   subjects: string[];
+  attendanceTarget?: number;
 }
 
 interface AttendanceOverview {
@@ -249,10 +250,12 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
   }, [date, filterClass, filterSection, viewSessionId, queryClient]);
 
   const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
-    queryKey: ["/api/admin/school-config"],
+    queryKey: ["/api/admin/attendance/context", schoolId],
     queryFn: async () => {
-      const r = await sessionFetch("/api/admin/school-config");
-      return r.ok ? r.json() : { classes: [], sections: [], subjects: [] };
+      const r = await sessionFetch("/api/admin/attendance/context");
+      return r.ok
+        ? r.json()
+        : { classes: [], sections: [], subjects: [], attendanceTarget: 85 };
     },
     enabled: !!schoolId,
   });
@@ -297,17 +300,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
     refetchOnMount: "always",
   });
 
-  const { data: studentPolicy } = useQuery<{ attendanceTarget: number }>({
-    queryKey: ["/api/admin/attendance-policies/resolve", "STUDENT"],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/admin/attendance-policies/resolve?role=STUDENT");
-      return r.ok ? r.json() : { attendanceTarget: 85 };
-    },
-    enabled: !!schoolId,
-    staleTime: 300000,
-  });
-
-  const studentAttTarget = studentPolicy?.attendanceTarget ?? 85;
+  const studentAttTarget = schoolConfig?.attendanceTarget ?? 85;
 
   const studentData = classDetail?.students ?? [];
   const submissionMeta = classDetail?.meta ?? { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null };

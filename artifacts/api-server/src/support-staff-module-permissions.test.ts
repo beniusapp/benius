@@ -22,21 +22,23 @@ test("removes School Setup grants without changing any other Support Staff grant
   );
 });
 
-test("Timetable and School Calendar require their exact parent grant", () => {
-  assert.equal(hasSupportStaffModuleAccess(["timetable"], "timetable"), true);
-  assert.equal(hasSupportStaffModuleAccess(["school-calendar"], "school-calendar"), true);
-  assert.equal(
-    hasSupportStaffModuleAccess(["timetable:schedule"], "timetable"),
-    false,
-  );
-  assert.equal(
-    hasSupportStaffModuleAccess(["school-calendar:events"], "school-calendar"),
-    false,
-  );
-  assert.equal(
-    supportStaffModuleAccessAllowed("support_staff", ["timetable:publish"], "timetable"),
-    false,
-  );
+test("parent-only modules require their exact parent grant", () => {
+  const parentOnlyModules = [
+    "timetable",
+    "school-calendar",
+    "attendance",
+    "exam-controller",
+    "complaint-hub",
+    "noticeboard",
+  ];
+  for (const moduleId of parentOnlyModules) {
+    assert.equal(hasSupportStaffModuleAccess([moduleId], moduleId), true);
+    assert.equal(hasSupportStaffModuleAccess([`${moduleId}:legacy-child`], moduleId), false);
+    assert.equal(
+      supportStaffModuleAccessAllowed("support_staff", [`${moduleId}:legacy-child`], moduleId),
+      false,
+    );
+  }
   assert.equal(
     supportStaffModuleAccessAllowed("support_staff", ["school-calendar"], "school-calendar"),
     true,
@@ -45,7 +47,7 @@ test("Timetable and School Calendar require their exact parent grant", () => {
   assert.equal(adminModuleAccessAllowed("teacher", [], "school-calendar"), false);
 });
 
-test("canonicalizes legacy child grants only for Timetable and School Calendar", () => {
+test("canonicalizes legacy child grants for parent-only modules without changing other grants", () => {
   assert.deepEqual(
     canonicalizeSupportStaffAllowedModules([
       "school-setup",
@@ -58,13 +60,19 @@ test("canonicalizes legacy child grants only for Timetable and School Calendar",
       "school-calendar:holidays",
       "attendance",
       "attendance:students",
+      "exam-controller",
+      "exam-controller:ledger",
+      "complaint-hub:private",
+      "noticeboard",
+      "noticeboard:bulk-delete",
       "fees-manager:fee-structures",
     ]),
     [
       "timetable",
       "school-calendar",
       "attendance",
-      "attendance:students",
+      "exam-controller",
+      "noticeboard",
       "fees-manager:fee-structures",
     ],
   );
@@ -74,6 +82,10 @@ test("canonicalizes legacy child grants only for Timetable and School Calendar",
   );
   assert.deepEqual(
     canonicalizeSupportStaffAllowedModules(["school-calendar:events"]),
+    [],
+  );
+  assert.deepEqual(
+    canonicalizeSupportStaffAllowedModules(["exam-controller:wizard", "complaint-hub:private", "noticeboard:view"]),
     [],
   );
 });

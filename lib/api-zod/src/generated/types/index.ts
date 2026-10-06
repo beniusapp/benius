@@ -6,8 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './adminAttendanceContext';
 export * from './adminCalendarContext';
 export * from './adminCalendarContextClassSections';
+export * from './adminExamControllerContext';
+export * from './adminNoticeboardContext';
 export * from './adminTimetableContext';
 export * from './healthStatus';
 export * from './mobileTeacherFirstLoginPasswordChange';

@@ -9,6 +9,10 @@ export function filterSupportStaffAllowedModules(
 export const SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS = [
   "timetable",
   "school-calendar",
+  "attendance",
+  "exam-controller",
+  "complaint-hub",
+  "noticeboard",
 ] as const;
 
 export function hasSupportStaffModuleAccess(

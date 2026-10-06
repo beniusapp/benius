@@ -38,6 +38,36 @@ export const GetAdminCalendarContextResponse = zod.object({
 
 
 /**
+ * @summary Get school and attendance policy values required by Attendance Overview
+ */
+export const GetAdminAttendanceContextResponse = zod.object({
+  "classes": zod.array(zod.string()),
+  "sections": zod.array(zod.string()),
+  "subjects": zod.array(zod.string()),
+  "attendanceTarget": zod.number()
+})
+
+
+/**
+ * @summary Get school metadata required by the Exam Controller
+ */
+export const GetAdminExamControllerContextResponse = zod.object({
+  "classes": zod.array(zod.string()),
+  "sections": zod.array(zod.string()),
+  "exam_types": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Get school metadata required by the Noticeboard
+ */
+export const GetAdminNoticeboardContextResponse = zod.object({
+  "classes": zod.array(zod.string()),
+  "sections": zod.array(zod.string())
+})
+
+
+/**
  * Uses a short-lived single-purpose challenge and returns no authenticated session.
  * @summary Complete a teacher's required first-login password change
  */

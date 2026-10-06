@@ -52,6 +52,48 @@ paths:
                 $ref: "#/components/schemas/AdminCalendarContext"
         "403":
           description: Admin access or the Support Staff School Calendar grant is required
+  /admin/attendance/context:
+    get:
+      operationId: getAdminAttendanceContext
+      tags: [admin-attendance]
+      summary: Get school and attendance policy values required by Attendance Overview
+      responses:
+        "200":
+          description: Attendance setup values for the authenticated school
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminAttendanceContext"
+        "403":
+          description: Admin access or the Support Staff Attendance Overview grant is required
+  /admin/exam-controller/context:
+    get:
+      operationId: getAdminExamControllerContext
+      tags: [admin-exam-controller]
+      summary: Get school metadata required by the Exam Controller
+      responses:
+        "200":
+          description: Exam Controller setup values for the authenticated school
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminExamControllerContext"
+        "403":
+          description: Admin access or the Support Staff Exam Controller grant is required
+  /admin/noticeboard/context:
+    get:
+      operationId: getAdminNoticeboardContext
+      tags: [admin-noticeboard]
+      summary: Get school metadata required by the Noticeboard
+      responses:
+        "200":
+          description: Noticeboard targeting values for the authenticated school
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminNoticeboardContext"
+        "403":
+          description: Admin access or the Support Staff Noticeboard grant is required
   /mobile/auth/teacher/change-password:
     post:
       operationId: mobileTeacherFirstLoginChangePassword
@@ -122,6 +164,52 @@ components:
             items:
               type: string
       required: [classes, sections, classSections]
+    AdminAttendanceContext:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            type: string
+        sections:
+          type: array
+          items:
+            type: string
+        subjects:
+          type: array
+          items:
+            type: string
+        attendanceTarget:
+          type: number
+      required: [classes, sections, subjects, attendanceTarget]
+    AdminExamControllerContext:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            type: string
+        sections:
+          type: array
+          items:
+            type: string
+        exam_types:
+          type: array
+          items:
+            type: string
+      required: [classes, sections, exam_types]
+    AdminNoticeboardContext:
+      type: object
+      properties:
+        classes:
+          type: array
+          items:
+            type: string
+        sections:
+          type: array
+          items:
+            type: string
+      required: [classes, sections]
     MobileTeacherFirstLoginPasswordChange:
       type: object
       additionalProperties: false

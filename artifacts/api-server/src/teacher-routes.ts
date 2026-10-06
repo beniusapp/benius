@@ -73,6 +73,26 @@ function requireSupportStaffModule(
   return false;
 }
 
+function requireAdminModuleAccess(
+  req: Request,
+  res: Response,
+  moduleId: string,
+  moduleLabel: string,
+): boolean {
+  if (
+    req.session.userId &&
+    adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      moduleId,
+    )
+  ) {
+    return true;
+  }
+  res.status(403).json({ message: `${moduleLabel} access required` });
+  return false;
+}
+
 type TeacherHomeworkContext = {
   teacher: NonNullable<Awaited<ReturnType<typeof storage.getTeacherById>>>;
   schoolId: number;
@@ -1412,6 +1432,10 @@ export function registerTeacherRoutes(app: Express) {
     diskUpload.single("file"),
     async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "noticeboard", "Noticeboard")) {
+      removeStagedNoticeUpload(req);
+      return;
+    }
     const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
     const rawBody = req.body as Record<string, unknown>;
     let content = rawBody.content as string | undefined;
@@ -1545,6 +1569,7 @@ export function registerTeacherRoutes(app: Express) {
     }),
     async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "noticeboard", "Noticeboard")) return;
     const schoolIdParam = Array.isArray(req.params.schoolId)
       ? req.params.schoolId[0] ?? ""
       : req.params.schoolId;
@@ -1600,6 +1625,7 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId || req.session.userRole === "teacher") {
       return res.status(403).json({ message: "Teachers cannot access the full-school notice feed." });
     }
+    if (!requireSupportStaffModule(req, res, "noticeboard", "Noticeboard")) return;
     const sid = parseInt(req.params.schoolId);
     if (!isPositiveSafeInteger(sid)) return res.status(400).json({ message: "Invalid schoolId." });
     const authenticatedSchoolId = await resolveAuthenticatedNoticeSchoolId(req, res);
@@ -1618,6 +1644,7 @@ export function registerTeacherRoutes(app: Express) {
     if (req.session.teacherId || req.session.userRole === "teacher") {
       return res.status(403).json({ message: "Teachers cannot bulk-delete notices." });
     }
+    if (!requireAdminModuleAccess(req, res, "noticeboard", "Noticeboard")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const { olderThanDays } = req.body;
@@ -1647,6 +1674,7 @@ export function registerTeacherRoutes(app: Express) {
     withTeacherNoticeContext("CURRENT_SESSION_WRITE", { optional: true }),
     async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "noticeboard", "Noticeboard")) return;
     const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] ?? "" : req.params.id;
     const id = teacherContext
@@ -1690,6 +1718,7 @@ export function registerTeacherRoutes(app: Express) {
     withTeacherNoticeContext("CURRENT_SESSION_WRITE", { optional: true }),
     async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "noticeboard", "Noticeboard")) return;
     const teacherContext = (req as TeacherNoticeRequest).teacherNoticeContext;
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] ?? "" : req.params.id;
     const id = teacherContext
@@ -1915,6 +1944,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.patch("/api/complaints/:id/status", async (req, res) => {
     if (!req.session.userId && !req.session.teacherId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "complaint-hub", "Complaint Hub")) return;
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ message: "Invalid ID" });
 
@@ -1950,6 +1980,12 @@ export function registerTeacherRoutes(app: Express) {
     if (!adminSchoolId) return res.status(403).json({ message: "Admin school context missing" });
     const c = await storage.getComplaintByIdForSchool(id, adminSchoolId);
     if (!c) return res.status(404).json({ message: "Complaint not found" });
+    if (
+      req.session.userRole === "support_staff" &&
+      (!(req as any).viewSessionId || c.sessionId !== (req as any).viewSessionId)
+    ) {
+      return res.status(404).json({ message: "Complaint not found in the selected session." });
+    }
     const { status, resolutionRemarks } = req.body;
     if (!["Pending", "Investigating", "Resolved", "Escalated"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const updated = await storage.updateComplaintStatus(id, adminSchoolId, status, resolutionRemarks?.trim() || undefined);
@@ -1958,6 +1994,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.post("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "complaint-hub", "Complaint Hub")) return;
     const complaintId = Number(req.params.id);
     if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid ID" });
 
@@ -1978,6 +2015,12 @@ export function registerTeacherRoutes(app: Express) {
     if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
     const complaint = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (
+      req.session.userRole === "support_staff" &&
+      (!(req as any).viewSessionId || complaint.sessionId !== (req as any).viewSessionId)
+    ) {
+      return res.status(404).json({ message: "Complaint not found in the selected session." });
+    }
 
     if (teacher) {
       if (!teacherComplaintMatchesSession(complaint, actorSchoolId, selectedSessionId!)) {
@@ -2011,6 +2054,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/complaints/:id/notes", async (req, res) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!requireSupportStaffModule(req, res, "complaint-hub", "Complaint Hub")) return;
     const complaintId = Number(req.params.id);
     if (!Number.isSafeInteger(complaintId) || complaintId <= 0) return res.status(400).json({ message: "Invalid ID" });
 
@@ -2031,6 +2075,12 @@ export function registerTeacherRoutes(app: Express) {
     if (!actorSchoolId) return res.status(403).json({ message: "School context missing" });
     const complaint = await storage.getComplaintByIdForSchool(complaintId, actorSchoolId);
     if (!complaint) return res.status(404).json({ message: "Complaint not found" });
+    if (
+      req.session.userRole === "support_staff" &&
+      (!(req as any).viewSessionId || complaint.sessionId !== (req as any).viewSessionId)
+    ) {
+      return res.status(404).json({ message: "Complaint not found in the selected session." });
+    }
 
     if (teacher) {
       if (!teacherComplaintMatchesSession(complaint, actorSchoolId, selectedSessionId!)) {
@@ -2174,6 +2224,7 @@ export function registerTeacherRoutes(app: Express) {
   // ===== COMPLAINT BULK DELETE (Admin only) =====
   app.delete("/api/admin/complaints/bulk", async (req, res) => {
     if (!req.session.userId) return res.status(401).json({ message: "Admin only" });
+    if (!requireAdminModuleAccess(req, res, "complaint-hub", "Complaint Hub")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(400).json({ message: "No school context" });
     const { olderThanDays, complaintTypes } = req.body;
@@ -3203,6 +3254,82 @@ export function registerTeacherRoutes(app: Express) {
     });
   });
 
+  app.get("/api/admin/attendance/context", async (req, res) => {
+    if (
+      !req.session.userId ||
+      !adminModuleAccessAllowed(
+        req.session.userRole,
+        req.session.allowedModules,
+        "attendance",
+      )
+    ) {
+      return res.status(403).json({ message: "Attendance Overview access required" });
+    }
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "School access denied" });
+    try {
+      const [metadata, policies] = await Promise.all([
+        storage.getAllSchoolMetadata(schoolId),
+        db.select().from(attendancePolicies).where(
+          and(
+            eq(attendancePolicies.schoolId, schoolId),
+            eq(attendancePolicies.isActive, true),
+          ),
+        ),
+      ]);
+      const studentPolicy = resolvePolicy(policies, "STUDENT", "");
+      return res.json({
+        classes: metadata.classes ?? [],
+        sections: metadata.sections ?? [],
+        subjects: metadata.subjects ?? [],
+        attendanceTarget: studentPolicy.attendanceTarget,
+      });
+    } catch {
+      return res.status(500).json({ message: "Failed to load Attendance Overview context" });
+    }
+  });
+
+  app.get("/api/admin/exam-controller/context", async (req, res) => {
+    if (
+      !req.session.userId ||
+      !adminModuleAccessAllowed(
+        req.session.userRole,
+        req.session.allowedModules,
+        "exam-controller",
+      )
+    ) {
+      return res.status(403).json({ message: "Exam Controller access required" });
+    }
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "School access denied" });
+    const metadata = await storage.getAllSchoolMetadata(schoolId);
+    return res.json({
+      classes: metadata.classes ?? [],
+      sections: metadata.sections ?? [],
+      exam_types: metadata.exam_types ?? [],
+    });
+  });
+
+  app.get("/api/admin/noticeboard/context", async (req, res) => {
+    if (
+      !req.session.userId ||
+      !adminModuleAccessAllowed(
+        req.session.userRole,
+        req.session.allowedModules,
+        "noticeboard",
+      )
+    ) {
+      return res.status(403).json({ message: "Noticeboard access required" });
+    }
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "School access denied" });
+    const metadata = await storage.getAllSchoolMetadata(schoolId);
+    return res.json({
+      classes: metadata.classes ?? [],
+      sections: metadata.sections ?? [],
+    });
+  });
+
   app.post("/api/timetable", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     if (!requireSupportStaffModule(req, res, "timetable", "Timetable Master")) return;
@@ -4080,8 +4207,7 @@ export function registerTeacherRoutes(app: Express) {
 
   // ── Ledger Status Overview (admin) ──────────────────────────────────────────
   app.get("/api/admin/ledger-status", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { term } = req.query as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
     try {
@@ -4096,8 +4222,7 @@ export function registerTeacherRoutes(app: Express) {
 
   // ── Available terms — all exam types configured in school setup ─────────────
   app.get("/api/admin/ledger-terms", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     try {
       const terms = await storage.getSchoolMetadata(req.session.schoolId!, "exam_types");
       res.json(terms);
@@ -4108,8 +4233,7 @@ export function registerTeacherRoutes(app: Express) {
 
   // ── Delete all promotion decisions for a term (purge old/stale ledger) ────────
   app.delete("/api/admin/ledger-term/:term", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const term = decodeURIComponent(req.params.term);
     if (!term) return res.status(400).json({ message: "term is required" });
     try {
@@ -4139,8 +4263,7 @@ Thank you for your prompt attention to this matter.
   // teacher.assignedClass/Section, then pins the notice to that teacher's ID.
   // targetType:"teacher" + targetTeacherId guarantee ZERO student leakage.
   app.post("/api/admin/send-ledger-reminder", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { className, section, term } = req.body as Record<string, string>;
     if (!className || !section || !term)
       return res.status(400).json({ message: "className, section, and term are required" });
@@ -4176,8 +4299,7 @@ Thank you for your prompt attention to this matter.
   // notice directly to their ID.  Teachers with multiple pending ledgers each
   // receive a separate notice per class-section they manage.
   app.post("/api/admin/send-ledger-reminder-all", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { term } = req.body as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
     const schoolId = req.session.schoolId!;
@@ -4219,8 +4341,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/exam/aggregated", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { class: cls, section, examType, term } = req.query as Record<string, string>;
     if (!cls || !section || !examType)
       return res.status(400).json({ message: "class, section, and examType are required" });
@@ -4277,8 +4398,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const overrideSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
@@ -4295,8 +4415,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/exam/override/bulk", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const itemSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
@@ -4314,8 +4433,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/exam/override/cohort", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const schema = z.object({
       class: z.string().min(1),
       section: z.string().min(1),
@@ -4328,8 +4446,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/exam/override", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const clearSchema = z.object({
       studentId: z.number().int().positive(),
       examType: z.string().min(1),
@@ -4343,8 +4460,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/promote", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const promoteSchema = z.object({
       term: z.string().optional(),
       items: z.array(z.object({
@@ -4519,7 +4635,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== COMPLAINTS BY SCHOOL (Admin only — teachers excluded) =====
   app.get("/api/complaints/school/:schoolId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "complaint-hub", "Complaint Hub")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;

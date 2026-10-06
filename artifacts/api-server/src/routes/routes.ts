@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { type Server } from "http";
 import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
 import { registerAdminCalendarRoutes } from "../admin-calendar-routes";
+import { adminModuleAccessAllowed } from "../support-staff-module-permissions";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
@@ -1769,7 +1770,11 @@ export async function registerRoutes(
 
   // ===== ADMIN: STUDENT PROFILE SUMMARY (for Quick Action in attendance) =====
   app.get("/api/admin/students/:studentId/summary", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || !adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "attendance",
+    )) return res.status(403).json({ message: "Attendance Overview access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const studentId = parseInt(req.params.studentId);
@@ -2852,7 +2857,11 @@ export async function registerRoutes(
 
   // ===== ADMIN ATTENDANCE: CLASS DETAIL =====
   app.get("/api/admin/attendance/class-detail", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || !adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "attendance",
+    )) return res.status(403).json({ message: "Attendance Overview access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { class: cls, section, date } = req.query as { class?: string; section?: string; date?: string };
@@ -2956,7 +2965,11 @@ export async function registerRoutes(
 
   // ===== ADMIN ATTENDANCE: SCHOOL-WIDE OVERVIEW (enrollment-based) =====
   app.get("/api/admin/attendance/overview", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || !adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "attendance",
+    )) return res.status(403).json({ message: "Attendance Overview access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { date } = req.query as { date?: string };
@@ -2995,7 +3008,11 @@ export async function registerRoutes(
   });
 
   app.get("/api/admin/attendance/teacher-summary", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+    if (!req.session.userId || !adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "attendance",
+    )) return res.status(403).json({ message: "Attendance Overview access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school associated with session" });
     const { date } = req.query as { date?: string };

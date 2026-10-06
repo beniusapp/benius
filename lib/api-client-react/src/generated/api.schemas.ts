@@ -23,6 +23,24 @@ export interface AdminCalendarContext {
   classSections: AdminCalendarContextClassSections;
 }
 
+export interface AdminAttendanceContext {
+  classes: string[];
+  sections: string[];
+  subjects: string[];
+  attendanceTarget: number;
+}
+
+export interface AdminExamControllerContext {
+  classes: string[];
+  sections: string[];
+  exam_types: string[];
+}
+
+export interface AdminNoticeboardContext {
+  classes: string[];
+  sections: string[];
+}
+
 export interface MobileTeacherFirstLoginPasswordChange {
   challengeToken: string;
   currentPassword: string;
