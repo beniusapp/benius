@@ -1,0 +1,191 @@
+# BENIUS — TEACHER DELETE LOGIC: PREVIOUS VS CURRENT
+
+## READ-ONLY AUDIT ONLY
+
+DO NOT CHANGE ANY CODE.
+
+DO NOT CHANGE DATABASE.
+
+DO NOT MODIFY WEB OR MOBILE.
+
+DO NOT DEPLOY.
+
+I want to understand exactly what changed in the **Teacher Registry Delete Teacher behavior** during the most recent Support Staff granular-permission work.
+
+---
+
+# QUESTION
+
+Immediately BEFORE the latest Teacher Registry permission change:
+
+When Principal/Admin clicked the red **Delete Teacher** button:
+
+### What exactly happened?
+
+I want the actual previous code behavior, not an assumption.
+
+Then compare it with:
+
+### What exactly happens NOW?
+
+The current UI appears to keep the Teacher in Teacher Registry as **INACTIVE**, with a Reactivate action.
+
+---
+
+# PLEASE USE CODE HISTORY / DIFF
+
+Inspect:
+
+- current implementation
+- immediately previous implementation before the latest Teacher/Student Registry granular-permission change
+- git diff/history if available
+
+Do NOT describe an older historical implementation unless it was the implementation immediately before this latest change.
+
+I specifically want:
+
+```text
+JUST BEFORE LATEST CHANGE
+vs
+CURRENT LOGIC
+```
+
+---
+
+# COMPARE THESE ITEMS
+
+For the PREVIOUS logic and CURRENT logic, answer:
+
+1. When Delete Teacher is clicked, is the Teacher row:
+   - physically deleted from database?
+   - soft-deactivated?
+   - moved/recorded in Removed History?
+   - something else?
+
+2. What happens to the related login/user account?
+
+3. Can that Teacher still log in?
+
+4. Does the Teacher remain visible in the normal Teacher Registry?
+
+5. Does the Teacher appear in Removed History?
+
+6. Was there a Restore/Reactivate mechanism?
+
+7. What happens to historical Teacher-related data?
+
+8. Which API endpoint handled Delete previously?
+
+9. Which API endpoint handles it now?
+
+10. Which database tables/fields are changed by the previous Delete and current Delete?
+
+11. Did the latest granular Support Staff permission task intentionally change the actual Principal/Admin Teacher deletion lifecycle, or was only permission enforcement supposed to change?
+
+---
+
+# VERY IMPORTANT
+
+Also answer whether the latest implementation changed Principal/Admin behavior from something like:
+
+```text
+Delete Teacher
+→ remove teacher
+→ Removed History
+```
+
+to:
+
+```text
+Delete Teacher
+→ keep teacher row
+→ mark INACTIVE
+→ show Reactivate
+```
+
+If yes, explain exactly why that behavioral change was made and which files/code changed it.
+
+---
+
+# STUDENT REGISTRY
+
+For comparison only, briefly state the current Student Delete behavior:
+
+- hard delete?
+- soft deactivate?
+- remains visible?
+- reactivate available?
+
+Do NOT change Student behavior.
+
+---
+
+# REQUIRED OUTPUT
+
+Return:
+
+## TEACHER DELETE — PREVIOUS VS CURRENT LOGIC
+
+| Behavior | Immediately Previous Logic | Current Logic |
+|---|---|---|
+| Teacher DB row | | |
+| User/login row | | |
+| Can login? | | |
+| Normal Registry visibility | | |
+| Removed History | | |
+| Restore/Reactivate | | |
+| Historical data | | |
+| API endpoint | | |
+| Main DB fields/tables changed | | |
+
+### Previous Delete Flow
+
+Show simply:
+
+Teacher → Delete → ... → final state
+
+### Current Delete Flow
+
+Show simply:
+
+Teacher → Delete → ... → final state
+
+### Why did this change?
+
+State exactly whether the latest task changed the business logic and why.
+
+### Principal/Admin behavior changed?
+
+YES / NO
+
+Explain.
+
+### Support Staff behavior
+
+Explain previous/current behavior separately if different.
+
+### Student Delete comparison
+
+Explain briefly.
+
+### Files responsible for the lifecycle change
+
+List them.
+
+### Code changes in this audit
+
+NONE
+
+### Database changes in this audit
+
+NONE
+
+### Mobile changes
+
+NONE
+
+### Deployment
+
+NONE
+
+STOP.
