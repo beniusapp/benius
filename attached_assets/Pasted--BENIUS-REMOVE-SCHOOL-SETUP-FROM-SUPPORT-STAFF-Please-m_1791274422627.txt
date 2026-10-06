@@ -1,0 +1,78 @@
+# BENIUS — REMOVE SCHOOL SETUP FROM SUPPORT STAFF
+
+Please make this small focused correction.
+
+## Product Decision
+
+**School Setup is Principal/Admin-only.**
+
+Support Staff must NOT be able to access or manage School Setup, even if an old Support Staff account still has legacy School Setup permission values stored.
+
+### Remove School Setup completely from the Support Staff permission editor.
+
+This includes all its submodules:
+
+- Academic Sessions
+- Classes
+- Sections
+- Subjects
+- Exam Types
+- Class–Section Mapping
+- Class–Subject Mapping
+- Class–Exam Type Mapping
+- Academic Policy (Grading)
+- Exam & Promotion Policy
+- Leave Policy
+- Attendance Policy
+
+## Required behavior
+
+For Support Staff:
+
+- School Setup must NOT appear in **Edit Permissions**.
+- School Setup must NOT appear on the Support Staff dashboard.
+- Support Staff must NOT access School Setup by manually entering a URL.
+- Support Staff must NOT use School Setup management APIs.
+- Existing/legacy `school-setup` permission strings must NOT give access.
+
+For Principal/Admin:
+
+- School Setup remains completely unchanged and fully functional.
+
+## IMPORTANT — Academic Session Selector
+
+Do **NOT** remove or break the Support Staff Academic Session selector.
+
+Support Staff may still see/select the school's Academic Session for modules they are authorized to use.
+
+That is separate from **Academic Session management**, which remains Principal/Admin-only.
+
+## Scope
+
+Do NOT change other Support Staff permissions.
+
+Do NOT change Fees & Payments.
+
+Do NOT change the Academic Session selector/foundation.
+
+Do NOT change Mobile.
+
+Do NOT change database schema.
+
+Do NOT deploy.
+
+## Verify
+
+Confirm:
+
+- Support Staff permission editor → School Setup absent
+- Support Staff dashboard → School Setup absent
+- Direct URL → blocked
+- School Setup APIs → blocked for Support Staff
+- Legacy stored School Setup permission → still blocked
+- Principal/Admin → unchanged
+- Support Staff Academic Session selector → still works
+
+Return files changed, tests/builds performed, and:
+
+**FINAL VERDICT: PASS / NEEDS CHANGES**
