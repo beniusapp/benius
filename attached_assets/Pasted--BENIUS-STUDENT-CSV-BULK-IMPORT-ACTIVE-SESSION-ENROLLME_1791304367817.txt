@@ -1,0 +1,1048 @@
+# BENIUS — STUDENT CSV/BULK IMPORT + ACTIVE-SESSION ENROLLMENT CONSISTENCY FIX
+
+Proceed with the next controlled Student Placement correction.
+
+This task is specifically for:
+
+**Web Student Registry → CSV/Bulk Student Import**
+
+Do NOT modify Promotion in this task.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+BENIUS is currently in DEVELOPMENT.
+
+---
+
+# EXISTING CONFIRMED ARCHITECTURE
+
+The previous task established this product rule:
+
+For the CURRENT / ACTIVE Academic Session:
+
+```text
+Student Registry
+=
+human-managed current Student placement
+
+Active-session enrollment
+=
+session-specific academic placement used by Attendance and other academic modules
+```
+
+When current placement is created or changed, BENIUS must keep:
+
+```text
+Class
+Section
+Roll Number
+```
+
+consistent between:
+
+```text
+Current Student Profile
++
+Active Academic Session Enrollment
+```
+
+Historical enrollments must remain untouched.
+
+Manual Student Add/Edit has already been corrected.
+
+Teacher Attendance already correctly uses selected-session enrollment.
+
+DO NOT undo those changes.
+
+---
+
+# CURRENT CSV PROBLEM
+
+The completed audit found that the Web CSV upload route:
+
+```text
+/api/schools/:schoolId/students/upload
+```
+
+bulk-creates Student profile records but does NOT create matching active-session enrollment records.
+
+Therefore CSV import can currently produce:
+
+```text
+Student Registry:
+MIS-1001
+Class 5/A
+Roll 1
+        ✅
+
+Active-session enrollment:
+MISSING
+        ❌
+```
+
+Then Student Registry can show the Student while Attendance cannot find the Student.
+
+This must be corrected.
+
+---
+
+# PRODUCT DECISION
+
+Every successfully imported active Student with academic placement must leave the import process with:
+
+```text
+Student Profile
++
+Active Academic Session Enrollment
+```
+
+with matching:
+
+```text
+Class
+Section
+Roll Number
+```
+
+for the ACTIVE Academic Session.
+
+Example CSV row:
+
+```text
+MIS-1001
+Class 5
+Section A
+Roll 1
+```
+
+Expected result:
+
+```text
+Student Profile:
+Class 5
+Section A
+Roll 1
+
+Active-session Enrollment:
+Class 5
+Section A
+Roll 1
+Status: Active
+```
+
+Attendance should then naturally find MIS-1001 under:
+
+```text
+Active Session
+Class 5
+Section A
+```
+
+No Attendance-specific workaround.
+
+---
+
+# IMPORTANT — REUSE THE NEW CANONICAL PLACEMENT LOGIC
+
+The previous Student Add/Edit task introduced shared/canonical backend logic for Student placement/enrollment synchronization.
+
+Inspect that implementation first.
+
+Do NOT create another independent version of the same business rule inside CSV Import if the existing shared placement/enrollment helper can safely be reused or extended.
+
+Desired architecture:
+
+```text
+Manual Add ─────────┐
+Manual Edit ────────┤
+                    ├──> Canonical Student Placement Logic
+CSV Import ─────────┘
+```
+
+Permission/transport handling may differ.
+
+The placement business rule must remain centralized.
+
+---
+
+# ACTIVE SESSION REQUIRED
+
+Before starting an import that creates current Student academic placement:
+
+Resolve exactly one valid ACTIVE Academic Session for the authenticated school.
+
+Do NOT:
+
+- guess a session
+- use another school's session
+- use an inactive/historical session
+- silently create Students without enrollment
+- silently skip enrollment creation
+
+If there is:
+
+```text
+NO active session
+```
+
+or an invalid/ambiguous active-session state:
+
+Reject the import BEFORE Student creation begins.
+
+Return a clear error.
+
+---
+
+# PRE-VALIDATE THE IMPORT
+
+Do not start writing Student records immediately while discovering obvious CSV problems row-by-row.
+
+Perform appropriate validation first.
+
+Validate at minimum:
+
+- authenticated school
+- active Academic Session
+- required Student fields
+- DSID/student identifier rules
+- Class
+- Section
+- Roll Number format where applicable
+- configured Class belongs to school
+- configured Section belongs to that Class/school
+- obvious duplicate identifiers within the uploaded file
+- conflicts with existing Students according to existing BENIUS rules
+
+Preserve existing Student Registry import requirements unless they conflict with the confirmed placement/enrollment architecture.
+
+Do NOT invent new business rules unnecessarily.
+
+---
+
+# TENANT ISOLATION
+
+Every imported Student and enrollment must belong to:
+
+```text
+authenticated school
+```
+
+Require:
+
+```text
+Authenticated School
+        =
+Student School
+        =
+Active Academic Session School
+        =
+Enrollment School
+```
+
+and validate Class/Section against that school.
+
+Never trust a client-supplied school ID by itself.
+
+School A must never import a Student or enrollment into School B.
+
+---
+
+# SUPPORT STAFF
+
+Support Staff with:
+
+```text
+Student Registry → Add Student
+```
+
+permission may continue using CSV Import according to the existing permission decision.
+
+Support Staff must use the SAME backend import/placement business logic as Principal/Admin.
+
+Do NOT create:
+
+```text
+Admin import logic
++
+Support Staff import logic
+```
+
+There should be one import behavior with authorization at the boundary.
+
+Support Staff without Add Student permission must remain denied.
+
+---
+
+# ATOMIC CONSISTENCY
+
+A Student must NEVER be committed as a successful import if the required active-session enrollment for that Student was not successfully created.
+
+The invariant is:
+
+```text
+Successful imported Student
+        ↓
+MUST HAVE
+        ↓
+matching active-session enrollment
+```
+
+If the Student/enrollment operation for a row fails:
+
+```text
+Student Profile ❌
+Enrollment ❌
+```
+
+Do NOT leave:
+
+```text
+Student Profile ✅
+Enrollment ❌
+```
+
+or:
+
+```text
+Student Profile ❌
+Enrollment ✅
+```
+
+Use database transactions appropriately.
+
+---
+
+# IMPORTANT — DO NOT USE ONE MASSIVE TRANSACTION FOR 100,000 STUDENTS
+
+BENIUS is intended to support large installations.
+
+Do NOT solve consistency by putting an entire potentially huge CSV import into one enormous transaction.
+
+That could create:
+
+- long database locks
+- excessive memory usage
+- huge rollback cost
+- timeout risk
+- poor concurrency
+
+Instead implement a scalable bounded/chunked approach.
+
+---
+
+# BOUNDED BATCHING
+
+Design the import to process validated rows in reasonable bounded batches/chunks.
+
+Choose a sensible batch size based on the existing stack/database.
+
+Do NOT hard-code architecture around the Development dataset size.
+
+Conceptually:
+
+```text
+CSV
+ ↓
+Validation
+ ↓
+Batch 1
+  Student + Enrollment pairs
+ ↓ commit
+
+Batch 2
+  Student + Enrollment pairs
+ ↓ commit
+
+Batch 3
+  ...
+```
+
+Within a committed batch, Student/enrollment consistency must be maintained.
+
+If the existing storage architecture makes per-row atomic Student+Enrollment operations safer initially, explain the trade-off and avoid uncontrolled parallelism.
+
+The important requirements are:
+
+- bounded memory
+- bounded transaction size
+- no half-created Student/enrollment pair
+- deterministic error reporting
+
+---
+
+# FAILURE POLICY
+
+Do NOT silently ignore enrollment failures.
+
+Return a useful import result.
+
+Clearly report:
+
+```text
+Total rows
+Successfully imported
+Failed
+Skipped/rejected
+```
+
+For failures, report safe row-level information such as:
+
+```text
+row number
+Student identifier if available
+reason
+```
+
+Do NOT expose passwords, secrets, hashes, or sensitive internal information.
+
+If the current BENIUS UI expects all-or-nothing import behavior, inspect that existing contract before changing response semantics.
+
+Preserve compatibility where reasonably possible while guaranteeing Student/enrollment consistency.
+
+Report any necessary contract change.
+
+---
+
+# DUPLICATES
+
+Handle duplicate situations safely.
+
+Audit and preserve the existing intended BENIUS behavior for:
+
+- duplicate DSID
+- duplicate username/login identity
+- duplicate row inside the same CSV
+- Student already existing in the school
+
+Do NOT accidentally convert CSV Import into Student Edit unless that behavior already exists and is intended.
+
+Do NOT overwrite an existing Student's historical enrollment merely because an import contains the same Student.
+
+---
+
+# CLASS / SECTION VALIDATION
+
+Do not accept arbitrary placement strings if the existing configured school placement metadata can validate them.
+
+Example:
+
+```text
+School 2 configured:
+Class 5
+Section a
+```
+
+CSV:
+
+```text
+Class 5
+Section Z
+```
+
+must not create:
+
+```text
+Student profile → 5/Z
+Enrollment → 5/Z
+```
+
+if Z is not a valid configured section.
+
+Use the same placement validation semantics introduced for manual Student Add/Edit where possible.
+
+Preserve canonical configured values/casing where the application currently requires it.
+
+---
+
+# ROLL NUMBER
+
+For imported current Students:
+
+```text
+students.roll_number
+```
+
+and:
+
+```text
+active-session enrollment.roll_no
+```
+
+must agree after successful import.
+
+Example:
+
+```text
+CSV Roll = 25
+
+Profile Roll = 25
+Enrollment Roll = 25
+```
+
+Do NOT touch previous-session enrollment roll numbers.
+
+---
+
+# HISTORICAL SESSION PROTECTION
+
+CSV Import is for current Student registration.
+
+It must NOT modify historical enrollment records.
+
+Example:
+
+```text
+2025-26 Enrollment
+Class 4/A
+Roll 7
+```
+
+must remain unchanged while importing/currently registering for:
+
+```text
+2026-27
+Class 5/A
+Roll 10
+```
+
+No bulk operation may rewrite previous Academic Sessions.
+
+---
+
+# PASSWORD HASHING / EXPENSIVE PER-ROW WORK
+
+The audit found per-row password hashing and other processing before the bulk insert.
+
+Review this carefully for scalability.
+
+Do NOT weaken password security to improve performance.
+
+Do NOT replace secure hashing with a weaker mechanism.
+
+Instead:
+
+- keep existing security strength
+- avoid unnecessary repeated database queries
+- use bounded processing
+- avoid unbounded concurrency
+- avoid keeping unnecessarily large intermediate structures in memory
+
+Report what was improved and what remains a future scalability concern.
+
+---
+
+# STUDENT ID / SERIAL GENERATION
+
+The audit found per-row serial allocation work.
+
+Inspect how Student identifiers are generated.
+
+For large imports:
+
+- avoid race conditions
+- avoid duplicate generated IDs
+- avoid one unnecessary database round trip per Student where possible
+- preserve existing BENIUS DSID format/business rules
+
+Do NOT redesign the visible DSID format unless required.
+
+If safe optimization requires a larger architectural change, report it rather than introducing risky behavior.
+
+---
+
+# DO NOT CHANGE ATTENDANCE
+
+Teacher Attendance is already correct.
+
+Do NOT change its eligibility rule.
+
+It remains:
+
+```text
+authenticated school
++
+validated selected Academic Session
++
+Student active
++
+selected-session enrollment Active
++
+enrollment Class/Section
+```
+
+The CSV correction should make imported Students naturally appear in Attendance because their enrollment now exists.
+
+---
+
+# DO NOT CREATE ATTENDANCE RECORDS
+
+Importing a Student must NOT create Attendance.
+
+A newly imported Student should simply be eligible for the roster.
+
+Until Attendance is marked:
+
+```text
+NOT MARKED
+```
+
+remains the correct state.
+
+Remember:
+
+```text
+NOT MARKED != ABSENT
+```
+
+---
+
+# DO NOT CHANGE DAILY PRESENCE
+
+Do not redesign Daily Presence.
+
+Its existing corrected semantics remain unchanged.
+
+---
+
+# DO NOT FIX PROMOTION
+
+Promotion remains a separate task.
+
+The previous audit found serious session-scope issues there.
+
+Do NOT modify:
+
+```text
+POST /api/admin/promote
+```
+
+or promotion business logic as part of CSV Import.
+
+Report:
+
+```text
+PROMOTION:
+OPEN — NEXT SEPARATE WORKSTREAM
+```
+
+---
+
+# DO NOT MODIFY MOBILE
+
+Mobile remains FROZEN.
+
+Do not modify:
+
+- React Native files
+- Mobile import UI
+- Mobile promotion
+- Mobile-specific Student APIs
+
+If shared backend/storage changes have an unavoidable impact on Mobile, report the impact clearly.
+
+Do not synchronize or redesign Mobile in this task.
+
+---
+
+# NO DATABASE SCHEMA CHANGE UNLESS ABSOLUTELY REQUIRED
+
+Prefer using the current schema for this focused task.
+
+The previous audit identified future database hardening work:
+
+- stronger same-school constraints
+- session-first indexes
+- one-active-session DB constraint
+
+Those are separate tasks.
+
+Do NOT casually introduce schema migrations here.
+
+If a schema change is truly necessary for safe CSV consistency, STOP and report why before applying it.
+
+---
+
+# DEVELOPMENT DATA
+
+Do NOT delete existing Student records.
+
+Do NOT modify MIS-0001, MIS-0002, MIS-0003 merely to test CSV.
+
+Use disposable Development test records/files if testing import behavior.
+
+Clearly identify and safely remove only disposable test records created by this task if cleanup is needed.
+
+Never touch Production.
+
+---
+
+# REQUIRED TESTS
+
+Run focused tests without unnecessary large-scale load testing.
+
+## Test 1 — Small valid import
+
+Import multiple valid Students.
+
+Expected for every Student:
+
+```text
+Profile exists
++
+Active-session enrollment exists
++
+Class matches
++
+Section matches
++
+Roll matches
++
+Enrollment status = Active
+```
+
+PASS/FAIL.
+
+---
+
+## Test 2 — Attendance eligibility
+
+For one imported Student:
+
+Verify the existing Teacher Attendance roster query for the active session and imported Class/Section finds the Student.
+
+Do NOT create Attendance.
+
+Expected:
+
+```text
+Student appears in roster
+Attendance record absent
+```
+
+PASS/FAIL.
+
+---
+
+## Test 3 — Invalid Class/Section
+
+Import row with invalid school placement.
+
+Expected:
+
+```text
+Rejected
+No Student
+No Enrollment
+```
+
+PASS/FAIL.
+
+---
+
+## Test 4 — Enrollment failure rollback
+
+Cause or safely simulate enrollment creation failure for a disposable test Student.
+
+Expected:
+
+```text
+Student does NOT remain committed
+Enrollment does NOT remain committed
+```
+
+PASS/FAIL.
+
+This test is important because the previous manual Add/Edit task did not execute the requested failure-injection verification.
+
+---
+
+## Test 5 — Duplicate within CSV
+
+Expected:
+
+No duplicate Student/enrollment corruption.
+
+PASS/FAIL.
+
+---
+
+## Test 6 — Existing Student conflict
+
+Attempt according to existing import conflict rules.
+
+Expected:
+
+No accidental overwrite of existing Student or historical enrollment.
+
+PASS/FAIL.
+
+---
+
+## Test 7 — No active session
+
+Safely test or unit-test the condition.
+
+Expected:
+
+Import rejected before Student creation.
+
+PASS/FAIL.
+
+---
+
+## Test 8 — Support Staff permission
+
+Support Staff with Add Student:
+
+```text
+Allowed
+```
+
+and receives same Student+enrollment behavior.
+
+Without Add Student:
+
+```text
+Denied
+```
+
+PASS/FAIL.
+
+---
+
+## Test 9 — Tenant isolation
+
+Attempt cross-school misuse in a focused test.
+
+Expected:
+
+```text
+REJECTED
+```
+
+No foreign Student/enrollment created.
+
+PASS/FAIL.
+
+---
+
+## Test 10 — Historical protection
+
+Ensure current import does not modify an existing historical enrollment.
+
+PASS/FAIL.
+
+---
+
+## Test 11 — Daily Presence regression
+
+Imported Student with no Attendance mark must remain:
+
+```text
+NOT MARKED
+```
+
+and must not be counted as Absent merely because imported.
+
+PASS/FAIL.
+
+---
+
+## Test 12 — Batch behavior
+
+Test enough disposable rows to exercise more than one configured processing batch if practical without expensive load testing.
+
+Verify:
+
+- batches complete correctly
+- Student/enrollment pairs remain consistent
+- failure reporting is deterministic
+- no unbounded concurrency
+
+PASS/FAIL.
+
+Do NOT run a 100,000 Student load test.
+
+---
+
+# REQUIRED POST-TEST INVARIANT CHECK
+
+After focused Development tests, run a school/session-scoped consistency query for the test scope.
+
+Verify there are no newly imported active Students for the active session where:
+
+```text
+Student exists
+AND
+required active-session enrollment is missing
+```
+
+and no newly imported Student where:
+
+```text
+profile Class/Section/Roll
+!=
+active-session enrollment Class/Section/Roll
+```
+
+Report counts.
+
+Do NOT perform or introduce an application startup full-school reconciliation.
+
+This is test verification only.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS CSV/BULK STUDENT IMPORT + SESSION ENROLLMENT FIX
+
+## Overall Verdict
+
+PASS / NEEDS CHANGES
+
+## Canonical Import Behavior
+
+Confirm:
+
+```text
+Successful CSV Student
+=
+Profile + matching active-session Enrollment
+```
+
+PASS/FAIL
+
+## Active Session
+
+- Resolved server-side: PASS/FAIL
+- No active session rejected: PASS/FAIL
+- Historical session protected: PASS/FAIL
+
+## Student + Enrollment Atomicity
+
+- Same transaction/bounded transaction: PASS/FAIL
+- Enrollment failure leaves no Student: PASS/FAIL
+- Half-created pair possible: YES/NO
+
+## Placement
+
+- Class synchronized: PASS/FAIL
+- Section synchronized: PASS/FAIL
+- Roll synchronized: PASS/FAIL
+- Enrollment status Active: PASS/FAIL
+
+## Placement Validation
+
+- School validation: PASS/FAIL
+- Class validation: PASS/FAIL
+- Section validation: PASS/FAIL
+
+## Support Staff
+
+- Add permission required: PASS/FAIL
+- Same import business logic as Admin: PASS/FAIL
+
+## Duplicate Handling
+
+Explain exact behavior.
+
+## Failure Reporting
+
+Report response behavior and whether row-level failures are clear.
+
+## Batch/Scalability
+
+Report:
+
+- chosen batch size
+- transaction strategy
+- memory behavior
+- password hashing behavior
+- serial/DSID generation behavior
+- N+1 issues removed
+- remaining scalability concerns
+
+## Attendance Integration
+
+For disposable imported test Student:
+
+- DSID:
+- Class/Section:
+- active-session enrollment:
+- appears in Attendance roster: YES/NO
+- Attendance row automatically created: YES/NO
+
+Expected last answer:
+
+```text
+NO
+```
+
+## Daily Presence
+
+NOT MARKED semantics preserved: PASS/FAIL
+
+## Historical Protection
+
+PASS/FAIL
+
+## Tenant Isolation
+
+PASS/FAIL
+
+## Post-Test Consistency
+
+- Missing active-session enrollments among successfully imported test Students:
+- Placement mismatches among successfully imported test Students:
+- Duplicate enrollments:
+
+Expected:
+
+```text
+0
+0
+0
+```
+
+## Existing Student Data
+
+Confirm MIS-0001/MIS-0002/MIS-0003 were not altered by this task.
+
+## Promotion
+
+OPEN — SEPARATE TASK
+
+## Database Schema
+
+NONE / explain if otherwise
+
+## Mobile
+
+FROZEN
+
+## Deployment
+
+NONE
+
+## Development Test Data
+
+List disposable records created and whether they were cleaned up.
+
+## Tests/builds
+
+List exact focused test/build results.
+
+## Files Changed
+
+List files and purpose.
+
+# FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
