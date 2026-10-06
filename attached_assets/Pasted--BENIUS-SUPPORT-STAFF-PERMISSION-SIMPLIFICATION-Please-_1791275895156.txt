@@ -1,0 +1,362 @@
+# BENIUS — SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+Please make this focused correction for ONLY:
+
+1. **Timetable Master**
+2. **School Calendar**
+
+Do NOT modify other modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+For Support Staff, I do NOT want submodule-level permissions for Timetable Master or School Calendar.
+
+These two modules must use a very simple:
+
+**FULL MODULE ACCESS ON / OFF**
+
+model.
+
+---
+
+# 1. TIMETABLE MASTER
+
+Currently Support Staff permissions contain:
+
+- Timetable Master
+  - Schedule Grid
+  - Bell Structure
+  - Publish Timetable
+
+REMOVE these submodule permissions from the Support Staff permission editor.
+
+The permission editor should simply show:
+
+```text
+☐ Timetable Master
+```
+
+No expand arrow.
+
+No Schedule Grid permission.
+
+No Bell Structure permission.
+
+No Publish Timetable permission.
+
+## When Timetable Master is granted
+
+Support Staff gets the **complete Timetable Master functionality available to Principal/Admin**, including:
+
+- Schedule Grid
+- Bell Structure
+- Publish
+- normal create/edit/update/delete actions available inside the module
+- all normal Timetable functionality required by the module
+
+Do not artificially disable buttons/actions merely because the user is Support Staff.
+
+The module grant itself is the authorization.
+
+Conceptually:
+
+```text
+Timetable Master = GRANTED
+        ↓
+Full Timetable Master access
+        ↓
+Schedule Grid ✅
+Bell Structure ✅
+Publish ✅
+```
+
+## When Timetable Master is NOT granted
+
+Support Staff must have:
+
+- no dashboard tile
+- no direct URL access
+- no Timetable API access
+- no create/edit/delete/publish access
+
+```text
+Timetable Master = NOT GRANTED
+        ↓
+ZERO Timetable Master access
+```
+
+---
+
+# 2. SCHOOL CALENDAR
+
+Currently Support Staff permissions contain sub-permissions such as:
+
+- Create / Edit Events
+- Holiday Auto-Seeder
+- and any other School Calendar sub-permissions
+
+REMOVE all School Calendar submodule permissions from the Support Staff permission editor.
+
+The permission editor should simply show:
+
+```text
+☐ School Calendar
+```
+
+No expand arrow.
+
+No individual Calendar action permissions.
+
+## When School Calendar is granted
+
+Support Staff gets the **complete School Calendar functionality available to Principal/Admin**, including normal:
+
+- viewing
+- creating events
+- editing events
+- deleting events where Principal normally can
+- holiday functionality
+- Holiday Auto-Seeder
+- other normal School Calendar actions
+
+The module grant itself authorizes the complete module.
+
+Conceptually:
+
+```text
+School Calendar = GRANTED
+        ↓
+Full School Calendar access
+```
+
+## When School Calendar is NOT granted
+
+Support Staff must have:
+
+- no dashboard tile
+- no direct URL access
+- no Calendar management API access
+- no create/edit/delete/holiday-management access
+
+---
+
+# VERY IMPORTANT — SAME AS PRINCIPAL FUNCTIONALITY
+
+When one of these modules is granted, Support Staff should be able to perform the normal operational functionality that Principal/Admin can perform inside that module.
+
+However, this does NOT mean bypassing security.
+
+Always preserve:
+
+- authenticated school/tenant isolation
+- Academic Session rules where applicable
+- historical-session read-only rules
+- server-side authorization
+
+Example:
+
+```text
+Support Staff — School A
+Timetable Master granted
+
+School A timetable → allowed
+School B timetable → NEVER allowed
+```
+
+---
+
+# LEGACY SUBMODULE PERMISSIONS
+
+Existing Support Staff accounts may already contain old permissions such as:
+
+- Timetable Schedule Grid
+- Bell Structure
+- Publish
+- Calendar event permissions
+- Holiday permissions
+
+Handle these safely.
+
+After this correction, authorization for these two modules should be based on the **parent module grant**, not individual submodule grants.
+
+Do NOT allow an old orphaned submodule permission by itself to bypass the parent-module requirement.
+
+When permissions are next saved, canonicalize them to the new simple parent-level model where appropriate.
+
+Do NOT perform an unnecessary database migration.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin functionality must remain unchanged.
+
+This simplification applies to the **Support Staff permission system**.
+
+Do not remove Timetable or Calendar functionality from Principal.
+
+---
+
+# SUPPORT STAFF PERMISSION EDITOR
+
+Expected appearance:
+
+```text
+☐ Timetable Master
+☐ School Calendar
+```
+
+Both should behave as simple checkboxes.
+
+There should be:
+
+- no expand/collapse control
+- no Timetable sub-permissions
+- no Calendar sub-permissions
+
+---
+
+# SERVER-SIDE ENFORCEMENT
+
+Do NOT make this UI-only.
+
+APIs must follow the same rule.
+
+For Support Staff:
+
+### Timetable Master granted
+→ allow normal same-school Timetable operations.
+
+### Timetable Master not granted
+→ reject Timetable operations.
+
+### School Calendar granted
+→ allow normal same-school Calendar operations.
+
+### School Calendar not granted
+→ reject Calendar operations.
+
+Do not rely only on hidden dashboard tiles.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- School Setup
+- Fees & Payments
+- Noticeboard
+- Attendance
+- Examination
+- Student Registry
+- Teacher Registry
+- Leave
+- Visitor Log
+- Support Staff management
+- Principal Profile
+- Academic Session selector
+- other permission structures
+- Mobile
+- database schema
+
+No broad refactor.
+
+---
+
+# VALIDATION
+
+Please verify:
+
+### Permission editor
+- Timetable Master appears once with no submodules
+- School Calendar appears once with no submodules
+
+### Timetable granted
+- Support Staff sees Timetable Master
+- Schedule Grid works
+- Bell Structure works
+- Publish works
+- normal Principal-equivalent operational actions work
+- same-school enforcement remains
+
+### Timetable not granted
+- tile hidden
+- direct URL blocked
+- APIs rejected
+
+### Calendar granted
+- Support Staff sees School Calendar
+- normal calendar viewing works
+- create/edit/delete functionality works as Principal
+- holiday functionality works
+- Holiday Auto-Seeder works
+- same-school enforcement remains
+
+### Calendar not granted
+- tile hidden
+- direct URL blocked
+- management APIs rejected
+
+### Security
+- School A Support Staff cannot operate on School B Timetable/Calendar data
+- historical-session write protections remain unchanged where applicable
+
+### Principal/Admin
+- existing behavior unchanged
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## TIMETABLE MASTER & SCHOOL CALENDAR PERMISSION SIMPLIFICATION
+
+### Permission editor
+PASS / FAIL
+
+### Timetable Master
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Academic Session protection: PASS/FAIL
+
+### School Calendar
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+### Legacy permissions
+Explain how old submodule grants are handled.
+
+### Principal/Admin behavior
+UNCHANGED / CHANGED
+
+### Other Support Staff permissions
+UNCHANGED / CHANGED
+
+### Database/schema changes
+NONE
+
+### Mobile changes
+NONE
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
