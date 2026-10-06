@@ -33,7 +33,7 @@ import {
   teacherAllocations, leavePolicies, examPolicyTiers, schoolAssets,
   auditLogs, academicSessions, gradingTiers, promotionDecisions,
   leaveRequests, studentLeaveRequests,
-  examScores, promotionOverrides, complaints, notices, visitorLogs,
+   examScores, complaints, notices, visitorLogs,
   feeRecords, academicHistory, homework, classwork, users,
 } from "@workspace/db";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "../attendance-policy-engine";
@@ -3689,9 +3689,15 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+    const id = /^\d+$/.test(req.params.id) ? Number(req.params.id) : Number.NaN;
+    if (!Number.isSafeInteger(id) || id <= 0)
+      return res.status(400).json({ message: "Invalid session ID" });
     try {
+      const selectedSession = await storage.getAcademicSessionForSchool(id, schoolId);
+      if (!selectedSession) {
+        res.status(404).json({ message: "Academic Session not found" });
+        return;
+      }
       const rows = await db
         .select({
           studentId:      promotionDecisions.studentId,
@@ -3705,7 +3711,10 @@ export async function registerRoutes(
           createdAt:      promotionDecisions.createdAt,
         })
         .from(promotionDecisions)
-        .innerJoin(students, eq(students.id, promotionDecisions.studentId))
+        .innerJoin(students, and(
+          eq(students.id, promotionDecisions.studentId),
+          eq(students.schoolId, schoolId),
+        ))
         .where(
           and(
             eq(promotionDecisions.sessionId, id),
@@ -3817,32 +3826,16 @@ export async function registerRoutes(
     try {
       const updated = await db.transaction(async (tx) => {
 
-        // ── Step 1: Promotion Overrides Reset ───────────────────────────────
-        // ALL 11 session modules now carry session_id and are self-scoping.
-        // Activating a new session leaves all historical data intact — archive
-        // mode shows each session's own records.
-        //
-        // Only promotion_overrides is reset here because it has no session_id
-        // and is per-exam-cycle (not per-session-ID).
-        console.log(`[SESSION-ACTIVATE] Clearing promotion overrides for school ${schoolId}`);
+        // Legacy promotion overrides have no session identity, so activation
+        // must not clear every session's rows. They remain unavailable to the
+        // Web Exam Controller until a session-aware schema migration is approved.
 
-        const [delPromotionOverrides] = await Promise.all([
-          tx.delete(promotionOverrides).where(eq(promotionOverrides.schoolId, schoolId)).returning({ id: promotionOverrides.id }),
-        ]);
-
-        console.log(
-          `[SESSION-ACTIVATE] ✓ Reset complete — promotionOverrides:${delPromotionOverrides.length}. ` +
-          `All 11 session modules (timetable, exams, attendance, leaves, complaints, ` +
-          `notices, visitor-log, audit-log, fees, history, homework/classwork) ` +
-          `preserved in archive — each tagged with their session_id.`
-        );
-
-        // ── Step 2: Archive siblings ─────────────────────────────────────────
+        // ── Step 1: Archive siblings ─────────────────────────────────────────
         await tx.update(academicSessions)
           .set({ isActive: false, status: "archived" })
           .where(eq(academicSessions.schoolId, schoolId));
 
-        // ── Step 3: Activate target session ─────────────────────────────────
+        // ── Step 2: Activate target session ─────────────────────────────────
         const [updated] = await tx.update(academicSessions)
           .set({ isActive: true, status: "active" })
           .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))

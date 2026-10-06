@@ -22,6 +22,7 @@ test("Support Staff parent grants gate the four module contexts and Admin operat
   const complaintReads: Array<[number, number | null | undefined]> = [];
   const complaintUpdates: Array<[number, number, string]> = [];
   const bulkComplaintDeletes: number[] = [];
+  const ledgerTermDeletes: Array<[number, number, string]> = [];
 
   replace(storage, "getAllSchoolMetadata", async (schoolId: number) => {
     metadataReads.push(schoolId);
@@ -40,9 +41,19 @@ test("Support Staff parent grants gate the four module contexts and Admin operat
     schoolId: 1,
     isActive: id !== 99,
   }));
+  replace(storage, "getAcademicSessionForSchool", async (id: number, schoolId: number) =>
+    id === 101 && schoolId === 1 ? { id, schoolId, isActive: true } : undefined,
+  );
   replace(storage, "getLedgerStatus", async () => []);
   replace(storage, "getSchoolMetadata", async () => ["Midterm"]);
-  replace(storage, "deletePromotionDecisionsByTerm", async () => 0);
+  replace(storage, "deletePromotionDecisionsByTerm", async (
+    schoolId: number,
+    sessionId: number,
+    term: string,
+  ) => {
+    ledgerTermDeletes.push([schoolId, sessionId, term]);
+    return 0;
+  });
   replace(storage, "getComplaintsBySchool", async (
     schoolId: number,
     sessionId: number | null | undefined,
@@ -189,7 +200,9 @@ test("Support Staff parent grants gate the four module contexts and Admin operat
   assert.equal((await request("/api/admin/ledger-term/Midterm", {
     method: "DELETE",
     grants: ["exam-controller"],
+    viewSessionId: 101,
   })).status, 200);
+  assert.deepEqual(ledgerTermDeletes, [[1, 101, "Midterm"]]);
   assert.equal((await request("/api/admin/promote", {
     method: "POST",
     body: {},

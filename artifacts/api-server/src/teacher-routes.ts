@@ -25,6 +25,12 @@ import {
   type TeacherAcademicSessionMode,
   type TeacherAcademicSessionRequest,
 } from "./teacher-academic-session";
+import {
+  PromotionStage1Error,
+  validatePromotionExecutionBatch,
+  validatePromotionSessionContext,
+  type PromotionSessionContextResult,
+} from "./promotion-stage1";
 import { isTeacherLeaveDateRangeWithinSession } from "./teacher-leave-scope";
 import {
   countDistinctHomeworkStudents,
@@ -98,6 +104,60 @@ function requireAdminModuleAccess(
   }
   res.status(403).json({ message: `${moduleLabel} access required` });
   return false;
+}
+
+type ExamControllerActor = { id: number; role: "admin" | "support_staff" };
+
+function resolveExamControllerActor(req: Request): ExamControllerActor | null {
+  if (req.session.userRole === "support_staff") {
+    const staffId = req.session.staffId;
+    return Number.isSafeInteger(staffId) && (staffId ?? 0) > 0
+      ? { id: staffId!, role: "support_staff" }
+      : null;
+  }
+
+  const userId = req.session.userId;
+  return req.session.userRole === "admin" &&
+    Number.isSafeInteger(userId) &&
+    (userId ?? 0) > 0
+    ? { id: userId!, role: "admin" }
+    : null;
+}
+
+async function requireAdminPromotionSession(
+  req: Request,
+  res: Response,
+  mode: "read" | "write",
+): Promise<Extract<PromotionSessionContextResult, { ok: true }> | null> {
+  const rawHeader = req.get("x-view-session-id");
+  const parsedSessionId = typeof rawHeader === "string" && /^\d+$/.test(rawHeader)
+    ? Number(rawHeader)
+    : Number.NaN;
+  const schoolId = req.session.schoolId;
+  let session;
+  try {
+    session = Number.isSafeInteger(parsedSessionId) && parsedSessionId > 0 && schoolId
+      ? await storage.getAcademicSessionForSchool(parsedSessionId, schoolId)
+      : undefined;
+  } catch {
+    res.status(503).json({
+      code: "SESSION_STATUS_UNAVAILABLE",
+      message: "Unable to verify the selected Academic Session. Please retry.",
+    });
+    return null;
+  }
+  const result = validatePromotionSessionContext(rawHeader, schoolId ?? 0, session, mode);
+  if (!result.ok) {
+    res.status(result.status).json({ code: result.code, message: result.message });
+    return null;
+  }
+  return result;
+}
+
+function respondWithPromotionStage1Error(res: Response, error: unknown): boolean {
+  if (!(error instanceof PromotionStage1Error)) return false;
+  res.status(error.statusCode).json({ code: error.code, message: error.message });
+  return true;
 }
 
 function requireAdminModuleSubAccess(
@@ -4329,11 +4389,9 @@ export function registerTeacherRoutes(app: Express) {
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
-    const selectedSessionId = (req as any).viewSessionId ?? (await storage.getActiveSession(schoolId))?.id;
-    if (!selectedSessionId || !await storage.getAcademicSessionForSchool(selectedSessionId, schoolId)) {
-      return res.status(403).json({ message: "Invalid academic session" });
-    }
     const student = await storage.getStudentById(parsed.data.studentId);
     if (!student || student.schoolId !== schoolId) {
       return res.status(404).json({ message: "Student not found" });
@@ -4344,7 +4402,7 @@ export function registerTeacherRoutes(app: Express) {
     const passPolicy = await storage.resolveClassPassPolicy(schoolId, parsed.data.studentClass);
     if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class "${parsed.data.studentClass}"` });
     const passPercentage = passPolicy.passPercentage;
-    const scores = (await storage.getExamScoresByStudent(student.id, schoolId, selectedSessionId)).map(score => ({
+    const scores = (await storage.getExamScoresByStudent(student.id, schoolId, selectedSession.sessionId)).map(score => ({
       subject: score.subject,
       examType: score.examType,
       marks: score.marks ?? 0,
@@ -4362,10 +4420,10 @@ export function registerTeacherRoutes(app: Express) {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { term } = req.query as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     try {
-      // Forward the view session so getLedgerStatus scopes promotion decisions
-      // to the correct academic year when the admin is browsing an archived session.
-      const data = await storage.getLedgerStatus(req.session.schoolId!, term, (req as any).viewSessionId ?? undefined);
+      const data = await storage.getLedgerStatus(req.session.schoolId!, term, selectedSession.sessionId);
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
@@ -4388,8 +4446,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const term = decodeURIComponent(req.params.term);
     if (!term) return res.status(400).json({ message: "term is required" });
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
     try {
-      const deleted = await storage.deletePromotionDecisionsByTerm(req.session.schoolId!, term);
+      const deleted = await storage.deletePromotionDecisionsByTerm(
+        req.session.schoolId!,
+        selectedSession.sessionId,
+        term,
+      );
       res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
@@ -4419,6 +4483,10 @@ Thank you for your prompt attention to this matter.
     const { className, section, term } = req.body as Record<string, string>;
     if (!className || !section || !term)
       return res.status(400).json({ message: "className, section, and term are required" });
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    const actor = resolveExamControllerActor(req);
+    if (!actor) return res.status(403).json({ message: "A valid Exam Controller actor is required" });
     const schoolId = req.session.schoolId!;
     try {
       // Look up the specific teacher assigned to this class-section
@@ -4426,8 +4494,9 @@ Thank you for your prompt attention to this matter.
 
       await storage.createNotice({
         schoolId,
-        createdById: req.session.userId!,
-        creatorRole: "admin",
+        sessionId: selectedSession.sessionId,
+        createdById: actor.id,
+        creatorRole: actor.role,
         targetType: "teacher",            // hard-blocks student notice feeds
         targetClass: className,           // retained for display / fallback context
         targetSection: section,
@@ -4454,9 +4523,13 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { term } = req.body as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    const actor = resolveExamControllerActor(req);
+    if (!actor) return res.status(403).json({ message: "A valid Exam Controller actor is required" });
     const schoolId = req.session.schoolId!;
     try {
-      const statuses = await storage.getLedgerStatus(schoolId, term);
+      const statuses = await storage.getLedgerStatus(schoolId, term, selectedSession.sessionId);
       const pending = statuses.filter(s => s.status !== "locked" && !s.adminExecuted);
 
       // Resolve teachers in parallel, then create one notice per pending ledger
@@ -4467,8 +4540,9 @@ Thank you for your prompt attention to this matter.
       await Promise.all(pending.map((row, i) =>
         storage.createNotice({
           schoolId,
-          createdById: req.session.userId!,
-          creatorRole: "admin",
+          sessionId: selectedSession.sessionId,
+          createdById: actor.id,
+          creatorRole: actor.role,
           targetType: "teacher",              // hard-blocks student notice feeds
           targetClass: row.class,
           targetSection: row.section,
@@ -4497,13 +4571,11 @@ Thank you for your prompt attention to this matter.
     const { class: cls, section, examType, term } = req.query as Record<string, string>;
     if (!cls || !section || !examType)
       return res.status(400).json({ message: "class, section, and examType are required" });
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
-    // Extract the view session so both score aggregation and ledger decisions
-    // are scoped to the same academic year when the admin is in archive mode.
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
-    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
-      storage.getExamAggregated(schoolId, cls, section, examType, viewSessionId),
-      storage.getPromotionOverrides(schoolId, cls, section, examType),
+    const [studentsData, meta, classSubjectsMap] = await Promise.all([
+      storage.getExamAggregated(schoolId, cls, section, examType, selectedSession.sessionId),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
     ]);
@@ -4538,7 +4610,13 @@ Thank you for your prompt attention to this matter.
     // If a term is provided, enrich each student with their ledger row
     let ledgerDecisions: import("@workspace/db/schema").PromotionDecision[] = [];
     if (term) {
-      ledgerDecisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
+      ledgerDecisions = await storage.getPromotionDecisions(
+        schoolId,
+        cls,
+        section,
+        term,
+        selectedSession.sessionId,
+      );
     }
     const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
     const studentsEnriched = studentsWithGrades.map(s => ({
@@ -4546,75 +4624,63 @@ Thank you for your prompt attention to this matter.
       ledger: ledgerMap.get(s.studentId) ?? null,
     }));
 
-    res.json({ students: studentsEnriched, overrides, missingSubjects, passThreshold });
+    res.json({
+      students: studentsEnriched,
+      overrides: [],
+      overrideSessionIsolation: "SCHEMA_MIGRATION_REQUIRED",
+      missingSubjects,
+      passThreshold,
+    });
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
-    const overrideSchema = z.object({
-      studentId: z.number().int().positive(),
-      examType: z.string().min(1),
-      class: z.string().min(1),
-      section: z.string().min(1),
-      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
-      nextClass: z.string().min(1),
-      nextSection: z.string().min(1),
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    res.status(409).json({
+      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
+      message: "Promotion overrides are disabled until their records can be stored per Academic Session.",
     });
-    const parsed = overrideSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.upsertPromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
-    res.json({ message: "Override saved" });
   });
 
   app.post("/api/admin/exam/override/bulk", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
-    const itemSchema = z.object({
-      studentId: z.number().int().positive(),
-      examType: z.string().min(1),
-      class: z.string().min(1),
-      section: z.string().min(1),
-      overrideStatus: z.string().min(1),
-      nextClass: z.string().min(1),
-      nextSection: z.string().min(1),
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    res.status(409).json({
+      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
+      message: "Bulk Promotion overrides are disabled until their records can be stored per Academic Session.",
     });
-    const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    const schoolId = req.session.schoolId!;
-    await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(i => ({ ...i, schoolId })));
-    res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
   });
 
   app.delete("/api/admin/exam/override/cohort", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
-    const schema = z.object({
-      class: z.string().min(1),
-      section: z.string().min(1),
-      examType: z.string().min(1),
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    res.status(409).json({
+      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
+      message: "Promotion override cleanup is disabled until records can be isolated by Academic Session.",
     });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.deleteAllPromotionOverrides({ ...parsed.data, schoolId: req.session.schoolId! });
-    res.json({ message: "All overrides cleared" });
   });
 
   app.delete("/api/admin/exam/override", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
-    const clearSchema = z.object({
-      studentId: z.number().int().positive(),
-      examType: z.string().min(1),
-      class: z.string().min(1),
-      section: z.string().min(1),
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    res.status(409).json({
+      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
+      message: "Promotion override deletion is disabled until records can be isolated by Academic Session.",
     });
-    const parsed = clearSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
-    await storage.deletePromotionOverride({ ...parsed.data, schoolId: req.session.schoolId! });
-    res.json({ message: "Override cleared" });
   });
 
   app.post("/api/admin/promote", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "write");
+    if (!selectedSession) return;
+    const actor = resolveExamControllerActor(req);
+    if (!actor) return res.status(403).json({ message: "A valid Exam Controller actor is required" });
     const promoteSchema = z.object({
-      term: z.string().optional(),
+      term: z.string().min(1),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
@@ -4633,106 +4699,61 @@ Thank you for your prompt attention to this matter.
     const parsed = promoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
 
-    const schoolId  = req.session.schoolId!;
-    const adminId   = req.session.userId!;
+    const schoolId = req.session.schoolId!;
     const items     = parsed.data.items;
-    const studentIds = items.map(i => i.studentId);
     const term      = parsed.data.term;
-
-    // ── 1. Pre-fetch student DSID/name map AND exam scores BEFORE the transaction
-    //       (needed for accurate audit log + cold-storage snapshot JSON).         ─
-    const [dsidMap, rawScores] = await Promise.all([
-      storage.getStudentDsidMap(schoolId, studentIds),
-      storage.getExamScoresForStudents(schoolId, studentIds),
-    ]);
-
-    // ── 2. Build enriched academic history records with cold-storage snapshot ──
-    //       snapshotJson packs student metadata + per-subject score breakdown    ─
-    const historyRecords = items.map(item => {
-      const info = dsidMap[item.studentId];
-      const scoreBreakdown = rawScores
-        .filter(s => s.studentId === item.studentId)
-        .map(s => ({
-          subject: s.subject, examType: s.examType,
-          marks: s.marks, totalMarks: s.totalMarks, isAbsent: s.isAbsent,
-        }));
-      return {
+    try {
+      validatePromotionExecutionBatch(items, term);
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      throw error;
+    }
+    let execution: Awaited<ReturnType<typeof storage.executePromotionTransaction>>;
+    try {
+      execution = await storage.executePromotionTransaction(
         schoolId,
-        studentId:     item.studentId,
-        fromClass:     item.fromClass,
-        fromSection:   item.fromSection,
-        toClass:       item.nextClass,
-        toSection:     item.nextSection,
-        examType:      item.examType,
-        totalObtained: item.totalObtained,
-        totalMax:      item.totalMax,
-        percentage:    item.percentage,
-        gradeLabel:    item.gradeLabel ?? null,
-        gradePoint:    item.gradePoint ?? null,
-        remarks:       item.gradeRemarks ?? null,
-        snapshotJson: {
-          archivedAt:    new Date().toISOString(),
-          adminId,
-          schoolId,
-          studentDsid:   info?.dsid ?? `ID:${item.studentId}`,
-          studentName:   info?.name ?? "Unknown",
-          fromClass:     item.fromClass,
-          fromSection:   item.fromSection,
-          toClass:       item.nextClass,
-          toSection:     item.nextSection,
-          examType:      item.examType,
-          term:          term ?? null,
-          totalObtained: item.totalObtained,
-          totalMax:      item.totalMax,
-          percentage:    item.percentage,
-          gradeLabel:    item.gradeLabel ?? null,
-          gradePoint:    item.gradePoint ?? null,
-          gradeRemarks:  item.gradeRemarks ?? null,
-          examBreakdown: scoreBreakdown,
-        },
-      };
-    });
-
-    // ── 3. Execute atomic transaction: history + student update + ledger mark ──
-    //       Full automatic rollback on any failure — student records revert.     ─
-    const promoted = await storage.executePromotionTransaction(
-      schoolId, items, historyRecords, term,
-    );
+        selectedSession.sessionId,
+        items,
+        term,
+        actor,
+      );
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      req.log?.error({ err: error }, "Promotion execution failed");
+      res.status(500).json({ message: "Promotion execution failed." });
+      return;
+    }
 
     // ── 4. Respond immediately — post-pipeline runs without blocking client ───
-    res.json({ promoted, pipelineQueued: true });
+    res.json({ promoted: execution.promoted, pipelineQueued: true });
 
     // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
-    // All mutations below are tenant-isolated via schoolId guard.
     (async () => {
       try {
         const now = new Date();
         const ts  = now.toISOString().replace("T", " ").slice(0, 19);
-        const examType = items[0]?.examType ?? parsed.data.term ?? "—";
+        const examType = items[0]?.examType ?? term;
 
         // 6a. Structured audit log per student
-        // Format: [Timestamp] - Admin [ID] successfully updated Student DSID from Class X-A to Class Y-A via Manual Wizard Execution.
+        // Support Staff are recorded using their positive staff ID and explicit role.
         for (const item of items) {
-          const info = dsidMap[item.studentId];
-          const dsid = info?.dsid ?? `ID:${item.studentId}`;
-          const name = info?.name ?? "Unknown";
+          const info = execution.students.find(student => student.studentId === item.studentId);
+          if (!info) continue;
+          const actorLabel = actor.role === "support_staff" ? "Support Staff" : "Admin";
           await storage.createAuditLog({
             schoolId,
+            sessionId: selectedSession.sessionId,
             actionType:    "PROMOTION_EXECUTED",
             entityType:    "student",
             entityId:      item.studentId,
-            actionBy:      adminId,
-            actionByRole:  "admin",
-            details: `[${ts}] - Admin ${adminId} successfully updated Student ${dsid} (${name}) from Class ${item.fromClass}-${item.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+            actionBy:      actor.id,
+            actionByRole:  actor.role,
+            details: `[${ts}] - ${actorLabel} ${actor.id} successfully updated Student ${info.dsid} (${info.name}) from Class ${info.fromClass}-${info.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
           });
         }
-
-        // 6b. Clean up executed promotion override records (stale data prevention)
-        await storage.deletePromotionOverridesByStudentIds(schoolId, studentIds, examType);
-
       } catch (pipelineErr) {
         // Pipeline errors are non-fatal — core promotion already succeeded
-        console.error("[promote pipeline]", pipelineErr);
+        req.log?.error({ err: pipelineErr }, "Promotion audit pipeline failed");
       }
     })();
   });
@@ -5561,20 +5582,20 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/admin/analytics/performance", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const { class: cls, section, examType, subject, search } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
     try {
       const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
       if (!passPolicy) return res.status(404).json({ message: "No grading tier configured for this class" });
-      const viewSessionId: number | null = (req as any).viewSessionId ?? null;
-      const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? undefined;
       const data = await storage.getAnalyticsData(schoolId, cls, {
         section: section || undefined,
         examType: examType || undefined,
         subject: subject || undefined,
         search: search || undefined,
-        sessionId: sessionFilter,
+        sessionId: selectedSession.sessionId,
       });
       res.json(data);
     } catch (error: any) {
@@ -5656,14 +5677,20 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/admin/analytics/promotion-decisions/:class/:section/:term", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
-    // Pass viewSessionId so archived sessions' decisions are isolated.
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
       const cls = decodeURIComponent(req.params.class);
       const section = decodeURIComponent(req.params.section);
       const term = decodeURIComponent(req.params.term);
-      const decisions = await storage.getPromotionDecisions(schoolId, cls, section, term, viewSessionId);
+      const decisions = await storage.getPromotionDecisions(
+        schoolId,
+        cls,
+        section,
+        term,
+        selectedSession.sessionId,
+      );
       res.json(decisions);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch promotion decisions" });

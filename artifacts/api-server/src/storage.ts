@@ -94,6 +94,14 @@ import {
   userSessionRevocationSid,
 } from "./session-revocation";
 import {
+  PromotionStage1Error,
+  promotionAlreadyExecutedError,
+  validatePromotionExecutionBatch,
+  validatePromotionExecutionRoster,
+  type PromotionExecutionItem,
+  type PromotionExecutionPlacement,
+} from "./promotion-stage1";
+import {
   hasActiveStudentPlacementChanged,
   isConfiguredStudentPlacement,
 } from "./student-registry-placement";
@@ -6155,11 +6163,11 @@ export class DatabaseStorage {
 
   // ===== ACADEMIC ADVANCEMENT WIZARD =====
 
-  async getExamAggregated(schoolId: number, cls: string, section: string, examType: string, sessionId?: number): Promise<{
+  async getExamAggregated(schoolId: number, cls: string, section: string, examType: string, sessionId: number): Promise<{
     studentId: number; dsid: string; name: string;
     totalObtained: number; totalMax: number; percentage: number; subjects: string[];
   }[]> {
-    // When a sessionId is provided, only aggregate scores from that academic year.
+    // Every operational aggregate is bound to exactly one academic year.
     const rows = await db.select().from(examScores)
       .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
       .where(and(
@@ -6167,7 +6175,7 @@ export class DatabaseStorage {
         eq(examScores.class, cls),
         eq(examScores.section, section),
         eq(examScores.examType, examType),
-        ...(sessionId != null ? [eq(examScores.sessionId, sessionId)] : []),
+        eq(examScores.sessionId, sessionId),
       ));
 
     const byStudent: Record<number, { dsid: string; name: string; obtained: number; total: number; subjects: string[] }> = {};
@@ -6331,45 +6339,216 @@ export class DatabaseStorage {
     await db.insert(academicHistory).values(records);
   }
 
-  /**
-   * Atomic promotion transaction — wraps all three critical writes in a single
-   * DB transaction. If any step fails the entire operation rolls back automatically:
-   *  1. Insert academic history snapshot records
-   *  2. Update each student's class/section + flag id_card_pending_reissue = true
-   *  3. Mark the promotion ledger as admin-executed
-   */
+  /** Atomic, tenant- and source-session-scoped Promotion execution. */
   async executePromotionTransaction(
     schoolId: number,
-    items: Array<{ studentId: number; nextClass: string; nextSection: string; fromClass: string; fromSection: string }>,
-    historyRecords: InsertAcademicHistory[],
-    term?: string,
-  ): Promise<number> {
-    let promoted = 0;
-    const now = new Date();
-    await db.transaction(async (tx) => {
-      if (historyRecords.length > 0) {
-        await tx.insert(academicHistory).values(historyRecords);
+    sourceSessionId: number,
+    items: PromotionExecutionItem[],
+    term: string,
+    actor: { id: number; role: "admin" | "support_staff" },
+  ): Promise<{ promoted: number; students: PromotionExecutionPlacement[] }> {
+    validatePromotionExecutionBatch(items, term);
+    if (!Number.isSafeInteger(actor.id) || actor.id <= 0) {
+      throw new PromotionStage1Error("A valid Promotion actor is required.", 403, "ACTOR_NOT_ACCESSIBLE");
+    }
+
+    return db.transaction(async (tx) => {
+      const [sourceSession] = await tx
+        .select({
+          id: academicSessions.id,
+          schoolId: academicSessions.schoolId,
+          isActive: academicSessions.isActive,
+        })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, sourceSessionId),
+          eq(academicSessions.schoolId, schoolId),
+          eq(academicSessions.isActive, true),
+        ))
+        .for("update");
+
+      if (!sourceSession) {
+        throw new PromotionStage1Error(
+          "The selected Academic Session is not an active session for this school.",
+          403,
+          "SESSION_NOT_WRITABLE",
+        );
       }
-      for (const item of items) {
-        const updated = await tx.update(students)
-          .set({ class: item.nextClass, section: item.nextSection, idCardPendingReissue: true })
-          .where(and(eq(students.id, item.studentId), eq(students.schoolId, schoolId)))
-          .returning();
-        if (updated.length > 0) promoted++;
-      }
-      if (term && items.length > 0) {
-        const { fromClass, fromSection } = items[0];
-        await tx.update(promotionDecisions)
-          .set({ adminExecuted: true, adminExecutedAt: now })
+
+      const studentIds = items.map(item => item.studentId);
+      const [studentRows, enrollmentRows] = await Promise.all([
+        tx.select({
+          id: students.id,
+          schoolId: students.schoolId,
+          isActive: students.isActive,
+          dsid: students.digitalStudentId,
+          name: students.name,
+        })
+          .from(students)
           .where(and(
-            eq(promotionDecisions.schoolId, schoolId),
-            eq(promotionDecisions.class, fromClass),
-            eq(promotionDecisions.section, fromSection),
-            eq(promotionDecisions.term, term),
-          ));
+            eq(students.schoolId, schoolId),
+            inArray(students.id, studentIds),
+          ))
+          .for("update"),
+        tx.select({
+          studentId: enrollments.studentId,
+          schoolId: enrollments.schoolId,
+          sessionId: enrollments.sessionId,
+          className: enrollments.className,
+          sectionName: enrollments.sectionName,
+          status: enrollments.status,
+        })
+          .from(enrollments)
+          .where(and(
+            eq(enrollments.schoolId, schoolId),
+            eq(enrollments.sessionId, sourceSessionId),
+            inArray(enrollments.studentId, studentIds),
+          ))
+          .for("update"),
+      ]);
+
+      const roster = validatePromotionExecutionRoster(
+        schoolId,
+        sourceSessionId,
+        items,
+        studentRows,
+        enrollmentRows,
+      );
+      const cohort = items[0];
+
+      const existingDecisions = await tx
+        .select({ adminExecuted: promotionDecisions.adminExecuted })
+        .from(promotionDecisions)
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sourceSessionId),
+          eq(promotionDecisions.class, cohort.fromClass),
+          eq(promotionDecisions.section, cohort.fromSection),
+          eq(promotionDecisions.term, term),
+          inArray(promotionDecisions.studentId, studentIds),
+        ))
+        .for("update");
+
+      if (existingDecisions.some(decision => decision.adminExecuted)) {
+        throw promotionAlreadyExecutedError();
       }
+
+      const scoreRows = await tx
+        .select({
+          studentId: examScores.studentId,
+          subject: examScores.subject,
+          examType: examScores.examType,
+          marks: examScores.marks,
+          totalMarks: examScores.totalMarks,
+          isAbsent: examScores.isAbsent,
+        })
+        .from(examScores)
+        .where(and(
+          eq(examScores.schoolId, schoolId),
+          eq(examScores.sessionId, sourceSessionId),
+          eq(examScores.class, cohort.fromClass),
+          eq(examScores.section, cohort.fromSection),
+          eq(examScores.examType, cohort.examType),
+          inArray(examScores.studentId, studentIds),
+        ));
+
+      const scoresByStudent = new Map<number, typeof scoreRows>();
+      for (const score of scoreRows) {
+        const studentScores = scoresByStudent.get(score.studentId) ?? [];
+        studentScores.push(score);
+        scoresByStudent.set(score.studentId, studentScores);
+      }
+      const placementByStudent = new Map(roster.map(placement => [placement.studentId, placement]));
+      const archivedAt = new Date();
+      const historyRecords: InsertAcademicHistory[] = items.map(item => {
+        const placement = placementByStudent.get(item.studentId)!;
+        const actorSnapshot = actor.role === "admin"
+          ? { actorRole: "admin", adminId: actor.id }
+          : { actorRole: "support_staff", staffId: actor.id };
+        return {
+          schoolId,
+          sessionId: sourceSessionId,
+          studentId: placement.studentId,
+          fromClass: placement.fromClass,
+          fromSection: placement.fromSection,
+          toClass: item.nextClass,
+          toSection: item.nextSection,
+          examType: item.examType,
+          totalObtained: item.totalObtained,
+          totalMax: item.totalMax,
+          percentage: item.percentage,
+          gradeLabel: item.gradeLabel ?? null,
+          gradePoint: item.gradePoint ?? null,
+          remarks: item.gradeRemarks ?? null,
+          snapshotJson: {
+            archivedAt: archivedAt.toISOString(),
+            ...actorSnapshot,
+            schoolId,
+            studentDsid: placement.dsid,
+            studentName: placement.name,
+            fromClass: placement.fromClass,
+            fromSection: placement.fromSection,
+            toClass: item.nextClass,
+            toSection: item.nextSection,
+            examType: item.examType,
+            term,
+            totalObtained: item.totalObtained,
+            totalMax: item.totalMax,
+            percentage: item.percentage,
+            gradeLabel: item.gradeLabel ?? null,
+            gradePoint: item.gradePoint ?? null,
+            gradeRemarks: item.gradeRemarks ?? null,
+            examBreakdown: (scoresByStudent.get(item.studentId) ?? []).map(score => ({
+              subject: score.subject,
+              examType: score.examType,
+              marks: score.marks,
+              totalMarks: score.totalMarks,
+              isAbsent: score.isAbsent,
+            })),
+          },
+        };
+      });
+
+      await tx.insert(academicHistory).values(historyRecords);
+
+      let promoted = 0;
+      for (const item of items) {
+        const [updated] = await tx.update(students)
+          .set({
+            class: item.nextClass,
+            section: item.nextSection,
+            idCardPendingReissue: true,
+          })
+          .where(and(
+            eq(students.id, item.studentId),
+            eq(students.schoolId, schoolId),
+            eq(students.isActive, true),
+          ))
+          .returning({ id: students.id });
+        if (!updated) {
+          throw new PromotionStage1Error(
+            "A Student is no longer eligible for Promotion.",
+            409,
+            "STUDENT_NOT_IN_SOURCE_SESSION",
+          );
+        }
+        promoted += 1;
+      }
+
+      await tx.update(promotionDecisions)
+        .set({ adminExecuted: true, adminExecutedAt: archivedAt })
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sourceSessionId),
+          eq(promotionDecisions.class, cohort.fromClass),
+          eq(promotionDecisions.section, cohort.fromSection),
+          eq(promotionDecisions.term, term),
+          eq(promotionDecisions.adminExecuted, false),
+          inArray(promotionDecisions.studentId, studentIds),
+        ));
+
+      return { promoted, students: roster };
     });
-    return promoted;
   }
 
   async clearIdCardReissueFlag(schoolId: number, studentIds: number[]): Promise<void> {
@@ -6495,7 +6674,7 @@ export class DatabaseStorage {
   async getAnalyticsData(
     schoolId: number,
     cls: string,
-    opts: { section?: string; examType?: string; subject?: string; search?: string; sessionId?: number }
+     opts: { section?: string; examType?: string; subject?: string; search?: string; sessionId: number }
   ): Promise<{
     students: Array<{
       studentId: number; dsid: string; name: string;
@@ -6519,7 +6698,7 @@ export class DatabaseStorage {
     ];
     if (opts.section) conditions.push(eq(examScores.section, opts.section));
     if (opts.examType) conditions.push(eq(examScores.examType, opts.examType));
-    if (opts.sessionId != null) conditions.push(eq(examScores.sessionId, opts.sessionId));
+    conditions.push(eq(examScores.sessionId, opts.sessionId));
 
     const rows = await db.select().from(examScores)
       .innerJoin(students, and(eq(examScores.studentId, students.id), eq(students.schoolId, schoolId)))
@@ -6548,17 +6727,13 @@ export class DatabaseStorage {
       byStudent[sid].total += r.exam_scores.totalMarks;
     }
 
-    let overrideMap: Record<number, string> = {};
-    if (opts.section && opts.examType) {
-      const overrides = await this.getPromotionOverrides(schoolId, cls, opts.section, opts.examType);
-      for (const o of overrides) overrideMap[o.studentId] = o.overrideStatus;
-    }
-
     let studentList = await Promise.all(Object.entries(byStudent).map(async ([id, d]) => {
       const studentId = parseInt(id);
       const percentage = d.total > 0 ? parseFloat(((d.obtained / d.total) * 100).toFixed(2)) : 0;
       const grade = await this.resolveGrade(schoolId, cls, percentage);
-      const overrideStatus = overrideMap[studentId] || null;
+      // Promotion overrides have no academic-session key. Never apply those
+      // legacy rows to a session-scoped analytics result.
+      const overrideStatus: string | null = null;
       let passStatus: "PASS" | "FAIL" | "GRACE_PASS";
       if (overrideStatus === "GRACE_PASS") passStatus = "GRACE_PASS";
       else if (overrideStatus === "PASS") passStatus = "PASS";
@@ -7614,16 +7789,15 @@ export class DatabaseStorage {
 
   // ── Promotion Ledger ──────────────────────────────────────────────────────
 
-  /** Fetch all saved promotion decisions for a class/section/term within a school.
-   *  When sessionId is provided, results are strictly scoped to that academic year. */
-  async getPromotionDecisions(schoolId: number, cls: string, section: string, term: string, sessionId?: number): Promise<PromotionDecision[]> {
+  /** Fetch saved promotion decisions for one class/section/term in one academic session. */
+  async getPromotionDecisions(schoolId: number, cls: string, section: string, term: string, sessionId: number): Promise<PromotionDecision[]> {
     return db.select().from(promotionDecisions).where(
       and(
         eq(promotionDecisions.schoolId, schoolId),
         eq(promotionDecisions.class, cls),
         eq(promotionDecisions.section, section),
         eq(promotionDecisions.term, term),
-        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
+        eq(promotionDecisions.sessionId, sessionId),
       )
     );
   }
@@ -7712,7 +7886,7 @@ export class DatabaseStorage {
     });
   }
 
-  async getLedgerStatus(schoolId: number, term: string, sessionId?: number): Promise<Array<{
+  async getLedgerStatus(schoolId: number, term: string, sessionId: number): Promise<Array<{
     class: string; section: string; term: string;
     status: "none" | "draft" | "locked";
     totalStudents: number; lockedCount: number; manualInterventionCount: number;
@@ -7754,8 +7928,7 @@ export class DatabaseStorage {
       .where(and(
         eq(promotionDecisions.schoolId, schoolId),
         eq(promotionDecisions.term, term),
-        // When sessionId is supplied, restrict to that academic year's decisions only.
-        ...(sessionId != null ? [eq(promotionDecisions.sessionId, sessionId)] : []),
+        eq(promotionDecisions.sessionId, sessionId),
       ));
 
     // ── 3. Faculty mappings → assigned teacher per class-section ─────────────
@@ -7917,14 +8090,24 @@ export class DatabaseStorage {
     ));
   }
 
-  async markLedgerExecuted(schoolId: number, cls: string, section: string, term: string): Promise<void> {
+  async markLedgerExecuted(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+    studentIds: number[],
+  ): Promise<void> {
+    if (studentIds.length === 0) return;
     await db.update(promotionDecisions)
       .set({ adminExecuted: true, adminExecutedAt: new Date() })
       .where(and(
         eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.sessionId, sessionId),
         eq(promotionDecisions.class, cls),
         eq(promotionDecisions.section, section),
         eq(promotionDecisions.term, term),
+        inArray(promotionDecisions.studentId, studentIds),
       ));
   }
 
@@ -7970,10 +8153,11 @@ export class DatabaseStorage {
     return ordered;
   }
 
-  async deletePromotionDecisionsByTerm(schoolId: number, term: string): Promise<number> {
+  async deletePromotionDecisionsByTerm(schoolId: number, sessionId: number, term: string): Promise<number> {
     const deleted = await db.delete(promotionDecisions)
       .where(and(
         eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.sessionId, sessionId),
         eq(promotionDecisions.term, term),
       ))
       .returning();

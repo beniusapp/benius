@@ -106,6 +106,9 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     schoolId: 1,
     isActive: id !== 99,
   }));
+  replace(storage, "getAcademicSessionForSchool", async (id: number, schoolId: number) =>
+    schoolId === 1 ? { id, schoolId, isActive: id !== 99 } : undefined,
+  );
   replace(storage, "getAllSchoolMetadata", async (schoolId: number) => {
     metadataReads.push(schoolId);
     return {
@@ -508,6 +511,9 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal((await request("/api/school-metadata/2", {
     grants: ["id-card-gen"],
   })).status, 403);
+  assert.equal((await request("/api/admin/analytics/performance?class=5", {
+    grants: ["analytics"],
+  })).status, 400, "session-dependent analytics requires an explicit selected session");
   const archivedAnalytics = await request("/api/admin/analytics/performance?class=5", {
     grants: ["analytics"],
     viewSessionId: 99,

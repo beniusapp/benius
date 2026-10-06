@@ -12,7 +12,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, sessionFetch } from "@/lib/queryClient";
+import {
+  apiRequestForViewSession,
+  queryClient,
+  sessionFetchForViewSession,
+} from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -48,6 +52,7 @@ interface AggStudent {
 interface AggData {
   students: AggStudent[];
   overrides: { studentId: number; overrideStatus: string; nextClass: string; nextSection: string }[];
+  overrideSessionIsolation?: "SESSION_AWARE" | "SCHEMA_MIGRATION_REQUIRED";
   missingSubjects: string[];
   passThreshold: number;
 }
@@ -132,7 +137,14 @@ function LedgerPills({ row }: { row: LedgerRow }) {
 export default function ExamController({ examTypes, classes: schoolClasses, sections: schoolSections, allowedSubs }: Props) {
   const canWizard = allowedSubs === undefined || allowedSubs.includes("wizard");
   const { toast } = useToast();
-  const { isArchiveMode } = useSessionView();
+  const { isArchiveMode, selectedSession } = useSessionView();
+  const selectedSessionId = selectedSession?.id ?? null;
+  const requireSelectedSessionId = () => {
+    if (selectedSessionId === null) {
+      throw new Error("Select an Academic Session before using the Exam Controller.");
+    }
+    return selectedSessionId;
+  };
 
   // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
@@ -182,13 +194,18 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
   // ── Fetch ledger status rows ──────────────────────────────────────────────
   const { data: ledgerRows = [], isLoading: ledgerLoading, refetch: refetchLedger } = useQuery<LedgerRow[]>({
-    queryKey: ["/api/admin/ledger-status", selectedTerm],
-    queryFn: async () => {
-      if (!selectedTerm) return [];
-      const r = await sessionFetch(`/api/admin/ledger-status?term=${encodeURIComponent(selectedTerm)}`);
+    queryKey: ["/api/admin/ledger-status", selectedSessionId, selectedTerm],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, queryTerm] = queryKey as [string, number | null, string];
+      if (querySessionId === null || !queryTerm) return [];
+      const r = await sessionFetchForViewSession(
+        `/api/admin/ledger-status?term=${encodeURIComponent(queryTerm)}`,
+        querySessionId,
+        { signal },
+      );
       return r.ok ? r.json() : [];
     },
-    enabled: !!selectedTerm,
+    enabled: selectedSessionId !== null && !!selectedTerm,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -205,18 +222,22 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
   const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
-    queryKey: ["/api/admin/exam/aggregated", cohort?.class, cohort?.section, examType, cohort?.term],
-    queryFn: async () => {
-      if (!cohort || !examType) return null;
-      const p = new URLSearchParams({ class: cohort.class, section: cohort.section, examType, term: cohort.term });
-      const r = await sessionFetch(`/api/admin/exam/aggregated?${p}`);
+    queryKey: ["/api/admin/exam/aggregated", selectedSessionId, cohort?.class, cohort?.section, examType, cohort?.term],
+    queryFn: async ({ queryKey, signal }) => {
+      const [, querySessionId, queryClass, querySection, queryExamType, queryTerm] = queryKey as [
+        string, number | null, string | undefined, string | undefined, string | undefined, string | undefined,
+      ];
+      if (querySessionId === null || !queryClass || !querySection || !queryExamType || !queryTerm) return null;
+      const p = new URLSearchParams({ class: queryClass, section: querySection, examType: queryExamType, term: queryTerm });
+      const r = await sessionFetchForViewSession(`/api/admin/exam/aggregated?${p}`, querySessionId, { signal });
       return r.ok ? r.json() : null;
     },
-    enabled: !!cohort && !!examType,
+    enabled: selectedSessionId !== null && !!cohort && !!examType,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+  const overridesAvailable = !!agg && agg.overrideSessionIsolation === "SESSION_AWARE";
 
   // ── Filtered student list (client-side, AND logic) ────────────────────────
   const filteredStudents = useMemo(() => {
@@ -245,6 +266,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
   // Seed overrides from DB when agg loads (only if local state is still empty)
   useEffect(() => {
+    if (agg?.overrideSessionIsolation !== "SESSION_AWARE") {
+      setOverrides({});
+      return;
+    }
     if (!agg?.overrides || agg.overrides.length === 0) return;
     setOverrides(prev => {
       if (Object.keys(prev).length > 0) return prev;
@@ -263,7 +288,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   // ── Delete term mutation ──────────────────────────────────────────────────
   const deleteTermMut = useMutation({
     mutationFn: async (term: string) => {
-      const res = await apiRequest("DELETE", `/api/admin/ledger-term/${encodeURIComponent(term)}`);
+      const res = await apiRequestForViewSession(
+        "DELETE",
+        `/api/admin/ledger-term/${encodeURIComponent(term)}`,
+        undefined,
+        requireSelectedSessionId(),
+      );
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed to delete term"); }
       return res.json();
     },
@@ -280,7 +310,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   // ── Reminder mutations ────────────────────────────────────────────────────
   const reminderMut = useMutation({
     mutationFn: async ({ className, section }: { className: string; section: string }) => {
-      const res = await apiRequest("POST", "/api/admin/send-ledger-reminder", { className, section, term: selectedTerm });
+      const res = await apiRequestForViewSession(
+        "POST",
+        "/api/admin/send-ledger-reminder",
+        { className, section, term: selectedTerm },
+        requireSelectedSessionId(),
+      );
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
       return res.json();
     },
@@ -297,12 +332,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       const led = s.ledger;
       const nc = dec === "retain" ? cohort.class   : (led?.targetClass    || nxtCls(cohort.class,   schoolClasses));
       const ns = dec === "retain" ? cohort.section : (led?.targetSection  || cohort.section);
-      const res = await apiRequest("POST", "/api/admin/exam/override", {
-        studentId, examType,
-        class: cohort.class, section: cohort.section,
-        overrideStatus: DEC_TO_STATUS[dec],
-        nextClass: nc, nextSection: ns,
-      });
+      const res = await apiRequestForViewSession("POST", "/api/admin/exam/override", {
+          studentId, examType,
+          class: cohort.class, section: cohort.section,
+          overrideStatus: DEC_TO_STATUS[dec],
+          nextClass: nc, nextSection: ns,
+        }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
       return res.json();
     },
@@ -323,12 +358,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       studentId: number; status: AdminDecision; nextClass: string; nextSection: string;
     }) => {
       if (!cohort) throw new Error("No cohort");
-      const res = await apiRequest("POST", "/api/admin/exam/override", {
-        studentId, examType,
-        class: cohort.class, section: cohort.section,
-        overrideStatus: DEC_TO_STATUS[status],
-        nextClass, nextSection,
-      });
+      const res = await apiRequestForViewSession("POST", "/api/admin/exam/override", {
+          studentId, examType,
+          class: cohort.class, section: cohort.section,
+          overrideStatus: DEC_TO_STATUS[status],
+          nextClass, nextSection,
+        }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Save failed"); }
       return res.json();
     },
@@ -345,9 +380,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const overrideClearMut = useMutation({
     mutationFn: async ({ studentId }: { studentId: number }) => {
       if (!cohort) throw new Error("No cohort");
-      const res = await apiRequest("DELETE", "/api/admin/exam/override", {
+      const res = await apiRequestForViewSession("DELETE", "/api/admin/exam/override", {
         studentId, examType, class: cohort.class, section: cohort.section,
-      });
+      }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Clear failed"); }
       return res.json();
     },
@@ -367,7 +402,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       items: Array<{ studentId: number; overrideStatus: string; nextClass: string; nextSection: string }>;
     }) => {
       if (!cohort) throw new Error("No cohort");
-      const res = await apiRequest("POST", "/api/admin/exam/override/bulk", {
+      const res = await apiRequestForViewSession("POST", "/api/admin/exam/override/bulk", {
         items: items.map(i => ({
           studentId: i.studentId,
           examType,
@@ -377,7 +412,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
           nextClass: i.nextClass,
           nextSection: i.nextSection,
         })),
-      });
+      }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Bulk save failed"); }
       return res.json() as Promise<{ count: number }>;
     },
@@ -411,9 +446,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const resetAllMut = useMutation({
     mutationFn: async () => {
       if (!cohort) throw new Error("No cohort");
-      const res = await apiRequest("DELETE", "/api/admin/exam/override/cohort", {
+      const res = await apiRequestForViewSession("DELETE", "/api/admin/exam/override/cohort", {
         class: cohort.class, section: cohort.section, examType,
-      });
+      }, requireSelectedSessionId());
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Reset failed"); }
       return res.json();
     },
@@ -454,7 +489,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
           gradeLabel: s.gradeLabel ?? null, gradePoint: s.gradePoint ?? null, gradeRemarks: s.gradeRemarks ?? null,
         };
       });
-      const res = await apiRequest("POST", "/api/admin/promote", { term: cohort.term, items });
+      const res = await apiRequestForViewSession(
+        "POST",
+        "/api/admin/promote",
+        { term: cohort.term, items },
+        requireSelectedSessionId(),
+      );
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
       return res.json();
     },
@@ -570,6 +610,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     resetAuditFilters();
   }
   function handleDestChange(studentId: number, field: "nextClass" | "nextSection", value: string, ov: AdminOverride) {
+    if (!overridesAvailable) return;
     const updated: AdminOverride = { ...ov, [field]: value };
     setOverrides(prev => ({ ...prev, [studentId]: updated }));
     setSavingStudents(prev => { const n = new Set(prev); n.add(studentId); return n; });
@@ -577,6 +618,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }
 
   function toggleOverride(studentId: number, dec: AdminDecision, s: AggStudent) {
+    if (!overridesAvailable) return;
     setOverrides(prev => {
       if (prev[studentId]?.status === dec) {
         // Deselect — clear from DB
@@ -594,7 +636,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     });
   }
   function handleBulkOverride(dec: AdminDecision) {
-    if (!agg || !cohort || selectedStudents.size === 0 || bulkOverrideMut.isPending) return;
+    if (!overridesAvailable || !agg || !cohort || selectedStudents.size === 0 || bulkOverrideMut.isPending) return;
 
     // ── Build execution list from ONLY the selected student IDs ──────────────
     // Non-selected students are never iterated — strict isolation guaranteed.
@@ -745,6 +787,12 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   Missing subject data: {agg.missingSubjects.join(", ")}
                 </div>
               )}
+              {!overridesAvailable && (
+                <div role="alert" className="mx-5 mt-3 flex items-start gap-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2.5">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>Manual Promotion overrides are unavailable because saved override records do not identify an Academic Session. They are not applied or cleared until session-aware storage is approved.</span>
+                </div>
+              )}
               {/* ── Filter bar ─────────────────────────────────────────────── */}
               <div className="mx-5 mt-4 mb-1 flex flex-wrap items-center gap-2">
                 {/* Text search */}
@@ -801,7 +849,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 {/* Reset all overrides */}
                 <button
                   onClick={() => setShowResetConfirm(true)}
-                  disabled={Object.keys(overrides).length === 0}
+                  disabled={!overridesAvailable || Object.keys(overrides).length === 0}
                   className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
                   data-testid="btn-reset-all-overrides">
                   <RefreshCw className="w-3 h-3" />Reset All Overrides
@@ -912,7 +960,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                 {(["promote","retain","grace_pass"] as AdminDecision[]).map(dec => (
                                   <button key={dec}
                                     onClick={() => toggleOverride(s.studentId, dec, s)}
-                                    disabled={savingStudents.has(s.studentId)}
+                                    disabled={!overridesAvailable || savingStudents.has(s.studentId)}
                                     data-testid={`btn-override-${dec}-${s.studentId}`}
                                     className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${
                                       ov?.status === dec
@@ -930,7 +978,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                 <div className="flex gap-1.5 items-center flex-wrap pl-0.5" data-testid={`dest-selectors-${s.studentId}`}>
                                   <select
                                     value={ov.nextClass}
-                                    disabled={ov.status === "retain" || savingStudents.has(s.studentId)}
+                                    disabled={!overridesAvailable || ov.status === "retain" || savingStudents.has(s.studentId)}
                                     onChange={e => handleDestChange(s.studentId, "nextClass", e.target.value, ov)}
                                     className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
                                     data-testid={`select-nextclass-${s.studentId}`}>
@@ -941,7 +989,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                   </select>
                                   <select
                                     value={ov.nextSection}
-                                    disabled={savingStudents.has(s.studentId)}
+                                    disabled={!overridesAvailable || savingStudents.has(s.studentId)}
                                     onChange={e => handleDestChange(s.studentId, "nextSection", e.target.value, ov)}
                                     className="px-2 py-1 text-xs rounded-md border border-[#1e2d44] bg-[#0A1628] text-white focus:outline-none focus:border-[#D4AF37]/60 disabled:opacity-50 disabled:cursor-not-allowed"
                                     data-testid={`select-nextsection-${s.studentId}`}>
@@ -1008,7 +1056,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       </Button>
                       <Button size="sm"
                         onClick={() => resetAllMut.mutate()}
-                        disabled={resetAllMut.isPending}
+                        disabled={!overridesAvailable || resetAllMut.isPending}
                         className="h-8 px-4 text-xs bg-red-600 hover:bg-red-500 text-white border-0"
                         data-testid="btn-reset-confirm">
                         {resetAllMut.isPending
@@ -1038,7 +1086,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => handleBulkOverride("promote")}
-                      disabled={bulkOverrideMut.isPending}
+                      disabled={!overridesAvailable || bulkOverrideMut.isPending}
                       className="h-8 px-3 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-promote">
                       {bulkOverrideMut.isPending
@@ -1047,7 +1095,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       Bulk Promote Selected
                     </Button>
                     <Button size="sm" onClick={() => handleBulkOverride("retain")}
-                      disabled={bulkOverrideMut.isPending}
+                      disabled={!overridesAvailable || bulkOverrideMut.isPending}
                       className="h-8 px-3 text-xs font-semibold bg-red-600 hover:bg-red-500 text-white border-0 disabled:opacity-60"
                       data-testid="btn-bulk-retain">
                       {bulkOverrideMut.isPending
