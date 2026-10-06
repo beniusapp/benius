@@ -1,0 +1,1139 @@
+# BENIUS — PROMOTION STAGE 3
+
+## TARGET ACADEMIC SESSION ACTIVATION → CURRENT STUDENT REGISTRY SYNCHRONIZATION
+
+This is an **IMPLEMENTATION task**.
+
+Do NOT start Stage 4.
+
+Current Promotion architecture:
+
+```text
+Stage 1   — Source Session + Tenant Isolation          PASS
+Stage 1B  — Override/Decision Session Identity         PASS
+Stage 2A  — Promotion History Target Session           PASS
+Stage 2   — Target Session Enrollment Preparation      PASS
+```
+
+Stage 2 now correctly prepares future-session enrollment without changing current Student Registry placement.
+
+Stage 3 must complete the lifecycle.
+
+---
+
+# CORE PRODUCT CONTRACT
+
+BENIUS placement architecture is:
+
+```text
+Student Registry
+=
+CURRENT placement
+
+Academic Session Enrollment
+=
+placement for a specific Academic Session
+```
+
+Therefore when a new Academic Session becomes the school's ACTIVE session:
+
+```text
+that session's Active Enrollments
+        ↓
+become the CURRENT placement
+        ↓
+Student Registry synchronizes
+```
+
+Example:
+
+Before activation:
+
+```text
+ACTIVE SESSION: 2026–27
+
+Student Registry
+MIS-0003 → Class 5/A, Roll 80
+
+2026–27 Enrollment
+MIS-0003 → Class 5/A, Roll 80
+
+2027–28 Enrollment
+MIS-0003 → Class 6/B, Roll NULL
+```
+
+Principal activates 2027–28.
+
+After successful activation:
+
+```text
+ACTIVE SESSION: 2027–28
+
+Student Registry
+MIS-0003 → Class 6/B, Roll NULL
+
+2026–27 Enrollment
+MIS-0003 → Class 5/A, Roll 80   ← PRESERVED
+
+2027–28 Enrollment
+MIS-0003 → Class 6/B, Roll NULL ← PRESERVED
+```
+
+The Registry now reflects the newly active Academic Session.
+
+---
+
+# 1 — AUDIT EXISTING ACTIVATION FLOW FIRST
+
+Before editing, inspect the actual Academic Session activation path.
+
+Identify:
+
+- Web activation UI
+- activation API route
+- storage function(s)
+- transaction boundaries
+- current active-session deactivation behavior
+- audit logging
+- Support Staff access if any
+- downstream cleanup currently triggered by activation
+- any Promotion/override cleanup
+- any Student/Enrollment mutation
+- any cache/session-context implications
+
+Do not assume the activation flow from previous audits is unchanged.
+
+Keep the implementation narrow.
+
+---
+
+# 2 — PRINCIPAL/ADMIN AUTHORITY
+
+Preserve the existing Academic Session management authorization.
+
+Do NOT broaden activation permissions.
+
+If Academic Session activation is currently Principal/Admin-only, it remains Principal/Admin-only.
+
+Support Staff must NOT gain session activation merely because Support Staff can use Exam Controller.
+
+Do not change the Support Staff permission model.
+
+---
+
+# 3 — TENANT ISOLATION
+
+The session being activated must:
+
+```text
+exist
+AND
+belong to authenticated school
+```
+
+Never trust request-supplied:
+
+```text
+schoolId
+```
+
+A Principal/Admin from School A must never activate School B's session or synchronize School B's Students.
+
+Every Enrollment used for synchronization must be scoped to:
+
+```text
+authenticated school
++
+target session
+```
+
+Every Student update must also be scoped to authenticated school.
+
+---
+
+# 4 — ACTIVATION SOURCE OF TRUTH
+
+When Session B becomes active, Registry synchronization must use:
+
+```text
+Session B Enrollment
+```
+
+as the placement source.
+
+Do NOT use:
+
+- Promotion history target class
+- Promotion decision
+- current Student Registry class
+- source-session enrollment
+- latest enrollment regardless of session
+- session name/year inference
+
+The authoritative placement is:
+
+```text
+authenticated school
++
+newly activated session
++
+Student
++
+Active Enrollment
+```
+
+---
+
+# 5 — WHICH ENROLLMENTS SYNCHRONIZE
+
+Only use target-session enrollments satisfying:
+
+```text
+enrollment.school_id = authenticated school
+enrollment.session_id = session being activated
+enrollment.status = Active
+```
+
+Then validate the associated Student belongs to the same school.
+
+Do not use another school's Student.
+
+Do not use inactive/cancelled/invalid Enrollment as current placement.
+
+---
+
+# 6 — STUDENT ACTIVE STATUS
+
+Do NOT automatically reactivate an inactive Student merely because an Active Enrollment exists.
+
+If:
+
+```text
+Student.is_active = false
+```
+
+do not change that status in Stage 3.
+
+Do not silently turn them active.
+
+For Registry placement synchronization, inspect the existing Student model and intended behavior.
+
+Preferred safe rule:
+
+```text
+Active Student
++
+Active target-session Enrollment
+→ synchronize Registry placement
+```
+
+Inactive Students should remain inactive and should not be brought into live academic operations by activation.
+
+Report how inactive Students are handled.
+
+---
+
+# 7 — STUDENTS WITHOUT TARGET ENROLLMENT
+
+This is critical.
+
+A school may contain an active Student who has no Enrollment in the newly activated session.
+
+Do NOT guess their placement.
+
+Do NOT copy their old Registry placement into the new session automatically.
+
+Do NOT create an Enrollment during activation unless an existing explicit BENIUS business rule already requires it.
+
+Preferred behavior:
+
+```text
+No Active target-session Enrollment
+→ no Registry placement synchronization for that Student
+```
+
+But the activation flow must surface this clearly.
+
+Before activation, calculate/report:
+
+```text
+Active Students:
+Active target-session Enrollments:
+Active Students missing target enrollment:
+```
+
+If missing target enrollments exist, inspect the existing product flow.
+
+For safety, prefer preventing activation with a clear validation response if activating would leave current Registry inconsistent with the newly active session.
+
+If this requires a product decision because current BENIUS semantics are ambiguous, STOP and report:
+
+```text
+PRODUCT DECISION REQUIRED — MISSING TARGET ENROLLMENTS
+```
+
+Do not invent placement.
+
+---
+
+# 8 — DUPLICATE / CONFLICTING TARGET ENROLLMENTS
+
+Inspect database uniqueness guarantees.
+
+There should normally be only one Enrollment per:
+
+```text
+school
++
+student
++
+session
+```
+
+If corrupted/legacy data produces multiple Active target-session Enrollments for the same Student:
+
+DO NOT arbitrarily choose one.
+
+Fail activation safely and report the conflict.
+
+No partial Registry synchronization.
+
+---
+
+# 9 — CLASS / SECTION VALIDATION
+
+Before Registry synchronization validate target Enrollment class/section according to existing BENIUS school structure rules.
+
+Do not put a Student into a class/section belonging to another school or invalid school structure.
+
+Reuse existing trusted validation where appropriate.
+
+Do not redesign class/section architecture.
+
+---
+
+# 10 — ROLL NUMBER
+
+Stage 2 intentionally allows:
+
+```text
+target Enrollment roll_no = NULL
+```
+
+because BENIUS has no automatic Promotion roll allocation policy.
+
+Therefore Stage 3 must NOT invent one.
+
+If target enrollment has:
+
+```text
+roll_no = 15
+```
+
+Registry current roll becomes 15.
+
+If target enrollment has:
+
+```text
+roll_no = NULL
+```
+
+Registry current roll should follow the existing Student Registry representation for unassigned roll.
+
+Do NOT:
+
+- retain old source roll merely because target roll is NULL
+- auto-increment roll
+- generate roll
+- copy source roll
+
+The newly active session's Enrollment is authoritative.
+
+---
+
+# 11 — CURRENT STUDENT REGISTRY SYNCHRONIZATION
+
+For each eligible Student:
+
+```text
+students.class
+=
+target enrollment.class
+
+students.section
+=
+target enrollment.section
+
+students.roll_number
+=
+target enrollment.roll_no
+```
+
+Use actual schema field names.
+
+Do not modify unrelated Student profile information.
+
+For example, do NOT modify:
+
+- name
+- DOB
+- gender
+- guardian
+- contact details
+- admission number
+- login credentials
+
+Stage 3 is placement synchronization only.
+
+---
+
+# 12 — STUDENT PROFILE PAGE DECISION
+
+Permanent BENIUS decision:
+
+Student Portal Profile always shows the Student's **current information/current placement**, regardless of which old Academic Session is selected.
+
+Therefore after activation, Profile may show the newly active Registry placement even when the Student later selects an older session.
+
+Do NOT make Student Profile historical/session-based.
+
+---
+
+# 13 — ID CARD REISSUE
+
+Stage 2 correctly stopped triggering ID-card reissue because current placement had not yet changed.
+
+Stage 3 is where current placement actually changes.
+
+Inspect established `idCardPendingReissue` semantics.
+
+If the existing meaning is:
+
+```text
+current Student placement changed
+→ ID card may require regeneration
+```
+
+then set:
+
+```text
+idCardPendingReissue = true
+```
+
+ONLY for Students whose current Registry placement actually changes during activation.
+
+If Registry placement before activation already exactly equals target Enrollment placement:
+
+do not unnecessarily mark reissue.
+
+Do not invent another ID-card rule.
+
+Report exact behavior.
+
+---
+
+# 14 — HISTORICAL ENROLLMENTS ARE IMMUTABLE
+
+Absolutely do NOT rewrite:
+
+```text
+2026–27 Enrollment
+```
+
+when activating:
+
+```text
+2027–28
+```
+
+All old session Enrollment rows remain historical records.
+
+Activation changes:
+
+```text
+Academic Session active state
++
+CURRENT Student Registry placement
+```
+
+It does NOT rewrite previous-session placement.
+
+---
+
+# 15 — TARGET ENROLLMENT ALSO REMAINS AUTHORITATIVE
+
+Do NOT delete or transform target Enrollment after copying its placement to Student Registry.
+
+After activation:
+
+```text
+2027–28 Enrollment → 6/B
+Student Registry    → 6/B
+```
+
+Both remain.
+
+Registry is the current convenient/current profile representation.
+
+Enrollment remains the session-specific academic record.
+
+---
+
+# 16 — TRANSACTION ATOMICITY
+
+This is critical.
+
+Do NOT allow:
+
+```text
+new session activated
+BUT
+only half of Student Registry synchronized
+```
+
+or:
+
+```text
+Registry synchronized
+BUT
+session activation failed
+```
+
+The core activation operation should be atomic.
+
+Within the same DB transaction, where technically feasible:
+
+1. lock/validate school session state;
+2. validate target session;
+3. validate target enrollments;
+4. validate no blocking conflicts;
+5. deactivate previous active session;
+6. activate target session;
+7. synchronize eligible Student Registry placement;
+8. perform essential activation state writes.
+
+If any essential synchronization fails:
+
+```text
+ROLL BACK
+```
+
+The previous active session and Registry placement should remain unchanged.
+
+Do not leave partial activation.
+
+---
+
+# 17 — PRE-ACTIVATION VALIDATION MUST HAPPEN BEFORE WRITES
+
+Before changing session state, validate all target-session placement data required for synchronization.
+
+Examples:
+
+```text
+foreign Student
+duplicate enrollment
+invalid class/section
+missing required relationship
+```
+
+must fail before partial Registry updates.
+
+Do not discover preventable conflicts halfway through after changing active session state.
+
+---
+
+# 18 — CONCURRENCY
+
+Do not build full Stage 4 infrastructure, but activation must not trivially allow two sessions for the same school to become active due to simultaneous requests.
+
+Inspect existing transaction/locking/DB constraints.
+
+Use the narrowest existing safe mechanism.
+
+At completion, there must be only one active Academic Session for the school.
+
+If the DB currently has no protection and solving this requires a schema migration, report it rather than inventing a large migration.
+
+---
+
+# 19 — EXISTING SESSION ACTIVATION SIDE EFFECTS
+
+Audit existing activation code for side effects.
+
+Do NOT preserve unsafe behavior merely because it existed.
+
+Especially inspect any code that:
+
+```text
+deletes Promotion Overrides
+deletes Promotion Decisions
+deletes historical academic state
+clears session-specific data globally
+```
+
+Stage 1B established that historical Promotion Overrides/Decisions are session-specific.
+
+Activating a new session must NOT delete another session's historical Promotion data.
+
+Do not perform broad school-wide Promotion cleanup.
+
+---
+
+# 20 — PROMOTION HISTORY
+
+Activation must NOT rewrite Promotion history.
+
+History remains:
+
+```text
+source_session_id
+target_session_id
+```
+
+as recorded at Promotion time.
+
+Do not change old history merely because target session becomes active.
+
+---
+
+# 21 — STUDENTS ADDED DIRECTLY TO TARGET SESSION
+
+Do not assume every target-session Enrollment came from Promotion.
+
+A Student may have a valid target-session Enrollment created through another legitimate workflow.
+
+Activation synchronization should rely on valid target-session Enrollment, not on the existence of Promotion History.
+
+Therefore:
+
+```text
+valid Active target Enrollment
+→ eligible source for current Registry synchronization
+```
+
+even if no Promotion history exists.
+
+---
+
+# 22 — STUDENT REGISTRY ADD/EDIT AFTER ACTIVATION
+
+Do not change the existing permanent rule:
+
+When Student Registry current placement is edited during the active session:
+
+```text
+Registry placement
+↔ active-session Enrollment
+```
+
+must remain synchronized according to the already implemented current-placement consistency architecture.
+
+Stage 3 should establish the correct Registry state at activation.
+
+Normal Registry editing behavior remains unchanged afterward.
+
+---
+
+# 23 — ATTENDANCE AFTER ACTIVATION
+
+After activation, Attendance must naturally use the newly active/selected session Enrollment.
+
+Do not modify Attendance business rules.
+
+Expected:
+
+```text
+2027–28 selected
+Student Registry → 6/B
+2027–28 Enrollment → 6/B
+Attendance → Student appears in 6/B
+```
+
+Historical:
+
+```text
+2026–27 selected
+2026–27 Enrollment → 5/A
+Historical academic placement → 5/A
+```
+
+Old Enrollment must continue supporting historical reads.
+
+---
+
+# 24 — DAILY PRESENCE
+
+Preserve:
+
+```text
+Active Student
++
+Active selected-session Enrollment
+```
+
+eligibility.
+
+And preserve:
+
+```text
+NOT MARKED != ABSENT
+```
+
+No Daily Presence business-rule changes.
+
+---
+
+# 25 — EXAMINATION / OTHER SESSION MODULES
+
+Do not broadly refactor Examination, Homework, Classwork, Timetable, etc.
+
+They should continue using their existing selected-session architecture.
+
+Stage 3 is about:
+
+```text
+Session activation
++
+Student Registry current placement
+```
+
+only.
+
+---
+
+# 26 — CACHE / FRONTEND SESSION STATE
+
+Inspect whether activating a new Academic Session invalidates/refetches the relevant Web session list/current active-session queries.
+
+After successful activation, the Web UI should not continue showing the old session as active because of stale cache.
+
+Use existing React Query invalidation/refetch patterns.
+
+Do not redesign frontend state management.
+
+---
+
+# 27 — ACTIVATION UX
+
+Before activation, if practical within the existing UI, clearly communicate that activation will make the selected session the current Academic Session.
+
+If synchronization count can safely be returned, success may conceptually say:
+
+```text
+2027–28 activated successfully.
+128 Student current placements synchronized.
+```
+
+Do not claim Students were synchronized if they were skipped.
+
+Do not create a large new wizard unless necessary.
+
+---
+
+# 28 — SUPPORT STAFF
+
+Do NOT broaden Academic Session management permissions.
+
+If Support Staff currently cannot activate Academic Sessions:
+
+```text
+Support Staff activation → DENIED
+```
+
+even if they have Exam Controller access.
+
+Promotion permission and Session Management permission are separate.
+
+---
+
+# 29 — MOBILE
+
+Mobile remains frozen.
+
+Do NOT modify:
+
+```text
+artifacts/benius-mobile/
+```
+
+Report shared backend impact only.
+
+---
+
+# 30 — DATABASE MIGRATION
+
+Do NOT perform a new schema migration unless a genuine blocker is discovered.
+
+If a migration is required for:
+
+```text
+single-active-session guarantee
+enrollment uniqueness
+another critical invariant
+```
+
+STOP that portion and report:
+
+```text
+SCHEMA MIGRATION REQUIRED
+```
+
+Do not improvise an unapproved migration.
+
+---
+
+# 31 — DEVELOPMENT ONLY
+
+BENIUS remains in Development/testing.
+
+Do NOT touch Production.
+
+Do NOT deploy.
+
+Development test fixtures may be created and cleaned safely.
+
+Do not delete unrelated Development data.
+
+---
+
+# REQUIRED TEST MATRIX
+
+## Authorization / Tenant
+
+1. Admin/Principal can activate own-school session.
+2. unauthorized Support Staff denied.
+3. School A cannot activate School B session.
+4. School A activation cannot update School B Students.
+
+## Placement Sync
+
+5. Active Student + Active target enrollment → Registry class synchronized.
+6. Registry section synchronized.
+7. Registry roll synchronized.
+8. target roll NULL → Registry receives valid unassigned/null representation.
+9. unrelated Student profile fields unchanged.
+10. target Enrollment unchanged.
+11. source/historical Enrollment unchanged.
+
+## No Target Enrollment
+
+12. Active Student missing target enrollment follows the explicit safe policy.
+13. No placement is guessed.
+14. No old enrollment is copied automatically.
+
+If this remains product-ambiguous, STOP and report before implementing unsafe behavior.
+
+## Inactive Student
+
+15. inactive Student remains inactive.
+16. inactive Student is not automatically reactivated.
+17. report whether Registry placement is skipped for inactive Student.
+
+## Enrollment Status
+
+18. inactive/cancelled target enrollment is not used as current placement.
+19. duplicate/conflicting target placement fails safely.
+
+## ID Card
+
+20. actual placement change → reissue flag behavior matches established semantics.
+21. identical placement → no unnecessary reissue.
+
+## Session State
+
+22. target becomes active.
+23. previous active session becomes inactive according to existing session model.
+24. exactly one active session remains for school.
+25. another school's active session unaffected.
+
+## Atomicity
+
+26. forced Student update failure → entire activation rolls back.
+27. target does not remain active after rollback.
+28. previous active session remains active after rollback.
+29. no partial Registry synchronization remains.
+
+## Historical Safety
+
+30. old Enrollment class unchanged.
+31. old Enrollment section unchanged.
+32. old Enrollment roll unchanged.
+33. Promotion history unchanged.
+34. old Promotion overrides preserved.
+35. old Promotion decisions preserved.
+
+## Attendance Regression
+
+36. newly active-session Student appears according to target Enrollment.
+37. historical selected session still uses historical Enrollment.
+38. inactive Student excluded.
+39. Daily Presence Not Marked behavior unchanged.
+
+## Student Registry Regression
+
+40. normal Registry Add/Edit active-session synchronization still passes.
+41. CSV Import still passes.
+
+## Promotion Regression
+
+42. Stage 1 security passes.
+43. Stage 1B session isolation passes.
+44. Stage 2 target enrollment preparation passes.
+45. Promotion still does not immediately change Registry before activation.
+
+## UI / Cache
+
+46. activation refreshes active-session state.
+47. UI does not continue showing previous session as active after success.
+
+---
+
+# REAL DEVELOPMENT DB VERIFICATION
+
+Perform a controlled Development DB integration test.
+
+Do NOT use Production.
+
+Create safe disposable fixtures.
+
+Example:
+
+```text
+School X
+
+Session A
+ACTIVE
+
+Session B
+DRAFT/INACTIVE
+
+Student X
+Active = true
+
+Registry:
+Class 5/A
+Roll 80
+
+Session A Enrollment:
+Class 5/A
+Roll 80
+
+Session B Enrollment:
+Class 6/B
+Roll NULL
+```
+
+Activate Session B.
+
+Verify directly in Development DB:
+
+```text
+Session A active:
+NO
+
+Session B active:
+YES
+
+Student Registry:
+Class 6/B
+Roll NULL
+
+Session A Enrollment:
+Class 5/A
+Roll 80
+UNCHANGED
+
+Session B Enrollment:
+Class 6/B
+Roll NULL
+UNCHANGED
+```
+
+Also verify `idCardPendingReissue` according to established semantics.
+
+Then run a rollback/failure scenario proving atomicity.
+
+Clean only disposable fixtures afterward.
+
+Confirm zero fixtures remain.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS PROMOTION STAGE 3 REPORT
+
+## Overall Verdict
+
+Choose:
+
+- PASS
+- PARTIAL — PRODUCT DECISION REQUIRED
+- PARTIAL — SCHEMA MIGRATION REQUIRED
+- NEEDS CHANGES
+- FAIL
+
+## Existing Activation Flow
+
+Explain the activation path found before editing.
+
+## Authorization
+
+Report Principal/Admin and Support Staff behavior.
+
+## Synchronization Source
+
+Confirm Registry placement comes exclusively from the newly activated session's valid Active Enrollment.
+
+## Students Without Target Enrollment
+
+State the exact behavior.
+
+Do not hide skipped/missing Students.
+
+## Inactive Students
+
+State exact behavior.
+
+## Registry Synchronization
+
+Report:
+
+```text
+class:
+section:
+roll:
+unrelated profile fields:
+```
+
+## ID Card Reissue
+
+State exact implemented rule.
+
+## Historical Enrollment Preservation
+
+Confirm source/old enrollments remain unchanged.
+
+## Promotion Data Preservation
+
+Confirm old:
+
+```text
+Promotion History
+Promotion Decisions
+Promotion Overrides
+```
+
+are not globally deleted or rewritten.
+
+## Transaction Atomicity
+
+Explain what is in the activation transaction and rollback behavior.
+
+## Single Active Session
+
+Explain how exactly one active session is maintained.
+
+If a schema limitation remains, state it.
+
+## Tenant Isolation
+
+Report cross-school tests.
+
+## Real Development DB Verification
+
+Show actual before/after:
+
+```text
+Session A:
+Session B:
+
+Registry before:
+Registry after:
+
+Session A Enrollment before:
+Session A Enrollment after:
+
+Session B Enrollment before:
+Session B Enrollment after:
+
+ID-card flag before:
+ID-card flag after:
+```
+
+Include failure/rollback verification.
+
+## Attendance / Daily Presence
+
+Report regressions.
+
+## Student Registry / CSV
+
+Report regressions.
+
+## Promotion
+
+Report Stage 1, Stage 1B and Stage 2 regressions.
+
+## Web UX / Cache
+
+Report activation UI/refetch behavior.
+
+## Mobile
+
+```text
+Changed: NO
+Known impact:
+```
+
+## Database
+
+```text
+New migration: NO
+```
+
+unless work stopped because a migration was genuinely required.
+
+## Production
+
+```text
+Production touched: NO
+Production deployed: NO
+```
+
+## Files Changed
+
+List exact files.
+
+## Tests
+
+List PASS / FAIL / NOT TESTED.
+
+Do not hide baseline diagnostics.
+
+# CHANGES NOT ALLOWED
+
+Confirm:
+
+```text
+Historical enrollment rewritten: NO
+Target enrollment deleted after activation: NO
+Promotion history rewritten: NO
+Promotion decisions globally cleared: NO
+Promotion overrides globally cleared: NO
+Inactive Student reactivated: NO
+Support Staff given Session Management permission: NO
+Mobile changed: NO
+Production deployed: NO
+```
+
+# FINAL VERDICT
+
+State whether Stage 3 is complete and whether the Promotion lifecycle is functionally complete through session activation.
+
+If PASS, state that **Stage 4 remains the reliability/scalability hardening stage**, not a change to the basic Promotion lifecycle.
+
+STOP.
