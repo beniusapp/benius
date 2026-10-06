@@ -1,0 +1,1092 @@
+# BENIUS — PROMOTION STAGE 2B
+
+## COMPLETE STAGE 2: TARGET SESSION + TARGET ENROLLMENT
+
+This is an **IMPLEMENTATION task**.
+
+Do NOT perform another broad architecture audit.
+
+The required database foundation is now complete:
+
+```text
+Stage 1  — Source-session + tenant isolation              PASS
+Stage 1B — Override/Decision session identity             PASS
+Stage 2A — academic_history.target_session_id             PASS
+```
+
+Now complete the previously blocked **Promotion Stage 2**.
+
+---
+
+# FINAL STAGE 2 PRODUCT CONTRACT
+
+Promotion prepares a Student's placement for a **future/target Academic Session**.
+
+It must NOT immediately change the Student's current placement.
+
+Example:
+
+```text
+SOURCE SESSION — 2026–27 (ACTIVE)
+
+Student Registry:
+MIS-0003 → Class 2/A, Roll 3
+
+Source Enrollment:
+2026–27 → Class 2/A, Roll 3
+```
+
+Admin promotes the Student to:
+
+```text
+TARGET SESSION — 2027–28
+
+Class 3/A
+Roll = unassigned/null if no target roll is provided
+```
+
+After successful Promotion:
+
+```text
+Student Registry
+2026–27 current placement
+→ Class 2/A, Roll 3
+→ UNCHANGED
+
+Source Enrollment
+2026–27
+→ Class 2/A, Roll 3
+→ UNCHANGED
+
+Target Enrollment
+2027–28
+→ Class 3/A
+→ CREATED
+
+Promotion History
+source_session_id = 2026–27
+target_session_id = 2027–28
+```
+
+Only Stage 3 will later synchronize Student Registry when the target session becomes active.
+
+---
+
+# 1. EXPLICIT TARGET SESSION
+
+Update Promotion execution so it requires:
+
+```text
+targetSessionId
+```
+
+Source session remains the selected/validated source Academic Session from the existing Stage 1 context.
+
+The execution request should conceptually become:
+
+```text
+{
+  targetSessionId,
+  term,
+  items
+}
+```
+
+Do not trust the client-provided target ID.
+
+Server must validate it.
+
+---
+
+# 2. TARGET SESSION VALIDATION
+
+Before any Promotion write:
+
+Validate that target session:
+
+```text
+exists
+belongs to authenticated school
+is not the source session
+is a legitimate target/future session
+```
+
+The target session does NOT need to be active.
+
+Indeed, normal intended flow is:
+
+```text
+Source = ACTIVE
+Target = future/draft/inactive
+```
+
+Reject:
+
+```text
+missing targetSessionId
+invalid targetSessionId
+foreign-school target session
+source == target
+```
+
+Do not infer target session from session name, numeric ID order, active session, year text, or creation date.
+
+---
+
+# 3. WEB TARGET SESSION SELECTOR
+
+Update the existing Web Exam Controller Promotion flow with the smallest appropriate target-session selector.
+
+Clearly show:
+
+```text
+Promoting From:
+2026–27
+
+Promoting To:
+2027–28
+```
+
+Only same-school eligible target sessions should appear.
+
+Do not redesign Exam Controller.
+
+Do not change unrelated UI.
+
+Do not expose another school's Academic Sessions.
+
+The selected target ID must be submitted to the backend.
+
+---
+
+# 4. SOURCE SESSION RULE
+
+Source session remains:
+
+```text
+authenticated school
++
+selected Academic Session
++
+active/writable
+```
+
+Do NOT allow Promotion execution from an archived source session.
+
+Historical Promotion data remains readable.
+
+---
+
+# 5. SOURCE STUDENT VALIDATION
+
+For every submitted Student verify:
+
+```text
+Student belongs to authenticated school
+Student is active
+
+source enrollment exists
+source enrollment belongs to authenticated school
+source enrollment belongs to source session
+source enrollment.status = Active
+```
+
+Source placement must come from the source-session enrollment.
+
+Do NOT use current Student Registry class/section as authoritative source academic placement.
+
+---
+
+# 6. CREATE TARGET ENROLLMENT
+
+For each Student whose Promotion result requires placement in the target session, create:
+
+```text
+school_id
+student_id
+session_id = targetSessionId
+class = intended target class
+section = intended target section
+roll_no = intended target roll or NULL
+status = Active
+```
+
+Use the existing Enrollment schema and conventions.
+
+Do NOT create duplicate:
+
+```text
+school
++
+student
++
+target session
+```
+
+enrollments.
+
+---
+
+# 7. TARGET ROLL RULE
+
+Stage 2A investigation confirmed:
+
+```text
+enrollments.roll_no is nullable
+```
+
+Therefore:
+
+If an established target roll is explicitly available, use it.
+
+Otherwise:
+
+```text
+target roll = NULL
+```
+
+Do NOT:
+
+```text
+copy source roll automatically
+generate a new roll
+renumber cohort
+guess roll
+```
+
+unless an already-established BENIUS rule explicitly does so.
+
+Do not create a new roll allocation business rule.
+
+---
+
+# 8. EXISTING TARGET ENROLLMENT
+
+Handle explicitly.
+
+## No existing target enrollment
+
+Create it.
+
+## Exact matching target enrollment
+
+If the Student already has:
+
+```text
+same school
+same target session
+same intended class
+same intended section
+same intended roll/null
+compatible Active status
+```
+
+treat it as already prepared.
+
+Do not create duplicate enrollment.
+
+## Conflicting target enrollment
+
+Example:
+
+```text
+Requested:
+2027–28 → 3/A
+
+Existing:
+2027–28 → 3/B
+```
+
+Reject safely:
+
+```text
+409 TARGET_ENROLLMENT_CONFLICT
+```
+
+Do NOT overwrite it.
+
+Do NOT silently move the Student.
+
+Do not leak foreign-school data.
+
+---
+
+# 9. REMOVE TEMPORARY STAGE 1 PROFILE UPDATE
+
+This is critical.
+
+The existing Stage 1 executor currently updates:
+
+```text
+students.class
+students.section
+```
+
+during Promotion.
+
+REMOVE/BYPASS that behavior for the new Stage 2 Promotion flow.
+
+After Promotion:
+
+```text
+students.class     → unchanged
+students.section   → unchanged
+students.roll      → unchanged
+```
+
+Student Registry remains the CURRENT placement.
+
+Future placement exists only in the target-session Enrollment.
+
+---
+
+# 10. ID CARD REISSUE
+
+Existing Promotion currently sets:
+
+```text
+idCardPendingReissue = true
+```
+
+because it immediately changes current placement.
+
+Stage 2 no longer changes current placement.
+
+Therefore do NOT set current Student ID-card reissue merely because a future target enrollment was prepared, unless code inspection proves the flag has a different established meaning.
+
+Prefer:
+
+```text
+Promotion preparation
+→ no current ID-card reissue
+```
+
+Stage 3 can handle current-placement consequences at activation.
+
+Report the final behavior.
+
+---
+
+# 11. SOURCE ENROLLMENT IMMUTABILITY
+
+Promotion must NEVER rewrite:
+
+```text
+source enrollment class
+source enrollment section
+source enrollment roll
+source enrollment status
+```
+
+Example:
+
+```text
+Before:
+2026–27 → 2/A → Roll 3
+
+After:
+2026–27 → 2/A → Roll 3
+```
+
+exactly unchanged.
+
+---
+
+# 12. PROMOTION HISTORY
+
+Stage 2A added:
+
+```text
+academic_history.session_id
+= SOURCE session
+
+academic_history.target_session_id
+= TARGET session
+```
+
+New Stage 2 Promotion history MUST explicitly write both.
+
+Do not leave `target_session_id` NULL for a successful new Stage 2 Promotion.
+
+Validate both sessions before inserting history.
+
+Also preserve existing:
+
+```text
+school
+student
+source placement/history snapshot
+scores/decision snapshot
+```
+
+according to current behavior.
+
+Do not put target session only in JSON.
+
+The real DB column is authoritative.
+
+---
+
+# 13. HISTORY TENANT SAFETY
+
+Before history insert ensure:
+
+```text
+authenticated school
+=
+Student school
+=
+source session school
+=
+target session school
+=
+source enrollment school
+=
+history school
+```
+
+The FK alone is NOT sufficient because it proves session existence, not same-school ownership.
+
+---
+
+# 14. PROMOTION DECISIONS
+
+Promotion Decision remains associated with the **SOURCE session**.
+
+Do NOT move/copy the decision to the target session.
+
+When marking executed, scope by:
+
+```text
+school
++
+source session
++
+Student
++
+cohort
++
+term
+```
+
+A decision belonging to another Academic Session must remain untouched.
+
+---
+
+# 15. PROMOTION OVERRIDES
+
+Overrides also belong to the **SOURCE session** for the Promotion decision.
+
+Use only:
+
+```text
+school
++
+source session
+```
+
+overrides.
+
+Never use target-session overrides to determine the source-session Promotion outcome.
+
+Any cleanup must remain source-session scoped.
+
+---
+
+# 16. PROMOTION OUTCOME SEMANTICS
+
+Do NOT invent new exam policy.
+
+Inspect the actual existing execution behavior for:
+
+```text
+promoted
+retained
+grace-pass
+```
+
+and any other currently supported state.
+
+The target enrollment must represent the Student's intended placement in the target Academic Session.
+
+Examples conceptually:
+
+```text
+PROMOTED
+Source: Class 2
+Target: Class 3
+```
+
+A retained/repeat Student may conceptually need:
+
+```text
+Source: Class 2
+Target: Class 2
+```
+
+for the new Academic Session.
+
+BUT implement this only according to existing BENIUS Promotion semantics.
+
+Do not invent a retained/repeat policy if the existing flow does not establish it.
+
+If a genuine ambiguity blocks safe implementation, report:
+
+```text
+PRODUCT DECISION REQUIRED
+```
+
+with the exact ambiguity.
+
+Do not silently guess.
+
+---
+
+# 17. TRANSACTION ATOMICITY
+
+The essential Stage 2 operation must be atomic.
+
+For a successful Student/cohort Promotion transaction, do not allow:
+
+```text
+target enrollment created
+BUT history missing
+```
+
+or:
+
+```text
+history created
+BUT target enrollment missing
+```
+
+or:
+
+```text
+decision marked executed
+BUT target enrollment failed
+```
+
+Core transaction should include as appropriate:
+
+```text
+source Student/enrollment validation
+target session validation
+target enrollment conflict check
+target enrollment create/confirm
+academic_history insert with source + target session
+source-session decision execution state
+```
+
+Preserve existing transaction semantics where safe.
+
+---
+
+# 18. COHORT CONFLICT
+
+Do not redesign large-cohort architecture yet.
+
+Stage 4 handles scalability.
+
+For now, preserve a clear transactional rule.
+
+If the current operation is all-or-nothing, a target-enrollment conflict should roll back the submitted Promotion transaction.
+
+Report the exact behavior.
+
+Do not silently switch to partial success.
+
+---
+
+# 19. RETRY SAFETY
+
+Narrow Stage 2 retry safety:
+
+If exact target enrollment already exists and represents the same intended result:
+
+```text
+do not duplicate enrollment
+```
+
+However, do not claim full idempotency unless history/decision/audit duplication is also protected.
+
+Full idempotency belongs to Stage 4.
+
+Report any remaining retry limitation.
+
+---
+
+# 20. TARGET SESSION STATUS
+
+Promotion must NOT:
+
+```text
+activate target session
+archive source session
+change session dates
+change active-session flag
+```
+
+Promotion only prepares future placement.
+
+---
+
+# 21. SUPPORT STAFF
+
+Authorized Support Staff with:
+
+```text
+exam-controller
+```
+
+permission follows the same Promotion rules.
+
+Preserve role-aware attribution:
+
+```text
+role = support_staff
+positive staffId
+authenticated school
+Student
+source session
+target session where audit/history supports it
+```
+
+Never record Support Staff as fake Admin.
+
+---
+
+# 22. SUCCESS UX
+
+After successful Promotion, do not tell the user that the Student's CURRENT Registry placement has already changed.
+
+Use language conceptually like:
+
+```text
+Promotion prepared successfully for Academic Session 2027–28.
+```
+
+The UI should show the target session.
+
+Do not claim:
+
+```text
+Student is now in Class 3
+```
+
+while the source session remains active.
+
+---
+
+# 23. STAGE 3 MUST NOT BE IMPLEMENTED
+
+Do NOT change Academic Session activation.
+
+Do NOT synchronize:
+
+```text
+target enrollment
+→ students.class/section/roll
+```
+
+yet.
+
+Do NOT automatically activate the target session.
+
+Stage 3 is separate.
+
+---
+
+# 24. CURRENT STUDENT REGISTRY ARCHITECTURE
+
+Preserve:
+
+```text
+Student Registry
+= current placement
+```
+
+and:
+
+```text
+Enrollment
+= session-specific placement
+```
+
+Do not modify normal Student Registry Add/Edit synchronization behavior.
+
+Do not modify CSV Import behavior.
+
+---
+
+# 25. ATTENDANCE
+
+Attendance must continue using:
+
+```text
+selected Academic Session
++
+active Student
++
+active selected-session Enrollment
+```
+
+Creating a future target enrollment must NOT cause that Student to appear in the future class while the current source session is selected.
+
+No Attendance business-rule changes.
+
+---
+
+# 26. MOBILE
+
+Mobile remains frozen.
+
+Do NOT modify:
+
+```text
+artifacts/benius-mobile/
+```
+
+The previously known Mobile Promotion decision conflict-target issue remains separate.
+
+Report shared-backend impact if any.
+
+---
+
+# 27. DATABASE
+
+Stage 2A migration is already complete.
+
+Do NOT perform another schema migration unless an unexpected genuine blocker is discovered.
+
+If another migration appears necessary:
+
+STOP and report it.
+
+Do not improvise.
+
+---
+
+# 28. PRODUCTION
+
+This remains Development.
+
+```text
+Production database touched: NO
+Production deployment: NO
+```
+
+Do not deploy.
+
+---
+
+# REQUIRED TEST MATRIX
+
+## Target Session
+
+1. Missing targetSessionId → reject.
+2. Invalid targetSessionId → reject.
+3. foreign-school targetSessionId → reject.
+4. source == target → reject.
+5. valid same-school future/inactive target → accept.
+
+## Source Student
+
+6. foreign Student → reject.
+7. inactive Student → reject.
+8. no source enrollment → reject.
+9. inactive source enrollment → reject.
+10. valid active source enrollment → accept.
+
+## Target Enrollment
+
+11. no target enrollment → create.
+12. exact matching target enrollment → no duplicate.
+13. conflicting target enrollment → 409.
+14. cross-school target enrollment impossible.
+15. target enrollment gets correct target session.
+16. target enrollment gets correct target class/section.
+17. roll remains NULL/unassigned when no established target roll exists.
+
+## Current Placement Preservation
+
+18. `students.class` unchanged.
+19. `students.section` unchanged.
+20. Student current roll unchanged.
+21. current ID-card reissue not incorrectly triggered.
+
+## Source Enrollment Preservation
+
+22. source class unchanged.
+23. source section unchanged.
+24. source roll unchanged.
+25. source status unchanged.
+
+## History
+
+26. `session_id` = exact source session.
+27. `target_session_id` = exact target session.
+28. history school = authenticated school.
+29. history Student = validated same-school Student.
+
+## Decisions
+
+30. source-session decision executed appropriately.
+31. target-session decision untouched.
+32. another session's decision untouched.
+
+## Overrides
+
+33. only source-session overrides used.
+34. target/other-session overrides ignored.
+
+## Session State
+
+35. source remains active.
+36. target remains inactive/draft.
+37. Promotion does not activate target.
+38. Promotion does not archive source.
+
+## Historical
+
+39. archived source Promotion denied.
+40. historical source enrollment unchanged.
+
+## Tenant Isolation
+
+41. School A cannot use School B target session.
+42. School A cannot create target enrollment for School B Student.
+43. School A cannot create School B history.
+
+## Support Staff
+
+44. authorized Support Staff works.
+45. unauthorized Support Staff denied.
+46. actor attribution remains support_staff.
+
+## Regression
+
+47. Student Registry Add/Edit synchronization PASS.
+48. CSV Import profile+enrollment PASS.
+49. Teacher Attendance PASS.
+50. Daily Presence NOT MARKED behavior PASS.
+51. Stage 1 source-session isolation PASS.
+52. Stage 1B override/decision isolation PASS.
+
+---
+
+# REAL DEVELOPMENT DB VERIFICATION
+
+Perform a controlled Development DB verification.
+
+Do NOT use Production.
+
+Use safe/disposable fixtures.
+
+Example:
+
+```text
+Source Session A = ACTIVE
+Target Session B = INACTIVE
+
+Student X Registry:
+2/A
+
+Source Enrollment:
+Session A → 2/A
+
+Target Enrollment:
+none
+```
+
+Execute Stage 2 Promotion preparation:
+
+```text
+Session A
+        ↓
+Session B → 3/A
+```
+
+Verify directly:
+
+```text
+Student Registry:
+still 2/A
+
+Source Enrollment:
+still Session A → 2/A
+
+Target Enrollment:
+Session B → 3/A exists
+
+academic_history.session_id:
+Session A
+
+academic_history.target_session_id:
+Session B
+
+Source Session:
+still active
+
+Target Session:
+still inactive
+```
+
+Also verify a conflicting target enrollment produces rollback/no corruption.
+
+Clean only disposable fixtures afterward.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS PROMOTION STAGE 2B REPORT
+
+## Overall Verdict
+
+Choose:
+
+- PASS
+- PARTIAL — PRODUCT DECISION REQUIRED
+- PARTIAL — SCHEMA MIGRATION REQUIRED
+- NEEDS CHANGES
+- FAIL
+
+## Target Session
+
+Report explicit target selection and backend validation.
+
+## Web UX
+
+Explain target-session selector and success wording.
+
+## Target Enrollment
+
+Report:
+
+```text
+No existing enrollment:
+Matching enrollment:
+Conflicting enrollment:
+Target roll behavior:
+Target status:
+```
+
+## Student Registry
+
+Confirm:
+
+```text
+class changed by Promotion: NO
+section changed by Promotion: NO
+roll changed by Promotion: NO
+ID-card reissue incorrectly triggered: NO
+```
+
+## Source Enrollment
+
+Confirm all source placement/status fields remain unchanged.
+
+## Promotion History
+
+Confirm:
+
+```text
+source session persisted:
+target session persisted:
+school validated:
+Student validated:
+```
+
+## Promotion Outcomes
+
+Explain actual behavior for promoted/retained/grace-pass and any other supported outcome.
+
+## Atomicity
+
+Explain exactly what commits/rolls back together.
+
+## Retry Behavior
+
+Explain exact matching enrollment behavior and remaining Stage 4 limitations.
+
+## Tenant Isolation
+
+Report cross-school tests.
+
+## Historical Protection
+
+Report archived source behavior.
+
+## Support Staff
+
+Report permission and actor attribution.
+
+## Real Development DB Verification
+
+Show actual before/after Registry, source enrollment, target enrollment, history and session statuses.
+
+## Regression
+
+Report Student Registry, CSV, Attendance, Daily Presence, Stage 1 and Stage 1B.
+
+## Mobile
+
+```text
+Changed: NO
+Known impact:
+```
+
+## Database
+
+```text
+New migration in Stage 2B: NO
+```
+
+unless an unexpected blocker was discovered and work stopped.
+
+## Production
+
+```text
+Production touched: NO
+Production deployed: NO
+```
+
+## Remaining Work
+
+### Stage 3
+Target-session activation → synchronize Student Registry from target enrollment.
+
+### Stage 4
+Idempotency + large-cohort scalability/reliability.
+
+## Files Changed
+
+List exact files.
+
+## Tests
+
+List PASS / FAIL / NOT TESTED.
+
+Do not hide baseline diagnostics.
+
+# CHANGES NOT ALLOWED
+
+Confirm:
+
+```text
+Source enrollment rewritten: NO
+Student Registry moved to target placement: NO
+Target session auto-activated: NO
+Historical enrollment rewritten: NO
+Mobile changed: NO
+Production deployed: NO
+```
+
+# FINAL VERDICT
+
+State whether **Promotion Stage 2 is now complete** and whether it is safe to proceed to Stage 3.
+
+STOP.
