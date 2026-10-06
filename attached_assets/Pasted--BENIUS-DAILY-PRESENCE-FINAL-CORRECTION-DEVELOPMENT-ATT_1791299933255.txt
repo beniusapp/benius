@@ -1,0 +1,787 @@
+# BENIUS — DAILY PRESENCE FINAL CORRECTION + DEVELOPMENT ATTENDANCE CLEANUP
+
+Proceed with the remaining Student Attendance correction.
+
+The previous task already successfully fixed the **Teacher Attendance live roster and write validation**.
+
+Do NOT undo or redesign that completed fix.
+
+## CONFIRMED COMPLETED BEHAVIOR
+
+Teacher Attendance now correctly requires:
+
+```text
+students.is_active = true
+AND
+selected-session enrollment exists
+AND
+enrollment.status = Active
+AND
+correct authenticated school
+AND
+correct selected Academic Session
+AND
+correct selected-session class/section
+```
+
+Development Class 1/A correctly changed:
+
+```text
+Before: 5
+After:  2
+
+Eligible:
+MIS-0001
+MIS-0002
+```
+
+Keep this behavior unchanged.
+
+---
+
+# NEW CONFIRMED PRODUCT DECISION
+
+BENIUS Student Attendance uses:
+
+## NOT MARKED ≠ ABSENT
+
+A Student whose attendance has not yet been submitted must NOT automatically be treated as Absent.
+
+For Daily Presence percentage:
+
+```text
+Present / Marked Applicable Attendance
+```
+
+An eligible Student with no attendance mark is tracked as:
+
+```text
+Not Marked
+```
+
+and is NOT included in the percentage denominator.
+
+---
+
+# EXAMPLE
+
+Suppose:
+
+```text
+MIS-0001 → Present
+MIS-0002 → Present
+MIS-0003 → Not Marked
+```
+
+Dashboard result:
+
+```text
+Daily Presence = 2/2
+Percentage = 100%
+
+Not Marked = 1
+```
+
+NOT:
+
+```text
+2/3 = 66.7%
+```
+
+because MIS-0003 has not been marked Absent.
+
+---
+
+# WHEN THE THIRD STUDENT IS MARKED ABSENT
+
+If later:
+
+```text
+MIS-0001 → Present
+MIS-0002 → Present
+MIS-0003 → Absent
+```
+
+then:
+
+```text
+Daily Presence = 2/3
+Percentage = 66.7%
+Not Marked = 0
+```
+
+---
+
+# WHEN ALL THREE ARE PRESENT
+
+```text
+MIS-0001 → Present
+MIS-0002 → Present
+MIS-0003 → Present
+```
+
+then:
+
+```text
+Daily Presence = 3/3
+Percentage = 100%
+Not Marked = 0
+```
+
+---
+
+# IMPORTANT — DO NOT INVENT A NEW WORKING-DAY RULE
+
+The previous audit found that BENIUS currently has no authoritative Student Attendance working-day source for an entirely unmarked class.
+
+The existing Student working dates are inferred from attendance marks, while the available weekday setting is Teacher-specific.
+
+Therefore:
+
+DO NOT invent a new:
+
+- Student weekly schedule
+- Student attendance calendar
+- Monday-Friday assumption
+- Teacher weekday rule for Students
+- automatic absence rule
+- new database schema
+
+We are NOT introducing those business rules in this task.
+
+---
+
+# DAILY PRESENCE — CORRECT POPULATION LOGIC
+
+Fix Daily Presence so that existing attendance records do NOT define Student eligibility.
+
+The eligible Student population must come from:
+
+```text
+authenticated school
++
+validated selected Academic Session
++
+students.is_active = true
++
+selected-session enrollment
++
+enrollment.status = Active
+```
+
+Use selected-session enrollment as the authoritative session-specific academic placement.
+
+Existing attendance records determine the Student's attendance STATUS.
+
+They do NOT determine whether the Student exists or is eligible.
+
+---
+
+# DAILY PRESENCE — MARKED POPULATION
+
+For the percentage calculation, use eligible Students who actually have an applicable attendance status recorded for that date.
+
+Conceptually:
+
+```text
+Eligible Student
+      ↓
+Attendance record exists?
+      ↓
+YES → use recorded attendance status in existing BENIUS calculation
+NO  → Not Marked
+```
+
+An eligible Student with no attendance record:
+
+```text
+Not Marked
+```
+
+must NOT automatically become:
+
+```text
+Absent
+```
+
+and must NOT reduce the Daily Presence percentage.
+
+---
+
+# INACTIVE STUDENTS
+
+Inactive Students must be excluded completely from LIVE Daily Presence.
+
+Example:
+
+```text
+students.is_active = false
+```
+
+means the Student must NOT contribute to:
+
+- Present count
+- Absent count
+- Daily Presence denominator
+- Daily Presence percentage
+- Not Marked count
+- live eligible population
+
+even if an old attendance record exists for that date.
+
+---
+
+# INACTIVE ENROLLMENT
+
+Likewise:
+
+```text
+students.is_active = true
+BUT
+selected-session enrollment.status != Active
+```
+
+must not contribute to live Daily Presence.
+
+---
+
+# EXISTING INELIGIBLE ATTENDANCE ROWS
+
+If an inactive/ineligible Student has an Attendance record for the requested date, that row must not affect the LIVE Daily Presence calculation.
+
+Eligibility must be established first.
+
+Then attendance status is associated with eligible Students.
+
+Do NOT start from attendance rows and assume every row is eligible.
+
+---
+
+# MIS-0003
+
+The audit found:
+
+```text
+MIS-0003
+
+Student profile:
+Class 2/A
+
+Selected Academic Session enrollment:
+Class 2/B
+```
+
+Do NOT modify this data in this task.
+
+For session-sensitive academic operations:
+
+```text
+selected-session enrollment = authoritative placement
+```
+
+Therefore MIS-0003 remains Class 2/B for Attendance.
+
+If MIS-0003 has no Attendance record for the requested date:
+
+```text
+MIS-0003 → Not Marked
+```
+
+Do NOT automatically mark or calculate MIS-0003 as Absent.
+
+---
+
+# DAILY PRESENCE DISPLAY
+
+Update the Web Dashboard Daily Presence presentation only as minimally necessary to represent the confirmed rule.
+
+The dashboard must continue showing:
+
+```text
+Daily Presence percentage
+Present / marked-applicable denominator
+```
+
+and should also make the number of eligible but unmarked Students visible.
+
+For example:
+
+```text
+Daily Presence
+
+100%
+2/2 Present
+
+1 Not Marked
+```
+
+Keep the existing BENIUS dashboard design/style.
+
+Do NOT redesign the dashboard.
+
+If the existing card can display the Not Marked information cleanly with a small secondary text, use that.
+
+---
+
+# ZERO MARKED ATTENDANCE CASE
+
+Handle this safely.
+
+Example:
+
+```text
+Eligible Students = 3
+Attendance records = 0
+Not Marked = 3
+```
+
+Do NOT display:
+
+```text
+0/3 = 0%
+```
+
+because that would imply all three were counted as non-present.
+
+Do NOT display:
+
+```text
+100%
+```
+
+either.
+
+Use the existing BENIUS empty/not-marked presentation where available.
+
+If none exists, use a clear neutral state such as:
+
+```text
+No attendance marked
+3 Not Marked
+```
+
+Do not fabricate a percentage when denominator = 0.
+
+---
+
+# ATTENDANCE STATUS SEMANTICS
+
+Preserve the existing BENIUS handling for legitimate recorded statuses such as:
+
+- Present
+- Absent
+- Leave
+- Holiday
+- Half Day
+- other existing statuses
+
+Do NOT redefine how those statuses affect the denominator/presence calculation unless absolutely required for this fix.
+
+The new decision applies specifically to:
+
+```text
+NO ATTENDANCE RECORD
+=
+NOT MARKED
+```
+
+Do not silently change existing attendance-status business rules.
+
+---
+
+# DEVELOPMENT DATA CLEANUP
+
+The user has explicitly approved cleaning Student Attendance test/history data because BENIUS is still in the BUILDING / DEVELOPMENT phase.
+
+After the code correction is ready:
+
+1. Confirm the connected database is Development.
+2. Count existing Student Attendance transactional records.
+3. Clear the existing Development Student Attendance test/transactional records if they are all development/test data.
+4. Start Student Attendance with a clean Development state.
+
+It is acceptable to remove the old incorrect records for:
+
+```text
+MIS-0004
+MIS-0006
+MIS-0007
+```
+
+and other existing Student Attendance test records if all are Development test data.
+
+---
+
+# STRICT DATABASE SAFETY
+
+ONLY Development.
+
+DO NOT TOUCH PRODUCTION.
+
+Do NOT delete:
+
+- Students
+- Teachers
+- Academic Sessions
+- Classes
+- Sections
+- Subjects
+- school configuration
+- Student profiles
+- Teacher profiles
+- fees
+- examinations
+- homework/classwork
+- unrelated records
+
+Only Student Attendance transactional/test data approved for this Development cleanup.
+
+---
+
+# ENROLLMENTS
+
+Do NOT delete enrollment rows merely to solve Daily Presence.
+
+The backend must remain safe even if:
+
+```text
+Student inactive
++
+Enrollment still Active
+```
+
+because the canonical eligibility rule requires BOTH:
+
+```text
+students.is_active = true
+AND
+enrollment.status = Active
+```
+
+Do not make enrollment-lifecycle changes in this task unless absolutely necessary.
+
+The previous Teacher Attendance correction already works without requiring destructive enrollment cleanup.
+
+---
+
+# STUDENT DEACTIVATION
+
+Leave Student deactivation behavior unchanged in this task.
+
+The live Attendance eligibility protection now ensures that a deactivated Student immediately becomes ineligible even if an Active enrollment remains.
+
+Any future enrollment-lifecycle synchronization can be handled separately.
+
+---
+
+# STUDENT REGISTRY
+
+UNCHANGED.
+
+Expected Development active count:
+
+```text
+3
+```
+
+---
+
+# DASHBOARD TOTAL STUDENTS
+
+UNCHANGED.
+
+Expected Development count:
+
+```text
+3
+```
+
+Do NOT make Total Students session-specific as part of this task.
+
+---
+
+# TEACHER ATTENDANCE
+
+Do NOT regress the completed fix.
+
+Expected Class 1/A live roster:
+
+```text
+MIS-0001
+MIS-0002
+```
+
+Inactive Students must remain excluded.
+
+---
+
+# ACADEMIC SESSION
+
+Preserve:
+
+```text
+authenticated school
++
+validated selected Academic Session
+```
+
+Do not silently fall back to another session.
+
+Previous/inactive Academic Sessions remain READ-ONLY for session-specific academic operational data.
+
+---
+
+# TENANT ISOLATION
+
+Strictly preserve school/tenant isolation.
+
+School A must never calculate:
+
+- School B Students
+- School B enrollments
+- School B attendance
+
+All eligibility must be server-side scoped to the authenticated school.
+
+---
+
+# MOBILE
+
+Mobile remains FROZEN.
+
+Do NOT modify:
+
+- Mobile UI
+- Mobile Attendance
+- Mobile routes
+- Mobile business logic
+- Mobile permissions
+
+If shared backend changes have future Mobile impact, REPORT it only.
+
+---
+
+# REQUIRED TESTS
+
+Add focused regression tests.
+
+## Test 1 — Two Present + One Not Marked
+
+```text
+Eligible Students = 3
+
+Student A = Present
+Student B = Present
+Student C = no attendance record
+```
+
+Expected:
+
+```text
+Present = 2
+Marked denominator = 2
+Percentage = 100%
+Not Marked = 1
+```
+
+---
+
+## Test 2 — Two Present + One Absent
+
+Expected:
+
+```text
+Present = 2
+Marked denominator = 3
+Percentage = 66.7%
+Not Marked = 0
+```
+
+---
+
+## Test 3 — Three Present
+
+Expected:
+
+```text
+Present = 3
+Marked denominator = 3
+Percentage = 100%
+Not Marked = 0
+```
+
+---
+
+## Test 4 — No Attendance Marked
+
+```text
+Eligible Students = 3
+Attendance records = 0
+```
+
+Expected:
+
+```text
+Marked denominator = 0
+Not Marked = 3
+No fabricated percentage
+```
+
+---
+
+## Test 5 — Inactive Student has old Attendance record
+
+Expected:
+
+```text
+Inactive Student excluded completely from LIVE summary.
+```
+
+The record must not affect numerator or denominator.
+
+---
+
+## Test 6 — Inactive enrollment
+
+Active Student with non-Active selected-session enrollment:
+
+```text
+Excluded from LIVE Daily Presence.
+```
+
+---
+
+## Test 7 — Tenant isolation
+
+School B Student/Enrollment/Attendance must never affect School A Daily Presence.
+
+---
+
+## Test 8 — Selected Academic Session
+
+Only eligible Students/enrollments from the validated selected session may participate.
+
+---
+
+## Test 9 — Teacher Attendance regression
+
+Confirm Class 1/A still returns only:
+
+```text
+MIS-0001
+MIS-0002
+```
+
+for the audited Development state.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS DAILY PRESENCE FINAL CORRECTION
+
+## Product rule
+
+Confirm:
+
+```text
+NOT MARKED != ABSENT
+```
+
+PASS/FAIL
+
+## Daily Presence eligibility
+
+- Active Student required: PASS/FAIL
+- Active selected-session enrollment required: PASS/FAIL
+- Selected-session placement used: PASS/FAIL
+- Existing Attendance rows do not define eligibility: PASS/FAIL
+- Inactive Students excluded: PASS/FAIL
+- Inactive enrollments excluded: PASS/FAIL
+
+## Percentage semantics
+
+- Not Marked excluded from denominator: PASS/FAIL
+- Not Marked excluded from numerator: PASS/FAIL
+- Absent remains a marked status: PASS/FAIL
+- Zero-marked case handled without fake percentage: PASS/FAIL
+
+## Development examples
+
+Report actual verified results for:
+
+1. 2 Present + 1 Not Marked
+2. 2 Present + 1 Absent
+3. 3 Present
+4. 0 Marked + 3 Not Marked
+
+## Dashboard UI
+
+Report exactly how Not Marked is displayed.
+
+Confirm existing design was preserved.
+
+## Teacher Attendance regression
+
+- Class 1/A eligible count:
+- Eligible DSIDs:
+- Inactive Students excluded: PASS/FAIL
+- Write validation preserved: PASS/FAIL
+
+## Development Attendance cleanup
+
+- Environment confirmed:
+- Attendance records before:
+- Attendance records deleted:
+- Attendance records remaining:
+- Production touched: NO
+- Core Student data deleted: NO
+- Unrelated data deleted: NO
+
+## Student Registry
+
+UNCHANGED / CHANGED
+
+## Dashboard Total Students
+
+UNCHANGED / CHANGED
+
+## MIS-0003
+
+Confirm selected-session enrollment remains Class 2/B and no data was manually changed.
+
+## Academic Session protections
+
+PASS/FAIL
+
+## Tenant isolation
+
+PASS/FAIL
+
+## Student deactivation behavior
+
+UNCHANGED / CHANGED
+
+## Database schema
+
+NONE / explain
+
+## Mobile
+
+FROZEN
+
+## Deployment
+
+NONE
+
+## Tests/builds performed
+
+List results.
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
