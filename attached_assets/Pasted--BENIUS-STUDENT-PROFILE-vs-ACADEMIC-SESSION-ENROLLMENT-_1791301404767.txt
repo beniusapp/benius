@@ -1,0 +1,981 @@
+# BENIUS — STUDENT PROFILE vs ACADEMIC SESSION ENROLLMENT CONSISTENCY AUDIT
+
+## READ-ONLY AUDIT FIRST — DO NOT MODIFY CODE OR DATABASE
+
+We have identified a serious Student placement consistency issue.
+
+BENIUS is expected to support **1 lakh+ Students**, so this must be solved architecturally and automatically.
+
+Do NOT manually repair individual Students as the solution.
+
+Do NOT make code changes yet.
+
+Do NOT modify database records.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# CONFIRMED EXAMPLE
+
+Development Student:
+
+```text
+MIS-0003 / student3mis
+```
+
+Student Registry currently displays:
+
+```text
+Class 2
+Section A
+```
+
+But the selected Academic Session is:
+
+```text
+2026–2027
+```
+
+and the previous audit confirmed the Student's selected-session enrollment is:
+
+```text
+Class 2
+Section B
+```
+
+Therefore:
+
+```text
+Student profile/current placement = 2/A
+
+Selected-session enrollment       = 2/B
+```
+
+Teacher Attendance correctly uses selected-session enrollment and therefore treats MIS-0003 as:
+
+```text
+2/B
+```
+
+So selecting Class 2/A in Teacher Attendance correctly finds no eligible Student.
+
+The question is:
+
+# WHY DID THE STUDENT PROFILE AND ACTIVE-SESSION ENROLLMENT BECOME DIFFERENT?
+
+---
+
+# IMPORTANT EXISTING BENIUS RULE
+
+Do NOT change this architecture during the audit.
+
+For session-specific academic operations:
+
+```text
+Selected Academic Session enrollment
+=
+authoritative Student academic placement
+```
+
+Examples include session-sensitive:
+
+- Attendance
+- Examination
+- Results
+- academic reports
+- promotion
+- other session-specific academic operations
+
+Student Registry currently behaves as a current/global Student management module.
+
+The purpose of this audit is NOT to make Attendance use `students.class/section`.
+
+The purpose is to determine why the current Student profile and current/active Academic Session enrollment can drift apart.
+
+---
+
+# SCALE REQUIREMENT
+
+BENIUS may support:
+
+```text
+100,000+ Students
+```
+
+Therefore the final architecture must NOT depend on:
+
+- manual Student-by-Student repair
+- frontend-only synchronization
+- periodic manual cleanup
+- N+1 database updates/queries where avoidable
+- loading all Students into application memory
+- comparing every Student on every page load
+- fixing mismatches only when Attendance is opened
+
+The final solution must prevent inconsistency at the **write/lifecycle boundary** and use scalable database operations.
+
+For this task, AUDIT ONLY.
+
+---
+
+# AUDIT 1 — CURRENT DATABASE STATE
+
+Read the Development database and compare active Students against their enrollment in the active Academic Session.
+
+For each active Student determine:
+
+- DSID
+- `students.is_active`
+- Student profile class
+- Student profile section
+- active Academic Session ID
+- active-session enrollment exists? YES/NO
+- enrollment status
+- enrollment class
+- enrollment section
+- profile/enrollment placement matches? YES/NO
+
+Do NOT dump 100,000 rows into the report.
+
+Return:
+
+```text
+Total active Students:
+Active Students with active-session enrollment:
+Active Students missing active-session enrollment:
+Active Students with duplicate active-session enrollment:
+Active Students with inactive/non-active current enrollment:
+Profile/enrollment placement mismatches:
+```
+
+Then list only the mismatched/problem Students in Development.
+
+Explicitly report MIS-0003.
+
+---
+
+# AUDIT 2 — DATABASE CONSTRAINTS
+
+Inspect the Student and enrollment schema.
+
+Determine:
+
+1. What uniqueness constraint exists on enrollment?
+2. Can one Student accidentally have multiple enrollments for the same Academic Session?
+3. Is uniqueness scoped by:
+
+```text
+school_id
+student_id
+academic_session_id
+```
+
+or another combination?
+
+4. Are class/section values foreign keys, IDs, strings, or mixed?
+5. Is enrollment status constrained?
+6. What indexes exist for enrollment lookup by:
+
+```text
+school
+session
+student
+class
+section
+status
+```
+
+7. Are the indexes appropriate for 100,000+ Students?
+8. Are there database constraints preventing cross-school enrollment corruption?
+9. Can an enrollment reference a Student from another school?
+10. Can an enrollment reference a class/section belonging to another school?
+
+Do NOT add constraints yet.
+
+Report existing protection and gaps.
+
+---
+
+# AUDIT 3 — ADD STUDENT FLOW
+
+Trace every Web/backend Student creation path.
+
+Include at minimum:
+
+- Principal/Admin Add Student
+- Support Staff Add Student
+- any shared Add Student endpoint
+- CSV/Bulk Student Import
+- any other Student creation endpoint
+- any legacy creation endpoint still reachable
+
+For each flow answer:
+
+### When a Student is created:
+
+Does BENIUS create:
+
+```text
+students row
++
+active Academic Session enrollment row
+```
+
+?
+
+Are both created in the same logical operation?
+
+Are they wrapped in a database transaction?
+
+Example failure to investigate:
+
+```text
+Student INSERT succeeds
+Enrollment INSERT fails
+
+Result:
+Student exists
+but no active-session enrollment
+```
+
+Can that happen today?
+
+Also check the opposite possibility.
+
+Determine whether Support Staff and Principal/Admin ultimately use the same canonical Student creation service/storage logic.
+
+---
+
+# AUDIT 4 — EDIT STUDENT FLOW
+
+This is especially important for MIS-0003.
+
+Trace every way Student Class/Section can be edited.
+
+Include:
+
+- Principal/Admin Edit Student
+- Support Staff Edit Student
+- bulk edit if available
+- CSV update/import if capable of modifying existing Students
+- any legacy Student update endpoint
+
+Suppose:
+
+```text
+Before:
+Student profile = 2/B
+Enrollment      = 2/B
+```
+
+Then someone edits Student Registry:
+
+```text
+Class 2/B
+→
+Class 2/A
+```
+
+What happens?
+
+Determine whether current code performs:
+
+```text
+students.class/section → 2/A
+```
+
+but leaves:
+
+```text
+active-session enrollment → 2/B
+```
+
+If YES, identify the exact route/function/file responsible.
+
+This is a likely explanation for MIS-0003, but DO NOT assume it.
+
+Prove it from code/data where possible.
+
+---
+
+# AUDIT 5 — STUDENT REGISTRY DISPLAY
+
+Trace exactly where Student Registry gets:
+
+```text
+Class
+Section
+Roll Number
+```
+
+Determine whether it displays:
+
+```text
+students.class
+students.section
+students.roll_number
+```
+
+or enrollment placement.
+
+Confirm whether Student Registry intentionally represents the Student's CURRENT profile information.
+
+Do NOT change it.
+
+Report only.
+
+---
+
+# AUDIT 6 — STUDENT REGISTRATION + ACTIVE SESSION
+
+When adding a Student while an Academic Session is active, determine exactly how BENIUS chooses the enrollment session.
+
+Does it:
+
+- use active Academic Session?
+- use selected Academic Session?
+- use a client-provided session ID?
+- silently fall back?
+- fail if no active session exists?
+
+This matters because Student Registry is global/current while academic placement is session-specific.
+
+Report the current behavior and any ambiguity.
+
+---
+
+# AUDIT 7 — CSV / BULK IMPORT
+
+This is CRITICAL for 100,000+ Student scalability.
+
+Inspect Student CSV/import functionality.
+
+Determine:
+
+1. Does every imported Student receive an active-session enrollment?
+2. Is enrollment creation done individually or in bulk?
+3. Are there N+1 queries?
+4. Can Student creation succeed while enrollment creation fails?
+5. Is the operation transactional?
+6. What happens on partial failure?
+7. Can duplicate enrollment rows be created?
+8. Does import validate school/class/section/session ownership?
+9. Does Support Staff Add permission use the same import path?
+10. Does import scale reasonably to large Student populations?
+
+Do NOT performance-test Production.
+
+Code/database inspection only unless safe Development tests already exist.
+
+---
+
+# AUDIT 8 — PROMOTION FLOW
+
+Trace Student promotion.
+
+Example:
+
+```text
+2026–2027
+Student → Class 2/A
+
+2027–2028
+Student → Class 3/A
+```
+
+Determine:
+
+- Does promotion create a NEW enrollment for the new Academic Session?
+- Is the previous session enrollment preserved?
+- Does promotion update `students.class/section` to current placement?
+- Does it accidentally modify old enrollment?
+- Can promotion create duplicate new-session enrollment?
+- What happens if promotion partially fails?
+- Is the operation transactional?
+- Is school + Academic Session isolation enforced?
+
+Historical enrollment must not be overwritten merely because the Student moves to the next session.
+
+---
+
+# AUDIT 9 — NEW ACADEMIC SESSION
+
+Trace what happens when a new Academic Session is created/activated.
+
+Determine:
+
+- Are Student enrollments automatically created?
+- Are they created only through promotion?
+- Are active Students copied forward?
+- Does BENIUS require explicit promotion/enrollment?
+- What happens to `students.class/section`?
+- Can an active Student exist with no enrollment in the newly active session?
+
+Report current architecture.
+
+Do NOT change it.
+
+---
+
+# AUDIT 10 — DEACTIVATION / REACTIVATION
+
+Trace Student deactivation.
+
+We already know deactivation currently changes:
+
+```text
+students.is_active = false
+```
+
+while an enrollment may remain Active.
+
+Determine:
+
+- whether this is intentional;
+- what happens on reactivation;
+- whether reactivation restores academic eligibility;
+- whether enrollment should or should not change;
+- whether Student profile placement changes.
+
+Do NOT change deactivation in this audit.
+
+Teacher Attendance already independently requires:
+
+```text
+students.is_active = true
+AND
+enrollment.status = Active
+```
+
+Preserve that completed correction.
+
+---
+
+# AUDIT 11 — ROLL NUMBER
+
+Check whether Roll Number is also session-sensitive.
+
+MIS-0003 currently shows a current Registry roll number.
+
+Determine:
+
+- Is roll number stored in Student profile?
+- Is roll number stored in enrollment?
+- Which value do Attendance/Examination/Results use?
+- Can roll number differ between Academic Sessions?
+- Could the same profile-vs-enrollment drift happen for Roll Number?
+
+Do NOT redesign yet.
+
+Report current behavior and risk.
+
+---
+
+# AUDIT 12 — ALL SESSION-SENSITIVE CONSUMERS
+
+Search the Web/backend codebase for session-sensitive Student placement reads.
+
+Identify modules that determine Student Class/Section/Roll using:
+
+```text
+students.class
+students.section
+students.roll_number
+```
+
+instead of selected-session enrollment.
+
+Check at minimum:
+
+- Teacher Attendance
+- Admin Attendance
+- Examination
+- Exam Controller
+- Results
+- Report Cards
+- Promotion
+- Homework where session-sensitive
+- Classwork where session-sensitive
+- Student Leave where placement matters
+- Student academic reports
+- Dashboard academic summaries
+- Student Portal session-sensitive academic pages
+
+Do NOT modify these modules.
+
+Return a matrix:
+
+| Module | Placement Source | Session Enrollment Correct? | Risk |
+|---|---|---|---|
+
+This is important because we do not want to fix only Attendance while another academic module still reads current Student profile placement.
+
+---
+
+# AUDIT 13 — WRITE PATH INVENTORY
+
+Search the entire backend for every place capable of modifying:
+
+```text
+students.class
+students.section
+students.roll_number
+```
+
+and every place capable of creating/updating/deleting:
+
+```text
+enrollments
+```
+
+Return the write-path inventory.
+
+For every Student placement-changing operation, identify whether it keeps the active/current Student profile and appropriate Academic Session enrollment synchronized.
+
+We need to find all possible drift creators.
+
+---
+
+# AUDIT 14 — TRANSACTION SAFETY
+
+For Student placement-changing workflows determine whether related writes are atomic.
+
+For example:
+
+```text
+BEGIN
+
+update Student current profile
+update/create selected/current-session enrollment
+
+COMMIT
+```
+
+If second operation fails:
+
+```text
+ROLLBACK
+```
+
+rather than leaving half-updated data.
+
+Report which flows currently have transaction protection and which do not.
+
+Do NOT implement transactions yet.
+
+---
+
+# AUDIT 15 — CONCURRENCY
+
+At 100,000+ Student scale, consider concurrent Admin/Support Staff operations.
+
+Audit whether:
+
+- two simultaneous imports can create duplicate enrollment;
+- two simultaneous Student edits can create conflicting placement;
+- promotion and manual edit can race;
+- database uniqueness protects enrollment identity.
+
+Do not over-engineer.
+
+Just identify genuine current risks.
+
+---
+
+# AUDIT 16 — TENANT ISOLATION
+
+Strictly verify that every Student/enrollment write path validates:
+
+```text
+authenticated school
+=
+Student school
+=
+Academic Session school
+=
+Class school
+=
+Section school
+=
+Enrollment school
+```
+
+where applicable.
+
+Never trust client-supplied school IDs.
+
+School A must never create/update an enrollment for School B.
+
+Return PASS/FAIL per major write flow.
+
+---
+
+# AUDIT 17 — ACADEMIC SESSION ISOLATION
+
+Verify that Student placement changes cannot accidentally modify another Academic Session.
+
+For session-specific enrollment operations require:
+
+```text
+authenticated school
++
+explicit/validated Academic Session
++
+Student
+```
+
+Previous/inactive Academic Sessions remain READ-ONLY for operational mutations unless an explicitly authorized historical administrative workflow already exists.
+
+Do NOT weaken BENIUS's historical-session protections.
+
+---
+
+# AUDIT 18 — SCALABILITY FOR 100,000+ STUDENTS
+
+Review the architecture specifically for:
+
+```text
+100,000+ Students per large installation
+```
+
+Do NOT perform an expensive load test.
+
+Inspect:
+
+- indexes
+- query shapes
+- pagination
+- bulk import strategy
+- bulk promotion strategy
+- N+1 queries
+- full-table application-memory scans
+- transaction size
+- uniqueness enforcement
+- class/session/student lookup indexes
+
+Categorize findings:
+
+```text
+GOOD
+ACCEPTABLE FOR NOW
+NEEDS CHANGE BEFORE LARGE SCALE
+```
+
+Only report genuine issues.
+
+Do not propose unnecessary micro-optimizations.
+
+---
+
+# REQUIRED ROOT-CAUSE ANSWER FOR MIS-0003
+
+At the end, explicitly answer:
+
+```text
+How did MIS-0003 become:
+
+Student profile = 2/A
+Session enrollment = 2/B
+```
+
+Use:
+
+```text
+PROVEN
+LIKELY BUT NOT PROVEN
+UNKNOWN
+```
+
+Do not guess.
+
+If possible, identify the exact workflow/code path responsible.
+
+---
+
+# REQUIRED FUTURE ARCHITECTURE RECOMMENDATION
+
+After the audit, recommend the minimum architecture that guarantees FUTURE Students cannot silently drift.
+
+The recommendation should evaluate whether BENIUS needs a canonical Student placement write service such as:
+
+```text
+Student Placement Operation
+        ↓
+Validate authenticated school
+        ↓
+Validate Academic Session
+        ↓
+Validate Class + Section
+        ↓
+Transaction
+        ↓
+Update appropriate Student current profile
++
+Create/update appropriate session enrollment
+        ↓
+Commit
+```
+
+But DO NOT implement it yet.
+
+Also determine whether:
+
+- Add Student
+- Edit Student
+- CSV Import
+- Promotion
+- Support Staff Add/Edit
+
+should all use the same canonical placement/enrollment service.
+
+The goal is:
+
+```text
+ONE placement business rule
+MULTIPLE authorized entry points
+```
+
+not duplicated synchronization logic.
+
+---
+
+# IMPORTANT — DO NOT "FIX" BY REMOVING SESSION ENROLLMENTS
+
+Session Enrollment is required.
+
+Do NOT recommend simplifying BENIUS to only:
+
+```text
+students.class
+students.section
+```
+
+That would destroy proper Academic Session history.
+
+We want:
+
+```text
+Student profile
+=
+current Student information
+
+Enrollment
+=
+Student placement for a specific Academic Session
+```
+
+with controlled synchronization for the current/active session.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS STUDENT PROFILE / SESSION ENROLLMENT CONSISTENCY AUDIT
+
+## Overall Verdict
+
+Choose:
+
+- CONSISTENT
+- DRIFT RISK
+- ACTIVE DATA INCONSISTENCY
+- BOTH DATA INCONSISTENCY + ARCHITECTURE RISK
+
+---
+
+## MIS-0003 Root Cause
+
+- Profile:
+- Active-session enrollment:
+- Cause:
+- Confidence: PROVEN / LIKELY / UNKNOWN
+- Exact responsible route/function if known:
+
+---
+
+## Development Data Summary
+
+- Active Students:
+- Active Students with active-session enrollment:
+- Missing enrollment:
+- Duplicate enrollment:
+- Non-active enrollment:
+- Profile/enrollment placement mismatches:
+
+List problem DSIDs only.
+
+---
+
+## Database Constraints
+
+- Enrollment uniqueness:
+- Cross-school protection:
+- Relevant indexes:
+- 100k+ readiness:
+- Gaps:
+
+---
+
+## Add Student
+
+### Principal/Admin
+PASS/FAIL + explanation
+
+### Support Staff
+PASS/FAIL + explanation
+
+### Transaction safety
+PASS/FAIL
+
+### Future drift possible?
+YES/NO
+
+---
+
+## Edit Student
+
+- Profile updated:
+- Enrollment updated:
+- Transactional:
+- Can create mismatch:
+- Exact route/function:
+
+---
+
+## CSV/Bulk Import
+
+- Student + enrollment consistency:
+- Transaction safety:
+- Partial failure risk:
+- N+1 risk:
+- 100k+ suitability:
+- Tenant validation:
+
+---
+
+## Promotion
+
+- New-session enrollment:
+- Old enrollment preserved:
+- Current profile synchronized:
+- Duplicate protection:
+- Transaction safety:
+- Session isolation:
+
+---
+
+## New Academic Session
+
+Explain exact current behavior.
+
+---
+
+## Deactivation / Reactivation
+
+Explain exact current behavior and whether it can create placement/eligibility inconsistencies.
+
+---
+
+## Roll Number
+
+- Profile source:
+- Enrollment source:
+- Session-sensitive:
+- Drift risk:
+
+---
+
+## Session-Sensitive Module Matrix
+
+Provide:
+
+| Module | Current Placement Source | Correct? | Risk |
+|---|---|---:|---|
+
+---
+
+## Placement Write Paths
+
+List every backend path that can change Student placement or enrollment and whether it synchronizes correctly.
+
+---
+
+## Transaction Safety
+
+List unsafe multi-write workflows.
+
+---
+
+## Tenant Isolation
+
+PASS/FAIL
+
+List any problematic path.
+
+---
+
+## Academic Session Isolation
+
+PASS/FAIL
+
+List any problematic path.
+
+---
+
+## 100,000+ Student Scalability
+
+### GOOD
+
+### ACCEPTABLE FOR NOW
+
+### NEEDS CHANGE BEFORE LARGE SCALE
+
+---
+
+## Recommended Minimum Architecture
+
+Explain the smallest safe architecture to ensure all FUTURE:
+
+- Add Student
+- Edit Student
+- Support Staff Add/Edit
+- CSV Import
+- Promotion
+- session enrollment creation
+
+cannot silently create profile/enrollment drift.
+
+Do NOT implement.
+
+---
+
+## Existing Data Correction Recommendation
+
+Explain how existing mismatches such as MIS-0003 should eventually be corrected safely.
+
+Do NOT modify them yet.
+
+---
+
+## Changes Made
+
+Code: NONE
+
+Database: NONE
+
+Mobile: NONE
+
+Deployment: NONE
+
+---
+
+# FINAL VERDICT
+
+AUDIT COMPLETE / AUDIT INCOMPLETE
+
+STOP.
