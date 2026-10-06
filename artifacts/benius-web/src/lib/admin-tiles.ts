@@ -104,10 +104,9 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
 
   // ── Teacher Registry ───────────────────────────────────────────────────────
   "teacher-registry": [
-    { id: "view",       label: "View Teachers" },
-    { id: "add",        label: "Add Teachers" },
-    { id: "edit",       label: "Edit Teachers" },
-    { id: "deactivate", label: "Deactivate Teachers" },
+    { id: "add",    label: "Add Teacher" },
+    { id: "edit",   label: "Edit Teacher" },
+    { id: "delete", label: "Delete Teacher" },
   ],
 
   // ── Non-Teaching Staff ─────────────────────────────────────────────────────
@@ -126,11 +125,9 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
 
   // ── Student Registry ───────────────────────────────────────────────────────
   "student-registry": [
-    { id: "view",       label: "View Students" },
-    { id: "add",        label: "Add / Activate Students" },
-    { id: "edit",       label: "Edit Students" },
-    { id: "deactivate", label: "Deactivate Students" },
-    { id: "export",     label: "Export Data" },
+    { id: "add",    label: "Add Student" },
+    { id: "edit",   label: "Edit Student" },
+    { id: "delete", label: "Delete Student" },
   ],
 
   // ── Fees & Payments ────────────────────────────────────────────────────────
@@ -192,12 +189,31 @@ export const SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS = [
   "id-card-gen",
   "assets",
   "faculty-mapping",
-  "teacher-registry",
-  "student-registry",
 ] as const;
+
+const REGISTRY_ACTION_MODULE_IDS = new Set(["teacher-registry", "student-registry"]);
+const REGISTRY_ACTION_SUBMODULE_IDS = new Set(["add", "edit", "delete"]);
 
 export function isSupportStaffParentOnlyModule(moduleId: string): boolean {
   return (SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS as readonly string[]).includes(moduleId);
+}
+
+export function shouldAutoGrantSubmodulePermissions(moduleId: string): boolean {
+  return !REGISTRY_ACTION_MODULE_IDS.has(moduleId);
+}
+
+function normalizeRegistryActionGrant(grant: string): string | null {
+  const separator = grant.indexOf(":");
+  if (separator < 0) return grant;
+
+  const moduleId = grant.slice(0, separator);
+  if (!REGISTRY_ACTION_MODULE_IDS.has(moduleId)) return grant;
+
+  const legacySubmoduleId = grant.slice(separator + 1);
+  const submoduleId = legacySubmoduleId === "deactivate" ? "delete" : legacySubmoduleId;
+  return REGISTRY_ACTION_SUBMODULE_IDS.has(submoduleId)
+    ? `${moduleId}:${submoduleId}`
+    : null;
 }
 
 /**
@@ -205,15 +221,16 @@ export function isSupportStaffParentOnlyModule(moduleId: string): boolean {
  * while legacy Fees grants map only to Ledger & Transactions.
  */
 export function expandModulesWithSubs(allowedModules: string[]): string[] {
+  const normalizedGrants = filterSupportStaffGrants(allowedModules);
   const legacyFeeGrants = ["fees-manager:view", "fees-manager:record", "fees-manager:export"];
-  const hasCompleteLegacyFeeGrant = legacyFeeGrants.every(grant => allowedModules.includes(grant));
+  const hasCompleteLegacyFeeGrant = legacyFeeGrants.every(grant => normalizedGrants.includes(grant));
   const result = hasCompleteLegacyFeeGrant
-    ? allowedModules.filter(key => !legacyFeeGrants.includes(key))
-    : [...allowedModules];
-  allowedModules.forEach(key => {
+    ? normalizedGrants.filter(key => !legacyFeeGrants.includes(key))
+    : [...normalizedGrants];
+  normalizedGrants.forEach(key => {
     if (key.includes(":")) return;
-    if (isSupportStaffParentOnlyModule(key)) return;
-    const hasSub = allowedModules.some(k => k.startsWith(key + ":"));
+    if (isSupportStaffParentOnlyModule(key) || REGISTRY_ACTION_MODULE_IDS.has(key)) return;
+    const hasSub = normalizedGrants.some(k => k.startsWith(key + ":"));
     if (!hasSub) {
       const subs = key === "fees-manager"
         ? MODULE_SUB_MODULES[key]?.filter(sub => sub.id === "ledger-transactions")
@@ -238,19 +255,32 @@ export function isSchoolSetupGrant(grant: string): boolean {
 export function filterSupportStaffGrants(
   allowedModules: readonly string[] | null | undefined,
 ): string[] {
-  return (allowedModules ?? []).filter(grant =>
-    !isSchoolSetupGrant(grant)
-      && grant !== "non-teaching-staff"
-      && !grant.startsWith("non-teaching-staff:"),
-  );
+  return (allowedModules ?? []).flatMap(grant => {
+    if (
+      isSchoolSetupGrant(grant)
+      || grant === "non-teaching-staff"
+      || grant.startsWith("non-teaching-staff:")
+    ) {
+      return [];
+    }
+    const normalizedGrant = normalizeRegistryActionGrant(grant);
+    return normalizedGrant ? [normalizedGrant] : [];
+  });
 }
 
 export function canonicalizeSupportStaffGrants(
   allowedModules: readonly string[] | null | undefined,
 ): string[] {
-  return filterSupportStaffGrants(allowedModules).filter(grant => {
+  const filteredGrants = filterSupportStaffGrants(allowedModules);
+  const parentGrants = new Set(filteredGrants.filter(grant => !grant.includes(":")));
+  return filteredGrants.filter(grant => {
     const separator = grant.indexOf(":");
-    return separator < 0 || !isSupportStaffParentOnlyModule(grant.slice(0, separator));
+    if (separator < 0) return true;
+    const parentModuleId = grant.slice(0, separator);
+    if (REGISTRY_ACTION_MODULE_IDS.has(parentModuleId) && !parentGrants.has(parentModuleId)) {
+      return false;
+    }
+    return !isSupportStaffParentOnlyModule(parentModuleId);
   });
 }
 

@@ -42,7 +42,8 @@ export default function DeactivationModal({
   const deactivateMutation = useMutation({
     mutationFn: async () => {
       // client-side pre-verify for fast UX feedback
-      const verifyRes  = await apiRequest("POST", "/api/admin/verify-password", { password });
+      const moduleId = type === "student" ? "student-registry" : "teacher-registry";
+      const verifyRes  = await apiRequest("POST", "/api/admin/verify-password", { password, moduleId });
       const verifyData: { valid: boolean } = await verifyRes.json();
       if (!verifyData.valid) throw new Error("Incorrect password");
 

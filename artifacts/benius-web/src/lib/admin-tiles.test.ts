@@ -8,6 +8,7 @@ import {
   isSupportStaffParentOnlyModule,
   SUPPORT_STAFF_PERMISSION_MODULES,
   expandModulesWithSubs,
+  shouldAutoGrantSubmodulePermissions,
 } from "./admin-tiles";
 
 test("Support Staff grant filtering removes School Setup and Support Staff management roots and children", () => {
@@ -155,25 +156,70 @@ test("parent-only modules are single grants in the editor and old child grants a
     assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
     assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
   }
-  assert.equal(isSupportStaffParentOnlyModule("student-registry"), true);
+  assert.equal(isSupportStaffParentOnlyModule("student-registry"), false);
   assert.deepEqual(
     canonicalizeSupportStaffGrants(["student-registry:view"]),
     [],
   );
 });
 
-test("Faculty Mapping, Teacher Registry, and Student Registry use only parent grants", () => {
-  for (const moduleId of ["faculty-mapping", "teacher-registry", "student-registry"]) {
-    assert.equal(isSupportStaffParentOnlyModule(moduleId), true);
+test("Faculty Mapping remains parent-only", () => {
+  const moduleId = "faculty-mapping";
+  assert.equal(isSupportStaffParentOnlyModule(moduleId), true);
+  assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
+  assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
+  assert.deepEqual(
+    canonicalizeSupportStaffGrants([moduleId, `${moduleId}:legacy-child`]),
+    [moduleId],
+  );
+  assert.deepEqual(
+    expandModulesWithSubs([moduleId]).filter(grant => grant.startsWith(`${moduleId}:`)),
+    [],
+  );
+});
+
+test("Teacher and Student Registry expose only explicit Add/Edit/Delete children", () => {
+  const expected = [
+    { id: "add", label: "Add Teacher" },
+    { id: "edit", label: "Edit Teacher" },
+    { id: "delete", label: "Delete Teacher" },
+  ];
+  assert.deepEqual(MODULE_SUB_MODULES["teacher-registry"], expected);
+  assert.deepEqual(MODULE_SUB_MODULES["student-registry"], [
+    { id: "add", label: "Add Student" },
+    { id: "edit", label: "Edit Student" },
+    { id: "delete", label: "Delete Student" },
+  ]);
+
+  for (const moduleId of ["teacher-registry", "student-registry"]) {
+    assert.equal(isSupportStaffParentOnlyModule(moduleId), false);
     assert.equal(hasSupportStaffModuleGrant([moduleId], moduleId), true);
-    assert.equal(hasSupportStaffModuleGrant([`${moduleId}:legacy-child`], moduleId), false);
+    assert.equal(hasSupportStaffModuleGrant([`${moduleId}:add`], moduleId), false);
+    assert.equal(shouldAutoGrantSubmodulePermissions(moduleId), false);
+    assert.deepEqual(expandModulesWithSubs([moduleId]), [moduleId]);
     assert.deepEqual(
-      canonicalizeSupportStaffGrants([moduleId, `${moduleId}:legacy-child`]),
-      [moduleId],
-    );
-    assert.deepEqual(
-      expandModulesWithSubs([moduleId]).filter(grant => grant.startsWith(`${moduleId}:`)),
-      [],
+      expandModulesWithSubs([moduleId, `${moduleId}:add`]),
+      [moduleId, `${moduleId}:add`],
     );
   }
+  assert.equal(shouldAutoGrantSubmodulePermissions("approval-center"), true);
+});
+
+test("legacy registry permissions keep explicit actions and never expand a parent into mutations", () => {
+  assert.deepEqual(
+    canonicalizeSupportStaffGrants([
+      "teacher-registry",
+      "teacher-registry:view",
+      "teacher-registry:deactivate",
+      "student-registry",
+      "student-registry:export",
+    ]),
+    ["teacher-registry", "teacher-registry:delete", "student-registry"],
+  );
+  assert.deepEqual(canonicalizeSupportStaffGrants(["teacher-registry:add"]), []);
+  assert.deepEqual(expandModulesWithSubs(["student-registry"]), ["student-registry"]);
+  assert.deepEqual(
+    expandModulesWithSubs(["student-registry", "student-registry:deactivate"]),
+    ["student-registry", "student-registry:delete"],
+  );
 });

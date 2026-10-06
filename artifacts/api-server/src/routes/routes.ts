@@ -7,6 +7,7 @@ import {
   authenticateRegistryActorPassword,
   requireRegistryAnyModuleAccess,
   requireRegistryModuleAccess,
+  requireRegistrySubmoduleAccess,
 } from "../registry-access";
 import { AcademicSessionFinancialHistoryError, storage } from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
@@ -1191,7 +1192,7 @@ export async function registerRoutes(
 
   app.post("/api/schools/:schoolId/students/upload", upload.single("file"), async (req, res) => {
     try {
-      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+      if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "add", "Add Student")) return;
 
       const requestedSchoolId = parseInt(req.params.schoolId as string);
       if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId <= 0) {
@@ -1321,7 +1322,7 @@ export async function registerRoutes(
 
   app.post("/api/schools/:schoolId/students", async (req, res) => {
     try {
-      if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+      if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "add", "Add Student")) return;
 
       const requestedSchoolId = parseInt(req.params.schoolId);
       if (!Number.isSafeInteger(requestedSchoolId) || requestedSchoolId <= 0) {
@@ -1680,7 +1681,16 @@ export async function registerRoutes(
 
   // ===== ADMIN PASSWORD VERIFICATION (for Double-Lock Modal) =====
   app.post("/api/admin/verify-password", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    const moduleId = req.body?.moduleId;
+    const registryModule = moduleId === "teacher-registry" || moduleId === "student-registry"
+      ? moduleId
+      : null;
+    if (!registryModule) {
+      res.status(400).json({ message: "A registry module is required" });
+      return;
+    }
+    const moduleLabel = registryModule === "teacher-registry" ? "Teacher Registry" : "Student Registry";
+    if (!requireRegistrySubmoduleAccess(req, res, registryModule, "delete", `Delete ${moduleLabel.replace(" Registry", "")}`)) return;
     const { password } = req.body;
     if (!password) return res.status(400).json({ message: "Password is required" });
     const actor = await authenticateRegistryActorPassword(req, password);
@@ -1689,7 +1699,7 @@ export async function registerRoutes(
 
   // ===== STUDENT DEACTIVATION =====
   app.post("/api/schools/:schoolId/students/:studentId/deactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "delete", "Delete Student")) return;
     const schoolId = parseInt(req.params.schoolId);
     const studentId = parseInt(req.params.studentId);
     if (isNaN(schoolId) || isNaN(studentId)) return res.status(400).json({ message: "Invalid ID" });
@@ -1724,7 +1734,7 @@ export async function registerRoutes(
 
   // ===== TEACHER DEACTIVATION =====
   app.post("/api/schools/:schoolId/teachers/:teacherId/deactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "delete", "Delete Teacher")) return;
     const schoolId = parseInt(req.params.schoolId);
     const teacherId = parseInt(req.params.teacherId);
     if (isNaN(schoolId) || isNaN(teacherId)) return res.status(400).json({ message: "Invalid ID" });
@@ -1755,7 +1765,7 @@ export async function registerRoutes(
 
   // ===== PATCH ALIASES (canonical contract) =====
   app.patch("/api/students/:studentId/deactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "delete", "Delete Student")) return;
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
 
@@ -4243,7 +4253,7 @@ export async function registerRoutes(
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "edit", "Edit Student")) return;
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
@@ -4358,7 +4368,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: AUTO-ASSIGN ROLL NUMBERS =====
   app.post("/api/schools/:schoolId/students/auto-assign-roll", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "edit", "Edit Student")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const { cls, section } = req.body;
@@ -4483,7 +4493,7 @@ export async function registerRoutes(
 
   // ===== ADMIN: BULK DEACTIVATE STUDENTS =====
   app.post("/api/schools/:schoolId/students/bulk-deactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "delete", "Delete Student")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId) || req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const { ids, reason, batchYear, comments, password } = req.body;

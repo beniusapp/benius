@@ -95,8 +95,9 @@ function GenderBadge({ gender }: { gender: string | null | undefined }) {
 export default function StudentRegistry({ schoolId, classes, sections, viewSessionId, isArchiveMode, allowedSubs }: Props) {
   const canAdd        = allowedSubs === undefined || allowedSubs.includes("add");
   const canEdit       = allowedSubs === undefined || allowedSubs.includes("edit");
-  const canDeactivate = allowedSubs === undefined || allowedSubs.includes("deactivate");
-  const canExport     = allowedSubs === undefined || allowedSubs.includes("export");
+  const canDelete     = allowedSubs === undefined || allowedSubs.includes("delete");
+  // Export is part of the parent-level read access; it is not a mutation action.
+  const canExport     = true;
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [q, setQ] = useState("");
@@ -319,7 +320,10 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
     mutationFn: async () => {
       const ids = Array.from(selected);
       // Pre-verify password for fast UX feedback
-      const vr = await apiRequest("POST", "/api/admin/verify-password", { password: bulkPassword });
+      const vr = await apiRequest("POST", "/api/admin/verify-password", {
+        password: bulkPassword,
+        moduleId: "student-registry",
+      });
       const vd: { valid: boolean } = await vr.json();
       if (!vd.valid) { setBulkPwError("Incorrect password"); throw new Error("Incorrect password"); }
       const r = await apiRequest("POST", `/api/schools/${schoolId}/students/bulk-deactivate`, {
@@ -638,7 +642,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             Auto Roll#
           </Button>
         )}
-        {canDeactivate && selected.size > 0 && (
+        {canDelete && selected.size > 0 && (
           <Button size="sm" variant="outline"
             className="border-red-400/40 text-red-400 hover:bg-red-400/10 h-11"
             onClick={() => setShowBulkConfirm(true)}
@@ -676,7 +680,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
             <thead className="bg-[#0F1E35] sticky top-0 z-10">
               <tr>
                 <th className="py-3 px-3">
-                  {canDeactivate && (
+                  {canDelete && (
                     <input
                       type="checkbox"
                       checked={allSelected}
@@ -723,7 +727,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                         ${selected.has(s.id) ? "bg-[#10b981]/5 border-l-2 border-l-[#10b981]/40" : ""}`}
                       data-testid={`row-student-${s.id}`}>
                       <td className="py-2 px-3">
-                        {canDeactivate && (
+                        {canDelete && (
                           <input
                             type="checkbox"
                             checked={selected.has(s.id)}
@@ -802,7 +806,7 @@ export default function StudentRegistry({ schoolId, classes, sections, viewSessi
                               <Pencil className="w-3.5 h-3.5" />
                             </Button>
                           )}
-                          {canDeactivate && (
+                          {canDelete && (
                             <Button variant="ghost" size="icon"
                               className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-9 w-9 shrink-0"
                               onClick={() => setDeactivateTarget(s)}

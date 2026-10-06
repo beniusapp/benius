@@ -640,13 +640,19 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     grants: ["teacher-registry"],
     body: teacherCreateBody,
   });
-  assert.equal(createdTeacher.status, 201);
+  assert.equal(createdTeacher.status, 403, "the Teacher Registry parent is read-only without Add Teacher");
+  const addedTeacher = await request("/api/admin/teachers", {
+    method: "POST",
+    grants: ["teacher-registry", "teacher-registry:add"],
+    body: teacherCreateBody,
+  });
+  assert.equal(addedTeacher.status, 201);
   assert.equal(teacherCreates.at(-1).schoolId, 1);
 
   const teacherEditBody = { fullName: "Updated School A Teacher" };
   assert.equal((await request("/api/admin/teachers/12", {
     method: "PATCH",
-    grants: ["teacher-registry"],
+    grants: ["teacher-registry", "teacher-registry:edit"],
     body: teacherEditBody,
   })).status, 404, "School A Staff cannot edit a School B teacher");
   assert.equal(teacherUpdates.length, 0);
@@ -654,24 +660,44 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     method: "PATCH",
     grants: ["teacher-registry"],
     body: teacherEditBody,
+  })).status, 403, "the Teacher Registry parent is read-only without Edit Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "PATCH",
+    grants: ["teacher-registry", "teacher-registry:edit"],
+    body: teacherEditBody,
   })).status, 200);
   assert.equal(teacherUpdates.at(-1)[1], 1);
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  })).status, 403, "the Teacher Registry parent is read-only without Delete Teacher");
+  assert.equal((await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: {},
+  })).status, 400, "Delete Teacher reaches request validation when explicitly granted");
 
   const passwordBody = { reason: "No longer employed", password: staffPassword };
   assert.equal((await request("/api/schools/2/teachers/12/deactivate", {
     method: "POST",
-    grants: ["teacher-registry"],
+    grants: ["teacher-registry", "teacher-registry:delete"],
     body: passwordBody,
   })).status, 403, "A manipulated schoolId cannot reach another school's teacher");
   assert.equal((await request("/api/schools/1/teachers/12/deactivate", {
     method: "POST",
-    grants: ["teacher-registry"],
+    grants: ["teacher-registry", "teacher-registry:delete"],
     body: passwordBody,
   })).status, 404, "School A Staff cannot deactivate a School B teacher");
   assert.equal(teacherDeactivations.length, 0);
   assert.equal((await request("/api/schools/1/teachers/11/deactivate", {
     method: "POST",
     grants: ["teacher-registry"],
+    body: passwordBody,
+  })).status, 403, "the Teacher Registry parent is read-only without Delete Teacher");
+  assert.equal((await request("/api/schools/1/teachers/11/deactivate", {
+    method: "POST",
+    grants: ["teacher-registry", "teacher-registry:delete"],
     body: passwordBody,
   })).status, 200);
   assert.deepEqual(teacherDeactivations.at(-1), [11, 1, "No longer employed"]);
@@ -748,13 +774,19 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     grants: ["student-registry"],
     body: studentCreateBody,
   });
-  assert.equal(createdStudent.status, 201);
+  assert.equal(createdStudent.status, 403, "the Student Registry parent is read-only without Add Student");
+  const addedStudent = await request("/api/schools/1/students", {
+    method: "POST",
+    grants: ["student-registry", "student-registry:add"],
+    body: studentCreateBody,
+  });
+  assert.equal(addedStudent.status, 201);
   assert.equal(studentCreates.at(-1).schoolId, 1);
   assert.equal(studentEnrollments.at(-1).schoolId, 1);
   assert.equal(studentEnrollments.at(-1).sessionId, 101);
   assert.equal((await request("/api/schools/2/students", {
     method: "POST",
-    grants: ["student-registry"],
+    grants: ["student-registry", "student-registry:add"],
     body: studentCreateBody,
   })).status, 403, "School A Staff cannot register a student against School B");
   const childImport = new FormData();
@@ -770,6 +802,19 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     grants: ["student-registry:add"],
     formData: childImport,
   })).status, 403);
+  const parentOnlyImport = new FormData();
+  parentOnlyImport.append(
+    "file",
+    new Blob(["name,class,section,phone,dob,email\nParent Only,5,A,9876543212,2008-04-02,parent.only@example.test\n"], {
+      type: "text/csv",
+    }),
+    "students.csv",
+  );
+  assert.equal((await request("/api/schools/1/students/upload", {
+    method: "POST",
+    grants: ["student-registry"],
+    formData: parentOnlyImport,
+  })).status, 403, "CSV import follows Add Student, not parent read access");
   const validImport = new FormData();
   validImport.append(
     "file",
@@ -780,7 +825,7 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   );
   const importedStudents = await request("/api/schools/1/students/upload", {
     method: "POST",
-    grants: ["student-registry"],
+    grants: ["student-registry", "student-registry:add"],
     formData: validImport,
   });
   assert.ok(importedStudents.status >= 200 && importedStudents.status < 300);
@@ -797,6 +842,16 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal((await request("/api/schools/2/students/paginated?page=1", {
     grants: ["student-registry"],
   })).status, 403, "School A Staff cannot read School B students by changing the URL");
+  assert.equal((await request("/api/schools/1/students/auto-assign-roll", {
+    method: "POST",
+    grants: ["student-registry"],
+    body: {},
+  })).status, 403, "roll-number updates require Edit Student");
+  assert.equal((await request("/api/schools/1/students/auto-assign-roll", {
+    method: "POST",
+    grants: ["student-registry", "student-registry:edit"],
+    body: {},
+  })).status, 400, "Edit Student reaches the roll-assignment request validation");
 
   const studentEditBody = {
     name: "Updated Student",
@@ -808,13 +863,18 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   };
   assert.equal((await request("/api/admin/students/32", {
     method: "PATCH",
-    grants: ["student-registry"],
+    grants: ["student-registry", "student-registry:edit"],
     body: studentEditBody,
   })).status, 404, "School A Staff cannot edit a School B student");
   assert.deepEqual(studentUpdates.at(-1).slice(0, 2), [32, 1]);
   assert.equal((await request("/api/admin/students/31", {
     method: "PATCH",
     grants: ["student-registry"],
+    body: studentEditBody,
+  })).status, 403, "the Student Registry parent is read-only without Edit Student");
+  assert.equal((await request("/api/admin/students/31", {
+    method: "PATCH",
+    grants: ["student-registry", "student-registry:edit"],
     body: studentEditBody,
   })).status, 200);
   const principalUpdatedStudents = await request(studentsPath, { role: "admin" });
@@ -825,13 +885,18 @@ test("Support Staff parent grants gate enterprise modules and registry operation
 
   assert.equal((await request("/api/schools/1/students/32/deactivate", {
     method: "POST",
-    grants: ["student-registry"],
+    grants: ["student-registry", "student-registry:delete"],
     body: { reason: "Transferred", password: staffPassword },
   })).status, 404, "School A Staff cannot deactivate a School B student");
   assert.equal(studentDeactivations.length, 0);
   assert.equal((await request("/api/schools/1/students/31/deactivate", {
     method: "POST",
     grants: ["student-registry"],
+    body: { reason: "Transferred", password: staffPassword },
+  })).status, 403, "the Student Registry parent is read-only without Delete Student");
+  assert.equal((await request("/api/schools/1/students/31/deactivate", {
+    method: "POST",
+    grants: ["student-registry", "student-registry:delete"],
     body: { reason: "Transferred", password: staffPassword },
   })).status, 200);
   assert.deepEqual(studentDeactivations.at(-1), [31, 1]);
@@ -841,6 +906,16 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal((await request("/api/schools/1/students/bulk-deactivate", {
     method: "POST",
     grants: ["student-registry"],
+    body: {
+      ids: [31, 32],
+      reason: "Graduated",
+      batchYear: "2025",
+      password: staffPassword,
+    },
+  })).status, 403, "bulk deactivation requires Delete Student");
+  assert.equal((await request("/api/schools/1/students/bulk-deactivate", {
+    method: "POST",
+    grants: ["student-registry", "student-registry:delete"],
     body: {
       ids: [31, 32],
       reason: "Graduated",
@@ -868,12 +943,17 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal((await request("/api/admin/verify-password", {
     method: "POST",
     grants: ["student-registry:deactivate"],
-    body: { password: staffPassword },
+    body: { password: staffPassword, moduleId: "student-registry" },
   })).status, 403);
-  const passwordCheck = await request("/api/admin/verify-password", {
+  assert.equal((await request("/api/admin/verify-password", {
     method: "POST",
     grants: ["student-registry"],
-    body: { password: staffPassword },
+    body: { password: staffPassword, moduleId: "student-registry" },
+  })).status, 403, "password pre-check also requires Delete Student");
+  const passwordCheck = await request("/api/admin/verify-password", {
+    method: "POST",
+    grants: ["student-registry", "student-registry:delete"],
+    body: { password: staffPassword, moduleId: "student-registry" },
   });
   assert.equal(passwordCheck.status, 200);
   assert.equal(passwordCheck.body.valid, true);

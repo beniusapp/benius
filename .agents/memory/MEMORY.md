@@ -15,6 +15,6 @@
 - [Teacher Dashboard session boundaries](teacher-dashboard-session-boundaries.md) — badges follow the selected session; the current-day Attendance status follows the active session.
 - [Teacher profile photo review](teacher-profile-photo-review.md) — photo-only review must not rewrite full-profile verification state or its approval history.
 - [Shared Support Staff academic-session foundation](support-staff-academic-session-foundation.md) — Support Staff may select sessions for granted modules but cannot use School Setup or manage sessions.
-- [Support Staff parent-only modules](support-staff-parent-only-modules.md) — eleven roots authorize; legacy children never do, and asset Staff actions use role-aware audit logs, not Admin FKs.
+- [Support Staff permissions and asset audit](support-staff-parent-only-modules.md) — preserve parent-only modules; Teacher/Student require parent plus explicit Add/Edit/Delete; asset Staff actions use role-aware audit logs.
 - [Support Staff Admin Profile boundary](support-staff-admin-profile-boundary.md) — keep Principal/Admin profile and account controls unavailable to Support Staff while retaining their own header identity and logout.
 - [Support Staff scoped permissions](support-staff-scoped-permissions.md) — Approval/Leave children authorize independently; history is read-only; legacy Staff-management grants never authorize.

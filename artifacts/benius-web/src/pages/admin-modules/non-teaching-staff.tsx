@@ -20,6 +20,7 @@ import {
   canonicalizeSupportStaffGrants,
   expandModulesWithSubs,
   isSupportStaffParentOnlyModule,
+  shouldAutoGrantSubmodulePermissions,
 } from "@/lib/admin-tiles";
 import type { NonTeachingStaff } from "@shared/schema";
 
@@ -126,7 +127,8 @@ function ModulePermissionTree({
       setExpanded(prev => { const n = new Set(prev); n.delete(moduleId); return n; });
     } else {
       const without = safeSelected.filter(s => !subKeys.includes(s) && s !== moduleId);
-      onChange([...without, moduleId, ...subKeys]);
+      const defaultSubmoduleGrants = shouldAutoGrantSubmodulePermissions(moduleId) ? subKeys : [];
+      onChange([...without, moduleId, ...defaultSubmoduleGrants]);
       setExpanded(prev => new Set([...prev, moduleId]));
     }
   };
@@ -156,7 +158,13 @@ function ModulePermissionTree({
     });
   };
 
-  const allChecked = SUPPORT_STAFF_PERMISSION_MODULES.every(m => isModuleChecked(m.id));
+  const allChecked = SUPPORT_STAFF_PERMISSION_MODULES.every(m =>
+    isModuleChecked(m.id)
+    && (
+      shouldAutoGrantSubmodulePermissions(m.id)
+      || getSubKeys(m.id).every(key => safeSelected.includes(key))
+    )
+  );
 
   const handleSelectAll = () => {
     if (allChecked) {

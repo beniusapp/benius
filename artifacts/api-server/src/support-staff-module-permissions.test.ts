@@ -145,15 +145,93 @@ test("canonicalizes legacy child grants for parent-only modules without changing
   );
 });
 
-test("Faculty Mapping, Teacher Registry, and Student Registry require exact parent grants", () => {
-  for (const moduleId of ["faculty-mapping", "teacher-registry", "student-registry"]) {
+test("Faculty Mapping remains parent-only", () => {
+  assert.equal(hasSupportStaffModuleAccess(["faculty-mapping"], "faculty-mapping"), true);
+  assert.equal(hasSupportStaffModuleAccess(["faculty-mapping:assign"], "faculty-mapping"), false);
+  assert.deepEqual(
+    canonicalizeSupportStaffAllowedModules(["faculty-mapping", "faculty-mapping:assign"]),
+    ["faculty-mapping"],
+  );
+});
+
+test("Teacher and Student Registry require parent access plus only the explicitly granted action", () => {
+  const actions = ["add", "edit", "delete"];
+  for (const moduleId of ["teacher-registry", "student-registry"]) {
     assert.equal(hasSupportStaffModuleAccess([moduleId], moduleId), true);
-    assert.equal(hasSupportStaffModuleAccess([`${moduleId}:legacy-child`], moduleId), false);
-    assert.equal(
-      canonicalizeSupportStaffAllowedModules([moduleId, `${moduleId}:legacy-child`]).join(","),
-      moduleId,
-    );
+    assert.equal(hasSupportStaffModuleAccess([`${moduleId}:add`], moduleId), false);
     assert.equal(adminModuleAccessAllowed("admin", [], moduleId), true);
     assert.equal(adminModuleAccessAllowed("teacher", [moduleId], moduleId), false);
+
+    for (const action of actions) {
+      assert.equal(
+        hasSupportStaffSubmoduleAccess([moduleId], moduleId, action),
+        false,
+        `${moduleId} parent access must not imply ${action}`,
+      );
+      assert.equal(
+        hasSupportStaffSubmoduleAccess([`${moduleId}:${action}`], moduleId, action),
+        false,
+        `${moduleId}:${action} without its parent must not authorize`,
+      );
+      const oneAction = [moduleId, `${moduleId}:${action}`];
+      assert.equal(hasSupportStaffModuleAccess(oneAction, moduleId), true);
+      assert.equal(hasSupportStaffSubmoduleAccess(oneAction, moduleId, action), true);
+      for (const otherAction of actions.filter(candidate => candidate !== action)) {
+        assert.equal(
+          hasSupportStaffSubmoduleAccess(oneAction, moduleId, otherAction),
+          false,
+          `${moduleId}:${action} must not imply ${otherAction}`,
+        );
+      }
+      assert.equal(
+        adminModuleSubAccessAllowed("support_staff", oneAction, moduleId, action),
+        true,
+      );
+    }
+
+    const allActions = [moduleId, ...actions.map(action => `${moduleId}:${action}`)];
+    assert.equal(actions.every(action =>
+      hasSupportStaffSubmoduleAccess(allActions, moduleId, action),
+    ), true);
   }
+});
+
+test("registry legacy grants are normalized safely without upgrading parent-only access", () => {
+  assert.deepEqual(
+    canonicalizeSupportStaffAllowedModules([
+      "student-registry",
+      "student-registry:view",
+      "student-registry:export",
+      "student-registry:deactivate",
+    ]),
+    ["student-registry", "student-registry:delete"],
+  );
+  assert.equal(
+    hasSupportStaffSubmoduleAccess(["student-registry"], "student-registry", "delete"),
+    false,
+    "a legacy parent-only grant remains read-only",
+  );
+  assert.equal(
+    hasSupportStaffSubmoduleAccess(
+      ["student-registry", "student-registry:deactivate"],
+      "student-registry",
+      "delete",
+    ),
+    true,
+    "an explicit legacy deactivate grant maps to the equivalent Delete action",
+  );
+  assert.equal(
+    hasSupportStaffSubmoduleAccess(
+      ["teacher-registry:deactivate"],
+      "teacher-registry",
+      "delete",
+    ),
+    false,
+    "a legacy action child without the parent remains ineffective",
+  );
+  assert.deepEqual(
+    canonicalizeSupportStaffAllowedModules(["teacher-registry:deactivate"]),
+    [],
+    "saving an action child without its parent removes the invalid grant",
+  );
 });

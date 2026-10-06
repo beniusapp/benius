@@ -6,6 +6,7 @@ import {
   getRegistryAuditActor,
   registryAnyModuleAccessAllowed,
   registryModuleAccessAllowed,
+  registrySubmoduleAccessAllowed,
 } from "./registry-access";
 import { storage } from "./storage";
 
@@ -33,6 +34,30 @@ test("registry access requires an exact parent grant and a positive Staff ID", (
   supportStaff.session.staffId = -7;
   assert.equal(registryModuleAccessAllowed(supportStaff, "id-card-gen"), false);
   assert.equal(getRegistryAuditActor(supportStaff), null);
+});
+
+test("registry mutations require an exact action child and its parent grant", () => {
+  const req = {
+    session: {
+      userId: -7,
+      staffId: 7,
+      schoolId: 1,
+      userRole: "support_staff",
+      allowedModules: ["teacher-registry"],
+    },
+  } as any;
+
+  assert.equal(registrySubmoduleAccessAllowed(req, "teacher-registry", "add"), false);
+  req.session.allowedModules = ["teacher-registry:add"];
+  assert.equal(registrySubmoduleAccessAllowed(req, "teacher-registry", "add"), false);
+  req.session.allowedModules = ["teacher-registry", "teacher-registry:add"];
+  assert.equal(registrySubmoduleAccessAllowed(req, "teacher-registry", "add"), true);
+  assert.equal(registrySubmoduleAccessAllowed(req, "teacher-registry", "edit"), false);
+
+  req.session.userRole = "admin";
+  req.session.userId = 70;
+  req.session.allowedModules = [];
+  assert.equal(registrySubmoduleAccessAllowed(req, "teacher-registry", "delete"), true);
 });
 
 test("password confirmation checks the Staff account, never the negative compatibility userId", async (t) => {

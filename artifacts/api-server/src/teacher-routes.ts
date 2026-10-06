@@ -60,6 +60,7 @@ import {
   authenticateRegistryActorPassword,
   requireRegistryAnyModuleAccess,
   requireRegistryModuleAccess,
+  requireRegistrySubmoduleAccess,
 } from "./registry-access";
 
 function requireSupportStaffModule(
@@ -4137,7 +4138,7 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/admin/students/:id", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "student-registry", "Student Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "student-registry", "edit", "Edit Student")) return;
 
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid student ID" });
@@ -5770,7 +5771,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/teachers", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "add", "Add Teacher")) return;
     const schoolId = req.session.schoolId!;
     const parsed = createTeacherSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -5808,7 +5809,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.patch("/api/admin/teachers/:id", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "edit", "Edit Teacher")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5861,7 +5862,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.delete("/api/admin/teachers/:id", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "delete", "Delete Teacher")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5948,7 +5949,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== DEACTIVATE / REACTIVATE TEACHER ID =====
   app.post("/api/admin/teachers/:id/deactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "delete", "Delete Teacher")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });
@@ -5969,7 +5970,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.post("/api/admin/teachers/:id/reactivate", async (req, res) => {
-    if (!requireRegistryModuleAccess(req, res, "teacher-registry", "Teacher Registry")) return;
+    if (!requireRegistrySubmoduleAccess(req, res, "teacher-registry", "delete", "Delete Teacher")) return;
     const schoolId = req.session.schoolId!;
     const teacherId = parseInt(req.params.id);
     if (isNaN(teacherId)) return res.status(400).json({ message: "Invalid teacher ID" });

@@ -532,7 +532,7 @@ export default function TeacherRegistry({ schoolId, classes, sections, subjects,
                               </Button>
                             )}
                             {/* Delete */}
-                            {(!allowedSubs || allowedSubs.includes("deactivate")) && (
+            {(!allowedSubs || allowedSubs.includes("delete")) && (
                               <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-300 hover:bg-red-400/10 h-8 w-8"
                                 onClick={() => setDeleteTarget(t)} disabled={isArchiveMode} title="Remove" data-testid={`button-delete-teacher-reg-${t.id}`}>
                                 <Trash2 className="w-3.5 h-3.5" />

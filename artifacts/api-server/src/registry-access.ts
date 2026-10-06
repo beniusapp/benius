@@ -1,6 +1,9 @@
 import bcrypt from "bcryptjs";
 import type { Request, Response } from "express";
-import { adminModuleAccessAllowed } from "./support-staff-module-permissions";
+import {
+  adminModuleAccessAllowed,
+  adminModuleSubAccessAllowed,
+} from "./support-staff-module-permissions";
 import { storage } from "./storage";
 
 export type RegistryActor = {
@@ -31,6 +34,20 @@ export function registryModuleAccessAllowed(req: Request, moduleId: string): boo
     );
 }
 
+export function registrySubmoduleAccessAllowed(
+  req: Request,
+  moduleId: string,
+  submoduleId: string,
+): boolean {
+  return registryModuleAccessAllowed(req, moduleId)
+    && adminModuleSubAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      moduleId,
+      submoduleId,
+    );
+}
+
 export function registryAnyModuleAccessAllowed(
   req: Request,
   moduleIds: readonly string[],
@@ -46,6 +63,18 @@ export function requireRegistryModuleAccess(
 ): boolean {
   if (registryModuleAccessAllowed(req, moduleId)) return true;
   res.status(403).json({ message: `${moduleLabel} access required` });
+  return false;
+}
+
+export function requireRegistrySubmoduleAccess(
+  req: Request,
+  res: Response,
+  moduleId: string,
+  submoduleId: string,
+  permissionLabel: string,
+): boolean {
+  if (registrySubmoduleAccessAllowed(req, moduleId, submoduleId)) return true;
+  res.status(403).json({ message: `${permissionLabel} permission required` });
   return false;
 }
 
