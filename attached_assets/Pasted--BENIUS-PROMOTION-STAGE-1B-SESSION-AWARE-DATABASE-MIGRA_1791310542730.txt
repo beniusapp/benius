@@ -1,0 +1,907 @@
+# BENIUS — PROMOTION STAGE 1B
+
+## SESSION-AWARE DATABASE MIGRATION
+
+This is an IMPLEMENTATION + DATABASE MIGRATION task.
+
+BENIUS is currently in **DEVELOPMENT / TESTING**, NOT Production.
+
+Stage 1 has already been completed and accepted as:
+
+**PARTIAL — SCHEMA MIGRATION REQUIRED**
+
+Stage 1 established strict session/tenant protection around Promotion, but Promotion Overrides are currently blocked because their database table cannot identify Academic Session.
+
+This Stage 1B will correct the database identity for:
+
+1. `promotion_overrides`
+2. `promotion_decisions` uniqueness/conflict identity
+
+Do this carefully and narrowly.
+
+---
+
+# PRIMARY GOAL
+
+After this task, Promotion operational records must be distinguishable by:
+
+```text
+Authenticated School
++
+Academic Session
++
+Student / cohort identity
+```
+
+There must be no possibility that:
+
+```text
+2026–27 Promotion data
+```
+
+is confused with:
+
+```text
+2027–28 Promotion data
+```
+
+simply because Student/Class/Section/Term are the same.
+
+---
+
+# DEVELOPMENT ENVIRONMENT
+
+This application is still being built and tested.
+
+Development test Promotion data may be cleaned if necessary.
+
+However:
+
+- inspect existing records first;
+- report exactly what exists;
+- do not guess Academic Session for ambiguous legacy records;
+- do not touch unrelated Student/Enrollment/Attendance data;
+- do not touch Production;
+- do not perform broad database cleanup.
+
+If old `promotion_overrides` records are clearly disposable Development test data and cannot be safely assigned to a session, they may be deleted after reporting their count.
+
+If existing Promotion Decisions are ambiguous/conflicting across sessions, do not silently assign/rewrite them. Report them and use the safest Development cleanup necessary.
+
+---
+
+# PERMANENT BENIUS RULE
+
+All Exam Controller operational state must be isolated by:
+
+```text
+school_id
++
+academic_session_id
+```
+
+where the data is Academic Session-specific.
+
+Historical sessions remain strictly read-only.
+
+Tenant isolation remains mandatory.
+
+---
+
+# PART A — INSPECT CURRENT DEVELOPMENT DATA FIRST
+
+Before changing schema, inspect:
+
+```text
+promotion_overrides
+promotion_decisions
+academic_sessions
+```
+
+Report:
+
+```text
+promotion_overrides total:
+promotion_overrides by school:
+legacy/sessionless override records:
+
+promotion_decisions total:
+decisions with session_id:
+decisions with NULL session_id:
+cross-session/conflicting decision identities:
+
+schools involved:
+academic sessions involved:
+```
+
+Also inspect current indexes/unique constraints for both tables.
+
+Do NOT assume the previous audit description is the complete schema definition.
+
+Use the actual current schema/database.
+
+---
+
+# PART B — PROMOTION OVERRIDES
+
+The previous audit confirmed `promotion_overrides` has no Academic Session identity.
+
+Add proper Academic Session identity.
+
+The intended conceptual record is:
+
+```text
+school
++
+session
++
+student
++
+exam/cohort context
++
+override
+```
+
+Use the existing table structure and actual override lookup semantics to determine the exact correct unique identity.
+
+At minimum, every override must belong to:
+
+```text
+school_id
++
+session_id
+```
+
+Do NOT infer session from:
+
+```text
+term
+class
+section
+student profile
+current active session at read time
+```
+
+The session must be persisted on the override record.
+
+---
+
+# SESSION FOREIGN KEY / OWNERSHIP
+
+Use the existing Academic Session table and BENIUS schema conventions.
+
+An override session must reference a real Academic Session.
+
+Application logic must additionally guarantee:
+
+```text
+override.school_id
+=
+academic_session.school_id
+=
+authenticated school
+```
+
+Do not assume a simple FK automatically guarantees same-school ownership if the DB schema does not provide a composite relationship.
+
+---
+
+# LEGACY OVERRIDES
+
+Do NOT do:
+
+```text
+all old overrides
+→ assign to current active session
+```
+
+That would fabricate historical meaning.
+
+Instead:
+
+### If there are zero legacy rows
+
+Proceed normally.
+
+### If legacy rows exist and are disposable Development test data
+
+Report the count and safely clean only those legacy Promotion Override test records.
+
+### If legacy rows contain data that cannot safely be considered disposable
+
+STOP the destructive portion and report.
+
+Do not guess.
+
+---
+
+# PART C — PROMOTION DECISION UNIQUE IDENTITY
+
+`promotion_decisions.sessionId` already exists.
+
+The known problem is that the database conflict/unique identity does not properly include Academic Session.
+
+Inspect the actual current constraint/index.
+
+Change the uniqueness so separate sessions can independently represent their own Promotion decision.
+
+Conceptually:
+
+```text
+School A
+2026–27
+MIS-0003
+Class 2/A
+Final
+```
+
+and:
+
+```text
+School A
+2027–28
+MIS-0003
+Class 2/A
+Final
+```
+
+must be allowed to exist independently.
+
+But duplicate decision identity inside the SAME session must still be prevented.
+
+Use the actual existing decision identity fields.
+
+Do NOT invent unnecessary identity fields.
+
+---
+
+# NULL / LEGACY DECISIONS
+
+Inspect existing:
+
+```text
+promotion_decisions.session_id IS NULL
+```
+
+records.
+
+Because this is Development, if they are clearly obsolete/ambiguous test data, they may be cleaned after reporting.
+
+Do NOT assign them automatically to the current session.
+
+After migration, new operational Promotion Decisions should not be allowed to become sessionless through normal application writes.
+
+If making the DB column globally NOT NULL would break legitimate legacy/history behavior elsewhere, do not blindly change it.
+
+Instead enforce the strongest safe model and report the remaining nullable legacy condition.
+
+---
+
+# PART D — UPDATE DRIZZLE SCHEMA
+
+Update the canonical BENIUS database schema:
+
+```text
+lib/db/src/schema/schema.ts
+```
+
+and any required migration files using the project's existing migration mechanism.
+
+Do not manually create a second competing schema definition.
+
+Keep schema and actual database aligned.
+
+---
+
+# PART E — UPDATE STORAGE
+
+After the schema supports Session ID, update all effective Promotion Override storage functions.
+
+Every override operation must explicitly use:
+
+```text
+schoolId
++
+sessionId
+```
+
+including:
+
+- lookup
+- create
+- update/upsert
+- bulk upsert
+- delete
+- cohort delete
+- execution cleanup if still appropriate
+- any reset/cleanup
+- analytics use
+- Exam Controller aggregation
+
+There must be no operational fallback like:
+
+```text
+sessionId missing
+→ query all overrides for school
+```
+
+Fail closed instead.
+
+---
+
+# PART F — RE-ENABLE OVERRIDES
+
+Stage 1 intentionally blocked unsafe overrides with `409`.
+
+Once genuine session-aware storage exists, safely re-enable:
+
+```text
+POST /api/admin/exam/override
+POST /api/admin/exam/override/bulk
+DELETE /api/admin/exam/override
+DELETE /api/admin/exam/override/cohort
+```
+
+only when:
+
+```text
+authenticated school
++
+validated writable Academic Session
+```
+
+are present.
+
+Archived session mutation remains denied.
+
+Missing session remains denied.
+
+Foreign session remains denied.
+
+---
+
+# PART G — OVERRIDE READS
+
+For:
+
+```text
+GET /api/admin/exam/aggregated
+```
+
+and any other Exam Controller/analytics reader using overrides:
+
+Use only overrides belonging to:
+
+```text
+authenticated school
++
+selected Academic Session
+```
+
+Never merge overrides from another session.
+
+Historical session reads may display that historical session's stored overrides if the user has permission.
+
+Historical reads must not mutate them.
+
+---
+
+# PART H — SESSION ACTIVATION CLEANUP
+
+The audit found Academic Session activation previously cleared ALL Promotion Overrides for the school.
+
+That is wrong once overrides are session-aware.
+
+Review the activation behavior.
+
+Do NOT delete another session's override data merely because a new session becomes active.
+
+Historical session overrides should remain historical data unless there is a clearly established existing business rule requiring deletion.
+
+Prefer preserving historical session data.
+
+Do not invent broad cleanup.
+
+---
+
+# PART I — PROMOTION EXECUTION CLEANUP
+
+Review the Stage 1 change that removed unscoped override cleanup.
+
+If Promotion execution legitimately needs to clear consumed overrides, any cleanup must now be scoped by:
+
+```text
+school
++
+source session
++
+relevant cohort/student context
+```
+
+Never delete overrides belonging to another session.
+
+If cleanup is not necessary for correctness, preserving the records is safer.
+
+Do not redesign business semantics unnecessarily.
+
+---
+
+# PART J — DECISION STORAGE / CONFLICT LOGIC
+
+Update Promotion Decision storage/upsert conflict handling to match the new session-aware database identity.
+
+A decision from:
+
+```text
+2026–27
+```
+
+must not conflict merely because an equivalent Student/Class/Section/Term decision exists in:
+
+```text
+2027–28
+```
+
+Within the same Academic Session, genuine duplicates must still fail/update according to existing intended behavior.
+
+Do not change Teacher assignment authorization or Promotion decision calculation rules.
+
+---
+
+# PART K — HISTORICAL READ-ONLY
+
+After migration:
+
+For archived Academic Session:
+
+```text
+GET decision/override data
+→ allowed where permission exists
+
+POST override
+→ denied
+
+DELETE override
+→ denied
+
+decision mutation
+→ denied
+
+promotion execution
+→ denied
+```
+
+Backend enforcement remains authoritative.
+
+---
+
+# PART L — TENANT ISOLATION
+
+Test explicitly:
+
+```text
+School A
+Session A
+Student A
+```
+
+cannot access or mutate:
+
+```text
+School B
+Session B
+Student B
+```
+
+For overrides, validate Student ownership where Student-specific operations exist.
+
+Never trust request-supplied:
+
+```text
+schoolId
+studentId
+sessionId
+```
+
+without authenticated-school validation.
+
+---
+
+# PART M — DO NOT START STAGE 2
+
+Do NOT create target Academic Session enrollment.
+
+Do NOT add `targetSessionId` to Promotion execution yet unless required purely for a schema definition that is NOT used.
+
+Prefer not to add it.
+
+Do NOT change Promotion to the new lifecycle yet.
+
+After Stage 1B, Promotion may still have the temporary Stage 1 behavior:
+
+```text
+Promotion
+→ Student profile changes immediately
+→ source enrollment preserved
+```
+
+We know this is temporary.
+
+Stage 2 will replace this behavior.
+
+---
+
+# PART N — DO NOT TOUCH STUDENT PLACEMENT ARCHITECTURE
+
+Do NOT modify:
+
+```text
+Student Registry Add/Edit synchronization
+CSV Import
+Student Enrollment canonical placement behavior
+Teacher Attendance
+Daily Presence
+Student deactivation
+```
+
+Do NOT rewrite historical enrollments.
+
+---
+
+# PART O — MOBILE
+
+Mobile remains frozen.
+
+Do NOT modify:
+
+```text
+artifacts/benius-mobile/
+```
+
+If shared backend/storage changes create a future Mobile compatibility concern, report it only.
+
+---
+
+# PART P — NO PRODUCTION DEPLOYMENT
+
+DO NOT DEPLOY.
+
+This is Development migration/testing only.
+
+---
+
+# REQUIRED TEST MATRIX
+
+Use focused tests plus a real Development database verification where safe.
+
+## Schema
+
+1. `promotion_overrides` has Session ID.
+2. Session FK/reference valid.
+3. Required session-aware indexes exist.
+4. Promotion decision unique identity includes Session ID.
+
+## Same Student across sessions
+
+Create/test equivalent logical data:
+
+```text
+School A
+Student X
+2026–27
+Final
+```
+
+and:
+
+```text
+School A
+Student X
+2027–28
+Final
+```
+
+Verify:
+
+5. Two Promotion Decisions can coexist.
+6. Two Promotion Overrides can coexist.
+7. Reading 2026–27 returns only 2026–27.
+8. Reading 2027–28 returns only 2027–28.
+
+## Same-session duplicate
+
+9. Duplicate decision identity in same session is prevented/handled according to intended existing behavior.
+10. Duplicate override identity in same session is prevented/upserted according to intended behavior.
+
+## Historical protection
+
+11. Archived override GET works.
+12. Archived override POST denied.
+13. Archived override DELETE denied.
+
+## Tenant isolation
+
+14. School A cannot read School B override.
+15. School A cannot write School B session override.
+16. School A cannot override School B Student.
+
+## Cleanup
+
+17. Activating Session B does not delete Session A historical overrides.
+18. Session-scoped cleanup never deletes another session's overrides.
+
+## Stage 1 regression
+
+19. Promotion requires source session.
+20. Foreign Student Promotion rejected.
+21. Source enrollment remains unchanged.
+22. Promotion history contains source Session ID.
+23. Session A execution does not mark Session B decision executed.
+
+## Existing completed architecture
+
+Run focused regression tests where available:
+
+24. Student Registry Add/Edit placement synchronization.
+25. CSV Import profile + enrollment behavior.
+26. Teacher Attendance active Student + active selected-session enrollment rule.
+27. Daily Presence `NOT MARKED != ABSENT`.
+
+Do not rewrite those modules just to make tests easier.
+
+---
+
+# REAL DEVELOPMENT DATABASE VERIFICATION
+
+Because Stage 1 transaction tests used a fake database, perform a small controlled Development DB verification after migration.
+
+Do NOT use Production.
+
+Use either existing safe test records or clearly identifiable disposable fixtures.
+
+Verify in the actual Development database:
+
+```text
+Session A decision
+Session B decision
+
+Session A override
+Session B override
+```
+
+can coexist without leakage.
+
+Then verify:
+
+```text
+query Session A
+→ Session A only
+
+query Session B
+→ Session B only
+```
+
+If disposable records are created, clean only those records afterward.
+
+Report before/after counts.
+
+---
+
+# MIGRATION SAFETY
+
+Before applying migration:
+
+1. Inspect current schema.
+2. Inspect existing Promotion data.
+3. Determine whether legacy Development rows are ambiguous.
+4. Report/handle only Promotion-related test data.
+5. Apply migration.
+6. Verify schema.
+7. Run focused DB verification.
+
+Do not delete Students.
+
+Do not delete Enrollments.
+
+Do not delete Attendance.
+
+Do not delete Academic Sessions.
+
+Do not delete unrelated Exam data.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS PROMOTION STAGE 1B REPORT
+
+## Overall Verdict
+
+Choose:
+
+- PASS
+- PARTIAL
+- NEEDS CHANGES
+- FAIL
+
+---
+
+## Pre-Migration Development Data
+
+Report:
+
+```text
+promotion_overrides:
+legacy overrides:
+promotion_decisions:
+NULL-session decisions:
+conflicting decisions:
+```
+
+Explain any Development data cleaned.
+
+---
+
+## Schema Migration
+
+Report exactly:
+
+```text
+promotion_overrides session column:
+FK:
+indexes:
+unique identity:
+
+promotion_decisions session column:
+old unique identity:
+new unique identity:
+```
+
+---
+
+## Promotion Override Isolation
+
+Report:
+
+```text
+Create:
+Read:
+Update:
+Delete:
+Bulk:
+Cohort cleanup:
+Analytics:
+Activation behavior:
+```
+
+Confirm whether all use School + Session.
+
+---
+
+## Promotion Decision Isolation
+
+Report same-session and cross-session behavior.
+
+---
+
+## Historical Read-Only
+
+Report archived GET/POST/DELETE results.
+
+---
+
+## Tenant Isolation
+
+Report cross-school tests.
+
+---
+
+## Real Development DB Verification
+
+Report actual Development DB results, not only mocked tests.
+
+Include:
+
+```text
+Session A + Session B decisions coexist:
+Session A + Session B overrides coexist:
+Session A read isolated:
+Session B read isolated:
+cleanup completed:
+```
+
+---
+
+## Regression
+
+Report:
+
+```text
+Stage 1 Promotion:
+Student Registry:
+CSV Import:
+Teacher Attendance:
+Daily Presence:
+```
+
+---
+
+## Student / Enrollment Data
+
+Confirm:
+
+```text
+Students deleted: 0
+Enrollments deleted: 0
+Attendance deleted: 0
+Historical enrollments rewritten: 0
+```
+
+---
+
+## Mobile
+
+```text
+Changed: NO
+```
+
+---
+
+## Deployment
+
+```text
+Production deployment: NO
+```
+
+---
+
+## Remaining Promotion Architecture
+
+Confirm:
+
+### Stage 2
+Explicit target Academic Session + target enrollment.
+
+### Stage 3
+Target-session activation → Student Registry synchronization.
+
+### Stage 4
+Idempotency + large-cohort scalability/reliability.
+
+---
+
+## Files Changed
+
+List exact files.
+
+---
+
+## Tests
+
+List PASS / FAIL / NOT TESTED.
+
+Do not hide pre-existing diagnostics.
+
+---
+
+# CHANGES NOT ALLOWED
+
+Confirm:
+
+```text
+Target enrollment created by Promotion: NO
+Student Registry activation sync implemented: NO
+Source enrollment rewritten: NO
+Mobile changed: NO
+Production deployed: NO
+```
+
+---
+
+# FINAL VERDICT
+
+State whether the **Stage 1B session-aware database foundation** is complete and whether it is safe to proceed to Stage 2.
+
+STOP.
