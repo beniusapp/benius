@@ -29,6 +29,7 @@ test("Web Promotion routes require and preserve the selected school session", as
   const executions: Array<{
     schoolId: number;
     sessionId: number;
+    targetSessionId: number;
     actor: { id: number; role: "admin" | "support_staff" };
   }> = [];
   const auditRows: any[] = [];
@@ -89,13 +90,17 @@ test("Web Promotion routes require and preserve the selected school session", as
   replace(storage, "executePromotionTransaction", async (
     schoolId: number,
     sessionId: number,
+    targetSessionId: number,
     _items: unknown[],
     _term: string,
     actor: { id: number; role: "admin" | "support_staff" },
   ) => {
-    executions.push({ schoolId, sessionId, actor });
+    executions.push({ schoolId, sessionId, targetSessionId, actor });
     return {
-      promoted: 1,
+      prepared: 1,
+      targetEnrollmentsCreated: 1,
+      targetSessionId,
+      targetSessionName: "2027–2028",
       students: [{
         studentId: 7,
         dsid: "B-007",
@@ -283,11 +288,31 @@ test("Web Promotion routes require and preserve the selected school session", as
   assert.equal(foreignPromotion.status, 403);
   assert.equal(executions.length, 0);
 
+  const missingTargetPromotion = await request("/api/admin/promote", {
+    method: "POST",
+    grants: examGrant,
+    viewSessionId: 42,
+    body: { term: "Term 2", items: [promotionItem] },
+  });
+  assert.equal(missingTargetPromotion.status, 400);
+  assert.equal(missingTargetPromotion.body.code, "TARGET_SESSION_REQUIRED");
+  assert.equal(executions.length, 0);
+
+  const invalidTargetPromotion = await request("/api/admin/promote", {
+    method: "POST",
+    grants: examGrant,
+    viewSessionId: 42,
+    body: { term: "Term 2", targetSessionId: "44", items: [promotionItem] },
+  });
+  assert.equal(invalidTargetPromotion.status, 400);
+  assert.equal(invalidTargetPromotion.body.code, "TARGET_SESSION_INVALID");
+  assert.equal(executions.length, 0);
+
   const duplicatePromotion = await request("/api/admin/promote", {
     method: "POST",
     grants: examGrant,
     viewSessionId: 42,
-    body: { term: "Term 2", items: [promotionItem, promotionItem] },
+    body: { term: "Term 2", targetSessionId: 44, items: [promotionItem, promotionItem] },
   });
   assert.equal(duplicatePromotion.status, 400);
   assert.equal(duplicatePromotion.body.code, "DUPLICATE_STUDENT");
@@ -297,13 +322,16 @@ test("Web Promotion routes require and preserve the selected school session", as
     method: "POST",
     grants: examGrant,
     viewSessionId: 42,
-    body: { term: "Term 2", items: [promotionItem] },
+    body: { term: "Term 2", targetSessionId: 44, items: [promotionItem] },
   });
   assert.equal(promoted.status, 200);
-  assert.equal(promoted.body.promoted, 1);
+  assert.equal(promoted.body.prepared, 1);
+  assert.equal(promoted.body.targetSessionId, 44);
+  assert.equal(promoted.body.targetSessionName, "2027–2028");
   assert.deepEqual(executions, [{
     schoolId: 11,
     sessionId: 42,
+    targetSessionId: 44,
     actor: { id: 7, role: "support_staff" },
   }]);
   await auditComplete;
@@ -311,6 +339,8 @@ test("Web Promotion routes require and preserve the selected school session", as
   assert.equal(auditRows[0].actionBy, 7);
   assert.equal(auditRows[0].actionByRole, "support_staff");
   assert.match(auditRows[0].details, /Support Staff 7/);
+  assert.match(auditRows[0].details, /Academic Session 2027–2028 \(ID 44\)/);
+  assert.match(auditRows[0].details, /Student Registry and source enrollment were not changed/);
 
   const overrideRequests = [
     ["POST", "/api/admin/exam/override", {

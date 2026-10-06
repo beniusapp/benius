@@ -4760,13 +4760,24 @@ Thank you for your prompt attention to this matter.
     }
   });
 
-  app.post("/api/admin/promote", async (req, res) => {
+  app.post("/api/admin/promote", async (req, res): Promise<void> => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
     const actor = resolveExamControllerActor(req);
-    if (!actor) return res.status(403).json({ message: "A valid Exam Controller actor is required" });
+    if (!actor) {
+      res.status(403).json({ message: "A valid Exam Controller actor is required" });
+      return;
+    }
+    if (req.body?.targetSessionId === undefined) {
+      res.status(400).json({
+        code: "TARGET_SESSION_REQUIRED",
+        message: "Select a target Academic Session before preparing Promotion.",
+      });
+      return;
+    }
     const promoteSchema = z.object({
+      targetSessionId: z.number().int().positive(),
       term: z.string().min(1),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
@@ -4784,9 +4795,19 @@ Thank you for your prompt attention to this matter.
       })).min(1),
     });
     const parsed = promoteSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    if (!parsed.success) {
+      const targetIssue = parsed.error.issues.some(issue => issue.path[0] === "targetSessionId");
+      res.status(400).json({
+        ...(targetIssue ? { code: "TARGET_SESSION_INVALID" } : {}),
+        message: targetIssue
+          ? "Select a valid target Academic Session."
+          : parsed.error.issues.map(issue => issue.message).join(", "),
+      });
+      return;
+    }
 
     const schoolId = req.session.schoolId!;
+    const targetSessionId = parsed.data.targetSessionId;
     const items     = parsed.data.items;
     const term      = parsed.data.term;
     try {
@@ -4800,6 +4821,7 @@ Thank you for your prompt attention to this matter.
       execution = await storage.executePromotionTransaction(
         schoolId,
         selectedSession.sessionId,
+        targetSessionId,
         items,
         term,
         actor,
@@ -4812,7 +4834,13 @@ Thank you for your prompt attention to this matter.
     }
 
     // ── 4. Respond immediately — post-pipeline runs without blocking client ───
-    res.json({ promoted: execution.promoted, pipelineQueued: true });
+    res.json({
+      prepared: execution.prepared,
+      targetEnrollmentsCreated: execution.targetEnrollmentsCreated,
+      targetSessionId: execution.targetSessionId,
+      targetSessionName: execution.targetSessionName,
+      pipelineQueued: true,
+    });
 
     // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
     (async () => {
@@ -4835,7 +4863,7 @@ Thank you for your prompt attention to this matter.
             entityId:      item.studentId,
             actionBy:      actor.id,
             actionByRole:  actor.role,
-            details: `[${ts}] - ${actorLabel} ${actor.id} successfully updated Student ${info.dsid} (${info.name}) from Class ${info.fromClass}-${info.fromSection} to Class ${item.nextClass}-${item.nextSection} via Manual Wizard Execution. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+            details: `[${ts}] - ${actorLabel} ${actor.id} prepared Student ${info.dsid} (${info.name}) for Academic Session ${execution.targetSessionName} (ID ${execution.targetSessionId}), from Class ${info.fromClass}-${info.fromSection} to Class ${item.nextClass}-${item.nextSection}. Student Registry and source enrollment were not changed. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
           });
         }
       } catch (pipelineErr) {

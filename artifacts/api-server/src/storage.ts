@@ -98,8 +98,11 @@ import {
   promotionAlreadyExecutedError,
   validatePromotionExecutionBatch,
   validatePromotionExecutionRoster,
+  validatePromotionTargetEnrollment,
+  validatePromotionTargetSession,
   type PromotionExecutionItem,
   type PromotionExecutionPlacement,
+  type PromotionTargetEnrollmentRow,
 } from "./promotion-stage1";
 import {
   hasActiveStudentPlacementChanged,
@@ -6483,14 +6486,21 @@ export class DatabaseStorage {
     await db.insert(academicHistory).values(records);
   }
 
-  /** Atomic, tenant- and source-session-scoped Promotion execution. */
+  /** Atomic, tenant- and source/target-session-scoped Promotion preparation. */
   async executePromotionTransaction(
     schoolId: number,
     sourceSessionId: number,
+    targetSessionId: number,
     items: PromotionExecutionItem[],
     term: string,
     actor: { id: number; role: "admin" | "support_staff" },
-  ): Promise<{ promoted: number; students: PromotionExecutionPlacement[] }> {
+  ): Promise<{
+    prepared: number;
+    targetEnrollmentsCreated: number;
+    targetSessionId: number;
+    targetSessionName: string;
+    students: PromotionExecutionPlacement[];
+  }> {
     validatePromotionExecutionBatch(items, term);
     if (!Number.isSafeInteger(actor.id) || actor.id <= 0) {
       throw new PromotionStage1Error("A valid Promotion actor is required.", 403, "ACTOR_NOT_ACCESSIBLE");
@@ -6518,6 +6528,27 @@ export class DatabaseStorage {
           "SESSION_NOT_WRITABLE",
         );
       }
+
+      const [targetSession] = await tx
+        .select({
+          id: academicSessions.id,
+          schoolId: academicSessions.schoolId,
+          status: academicSessions.status,
+          sessionName: academicSessions.sessionName,
+        })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, targetSessionId),
+          eq(academicSessions.schoolId, schoolId),
+        ))
+        .for("update");
+
+      validatePromotionTargetSession(
+        schoolId,
+        sourceSessionId,
+        targetSessionId,
+        targetSession,
+      );
 
       const studentIds = items.map(item => item.studentId);
       const [studentRows, enrollmentRows] = await Promise.all([
@@ -6577,6 +6608,95 @@ export class DatabaseStorage {
         throw promotionAlreadyExecutedError();
       }
 
+      const targetEnrollmentRows = await tx
+        .select({
+          studentId: enrollments.studentId,
+          schoolId: enrollments.schoolId,
+          sessionId: enrollments.sessionId,
+          className: enrollments.className,
+          sectionName: enrollments.sectionName,
+          rollNo: enrollments.rollNo,
+          status: enrollments.status,
+        })
+        .from(enrollments)
+        .where(and(
+          eq(enrollments.sessionId, targetSessionId),
+          inArray(enrollments.studentId, studentIds),
+        ))
+        .for("update");
+
+      const targetEnrollmentsByStudent = new Map<number, PromotionTargetEnrollmentRow[]>();
+      for (const enrollment of targetEnrollmentRows) {
+        const rows = targetEnrollmentsByStudent.get(enrollment.studentId) ?? [];
+        rows.push(enrollment);
+        targetEnrollmentsByStudent.set(enrollment.studentId, rows);
+      }
+
+      let targetEnrollmentsCreated = 0;
+      for (const item of items) {
+        const existingRows = targetEnrollmentsByStudent.get(item.studentId) ?? [];
+        const disposition = validatePromotionTargetEnrollment(
+          schoolId,
+          targetSessionId,
+          item,
+          existingRows,
+        );
+        if (disposition === "already_prepared") continue;
+
+        const [inserted] = await tx
+          .insert(enrollments)
+          .values({
+            schoolId,
+            studentId: item.studentId,
+            sessionId: targetSessionId,
+            className: item.nextClass,
+            sectionName: item.nextSection,
+            rollNo: null,
+            status: "Active",
+          })
+          .onConflictDoNothing({
+            target: [enrollments.schoolId, enrollments.studentId, enrollments.sessionId],
+          })
+          .returning({ id: enrollments.id });
+
+        if (inserted) {
+          targetEnrollmentsCreated += 1;
+          continue;
+        }
+
+        // A concurrent request may have created this unique enrollment after
+        // the initial locked read. Confirm it is the exact requested placement.
+        const concurrentRows = await tx
+          .select({
+            studentId: enrollments.studentId,
+            schoolId: enrollments.schoolId,
+            sessionId: enrollments.sessionId,
+            className: enrollments.className,
+            sectionName: enrollments.sectionName,
+            rollNo: enrollments.rollNo,
+            status: enrollments.status,
+          })
+          .from(enrollments)
+          .where(and(
+            eq(enrollments.sessionId, targetSessionId),
+            eq(enrollments.studentId, item.studentId),
+          ))
+          .for("update");
+        const concurrentDisposition = validatePromotionTargetEnrollment(
+          schoolId,
+          targetSessionId,
+          item,
+          concurrentRows,
+        );
+        if (concurrentDisposition !== "already_prepared") {
+          throw new PromotionStage1Error(
+            "A target-session enrollment changed during Promotion preparation.",
+            409,
+            "TARGET_ENROLLMENT_CONFLICT",
+          );
+        }
+      }
+
       const scoreRows = await tx
         .select({
           studentId: examScores.studentId,
@@ -6612,6 +6732,7 @@ export class DatabaseStorage {
         return {
           schoolId,
           sessionId: sourceSessionId,
+          targetSessionId,
           studentId: placement.studentId,
           fromClass: placement.fromClass,
           fromSection: placement.fromSection,
@@ -6628,6 +6749,9 @@ export class DatabaseStorage {
             archivedAt: archivedAt.toISOString(),
             ...actorSnapshot,
             schoolId,
+            sourceSessionId,
+            targetSessionId,
+            targetSessionName: targetSession.sessionName,
             studentDsid: placement.dsid,
             studentName: placement.name,
             fromClass: placement.fromClass,
@@ -6655,30 +6779,6 @@ export class DatabaseStorage {
 
       await tx.insert(academicHistory).values(historyRecords);
 
-      let promoted = 0;
-      for (const item of items) {
-        const [updated] = await tx.update(students)
-          .set({
-            class: item.nextClass,
-            section: item.nextSection,
-            idCardPendingReissue: true,
-          })
-          .where(and(
-            eq(students.id, item.studentId),
-            eq(students.schoolId, schoolId),
-            eq(students.isActive, true),
-          ))
-          .returning({ id: students.id });
-        if (!updated) {
-          throw new PromotionStage1Error(
-            "A Student is no longer eligible for Promotion.",
-            409,
-            "STUDENT_NOT_IN_SOURCE_SESSION",
-          );
-        }
-        promoted += 1;
-      }
-
       await tx.update(promotionDecisions)
         .set({ adminExecuted: true, adminExecutedAt: archivedAt })
         .where(and(
@@ -6691,7 +6791,13 @@ export class DatabaseStorage {
           inArray(promotionDecisions.studentId, studentIds),
         ));
 
-      return { promoted, students: roster };
+      return {
+        prepared: items.length,
+        targetEnrollmentsCreated,
+        targetSessionId,
+        targetSessionName: targetSession.sessionName,
+        students: roster,
+      };
     });
   }
 

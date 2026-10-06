@@ -93,6 +93,23 @@ export interface PromotionEnrollmentRow {
   status: string;
 }
 
+export interface PromotionTargetSessionRow {
+  id: number;
+  schoolId: number;
+  status: string;
+  sessionName: string;
+}
+
+export interface PromotionTargetEnrollmentRow {
+  studentId: number;
+  schoolId: number;
+  sessionId: number;
+  className: string;
+  sectionName: string;
+  rollNo: number | null;
+  status: string;
+}
+
 export interface PromotionExecutionPlacement {
   studentId: number;
   dsid: string;
@@ -187,6 +204,69 @@ export function validatePromotionExecutionRoster(
       fromSection: enrollment.sectionName,
     };
   });
+}
+
+export function validatePromotionTargetSession(
+  schoolId: number,
+  sourceSessionId: number,
+  targetSessionId: number,
+  targetSession: PromotionTargetSessionRow | undefined,
+): asserts targetSession is PromotionTargetSessionRow {
+  if (!Number.isSafeInteger(targetSessionId) || targetSessionId <= 0) {
+    throw new PromotionStage1Error(
+      "A valid target Academic Session is required.",
+      400,
+      "TARGET_SESSION_REQUIRED",
+    );
+  }
+  if (targetSessionId === sourceSessionId) {
+    throw new PromotionStage1Error(
+      "The target Academic Session must differ from the source session.",
+      400,
+      "TARGET_SESSION_SAME_AS_SOURCE",
+    );
+  }
+  if (
+    !targetSession ||
+    targetSession.id !== targetSessionId ||
+    targetSession.schoolId !== schoolId ||
+    targetSession.status.toLowerCase() === "archived"
+  ) {
+    throw new PromotionStage1Error(
+      "The target Academic Session is not available for this school.",
+      403,
+      "TARGET_SESSION_NOT_ACCESSIBLE",
+    );
+  }
+}
+
+export function validatePromotionTargetEnrollment(
+  schoolId: number,
+  targetSessionId: number,
+  item: PromotionExecutionItem,
+  existingRows: PromotionTargetEnrollmentRow[],
+): "create" | "already_prepared" {
+  if (existingRows.length === 0) return "create";
+
+  const exactMatch =
+    existingRows.length === 1 &&
+    existingRows[0].schoolId === schoolId &&
+    existingRows[0].studentId === item.studentId &&
+    existingRows[0].sessionId === targetSessionId &&
+    existingRows[0].className === item.nextClass &&
+    existingRows[0].sectionName === item.nextSection &&
+    existingRows[0].rollNo === null &&
+    existingRows[0].status === "Active";
+
+  if (!exactMatch) {
+    throw new PromotionStage1Error(
+      "A target-session enrollment already exists with a different school, placement, roll number, or status.",
+      409,
+      "TARGET_ENROLLMENT_CONFLICT",
+    );
+  }
+
+  return "already_prepared";
 }
 
 export function promotionAlreadyExecutedError(): PromotionStage1Error {

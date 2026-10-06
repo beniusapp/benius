@@ -57,6 +57,13 @@ interface AggData {
   passThreshold: number;
 }
 
+interface AcademicSessionOption {
+  id: number;
+  sessionName: string;
+  status: string;
+  isActive: boolean;
+}
+
 type AdminDecision = "promote" | "retain" | "grace_pass";
 interface AdminOverride { status: AdminDecision; nextClass: string; nextSection: string; }
 
@@ -145,6 +152,25 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     }
     return selectedSessionId;
   };
+  const { data: academicSessions = [], isLoading: sessionsLoading, isError: sessionsError } =
+    useQuery<AcademicSessionOption[]>({
+      queryKey: ["/api/admin/academic-sessions"],
+      queryFn: async ({ signal }) => {
+        const response = await fetch("/api/admin/academic-sessions", { signal });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error((body as any)?.message ?? "Failed to load Academic Sessions");
+        }
+        return response.json();
+      },
+      staleTime: 60_000,
+    });
+  const eligibleTargetSessions = useMemo(
+    () => academicSessions.filter(session =>
+      session.id !== selectedSessionId && session.status.toLowerCase() !== "archived",
+    ),
+    [academicSessions, selectedSessionId],
+  );
 
   // ── Core view state ───────────────────────────────────────────────────────
   const [view, setView]                 = useState<"table"|"wizard">("table");
@@ -152,6 +178,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [cohort, setCohort]             = useState<LedgerRow | null>(null);
   const [examType, setExamType]         = useState(examTypes[0] ?? "");
   const [step, setStep]                 = useState<1|2|3>(1);
+  const [targetSessionId, setTargetSessionId] = useState<number | null>(null);
   const [overrides, setOverrides]       = useState<Record<number, AdminOverride>>({});
   const [confirmed, setConfirmed]       = useState(false);
   const [selectedStudents,  setSelectedStudents]  = useState<Set<number>>(new Set());
@@ -175,6 +202,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
   const [remindingKey, setRemindingKey]     = useState("");
   const [termToDelete, setTermToDelete]     = useState<string | null>(null);
+  const selectedTargetSession = useMemo(
+    () => eligibleTargetSessions.find(session => session.id === targetSessionId) ?? null,
+    [eligibleTargetSessions, targetSessionId],
+  );
+
+  useEffect(() => {
+    setTargetSessionId(null);
+    setConfirmed(false);
+  }, [selectedSessionId]);
 
   const toggleStatusFilter = (f: "ready"|"pending") =>
     setStatusFilter(prev => prev === f ? "all" : f);
@@ -470,6 +506,9 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   const executeMut = useMutation({
     mutationFn: async () => {
       if (!cohort || !agg) throw new Error("No cohort");
+      if (!selectedTargetSession || targetSessionId === null) {
+        throw new Error("Select a target Academic Session before preparing Promotion.");
+      }
       // Scope to selected students only, or full cohort if no selection was active
       const targetStudents = executionScope !== null
         ? agg.students.filter(s => executionScope.has(s.studentId))
@@ -492,14 +531,18 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       const res = await apiRequestForViewSession(
         "POST",
         "/api/admin/promote",
-        { term: cohort.term, items },
+        { term: cohort.term, targetSessionId, items },
         requireSelectedSessionId(),
       );
       if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error((b as any)?.message ?? "Failed"); }
       return res.json();
     },
     onSuccess: (d) => {
-      toast({ title: "✅ Promotion Executed", description: `${d.promoted} student(s) advanced & records archived.`, duration: 5000 });
+      toast({
+        title: "Promotion Prepared",
+        description: `${d.prepared} student(s) prepared for ${d.targetSessionName}. Student Registry placement and source enrollment remain unchanged.`,
+        duration: 6000,
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ledger-status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/exam/aggregated"] });
       closeWizard();
@@ -597,14 +640,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     if (!canWizard) return;
     setCohort(row);
     setExamType(row.term);
-    setOverrides({}); setConfirmed(false); setStep(1);
+    setOverrides({}); setConfirmed(false); setStep(1); setTargetSessionId(null);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
     setExecutionScope(null);
     resetAuditFilters();
     setView("wizard");
   }
   function closeWizard() {
-    setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1);
+    setView("table"); setCohort(null); setOverrides({}); setConfirmed(false); setStep(1); setTargetSessionId(null);
     setSelectedStudents(new Set()); setSavingStudents(new Set());
     setExecutionScope(null);
     resetAuditFilters();
@@ -1114,6 +1157,69 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       {/* ── STEP 3: Execute ───────────────────────────────────────────────── */}
       {step === 3 && (
         <div className="space-y-4">
+          <div className="rounded-2xl border border-[#1e2d44] p-5 space-y-4" style={{ background: "#1A2942" }}
+            data-testid="promotion-session-target">
+            <div>
+              <h2 className="text-sm font-bold text-white">Promotion Academic Sessions</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Choose where to prepare the next-session enrollment. This does not change the current Student Registry placement or activate a session.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-400">Promoting From</label>
+                <div className="h-10 px-3 rounded-xl border border-[#1e2d44] bg-[#0A1628] flex items-center text-white text-sm font-medium"
+                  data-testid="promotion-source-session">
+                  {selectedSession?.sessionName ?? "Select a source Academic Session"}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-400" htmlFor="promotion-target-session">
+                  Promoting To
+                </label>
+                {sessionsLoading ? (
+                  <div className="h-10 px-3 rounded-xl border border-[#1e2d44] bg-[#0A1628] flex items-center text-slate-400 text-sm">
+                    Loading Academic Sessions…
+                  </div>
+                ) : sessionsError ? (
+                  <div role="alert" className="h-10 px-3 rounded-xl border border-red-500/30 bg-[#0A1628] flex items-center text-red-300 text-xs">
+                    Unable to load target sessions. Refresh and try again.
+                  </div>
+                ) : eligibleTargetSessions.length === 0 ? (
+                  <div className="h-10 px-3 rounded-xl border border-[#1e2d44] bg-[#0A1628] flex items-center text-slate-400 text-xs">
+                    No eligible target sessions are available.
+                  </div>
+                ) : (
+                  <Select
+                    value={targetSessionId === null ? "" : String(targetSessionId)}
+                    onValueChange={value => {
+                      setTargetSessionId(Number(value));
+                      setConfirmed(false);
+                    }}
+                  >
+                    <SelectTrigger id="promotion-target-session" aria-label="Target Academic Session"
+                      className="bg-[#0A1628] border-[#1e2d44] text-white h-10 w-full"
+                      data-testid="select-promotion-target-session">
+                      <SelectValue placeholder="Choose a target session…" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#1A2942] border-[#1e2d44]">
+                      {eligibleTargetSessions.map(session => (
+                        <SelectItem key={session.id} value={String(session.id)} className="text-white hover:bg-[#0A1628]">
+                          {session.sessionName} · {session.isActive ? "Active" : session.status}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            </div>
+            {selectedTargetSession && (
+              <p className="text-xs text-emerald-200" data-testid="promotion-target-session-selected">
+                Target: {selectedTargetSession.sessionName}. The target session status will remain unchanged.
+              </p>
+            )}
+          </div>
+
           {/* Scope indicator — shown when executing a subset */}
           {executionScope !== null && (
             <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl border border-[#D4AF37]/30 bg-[#D4AF37]/5 text-xs text-[#D4AF37]"
@@ -1183,13 +1289,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
           <div className="rounded-2xl border border-[#1e2d44] p-5 space-y-4" style={{ background:"#1A2942" }}>
             <div className="flex items-start gap-3">
-              <Checkbox id="exec-confirm" checked={confirmed} onCheckedChange={v => setConfirmed(!!v)}
+              <Checkbox id="exec-confirm" checked={confirmed} disabled={!selectedTargetSession}
+                onCheckedChange={v => setConfirmed(!!v)}
                 className="mt-0.5 border-slate-500 data-[state=checked]:bg-[#D4AF37] data-[state=checked]:border-[#D4AF37]"
                 data-testid="checkbox-confirm-execute" />
               <label htmlFor="exec-confirm" className="text-sm text-slate-300 leading-relaxed cursor-pointer select-none">
-                I confirm this will <strong className="text-white">permanently update the class and section</strong> for{" "}
-                <strong className="text-[#D4AF37]">{counters.promote + counters.grace}</strong> promoted student(s) and archive their academic records.{" "}
-                <span className="text-red-400 font-semibold">This action cannot be undone.</span>
+                I confirm this will prepare a separate enrollment and Promotion history in{" "}
+                <strong className="text-[#D4AF37]">{selectedTargetSession?.sessionName ?? "the selected target session"}</strong>.
+                The Student Registry placement and source enrollment will remain unchanged.
               </label>
             </div>
             <div className="flex items-center justify-between pt-1">
@@ -1198,14 +1305,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
+                disabled={!confirmed || !selectedTargetSession || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}
                 data-testid="btn-execute-promotion">
                 {executeMut.isPending
-                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin"/>Executing…</>
-                  : <><CheckSquare className="w-4 h-4 mr-2"/>Execute Promotion</>}
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin"/>Preparing…</>
+                  : <><CheckSquare className="w-4 h-4 mr-2"/>Prepare Promotion</>}
               </Button>
             </div>
           </div>
