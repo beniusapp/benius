@@ -1169,6 +1169,22 @@ test("Support Staff parent grants gate enterprise modules and registry operation
     false,
     "a hard-deleted Teacher no longer appears in the normal Registry",
   );
+  removedTeacherHistoryEntries.push({
+    schoolId: 2,
+    digitalTeacherId: "B-T999",
+    fullName: "School B Private Teacher",
+  });
+  const sameSchoolHistory = await request(
+    "/api/admin/teachers/removed-history?schoolId=2",
+    { grants: ["teacher-registry"], schoolId: 1 },
+  );
+  assert.equal(sameSchoolHistory.status, 200);
+  assert.deepEqual(
+    sameSchoolHistory.body.data.map((entry: any) => entry.digitalTeacherId),
+    ["A-T011"],
+    "Support Staff sees only same-school Removed History even if a different school ID is supplied",
+  );
+  assert.equal(removedTeacherHistorySchoolReads.at(-1), 1);
   const principalHistory = await request("/api/admin/teachers/removed-history", { role: "admin" });
   assert.equal(principalHistory.status, 200);
   assert.equal(
