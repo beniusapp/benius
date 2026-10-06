@@ -9,7 +9,12 @@ import {
   requireRegistryModuleAccess,
   requireRegistrySubmoduleAccess,
 } from "../registry-access";
-import { AcademicSessionFinancialHistoryError, storage } from "../storage";
+import {
+  AcademicSessionFinancialHistoryError,
+  StudentRegistryPlacementSessionError,
+  StudentRegistryPlacementValidationError,
+  storage,
+} from "../storage";
 import { aggregateStudentAttendance } from "../student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "../student-attendance-working-days";
 import { getWorkingDays, parseWorkingDays, saveWorkingDays } from "../teacher-working-days";
@@ -1364,7 +1369,7 @@ export async function registerRoutes(
       const dsid = `${schoolCode}-${String(serial).padStart(4, "0")}`;
       const passwordHash = await bcrypt.hash(dsid, 10);
 
-      const student = await storage.createStudent({
+      const student = await storage.createStudentWithActiveSessionEnrollment({
         schoolId,
         digitalStudentId: dsid,
         name,
@@ -1386,29 +1391,14 @@ export async function registerRoutes(
         email,
       });
 
-      // Auto-enrollment: silently attach the student to the currently active
-      // academic session for this school. If no session is active yet, skip
-      // gracefully — enrollment can be assigned later when a session is created.
-      try {
-        const activeSession = await storage.getActiveSession(schoolId);
-        if (activeSession) {
-          await storage.createEnrollment({
-            schoolId,
-            studentId: student.id,
-            sessionId: activeSession.id,
-            className: cls,
-            sectionName: section,
-            ...(rollNumber ? { rollNo: rollNumber } : {}),
-            status: "Active",
-          });
-        }
-      } catch (enrollErr) {
-        // Non-fatal: student row was created successfully; log and continue.
-        console.warn("Auto-enrollment skipped:", enrollErr);
-      }
-
       res.status(201).json(student);
     } catch (error: any) {
+      if (
+        error instanceof StudentRegistryPlacementSessionError
+        || error instanceof StudentRegistryPlacementValidationError
+      ) {
+        return res.status(error.status).json({ message: error.message, code: error.code });
+      }
       console.error("Manual student add error:", error);
       res.status(500).json({ message: error.message || "Failed to add student" });
     }
@@ -2406,33 +2396,13 @@ export async function registerRoutes(
     }
   });
 
-  // Student: enrollment history — exact class/section per academic session
-  // Also auto-upserts the current active-session enrollment so the registry
-  // stays fresh even for students created before the enrollment table existed.
+  // Student: enrollment history — exact class/section per academic session.
+  // This endpoint is read-only; placement synchronization belongs to explicit
+  // authorized Student Registry writes.
   app.get("/api/student/exam/enrollment-history", async (req, res) => {
     if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
     const student = await storage.getStudentById(req.session.studentId);
     if (!student) return res.status(404).json({ message: "Student not found" });
-
-    // Idempotent upsert: ensure the current session enrollment record exists
-    // (captures students who were created before the enrollment table or before
-    //  the active session was configured).
-    try {
-      const activeSession = await storage.getActiveSession(student.schoolId);
-      if (activeSession) {
-        await storage.upsertStudentEnrollment({
-          schoolId: student.schoolId,
-          studentId: student.id,
-          sessionId: activeSession.id,
-          className: student.class,
-          sectionName: student.section,
-          status: "Active",
-        });
-      }
-    } catch (e) {
-      // Non-fatal — historical data still returned even if upsert fails
-      console.warn("Enrollment upsert skipped:", (e as Error).message);
-    }
 
     const history = await storage.getStudentEnrollmentHistory(student.schoolId, student.id);
     res.json(history);
@@ -4268,15 +4238,26 @@ export async function registerRoutes(
         return res.status(409).json({ message: `Roll number ${rollNumber} is already assigned in ${rest.class}-${rest.section}` });
       }
     }
-    const updated = await storage.updateStudent(id, schoolId, {
-      ...rest,
-      rollNumber:   rollNumber   ?? null,
-      fatherName:   rest.fatherName   ?? null,
-      motherName:   rest.motherName   ?? null,
-      address:      rest.address      ?? null,
-      aadharNumber: rest.aadharNumber ?? null,
-      email:        rest.email,
-    });
+    let updated;
+    try {
+      updated = await storage.updateStudentWithActiveSessionEnrollment(id, schoolId, {
+        ...rest,
+        rollNumber:   rollNumber   ?? null,
+        fatherName:   rest.fatherName   ?? null,
+        motherName:   rest.motherName   ?? null,
+        address:      rest.address      ?? null,
+        aadharNumber: rest.aadharNumber ?? null,
+        email:        rest.email,
+      });
+    } catch (error) {
+      if (
+        error instanceof StudentRegistryPlacementSessionError
+        || error instanceof StudentRegistryPlacementValidationError
+      ) {
+        return res.status(error.status).json({ message: error.message, code: error.code });
+      }
+      throw error;
+    }
     if (!updated) return res.status(404).json({ message: "Student not found" });
     res.json(updated);
   });

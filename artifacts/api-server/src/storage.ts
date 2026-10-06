@@ -93,6 +93,10 @@ import {
   studentSessionRevocationSid,
   userSessionRevocationSid,
 } from "./session-revocation";
+import {
+  hasActiveStudentPlacementChanged,
+  isConfiguredStudentPlacement,
+} from "./student-registry-placement";
 import { summarizeWebDailyPresence } from "./web-daily-presence";
 import {
   generatePasswordRecoveryToken,
@@ -140,6 +144,36 @@ export class AttendanceLeaveMutationError extends Error {
     this.name = "AttendanceLeaveMutationError";
   }
 }
+
+export class StudentRegistryPlacementSessionError extends Error {
+  readonly status = 409;
+
+  constructor(readonly code: "NO_ACTIVE_SESSION" | "MULTIPLE_ACTIVE_SESSIONS") {
+    super(code === "NO_ACTIVE_SESSION"
+      ? "An active academic session is required to add a Student or change an active Student's placement."
+      : "Student placement cannot be synchronized because more than one academic session is active.");
+    this.name = "StudentRegistryPlacementSessionError";
+  }
+}
+
+export class StudentRegistryPlacementValidationError extends Error {
+  readonly status = 400;
+  readonly code = "INVALID_STUDENT_PLACEMENT";
+
+  constructor() {
+    super("The selected class and section are not configured for this school.");
+    this.name = "StudentRegistryPlacementValidationError";
+  }
+}
+
+type StudentUpdateData = {
+  name: string; class: string; section: string; phone: string;
+  gender?: string | null; rollNumber?: number | null; guardianName?: string | null;
+  dob?: string; enrollmentDate?: string; bloodGroup?: string | null;
+  fatherName?: string | null; motherName?: string | null;
+  address?: string | null; aadharNumber?: string | null;
+  email?: string | null;
+};
 
 export class TeacherEmailConflictError extends Error {
   readonly status = 409;
@@ -617,6 +651,55 @@ export class DatabaseStorage {
   async createStudent(insertStudent: InsertStudent): Promise<Student> {
     const [student] = await db.insert(students).values(insertStudent).returning();
     return student;
+  }
+
+  /**
+   * Web Student Registry Add: create the profile and its active-session
+   * enrollment together. A missing or ambiguous active session is a conflict,
+   * not a reason to create an unenrolled Student.
+   */
+  async createStudentWithActiveSessionEnrollment(insertStudent: InsertStudent): Promise<Student> {
+    return db.transaction(async (tx) => {
+      const activeSessions = await tx
+        .select({ id: academicSessions.id })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.schoolId, insertStudent.schoolId),
+          eq(academicSessions.isActive, true),
+        ))
+        .limit(2)
+        .for("update");
+
+      if (activeSessions.length === 0) {
+        throw new StudentRegistryPlacementSessionError("NO_ACTIVE_SESSION");
+      }
+      if (activeSessions.length !== 1) {
+        throw new StudentRegistryPlacementSessionError("MULTIPLE_ACTIVE_SESSIONS");
+      }
+
+      const placementMetadata = await tx
+        .select({ metaKey: schoolMetadata.metaKey, metaValue: schoolMetadata.metaValue })
+        .from(schoolMetadata)
+        .where(and(
+          eq(schoolMetadata.schoolId, insertStudent.schoolId),
+          inArray(schoolMetadata.metaKey, ["classes", "sections", "class_sections"]),
+        ));
+      if (!isConfiguredStudentPlacement(placementMetadata, insertStudent.class, insertStudent.section)) {
+        throw new StudentRegistryPlacementValidationError();
+      }
+
+      const [student] = await tx.insert(students).values(insertStudent).returning();
+      await tx.insert(enrollments).values({
+        schoolId: insertStudent.schoolId,
+        studentId: student.id,
+        sessionId: activeSessions[0].id,
+        className: student.class,
+        sectionName: student.section,
+        rollNo: student.rollNumber ?? null,
+        status: "Active",
+      });
+      return student;
+    });
   }
 
   async getStudentById(id: number): Promise<Student | undefined> {
@@ -4449,14 +4532,25 @@ export class DatabaseStorage {
     return rows;
   }
 
-  async updateStudent(id: number, schoolId: number, data: {
-    name: string; class: string; section: string; phone: string;
-    gender?: string | null; rollNumber?: number | null; guardianName?: string | null;
-    dob?: string; enrollmentDate?: string; bloodGroup?: string | null;
-    fatherName?: string | null; motherName?: string | null;
-    address?: string | null; aadharNumber?: string | null;
-    email?: string | null;
-  }): Promise<Student | undefined> {
+  async updateStudent(id: number, schoolId: number, data: StudentUpdateData): Promise<Student | undefined> {
+    return this.updateStudentWithinTransaction(id, schoolId, data, false);
+  }
+
+  /** Web Student Registry Edit: synchronize only changed placement fields. */
+  async updateStudentWithActiveSessionEnrollment(
+    id: number,
+    schoolId: number,
+    data: StudentUpdateData,
+  ): Promise<Student | undefined> {
+    return this.updateStudentWithinTransaction(id, schoolId, data, true);
+  }
+
+  private async updateStudentWithinTransaction(
+    id: number,
+    schoolId: number,
+    data: StudentUpdateData,
+    synchronizeActiveSessionPlacement: boolean,
+  ): Promise<Student | undefined> {
     const setData: Record<string, unknown> = {
       name: data.name, class: data.class, section: data.section, phone: data.phone,
     };
@@ -4473,13 +4567,75 @@ export class DatabaseStorage {
     if (data.email !== undefined) setData.email = data.email;
     return db.transaction(async tx => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${schoolId}, ${id})`);
-      const [before] = await tx.select({ email: students.email }).from(students)
+      const [before] = await tx.select({
+        email: students.email,
+        class: students.class,
+        section: students.section,
+        rollNumber: students.rollNumber,
+        isActive: students.isActive,
+      }).from(students)
         .where(and(eq(students.id, id), eq(students.schoolId, schoolId))).for("update");
       if (!before) return undefined;
+
+      const placementChanged = synchronizeActiveSessionPlacement
+        && hasActiveStudentPlacementChanged(before, {
+          class: data.class,
+          section: data.section,
+          rollNumber: data.rollNumber ?? null,
+        });
+      let activeSessionId: number | null = null;
+      if (placementChanged) {
+        const activeSessions = await tx
+          .select({ id: academicSessions.id })
+          .from(academicSessions)
+          .where(and(
+            eq(academicSessions.schoolId, schoolId),
+            eq(academicSessions.isActive, true),
+          ))
+          .limit(2)
+          .for("update");
+        if (activeSessions.length === 0) {
+          throw new StudentRegistryPlacementSessionError("NO_ACTIVE_SESSION");
+        }
+        if (activeSessions.length !== 1) {
+          throw new StudentRegistryPlacementSessionError("MULTIPLE_ACTIVE_SESSIONS");
+        }
+        activeSessionId = activeSessions[0].id;
+
+        const placementMetadata = await tx
+          .select({ metaKey: schoolMetadata.metaKey, metaValue: schoolMetadata.metaValue })
+          .from(schoolMetadata)
+          .where(and(
+            eq(schoolMetadata.schoolId, schoolId),
+            inArray(schoolMetadata.metaKey, ["classes", "sections", "class_sections"]),
+          ));
+        if (!isConfiguredStudentPlacement(placementMetadata, data.class, data.section)) {
+          throw new StudentRegistryPlacementValidationError();
+        }
+      }
+
       const [updated] = await tx.update(students)
         .set(setData as Partial<typeof students.$inferInsert>)
         .where(and(eq(students.id, id), eq(students.schoolId, schoolId)))
         .returning();
+      if (activeSessionId !== null) {
+        await tx.insert(enrollments).values({
+          schoolId,
+          studentId: id,
+          sessionId: activeSessionId,
+          className: data.class,
+          sectionName: data.section,
+          rollNo: data.rollNumber ?? null,
+          status: "Active",
+        }).onConflictDoUpdate({
+          target: [enrollments.schoolId, enrollments.studentId, enrollments.sessionId],
+          set: {
+            className: data.class,
+            sectionName: data.section,
+            rollNo: data.rollNumber ?? null,
+          },
+        });
+      }
       if (data.email !== undefined && (data.email ?? "").trim().toLowerCase() !== (before.email ?? "").trim().toLowerCase()) {
         const now = new Date();
         await tx.update(studentPasswordResetChallenges).set({ consumedAt: now }).where(and(

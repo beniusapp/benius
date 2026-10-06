@@ -3,6 +3,7 @@
 - [BENIUS Web-first development](benius-web-first-development.md) — prioritize Web and required backend work; keep Mobile feature work frozen until explicitly requested.
 - [Native mobile auth boundary](native-mobile-auth-boundary.md) — keep mobile bearer auth separate from web cookies; browser preview is not a sign-in client.
 - [Student content boundaries](student-content-boundaries.md) — historical cohort controls session reads; new Student uploads need owner/reviewer-gated downloads.
+- [Current Student placement](current-student-placement.md) — authorized Web Registry Add or placement-changing Edit synchronizes only the active-session enrollment; preserve history.
 - [Expo preview font loading](expo-preview-font-loading.md) — keep optional custom fonts from blocking the first visible Expo screen.
 - [API TypeScript test runner](api-server-test-runner.md) — bundle API tests as CommonJS with esbuild before Node’s test runner.
 - [Student result calculation boundaries](student-result-calculation-boundaries.md) — historical result access does not imply historical policy snapshots or a new journey formula.
