@@ -1,0 +1,380 @@
+# BENIUS — SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+Apply the SAME parent-only permission model already implemented for Timetable Master, School Calendar, Attendance Overview, Exam Controller, Complaint Hub and Noticeboard.
+
+Apply it ONLY to these 5 modules:
+
+1. Performance Analytics
+2. Audit Logs
+3. Visitor Log
+4. ID Card Gen
+5. Assets & Inventory
+
+Do NOT modify other modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+I do NOT want submodule permissions for these five modules.
+
+Support Staff permission editor should simply show:
+
+```text
+☐ Performance Analytics
+☐ Audit Logs
+☐ Visitor Log
+☐ ID Card Gen
+☐ Assets & Inventory
+```
+
+No expand arrows.
+
+No child/submodule permissions.
+
+---
+
+# SIMPLE AUTHORIZATION RULE
+
+For EACH of these five modules:
+
+## Parent module GRANTED
+
+Support Staff gets the complete normal operational functionality available to Principal/Admin inside that module.
+
+## Parent module NOT GRANTED
+
+Support Staff gets ZERO access:
+
+- dashboard tile hidden
+- direct URL blocked
+- protected APIs rejected
+- no read/write/action access
+
+The parent module checkbox is the authorization boundary.
+
+---
+
+# 1. PERFORMANCE ANALYTICS
+
+When granted:
+
+Support Staff gets the complete normal Principal/Admin Performance Analytics functionality.
+
+This includes normal viewing/filtering/reporting/analytics functionality available inside the module.
+
+Preserve:
+
+- authenticated school isolation
+- Academic Session scoping
+- examination/session rules
+
+Support Staff of School A must never access School B analytics.
+
+---
+
+# 2. AUDIT LOGS
+
+When granted:
+
+Support Staff gets the normal Principal/Admin Audit Logs viewing functionality.
+
+IMPORTANT:
+
+Audit Logs remain an audit/history module.
+
+Granting Audit Logs does NOT allow Support Staff to modify, delete, rewrite or manipulate audit history if Principal/Admin cannot normally do so.
+
+Support Staff should see the school's appropriate audit records using the same normal module behavior as Principal/Admin.
+
+Preserve school/session scoping where applicable.
+
+---
+
+# 3. VISITOR LOG
+
+When granted:
+
+Support Staff gets the complete normal Principal/Admin Visitor Log operational functionality, including the normal:
+
+- active visitors
+- visitor history
+- check-in
+- check-out
+- other existing Visitor Log operations
+
+Preserve tenant isolation.
+
+School A Support Staff must only operate on School A visitors.
+
+Do not allow a manipulated visitor ID, school ID or request value to operate on another school's record.
+
+Preserve existing session rules where applicable.
+
+---
+
+# 4. ID CARD GEN
+
+When granted:
+
+Support Staff gets the complete normal Principal/Admin ID Card Generation functionality.
+
+This includes the normal search/generation/reissue/print functionality that exists inside the module.
+
+Support Staff must operate only on records belonging to their authenticated school.
+
+School A Support Staff must never generate/reissue/access ID cards using School B records.
+
+---
+
+# 5. ASSETS & INVENTORY
+
+When granted:
+
+Support Staff gets the complete normal Principal/Admin Assets & Inventory operational functionality.
+
+This includes the existing normal:
+
+- view
+- add
+- edit
+- delete
+
+and other existing operational actions inside the module.
+
+Preserve authenticated school ownership.
+
+School A Support Staff must never view/create/edit/delete School B assets.
+
+---
+
+# IMPORTANT — FULL ACCESS LIKE PRINCIPAL
+
+“Full access like Principal” means:
+
+> Normal operational functionality inside the granted module.
+
+It does NOT mean Support Staff becomes an Admin.
+
+Do NOT bypass:
+
+- school/tenant isolation
+- Academic Session isolation
+- historical-session read-only rules
+- server-side validation
+- data integrity rules
+- normal module business rules
+
+Support Staff remains a separate Support Staff actor.
+
+---
+
+# ACTOR ATTRIBUTION / NEGATIVE ID
+
+The previous shared-data audit found some actor-attribution and negative Support Staff ID problems, particularly around Visitor Log and Assets.
+
+While enabling full module access, DO NOT write `userId = -staffId` into a foreign-key field that expects a real Admin `users.id`.
+
+Do NOT falsely record a Support Staff action as though the Principal personally performed it.
+
+Where the existing architecture already supports Support Staff actor attribution, preserve/use it.
+
+If proper attribution cannot be safely implemented without a larger schema/business-logic change, do NOT invent a workaround.
+
+Report the limitation instead.
+
+The operational school data must still belong to the authenticated school.
+
+---
+
+# LEGACY CHILD PERMISSIONS
+
+Existing accounts may contain old child permissions for these modules.
+
+After this change:
+
+**Only the parent module grant authorizes access.**
+
+A legacy child permission by itself must NOT grant access.
+
+Do NOT automatically convert child-only permission into full parent access.
+
+When permissions are next saved, remove/canonicalize obsolete child keys for these modules.
+
+No unnecessary database migration.
+
+---
+
+# SERVER-SIDE ENFORCEMENT
+
+This must NOT be UI-only.
+
+For each module:
+
+```text
+Parent granted
+→ normal same-school module functionality allowed
+
+Parent not granted
+→ module APIs rejected
+```
+
+Do not rely only on hiding dashboard tiles.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin behavior must remain unchanged.
+
+---
+
+# MOBILE IS FROZEN
+
+Mobile development is currently FROZEN.
+
+Therefore:
+
+- DO NOT modify Mobile source files.
+- DO NOT redesign Mobile APIs.
+- DO NOT synchronize these new permission rules into Mobile now.
+- DO NOT change Mobile business logic.
+
+Work only on Web + required shared backend behavior.
+
+If an existing shared backend change has Mobile implications, report them, but do not modify Mobile.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- School Setup
+- Timetable Master
+- School Calendar
+- Attendance Overview
+- Exam Controller
+- Complaint Hub
+- Noticeboard
+- Fees & Payments
+- Academic Session selector
+- other Support Staff modules
+- Teacher Portal
+- Student Portal
+- database schema unless absolutely required for a security fix
+- `/uploads`
+- deployment
+
+No broad refactor.
+
+---
+
+# VALIDATION
+
+Verify permission editor shows ONLY:
+
+```text
+☐ Performance Analytics
+☐ Audit Logs
+☐ Visitor Log
+☐ ID Card Gen
+☐ Assets & Inventory
+```
+
+No child controls.
+
+For EACH module verify:
+
+### Granted
+- tile visible
+- direct module access works
+- normal Principal-equivalent functionality works
+- required APIs work
+- same-school data is used
+
+### Not granted
+- tile hidden
+- direct URL blocked
+- APIs rejected
+
+### Security
+Verify School A Support Staff cannot read/write School B data.
+
+### Session
+Where the module is Academic Session-sensitive, preserve selected-session behavior and historical write protections.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## FIVE ENTERPRISE MODULE SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+### Permission Editor
+PASS / FAIL
+
+### Performance Analytics
+- Parent-only: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant/session isolation: PASS/FAIL
+
+### Audit Logs
+- Parent-only: YES/NO
+- Normal audit visibility when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant/session isolation: PASS/FAIL
+
+### Visitor Log
+- Parent-only: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Actor attribution: PASS / LIMITATION FOUND
+
+### ID Card Gen
+- Parent-only: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+
+### Assets & Inventory
+- Parent-only: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Actor attribution: PASS / LIMITATION FOUND
+
+### Legacy child permissions
+Explain handling.
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Other Support Staff modules
+UNCHANGED / CHANGED
+
+### Mobile
+FROZEN / CHANGED
+
+Expected: FROZEN.
+
+### Database/schema changes
+NONE / explain if required
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
