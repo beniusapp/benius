@@ -26,7 +26,10 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   const visitorAuditEntries: any[] = [];
   const assetReads: number[] = [];
   const assetCreates: any[] = [];
+  const assetUpdates: Array<[number, number, any]> = [];
+  const assetDeletes: Array<[number, number]> = [];
   const assetActivity: any[] = [];
+  const assetAuditEntries: any[] = [];
   const studentReads: any[] = [];
   const teacherReads: number[] = [];
 
@@ -100,6 +103,7 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   }));
   replace(storage, "createAuditLog", async (entry: any) => {
     visitorAuditEntries.push(entry);
+    if (entry.entityType === "asset") assetAuditEntries.push(entry);
     return { id: visitorAuditEntries.length, ...entry };
   });
   replace(storage, "getAssets", async (schoolId: number) => {
@@ -110,13 +114,19 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
     assetCreates.push(data);
     return { id: 5, ...data };
   });
-  replace(storage, "getAssetById", async (id: number, schoolId: number) =>
-    id === 4 && schoolId === 1 ? { id, schoolId, name: "Projector" } : null,
-  );
-  replace(storage, "updateAsset", async (id: number, schoolId: number, data: any) =>
-    ({ id, schoolId, ...data }),
-  );
-  replace(storage, "deleteAsset", async () => true);
+  replace(storage, "getAssetById", async (id: number, schoolId: number) => {
+    if (id === 4 && schoolId === 1) return { id, schoolId, name: "Projector", quantity: 1 };
+    if (id === 8 && schoolId === 2) return { id, schoolId, name: "School B Laptop", quantity: 1 };
+    return null;
+  });
+  replace(storage, "updateAsset", async (id: number, schoolId: number, data: any) => {
+    assetUpdates.push([id, schoolId, data]);
+    return { id, schoolId, name: id === 4 ? "Projector" : "School B Laptop", ...data };
+  });
+  replace(storage, "deleteAsset", async (id: number, schoolId: number) => {
+    assetDeletes.push([id, schoolId]);
+    return true;
+  });
   replace(storage, "logAssetActivity", async (entry: any) => {
     assetActivity.push(entry);
   });
@@ -166,7 +176,13 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
     const schoolId = Number(req.get("x-test-school") ?? 1);
     (req as any).session = role === "admin"
       ? { userId: 70, userRole: "admin", schoolId, allowedModules }
-      : { userId: -7, staffId: 7, userRole: "support_staff", schoolId, allowedModules };
+      : {
+          userId: -7,
+          staffId: Number(req.get("x-test-staff-id") ?? 7),
+          userRole: "support_staff",
+          schoolId,
+          allowedModules,
+        };
     next();
   });
   const server = createServer(app);
@@ -187,6 +203,7 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
       role?: "admin" | "support_staff";
       grants?: string[];
       schoolId?: number;
+      staffId?: number;
       viewSessionId?: number;
     } = {},
   ) {
@@ -197,6 +214,7 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
         ...(options.role ? { "x-test-role": options.role } : {}),
         ...(options.grants ? { "x-test-grants": options.grants.join(",") } : {}),
         ...(options.schoolId ? { "x-test-school": String(options.schoolId) } : {}),
+        ...(options.staffId === undefined ? {} : { "x-test-staff-id": String(options.staffId) }),
         ...(options.viewSessionId === undefined
           ? {}
           : { "x-view-session-id": String(options.viewSessionId) }),
@@ -311,13 +329,33 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
     body: assetBody,
   })).status, 201);
   assert.equal(assetCreates.at(-1).schoolId, 1, "asset ownership comes from the authenticated school");
+  assert.equal(assetAuditEntries.at(-1).actionType, "create");
+  assert.equal(assetAuditEntries.at(-1).entityType, "asset");
+  assert.equal(assetAuditEntries.at(-1).entityId, 5);
+  assert.equal(assetAuditEntries.at(-1).schoolId, 1);
+  assert.equal(assetAuditEntries.at(-1).actionBy, 7);
+  assert.equal(assetAuditEntries.at(-1).actionByRole, "support_staff");
+  const invalidActorEdit = await request("/api/admin/assets/4", {
+    method: "PATCH",
+    grants: ["assets"],
+    staffId: -7,
+    body: { quantity: 4 },
+  });
+  assert.equal(invalidActorEdit.status, 403);
+  assert.equal(assetUpdates.length, 0, "invalid Staff actors cannot mutate assets");
+  assert.equal(assetAuditEntries.at(-1).actionBy, 7);
   const staffAssetEdit = await request("/api/admin/assets/4", {
     method: "PATCH",
     grants: ["assets"],
     body: { quantity: 2 },
   });
-  assert.equal(staffAssetEdit.status, 403);
-  assert.equal(staffAssetEdit.body.code, "SUPPORT_STAFF_ASSET_ACTOR_UNSUPPORTED");
+  assert.equal(staffAssetEdit.status, 200);
+  assert.deepEqual(assetUpdates.at(-1), [4, 1, { quantity: 2 }]);
+  assert.equal(assetAuditEntries.at(-1).actionType, "update");
+  assert.equal(assetAuditEntries.at(-1).entityId, 4);
+  assert.equal(assetAuditEntries.at(-1).schoolId, 1);
+  assert.equal(assetAuditEntries.at(-1).actionBy, 7);
+  assert.equal(assetAuditEntries.at(-1).actionByRole, "support_staff");
   assert.equal((await request("/api/admin/assets/4", {
     method: "PATCH",
     body: { quantity: 2 },
@@ -325,16 +363,38 @@ test("Support Staff parent grants gate the five enterprise modules and retain sc
   assert.equal((await request("/api/admin/assets/4", {
     method: "DELETE",
     grants: ["assets"],
-  })).status, 403);
+  })).status, 200);
+  assert.deepEqual(assetDeletes.at(-1), [4, 1]);
+  assert.equal(assetAuditEntries.at(-1).actionType, "delete");
+  assert.equal(assetAuditEntries.at(-1).entityId, 4);
+  assert.equal(assetAuditEntries.at(-1).schoolId, 1);
+  assert.equal(assetAuditEntries.at(-1).actionBy, 7);
+  assert.equal(assetAuditEntries.at(-1).actionByRole, "support_staff");
   assert.equal((await request("/api/admin/assets/4", {
     method: "DELETE",
   })).status, 403);
+  assert.equal((await request("/api/admin/assets/8", {
+    method: "PATCH",
+    grants: ["assets"],
+    body: { quantity: 3 },
+  })).status, 404, "School A Support Staff cannot edit a School B asset");
+  assert.equal((await request("/api/admin/assets/8", {
+    method: "DELETE",
+    grants: ["assets"],
+  })).status, 404, "School A Support Staff cannot delete a School B asset");
+  assert.deepEqual(assetUpdates.at(-1), [4, 1, { quantity: 2 }]);
+  assert.deepEqual(assetDeletes.at(-1), [4, 1]);
   assert.equal(assetActivity.length, 0, "Support Staff IDs are never written into the Admin-user foreign key");
   assert.equal((await request("/api/admin/assets/4", {
     method: "PATCH",
     role: "admin",
     body: { quantity: 2 },
   })).status, 200, "Admin asset editing remains unchanged");
+  assert.equal(assetActivity.at(-1).userId, 70);
+  assert.equal((await request("/api/admin/assets/4", {
+    method: "DELETE",
+    role: "admin",
+  })).status, 200, "Admin asset deletion remains unchanged");
   assert.equal(assetActivity.at(-1).userId, 70);
 
   const studentsPath = "/api/schools/1/students/paginated?page=1";

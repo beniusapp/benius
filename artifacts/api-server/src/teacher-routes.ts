@@ -5196,12 +5196,28 @@ Thank you for your prompt attention to this matter.
   app.post("/api/admin/assets", async (req, res) => {
     try {
       if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
+      const isSupportStaff = req.session.userRole === "support_staff";
+      const actorId = isSupportStaff ? req.session.staffId : null;
+      if (isSupportStaff && !isPositiveSafeInteger(actorId)) {
+        return res.status(403).json({ message: "A valid Support Staff asset actor is required" });
+      }
       const schoolId = req.session.schoolId!;
       const parsed = createAssetSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
       console.log("[asset-create] parsed:", JSON.stringify(parsed.data));
       const asset = await storage.createAsset({ ...parsed.data, schoolId });
       console.log("[asset-create] saved:", JSON.stringify({ id: asset.id, purchasedDate: asset.purchasedDate, warrantyExpiry: asset.warrantyExpiry }));
+      if (isSupportStaff) {
+        await storage.createAuditLog({
+          schoolId,
+          actionType: "create",
+          entityType: "asset",
+          entityId: asset.id,
+          actionBy: actorId!,
+          actionByRole: "support_staff",
+          details: `Support Staff added asset: ${asset.name}`,
+        });
+      }
       res.status(201).json(asset);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to create asset" });
@@ -5211,11 +5227,10 @@ Thank you for your prompt attention to this matter.
   app.patch("/api/admin/assets/:id", async (req, res) => {
     try {
       if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
-      if (req.session.userRole === "support_staff") {
-        return res.status(403).json({
-          code: "SUPPORT_STAFF_ASSET_ACTOR_UNSUPPORTED",
-          message: "Support Staff asset editing is disabled because asset activity history only supports Admin user IDs.",
-        });
+      const isSupportStaff = req.session.userRole === "support_staff";
+      const actorId = isSupportStaff ? req.session.staffId : null;
+      if (isSupportStaff && !isPositiveSafeInteger(actorId)) {
+        return res.status(403).json({ message: "A valid Support Staff asset actor is required" });
       }
       const schoolId = req.session.schoolId!;
       const id = parseInt(req.params.id);
@@ -5232,13 +5247,25 @@ Thank you for your prompt attention to this matter.
       console.log("[asset-update] result:", JSON.stringify({ id: updated?.id, purchasedDate: updated?.purchasedDate, warrantyExpiry: updated?.warrantyExpiry }));
       if (!updated) return res.status(404).json({ message: "Asset not found" });
 
-      await storage.logAssetActivity({
-        schoolId,
-        assetId: id,
-        userId: req.session.userId!,
-        action: "edit",
-        snapshot: JSON.stringify({ before, after: updated }),
-      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log edit for asset ${id}:`, logErr.message));
+      if (isSupportStaff) {
+        await storage.createAuditLog({
+          schoolId,
+          actionType: "update",
+          entityType: "asset",
+          entityId: id,
+          actionBy: actorId!,
+          actionByRole: "support_staff",
+          details: JSON.stringify({ assetName: before.name, before, after: updated }),
+        });
+      } else {
+        await storage.logAssetActivity({
+          schoolId,
+          assetId: id,
+          userId: req.session.userId!,
+          action: "edit",
+          snapshot: JSON.stringify({ before, after: updated }),
+        }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log edit for asset ${id}:`, logErr.message));
+      }
 
       res.json(updated);
     } catch (error: any) {
@@ -5249,11 +5276,10 @@ Thank you for your prompt attention to this matter.
   app.delete("/api/admin/assets/:id", async (req, res) => {
     try {
       if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
-      if (req.session.userRole === "support_staff") {
-        return res.status(403).json({
-          code: "SUPPORT_STAFF_ASSET_ACTOR_UNSUPPORTED",
-          message: "Support Staff asset deletion is disabled because asset activity history only supports Admin user IDs.",
-        });
+      const isSupportStaff = req.session.userRole === "support_staff";
+      const actorId = isSupportStaff ? req.session.staffId : null;
+      if (isSupportStaff && !isPositiveSafeInteger(actorId)) {
+        return res.status(403).json({ message: "A valid Support Staff asset actor is required" });
       }
       const schoolId = req.session.schoolId!;
       const id = parseInt(req.params.id);
@@ -5265,13 +5291,25 @@ Thank you for your prompt attention to this matter.
       const deleted = await storage.deleteAsset(id, schoolId);
       if (!deleted) return res.status(404).json({ message: "Asset not found" });
 
-      await storage.logAssetActivity({
-        schoolId,
-        assetId: id,
-        userId: req.session.userId!,
-        action: "delete",
-        snapshot: JSON.stringify({ before }),
-      }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log delete for asset ${id}:`, logErr.message));
+      if (isSupportStaff) {
+        await storage.createAuditLog({
+          schoolId,
+          actionType: "delete",
+          entityType: "asset",
+          entityId: id,
+          actionBy: actorId!,
+          actionByRole: "support_staff",
+          details: JSON.stringify({ assetName: before.name, before }),
+        });
+      } else {
+        await storage.logAssetActivity({
+          schoolId,
+          assetId: id,
+          userId: req.session.userId!,
+          action: "delete",
+          snapshot: JSON.stringify({ before }),
+        }).catch((logErr: Error) => console.warn(`[asset-log] Failed to log delete for asset ${id}:`, logErr.message));
+      }
 
       res.json({ message: "Asset deleted" });
     } catch (error: any) {
