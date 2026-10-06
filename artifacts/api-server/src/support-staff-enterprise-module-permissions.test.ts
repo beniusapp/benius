@@ -37,6 +37,9 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   const teacherCreates: any[] = [];
   const teacherUpdates: any[] = [];
   const teacherDeactivations: any[] = [];
+  const teacherReactivations: any[] = [];
+  const teacherPhysicalDeletes: any[] = [];
+  const removedTeacherHistoryEntries: any[] = [];
   const facultyMappingReads: number[] = [];
   const facultyMappingWrites: any[] = [];
   const facultyMappingDeletes: any[] = [];
@@ -233,9 +236,22 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   });
   replace(storage, "deactivateTeacher", async (id: number, schoolId: number, reason: string) => {
     teacherDeactivations.push([id, schoolId, reason]);
-    return teachersById[id]?.schoolId === schoolId
-      ? { ...teachersById[id], isActive: false }
-      : null;
+    if (teachersById[id]?.schoolId !== schoolId) return null;
+    teachersById[id] = { ...teachersById[id], isActive: false };
+    return teachersById[id];
+  });
+  replace(storage, "reactivateTeacher", async (id: number, schoolId: number) => {
+    teacherReactivations.push([id, schoolId]);
+    if (teachersById[id]?.schoolId !== schoolId) return undefined;
+    teachersById[id] = { ...teachersById[id], isActive: true };
+    return teachersById[id];
+  });
+  replace(storage, "deleteTeacher", async (id: number, schoolId: number) => {
+    teacherPhysicalDeletes.push([id, schoolId]);
+    return true;
+  });
+  replace(storage, "logRemovedTeacher", async (entry: any) => {
+    removedTeacherHistoryEntries.push(entry);
   });
   replace(storage, "getFacultyMappingsBySchool", async (schoolId: number) => {
     facultyMappingReads.push(schoolId);
@@ -704,6 +720,38 @@ test("Support Staff parent grants gate enterprise modules and registry operation
   assert.equal(visitorAuditEntries.at(-1).entityType, "teacher");
   assert.equal(visitorAuditEntries.at(-1).actionBy, 7);
   assert.equal(visitorAuditEntries.at(-1).actionByRole, "support_staff");
+  const softRemovedTeacher = await request("/api/admin/teachers/11", {
+    method: "DELETE",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: { reason: "No longer employed", adminPassword: staffPassword },
+  });
+  assert.equal(softRemovedTeacher.status, 200);
+  assert.equal(teachersById[11].isActive, false);
+  assert.deepEqual(teacherDeactivations.at(-1), [11, 1, "No longer employed"]);
+  assert.deepEqual(teacherPhysicalDeletes, [], "Teacher Delete must not delete the teacher/user rows");
+  assert.deepEqual(removedTeacherHistoryEntries, [], "soft deactivation must not create permanent-removal history");
+  assert.deepEqual(
+    [visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
+    [7, "support_staff"],
+    "Teacher deactivation audit uses the positive Staff ID and Support Staff role",
+  );
+  assert.equal((await request("/api/admin/teachers/11/reactivate", {
+    method: "POST",
+    grants: ["teacher-registry"],
+    body: { adminPassword: staffPassword },
+  })).status, 403, "reactivation also requires Delete Teacher");
+  assert.equal((await request("/api/admin/teachers/11/reactivate", {
+    method: "POST",
+    grants: ["teacher-registry", "teacher-registry:delete"],
+    body: { adminPassword: staffPassword },
+  })).status, 200);
+  assert.equal(teachersById[11].isActive, true);
+  assert.deepEqual(teacherReactivations.at(-1), [11, 1]);
+  assert.deepEqual(
+    [visitorAuditEntries.at(-1).actionBy, visitorAuditEntries.at(-1).actionByRole],
+    [7, "support_staff"],
+    "Teacher reactivation audit uses the positive Staff ID and Support Staff role",
+  );
 
   assert.equal((await request("/api/admin/faculty-mappings")).status, 403);
   assert.equal((await request("/api/admin/faculty-mappings", {

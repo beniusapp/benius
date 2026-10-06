@@ -5880,55 +5880,22 @@ Thank you for your prompt attention to this matter.
       const actor = await authenticateRegistryActorPassword(req, parsed.data.adminPassword);
       if (!actor) return res.status(401).json({ message: "Incorrect password" });
 
-      const teacher = await storage.getTeacherById(teacherId);
-      if (!teacher || teacher.schoolId !== schoolId)
+      const deactivated = await storage.deactivateTeacher(teacherId, schoolId, parsed.data.reason);
+      if (!deactivated)
         return res.status(404).json({ message: "Teacher not found" });
 
-      // Fetch teacher's email from users table before deletion
-      const [teacherUser] = await db.select({ email: users.email }).from(users).where(eq(users.id, teacher.userId));
-
-      // Snapshot faculty_mappings — real class/section/subject data lives here, not on the teachers row
-      const mappings = await db
-        .select({ className: facultyMappings.className, section: facultyMappings.section, subject: facultyMappings.subject })
-        .from(facultyMappings)
-        .where(and(eq(facultyMappings.teacherId, teacherId), eq(facultyMappings.schoolId, schoolId)));
-
-      // Build compound strings: "3-A, 5-B" and "Physics, Math"
-      const snapshotClass = mappings.length
-        ? mappings.map(m => `${m.className}-${m.section}`).join(", ")
-        : (teacher.assignedClass && teacher.assignedSection
-            ? `${teacher.assignedClass}-${teacher.assignedSection}`
-            : (teacher.assignedClass || null));
-      const snapshotSubject = mappings.length
-        ? [...new Set(mappings.map(m => m.subject).filter(Boolean))].join(", ") || null
-        : (teacher.subject || null);
-
-      // Log the removal before deleting
-      await storage.logRemovedTeacher({
+      await storage.createAuditLog({
         schoolId,
-        digitalTeacherId: teacher.digitalTeacherId ?? null,
-        fullName: teacher.fullName,
-        email: teacherUser?.email ?? null,
-        phone: teacher.phone ?? null,
-        subject: snapshotSubject,
-        assignedClass: snapshotClass,
-        assignedSection: null,
-        designation: teacher.designation ?? null,
-        gender: teacher.gender ?? null,
-        dateOfBirth: teacher.dateOfBirth ?? null,
-        govtIdType: teacher.govtIdType ?? null,
-        govtIdNumber: teacher.govtIdNumber ?? null,
-        address: teacher.address ?? null,
-        joiningDate: teacher.joiningDate ?? null,
-        qualifications: teacher.qualifications ?? null,
-        removalReason: parsed.data.reason,
-        removedByEmail: actor.email ?? null,
+        actionType: "deactivate",
+        entityType: "teacher",
+        entityId: teacherId,
+        actionBy: actor.id,
+        actionByRole: actor.role,
+        details: `Teacher ${deactivated.fullName} deactivated. Reason: ${parsed.data.reason}`,
       });
-
-      await storage.deleteTeacher(teacherId, schoolId);
-      res.json({ message: "Teacher removed from registry" });
+      res.json({ message: "Teacher deactivated", teacher: deactivated });
     } catch (err: any) {
-      res.status(500).json({ message: err.message || "Failed to delete teacher" });
+      res.status(500).json({ message: err.message || "Failed to deactivate teacher" });
     }
   });
 
@@ -5983,6 +5950,15 @@ Thank you for your prompt attention to this matter.
       if (!actor) return res.status(401).json({ message: "Incorrect password" });
       const updated = await storage.reactivateTeacher(teacherId, schoolId);
       if (!updated) return res.status(404).json({ message: "Teacher not found" });
+      await storage.createAuditLog({
+        schoolId,
+        actionType: "reactivate",
+        entityType: "teacher",
+        entityId: teacherId,
+        actionBy: actor.id,
+        actionByRole: actor.role,
+        details: `Teacher ${updated.fullName} reactivated`,
+      });
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to reactivate teacher" });
