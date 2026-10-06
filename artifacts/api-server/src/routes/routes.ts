@@ -1566,10 +1566,34 @@ export async function registerRoutes(
 
   // ===== SCHOOL METADATA (Admin) =====
   app.get("/api/school-metadata/:schoolId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin") return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    const hasAnalyticsAccess = adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "analytics",
+    );
+    const hasIdCardAccess = adminModuleAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      "id-card-gen",
+    );
+    if (!hasAnalyticsAccess && !hasIdCardAccess) {
+      return res.status(403).json({ message: "Performance Analytics or ID Card Gen permission required" });
+    }
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Access denied" });
     const meta = await storage.getAllSchoolMetadata(schoolId);
+    if (req.session.userRole === "support_staff" && !hasAnalyticsAccess) {
+      return res.json({
+        classes: meta.classes ?? [],
+        sections: meta.sections ?? [],
+        subjects: [],
+        exam_types: [],
+        class_sections: {},
+        class_subjects: {},
+        class_exam_types: {},
+      });
+    }
     res.json(meta);
   });
 

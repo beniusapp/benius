@@ -186,6 +186,11 @@ export const SUPPORT_STAFF_PARENT_ONLY_MODULE_IDS = [
   "exam-controller",
   "complaint-hub",
   "noticeboard",
+  "analytics",
+  "audit-logs",
+  "visitor-log",
+  "id-card-gen",
+  "assets",
 ] as const;
 
 export function isSupportStaffParentOnlyModule(moduleId: string): boolean {

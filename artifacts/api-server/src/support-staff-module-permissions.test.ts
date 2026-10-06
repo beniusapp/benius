@@ -30,6 +30,11 @@ test("parent-only modules require their exact parent grant", () => {
     "exam-controller",
     "complaint-hub",
     "noticeboard",
+    "analytics",
+    "audit-logs",
+    "visitor-log",
+    "id-card-gen",
+    "assets",
   ];
   for (const moduleId of parentOnlyModules) {
     assert.equal(hasSupportStaffModuleAccess([moduleId], moduleId), true);
@@ -65,6 +70,16 @@ test("canonicalizes legacy child grants for parent-only modules without changing
       "complaint-hub:private",
       "noticeboard",
       "noticeboard:bulk-delete",
+      "analytics",
+      "analytics:view",
+      "audit-logs",
+      "audit-logs:view",
+      "visitor-log",
+      "visitor-log:checkin",
+      "id-card-gen",
+      "id-card-gen:reissue",
+      "assets",
+      "assets:edit",
       "fees-manager:fee-structures",
     ]),
     [
@@ -73,6 +88,11 @@ test("canonicalizes legacy child grants for parent-only modules without changing
       "attendance",
       "exam-controller",
       "noticeboard",
+      "analytics",
+      "audit-logs",
+      "visitor-log",
+      "id-card-gen",
+      "assets",
       "fees-manager:fee-structures",
     ],
   );
@@ -85,7 +105,16 @@ test("canonicalizes legacy child grants for parent-only modules without changing
     [],
   );
   assert.deepEqual(
-    canonicalizeSupportStaffAllowedModules(["exam-controller:wizard", "complaint-hub:private", "noticeboard:view"]),
+    canonicalizeSupportStaffAllowedModules([
+      "exam-controller:wizard",
+      "complaint-hub:private",
+      "noticeboard:view",
+      "analytics:results",
+      "audit-logs:view",
+      "visitor-log:active",
+      "id-card-gen:search",
+      "assets:delete",
+    ]),
     [],
   );
 });

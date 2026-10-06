@@ -652,9 +652,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
     const schoolId = parseInt(req.params.schoolId);
     if (isNaN(schoolId)) return res.status(400).json({ message: "Invalid school ID" });
-    const userData = await storage.getUserWithSchool(req.session.userId);
-    if (!userData || userData.school.id !== schoolId || userData.user.role !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (req.session.userRole === "support_staff") {
+      if (!requireAdminModuleAccess(req, res, "id-card-gen", "ID Card Gen")) return;
+      if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    } else {
+      const userData = await storage.getUserWithSchool(req.session.userId);
+      if (!userData || userData.school.id !== schoolId || userData.user.role !== "admin")
+        return res.status(403).json({ message: "Admin access required" });
+    }
     const teacherList = await storage.getTeachersBySchool(schoolId);
     res.json(teacherList);
   });
@@ -3855,6 +3860,20 @@ export function registerTeacherRoutes(app: Express) {
   // Tables: students (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/schools/:schoolId/students/paginated", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.userRole === "support_staff") {
+      const grants = req.session.allowedModules ?? [];
+      const hasStudentRegistryGrant = grants.some(
+        grant => grant === "student-registry" || grant.startsWith("student-registry:"),
+      );
+      const hasIdCardGrant = adminModuleAccessAllowed(
+        req.session.userRole,
+        grants,
+        "id-card-gen",
+      );
+      if (!hasStudentRegistryGrant && !hasIdCardGrant) {
+        return res.status(403).json({ message: "Student Registry or ID Card Gen permission required" });
+      }
+    }
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const { q, cls, section, page, pendingReissue } = req.query;
     const schoolId = parseInt(req.params.schoolId);
@@ -4646,7 +4665,7 @@ Thank you for your prompt attention to this matter.
 
   // ===== AUDIT LOGS (Admin) =====
   app.get("/api/audit-logs/:schoolId", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "audit-logs", "Audit Logs")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
@@ -4798,21 +4817,32 @@ Thank you for your prompt attention to this matter.
 
   // ===== VISITOR LOGS =====
   app.post("/api/visitor-logs", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "visitor-log", "Visitor Log")) return;
+    const actionBy = req.session.userRole === "support_staff"
+      ? req.session.staffId
+      : req.session.userId;
+    if (!isPositiveSafeInteger(actionBy)) {
+      return res.status(403).json({ message: "A valid Visitor Log actor is required" });
+    }
     const { visitorName, purpose, hostName, phone, email, visitorIdNumber, address } = req.body;
     if (!visitorName || !purpose || !hostName) return res.status(400).json({ message: "Name, purpose, and host are required" });
-    const activeSession = await storage.getActiveSession(req.session.schoolId!);
-    const v = await storage.createVisitorLog({ schoolId: req.session.schoolId!, sessionId: activeSession?.id ?? null, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
+    const schoolId = req.session.schoolId!;
+    const activeSession = await storage.getActiveSession(schoolId);
+    if (req.session.userRole === "support_staff" && !activeSession) {
+      return res.status(409).json({ message: "Visitor check-in requires an active academic session" });
+    }
+    const v = await storage.createVisitorLog({ schoolId, sessionId: activeSession?.id ?? null, visitorName, purpose, hostName, phone: phone || null, email: email || null, visitorIdNumber: visitorIdNumber || null, address: address || null, badge: null });
     await storage.createAuditLog({
-      schoolId: req.session.schoolId!, actionType: "checkin", entityType: "visitor", entityId: v.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
-      details: `Visitor checked in: ${visitorName}`,
+      schoolId, actionType: "checkin", entityType: "visitor", entityId: v.id,
+      actionBy,
+      actionByRole: req.session.userRole === "support_staff" ? "support_staff" : "admin",
+      details: `${req.session.userRole === "support_staff" ? "Support Staff" : "Admin"} checked in visitor: ${visitorName}`,
     });
     res.status(201).json(v);
   });
 
   app.get("/api/visitor-logs/:schoolId", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "visitor-log", "Visitor Log")) return;
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
     // Filter by viewed session so archive mode shows only that session's data
@@ -4825,12 +4855,37 @@ Thank you for your prompt attention to this matter.
   });
 
   app.patch("/api/visitor-logs/:id/checkout", async (req, res) => {
-    if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "visitor-log", "Visitor Log")) return;
+    const schoolId = req.session.schoolId!;
+    const isSupportStaff = req.session.userRole === "support_staff";
+    const actionBy = isSupportStaff ? req.session.staffId : req.session.userId;
+    if (!isPositiveSafeInteger(actionBy)) {
+      return res.status(403).json({ message: "A valid Visitor Log actor is required" });
+    }
     const id = parseInt(req.params.id);
-    const logs = await storage.getVisitorLogsBySchool(req.session.schoolId!);
+    const activeSession = isSupportStaff ? await storage.getActiveSession(schoolId) : null;
+    if (isSupportStaff && !activeSession) {
+      return res.status(409).json({ message: "Visitor check-out requires an active academic session" });
+    }
+    const logs = await storage.getVisitorLogsBySchool(
+      schoolId,
+      isSupportStaff ? activeSession!.id : undefined,
+    );
     const entry = logs.find(l => l.id === id);
     if (!entry) return res.status(403).json({ message: "Not authorized" });
     const v = await storage.checkoutVisitor(id);
+    if (isSupportStaff) {
+      await storage.createAuditLog({
+        schoolId,
+        sessionId: entry.sessionId,
+        actionType: "checkout",
+        entityType: "visitor",
+        entityId: id,
+        actionBy,
+        actionByRole: "support_staff",
+        details: `Support Staff checked out visitor: ${entry.visitorName}`,
+      });
+    }
     res.json(v);
   });
 
@@ -5129,7 +5184,7 @@ Thank you for your prompt attention to this matter.
   // Tables: school_assets (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/assets", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
       const schoolId = req.session.schoolId!;
       const assets = await storage.getAssets(schoolId);
       res.json(assets);
@@ -5140,7 +5195,7 @@ Thank you for your prompt attention to this matter.
 
   app.post("/api/admin/assets", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
       const schoolId = req.session.schoolId!;
       const parsed = createAssetSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
@@ -5155,7 +5210,13 @@ Thank you for your prompt attention to this matter.
 
   app.patch("/api/admin/assets/:id", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
+      if (req.session.userRole === "support_staff") {
+        return res.status(403).json({
+          code: "SUPPORT_STAFF_ASSET_ACTOR_UNSUPPORTED",
+          message: "Support Staff asset editing is disabled because asset activity history only supports Admin user IDs.",
+        });
+      }
       const schoolId = req.session.schoolId!;
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
@@ -5187,7 +5248,13 @@ Thank you for your prompt attention to this matter.
 
   app.delete("/api/admin/assets/:id", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole !== "admin") return res.status(403).json({ message: "Admin access required" });
+      if (!requireAdminModuleAccess(req, res, "assets", "Assets & Inventory")) return;
+      if (req.session.userRole === "support_staff") {
+        return res.status(403).json({
+          code: "SUPPORT_STAFF_ASSET_ACTOR_UNSUPPORTED",
+          message: "Support Staff asset deletion is disabled because asset activity history only supports Admin user IDs.",
+        });
+      }
       const schoolId = req.session.schoolId!;
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid asset ID" });
@@ -5215,8 +5282,7 @@ Thank you for your prompt attention to this matter.
   // ===== ACADEMIC INTELLIGENCE ANALYTICS =====
 
   app.get("/api/admin/analytics/sections", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const { class: cls } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
@@ -5229,8 +5295,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/exam-types", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const { class: cls, section } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
@@ -5243,8 +5308,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/performance", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const { class: cls, section, examType, subject, search } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
@@ -5267,8 +5331,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/student-journey/:studentId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const studentId = parseInt(req.params.studentId);
     if (isNaN(studentId)) return res.status(400).json({ message: "Invalid student ID" });
     const schoolId = req.session.schoolId!;
@@ -5282,8 +5345,7 @@ Thank you for your prompt attention to this matter.
 
   // ── Admin analytics: weighted data endpoints (mirrors teacher module) ─────
   app.get("/api/admin/analytics/class-scores/:class/:section", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
@@ -5314,8 +5376,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/exam-policy/:class", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     try {
@@ -5329,8 +5390,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/grading-rules/:class", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     try {
@@ -5343,8 +5403,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/promotion-decisions/:class/:section/:term", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     // Pass viewSessionId so archived sessions' decisions are isolated.
     const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
@@ -5360,8 +5419,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/view-marks/:class/:section/:subject/:examType", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
@@ -5375,8 +5433,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/student-scores/:studentId", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const studentId = parseInt(req.params.studentId);
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
@@ -5387,8 +5444,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/class-average/:class/:section/:subject", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
@@ -5401,8 +5457,7 @@ Thank you for your prompt attention to this matter.
   });
 
   app.get("/api/admin/analytics/attendance-summary/:class/:section", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
@@ -5720,10 +5775,13 @@ Thank you for your prompt attention to this matter.
   // x-view-session-id and MUST NOT be changed to do session filtering.
   // Tables: non_teaching_staff (listed in GLOBAL DATA PROTECTION CONTRACT)
   app.get("/api/admin/non-teaching-staff", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
-      return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleAccess(req, res, "id-card-gen", "ID Card Gen")) return;
     try {
       const data = await storage.getNonTeachingStaffBySchool(req.session.schoolId!);
+      if (req.session.userRole === "support_staff") {
+        const cardData = data.map(({ passwordHash: _passwordHash, allowedModules: _allowedModules, ...staff }) => staff);
+        return res.json(cardData);
+      }
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch staff" });

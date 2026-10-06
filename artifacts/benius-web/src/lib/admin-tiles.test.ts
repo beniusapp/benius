@@ -55,6 +55,11 @@ test("parent-only modules are single grants in the editor and old child grants a
     "exam-controller",
     "complaint-hub",
     "noticeboard",
+    "analytics",
+    "audit-logs",
+    "visitor-log",
+    "id-card-gen",
+    "assets",
   ];
   const canonical = canonicalizeSupportStaffGrants([
     "timetable",
@@ -68,6 +73,16 @@ test("parent-only modules are single grants in the editor and old child grants a
     "noticeboard",
     "noticeboard:bulk-delete",
     "school-calendar:events",
+    "analytics",
+    "analytics:view",
+    "audit-logs",
+    "audit-logs:view",
+    "visitor-log",
+    "visitor-log:history",
+    "id-card-gen",
+    "id-card-gen:search",
+    "assets",
+    "assets:add",
   ]);
   assert.deepEqual(canonical, [
     "timetable",
@@ -75,6 +90,11 @@ test("parent-only modules are single grants in the editor and old child grants a
     "exam-controller",
     "complaint-hub",
     "noticeboard",
+    "analytics",
+    "audit-logs",
+    "visitor-log",
+    "id-card-gen",
+    "assets",
   ]);
   assert.deepEqual(expandModulesWithSubs(canonical), [
     "timetable",
@@ -82,6 +102,11 @@ test("parent-only modules are single grants in the editor and old child grants a
     "exam-controller",
     "complaint-hub",
     "noticeboard",
+    "analytics",
+    "audit-logs",
+    "visitor-log",
+    "id-card-gen",
+    "assets",
   ]);
   for (const moduleId of parentOnlyModules) {
     assert.equal(isSupportStaffParentOnlyModule(moduleId), true);

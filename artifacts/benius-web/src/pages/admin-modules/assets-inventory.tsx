@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
 
-interface Props { schoolId: number; allowedSubs?: string[] }
+interface Props { schoolId: number; allowedSubs?: string[]; isSupportStaff?: boolean }
 
 interface Asset {
   id: number;
@@ -151,10 +151,10 @@ function generateAssetReport(asset: Asset, schoolName: string) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Props) {
+export default function AssetsInventory({ schoolId: _schoolId, allowedSubs, isSupportStaff = false }: Props) {
   const canAdd    = allowedSubs === undefined || allowedSubs.includes("add");
-  const canEdit   = allowedSubs === undefined || allowedSubs.includes("edit");
-  const canDelete = allowedSubs === undefined || allowedSubs.includes("delete");
+  const canEdit   = !isSupportStaff && (allowedSubs === undefined || allowedSubs.includes("edit"));
+  const canDelete = !isSupportStaff && (allowedSubs === undefined || allowedSubs.includes("delete"));
   const { toast } = useToast();
   const { isArchiveMode } = useSessionView();
   const { data: me } = useQuery<{ schoolName?: string }>({ queryKey: ["/api/me"] });
@@ -363,6 +363,16 @@ export default function AssetsInventory({ schoolId: _schoolId, allowedSubs }: Pr
           </Button>
         )}
       </div>
+
+      {isSupportStaff && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+          data-testid="asset-support-staff-attribution-notice"
+        >
+          Support Staff can view and add assets, but additions are not actor-attributed in the current data model. Editing and deleting are disabled because activity history only accepts Admin user IDs; safe Support Staff attribution needs a schema/business-logic change.
+        </div>
+      )}
 
       {/* ── Add-Asset Form ── */}
       {showAddForm && (
