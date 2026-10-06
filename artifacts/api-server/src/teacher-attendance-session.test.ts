@@ -72,6 +72,7 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     rosterReads: [] as Array<[number, number, string, string]>,
     liveRosterReads: [] as Array<[number, number, string, string]>,
     reportRosterReads: [] as Array<[number, number, string, string]>,
+    webDailyPresenceReads: [] as Array<[number, number, string]>,
     historyReads: [] as Array<[number, number, string, string, string, string]>,
     studentOwnershipReads: [] as Array<[number[], number]>,
     upserts: [] as Array<Array<Record<string, unknown>>>,
@@ -149,6 +150,25 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     return schoolId === 1 && sessionId === 102 && className === "7" && section === "A"
       ? [historicalStudent]
       : [];
+  });
+  replaceStorage("getWebDailyAttendanceSummary", async (
+    schoolId: number, sessionId: number, date: string,
+  ) => {
+    calls.webDailyPresenceReads.push([schoolId, sessionId, date]);
+    return {
+      total: 2,
+      eligibleTotal: 3,
+      notMarked: 1,
+      applicableTotal: 2,
+      present: 2,
+      absent: 0,
+      leave: 0,
+      late: 0,
+      halfDay: 0,
+      missing: 0,
+      unknown: 0,
+      percentage: 100,
+    };
   });
   replaceStorage("getAttendanceForStudentsOnDate", async (
     schoolId: number, sessionId: number, studentIds: number[], className: string, section: string, date: string,
@@ -252,7 +272,12 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     const role = req.get("x-test-role") ?? "teacher";
     (req as any).session = role === "anonymous"
       ? {}
-      : { teacherId: 9, userId: 90, schoolId: 1, userRole: "teacher" };
+      : {
+        teacherId: 9,
+        userId: 90,
+        schoolId: 1,
+        userRole: role === "admin" ? "admin" : "teacher",
+      };
     const selectedSession = req.get("x-view-session-id");
     if (selectedSession !== undefined) (req as any).viewSessionId = Number(selectedSession);
     if (req.path.startsWith("/api/mobile/teacher/") && role !== "anonymous") {
@@ -297,6 +322,24 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   assert.equal(firstA.status, 200);
   assert.deepEqual(firstA.body.map((entry: any) => [entry.studentId, entry.status]), [[10, "present"]]);
   assert.deepEqual(calls.liveRosterReads.at(-1), [1, 101, "8", "B"]);
+
+  const dailyPresence = await request(`/api/attendance/daily-summary/1/${todayInIST()}`, {
+    sessionId: 101,
+    role: "admin",
+  });
+  assert.equal(dailyPresence.status, 200);
+  assert.equal(dailyPresence.body.notMarked, 1);
+  assert.deepEqual(calls.webDailyPresenceReads.at(-1), [1, 101, todayInIST()]);
+  const dailyReadsBeforeForeign = calls.webDailyPresenceReads.length;
+  assert.equal((await request(`/api/attendance/daily-summary/2/${todayInIST()}`, {
+    sessionId: 101,
+    role: "admin",
+  })).status, 403, "Daily Presence rejects a different authenticated school");
+  assert.equal(calls.webDailyPresenceReads.length, dailyReadsBeforeForeign);
+  assert.equal((await request(`/api/attendance/daily-summary/1/${todayInIST()}`, {
+    role: "admin",
+  })).status, 400, "Daily Presence requires an explicit selected session");
+  assert.equal(calls.webDailyPresenceReads.length, dailyReadsBeforeForeign);
 
   assert.equal((await request(currentPath)).status, 400, "session-sensitive reads require an explicit selection");
   assert.equal((await request(currentPath, { sessionId: "101x" })).status, 400);

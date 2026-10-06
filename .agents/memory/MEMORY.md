@@ -6,7 +6,7 @@
 - [Expo preview font loading](expo-preview-font-loading.md) — keep optional custom fonts from blocking the first visible Expo screen.
 - [API TypeScript test runner](api-server-test-runner.md) — bundle API tests as CommonJS with esbuild before Node’s test runner.
 - [Student result calculation boundaries](student-result-calculation-boundaries.md) — historical result access does not imply historical policy snapshots or a new journey formula.
-- [Student attendance population](student-attendance-population.md) — live attendance and school-wide daily presence must share an active, selected-session-enrollment population while preserving history.
+- [Student attendance population](student-attendance-population.md) — selected-session active enrollment defines eligibility; unmarked Students are Not Marked and excluded from the percentage denominator.
 - [Notice session null semantics](notice-session-null-semantics.md) — unassigned legacy notices are not automatically global across school years.
 - [Teacher Noticeboard session routing](teacher-noticeboard-session-routing.md) — keep Teacher content session-scoped while the legacy Dashboard badge returns IDs only.
 - [TypeScript diagnostic baselines](typescript-diagnostic-baselines.md) — an empty LSP snapshot does not prove package typechecks are clean.

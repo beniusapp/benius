@@ -93,6 +93,7 @@ import {
   studentSessionRevocationSid,
   userSessionRevocationSid,
 } from "./session-revocation";
+import { summarizeWebDailyPresence } from "./web-daily-presence";
 import {
   generatePasswordRecoveryToken,
   hashPasswordRecoverySecret,
@@ -5020,6 +5021,61 @@ export class DatabaseStorage {
       unknown: aggregation.unknown,
       percentage: aggregation.percentage,
     };
+  }
+
+  // Web Admin Dashboard only; keep getDailyAttendanceSummary unchanged for
+  // existing Mobile and other consumers.
+  async getWebDailyAttendanceSummary(schoolId: number, sessionId: number, date: string) {
+    const enrollmentRows = await db
+      .select({ student: students, enrollment: enrollments })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, enrollments.schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(students.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.status, "Active"),
+        eq(students.isActive, true),
+      ));
+
+    const eligibleStudentIds = [...new Set(enrollmentRows
+      .filter(({ student, enrollment }) => isEligibleForLiveStudentAttendance(
+        student,
+        enrollment,
+        {
+          schoolId,
+          sessionId,
+          className: enrollment.className,
+          sectionName: enrollment.sectionName,
+        },
+      ))
+      .map(({ student }) => student.id))];
+
+    const records = eligibleStudentIds.length === 0
+      ? []
+      : await db
+        .select({
+          studentId: attendanceRecords.studentId,
+          status: attendanceRecords.status,
+        })
+        .from(attendanceRecords)
+        .where(and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.sessionId, sessionId),
+          eq(attendanceRecords.date, date),
+          inArray(attendanceRecords.studentId, eligibleStudentIds),
+        ))
+        .orderBy(desc(attendanceRecords.markedAt));
+
+    return summarizeWebDailyPresence({
+      schoolId,
+      sessionId,
+      eligibleStudentIds,
+      records,
+    });
   }
 
   // ===== AUDIT LOGS READER =====

@@ -233,7 +233,7 @@ const schoolInfoSchema = z.object({
   gstin:              z.string().optional(),
 });
 
-function useCountUp(target: number, duration = 1100) {
+function useCountUp(target: number, duration = 1100, precision = 0) {
   const [count, setCount] = useState(0);
   const rafRef = useRef(0);
 
@@ -244,7 +244,8 @@ function useCountUp(target: number, duration = 1100) {
     const animate = (now: number) => {
       const progress = Math.min((now - startTime) / duration, 1);
       const eased = 1 - (1 - progress) ** 3;
-      setCount(Math.round(eased * target));
+      const factor = 10 ** precision;
+      setCount(Math.round(eased * target * factor) / factor);
       if (progress < 1) rafRef.current = requestAnimationFrame(animate);
     };
     rafRef.current = requestAnimationFrame(animate);
@@ -1720,17 +1721,30 @@ export default function AdminDashboard() {
   // a separate cache entry for each academic year and triggers a fresh fetch
   // whenever the admin switches sessions.  The backend will receive
   // x-view-session-id via sessionFetch and can scope the response accordingly.
-  const { data: dailySummary } = useQuery<{ total: number; applicableTotal?: number; present: number; percentage: number }>({
+  const { data: dailySummary, isError: dailySummaryError } = useQuery<{
+    total: number;
+    eligibleTotal: number;
+    notMarked: number;
+    applicableTotal: number;
+    present: number;
+    percentage: number | null;
+  }>({
     queryKey: ["admin-session-summary", selectedViewSession?.id ?? null, me?.schoolId, today],
     queryFn: async ({ queryKey, signal }) => {
       const [, viewSessionId, schoolId, date] = queryKey as [string, number | null, number | undefined, string];
-      if (!schoolId || viewSessionId == null) return { total: 0, present: 0, percentage: 0 };
+      if (!schoolId || viewSessionId == null) {
+        return {
+          total: 0, eligibleTotal: 0, notMarked: 0, applicableTotal: 0,
+          present: 0, percentage: null,
+        };
+      }
       const r = await sessionFetchForViewSession(
         `/api/attendance/daily-summary/${schoolId}/${date}`,
         viewSessionId,
         { signal },
       );
-      return r.ok ? r.json() : { total: 0, present: 0, percentage: 0 };
+      if (!r.ok) throw new Error("Failed to load Daily Presence");
+      return r.json();
     },
     enabled: !!me?.schoolId && selectedViewSession?.id != null,
     meta: { sessionScoped: true },
@@ -1819,7 +1833,7 @@ export default function AdminDashboard() {
 
   const studentCountAnimated   = useCountUp(me?.studentCount ?? 0);
   const facultyCountAnimated   = useCountUp(teachersList.length);
-  const attendancePctAnimated  = useCountUp(dailySummary?.percentage ?? 0);
+  const attendancePctAnimated  = useCountUp(dailySummary?.percentage ?? 0, 1100, 1);
   const actionCountAnimated    = useCountUp(totalActionRequired);
 
   const logoutMutation = useMutation({
@@ -1930,8 +1944,8 @@ export default function AdminDashboard() {
   };
 
   const attendancePresent = dailySummary?.present ?? 0;
-  const attendanceTotal   = dailySummary?.total   ?? 0;
-  const attendanceApplicableTotal = dailySummary?.applicableTotal ?? attendanceTotal;
+  const attendanceApplicableTotal = dailySummary?.applicableTotal ?? 0;
+  const attendanceNotMarked = dailySummary?.notMarked ?? 0;
 
   const adminInitials = (me.role === "support_staff" && me.displayName)
     ? me.displayName.trim().split(/\s+/).slice(0, 2).map((w: string) => w[0].toUpperCase()).join("")
@@ -2179,7 +2193,7 @@ export default function AdminDashboard() {
 
             {/* Daily Presence */}
             {(() => {
-              const hasData = attendanceTotal > 0;
+              const hasData = attendanceApplicableTotal > 0 && dailySummary?.percentage != null;
               const isHealthy = hasData && (dailySummary?.percentage ?? 0) >= 75;
               const presenceColor = hasData
                 ? (isHealthy ? "#10b981" : "#ef4444")
@@ -2198,7 +2212,7 @@ export default function AdminDashboard() {
                   data-testid="stat-attendance"
                 >
                   <StatRing
-                    value={attendancePctAnimated}
+                    value={hasData ? attendancePctAnimated : 0}
                     max={100}
                     color={presenceColor}
                     icon={
@@ -2218,19 +2232,38 @@ export default function AdminDashboard() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 mb-1">
                       <p className="text-[10px] text-white/40 leading-none font-medium">Daily Presence</p>
-                      {attendanceTotal > 0 && (
+                      {hasData && (
                         <span className="relative flex h-2 w-2">
                           <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${pulseBg} opacity-75`} />
                           <span className={`relative inline-flex rounded-full h-2 w-2 ${pulseBg}`} />
                         </span>
                       )}
                     </div>
-                    <p className="text-xl font-extrabold text-white tracking-tight">
-                      {attendanceTotal ? `${attendancePctAnimated}%` : "—"}
+                    <p className="text-xl font-extrabold text-white tracking-tight" data-testid="text-attendance-percentage">
+                      {hasData
+                        ? `${Number.isInteger(attendancePctAnimated) ? attendancePctAnimated : attendancePctAnimated.toFixed(1)}%`
+                        : "—"}
                     </p>
-                    {attendanceTotal > 0 && (
-                      <p className="text-[10px] text-white/30 mt-0.5">{attendancePresent}/{attendanceApplicableTotal} present</p>
-                    )}
+                    {dailySummaryError ? (
+                      <p className="text-[10px] text-white/30 mt-0.5" data-testid="text-attendance-error">
+                        Attendance unavailable
+                      </p>
+                    ) : dailySummary ? (
+                      <>
+                        {hasData ? (
+                          <p className="text-[10px] text-white/30 mt-0.5" data-testid="text-attendance-marked">
+                            {attendancePresent}/{attendanceApplicableTotal} present
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-white/30 mt-0.5" data-testid="text-attendance-empty">
+                            No attendance marked
+                          </p>
+                        )}
+                        <p className="text-[10px] text-white/30 mt-0.5" data-testid="text-attendance-not-marked">
+                          {attendanceNotMarked} Not Marked
+                        </p>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               );

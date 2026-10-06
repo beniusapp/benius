@@ -4775,7 +4775,7 @@ Thank you for your prompt attention to this matter.
         (req as any).viewSessionId,
       );
       requireAttendanceDateInSession(req.params.date, attendanceSession);
-      const summary = await storage.getDailyAttendanceSummary(
+      const summary = await storage.getWebDailyAttendanceSummary(
         schoolId, attendanceSession.id, req.params.date,
       );
       res.json(summary);
