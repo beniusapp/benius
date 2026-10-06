@@ -1,0 +1,397 @@
+# BENIUS — SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+Please make the same parent-only permission model we already implemented for Timetable Master and School Calendar.
+
+Apply it ONLY to these 4 modules:
+
+1. Attendance Overview
+2. Exam Controller
+3. Complaint Hub
+4. Noticeboard
+
+Do NOT modify other modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+I do NOT want submodule permissions for these four modules.
+
+Each module should have ONE simple checkbox.
+
+Expected Support Staff permission editor:
+
+```text
+☐ Attendance Overview
+☐ Exam Controller
+☐ Complaint Hub
+☐ Noticeboard
+```
+
+There should be:
+
+- no expand arrow
+- no child permissions
+- no individual action/submodule checkboxes
+
+---
+
+# 1. ATTENDANCE OVERVIEW
+
+Remove Support Staff sub-permissions such as:
+
+- Student Attendance
+- Teacher Attendance
+
+New rule:
+
+### Attendance Overview = GRANTED
+
+Support Staff gets the complete normal **Attendance Overview functionality available to Principal/Admin**.
+
+Both Student and Teacher Attendance functionality inside this Admin module should work normally.
+
+### Attendance Overview = NOT GRANTED
+
+Support Staff gets ZERO Attendance Overview access:
+
+- tile hidden
+- direct URL blocked
+- protected Attendance Overview APIs rejected
+
+---
+
+# 2. EXAM CONTROLLER
+
+Remove sub-permissions such as:
+
+- Exam Ledger
+- Promotion Wizard
+
+New rule:
+
+### Exam Controller = GRANTED
+
+Support Staff gets the complete normal **Principal/Admin Exam Controller functionality**.
+
+This includes the operational functionality contained inside the module.
+
+### Exam Controller = NOT GRANTED
+
+ZERO Exam Controller access.
+
+---
+
+# VERY IMPORTANT — EXAM SESSION SECURITY
+
+Do NOT weaken the existing BENIUS Exam Controller rules.
+
+Every Exam Controller operation must remain scoped to:
+
+**Authenticated School + Selected Academic Session**
+
+Historical/inactive Academic Sessions remain STRICTLY READ-ONLY.
+
+No historical write may silently redirect to the active session.
+
+Tenant isolation remains mandatory.
+
+---
+
+# 3. COMPLAINT HUB
+
+Remove sub-permissions such as:
+
+- Private Complaints
+- Grievances
+- Escalated Complaints
+
+and any other Support Staff Complaint Hub child permission.
+
+New rule:
+
+### Complaint Hub = GRANTED
+
+Support Staff gets the complete normal **Principal/Admin Complaint Hub operational functionality**.
+
+### Complaint Hub = NOT GRANTED
+
+ZERO Complaint Hub access.
+
+This must apply to both UI and protected APIs.
+
+Preserve school and Academic Session isolation where applicable.
+
+---
+
+# 4. NOTICEBOARD
+
+Remove Support Staff sub-permissions such as:
+
+- View Notices
+- Create Notice
+- Bulk Delete
+
+or any other Noticeboard child permissions currently defined.
+
+New rule:
+
+### Noticeboard = GRANTED
+
+Support Staff gets the complete normal **Principal/Admin Noticeboard operational functionality**.
+
+### Noticeboard = NOT GRANTED
+
+ZERO Noticeboard access.
+
+---
+
+# CRITICAL — PRESERVE RECENT NOTICEBOARD SECURITY FIX
+
+We recently corrected the Noticeboard cross-school vulnerability.
+
+DO NOT undo or weaken that fix.
+
+The following must remain true:
+
+```text
+Support Staff — School A
+
+School A Noticeboard → allowed when module granted
+School B Noticeboard → ALWAYS REJECT
+```
+
+Client-supplied URL/body/query `schoolId` must NEVER allow Support Staff to access another school.
+
+This applies to:
+
+- read
+- create
+- edit
+- delete
+- notice targets
+
+The authenticated server-side school identity remains authoritative.
+
+---
+
+# MEANING OF "FULL ACCESS LIKE PRINCIPAL"
+
+For these modules:
+
+> When the parent module is granted, Support Staff should be able to perform the normal operational functionality that Principal/Admin can perform inside that module.
+
+However, this does NOT mean bypassing:
+
+- tenant isolation
+- Academic Session isolation
+- historical-session read-only rules
+- server-side validation
+- normal data integrity/business rules
+
+Support Staff is still a Support Staff actor operating on the Principal's shared school data.
+
+Do NOT convert Support Staff into an Admin identity.
+
+---
+
+# LEGACY CHILD PERMISSIONS
+
+Existing Support Staff accounts may contain old child grants.
+
+Examples:
+
+- Attendance student/teacher child grants
+- Exam Ledger
+- Promotion Wizard
+- Complaint child grants
+- Noticeboard child grants
+
+After this change:
+
+**Authorization must depend on the parent module grant.**
+
+An old child permission by itself must NOT grant access.
+
+Do NOT automatically promote a child-only legacy permission into full parent access.
+
+When permissions are subsequently saved, clean/canonicalize obsolete child keys as appropriate.
+
+No database migration is required unless absolutely necessary.
+
+---
+
+# SERVER-SIDE ENFORCEMENT
+
+This must NOT be only a UI change.
+
+For every one of these modules:
+
+### Parent granted
+Allow normal same-school Principal-equivalent operational functionality.
+
+### Parent not granted
+Reject Support Staff API access.
+
+Do not rely only on hiding dashboard tiles.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin functionality must remain unchanged.
+
+This simplification applies only to the Support Staff permission system.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- School Setup
+- Timetable Master
+- School Calendar
+- Fees & Payments
+- Academic Session selector
+- Student Registry
+- Teacher Registry
+- Leave Requests
+- Approval Center
+- Visitor Log
+- ID Card
+- Assets & Inventory
+- Support Staff management
+- Principal Profile
+- Teacher Portal
+- Student Portal
+- Mobile
+- database schema
+- `/uploads`
+- promotion ledger architecture
+
+No broad refactor.
+
+---
+
+# VALIDATION
+
+## Permission editor
+
+Verify exactly:
+
+```text
+☐ Attendance Overview
+☐ Exam Controller
+☐ Complaint Hub
+☐ Noticeboard
+```
+
+No child permissions for these four.
+
+## For EACH module
+
+### Granted
+- dashboard tile visible
+- direct module access works
+- normal module UI works
+- Principal-equivalent operational functionality works
+- required APIs work
+- same-school data used
+
+### Not granted
+- tile hidden
+- direct URL blocked
+- protected APIs rejected
+
+---
+
+# SECURITY VALIDATION
+
+Verify:
+
+### Tenant isolation
+School A Support Staff cannot read/write School B data in ANY of these four modules.
+
+### Academic Session
+Where session-specific:
+
+- selected session belongs to authenticated school
+- reads use the correct selected session
+- historical session writes remain rejected
+- no historical write silently falls back to active session
+
+### Noticeboard
+Specifically regression-test the recently fixed cross-school Noticeboard routes.
+
+They must remain protected.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## FOUR-MODULE SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+### Permission Editor
+PASS / FAIL
+
+### Attendance Overview
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Session protection: PASS/FAIL
+
+### Exam Controller
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Academic Session isolation: PASS/FAIL
+- Historical writes rejected: PASS/FAIL
+
+### Complaint Hub
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Session protection: PASS/FAIL
+
+### Noticeboard
+- Parent-only permission: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Previous cross-school security fix preserved: PASS/FAIL
+
+### Legacy child permissions
+Explain handling.
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Other Support Staff modules
+UNCHANGED / CHANGED
+
+### Database/schema changes
+NONE
+
+### Mobile changes
+NONE
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
