@@ -3,7 +3,7 @@
  *
  * Session creation rules:
  *  • Only ONE session per school may be active at any time.
- *  • Activation requires typing "ROLLOVER" in a safety confirmation modal.
+ *  • Activation requires typing "ACTIVATE" in a safety confirmation modal.
  *  • Deleting an active session is blocked in the UI.
  *  • All API calls carry implicit tenant scope via the admin session cookie.
  *  • Session names must be unique; dates must not overlap; start < end.
@@ -77,6 +77,16 @@ interface AcademicSession {
   // Extra fields returned only by the POST /api/admin/academic-sessions endpoint
   copyResult?: SessionCopyResult | null;
   executionLog?: string[];
+  activationSummary?: AcademicSessionActivationSummary;
+}
+
+interface AcademicSessionActivationSummary {
+  activeStudents: number;
+  activeTargetSessionEnrollments: number;
+  studentsSynchronized: number;
+  studentsUpdated: number;
+  studentsUnchanged: number;
+  inactiveStudentsSkipped: number;
 }
 
 interface Props { schoolId: number; isArchiveMode?: boolean }
@@ -1233,6 +1243,23 @@ interface PromotionSummaryResponse {
   undecidedCount: number;
 }
 
+interface ActivationPreviewResponse {
+  sessionId: number;
+  sessionName: string;
+  activeStudents: number;
+  activeTargetSessionEnrollments: number;
+  activeTargetEnrollmentsForActiveStudents: number;
+  activeStudentsMissingTargetEnrollment: number;
+  inactiveStudentsSkipped: number;
+  studentsReadyToSynchronize: number;
+  studentsNeedingRegistryUpdate: number;
+  studentsWithUnchangedPlacement: number;
+  duplicateActiveEnrollmentConflicts: number;
+  foreignOrMissingStudentEnrollments: number;
+  invalidTargetPlacements: number;
+  canActivate: boolean;
+}
+
 interface ActivationGateProps {
   session:   AcademicSession;
   onClose:   () => void;
@@ -1253,6 +1280,28 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
       if (!r.ok) return { decisions: [], undecidedCount: 0 };
       return r.json();
     },
+  });
+
+  const {
+    data: activationPreview,
+    isLoading: activationPreviewLoading,
+    isError: activationPreviewFailed,
+    error: activationPreviewError,
+  } = useQuery<ActivationPreviewResponse>({
+    queryKey: ["/api/admin/academic-sessions", session.id, "activation-preview"],
+    queryFn: async () => {
+      const response = await apiRequest(
+        "GET",
+        `/api/admin/academic-sessions/${session.id}/activation-preview`,
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || "Unable to check target-session enrollments.");
+      }
+      return response.json();
+    },
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const promoList       = promoData?.decisions      ?? [];
@@ -1278,7 +1327,12 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
     } catch { /* noop */ }
   }
 
-  const canActivate = typedWord === "ACTIVATE" && promoChecked && moduleChecked;
+  const canActivate = typedWord === "ACTIVATE"
+    && promoChecked
+    && moduleChecked
+    && !activationPreviewLoading
+    && !activationPreviewFailed
+    && activationPreview?.canActivate === true;
 
   // ── Checkbox row helper ─────────────────────────────────────────────────
   function CheckRow({ checked, onChange, children }: { checked: boolean; onChange: () => void; children: React.ReactNode }) {
@@ -1341,8 +1395,9 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
               <p className="text-[11px] font-black tracking-widest uppercase text-red-400/80">Safety Lock</p>
             </div>
             <p className="text-xs text-white/50 leading-relaxed">
-              This is a permanent switch. Once activated, all date-scoped modules flip to this session.
-              Type <span className="font-mono font-bold text-red-400">ACTIVATE</span> to unlock the form below.
+              This makes the selected session current. Student Registry placement will follow this session's
+              Active enrollments; historical session records remain unchanged. Type{" "}
+              <span className="font-mono font-bold text-red-400">ACTIVATE</span> to unlock the form below.
             </p>
             <Input
               value={typedWord}
@@ -1371,6 +1426,89 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
               transition: "opacity 0.25s ease",
             }}>
 
+          {/* ── Student Registry placement preflight ─────────────────────── */}
+          <div
+            className="rounded-xl overflow-hidden"
+            style={{
+              border: `1px solid ${activationPreview?.canActivate ? "rgba(16,185,129,0.22)" : "rgba(239,68,68,0.22)"}`,
+            }}
+            data-testid="activation-placement-preflight"
+          >
+            <div
+              className="flex items-center gap-2 px-4 py-3"
+              style={{
+                background: activationPreview?.canActivate ? "rgba(16,185,129,0.06)" : "rgba(239,68,68,0.06)",
+                borderBottom: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <Shield className={`w-4 h-4 ${activationPreview?.canActivate ? "text-emerald-400" : "text-red-400"}`} />
+              <p className="text-[11px] font-black tracking-widest uppercase text-white/75">
+                Student Registry placement check
+              </p>
+              {activationPreviewLoading && <Loader2 className="ml-auto w-3.5 h-3.5 animate-spin text-white/45" />}
+            </div>
+
+            {activationPreviewLoading ? (
+              <p className="px-4 py-4 text-xs text-white/45">Checking target-session enrollments…</p>
+            ) : activationPreviewFailed ? (
+              <div className="flex items-start gap-2 px-4 py-4" role="alert">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-300/90">
+                  {activationPreviewError instanceof Error
+                    ? activationPreviewError.message
+                    : "Unable to check target-session enrollments. Activation is disabled."}
+                </p>
+              </div>
+            ) : activationPreview ? (
+              <div className="px-4 py-3 space-y-2">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+                  <span className="text-white/45">Active Students</span>
+                  <span className="text-right text-white/80">{activationPreview.activeStudents}</span>
+                  <span className="text-white/45">Active target-session Enrollments</span>
+                  <span className="text-right text-white/80">{activationPreview.activeTargetSessionEnrollments}</span>
+                  <span className="text-white/45">Active Students with target enrollment</span>
+                  <span className="text-right text-white/80">{activationPreview.activeTargetEnrollmentsForActiveStudents}</span>
+                  <span className="text-white/45">Active Students missing target enrollment</span>
+                  <span className={`text-right font-semibold ${activationPreview.activeStudentsMissingTargetEnrollment > 0 ? "text-red-300" : "text-emerald-300"}`}>
+                    {activationPreview.activeStudentsMissingTargetEnrollment}
+                  </span>
+                  <span className="text-white/45">Registry placements that will change</span>
+                  <span className="text-right text-white/80">{activationPreview.studentsNeedingRegistryUpdate}</span>
+                  <span className="text-white/45">Inactive Students skipped</span>
+                  <span className="text-right text-white/80">{activationPreview.inactiveStudentsSkipped}</span>
+                </div>
+
+                {activationPreview.canActivate ? (
+                  <p className="pt-2 border-t border-white/10 text-[10px] leading-relaxed text-emerald-300/80">
+                    Every Active Student has one valid Active enrollment in this session. Inactive Students will
+                    remain inactive and will not be synchronized.
+                  </p>
+                ) : (
+                  <div
+                    className="pt-2 border-t border-red-400/15 text-[10px] leading-relaxed text-red-300/90"
+                    role="alert"
+                    data-testid="activation-placement-blocked"
+                  >
+                    <p className="font-semibold">Activation is blocked. No session or Registry changes will be made.</p>
+                    <p className="mt-1">
+                      Prepare valid target-session enrollments for all Active Students. Activation will not copy
+                      an old placement or create an enrollment.
+                    </p>
+                    {(activationPreview.duplicateActiveEnrollmentConflicts > 0
+                      || activationPreview.foreignOrMissingStudentEnrollments > 0
+                      || activationPreview.invalidTargetPlacements > 0) && (
+                      <p className="mt-1">
+                        Data conflicts — duplicate placements: {activationPreview.duplicateActiveEnrollmentConflicts};
+                        missing or different-school Students: {activationPreview.foreignOrMissingStudentEnrollments};
+                        invalid class/sections: {activationPreview.invalidTargetPlacements}.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
           {/* ── SECTION 2: Promotion Status ─────────────────────────────── */}
           <div className="rounded-xl overflow-hidden"
             style={{ border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -1394,7 +1532,8 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
                 <div>
                   <p className="text-xs font-semibold text-amber-300">No promotions recorded yet</p>
                   <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
-                    Please complete student promotions in the <strong className="text-white/60">Exam Controller</strong> before activating this session. You can still proceed, but promotions should be done first.
+                    Promotion history is shown for reference only. Student placement is determined by each
+                    Active Student's Active enrollment in the target session, checked above.
                   </p>
                 </div>
               </div>
@@ -1476,69 +1615,30 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
                     {undecidedCount} student{undecidedCount !== 1 ? "s have" : " has"} no promotion decision yet
                   </p>
                   <p className="text-[10px] text-white/40 mt-0.5 leading-relaxed">
-                    These students are not in the promotion ledger for this session and will be left without a class assignment after the session switch. Visit the{" "}
-                    <strong className="text-amber-300/70">Exam Controller</strong> to record their decisions before activating.
+                    Promotion decisions do not determine activation placement. Each Active Student still needs
+                    one valid Active enrollment in the target session; the placement check above is authoritative.
                   </p>
                 </div>
               </div>
             )}
           </div>
 
-          {/* ── SECTION 3: Module Impact Summary ─────────────────────────── */}
-          {(() => {
-            const SESSION_ARCHIVED_MODS = [
-              { emoji: "📅", label: "Timetable Master",       detail: "Saved per session — previous timetable viewable in archive" },
-              { emoji: "🏆", label: "Exam Controller",        detail: "Exam marks and grades preserved — viewable per session in archive" },
-              { emoji: "📊", label: "Attendance Overview",    detail: "Attendance records archived — viewable per session in archive" },
-              { emoji: "📋", label: "Leave Requests",         detail: "Leave history preserved — viewable per session in archive" },
-              { emoji: "🛡️", label: "Complaint Hub",         detail: "Complaints archived — viewable per session" },
-              { emoji: "🔔", label: "Noticeboard",            detail: "Notices preserved — viewable per session in archive" },
-              { emoji: "🪪", label: "Visitor Log",            detail: "Visitor entries archived — viewable per session" },
-              { emoji: "🔒", label: "Audit Logs",             detail: "Action trail preserved — viewable per session in archive" },
-              { emoji: "💳", label: "ID Card Generator",      detail: "Generated ID card records preserved per session" },
-              { emoji: "💰", label: "Fees & Payments",        detail: "Fee records archived — viewable per session" },
-              { emoji: "📈", label: "Performance Analytics",  detail: "Academic history snapshots preserved per session" },
-            ];
-            return (
-              <div className="space-y-3">
-                <div className="rounded-xl overflow-hidden"
-                  style={{ border: "1px solid rgba(34,211,238,0.18)" }}>
-                  <div className="flex items-center gap-2 px-4 py-3"
-                    style={{ background: "rgba(34,211,238,0.07)", borderBottom: "1px solid rgba(34,211,238,0.12)" }}>
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
-                      style={{ background: "rgba(34,211,238,0.25)", border: "1px solid rgba(34,211,238,0.40)" }}>3</div>
-                    <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400/90">Module Impact</p>
-                    <span className="ml-auto text-[10px] font-bold text-cyan-400/60">{SESSION_ARCHIVED_MODS.length} modules — all archived</span>
-                  </div>
-
-                  <div className="divide-y" style={{ borderColor: "rgba(34,211,238,0.07)" }}>
-                    {SESSION_ARCHIVED_MODS.map(mod => (
-                      <div key={mod.label} className="flex items-start gap-3 px-4 py-2.5">
-                        <span className="text-base flex-shrink-0 mt-0.5">{mod.emoji}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-white/80">{mod.label}</p>
-                          <p className="text-[10px] text-white/45 mt-0.5 leading-relaxed">{mod.detail}</p>
-                        </div>
-                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5"
-                          style={{ background: "rgba(34,211,238,0.10)", color: "rgba(103,232,249,0.80)", border: "1px solid rgba(34,211,238,0.22)" }}>
-                          ARCHIVED
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Global data safety note */}
-                  <div className="flex items-start gap-2 px-4 py-3"
-                    style={{ background: "rgba(16,185,129,0.04)", borderTop: "1px solid rgba(16,185,129,0.12)" }}>
-                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-400/60" />
-                    <span className="text-[10px] leading-relaxed" style={{ color: "rgba(52,211,153,0.60)" }}>
-                      Global data is <strong style={{ color: "rgba(52,211,153,0.80)" }}>never affected</strong> — School Setup, Teachers, Students, Policies, Bell Structure, Calendar and all configurations remain intact.
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {/* ── SECTION 3: Activation effects ─────────────────────────────── */}
+          <div className="rounded-xl overflow-hidden"
+            style={{ border: "1px solid rgba(34,211,238,0.18)" }}>
+            <div className="flex items-center gap-2 px-4 py-3"
+              style={{ background: "rgba(34,211,238,0.07)", borderBottom: "1px solid rgba(34,211,238,0.12)" }}>
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white"
+                style={{ background: "rgba(34,211,238,0.25)", border: "1px solid rgba(34,211,238,0.40)" }}>3</div>
+              <p className="text-[11px] font-black tracking-widest uppercase text-cyan-400/90">Activation effects</p>
+            </div>
+            <div className="px-4 py-3 text-[10px] leading-relaxed text-white/55 space-y-1">
+              <p>• The selected session becomes active; sibling sessions become archived.</p>
+              <p>• Active Students' current Registry placement follows their valid Active enrollment in this session.</p>
+              <p>• Historical Enrollment rows, Promotion data, and other session records are not rewritten or cleared.</p>
+              <p>• Inactive Students remain inactive and are not synchronized.</p>
+            </div>
+          </div>
 
           {/* ── SECTION 4: Confirmation Checkboxes ──────────────────────── */}
           <div className="rounded-xl p-4 space-y-3"
@@ -1549,20 +1649,10 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
               <p className="text-[11px] font-black tracking-widest uppercase text-indigo-400/80">Confirmation</p>
             </div>
             <CheckRow checked={promoChecked} onChange={() => setPromoChecked(v => !v)}>
-              I have promoted all eligible students in the <strong className="text-white/70">Exam Controller</strong> for this session.
+              I understand Promotion history is informational; the target session's Active enrollments determine placement.
             </CheckRow>
-            {promoChecked && promoList.length === 0 && (
-              <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg text-[10px]"
-                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.28)" }}
-                data-testid="warning-no-promotions">
-                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5 text-red-400" />
-                <span className="text-red-300/80 leading-relaxed">
-                  You are about to activate with <strong className="text-red-300">no student promotions on record.</strong> This means no students will be carried forward into the new session automatically.
-                </span>
-              </div>
-            )}
             <CheckRow checked={moduleChecked} onChange={() => setModuleChecked(v => !v)}>
-              I understand that session modules will be <strong className="text-white/70">archived</strong> (viewable in archive mode) and attendance records will <strong className="text-white/70">reset</strong> when this session is activated.
+              I understand session activation preserves historical enrollment, Promotion, and module records.
             </CheckRow>
           </div>
 
@@ -1593,7 +1683,7 @@ function SessionActivationGateModal({ session, onClose, onConfirm, isPending }: 
             {isPending
               ? <Loader2 className="w-4 h-4 animate-spin" />
               : <Zap className="w-4 h-4" />}
-            {promoList.length === 0 ? "Activate Anyway" : "Activate Session"}
+            "Activate Session"
           </button>
         </div>
 
@@ -1767,7 +1857,7 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
     mutationFn: async (id: number) => {
       const r = await apiRequest("PATCH", `/api/admin/academic-sessions/${id}/activate`, {});
       if (!r.ok) { const err = await r.json(); throw new Error(err.message || "Failed to activate"); }
-      return r.json();
+      return r.json() as Promise<AcademicSession>;
     },
     onSuccess: (session: AcademicSession) => {
       setRolloverTarget(null);
@@ -1789,9 +1879,23 @@ export default function AcademicSessions({ schoolId, isArchiveMode = false }: Pr
         );
       }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/academic-sessions"] });
-      toast({ title: "Session activated", description: "Roster rolled over to the new session." });
+      queryClient.invalidateQueries({ queryKey: ["/api/schools", schoolId, "students"] });
+      const summary = session.activationSummary;
+      toast({
+        title: "Session activated",
+        description: summary
+          ? `${summary.studentsSynchronized} active Student placement(s) synchronized; ${summary.studentsUpdated} Registry placement(s) changed.`
+          : "The selected session is now current.",
+      });
     },
-    onError: (e: Error) => toast({ title: "Activation failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => {
+      if (rolloverTarget) {
+        queryClient.invalidateQueries({
+          queryKey: ["/api/admin/academic-sessions", rolloverTarget.id, "activation-preview"],
+        });
+      }
+      toast({ title: "Activation failed", description: e.message, variant: "destructive" });
+    },
   });
 
   // ── Delete mutation ───────────────────────────────────────────────────────

@@ -56,6 +56,10 @@ import { addCalendarDays, calendarDayDifference, calendarWeekday, dateOnlyInIST,
 import { isAttendanceDateInSession } from "@shared/attendance-session-date";
 import { db } from "./db";
 import { pool } from "./db";
+import {
+  activateAcademicSessionInTransaction,
+  inspectAcademicSessionActivation,
+} from "./academic-session-activation";
 import { studentPublishedRankScope, studentPublishedScoreScope } from "./student-examination-score-scope";
 import { countUnreadStudentNotices, studentNoticeMatchesAudience, studentNoticeSessionScope } from "./student-notice-visibility";
 import { studentTimetableScope } from "./student-timetable-visibility";
@@ -8460,6 +8464,18 @@ export class DatabaseStorage {
     return session;
   }
 
+  async createAcademicSessionWithActivation(
+    data: InsertAcademicSession,
+  ) {
+    return await db.transaction(async (tx) => {
+      const [draft] = await tx
+        .insert(academicSessions)
+        .values({ ...data, isActive: false, status: "draft" })
+        .returning();
+      return activateAcademicSessionInTransaction(tx, draft.id, data.schoolId);
+    });
+  }
+
   /**
    * Hard-delete only a session with no financial history. Fee and payment
    * foreign keys use SET NULL for legacy compatibility, so the service must
@@ -8476,6 +8492,9 @@ export class DatabaseStorage {
       `);
       const target = locked.rows[0] as { id: number; is_active: boolean } | undefined;
       if (!target) return false;
+      // An active session cannot be deleted as a way to implicitly select a
+      // different session. The Principal must activate the intended target.
+      if (target.is_active) return false;
 
       // Direct session records and all rows that inherit session via a linked
       // invoice/payment count as financial history. Every predicate is tenant
@@ -8549,23 +8568,6 @@ export class DatabaseStorage {
       await tx
         .delete(academicSessions)
         .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)));
-
-      // If the deleted session was active, promote the most recent remaining session
-      if (target.is_active) {
-        const remaining = await tx
-          .select({ id: academicSessions.id })
-          .from(academicSessions)
-          .where(eq(academicSessions.schoolId, schoolId))
-          .orderBy(desc(academicSessions.id))
-          .limit(1);
-
-        if (remaining.length > 0) {
-          await tx
-            .update(academicSessions)
-            .set({ isActive: true, status: "active" })
-            .where(and(eq(academicSessions.id, remaining[0].id), eq(academicSessions.schoolId, schoolId)));
-        }
-      }
       return true;
     });
   }
@@ -8578,22 +8580,22 @@ export class DatabaseStorage {
    * Both steps run inside a single DB transaction so there is never a window
    * where two sessions are active or no session is active mid-request.
    */
-  async activateAcademicSession(id: number, schoolId: number): Promise<AcademicSession> {
+  async getAcademicSessionActivationPreview(id: number, schoolId: number) {
     return await db.transaction(async (tx) => {
-      await tx
-        .update(academicSessions)
-        .set({ isActive: false })
-        .where(eq(academicSessions.schoolId, schoolId));
-
-      const [updated] = await tx
-        .update(academicSessions)
-        .set({ isActive: true })
-        .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))
-        .returning();
-
-      if (!updated) throw new Error("Session not found or access denied");
-      return updated;
+      const { plan } = await inspectAcademicSessionActivation(tx, id, schoolId);
+      return plan.preview;
     });
+  }
+
+  async activateAcademicSessionWithSummary(id: number, schoolId: number) {
+    return await db.transaction(async (tx) => (
+      activateAcademicSessionInTransaction(tx, id, schoolId)
+    ));
+  }
+
+  async activateAcademicSession(id: number, schoolId: number): Promise<AcademicSession> {
+    const result = await this.activateAcademicSessionWithSummary(id, schoolId);
+    return result.session;
   }
 
   // ── ENROLLMENTS ─────────────────────────────────────────────────────────────

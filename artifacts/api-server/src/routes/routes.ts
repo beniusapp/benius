@@ -1,6 +1,12 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { resolveAcademicSessionListAccess } from "../academic-session-list-access";
+import {
+  AcademicSessionActivationBlockedError,
+  AcademicSessionActivationNotFoundError,
+  activateAcademicSessionInTransaction,
+  canManageAcademicSession,
+} from "../academic-session-activation";
 import { registerAdminCalendarRoutes } from "../admin-calendar-routes";
 import { adminModuleAccessAllowed } from "../support-staff-module-permissions";
 import {
@@ -3357,7 +3363,7 @@ export async function registerRoutes(
       executionLog.push("STEP 3 → Starting database transaction...");
       console.log("[SESSION-CREATE] STEP 3 — starting DB transaction");
 
-      const { session: newSession, copyResult } = await db.transaction(async (tx) => {
+      const { session: newSession, copyResult, activationSummary } = await db.transaction(async (tx) => {
 
         // Step 3a: Tenant isolation guard
         if (copiedFromSessionId) {
@@ -3375,47 +3381,9 @@ export async function registerRoutes(
           console.log(`[SESSION-CREATE] ✓ 3a — source "${srcGuard.sessionName}" verified`);
         }
 
-        // ══════════════════════════════════════════════════════════════════
-        // GLOBAL DATA PROTECTION CONTRACT
-        // The following tables represent permanent school-wide data.
-        // They MUST NEVER be deleted from, truncated, or bulk-updated inside
-        // any session creation, activation, or deletion transaction.
-        // Any future developer who needs to modify this list must get explicit
-        // sign-off from the product owner and document the reason here.
-        //
-        // ── Core identity & configuration ───────────────────────────────
-        //   schools               — school identity record
-        //   teachers              — teacher registry (Teacher Profile module)
-        //   non_teaching_staff    — support staff registry
-        //   students              — student identity records
-        //   faculty_mappings      — teacher↔class↔subject assignments (Faculty Info module)
-        //   teacher_allocations   — weekly quota allocations
-        //   school_assets         — assets & inventory catalog
-        //   school_metadata       — classes / sections / subjects / exam types
-        //   leave_policies        — school leave policy definitions
-        //   attendance_policies   — attendance policy definitions
-        //   timetable_structure   — bell structure (period time slots)
-        //   grading_tiers         — grade boundary definitions
-        //   exam_policy_tiers     — exam scoring rules
-        //
-        // ── Permanent teacher-dashboard modules (explicitly protected) ───
-        //   calendar_events       — School Calendar (additive copies only — no deletes)
-        //   gallery_items         — Gallery (photos, events, memories — never wiped on rollover)
-        //   library_books         — Library books catalog (global e-book/resource registry)
-        //   book_borrows          — Library borrowing records (persistent lending history)
-        //
-        // ── Permanent student-portal modules (explicitly protected) ────
-        //   student_profiles      — Student Profile (identity, photo, verification — never wiped)
-        //   (gallery_items)       — Gallery student view — same table as teacher gallery above
-        //   (library_books)       — E-Library student view — same table as teacher library above
-        //   (faculty_mappings)    — Faculty Info student view — same table as above
-        //   (calendar_events)     — School Calendar student view — same table as above
-        //
-        // PERMITTED destructive operations in this transaction (Full Reset):
-        //   ✓ leave_requests           — teacher leave queue (session-scoped)
-        //   ✓ student_leave_requests   — student leave queue (session-scoped)
-        //   ✓ timetable_entries        — schedule grid assignments (session-scoped)
-        // ══════════════════════════════════════════════════════════════════
+        // Activation updates session state and synchronizes current Student
+        // placement only. It does not delete, truncate, or reset session-module,
+        // identity, configuration, Enrollment, or Promotion data.
 
         // Runtime guard: verify schoolId is locked to this request's authenticated school.
         // This prevents any cross-school data mutation even if a parameter is tampered.
@@ -3425,41 +3393,40 @@ export async function registerRoutes(
 
         // Step 3b: Insert session
         console.log("[SESSION-CREATE] 3b — inserting session record");
-        const [session] = await tx
+        let [session] = await tx
           .insert(academicSessions)
           .values({
             schoolId,
             sessionName:          sessionName.trim(),
             startDate,
             endDate,
-            isActive:             shouldActivate,
-            status:               shouldActivate ? "active" : status,
+            isActive:             false,
+            status:               shouldActivate ? "draft" : status,
             newAdmissionsEnabled,
             promotionStrategy,
             copiedFromSessionId:  copiedFromSessionId ?? null,
             copiedModules:        null,
           })
           .returning();
+        let activationSummary: Awaited<ReturnType<typeof activateAcademicSessionInTransaction>>["summary"] | null = null;
         executionLog.push(`STEP 3b ✓ — Session record created (ID #${session.id})`);
         console.log(`[SESSION-CREATE] ✓ 3b — session #${session.id} inserted`);
 
         // ─────────────────────────────────────────────────────────────────
-        // NOTE: Full Module Reset (all 11 session-scoped modules) is performed
-        // at ACTIVATION time only — inside PATCH /activate — NOT here.
-        // This ensures data is wiped only after the admin explicitly confirms.
+        // Activation changes the selected session and current Student Registry
+        // placement. It does not wipe session records or Promotion history.
         // ─────────────────────────────────────────────────────────────────
-        executionLog.push("STEP 3b-reset — skipped at creation; reset runs at activation time");
+        executionLog.push("STEP 3b — existing session records are preserved");
 
         // Step 3c: Activate if requested
         if (shouldActivate) {
-          console.log("[SESSION-CREATE] 3c — activating, archiving siblings");
-          await tx.update(academicSessions)
-            .set({ isActive: false, status: "archived" })
-            .where(and(eq(academicSessions.schoolId, schoolId), eq(academicSessions.isActive, true)));
-          await tx.update(academicSessions)
-            .set({ isActive: true, status: "active" })
-            .where(and(eq(academicSessions.id, session.id), eq(academicSessions.schoolId, schoolId)));
-          executionLog.push("STEP 3c ✓ — Session set as active, siblings archived");
+          console.log("[SESSION-CREATE] 3c — validating and activating session");
+          const activation = await activateAcademicSessionInTransaction(tx, session.id, schoolId);
+          session = activation.session;
+          activationSummary = activation.summary;
+          executionLog.push(
+            `STEP 3c ✓ — Session activated; ${activation.summary.studentsSynchronized} active Student placement(s) synchronized`,
+          );
         }
 
         // Step 3d: Copy engine
@@ -3662,16 +3629,30 @@ export async function registerRoutes(
         return {
           session: { ...session, copiedModules: copyResult ? JSON.stringify(copyResult) : null },
           copyResult,
+          activationSummary,
         };
       }); // ← END DB TRANSACTION
 
       executionLog.push("STEP 6 ✓ — Database transaction committed successfully");
       console.log(`[SESSION-CREATE] ✓ STEP 6 — committed. Session #${newSession.id} "${newSession.sessionName}" created.`);
 
-      res.status(201).json({ ...newSession, copyResult, executionLog });
+      res.status(201).json({
+        ...newSession,
+        copyResult,
+        executionLog,
+        activationSummary,
+      });
 
     } catch (e: any) {
       console.error("[SESSION-CREATE] ✗ FAILED:", e.message);
+      if (e instanceof AcademicSessionActivationBlockedError) {
+        return res.status(409).json({
+          message: e.message,
+          code: e.code,
+          activationPreview: e.preview,
+          rolled_back: true,
+        });
+      }
       res.status(500).json({
         message: e.message || "Failed to create session — all changes rolled back",
         rolled_back: true,
@@ -3781,16 +3762,28 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/admin/academic-sessions/:id/activation-preview", async (req, res) => {
+    if (!req.session.userId || !canManageAcademicSession(req.session.userRole))
+      return res.status(403).json({ message: "Admin access required" });
+    const schoolId = req.session.schoolId;
+    if (!schoolId) return res.status(403).json({ message: "No school in session" });
+    const id = /^\d+$/.test(req.params.id) ? Number(req.params.id) : Number.NaN;
+    if (!Number.isSafeInteger(id) || id <= 0)
+      return res.status(400).json({ message: "Invalid session ID" });
+
+    try {
+      return res.json(await storage.getAcademicSessionActivationPreview(id, schoolId));
+    } catch (error) {
+      if (error instanceof AcademicSessionActivationNotFoundError) {
+        return res.status(404).json({ message: error.message, code: error.code });
+      }
+      return res.status(500).json({ message: "Failed to inspect target-session enrollments." });
+    }
+  });
+
   /*
-   * Activate a session — inside a single atomic transaction:
-   *   1. Full Module Reset: wipes all 11 session-scoped modules for the school.
-   *      Global data tables (teachers, students, school setup, policies, etc.)
-   *      are NEVER touched — they are SELECT-only throughout.
-   *   2. Archives all sibling sessions for this school.
-   *   3. Marks the target session as active.
-   *
-   * The reset intentionally happens HERE (at activation time), not at creation.
-   * This guarantees data is cleared only after the admin explicitly confirms.
+   * Activation and current Student Registry placement synchronization share
+   * one transaction. All target data is validated before session state writes.
    */
   // ── SSE endpoint — real-time session activation push ──────────────────────
   // Teachers and students connect here on login. When admin activates a
@@ -3817,40 +3810,33 @@ export async function registerRoutes(
   });
 
   app.patch("/api/admin/academic-sessions/:id/activate", async (req, res) => {
-    if (!req.session.userId || req.session.userRole !== "admin")
+    if (!req.session.userId || !canManageAcademicSession(req.session.userRole))
       return res.status(403).json({ message: "Admin access required" });
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "No school in session" });
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
     try {
-      const updated = await db.transaction(async (tx) => {
-
-        // Legacy promotion overrides have no session identity, so activation
-        // must not clear every session's rows. They remain unavailable to the
-        // Web Exam Controller until a session-aware schema migration is approved.
-
-        // ── Step 1: Archive siblings ─────────────────────────────────────────
-        await tx.update(academicSessions)
-          .set({ isActive: false, status: "archived" })
-          .where(eq(academicSessions.schoolId, schoolId));
-
-        // ── Step 2: Activate target session ─────────────────────────────────
-        const [updated] = await tx.update(academicSessions)
-          .set({ isActive: true, status: "active" })
-          .where(and(eq(academicSessions.id, id), eq(academicSessions.schoolId, schoolId)))
-          .returning();
-
-        if (!updated) throw new Error("Session not found or access denied");
-        return updated;
-      });
-
-      res.json(updated);
+      const result = await storage.activateAcademicSessionWithSummary(id, schoolId);
       // Push real-time event to all connected teachers and students for this school
-      broadcastSessionActivated(schoolId, { sessionId: updated.id, sessionName: updated.sessionName });
+      broadcastSessionActivated(schoolId, {
+        sessionId: result.session.id,
+        sessionName: result.session.sessionName,
+      });
+      return res.json({ ...result.session, activationSummary: result.summary });
     } catch (e: any) {
       console.error("[SESSION-ACTIVATE] ✗ FAILED:", e.message);
-      res.status(500).json({ message: e.message || "Failed to activate session" });
+      if (e instanceof AcademicSessionActivationBlockedError) {
+        return res.status(409).json({
+          message: e.message,
+          code: e.code,
+          activationPreview: e.preview,
+        });
+      }
+      if (e instanceof AcademicSessionActivationNotFoundError) {
+        return res.status(404).json({ message: e.message, code: e.code });
+      }
+      return res.status(500).json({ message: e.message || "Failed to activate session" });
     }
   });
 

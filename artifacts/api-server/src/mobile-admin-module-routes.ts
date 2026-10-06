@@ -11,6 +11,10 @@ import {
 } from "@workspace/db";
 import { db } from "./db";
 import { storage } from "./storage";
+import {
+  AcademicSessionActivationBlockedError,
+  AcademicSessionActivationNotFoundError,
+} from "./academic-session-activation";
 import { aggregateStudentAttendance } from "./student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import { replaceCalendarYear } from "@shared/ist-time";
@@ -330,6 +334,10 @@ export function registerMobileAdminModuleRoutes(
     requireModule("school-setup", "academic-sessions"),
     async (req, res) => {
       const user = principal(req)!;
+      if (user.role !== "admin") {
+        reject(res, 403, "Only an administrator can manage academic sessions.");
+        return;
+      }
       const parsed = z.object({
         sessionName: z.string().trim().min(1).max(50),
         startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -359,18 +367,24 @@ export function registerMobileAdminModuleRoutes(
           startDate: parsed.data.startDate,
           endDate: parsed.data.endDate,
           isActive: false,
-          status: parsed.data.setAsActive ? "active" : "draft",
+          status: "draft",
           newAdmissionsEnabled: parsed.data.newAdmissionsEnabled,
           promotionStrategy: parsed.data.promotionStrategy,
           copiedFromSessionId: null,
           copiedModules: null,
         };
-        let created = await storage.createAcademicSession(input);
         if (parsed.data.setAsActive || existing.length === 0) {
-          created = await storage.activateAcademicSession(created.id, user.schoolId);
+          const activated = await storage.createAcademicSessionWithActivation(input);
+          res.status(201).json(activated.session);
+          return;
         }
+        const created = await storage.createAcademicSession(input);
         res.status(201).json(created);
-      } catch {
+      } catch (error) {
+        if (error instanceof AcademicSessionActivationBlockedError) {
+          reject(res, 409, error.message);
+          return;
+        }
         reject(res, 503, "Unable to create the academic session.");
       }
     },
@@ -525,6 +539,10 @@ export function registerMobileAdminModuleRoutes(
     requireModule("school-setup", "academic-sessions"),
     async (req, res) => {
       const user = principal(req)!;
+      if (user.role !== "admin") {
+        reject(res, 403, "Only an administrator can manage academic sessions.");
+        return;
+      }
       const id = parseId(req.params.id);
       if (!id) {
         reject(res, 400, "Invalid academic session ID.");
@@ -532,7 +550,15 @@ export function registerMobileAdminModuleRoutes(
       }
       try {
         res.json(await storage.activateAcademicSession(id, user.schoolId));
-      } catch {
+      } catch (error) {
+        if (error instanceof AcademicSessionActivationBlockedError) {
+          reject(res, 409, error.message);
+          return;
+        }
+        if (error instanceof AcademicSessionActivationNotFoundError) {
+          reject(res, 404, error.message);
+          return;
+        }
         reject(res, 404, "Academic session not found for this school.");
       }
     },
@@ -544,6 +570,10 @@ export function registerMobileAdminModuleRoutes(
     requireModule("school-setup", "academic-sessions"),
     async (req, res) => {
       const user = principal(req)!;
+      if (user.role !== "admin") {
+        reject(res, 403, "Only an administrator can manage academic sessions.");
+        return;
+      }
       const id = parseId(req.params.id);
       if (!id) {
         reject(res, 400, "Invalid academic session ID.");
