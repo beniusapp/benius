@@ -1,0 +1,473 @@
+# BENIUS — RESTORE PREVIOUS TEACHER DELETE LIFECYCLE
+
+We completed a read-only comparison of the Teacher Registry deletion behavior.
+
+## FINAL PRODUCT DECISION
+
+Restore the **immediately previous Teacher Delete behavior** from revision:
+
+`0f0a44a`
+
+The current revision changed Teacher Delete to soft deactivation. I do NOT want that.
+
+Teacher Delete must again follow the previous:
+
+**Removed History → Hard Delete**
+
+lifecycle.
+
+This applies to:
+
+- Principal/Admin
+- Support Staff with the explicit **Delete Teacher** permission
+
+Do NOT change the granular Teacher Registry permission model.
+
+Do NOT modify Student Registry deletion behavior.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# REQUIRED TEACHER DELETE BEHAVIOR
+
+When an authorized user clicks:
+
+**Delete Teacher**
+
+the flow must be:
+
+```text id="n9c1k7"
+Teacher
+   ↓
+Delete Teacher
+   ↓
+Capture previous Teacher profile/assignment snapshot
+   ↓
+Write Removed History
+   ↓
+Physically delete Teacher record
+   ↓
+Physically delete related User/Login record
+   ↓
+Teacher disappears from normal Teacher Registry
+```
+
+Restore this as closely as possible to the immediately previous implementation from revision `0f0a44a`.
+
+Do NOT redesign it.
+
+---
+
+# REMOVED HISTORY
+
+Before deleting the Teacher, preserve the previous behavior that records the Teacher snapshot in:
+
+`removed_teachers_log`
+
+Restore the same information that the previous implementation captured, including the existing profile/assignment snapshot behavior.
+
+After deletion:
+
+- Teacher should no longer appear in normal Teacher Registry.
+- Removed History should contain the deletion snapshot according to the previous behavior.
+
+Do NOT replace Removed History with only an `audit_logs` deactivation entry.
+
+---
+
+# PHYSICAL DELETE
+
+Restore the previous use of the existing hard-delete path such as:
+
+`storage.deleteTeacher`
+
+according to the immediately previous implementation.
+
+The Teacher database row should be physically removed.
+
+The associated User/Login row should be physically removed according to the previous behavior.
+
+Do NOT simply set:
+
+`is_active = false`
+
+for this Delete action.
+
+---
+
+# IMPORTANT — PRESERVE PREVIOUS DB BEHAVIOR
+
+The previous audit confirmed that some Teacher-linked records may be affected by existing foreign-key cascade / SET NULL / restrictive behavior.
+
+Do NOT redesign those relationships in this task.
+
+Restore the previous lifecycle **exactly according to the existing schema behavior**.
+
+If an existing non-cascading reference prevents deletion, preserve the established safe failure behavior rather than bypassing database integrity.
+
+Do NOT manually delete unrelated records merely to force deletion.
+
+---
+
+# REMOVE THE NEW INACTIVE / REACTIVATE REGISTRY BEHAVIOR
+
+The latest change added inactive Teachers to the normal Teacher Registry and introduced a Reactivate action.
+
+For the Teacher Delete workflow, restore the previous UI behavior.
+
+After successful Delete:
+
+- Teacher disappears from normal Registry.
+- Do NOT show that deleted Teacher as `INACTIVE`.
+- Do NOT show Reactivate for a Teacher that was hard deleted.
+
+Restore the previous Teacher Registry presentation as closely as possible to revision `0f0a44a`.
+
+Do not unnecessarily delete backend deactivate/reactivate infrastructure if other existing functionality uses it.
+
+The requirement is specifically to restore the **Delete Teacher workflow and UI behavior**.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin should use the restored previous Delete behavior:
+
+```text id="92gw2k"
+Delete Teacher
+→ Removed History
+→ hard delete Teacher/User
+```
+
+Restore the previous confirmation/UI wording where appropriate.
+
+Principal/Admin behavior for other Teacher Registry functions remains unchanged.
+
+---
+
+# SUPPORT STAFF
+
+The current granular Support Staff permission model MUST remain.
+
+Teacher Registry:
+
+```text id="tkwq9f"
+Teacher Registry
+├── Add Teacher
+├── Edit Teacher
+└── Delete Teacher
+```
+
+## Delete Teacher granted
+
+Support Staff can perform the SAME restored Teacher Delete lifecycle as Principal/Admin:
+
+```text id="23vukq"
+Support Staff
++ Teacher Registry
++ Delete Teacher
+        ↓
+Delete same-school Teacher
+        ↓
+Removed History
+        ↓
+Hard delete Teacher/User
+```
+
+## Delete Teacher not granted
+
+Support Staff:
+
+- must not see/use the Delete action
+- must not call the Delete API successfully
+- must not create a Removed History entry
+- must not delete/deactivate the Teacher
+
+---
+
+# OTHER TEACHER PERMISSIONS
+
+Do NOT change:
+
+### Add Teacher
+Controls Add only.
+
+### Edit Teacher
+Controls Edit only.
+
+### Delete Teacher
+Controls the restored hard-delete workflow only.
+
+Permissions remain independent.
+
+Example:
+
+```text id="k8fbma"
+Teacher Registry ✅
+Add Teacher      ❌
+Edit Teacher     ❌
+Delete Teacher   ✅
+```
+
+Expected:
+
+- View/search ✅
+- Add ❌
+- Edit ❌
+- Delete via restored hard-delete workflow ✅
+
+---
+
+# TENANT ISOLATION
+
+Preserve strict school isolation.
+
+School A Support Staff with Delete Teacher permission:
+
+```text id="mb1s4z"
+Delete School A Teacher → allowed
+Delete School B Teacher → REJECT
+```
+
+Teacher lookup and deletion must be scoped/validated against the authenticated school.
+
+Do not trust a supplied Teacher ID without checking ownership.
+
+---
+
+# PASSWORD / SECURITY CONFIRMATION
+
+If the immediately previous Delete flow required password/security confirmation, preserve that behavior.
+
+For Support Staff, use the authenticated Support Staff credential/identity path already corrected during the granular permission work.
+
+Do NOT attempt to validate Support Staff using:
+
+`userId = -staffId`
+
+as an Admin user.
+
+---
+
+# ACTOR / REMOVED HISTORY ATTRIBUTION
+
+Preserve the actual actor where the current safe role-aware infrastructure supports it.
+
+Support Staff must NOT be falsely represented as Principal/Admin.
+
+Do NOT put a negative Support Staff ID into a foreign key expecting `users.id`.
+
+However, do NOT redesign `removed_teachers_log` schema in this task.
+
+If the existing Removed History schema cannot store a role-aware Support Staff actor, preserve the Teacher snapshot safely and use the existing role-aware audit mechanism for actor attribution where appropriate.
+
+Report exactly how attribution works.
+
+---
+
+# STUDENT REGISTRY
+
+DO NOT CHANGE Student Delete.
+
+Student Registry remains on its existing soft-deactivation lifecycle.
+
+This task is ONLY Teacher Delete.
+
+---
+
+# FACULTY MAPPING
+
+Do NOT change Faculty Mapping permission behavior.
+
+If the previous Teacher hard-delete lifecycle snapshots Faculty Mapping information into Removed History, restore that existing behavior.
+
+Do not otherwise redesign Faculty Mapping.
+
+---
+
+# MOBILE IS FROZEN
+
+Do NOT modify:
+
+- Mobile source
+- Mobile Teacher Registry
+- Mobile APIs
+- Mobile permission behavior
+
+Mobile remains frozen.
+
+---
+
+# DATABASE / SCHEMA
+
+Do NOT make schema changes.
+
+The previous hard-delete behavior already existed with the current architecture.
+
+If restoration unexpectedly requires a schema change, STOP and report before changing it.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT change:
+
+- Add Teacher permission
+- Edit Teacher permission
+- Student Registry permissions
+- Student Delete lifecycle
+- Faculty Mapping permissions
+- other Support Staff modules
+- Academic Session foundation
+- Principal Profile
+- Support Staff Management
+- Mobile
+- unrelated backend routes
+- deployment
+
+---
+
+# REQUIRED TESTS
+
+## Principal/Admin
+
+Verify:
+
+1. Delete Teacher
+2. Removed History snapshot created
+3. Teacher DB row deleted
+4. associated User/Login row deleted
+5. Teacher disappears from normal Registry
+6. Teacher appears in Removed History
+7. deleted Teacher cannot log in
+
+---
+
+## Support Staff — Delete granted
+
+Verify:
+
+1. Teacher Registry parent granted
+2. Delete Teacher granted
+3. same-school Teacher deletion succeeds
+4. Removed History created
+5. Teacher/User physically deleted
+6. Teacher disappears from Registry
+7. Principal sees the Teacher in Removed History
+8. Support Staff actor is safely attributed where supported
+
+---
+
+## Support Staff — Delete NOT granted
+
+Verify:
+
+- Delete UI unavailable
+- Delete API rejected
+- Teacher remains
+- User remains
+- no Removed History entry created
+
+---
+
+## Permission independence
+
+Verify:
+
+- Add only → cannot Delete
+- Edit only → cannot Delete
+- Delete only → can Delete but cannot Add/Edit
+- Add + Edit → cannot Delete
+- all three → all three actions work
+
+---
+
+## Tenant isolation
+
+Verify:
+
+School A Support Staff cannot delete School B Teacher even with Delete Teacher permission.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## TEACHER HARD-DELETE LIFECYCLE RESTORATION
+
+### Principal/Admin Delete
+PASS / FAIL
+
+### Support Staff Delete with permission
+PASS / FAIL
+
+### Support Staff without Delete permission
+PASS / FAIL
+
+### Removed History
+PASS / FAIL
+
+Explain what snapshot is stored.
+
+### Teacher DB row after Delete
+DELETED / RETAINED
+
+Expected: DELETED.
+
+### User/Login row after Delete
+DELETED / RETAINED
+
+Expected: DELETED.
+
+### Normal Teacher Registry after Delete
+REMOVED / STILL VISIBLE
+
+Expected: REMOVED.
+
+### INACTIVE status from Delete
+YES / NO
+
+Expected: NO.
+
+### Reactivate action for hard-deleted Teacher
+YES / NO
+
+Expected: NO.
+
+### Permission independence
+PASS / FAIL
+
+### Tenant isolation
+PASS / FAIL
+
+### Actor attribution
+Explain.
+
+### Student Delete behavior
+UNCHANGED / CHANGED
+
+Expected: UNCHANGED.
+
+### Principal/Admin other Teacher functionality
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
