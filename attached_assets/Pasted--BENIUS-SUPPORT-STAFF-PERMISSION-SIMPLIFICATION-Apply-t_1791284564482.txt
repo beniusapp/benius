@@ -1,0 +1,576 @@
+# BENIUS — SUPPORT STAFF PERMISSION SIMPLIFICATION
+
+Apply the same **parent-only permission model** to ONLY these three modules:
+
+1. Faculty Mapping
+2. Teacher Registry
+3. Student Registry
+
+Do NOT modify unrelated modules.
+
+Do NOT modify Mobile.
+
+Do NOT deploy.
+
+---
+
+# PRODUCT DECISION
+
+I do NOT want submodule/action permissions for these three modules.
+
+The Support Staff permission editor should simply show:
+
+```text
+☐ Faculty Mapping
+☐ Teacher Registry
+☐ Student Registry
+```
+
+There should be:
+
+- no expand arrows
+- no View/Add/Edit/Deactivate child permissions
+- no Assign child permission
+- no Export child permission
+- no other sub-permissions
+
+The parent module itself is the permission boundary.
+
+---
+
+# 1. FACULTY MAPPING
+
+## Granted
+
+If:
+
+**Faculty Mapping = GRANTED**
+
+Support Staff gets the complete normal Principal/Admin operational functionality inside Faculty Mapping.
+
+This includes the existing normal functionality for:
+
+- viewing faculty mappings
+- assigning teachers
+- modifying mappings
+- removing/changing mappings where Principal/Admin normally can
+- other existing Faculty Mapping operations
+
+Do not artificially disable functionality merely because the authenticated user is Support Staff.
+
+## Not granted
+
+Support Staff gets ZERO Faculty Mapping access:
+
+- dashboard tile hidden
+- direct URL blocked
+- protected APIs rejected
+- no mapping reads or mutations
+
+---
+
+# 2. TEACHER REGISTRY
+
+Remove existing Support Staff child permissions such as:
+
+- View
+- Add
+- Edit
+- Deactivate
+
+and any other Teacher Registry child permission.
+
+The permission editor should show only:
+
+```text
+☐ Teacher Registry
+```
+
+## Granted
+
+If:
+
+**Teacher Registry = GRANTED**
+
+Support Staff gets the complete normal Principal/Admin operational functionality inside Teacher Registry.
+
+This includes existing normal functionality such as:
+
+- view/search teachers
+- register/add teacher
+- edit teacher
+- deactivate teacher
+- other normal Teacher Registry operations available to Principal/Admin
+
+IMPORTANT:
+
+We have already decided that Support Staff IS allowed to deactivate a Teacher when Teacher Registry is granted.
+
+## Not granted
+
+Support Staff gets ZERO Teacher Registry access.
+
+---
+
+# 3. STUDENT REGISTRY
+
+Remove existing Support Staff child permissions such as:
+
+- View
+- Add
+- Edit
+- Deactivate
+- Export
+
+and any other Student Registry child permission.
+
+The permission editor should show only:
+
+```text
+☐ Student Registry
+```
+
+## Granted
+
+If:
+
+**Student Registry = GRANTED**
+
+Support Staff gets the complete normal Principal/Admin operational functionality inside Student Registry.
+
+This includes existing normal functionality such as:
+
+- view/search students
+- register/add student
+- edit student
+- deactivate student
+- export where Principal/Admin normally can
+- other normal Student Registry operations
+
+IMPORTANT:
+
+We have already decided that Support Staff IS allowed to deactivate a Student when Student Registry is granted.
+
+## Not granted
+
+Support Staff gets ZERO Student Registry access.
+
+---
+
+# VERY IMPORTANT — SHARED SCHOOL DATA
+
+Support Staff must operate on the SAME school-owned data that Principal/Admin uses.
+
+Example:
+
+```text
+Support Staff — School A
+Teacher Registry granted
+        ↓
+Adds Teacher
+        ↓
+School A shared Teacher data
+        ↓
+Principal/Admin sees same Teacher
+```
+
+There must NOT be separate Support Staff registry data.
+
+The same applies to:
+
+- Faculty Mapping
+- Teacher Registry
+- Student Registry
+
+---
+
+# TENANT ISOLATION
+
+This is NON-NEGOTIABLE.
+
+Support Staff belongs to one authenticated school.
+
+Example:
+
+```text
+Support Staff — School A
+
+School A Teachers       ✅
+School A Students       ✅
+School A Faculty Mapping ✅
+
+School B Teachers       ❌
+School B Students       ❌
+School B Faculty Mapping ❌
+```
+
+All reads and writes must derive/validate school ownership from the authenticated server-side identity.
+
+Do NOT trust client-supplied:
+
+- schoolId
+- teacherId
+- studentId
+- mapping IDs
+
+without validating ownership.
+
+An object ID belonging to School B must never allow School A Support Staff to read or mutate that object.
+
+---
+
+# TEACHER / STUDENT DEACTIVATION
+
+Support Staff with the corresponding parent grant must be able to deactivate same-school records exactly according to the existing Principal/Admin business rules.
+
+But do NOT bypass:
+
+- school ownership
+- existing validation
+- dependency checks
+- existing password/PIN/security confirmation requirements, if genuinely part of the Principal workflow
+
+Do NOT try to resolve Support Staff as an Admin using the negative compatibility `userId`.
+
+If Principal authentication logic currently assumes an Admin `users.id`, adapt the authorization safely for the authenticated Support Staff identity rather than using `-staffId` as an Admin ID.
+
+---
+
+# NEGATIVE SUPPORT STAFF ID
+
+The previous audit found Registry operations that could fail because older Web routes attempted to use:
+
+`userId = -staffId`
+
+as though it were an Admin `users.id`.
+
+Correct this where necessary for these three modules.
+
+DO NOT:
+
+- create a fake Admin
+- convert Support Staff into Admin
+- write negative Support Staff IDs into Admin foreign keys
+- bypass tenant checks
+- falsely attribute actions to Principal
+
+Use the authenticated:
+
+- positive `staffId`
+- role = `support_staff`
+- authenticated school
+
+where appropriate.
+
+---
+
+# ACTOR ATTRIBUTION
+
+When Support Staff performs actions such as:
+
+- teacher registration
+- teacher edit/deactivation
+- student registration
+- student edit/deactivation
+- Faculty Mapping changes
+
+the operational data remains owned by the SCHOOL.
+
+Where BENIUS records actor/audit information, preserve the actual actor as Support Staff.
+
+Prefer existing role-aware audit infrastructure:
+
+```text
+Actor:
+positive staffId
+role = support_staff
+
+Owner:
+authenticated school
+```
+
+Do not falsely record Principal/Admin as the actor.
+
+---
+
+# ACADEMIC SESSION
+
+Teacher/Student registry master records may be current/global where that is the existing product design.
+
+However, any operation involving session-specific placement, enrollment, mapping or academic data must preserve the existing BENIUS Academic Session rules.
+
+Do NOT change the Student Portal Profile decision.
+
+Do NOT change enrollment architecture.
+
+Historical/inactive Academic Session operational data remains read-only wherever applicable.
+
+---
+
+# LEGACY CHILD PERMISSIONS
+
+Existing Support Staff accounts may contain old child permissions.
+
+Examples:
+
+Teacher Registry:
+- view
+- add
+- edit
+- deactivate
+
+Student Registry:
+- view
+- add
+- edit
+- deactivate
+- export
+
+Faculty Mapping:
+- view
+- assign
+
+After this correction:
+
+> ONLY the parent module grant authorizes Support Staff access.
+
+A child-only legacy grant must NOT authorize the module.
+
+Do NOT automatically promote legacy child-only grants into full parent access.
+
+When permissions are subsequently saved, remove/canonicalize obsolete child keys for these three modules.
+
+No unnecessary database migration.
+
+---
+
+# SERVER-SIDE ENFORCEMENT
+
+This must NOT be UI-only.
+
+For each module:
+
+```text
+Parent granted
+→ normal same-school functionality allowed
+
+Parent not granted
+→ protected APIs rejected
+```
+
+Direct URL access must also be blocked when ungranted.
+
+---
+
+# PRINCIPAL/ADMIN
+
+Principal/Admin functionality must remain unchanged.
+
+Do not reduce or alter Principal capabilities.
+
+---
+
+# MOBILE REMAINS FROZEN
+
+Mobile development remains FROZEN.
+
+Therefore:
+
+- DO NOT modify Mobile files
+- DO NOT redesign Mobile APIs
+- DO NOT synchronize Mobile permission behavior
+- DO NOT change Mobile business logic
+
+If an existing Mobile issue is noticed, report it only.
+
+---
+
+# DO NOT CHANGE
+
+Do NOT modify:
+
+- School Setup
+- Timetable Master
+- School Calendar
+- Attendance Overview
+- Exam Controller
+- Complaint Hub
+- Noticeboard
+- Approval Center
+- Leave Requests
+- Support Staff Management
+- Performance Analytics
+- Audit Logs
+- Visitor Log
+- ID Card Gen
+- Assets & Inventory
+- Fees & Payments
+- Academic Session selector
+- Teacher Portal
+- Student Portal
+- unrelated database/schema
+- deployment
+
+No broad refactor.
+
+---
+
+# REQUIRED VALIDATION
+
+## Permission Editor
+
+Must show:
+
+```text
+☐ Faculty Mapping
+☐ Teacher Registry
+☐ Student Registry
+```
+
+No child controls.
+
+---
+
+## Faculty Mapping granted
+
+Verify:
+
+- module visible
+- direct access works
+- normal mapping reads work
+- assignment/mapping mutations work
+- same-school enforcement works
+
+Without grant:
+- module hidden
+- direct URL blocked
+- APIs rejected
+
+---
+
+## Teacher Registry granted
+
+Verify:
+
+- list/search works
+- add/register works
+- edit works
+- deactivate works
+- Principal sees Staff-created/updated Teacher
+- same-school enforcement works
+
+Without grant:
+- module hidden
+- direct URL blocked
+- APIs rejected
+
+---
+
+## Student Registry granted
+
+Verify:
+
+- list/search works
+- add/register works
+- edit works
+- deactivate works
+- export works where Principal has it
+- Principal sees Staff-created/updated Student
+- same-school enforcement works
+
+Without grant:
+- module hidden
+- direct URL blocked
+- APIs rejected
+
+---
+
+# CROSS-SCHOOL SECURITY TESTS
+
+Specifically test:
+
+School A Support Staff:
+
+- read School B Teacher → REJECT
+- edit/deactivate School B Teacher → REJECT
+- read School B Student → REJECT
+- edit/deactivate School B Student → REJECT
+- change School B Faculty Mapping → REJECT
+
+Also verify manipulated IDs or `schoolId` values cannot bypass tenant isolation.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+## FACULTY MAPPING / TEACHER REGISTRY / STUDENT REGISTRY SIMPLIFICATION
+
+### Permission Editor
+PASS / FAIL
+
+### Faculty Mapping
+- Parent-only: YES/NO
+- Full functionality when granted: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Actor attribution: PASS / LIMITATION
+
+### Teacher Registry
+- Parent-only: YES/NO
+- View/search: PASS/FAIL
+- Add/register: PASS/FAIL
+- Edit: PASS/FAIL
+- Deactivate: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Actor attribution: PASS / LIMITATION
+
+### Student Registry
+- Parent-only: YES/NO
+- View/search: PASS/FAIL
+- Add/register: PASS/FAIL
+- Edit: PASS/FAIL
+- Deactivate: PASS/FAIL
+- Export: PASS/FAIL
+- No access when ungranted: PASS/FAIL
+- Tenant isolation: PASS/FAIL
+- Actor attribution: PASS / LIMITATION
+
+### Shared Principal/Support Staff data
+PASS / FAIL
+
+Confirm whether successful Support Staff changes are visible through the normal Principal/Admin module.
+
+### Negative-ID safety
+PASS / FAIL
+
+### Legacy child permissions
+Explain handling.
+
+### Academic Session protections
+UNCHANGED / CHANGED
+
+### Principal/Admin
+UNCHANGED / CHANGED
+
+### Other modules
+UNCHANGED / CHANGED
+
+### Database/schema
+NONE / explain
+
+### Mobile
+FROZEN
+
+### Deployment
+NONE
+
+### Tests/builds performed
+
+## FINAL VERDICT
+
+PASS / NEEDS CHANGES
+
+STOP.
