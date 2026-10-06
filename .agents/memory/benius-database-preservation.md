@@ -9,10 +9,18 @@ During the workspace port, a schema push against the populated development datab
 
 **How to apply:** Do not run schema pushes automatically after task merges; install dependencies there, and handle database changes as a separately reviewed operation. Before any future schema push, inspect the proposed SQL and current records and resolve schema drift without deleting data. An imported workspace may have a fresh database rather than the populated database from the original project: inspect it first, and ask whether to initialize or restore school data. For new additive tables needed by the server's startup schema guard, keep reviewed migration SQL and an idempotent startup path ahead of that guard; otherwise a fresh deployment can block even the unchanged web app. A successful application startup alone does not authorize destructive schema changes.
 
-## Teacher promotion ledger session identity
+## Teacher Promotion session identity
 
-Do not change the promotion-ledger schema or force existing records into a school year without explicit approval. Until the ledger can represent the same student/cohort/term independently for each academic session, selected-session writes must refuse to overwrite a record tagged to another session or an untagged legacy record.
+Promotion decisions and overrides are isolated by school, session, and their exact cohort/student identity. Reads, upserts, and deletes must include the selected session; writes require that session to be active and the Student to have an active enrollment in the exact source cohort. Never infer a missing historical session from the current session.
 
-**Why:** The existing conflict identity does not include academic session, and historical ledger rows cannot be assigned to a year with confidence. The Step 4 request did not authorize a schema migration.
+**Why:** A Student can have independent Promotion outcomes in different school years; the old unscoped key could not represent both, and legacy rows may not have enough evidence for safe reassignment.
 
-**How to apply:** Keep reads scoped to the selected session, make conflicts explicit without partially saving, and treat a session-aware uniqueness migration plus safe legacy-data handling as separately approved work.
+**How to apply:** Keep the database unique constraints, storage conflict targets, and API tenant/session checks aligned. Validate active enrollment for writes and use exact-session reads/deletes.
+
+## Drizzle push scope safety
+
+The project's Drizzle table filter does not make a partial push safe for its monolithic schema: a filtered or temporary partial schema can still produce unrelated global sequence changes.
+
+**Why:** A Development push applied the intended Promotion DDL, then attempted to drop unrelated serial sequences and failed; subsequent catalog and row-count checks showed the target schema was applied and no sequence or application data was removed.
+
+**How to apply:** Inspect generated SQL before schema pushes, reject out-of-scope DDL, never use force, and verify the live catalog after any failed push because it may have partially applied earlier statements.

@@ -475,8 +475,17 @@ export const promotionDecisions = pgTable("promotion_decisions", {
   adminExecutedAt: timestamp("admin_executed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at"),
-  sessionId: integer("session_id").references(() => academicSessions.id, { onDelete: "cascade" }),
-});
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
+}, (table) => [
+  uniqueIndex("promotion_decisions_session_identity_unique").on(
+    table.schoolId,
+    table.sessionId,
+    table.class,
+    table.section,
+    table.term,
+    table.studentId,
+  ),
+]);
 export type PromotionDecision = typeof promotionDecisions.$inferSelect;
 
 export const galleryItems = pgTable("gallery_items", {
@@ -867,6 +876,7 @@ export type HomeworkSubmission = typeof homeworkSubmissions.$inferSelect;
 export const promotionOverrides = pgTable("promotion_overrides", {
   id: serial("id").primaryKey(),
   schoolId: integer("school_id").notNull().references(() => schools.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => academicSessions.id, { onDelete: "cascade" }),
   studentId: integer("student_id").notNull().references(() => students.id, { onDelete: "cascade" }),
   examType: text("exam_type").notNull(),
   class: text("class").notNull(),
@@ -876,7 +886,14 @@ export const promotionOverrides = pgTable("promotion_overrides", {
   nextSection: text("next_section").notNull(),
   overriddenAt: timestamp("overridden_at").notNull().defaultNow(),
 }, (table) => [
-  uniqueIndex("promotion_override_unique").on(table.schoolId, table.studentId, table.examType, table.class, table.section),
+  uniqueIndex("promotion_override_unique").on(
+    table.schoolId,
+    table.sessionId,
+    table.studentId,
+    table.examType,
+    table.class,
+    table.section,
+  ),
 ]);
 
 export const insertPromotionOverrideSchema = createInsertSchema(promotionOverrides).omit({ id: true, overriddenAt: true });

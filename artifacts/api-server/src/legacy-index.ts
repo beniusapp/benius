@@ -161,6 +161,7 @@ app.use((req, res, next) => {
     CREATE TABLE IF NOT EXISTS promotion_decisions (
       id SERIAL PRIMARY KEY,
       school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES academic_sessions(id) ON DELETE CASCADE,
       class TEXT NOT NULL,
       section TEXT NOT NULL,
       term TEXT NOT NULL,
@@ -172,9 +173,13 @@ app.use((req, res, next) => {
       processed_by_teacher_id INTEGER REFERENCES teachers(id),
       locked BOOLEAN NOT NULL DEFAULT FALSE,
       locked_at TIMESTAMP,
+      auto_suggestion TEXT,
+      manual_intervention BOOLEAN NOT NULL DEFAULT FALSE,
+      admin_executed BOOLEAN NOT NULL DEFAULT FALSE,
+      admin_executed_at TIMESTAMP,
       created_at TIMESTAMP NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMP,
-      UNIQUE(school_id, class, section, term, student_id)
+      UNIQUE(school_id, session_id, class, section, term, student_id)
     );
   `);
 

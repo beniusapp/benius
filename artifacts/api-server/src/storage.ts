@@ -6199,51 +6199,195 @@ export class DatabaseStorage {
   }
 
   async upsertPromotionOverride(data: {
-    schoolId: number; studentId: number; examType: string; class: string; section: string;
+    schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
     overrideStatus: string; nextClass: string; nextSection: string;
   }): Promise<void> {
-    await db.insert(promotionOverrides).values(data)
-      .onConflictDoUpdate({
-        target: [promotionOverrides.schoolId, promotionOverrides.studentId, promotionOverrides.examType, promotionOverrides.class, promotionOverrides.section],
-        set: { overrideStatus: data.overrideStatus, nextClass: data.nextClass, nextSection: data.nextSection, overriddenAt: new Date() },
-      });
+    await this.bulkUpsertPromotionOverrides([data]);
   }
 
   async bulkUpsertPromotionOverrides(items: Array<{
-    schoolId: number; studentId: number; examType: string; class: string; section: string;
+    schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
     overrideStatus: string; nextClass: string; nextSection: string;
   }>): Promise<void> {
-    for (const item of items) {
-      await this.upsertPromotionOverride(item);
+    if (items.length === 0) return;
+    const first = items[0];
+    const studentIds = items.map(item => item.studentId);
+    if (
+      new Set(studentIds).size !== studentIds.length ||
+      items.some(item =>
+        item.schoolId !== first.schoolId ||
+        item.sessionId !== first.sessionId ||
+        item.class !== first.class ||
+        item.section !== first.section ||
+        item.examType !== first.examType
+      )
+    ) {
+      throw new PromotionStage1Error(
+        "Promotion overrides in one request must use one session, cohort, and examination with no duplicate Students.",
+        400,
+        "MIXED_PROMOTION_COHORT",
+      );
     }
+
+    await db.transaction(async (tx) => {
+      const [session] = await tx.select({
+        id: academicSessions.id,
+        isActive: academicSessions.isActive,
+      })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, first.sessionId),
+          eq(academicSessions.schoolId, first.schoolId),
+        ))
+        .for("update");
+      if (!session?.isActive) {
+        throw new PromotionStage1Error(
+          "Promotion overrides can only be saved in the school's active Academic Session.",
+          403,
+          "SESSION_NOT_WRITABLE",
+        );
+      }
+
+      const [studentRows, enrollmentRows] = await Promise.all([
+        tx.select({
+          id: students.id,
+          schoolId: students.schoolId,
+          isActive: students.isActive,
+          dsid: students.digitalStudentId,
+          name: students.name,
+        })
+          .from(students)
+          .where(and(
+            eq(students.schoolId, first.schoolId),
+            inArray(students.id, studentIds),
+          ))
+          .for("update"),
+        tx.select({
+          studentId: enrollments.studentId,
+          schoolId: enrollments.schoolId,
+          sessionId: enrollments.sessionId,
+          className: enrollments.className,
+          sectionName: enrollments.sectionName,
+          status: enrollments.status,
+        })
+          .from(enrollments)
+          .where(and(
+            eq(enrollments.schoolId, first.schoolId),
+            eq(enrollments.sessionId, first.sessionId),
+            inArray(enrollments.studentId, studentIds),
+          ))
+          .for("update"),
+      ]);
+
+      validatePromotionExecutionRoster(
+        first.schoolId,
+        first.sessionId,
+        items.map(item => ({
+          studentId: item.studentId,
+          fromClass: item.class,
+          fromSection: item.section,
+          nextClass: item.nextClass,
+          nextSection: item.nextSection,
+          examType: item.examType,
+          totalObtained: 0,
+          totalMax: 0,
+          percentage: 0,
+        })),
+        studentRows,
+        enrollmentRows,
+      );
+
+      for (const item of items) {
+        await tx.insert(promotionOverrides).values(item)
+          .onConflictDoUpdate({
+            target: [
+              promotionOverrides.schoolId,
+              promotionOverrides.sessionId,
+              promotionOverrides.studentId,
+              promotionOverrides.examType,
+              promotionOverrides.class,
+              promotionOverrides.section,
+            ],
+            set: {
+              overrideStatus: item.overrideStatus,
+              nextClass: item.nextClass,
+              nextSection: item.nextSection,
+              overriddenAt: new Date(),
+            },
+          });
+      }
+    });
   }
 
   async deleteAllPromotionOverrides(data: {
-    schoolId: number; class: string; section: string; examType: string;
+    schoolId: number; sessionId: number; class: string; section: string; examType: string;
   }): Promise<void> {
-    await db.delete(promotionOverrides).where(and(
-      eq(promotionOverrides.schoolId, data.schoolId),
-      eq(promotionOverrides.class, data.class),
-      eq(promotionOverrides.section, data.section),
-      eq(promotionOverrides.examType, data.examType),
-    ));
+    await db.transaction(async (tx) => {
+      const [session] = await tx.select({ isActive: academicSessions.isActive })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, data.sessionId),
+          eq(academicSessions.schoolId, data.schoolId),
+        ))
+        .for("update");
+      if (!session?.isActive) {
+        throw new PromotionStage1Error(
+          "Promotion overrides can only be changed in the school's active Academic Session.",
+          403,
+          "SESSION_NOT_WRITABLE",
+        );
+      }
+      await tx.delete(promotionOverrides).where(and(
+        eq(promotionOverrides.schoolId, data.schoolId),
+        eq(promotionOverrides.sessionId, data.sessionId),
+        eq(promotionOverrides.class, data.class),
+        eq(promotionOverrides.section, data.section),
+        eq(promotionOverrides.examType, data.examType),
+      ));
+    });
   }
 
   async deletePromotionOverride(data: {
-    schoolId: number; studentId: number; examType: string; class: string; section: string;
+    schoolId: number; sessionId: number; studentId: number; examType: string; class: string; section: string;
   }): Promise<void> {
-    await db.delete(promotionOverrides).where(and(
-      eq(promotionOverrides.schoolId, data.schoolId),
-      eq(promotionOverrides.studentId, data.studentId),
-      eq(promotionOverrides.examType, data.examType),
-      eq(promotionOverrides.class, data.class),
-      eq(promotionOverrides.section, data.section),
-    ));
+    await db.transaction(async (tx) => {
+      const [session] = await tx.select({ isActive: academicSessions.isActive })
+        .from(academicSessions)
+        .where(and(
+          eq(academicSessions.id, data.sessionId),
+          eq(academicSessions.schoolId, data.schoolId),
+        ))
+        .for("update");
+      if (!session?.isActive) {
+        throw new PromotionStage1Error(
+          "Promotion overrides can only be changed in the school's active Academic Session.",
+          403,
+          "SESSION_NOT_WRITABLE",
+        );
+      }
+      const [student] = await tx.select({ id: students.id })
+        .from(students)
+        .where(and(
+          eq(students.id, data.studentId),
+          eq(students.schoolId, data.schoolId),
+        ))
+        .for("update");
+      if (!student) return;
+      await tx.delete(promotionOverrides).where(and(
+        eq(promotionOverrides.schoolId, data.schoolId),
+        eq(promotionOverrides.sessionId, data.sessionId),
+        eq(promotionOverrides.studentId, data.studentId),
+        eq(promotionOverrides.examType, data.examType),
+        eq(promotionOverrides.class, data.class),
+        eq(promotionOverrides.section, data.section),
+      ));
+    });
   }
 
-  async getPromotionOverrides(schoolId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
+  async getPromotionOverrides(schoolId: number, sessionId: number, cls: string, section: string, examType: string): Promise<PromotionOverride[]> {
     return await db.select().from(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, schoolId),
+      eq(promotionOverrides.sessionId, sessionId),
       eq(promotionOverrides.class, cls),
       eq(promotionOverrides.section, section),
       eq(promotionOverrides.examType, examType),
@@ -6727,13 +6871,23 @@ export class DatabaseStorage {
       byStudent[sid].total += r.exam_scores.totalMarks;
     }
 
+    const overrideMap: Record<number, string> = {};
+    if (opts.section && opts.examType) {
+      const overrides = await this.getPromotionOverrides(
+        schoolId,
+        opts.sessionId,
+        cls,
+        opts.section,
+        opts.examType,
+      );
+      for (const override of overrides) overrideMap[override.studentId] = override.overrideStatus;
+    }
+
     let studentList = await Promise.all(Object.entries(byStudent).map(async ([id, d]) => {
       const studentId = parseInt(id);
       const percentage = d.total > 0 ? parseFloat(((d.obtained / d.total) * 100).toFixed(2)) : 0;
       const grade = await this.resolveGrade(schoolId, cls, percentage);
-      // Promotion overrides have no academic-session key. Never apply those
-      // legacy rows to a session-scoped analytics result.
-      const overrideStatus: string | null = null;
+      const overrideStatus = overrideMap[studentId] ?? null;
       let passStatus: "PASS" | "FAIL" | "GRACE_PASS";
       if (overrideStatus === "GRACE_PASS") passStatus = "GRACE_PASS";
       else if (overrideStatus === "PASS") passStatus = "PASS";
@@ -7812,28 +7966,14 @@ export class DatabaseStorage {
   ): Promise<boolean> {
     const now = new Date();
     return db.transaction(async (tx) => {
-      // The existing conflict identity omits sessionId. Refuse to overwrite a
-      // decision tagged to another (or legacy untagged) session until the
-      // database can represent both rows independently. Transaction-scoped
-      // advisory locks also close the concurrent first-insert race.
+      // The conflict identity includes sessionId; serialize concurrent saves
+      // only for the same school/session/cohort/student identity.
       const studentIds = [...new Set(entries.map(entry => entry.studentId))].sort((a, b) => a - b);
       for (const studentId of studentIds) {
-        const conflictIdentity = JSON.stringify([schoolId, cls, section, term, studentId]);
+        const conflictIdentity = JSON.stringify([schoolId, sessionId, cls, section, term, studentId]);
         await tx.execute(sql`
           SELECT pg_advisory_xact_lock(hashtextextended(${conflictIdentity}, 0))
         `);
-        const existing = await tx.select({ sessionId: promotionDecisions.sessionId })
-          .from(promotionDecisions)
-          .where(and(
-            eq(promotionDecisions.schoolId, schoolId),
-            eq(promotionDecisions.class, cls),
-            eq(promotionDecisions.section, section),
-            eq(promotionDecisions.term, term),
-            eq(promotionDecisions.studentId, studentId),
-          ))
-          .limit(1)
-          .for("update");
-        if (existing.length > 0 && existing[0].sessionId !== sessionId) return false;
       }
 
       // When unlocking, clear only locked rows from the selected session.
@@ -7866,7 +8006,14 @@ export class DatabaseStorage {
           updatedAt: now,
           sessionId,
         }).onConflictDoUpdate({
-          target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
+          target: [
+            promotionDecisions.schoolId,
+            promotionDecisions.sessionId,
+            promotionDecisions.class,
+            promotionDecisions.section,
+            promotionDecisions.term,
+            promotionDecisions.studentId,
+          ],
           set: {
             decision: entry.decision,
             targetClass: entry.targetClass,
@@ -8081,10 +8228,11 @@ export class DatabaseStorage {
   }
 
   // ── Delete promotion overrides for a specific set of student IDs ──────────
-  async deletePromotionOverridesByStudentIds(schoolId: number, studentIds: number[], examType: string): Promise<void> {
+  async deletePromotionOverridesByStudentIds(schoolId: number, sessionId: number, studentIds: number[], examType: string): Promise<void> {
     if (studentIds.length === 0) return;
     await db.delete(promotionOverrides).where(and(
       eq(promotionOverrides.schoolId, schoolId),
+      eq(promotionOverrides.sessionId, sessionId),
       eq(promotionOverrides.examType, examType),
       inArray(promotionOverrides.studentId, studentIds),
     ));

@@ -4574,8 +4574,9 @@ Thank you for your prompt attention to this matter.
     const selectedSession = await requireAdminPromotionSession(req, res, "read");
     if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
-    const [studentsData, meta, classSubjectsMap] = await Promise.all([
+    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
       storage.getExamAggregated(schoolId, cls, section, examType, selectedSession.sessionId),
+      storage.getPromotionOverrides(schoolId, selectedSession.sessionId, cls, section, examType),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
     ]);
@@ -4626,8 +4627,8 @@ Thank you for your prompt attention to this matter.
 
     res.json({
       students: studentsEnriched,
-      overrides: [],
-      overrideSessionIsolation: "SCHEMA_MIGRATION_REQUIRED",
+      overrides,
+      overrideSessionIsolation: "SESSION_AWARE",
       missingSubjects,
       passThreshold,
     });
@@ -4637,40 +4638,126 @@ Thank you for your prompt attention to this matter.
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
-    res.status(409).json({
-      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
-      message: "Promotion overrides are disabled until their records can be stored per Academic Session.",
+    const overrideSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      nextClass: z.string().min(1),
+      nextSection: z.string().min(1),
     });
+    const parsed = overrideSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues.map(issue => issue.message).join(", "),
+      });
+      return;
+    }
+    try {
+      await storage.upsertPromotionOverride({
+        ...parsed.data,
+        schoolId: req.session.schoolId!,
+        sessionId: selectedSession.sessionId,
+      });
+      res.json({ message: "Override saved" });
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      res.status(500).json({ message: "Failed to save Promotion override" });
+    }
   });
 
   app.post("/api/admin/exam/override/bulk", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
-    res.status(409).json({
-      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
-      message: "Bulk Promotion overrides are disabled until their records can be stored per Academic Session.",
+    const itemSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
+      overrideStatus: z.enum(["PASS", "FAIL", "GRACE_PASS", "REPEAT"]),
+      nextClass: z.string().min(1),
+      nextSection: z.string().min(1),
     });
+    const parsed = z.object({ items: z.array(itemSchema).min(1) }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues.map(issue => issue.message).join(", "),
+      });
+      return;
+    }
+    try {
+      const schoolId = req.session.schoolId!;
+      await storage.bulkUpsertPromotionOverrides(parsed.data.items.map(item => ({
+        ...item,
+        schoolId,
+        sessionId: selectedSession.sessionId,
+      })));
+      res.json({ message: "Bulk overrides saved", count: parsed.data.items.length });
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      res.status(500).json({ message: "Failed to save bulk Promotion overrides" });
+    }
   });
 
   app.delete("/api/admin/exam/override/cohort", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
-    res.status(409).json({
-      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
-      message: "Promotion override cleanup is disabled until records can be isolated by Academic Session.",
+    const schema = z.object({
+      class: z.string().min(1),
+      section: z.string().min(1),
+      examType: z.string().min(1),
     });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues.map(issue => issue.message).join(", "),
+      });
+      return;
+    }
+    try {
+      await storage.deleteAllPromotionOverrides({
+        ...parsed.data,
+        schoolId: req.session.schoolId!,
+        sessionId: selectedSession.sessionId,
+      });
+      res.json({ message: "All overrides cleared" });
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      res.status(500).json({ message: "Failed to clear Promotion overrides" });
+    }
   });
 
   app.delete("/api/admin/exam/override", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const selectedSession = await requireAdminPromotionSession(req, res, "write");
     if (!selectedSession) return;
-    res.status(409).json({
-      code: "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED",
-      message: "Promotion override deletion is disabled until records can be isolated by Academic Session.",
+    const clearSchema = z.object({
+      studentId: z.number().int().positive(),
+      examType: z.string().min(1),
+      class: z.string().min(1),
+      section: z.string().min(1),
     });
+    const parsed = clearSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        message: parsed.error.issues.map(issue => issue.message).join(", "),
+      });
+      return;
+    }
+    try {
+      await storage.deletePromotionOverride({
+        ...parsed.data,
+        schoolId: req.session.schoolId!,
+        sessionId: selectedSession.sessionId,
+      });
+      res.json({ message: "Override cleared" });
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      res.status(500).json({ message: "Failed to clear Promotion override" });
+    }
   });
 
   app.post("/api/admin/promote", async (req, res) => {

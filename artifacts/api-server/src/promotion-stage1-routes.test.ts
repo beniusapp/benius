@@ -32,7 +32,8 @@ test("Web Promotion routes require and preserve the selected school session", as
     actor: { id: number; role: "admin" | "support_staff" };
   }> = [];
   const auditRows: any[] = [];
-  const overrideWrites: string[] = [];
+  const overrideReads: unknown[][] = [];
+  const overrideWrites: Array<{ kind: string; data: any }> = [];
   let resolveAudit!: () => void;
   const auditComplete = new Promise<void>(resolve => { resolveAudit = resolve; });
 
@@ -73,6 +74,10 @@ test("Web Promotion routes require and preserve the selected school session", as
     aggregateReads.push([schoolId, cls, section, examType, sessionId]);
     return [];
   });
+  replace(storage, "getPromotionOverrides", async (...args: any[]) => {
+    overrideReads.push(args);
+    return [];
+  });
   replace(storage, "getAllSchoolMetadata", async () => ({
     classes: ["5", "6"],
     sections: ["A"],
@@ -104,10 +109,18 @@ test("Web Promotion routes require and preserve the selected school session", as
     auditRows.push(data);
     resolveAudit();
   });
-  replace(storage, "upsertPromotionOverride", async () => { overrideWrites.push("single-save"); });
-  replace(storage, "bulkUpsertPromotionOverrides", async () => { overrideWrites.push("bulk-save"); });
-  replace(storage, "deletePromotionOverride", async () => { overrideWrites.push("single-delete"); });
-  replace(storage, "deleteAllPromotionOverrides", async () => { overrideWrites.push("cohort-delete"); });
+  replace(storage, "upsertPromotionOverride", async (data: any) => {
+    overrideWrites.push({ kind: "single-save", data });
+  });
+  replace(storage, "bulkUpsertPromotionOverrides", async (data: any) => {
+    overrideWrites.push({ kind: "bulk-save", data });
+  });
+  replace(storage, "deletePromotionOverride", async (data: any) => {
+    overrideWrites.push({ kind: "single-delete", data });
+  });
+  replace(storage, "deleteAllPromotionOverrides", async (data: any) => {
+    overrideWrites.push({ kind: "cohort-delete", data });
+  });
 
   t.after(() => {
     for (const { target, name, hadOwn, original } of replacements.reverse()) {
@@ -203,7 +216,8 @@ test("Web Promotion routes require and preserve the selected school session", as
   assert.deepEqual(aggregateReads, [[11, "5", "A", "Term 2", 41]]);
   assert.deepEqual(decisionReads.at(-1), [11, "5", "A", "Term 2", 41]);
   assert.deepEqual(archivedAggregate.body.overrides, []);
-  assert.equal(archivedAggregate.body.overrideSessionIsolation, "SCHEMA_MIGRATION_REQUIRED");
+  assert.equal(archivedAggregate.body.overrideSessionIsolation, "SESSION_AWARE");
+  assert.deepEqual(overrideReads, [[11, 41, "5", "A", "Term 2"]]);
 
   const analyticsWithoutSession = await request(
     "/api/admin/analytics/promotion-decisions/5/A/Term%202",
@@ -298,24 +312,28 @@ test("Web Promotion routes require and preserve the selected school session", as
   assert.equal(auditRows[0].actionByRole, "support_staff");
   assert.match(auditRows[0].details, /Support Staff 7/);
 
-  for (const [method, path, body] of [
-    ["POST", "/api/admin/exam/override", { studentId: 7 }],
-    ["POST", "/api/admin/exam/override/bulk", { items: [{ studentId: 7 }] }],
-    ["DELETE", "/api/admin/exam/override", { studentId: 7 }],
-    ["DELETE", "/api/admin/exam/override/cohort", { class: "5", section: "A" }],
-  ] as const) {
+  const overrideRequests = [
+    ["POST", "/api/admin/exam/override", {
+      studentId: 7, examType: "Term 2", class: "5", section: "A",
+      overrideStatus: "PASS", nextClass: "6", nextSection: "A",
+    }, "single-save"],
+    ["POST", "/api/admin/exam/override/bulk", {
+      items: [
+        { studentId: 7, examType: "Term 2", class: "5", section: "A", overrideStatus: "PASS", nextClass: "6", nextSection: "A" },
+        { studentId: 8, examType: "Term 2", class: "5", section: "A", overrideStatus: "REPEAT", nextClass: "5", nextSection: "A" },
+      ],
+    }, "bulk-save"],
+    ["DELETE", "/api/admin/exam/override", {
+      studentId: 7, examType: "Term 2", class: "5", section: "A",
+    }, "single-delete"],
+    ["DELETE", "/api/admin/exam/override/cohort", {
+      class: "5", section: "A", examType: "Term 2",
+    }, "cohort-delete"],
+  ] as const;
+  for (const [method, path, body] of overrideRequests) {
     const missing = await request(path, { method, body, grants: examGrant });
     assert.equal(missing.status, 400);
     assert.equal(missing.body.code, "SESSION_REQUIRED");
-
-    const blocked = await request(path, {
-      method,
-      body,
-      grants: examGrant,
-      viewSessionId: 42,
-    });
-    assert.equal(blocked.status, 409);
-    assert.equal(blocked.body.code, "PROMOTION_OVERRIDE_SESSION_MIGRATION_REQUIRED");
 
     const archived = await request(path, {
       method,
@@ -325,8 +343,35 @@ test("Web Promotion routes require and preserve the selected school session", as
     });
     assert.equal(archived.status, 403);
     assert.equal(archived.body.code, "ARCHIVE_READ_ONLY");
+
+    const foreign = await request(path, {
+      method,
+      body,
+      grants: examGrant,
+      viewSessionId: 88,
+    });
+    assert.equal(foreign.status, 403);
+
+    const saved = await request(path, {
+      method,
+      body,
+      grants: examGrant,
+      viewSessionId: 42,
+    });
+    assert.equal(saved.status, 200);
   }
-  assert.deepEqual(overrideWrites, []);
+  assert.deepEqual(overrideWrites.map(write => write.kind), [
+    "single-save",
+    "bulk-save",
+    "single-delete",
+    "cohort-delete",
+  ]);
+  assert.equal(overrideWrites[0].data.sessionId, 42);
+  assert.equal(overrideWrites[0].data.schoolId, 11);
+  assert.equal(overrideWrites[1].data.length, 2);
+  assert.ok(overrideWrites[1].data.every((item: any) => item.sessionId === 42 && item.schoolId === 11));
+  assert.equal(overrideWrites[2].data.sessionId, 42);
+  assert.equal(overrideWrites[3].data.sessionId, 42);
 
   const scopedDelete = await request("/api/admin/ledger-term/Term%202", {
     method: "DELETE",
