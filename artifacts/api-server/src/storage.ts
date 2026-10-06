@@ -77,6 +77,7 @@ import {
   aggregateStudentAttendance,
   type StudentAttendanceAggregation,
 } from "./student-attendance-calculation";
+import { isEligibleForLiveStudentAttendance } from "./student-attendance-live-eligibility";
 import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import {
   CURRENT_FEE_AUDIT_ACTION_OPTIONS,
@@ -1025,6 +1026,40 @@ export class DatabaseStorage {
       }
     }
     return [...roster.values()];
+  }
+
+  async getLiveAttendanceRosterForSessionClass(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<Student[]> {
+    const scope = {
+      schoolId,
+      sessionId,
+      className: cls,
+      sectionName: section,
+    };
+    const rows = await db.select({ student: students, enrollment: enrollments })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, enrollments.schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(students.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+        eq(enrollments.status, "Active"),
+        eq(students.isActive, true),
+      ));
+
+    return rows
+      .filter(({ student, enrollment }) =>
+        isEligibleForLiveStudentAttendance(student, enrollment, scope))
+      .map(({ student }) => student);
   }
 
   async getAttendanceReportRosterForSessionClass(

@@ -968,7 +968,7 @@ export function registerTeacherRoutes(app: Express) {
     const historicalView = !attendanceSession.isActive || date < addCalendarDays(todayInIST(), -7);
     const studentList = historicalView
       ? await storage.getAttendanceReportRosterForSessionClass(context.schoolId, attendanceSession.id, cls, section)
-      : await storage.getAttendanceRosterForSessionClass(context.schoolId, attendanceSession.id, cls, section);
+      : await storage.getLiveAttendanceRosterForSessionClass(context.schoolId, attendanceSession.id, cls, section);
     const records = historicalView
       ? await storage.getAttendanceByClassDate(context.schoolId, attendanceSession.id, cls, section, date)
       : await storage.getAttendanceForStudentsOnDate(
@@ -1046,7 +1046,7 @@ export function registerTeacherRoutes(app: Express) {
     }
     // This checks Student placement, not the Teacher's Faculty Mapping. Every
     // same-school Teacher retains permission to mark any valid class roster.
-    const roster = await storage.getAttendanceRosterForSessionClass(
+    const roster = await storage.getLiveAttendanceRosterForSessionClass(
       schoolId, attendanceSession.id, targetClass, targetSection,
     );
     const rosterIds = new Set(roster.map(student => student.id));

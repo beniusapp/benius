@@ -70,6 +70,7 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     bulkProfileApprovals: [] as Array<[number[], number, number, number]>,
     approvalHistoryReads: [] as Array<[number, number, number]>,
     rosterReads: [] as Array<[number, number, string, string]>,
+    liveRosterReads: [] as Array<[number, number, string, string]>,
     reportRosterReads: [] as Array<[number, number, string, string]>,
     historyReads: [] as Array<[number, number, string, string, string, string]>,
     studentOwnershipReads: [] as Array<[number[], number]>,
@@ -132,6 +133,15 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     if (sessionId === 101 && className === "5" && section === "A") return [mobileAssignedStudent];
     return [];
   });
+  replaceStorage("getLiveAttendanceRosterForSessionClass", async (
+    schoolId: number, sessionId: number, className: string, section: string,
+  ) => {
+    calls.liveRosterReads.push([schoolId, sessionId, className, section]);
+    if (schoolId === 1 && sessionId === 101 && className === "8" && section === "B") {
+      return [currentStudent];
+    }
+    return [];
+  });
   replaceStorage("getAttendanceReportRosterForSessionClass", async (
     schoolId: number, sessionId: number, className: string, section: string,
   ) => {
@@ -159,7 +169,7 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   });
   replaceStorage("getStudentsByIdsForSchool", async (ids: number[], schoolId: number) => {
     calls.studentOwnershipReads.push([ids, schoolId]);
-    const schoolOwnedIds = schoolId === 1 ? [10, 50] : [schoolBStudent.id];
+    const schoolOwnedIds = schoolId === 1 ? [10, 11, 12, 50] : [schoolBStudent.id];
     return ids.filter((id) => schoolOwnedIds.includes(id)).map((id) => ({ id, schoolId }));
   });
   replaceStorage("getHolidayOnDate", async () => null);
@@ -286,7 +296,7 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
   const firstA = await request(currentPath, { sessionId: 101 });
   assert.equal(firstA.status, 200);
   assert.deepEqual(firstA.body.map((entry: any) => [entry.studentId, entry.status]), [[10, "present"]]);
-  assert.deepEqual(calls.rosterReads.at(-1), [1, 101, "8", "B"]);
+  assert.deepEqual(calls.liveRosterReads.at(-1), [1, 101, "8", "B"]);
 
   assert.equal((await request(currentPath)).status, 400, "session-sensitive reads require an explicit selection");
   assert.equal((await request(currentPath, { sessionId: "101x" })).status, 400);
@@ -326,11 +336,33 @@ test("Teacher Attendance uses the authenticated tenant and selected session for 
     },
   });
   assert.equal(saved.status, 200);
+  assert.deepEqual(calls.liveRosterReads.at(-1), [1, 101, "8", "B"]);
   assert.deepEqual(calls.upserts.at(-1)?.map(({ teacherId, schoolId, sessionId, class: className, section }) => ({
     teacherId, schoolId, sessionId, className, section,
   })), [{ teacherId: 9, schoolId: 1, sessionId: 101, className: "8", section: "B" }]);
 
   const upsertCount = calls.upserts.length;
+  assert.equal((await request("/api/attendance", {
+    method: "POST",
+    sessionId: 101,
+    body: {
+      date: todayInIST(),
+      class: "8",
+      section: "B",
+      records: [{ studentId: 11, status: "present" }],
+    },
+  })).status, 400, "an inactive Student with a still-Active enrollment is rejected");
+  assert.equal((await request("/api/attendance", {
+    method: "POST",
+    sessionId: 101,
+    body: {
+      date: todayInIST(),
+      class: "8",
+      section: "B",
+      records: [{ studentId: 12, status: "present" }],
+    },
+  })).status, 400, "an active Student with an inactive enrollment is rejected");
+  assert.equal(calls.upserts.length, upsertCount);
   assert.equal((await request("/api/attendance", {
     method: "POST", sessionId: 102,
     body: { date: todayInIST(), class: "7", section: "A", records: [{ studentId: 10, status: "present" }] },
