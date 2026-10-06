@@ -230,7 +230,7 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
       const r = await sessionFetch(`/api/leave/school/${schoolId}`);
       return r.ok ? r.json() : [];
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canTeacherLeave,
   });
 
   const { data: studentLeaves = [], isLoading: sleavesLoading } = useQuery<any[]>({
@@ -239,16 +239,16 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
       const r = await sessionFetch(`/api/student-leaves/school/${schoolId}`);
       return r.ok ? r.json() : [];
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canStudentLeave,
   });
 
   const { data: historyData, isLoading: historyLoading } = useQuery<any>({
     queryKey: ["/api/approval-history/leaves", schoolId],
     queryFn: async () => {
-      const r = await fetch(`/api/approval-history/${schoolId}`, { credentials: "include" });
+      const r = await sessionFetch(`/api/approval-history/${schoolId}`);
       return r.ok ? r.json() : { teacherLeaves: [], studentLeaves: [] };
     },
-    enabled: !!schoolId && activeSection === "leave-history",
+    enabled: !!schoolId && canHistory && activeSection === "leave-history",
   });
 
   // ── Mutations ─────────────────────────────────────────────────────────────────
@@ -439,12 +439,20 @@ export default function LeaveRequests({ schoolId, initialSection, onNavigateSect
     );
   }
 
+  if (
+    (activeSection === "teacher-leave" && !canTeacherLeave)
+    || (activeSection === "student-leave" && !canStudentLeave)
+    || (activeSection === "leave-history" && !canHistory)
+  ) {
+    return <div role="alert" className="rounded-xl border border-red-400/20 bg-red-500/5 p-5 text-sm text-white/70">You do not have permission to access this Leave Requests section.</div>;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // LEAVE HISTORY — FULL SCREEN
   // ══════════════════════════════════════════════════════════════════════════
   if (activeSection === "leave-history") {
-    const hCanTeacher = canTeacherLeave;
-    const hCanStudent = canStudentLeave;
+    const hCanTeacher = true;
+    const hCanStudent = true;
     const tabCount    = [hCanTeacher, hCanStudent].filter(Boolean).length;
     const gridCols    = tabCount === 1 ? "grid-cols-1" : "grid-cols-2";
     const defaultTab  = hCanTeacher ? "teacher_leaves" : "student_leaves";

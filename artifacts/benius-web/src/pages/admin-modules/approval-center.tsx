@@ -1236,6 +1236,8 @@ const EBOOK_CATEGORIES = ["Fiction", "Non-Fiction", "Science", "Mathematics", "H
 export default function ApprovalCenter({ schoolId, initialSection, onNavigateSection, allowedSubs, isArchiveMode = false }: Props) {
   const { toast } = useToast();
   const [activeSection, setActiveSection] = useState<ActiveSection>((initialSection as ActiveSection) ?? null);
+  const canGallery = !allowedSubs || allowedSubs.includes("gallery-hub");
+  const canEbooks = !allowedSubs || allowedSubs.includes("ebook");
   useEffect(() => {
     setActiveSection((initialSection as ActiveSection) ?? null);
   }, [initialSection]);
@@ -1258,7 +1260,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       const r = await fetch(`/api/approval-history/${schoolId}`, { credentials: "include" });
       return r.ok ? r.json() : { teacherLeaves: [], studentLeaves: [], gallery: [], ebooks: [] };
     },
-    enabled: !!schoolId && showHistory,
+    enabled: !!schoolId && showHistory && (canGallery || canEbooks),
   });
 
   const { data: pendingEbooks = [], isLoading: ebooksLoading } = useQuery<any[]>({
@@ -1267,7 +1269,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       const r = await fetch(`/api/library/books/${schoolId}/pending`, { credentials: "include" });
       return r.ok ? r.json() : [];
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canEbooks,
   });
 
   const { data: allBooks = [], isLoading: allBooksLoading } = useQuery<any[]>({
@@ -1276,7 +1278,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       const r = await fetch(`/api/library/books/${schoolId}`, { credentials: "include" });
       return r.ok ? r.json() : [];
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canEbooks,
   });
 
   const approvedBooks = allBooks.filter((b: any) => b.verificationStatus === "approved");
@@ -1335,7 +1337,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       const r = await fetch(`/api/gallery/${schoolId}?all=true`, { credentials: "include" });
       return r.ok ? r.json() : [];
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && canGallery,
   });
   const galleryPendingCount = allGalleryForCount.filter((g: any) => !g.approved).length;
 
@@ -1345,8 +1347,8 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
     </div>
   );
 
-  const hCanGallery = !allowedSubs || allowedSubs.includes("gallery-hub");
-  const hCanEbooks  = !allowedSubs || allowedSubs.includes("ebook");
+  const hCanGallery = canGallery;
+  const hCanEbooks  = canEbooks;
   const hTabCount   = [hCanGallery, hCanEbooks].filter(Boolean).length;
   const hDefaultTab = hCanGallery ? "gallery" : "ebooks";
   const hGridCols   = hTabCount === 1 ? "grid-cols-1" : "grid-cols-2";
@@ -1360,7 +1362,7 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
             <History className="w-5 h-5" style={{ color: "#D4AF37" }} />
             Approval History
           </DialogTitle>
-          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>Admin-actioned gallery photos and e-books</p>
+          <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.50)" }}>Approval history for gallery photos and e-books</p>
         </DialogHeader>
         {historyLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin" style={{ color: "#D4AF37" }} /></div>
@@ -1413,6 +1415,13 @@ export default function ApprovalCenter({ schoolId, initialSection, onNavigateSec
       </DialogContent>
     </Dialog>
   );
+
+  if (
+    (activeSection === "gallery-hub" && !canGallery)
+    || (activeSection === "ebook" && !canEbooks)
+  ) {
+    return <div role="alert" className="rounded-xl border border-red-400/20 bg-red-500/5 p-5 text-sm text-white/70">You do not have permission to access this Approval Center section.</div>;
+  }
 
   /* ── LANDING PAGE ── */
   if (activeSection === null) {

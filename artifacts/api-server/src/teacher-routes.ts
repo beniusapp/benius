@@ -52,6 +52,7 @@ import { registerTeacherPasswordRecoveryRoutes } from "./teacher-password-recove
 import { authenticationAttemptIsRevoked } from "./session-revocation";
 import {
   adminModuleAccessAllowed,
+  adminModuleSubAccessAllowed,
   canonicalizeSupportStaffAllowedModules,
   supportStaffModuleAccessAllowed,
 } from "./support-staff-module-permissions";
@@ -91,6 +92,62 @@ function requireAdminModuleAccess(
   }
   res.status(403).json({ message: `${moduleLabel} access required` });
   return false;
+}
+
+function requireAdminModuleSubAccess(
+  req: Request,
+  res: Response,
+  moduleId: string,
+  submoduleId: string,
+  moduleLabel: string,
+): boolean {
+  const isAuthenticatedAdmin = !!req.session.userId && req.session.userRole === "admin";
+  const isAuthenticatedSupportStaff = !!req.session.userId
+    && req.session.userRole === "support_staff"
+    && Number.isSafeInteger(req.session.staffId)
+    && (req.session.staffId ?? 0) > 0;
+  if (
+    (isAuthenticatedAdmin || isAuthenticatedSupportStaff)
+    && adminModuleSubAccessAllowed(
+      req.session.userRole,
+      req.session.allowedModules,
+      moduleId,
+      submoduleId,
+    )
+  ) {
+    return true;
+  }
+  res.status(403).json({ message: `${moduleLabel} permission required` });
+  return false;
+}
+
+async function resolveSupportStaffSession(
+  req: Request,
+  res: Response,
+  schoolId: number,
+  write: boolean,
+) {
+  const activeSession = await storage.getActiveSession(schoolId);
+  const requestedSessionId = (req as any).viewSessionId;
+  const selectedSessionId = requestedSessionId ?? activeSession?.id ?? null;
+  if (!Number.isSafeInteger(selectedSessionId) || selectedSessionId <= 0) {
+    res.status(409).json({ message: "No Academic Session is selected for this school." });
+    return null;
+  }
+
+  const selectedSession = await storage.getAcademicSessionForSchool(selectedSessionId, schoolId);
+  if (!selectedSession) {
+    res.status(403).json({ message: "Academic Session is not valid for this school." });
+    return null;
+  }
+  if (write && (!selectedSession.isActive || activeSession?.id !== selectedSession.id)) {
+    res.status(403).json({
+      error: "Security Restriction: Write operations are strictly blocked for archived school years.",
+      code: "ARCHIVE_READ_ONLY",
+    });
+    return null;
+  }
+  return selectedSession;
 }
 
 type TeacherHomeworkContext = {
@@ -2458,8 +2515,13 @@ export function registerTeacherRoutes(app: Express) {
   // It is intentionally NOT filtered by viewSessionId and MUST NOT be deleted
   // or wiped during any session creation, activation, or rollover operation.
   // Table: gallery_items (no session_id column — listed in GLOBAL DATA PROTECTION CONTRACT)
-  app.post("/api/gallery", diskUpload.single("image"), async (req, res) => {
+  app.post("/api/gallery", (req, res, next) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.teacherId && req.session.userRole === "support_staff"
+      && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
+    next();
+  }, diskUpload.single("image"), async (req, res) => {
+    const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     if (!req.file) return res.status(400).json({ message: "Image file required" });
 
     const { title, schoolId, description, eventTag, capturedDate, capturedTime, location } = req.body;
@@ -2473,10 +2535,15 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Not authorized for this school" });
     }
 
+    const uploaderId = req.session.teacherId
+      ?? (isSupportStaff ? req.session.staffId! : req.session.userId!);
+    const uploaderRole = req.session.teacherId
+      ? "teacher"
+      : isSupportStaff ? "support_staff" : "admin";
     const item = await storage.createGalleryItem({
       schoolId: sid,
-      uploadedById: req.session.teacherId || req.session.userId!,
-      uploaderRole: req.session.teacherId ? "teacher" : "admin",
+      uploadedById: uploaderId,
+      uploaderRole,
       title,
       description: description || null,
       eventTag: eventTag || null,
@@ -2484,18 +2551,23 @@ export function registerTeacherRoutes(app: Express) {
       capturedTime: capturedTime || null,
       location: location || null,
       imageUrl: `/uploads/${req.file.filename}`,
-      approved: !!req.session.userId && !req.session.teacherId,
+      approved: !req.session.teacherId,
     });
     await storage.createAuditLog({
       schoolId: sid, actionType: "upload", entityType: "gallery", entityId: item.id,
-      actionBy: req.session.teacherId || req.session.userId!, actionByRole: req.session.teacherId ? "teacher" : "admin",
+      actionBy: uploaderId, actionByRole: uploaderRole,
       details: `Uploaded gallery image: ${title}`,
     });
     res.status(201).json(item);
   });
 
-  app.post("/api/gallery/batch", diskUpload.array("images", 10), async (req, res) => {
+  app.post("/api/gallery/batch", (req, res, next) => {
     if (!req.session.teacherId && !req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.session.teacherId && req.session.userRole === "support_staff"
+      && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
+    next();
+  }, diskUpload.array("images", 10), async (req, res) => {
+    const isSupportStaff = !req.session.teacherId && req.session.userRole === "support_staff";
     const files = req.files as Express.Multer.File[];
     if (!files || files.length === 0) return res.status(400).json({ message: "At least one image required" });
 
@@ -2510,9 +2582,12 @@ export function registerTeacherRoutes(app: Express) {
       return res.status(403).json({ message: "Not authorized for this school" });
     }
 
-    const uploaderId = req.session.teacherId || req.session.userId!;
-    const isAdmin = !!req.session.userId && !req.session.teacherId;
-    const uploaderRole = req.session.teacherId ? "teacher" : "admin";
+    const uploaderId = req.session.teacherId
+      ?? (isSupportStaff ? req.session.staffId! : req.session.userId!);
+    const uploaderRole = req.session.teacherId
+      ? "teacher"
+      : isSupportStaff ? "support_staff" : "admin";
+    const isAdmin = !req.session.teacherId;
     const items = [];
     for (const file of files) {
       const item = await storage.createGalleryItem({
@@ -2524,8 +2599,8 @@ export function registerTeacherRoutes(app: Express) {
       });
       await storage.createAuditLog({
         schoolId: sid, actionType: "batch_upload", entityType: "gallery", entityId: item.id,
-        actionBy: uploaderId, actionByRole: req.session.teacherId ? "teacher" : "admin",
-        details: `Batch uploaded gallery image: ${title}`,
+        actionBy: uploaderId, actionByRole: uploaderRole,
+        details: `${isSupportStaff ? "Support Staff" : req.session.teacherId ? "Teacher" : "Admin"} batch uploaded gallery image: ${title}`,
       });
       items.push(item);
     }
@@ -2547,6 +2622,8 @@ export function registerTeacherRoutes(app: Express) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     } else if (req.session.userId) {
+      if (req.session.userRole === "support_staff"
+        && !requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
       if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     } else {
       return res.status(401).json({ message: "Not authenticated" });
@@ -2557,13 +2634,15 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/gallery/:id/approve", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     const existing = await storage.getGalleryItemById(parseInt(req.params.id));
     if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     const item = await storage.approveGalleryItem(existing.id);
+    const isSupportStaff = req.session.userRole === "support_staff";
     await storage.createAuditLog({
       schoolId: item.schoolId, actionType: "approve", entityType: "gallery", entityId: item.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
+      actionBy: isSupportStaff ? req.session.staffId! : req.session.userId!,
+      actionByRole: isSupportStaff ? "support_staff" : "admin",
       details: `Approved gallery image: ${item.title}`,
     });
     res.json(item);
@@ -2571,7 +2650,7 @@ export function registerTeacherRoutes(app: Express) {
 
   app.get("/api/admin/gallery/:schoolId", async (req, res) => {
     try {
-      if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+      if (!requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
       const schoolId = parseInt(req.params.schoolId);
       if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
       const items = await storage.getAdminGalleryItems(schoolId);
@@ -2583,27 +2662,31 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.delete("/api/gallery/:id", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     const existing = await storage.getGalleryItemById(parseInt(req.params.id));
     if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     await storage.deleteGalleryItem(existing.id, existing.schoolId);
+    const isSupportStaff = req.session.userRole === "support_staff";
     await storage.createAuditLog({
       schoolId: existing.schoolId, actionType: "delete", entityType: "gallery", entityId: existing.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
+      actionBy: isSupportStaff ? req.session.staffId! : req.session.userId!,
+      actionByRole: isSupportStaff ? "support_staff" : "admin",
       details: `Deleted gallery image: ${existing.title}`,
     });
     res.json({ success: true });
   });
 
   app.post("/api/gallery/batch-delete", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleSubAccess(req, res, "approval-center", "gallery-hub", "Gallery Hub")) return;
     const { ids, reason } = req.body as { ids: number[]; reason?: string };
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ message: "No IDs provided" });
     await storage.deleteGalleryItems(ids, req.session.schoolId!);
+    const isSupportStaff = req.session.userRole === "support_staff";
     await storage.createAuditLog({
       schoolId: req.session.schoolId!, actionType: reason === "rejected" ? "reject" : "delete",
       entityType: "gallery", entityId: 0,
-      actionBy: req.session.userId!, actionByRole: "admin",
+      actionBy: isSupportStaff ? req.session.staffId! : req.session.userId!,
+      actionByRole: isSupportStaff ? "support_staff" : "admin",
       details: `${reason === "rejected" ? "Rejected" : "Deleted"} ${ids.length} gallery image(s)`,
     });
     res.json({ success: true, deleted: ids.length });
@@ -2663,6 +2746,8 @@ export function registerTeacherRoutes(app: Express) {
       const teacher = await storage.getTeacherById(req.session.teacherId);
       if (!teacher || teacher.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     } else if (req.session.userId) {
+      if (req.session.userRole === "support_staff"
+        && !requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
       if (req.session.schoolId !== sid) return res.status(403).json({ message: "Not authorized" });
     } else {
       return res.status(401).json({ message: "Not authenticated" });
@@ -2698,15 +2783,17 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/library/books/:id/verify", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (!requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
     const { status } = req.body;
     if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const existing = await storage.getLibraryBookById(parseInt(req.params.id));
     if (!existing || existing.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     const book = await storage.updateBookVerificationStatus(existing.id, status);
+    const isSupportStaff = req.session.userRole === "support_staff";
     await storage.createAuditLog({
       schoolId: book.schoolId, actionType: "verify", entityType: "ebook", entityId: book.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
+      actionBy: isSupportStaff ? req.session.staffId! : req.session.userId!,
+      actionByRole: isSupportStaff ? "support_staff" : "admin",
       details: `${status === "approved" ? "Approved" : "Rejected"} e-book: ${book.title}`,
     });
     res.json(book);
@@ -2750,8 +2837,13 @@ export function registerTeacherRoutes(app: Express) {
     res.json(mine);
   });
 
-  app.post("/api/library/ebooks/admin", diskUpload.single("file"), async (req, res) => {
+  app.post("/api/library/ebooks/admin", (req, res, next) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    if (req.session.userRole === "support_staff"
+      && !requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
+    next();
+  }, diskUpload.single("file"), async (req, res) => {
+    const isSupportStaff = req.session.userRole === "support_staff";
     if (!req.file) return res.status(400).json({ message: "File required" });
     const { title, author, targetClass, category } = req.body;
     if (!title || !author) return res.status(400).json({ message: "Title and author required" });
@@ -2765,18 +2857,28 @@ export function registerTeacherRoutes(app: Express) {
     });
     await storage.createAuditLog({
       schoolId: req.session.schoolId!, actionType: "upload", entityType: "ebook", entityId: book.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
-      details: `Admin uploaded e-book: ${title} by ${author}`,
+      actionBy: isSupportStaff ? req.session.staffId! : req.session.userId!,
+      actionByRole: isSupportStaff ? "support_staff" : "admin",
+      details: `${isSupportStaff ? "Support Staff" : "Admin"} uploaded e-book: ${title} by ${author}`,
     });
     res.status(201).json(book);
   });
 
   app.delete("/api/library/books/:id", async (req, res) => {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    if (isSupportStaff && !requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
     const book = await storage.getLibraryBookById(parseInt(req.params.id));
     if (!book) return res.status(404).json({ message: "Book not found" });
     if (book.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
     await storage.deleteLibraryBook(parseInt(req.params.id));
+    if (isSupportStaff) {
+      await storage.createAuditLog({
+        schoolId: book.schoolId, actionType: "delete", entityType: "ebook", entityId: book.id,
+        actionBy: req.session.staffId!, actionByRole: "support_staff",
+        details: `Support Staff deleted e-book: ${book.title}`,
+      });
+    }
     res.json({ message: "Book deleted" });
   });
 
@@ -2853,6 +2955,14 @@ export function registerTeacherRoutes(app: Express) {
     if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    if (isSupportStaff && !requireAdminModuleSubAccess(req, res, "leave-requests", "teacher-leave", "Teacher Leave")) return;
+    if (isSupportStaff) {
+      const selectedSession = await resolveSupportStaffSession(req, res, schoolId, false);
+      if (!selectedSession) return;
+      const list = await storage.getLeaveRequestsBySchool(schoolId, selectedSession.id);
+      return res.json(list);
+    }
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
     const list = await storage.getLeaveRequestsBySchool(schoolId, sessionFilter);
@@ -2860,19 +2970,35 @@ export function registerTeacherRoutes(app: Express) {
   });
 
   app.patch("/api/leave/:id/status", async (req, res) => {
-    if (!req.session.userId || req.session.userRole === "teacher") return res.status(403).json({ message: "Admin access required" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    if (isSupportStaff) {
+      if (!requireAdminModuleSubAccess(req, res, "leave-requests", "teacher-leave", "Teacher Leave")) return;
+    } else if (!req.session.userId || req.session.userRole === "teacher") {
+      return res.status(403).json({ message: "Admin access required" });
+    }
     const { status } = req.body;
     if (!["approved", "rejected"].includes(status)) return res.status(400).json({ message: "Invalid status" });
     const leave = await storage.getLeaveRequestById(parseInt(req.params.id));
     if (!leave || leave.schoolId !== req.session.schoolId) return res.status(403).json({ message: "Not authorized" });
+    let leaveSession: Awaited<ReturnType<typeof storage.getAcademicSessionForSchool>> | null = null;
+    if (isSupportStaff) {
+      if (!leave.sessionId) {
+        return res.status(409).json({ message: "Leave request has no academic Session" });
+      }
+      const selectedSession = await resolveSupportStaffSession(req, res, leave.schoolId, true);
+      if (!selectedSession) return;
+      if (leave.sessionId !== selectedSession.id) {
+        return res.status(404).json({ message: "Leave request not found in the selected session." });
+      }
+      leaveSession = selectedSession;
+    }
     if (status === "approved" && leave.teacherId) {
       const leaveTeacher = await storage.getTeacherById(leave.teacherId);
       if (!leaveTeacher || leaveTeacher.schoolId !== leave.schoolId) {
         return res.status(403).json({ message: "Not authorized" });
       }
     }
-    let leaveSession: Awaited<ReturnType<typeof storage.getAcademicSessionById>> | null = null;
-    if (status === "approved") {
+    if (status === "approved" && !isSupportStaff) {
       if (!leave.sessionId) {
         return res.status(409).json({ message: "Leave request has no academic Session" });
       }
@@ -2888,16 +3014,14 @@ export function registerTeacherRoutes(app: Express) {
         });
       }
     }
-    const updated = await storage.updateLeaveStatusWithApprover(
-      leave.id,
-      req.session.schoolId!,
-      status,
-      req.session.userId!,
-    );
+    const actorId = isSupportStaff ? req.session.staffId! : req.session.userId!;
+    const updated = isSupportStaff
+      ? await storage.updateLeaveStatusBySchool(leave.id, req.session.schoolId!, status)
+      : await storage.updateLeaveStatusWithApprover(leave.id, req.session.schoolId!, status, actorId);
     if (!updated) return res.status(404).json({ message: "Leave request not found" });
     await storage.createAuditLog({
       schoolId: updated.schoolId, actionType: status, entityType: "teacher_leave", entityId: updated.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
+      actionBy: actorId, actionByRole: isSupportStaff ? "support_staff" : "admin",
       details: `${status === "approved" ? "Approved" : "Rejected"} teacher leave request`,
     });
 
@@ -4679,6 +4803,14 @@ Thank you for your prompt attention to this matter.
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
     const schoolId = parseInt(req.params.schoolId);
     if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    if (isSupportStaff && !requireAdminModuleSubAccess(req, res, "leave-requests", "student-leave", "Student Leave")) return;
+    if (isSupportStaff) {
+      const selectedSession = await resolveSupportStaffSession(req, res, schoolId, false);
+      if (!selectedSession) return;
+      const list = await storage.getStudentLeavesForAdmin(schoolId, selectedSession.id);
+      return res.json(list);
+    }
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(schoolId))?.id ?? null;
     const list = await storage.getStudentLeavesForAdmin(schoolId, sessionFilter);
@@ -4687,24 +4819,55 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/approval-history/:schoolId", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
-    if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
+    const schoolId = parseInt(req.params.schoolId);
+    if (req.session.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    const canSeeGallery = adminModuleSubAccessAllowed(req.session.userRole, req.session.allowedModules, "approval-center", "gallery-hub");
+    const canSeeEbooks = adminModuleSubAccessAllowed(req.session.userRole, req.session.allowedModules, "approval-center", "ebook");
+    const canSeeLeaveHistory = adminModuleSubAccessAllowed(req.session.userRole, req.session.allowedModules, "leave-requests", "leave-history");
+    if (isSupportStaff && !canSeeGallery && !canSeeEbooks && !canSeeLeaveHistory) {
+      return res.status(403).json({ message: "Approval History permission required" });
+    }
+    if (isSupportStaff) {
+      const selectedSession = await resolveSupportStaffSession(req, res, schoolId, false);
+      if (!selectedSession) return;
+      const history = await storage.getApprovalHistory(schoolId, selectedSession.id);
+      return res.json({
+        teacherLeaves: canSeeLeaveHistory ? history.teacherLeaves : [],
+        studentLeaves: canSeeLeaveHistory ? history.studentLeaves : [],
+        gallery: canSeeGallery ? history.gallery : [],
+        ebooks: canSeeEbooks ? history.ebooks : [],
+      });
+    }
     const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     const sessionFilter = viewSessionId ?? (await storage.getActiveSession(req.session.schoolId!))?.id ?? null;
-    const history = await storage.getApprovalHistory(parseInt(req.params.schoolId), sessionFilter);
+    const history = await storage.getApprovalHistory(schoolId, sessionFilter);
     res.json(history);
   });
 
   app.patch("/api/student-leaves/:id/admin-approve", async (req, res) => {
     const isAdmin = !!(req.session.userId && req.session.userRole === "admin");
-    const isStaffMod = !!(req.session.staffId && req.session.userRole === "support_staff" &&
-      (req.session.allowedModules ?? []).includes("approval-center:student-leave"));
-    if (!isAdmin && !isStaffMod) return res.status(403).json({ message: "Admin access required" });
+    const isSupportStaff = req.session.userRole === "support_staff";
+    if (isSupportStaff) {
+      if (!requireAdminModuleSubAccess(req, res, "leave-requests", "student-leave", "Student Leave")) return;
+    } else if (!isAdmin) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
     const schoolId = req.session.schoolId!;
     const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
     if (!leave) return res.status(403).json({ message: "Not authorized" });
     if (leave.status !== "forwarded_to_admin") return res.status(409).json({ message: "Only leaves forwarded by a teacher can be approved here" });
     if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
-    const leaveSession = await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
+    const selectedSession = isSupportStaff
+      ? await resolveSupportStaffSession(req, res, schoolId, true)
+      : null;
+    if (isSupportStaff && !selectedSession) return;
+    if (isSupportStaff && leave.sessionId !== selectedSession!.id) {
+      return res.status(404).json({ message: "Leave request not found in the selected session." });
+    }
+    const leaveSession = isSupportStaff
+      ? selectedSession
+      : await storage.getAcademicSessionForSchool(leave.sessionId, leave.schoolId);
     if (!leaveSession) return res.status(403).json({ message: "Not authorized" });
     const student = await storage.getStudentById(leave.studentId);
     if (!student || student.schoolId !== leave.schoolId) return res.status(403).json({ message: "Not authorized" });
@@ -4714,12 +4877,14 @@ Thank you for your prompt attention to this matter.
     const classTeacher = student
       ? await storage.getTeacherByClassSection(leave.schoolId, student.class, student.section)
       : null;
+    const actorId = isSupportStaff ? req.session.staffId! : req.session.userId!;
+    const reviewerRole = isSupportStaff ? "support_staff" : "admin";
     let updated;
     try {
       updated = await storage.approveStudentLeaveWithAttendance({
         leaveId: leave.id, studentId: leave.studentId, teacherId: classTeacher?.id ?? null,
         schoolId, sessionId: leave.sessionId,
-        expectedStatus: "forwarded_to_admin", reviewedBy: req.session.userId!, reviewerRole: "admin",
+        expectedStatus: "forwarded_to_admin", reviewedBy: actorId, reviewerRole,
         adminComment: adminComment || undefined,
       });
     } catch (error) {
@@ -4729,8 +4894,8 @@ Thank you for your prompt attention to this matter.
     if (!updated) return res.status(409).json({ message: "Leave request is no longer awaiting admin approval" });
     await storage.createAuditLog({
       schoolId: leave.schoolId, actionType: "approve", entityType: "student_leave", entityId: leave.id,
-      actionBy: req.session.userId!, actionByRole: "admin",
-      details: `Admin approved student leave for dates ${leave.startDate} to ${leave.endDate}`,
+      actionBy: actorId, actionByRole: reviewerRole,
+      details: `${isSupportStaff ? "Support Staff" : "Admin"} approved student leave for dates ${leave.startDate} to ${leave.endDate}`,
     });
     res.json(updated);
   });
@@ -4787,6 +4952,44 @@ Thank you for your prompt attention to this matter.
       return res.json(updated);
     }
 
+    if (req.session.userRole === "support_staff") {
+      if (!requireAdminModuleSubAccess(req, res, "leave-requests", "student-leave", "Student Leave")) return;
+      const schoolId = req.session.schoolId!;
+      const leave = await storage.getStudentLeaveById(parseInt(req.params.id), schoolId);
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
+      if (leave.status !== "forwarded_to_admin") {
+        return res.status(409).json({ message: "Support Staff can only reject leaves that were forwarded by a teacher" });
+      }
+      if (!leave.sessionId) return res.status(409).json({ message: "Leave request has no academic session" });
+      const selectedSession = await resolveSupportStaffSession(req, res, schoolId, true);
+      if (!selectedSession) return;
+      if (leave.sessionId !== selectedSession.id) {
+        return res.status(404).json({ message: "Leave request not found in the selected session." });
+      }
+      const student = await storage.getStudentById(leave.studentId);
+      if (!student || student.schoolId !== schoolId) return res.status(403).json({ message: "Not authorized" });
+      const { adminComment } = req.body;
+      const staffId = req.session.staffId!;
+      const updated = await storage.updateStudentLeaveStatus(
+        leave.id,
+        schoolId,
+        "rejected",
+        staffId,
+        "support_staff",
+        rejectionReason || undefined,
+        adminComment || undefined,
+        undefined,
+        selectedSession.id,
+      );
+      if (!updated) return res.status(404).json({ message: "Leave request not found" });
+      await storage.createAuditLog({
+        schoolId, actionType: "reject", entityType: "student_leave", entityId: leave.id,
+        actionBy: staffId, actionByRole: "support_staff",
+        details: `Support Staff rejected student leave${rejectionReason ? `: ${rejectionReason}` : ""}`,
+      });
+      return res.json(updated);
+    }
+
     // Admin path: school-scoped rejection (only forwarded_to_admin leaves)
     if (req.session.userId) {
       const schoolId = req.session.schoolId!;
@@ -4810,6 +5013,8 @@ Thank you for your prompt attention to this matter.
   // ===== PENDING EBOOKS (Admin) =====
   app.get("/api/library/books/:schoolId/pending", async (req, res) => {
     if (!req.session.userId) return res.status(403).json({ message: "Admin access required" });
+    if (req.session.userRole === "support_staff"
+      && !requireAdminModuleSubAccess(req, res, "approval-center", "ebook", "E-Book Library")) return;
     if (req.session.schoolId !== parseInt(req.params.schoolId)) return res.status(403).json({ message: "Not authorized" });
     const list = await storage.getPendingEbooks(parseInt(req.params.schoolId));
     res.json(list);

@@ -1867,9 +1867,17 @@ export default function AdminDashboard() {
       }
       return areaGrants;
     }
-    return allowedModules
+    const submoduleGrants = allowedModules
       .filter((k: string) => k.startsWith(moduleId + ":"))
       .map((k: string) => k.split(":")[1]);
+    if (
+      submoduleGrants.length === 0
+      && allowedModules.includes(moduleId)
+      && (moduleId === "approval-center" || moduleId === "leave-requests")
+    ) {
+      return (MODULE_SUB_MODULES[moduleId] ?? []).map(sub => sub.id);
+    }
+    return submoduleGrants;
   }
 
   const renderModule = () => {

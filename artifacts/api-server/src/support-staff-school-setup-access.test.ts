@@ -157,6 +157,8 @@ test("School Setup policy APIs deny Support Staff with legacy grants and preserv
   const legacyGrants = [
     "school-setup",
     "school-setup:classes",
+    "non-teaching-staff",
+    "non-teaching-staff:permissions",
     "timetable",
     "timetable:schedule",
     "timetable:structure",

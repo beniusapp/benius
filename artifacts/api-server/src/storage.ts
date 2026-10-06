@@ -2860,6 +2860,7 @@ export class DatabaseStorage {
         id: galleryItems.id,
         schoolId: galleryItems.schoolId,
         uploadedById: galleryItems.uploadedById,
+        uploaderRole: galleryItems.uploaderRole,
         title: galleryItems.title,
         description: galleryItems.description,
         eventTag: galleryItems.eventTag,
@@ -2872,10 +2873,20 @@ export class DatabaseStorage {
         teacherName: teachers.fullName,
       })
       .from(galleryItems)
-      .leftJoin(teachers, eq(galleryItems.uploadedById, teachers.id))
+      .leftJoin(teachers, and(
+        eq(galleryItems.uploadedById, teachers.id),
+        eq(galleryItems.uploaderRole, "teacher"),
+      ))
       .where(eq(galleryItems.schoolId, schoolId))
       .orderBy(desc(galleryItems.createdAt));
-    return rows as Array<GalleryItem & { teacherName: string | null }>;
+    return await Promise.all(rows.map(async row => {
+      if (row.uploaderRole !== "support_staff") return row as GalleryItem & { teacherName: string | null };
+      const staff = await this.getNonTeachingStaffById(row.uploadedById);
+      return {
+        ...row,
+        teacherName: staff?.schoolId === schoolId ? staff.fullName : null,
+      } as GalleryItem & { teacherName: string | null };
+    }));
   }
 
   async deleteGalleryItem(id: number, schoolId: number): Promise<void> {
@@ -4288,6 +4299,14 @@ export class DatabaseStorage {
     return req ?? null;
   }
 
+  async updateLeaveStatusBySchool(id: number, schoolId: number, status: string): Promise<LeaveRequest | null> {
+    const [req] = await db.update(leaveRequests).set({ status }).where(and(
+      eq(leaveRequests.id, id),
+      eq(leaveRequests.schoolId, schoolId),
+    )).returning();
+    return req ?? null;
+  }
+
   // ===== PAGINATED STUDENTS (Big Data) =====
   async getStudentsPaginated(schoolId: number, opts: { q?: string; cls?: string; section?: string; page?: number; pendingReissue?: boolean; sessionId?: number | null }): Promise<{ data: Student[]; total: number }> {
     const { q, cls, section, page = 1, pendingReissue, sessionId } = opts;
@@ -5011,7 +5030,7 @@ export class DatabaseStorage {
     // 2. Student Leave history (admin-actioned only) — scoped to session when provided
     const sLeaveConditions = [
       eq(studentLeaveRequests.schoolId, schoolId),
-      eq(studentLeaveRequests.reviewerRole, "admin"),
+      inArray(studentLeaveRequests.reviewerRole, ["admin", "support_staff"]),
       inArray(studentLeaveRequests.status, ["approved", "rejected"]),
     ] as any[];
     if (sessionId != null) sLeaveConditions.push(eq(studentLeaveRequests.sessionId, sessionId));
@@ -5028,17 +5047,50 @@ export class DatabaseStorage {
       .where(and(eq(galleryItems.schoolId, schoolId), eq(galleryItems.approved, true)))
       .orderBy(desc(galleryItems.createdAt)).limit(100);
     const galleryHistory = await Promise.all(gallery.map(async g => {
-      const t = await this.getTeacherById(g.uploadedById);
-      return { ...g, uploaderName: t?.fullName ?? "Unknown" };
+      if (g.uploaderRole === "teacher") {
+        const teacher = await this.getTeacherById(g.uploadedById);
+        return { ...g, uploaderName: teacher?.fullName ?? "Unknown" };
+      }
+      if (g.uploaderRole === "support_staff") {
+        const staff = await this.getNonTeachingStaffById(g.uploadedById);
+        return {
+          ...g,
+          uploaderName: staff?.schoolId === schoolId ? staff.fullName : "Support Staff",
+        };
+      }
+      return { ...g, uploaderName: "Unknown" };
     }));
 
     // 4. Ebook history (approved or rejected)
     const ebooks = await db.select().from(libraryBooks)
       .where(and(eq(libraryBooks.schoolId, schoolId), inArray(libraryBooks.verificationStatus, ["approved", "rejected"])))
       .orderBy(desc(libraryBooks.id)).limit(100);
+    const supportEbookUploads = await db.select({
+      entityId: auditLogs.entityId,
+      actionBy: auditLogs.actionBy,
+    }).from(auditLogs).where(and(
+      eq(auditLogs.schoolId, schoolId),
+      eq(auditLogs.actionType, "upload"),
+      eq(auditLogs.entityType, "ebook"),
+      eq(auditLogs.actionByRole, "support_staff"),
+    ));
+    const supportEbookUploadById = new Map(
+      supportEbookUploads
+        .filter(log => log.entityId !== null && log.actionBy !== null)
+        .map(log => [log.entityId!, log.actionBy!]),
+    );
     const ebookHistory = await Promise.all(ebooks.map(async b => {
       const t = b.uploadedById ? await this.getTeacherById(b.uploadedById) : null;
-      return { ...b, uploaderName: t?.fullName ?? "Unknown" };
+      if (t) return { ...b, uploaderName: t.fullName };
+      const staffId = supportEbookUploadById.get(b.id);
+      if (staffId !== undefined) {
+        const staff = await this.getNonTeachingStaffById(staffId);
+        return {
+          ...b,
+          uploaderName: staff?.schoolId === schoolId ? staff.fullName : "Support Staff",
+        };
+      }
+      return { ...b, uploaderName: "Unknown" };
     }));
 
     return { teacherLeaves: teacherLeaveHistory, studentLeaves: studentLeaveHistory, gallery: galleryHistory, ebooks: ebookHistory };

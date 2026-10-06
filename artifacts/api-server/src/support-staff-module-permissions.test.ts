@@ -5,8 +5,34 @@ import {
   canonicalizeSupportStaffAllowedModules,
   filterSupportStaffAllowedModules,
   hasSupportStaffModuleAccess,
+  hasSupportStaffSubmoduleAccess,
+  adminModuleSubAccessAllowed,
   supportStaffModuleAccessAllowed,
 } from "./support-staff-module-permissions";
+
+test("approval and leave submodules are independently authorized for Support Staff", () => {
+  const galleryOnly = ["approval-center", "approval-center:gallery-hub"];
+  assert.equal(hasSupportStaffSubmoduleAccess(galleryOnly, "approval-center", "gallery-hub"), true);
+  assert.equal(hasSupportStaffSubmoduleAccess(galleryOnly, "approval-center", "ebook"), false);
+
+  const historyOnly = ["leave-requests", "leave-requests:leave-history"];
+  assert.equal(hasSupportStaffSubmoduleAccess(historyOnly, "leave-requests", "leave-history"), true);
+  assert.equal(hasSupportStaffSubmoduleAccess(historyOnly, "leave-requests", "teacher-leave"), false);
+  assert.equal(hasSupportStaffSubmoduleAccess(historyOnly, "leave-requests", "student-leave"), false);
+  assert.equal(hasSupportStaffModuleAccess(historyOnly, "leave-requests"), true);
+  assert.equal(hasSupportStaffModuleAccess([], "leave-requests"), false);
+
+  assert.equal(adminModuleSubAccessAllowed("admin", [], "approval-center", "ebook"), true);
+  assert.equal(adminModuleSubAccessAllowed("teacher", galleryOnly, "approval-center", "gallery-hub"), false);
+});
+
+test("legacy Support Staff management grants are removed and never authorize", () => {
+  const legacy = ["non-teaching-staff", "non-teaching-staff:permissions"];
+  assert.deepEqual(filterSupportStaffAllowedModules(legacy), []);
+  assert.deepEqual(canonicalizeSupportStaffAllowedModules(legacy), []);
+  assert.equal(hasSupportStaffModuleAccess(legacy, "non-teaching-staff"), false);
+  assert.equal(adminModuleAccessAllowed("support_staff", legacy, "non-teaching-staff"), false);
+});
 
 test("removes School Setup grants without changing any other Support Staff grants", () => {
   assert.deepEqual(

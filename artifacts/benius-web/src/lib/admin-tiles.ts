@@ -90,15 +90,15 @@ export const MODULE_SUB_MODULES: Record<string, { id: string; label: string }[]>
   // ── Approval Center ────────────────────────────────────────────────────────
   // Sections: gallery-hub | ebook  (approval-center.tsx)
   "approval-center": [
-    { id: "gallery-hub", label: "Gallery Hub Approvals" },
-    { id: "ebook",       label: "E-Book Verification" },
+    { id: "gallery-hub", label: "Gallery Hub" },
+    { id: "ebook",       label: "E-Book Library" },
   ],
 
   // ── Leave Requests ─────────────────────────────────────────────────────────
   // Sections: teacher-leave | student-leave | leave-history  (leave-requests.tsx)
   "leave-requests": [
-    { id: "teacher-leave",  label: "Teacher Leave Requests" },
-    { id: "student-leave",  label: "Student Leave Requests (forwarded by teacher)" },
+    { id: "teacher-leave",  label: "Teacher Leave" },
+    { id: "student-leave",  label: "Student Leave" },
     { id: "leave-history",  label: "Leave Approval History" },
   ],
 
@@ -235,7 +235,11 @@ export function isSchoolSetupGrant(grant: string): boolean {
 export function filterSupportStaffGrants(
   allowedModules: readonly string[] | null | undefined,
 ): string[] {
-  return (allowedModules ?? []).filter(grant => !isSchoolSetupGrant(grant));
+  return (allowedModules ?? []).filter(grant =>
+    !isSchoolSetupGrant(grant)
+      && grant !== "non-teaching-staff"
+      && !grant.startsWith("non-teaching-staff:"),
+  );
 }
 
 export function canonicalizeSupportStaffGrants(
@@ -251,9 +255,13 @@ export function hasSupportStaffModuleGrant(
   allowedModules: readonly string[] | null | undefined,
   moduleId: string,
 ): boolean {
-  return !isSchoolSetupGrant(moduleId) && filterSupportStaffGrants(allowedModules).includes(moduleId);
+  if (isSchoolSetupGrant(moduleId) || moduleId === "non-teaching-staff") return false;
+  const grants = filterSupportStaffGrants(allowedModules);
+  if (grants.includes(moduleId)) return true;
+  return (moduleId === "approval-center" || moduleId === "leave-requests")
+    && grants.some(grant => grant.startsWith(`${moduleId}:`));
 }
 
 export const SUPPORT_STAFF_PERMISSION_MODULES = ADMIN_TILE_DEFS.filter(
-  module => module.id !== "school-setup",
+  module => module.id !== "school-setup" && module.id !== "non-teaching-staff",
 );
