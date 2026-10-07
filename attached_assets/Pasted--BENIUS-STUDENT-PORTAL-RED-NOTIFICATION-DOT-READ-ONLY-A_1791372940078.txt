@@ -1,0 +1,624 @@
+# BENIUS — STUDENT PORTAL RED NOTIFICATION DOT
+# READ-ONLY ARCHITECTURE AUDIT
+
+## IMPORTANT
+
+DO NOT change code.
+
+DO NOT change database/schema.
+
+DO NOT implement the notification dot yet.
+
+DO NOT modify Mobile.
+
+DO NOT deploy.
+
+First inspect the existing BENIUS architecture and determine the smallest correct way to implement this feature.
+
+---
+
+# FEATURE I WANT
+
+I want a small RED notification dot on the Student Portal dashboard/module cards.
+
+ONLY these Student modules should have this feature:
+
+1. Homework
+2. Classwork
+3. Noticeboard
+4. Complaints
+
+DO NOT add the dot to other Student modules.
+
+---
+
+# EXPECTED USER EXPERIENCE
+
+Example:
+
+Teacher/Admin publishes a new Notice that is visible to Student A.
+
+Student A opens the Student Portal dashboard.
+
+Noticeboard card:
+
+🔴 RED DOT
+
+Student A clicks/opens Noticeboard.
+
+The red dot should disappear immediately.
+
+It must remain cleared until another NEW relevant Notice arrives.
+
+Same principle for Homework and Classwork.
+
+---
+
+# COMPLAINTS SPECIAL RULE
+
+Complaints are different.
+
+The red dot should NOT appear simply because the Student created/sent their own Complaint.
+
+For Complaints, the red dot should appear only when there is a **new Teacher/Admin-side update relevant to that Student**.
+
+Examples could include, depending on current BENIUS Complaint architecture:
+
+- Teacher reply
+- Admin reply
+- Teacher/Admin status update
+- Teacher/Admin action/message
+
+Audit the actual Complaint model first.
+
+Do NOT invent reply/message concepts if they do not exist.
+
+Determine what existing Complaint events genuinely represent a new Teacher/Admin update visible to the Student.
+
+---
+
+# CORE BUSINESS RULE
+
+The notification state must be:
+
+**PER STUDENT + PER MODULE**
+
+Example:
+
+```text
+Student A opens Noticeboard
+→ Student A Noticeboard dot clears
+
+Student B has not opened Noticeboard
+→ Student B Noticeboard dot remains
+```
+
+Never use one global school-wide read flag.
+
+---
+
+# IMPORTANT — CLICK/OPEN BEHAVIOR
+
+When the Student clicks a module that currently has a red dot:
+
+- visually clear the dot immediately
+- persist the seen/read state safely
+- returning to Dashboard must keep it cleared
+- refreshing/relogging must keep it cleared
+- another NEW relevant item/update after that must make the dot appear again
+
+This cannot be only temporary React component state.
+
+It needs persistent per-Student state.
+
+---
+
+# IMPORTANT — DO NOT MARK CONTENT ITSELF AS READ YET
+
+This feature is initially a MODULE-LEVEL red dot.
+
+I am NOT asking for:
+
+- per-Homework unread badges
+- per-Classwork unread badges
+- per-Notice unread badges
+- individual message read receipts
+- notification center
+- push notifications
+- email notifications
+- notification count numbers
+
+The dashboard only needs to know:
+
+> Has something new happened in this module since this Student last opened it?
+
+Keep the architecture minimal.
+
+---
+
+# ACADEMIC SESSION REQUIREMENT
+
+Homework, Classwork, Noticeboard and Complaints have existing Academic Session behavior.
+
+Audit whether the red-dot state should follow the **currently selected Academic Session**.
+
+For example:
+
+Student is viewing:
+
+2026–2027
+
+New Homework exists in 2026–2027.
+
+Homework should show 🔴.
+
+If Student switches to an older Academic Session, determine whether the dot should be independently tracked for that session.
+
+Do NOT make a product decision silently.
+
+Report the existing module/session architecture and recommend the safest behavior.
+
+Remember:
+
+Historical Academic Sessions are read-only.
+
+Opening a historical module may record Student UI/read state only if that is architecturally safe; it must NOT mutate historical academic content.
+
+---
+
+# HOMEWORK
+
+Audit:
+
+- how Homework relevant to a Student is determined
+- school
+- Academic Session
+- enrollment/class/section
+- assignment/business date
+- creation timestamp
+- due date
+- teacher
+- current storage/API queries
+
+Determine what timestamp/version can reliably mean:
+
+**There is Homework newer than when this Student last opened Homework.**
+
+Do not use due date as the notification creation event unless current architecture explicitly requires it.
+
+Normally the notification event should correspond to new relevant Homework being created/published.
+
+Verify from code.
+
+---
+
+# CLASSWORK
+
+Audit the equivalent Classwork flow.
+
+Determine how to detect:
+
+**new relevant Classwork since Student last opened Classwork.**
+
+Preserve the recently corrected IST business-date behavior.
+
+Do NOT modify that correction.
+
+---
+
+# NOTICEBOARD
+
+Audit all Student-visible Notice audiences.
+
+A red dot must appear only when a NEW Notice is actually visible to that Student under existing rules.
+
+For example, inspect whether Notices can target:
+
+- whole school
+- class
+- section
+- specific Student
+- other audiences
+
+Do not show Student A a notification because of a Notice they cannot access.
+
+Preserve tenant and session visibility rules.
+
+---
+
+# COMPLAINTS
+
+Audit carefully.
+
+Determine:
+
+1. How Student Complaints are stored.
+2. How Teacher/Admin updates are stored.
+3. Whether replies/messages have their own timestamps.
+4. Whether status changes have timestamps.
+5. Whether sender/actor role is stored.
+6. Whether Student can distinguish their own update from Teacher/Admin update.
+7. Which exact event should trigger the red dot.
+
+We specifically need:
+
+```text
+Student creates Complaint
+→ NO red dot because of their own action
+
+Teacher/Admin makes a new relevant update
+→ 🔴 Complaints
+
+Student opens Complaints
+→ dot clears
+
+Teacher/Admin makes another update later
+→ 🔴 again
+```
+
+If the existing schema cannot reliably distinguish this, state that clearly.
+
+---
+
+# CURRENT DASHBOARD
+
+Inspect the Student Dashboard implementation.
+
+Find:
+
+- module card definitions
+- existing red-dot implementation, if any
+- existing badge/count APIs
+- dashboard queries
+- EventSource/SSE/live-update behavior
+- React Query cache behavior
+- existing notification utilities
+- any unread/read state already used elsewhere.
+
+The screenshot shows a red dot style already exists visually on Noticeboard.
+
+Determine whether that is:
+
+- static/demo UI
+- count-based
+- real unread logic
+- another existing feature.
+
+Do NOT assume.
+
+---
+
+# EXISTING READ / UNREAD INFRASTRUCTURE
+
+Search the current backend/database for anything like:
+
+- notification
+- unread
+- read_at
+- seen_at
+- last_seen
+- last_opened
+- acknowledgement
+- notification preference
+- Student notification state
+- module activity state
+
+Determine whether we can safely reuse something.
+
+Do NOT create a new table unless the audit proves persistent state does not already exist.
+
+---
+
+# POSSIBLE MINIMAL MODEL TO EVALUATE
+
+Do NOT implement this yet.
+
+Evaluate whether a model conceptually like this would work:
+
+```text
+student_id
+school_id
+academic_session_id
+module
+last_seen_at
+```
+
+Example:
+
+```text
+MIS-0001
+School 2
+Session 2026-2027
+Homework
+last_seen_at = 07 Oct 10:00 IST
+```
+
+Then:
+
+```text
+Latest relevant Homework created:
+07 Oct 11:00
+
+11:00 > 10:00
+→ 🔴
+```
+
+After Student opens Homework:
+
+```text
+last_seen_at = now
+→ dot disappears
+```
+
+But do NOT automatically choose this architecture.
+
+First check whether existing infrastructure makes another approach safer.
+
+---
+
+# RACE CONDITION / CORRECTNESS
+
+Think about this situation:
+
+1. Dashboard says Homework has something new.
+2. Student clicks Homework.
+3. At almost the same time Teacher creates another Homework.
+
+The implementation should avoid accidentally marking unseen newer content as seen where practical.
+
+Audit whether marking against a latest-known activity timestamp/version would be safer than blindly storing server `now`.
+
+Do not overengineer, but identify the correct minimal behavior.
+
+---
+
+# IST
+
+BENIUS business/display timezone is Asia/Kolkata.
+
+However, notification ordering should be based on reliable timestamps/instants rather than formatted date strings.
+
+Do not repeat the recently fixed UTC-calendar-date bug.
+
+Explain what timestamps should be used for ordering and what should only be formatted in IST for display.
+
+---
+
+# TENANT ISOLATION
+
+NON-NEGOTIABLE.
+
+Student notification state must be scoped to:
+
+authenticated Student
++
+authenticated school
++
+relevant Academic Session where applicable.
+
+School A activity must never generate Student B/School B notification state.
+
+Never trust client-provided Student ID or school ID for authorization.
+
+---
+
+# SECURITY
+
+The Student must only be able to:
+
+- read their own notification-dot state
+- mark their own module as seen
+
+A Student must not be able to clear another Student's notifications.
+
+Do not trust:
+
+`studentId`
+
+from the client for authorization.
+
+Derive Student identity from authenticated session.
+
+---
+
+# HISTORICAL SESSIONS
+
+Do not mutate:
+
+- Homework
+- Classwork
+- Notice
+- Complaint
+- historical enrollment
+- historical academic content
+
+when clearing a dot.
+
+Notification/read-state metadata is separate from academic content.
+
+Audit whether storing read-state for historical sessions is safe.
+
+---
+
+# MOBILE FREEZE
+
+Mobile is FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do NOT implement Mobile notification dots.
+
+Do NOT redesign Mobile APIs.
+
+This feature is currently:
+
+**STUDENT WEB PORTAL ONLY.**
+
+If a shared backend change could affect Mobile, report it before implementation.
+
+---
+
+# TEACHER PORTAL
+
+DO NOT implement Teacher Portal dots now.
+
+Teacher Portal will be a separate later stage.
+
+Only Student Portal is in scope.
+
+---
+
+# DATABASE / DEVELOPMENT
+
+Development database may be inspected READ-ONLY.
+
+Do not create tables.
+
+Do not migrate schema.
+
+Do not update records.
+
+Do not access Production.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS STUDENT RED-DOT NOTIFICATION AUDIT
+
+## Overall Verdict
+
+Choose:
+
+- EXISTING INFRASTRUCTURE CAN BE REUSED
+- SMALL NEW PERSISTENT STATE REQUIRED
+- SCHEMA / ARCHITECTURE DECISION REQUIRED
+- NEEDS MORE INFORMATION
+
+## Simple explanation
+
+Explain in simple words how BENIUS can know:
+
+> "Something new exists in this module since this Student last opened it."
+
+## Current Dashboard red dot
+
+Explain what the existing red dot shown in the UI actually does.
+
+## Homework
+
+State exactly what event/timestamp can trigger 🔴.
+
+## Classwork
+
+State exactly what event/timestamp can trigger 🔴.
+
+## Noticeboard
+
+Explain visibility/targeting and what should trigger 🔴.
+
+## Complaints
+
+This is especially important.
+
+State exactly which existing Teacher/Admin event can trigger 🔴 and how BENIUS can distinguish it from Student activity.
+
+## Existing read/unread infrastructure
+
+State what already exists.
+
+## Persistence requirement
+
+Explain how the dot can remain cleared after:
+
+- returning to Dashboard
+- refresh
+- logout/login.
+
+## Per-Student isolation
+
+## Academic Session behavior
+
+Recommend whether state should be:
+
+Student + Module
+
+or:
+
+Student + Academic Session + Module
+
+based on the actual existing architecture.
+
+Do not implement.
+
+## Historical-session behavior
+
+## Race-condition handling
+
+Recommend the smallest safe strategy.
+
+## IST/timestamp behavior
+
+## Tenant isolation/security
+
+## Recommended minimal architecture
+
+Give the smallest safe architecture.
+
+If a database change is genuinely necessary, state exactly what minimal schema would be required.
+
+Do NOT implement it.
+
+## Exact APIs that would be needed
+
+Recommend only.
+
+For example, if appropriate:
+
+- dashboard notification state GET
+- mark-module-seen POST
+
+Do not create them.
+
+## Web files likely affected
+
+## Backend files likely affected
+
+## Database/schema impact
+
+## Mobile impact
+
+Must remain frozen.
+
+## Teacher Portal impact
+
+NONE — later stage.
+
+## Product decisions required
+
+List ONLY decisions that genuinely require me.
+
+## Recommended implementation stage
+
+Give a small implementation plan after the audit.
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Mobile changes
+NONE
+
+## Production
+NOT ACCESSED
+
+## Deployment
+NONE
+
+STOP after the audit.
