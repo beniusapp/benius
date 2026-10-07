@@ -1,0 +1,504 @@
+# BENIUS — STUDENT PROFILE ACADEMIC PLACEMENT PROTECTION
+
+Implement the following confirmed product decision.
+
+This is a SMALL correction.
+
+Do NOT redesign Student Profile.
+
+Do NOT change Promotion.
+
+Do NOT change Academic Session architecture.
+
+Mobile remains FROZEN.
+
+Do NOT deploy.
+
+---
+
+# CONFIRMED PRODUCT DECISION
+
+The following fields are **school-assigned academic placement fields**:
+
+- Class
+- Section
+- Roll Number
+
+Students must NOT be allowed to:
+
+- edit them
+- propose changes to them
+- submit changes to them through Profile Verification
+- modify them through a manually crafted Student Profile API request
+
+Students may only VIEW these fields.
+
+Official placement must continue to be controlled through authorized school/Admin workflows.
+
+---
+
+# CURRENT PROBLEM
+
+Student Profile Verification currently allows Roll Number to be edited.
+
+Example Development Student:
+
+`MIS-0001`
+
+Current data:
+
+```text id="1xnp2a"
+student_profiles.roll_no = "10"
+
+students.roll_number = NULL
+
+active-session enrollment.roll_no = NULL
+```
+
+Therefore Verification Details shows:
+
+`10`
+
+while:
+
+Student Profile → `—`
+
+Student Registry → `—`
+
+The submitted `10` is NOT an official school-assigned Roll Number.
+
+Do NOT promote/copy that value into official placement.
+
+---
+
+# 1. STUDENT VERIFICATION UI
+
+Change Student Verification Details so:
+
+```text id="tj3f63"
+Class        → read-only / System-assigned
+Section      → read-only / System-assigned
+Roll Number  → read-only / System-assigned
+```
+
+Class and Section already behave approximately this way.
+
+Make Roll Number consistent with them.
+
+The Student must not be able to type/change Roll Number.
+
+Use clear UI wording such as the existing:
+
+`System-assigned`
+
+pattern.
+
+Do not unnecessarily redesign the page.
+
+---
+
+# 2. DISPLAY THE OFFICIAL CURRENT ROLL NUMBER
+
+The read-only Roll Number displayed in Student Verification must NOT prefer:
+
+`student_profiles.roll_no`
+
+over official placement.
+
+The old submitted profile value must not masquerade as the Student's official Roll Number.
+
+For current Student Profile behavior, display the authoritative current official value according to the existing BENIUS current-placement architecture.
+
+The normal Student Profile intentionally displays CURRENT information and is not historical-session-dependent.
+
+Preserve that behavior.
+
+For MIS-0001, because the official current Roll Number is currently NULL, the Student should see:
+
+`—`
+
+or the existing empty/system-assigned representation.
+
+Do NOT display `10` as official.
+
+---
+
+# 3. STUDENT PROFILE API PROTECTION
+
+This must be enforced on the backend, not only in the UI.
+
+Student Profile save/submission endpoints must NOT allow Student-controlled changes to:
+
+- class
+- section
+- roll number
+
+Even if a Student manually crafts an API request containing:
+
+```text id="t0fqmv"
+class
+section
+rollNo
+```
+
+those values must NOT change:
+
+- `students`
+- `enrollments`
+- official placement
+- approved placement snapshot.
+
+Prefer rejecting/disallowing these Student-controlled placement fields rather than silently turning them into official placement.
+
+Use the smallest safe implementation consistent with the existing API style.
+
+---
+
+# 4. PROFILE SUBMISSION STORAGE
+
+New Student Profile submissions must not treat:
+
+- class
+- section
+- roll number
+
+as Student-editable proposed profile changes.
+
+Do not create new placement divergence through `student_profiles`.
+
+However:
+
+## DO NOT DELETE HISTORICAL DATA
+
+Existing values such as:
+
+`student_profiles.roll_no = "10"`
+
+must NOT be deleted or rewritten merely for this correction.
+
+They may remain as historical submission data.
+
+They simply must no longer be presented or applied as authoritative current placement.
+
+No database cleanup.
+
+---
+
+# 5. PROFILE APPROVAL
+
+Preserve the existing safety rule:
+
+Profile approval must NOT take Student-submitted:
+
+- class
+- section
+- roll number
+
+and make them official placement.
+
+Do NOT add these fields to the profile approval correction allowlist.
+
+Profile approval must not update academic placement.
+
+Academic placement belongs to the authorized school/Admin placement workflow.
+
+---
+
+# 6. OFFICIAL ROLL NUMBER ASSIGNMENT
+
+Do NOT build new Roll Number assignment functionality.
+
+Existing authorized Registry/placement workflows remain responsible for official placement.
+
+When Admin/school legitimately assigns a Roll Number through the authorized placement workflow, the existing architecture should maintain consistency between:
+
+```text id="2j0s0a"
+Active Academic Session Enrollment
+        ↕
+Current Student Registry
+```
+
+Student Profile should then display the official current Roll Number.
+
+---
+
+# 7. IMPORTANT — DO NOT SET MIS-0001 TO 10
+
+Do NOT modify:
+
+```text id="2xb3pm"
+students.roll_number
+```
+
+to `10`.
+
+Do NOT modify:
+
+```text id="4v36xu"
+enrollments.roll_no
+```
+
+to `10`.
+
+The value `10` was Student-submitted and has not been established as an official school-assigned Roll Number.
+
+Leave official placement unchanged.
+
+---
+
+# 8. STUDENT PROFILE CURRENT-INFORMATION RULE
+
+Preserve the existing BENIUS decision:
+
+> Student Profile always displays the Student's CURRENT information even when an older Academic Session is selected.
+
+Do NOT make Student Profile historical/session-sensitive.
+
+This correction is only about preventing Student-controlled academic placement changes and displaying the official current placement correctly.
+
+---
+
+# 9. PROMOTION / ACADEMIC SESSION
+
+Promotion Stages 1–4 are COMPLETE.
+
+Do NOT modify Promotion.
+
+Do NOT modify Stage 3 activation.
+
+Preserve:
+
+```text id="1rxkbr"
+Target-session Enrollment
+        ↓
+Academic Session Activation
+        ↓
+Current Student Registry
+Class + Section + Roll synchronization
+```
+
+Do not introduce another source of truth.
+
+---
+
+# 10. TEACHER PROFILE APPROVAL
+
+Do not change unrelated Teacher approval permissions or workflows.
+
+Only ensure Student-submitted academic placement fields cannot become official through profile verification.
+
+Preserve the previously established rule that photo-only approval/rejection does not change full profile verification status/snapshot.
+
+---
+
+# 11. TENANT ISOLATION
+
+Preserve all school/tenant isolation.
+
+Student can only access their own profile.
+
+Teacher/Admin authorization remains school-scoped.
+
+No cross-school placement lookup or mutation.
+
+---
+
+# 12. MOBILE FREEZE
+
+Mobile is FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do not implement Mobile parity.
+
+Do not redesign Mobile Student Profile.
+
+If shared backend protection naturally protects Mobile/API calls, report the impact, but do not expand scope into Mobile development.
+
+---
+
+# 13. DATABASE
+
+NO schema change.
+
+NO migration.
+
+NO cleanup of existing `student_profiles.roll_no`.
+
+NO modification of existing Student/Enrollment placement data.
+
+---
+
+# FOCUSED TESTS
+
+Test at minimum:
+
+### UI / data source
+
+1. Official Student roll = NULL
+   + old `student_profiles.roll_no = "10"`
+   → Verification Details does NOT present `10` as official Roll Number.
+
+2. Official current roll = `15`
+   → Student Profile displays `15`.
+
+3. Verification Details displays the official current Roll Number read-only.
+
+### API protection
+
+4. Student submits normal editable profile fields
+   → existing behavior succeeds.
+
+5. Student attempts to submit `rollNo`
+   → cannot modify official placement.
+
+6. Student attempts to submit `class`
+   → cannot modify official placement.
+
+7. Student attempts to submit `section`
+   → cannot modify official placement.
+
+8. Crafted request containing all three
+   → cannot modify Student/Enrollment placement.
+
+### Approval
+
+9. Profile approval does not apply historical/student-submitted `rollNo`.
+
+10. Approval does not modify Class/Section/Roll placement.
+
+### Existing data
+
+11. Existing `student_profiles.roll_no = "10"` remains stored unchanged.
+
+12. Existing Student and Enrollment roll remain unchanged.
+
+### Architecture
+
+13. Student Profile remains current-information based.
+
+14. Tenant isolation remains intact.
+
+15. Promotion/Academic Session behavior remains untouched.
+
+---
+
+# DEVELOPMENT VERIFICATION
+
+Read-only verification may be performed against MIS-0001.
+
+Expected after correction:
+
+```text id="36zjjl"
+Historical profile submission:
+rollNo = "10"        ← retained
+
+Official current Student:
+rollNumber = NULL    ← unchanged
+
+Active Enrollment:
+rollNo = NULL        ← unchanged
+
+Student Profile:
+Roll Number = —
+
+Verification Details:
+Roll Number = —
+read-only/system-assigned
+```
+
+Do NOT modify MIS-0001 to manufacture this result.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS STUDENT ACADEMIC PLACEMENT PROFILE PROTECTION REPORT
+
+## Overall Verdict
+PASS / NEEDS CHANGES
+
+## Product rule implemented
+
+Confirm:
+
+Class / Section / Roll Number = school-assigned and Student read-only.
+
+## Verification Details
+
+Explain what source is now displayed for Class, Section, Roll Number.
+
+## Student Profile
+
+Explain source of current Roll Number.
+
+## API protection
+
+Explain what happens if Student manually sends:
+
+- class
+- section
+- rollNo
+
+## Profile approval
+
+Confirm Student-submitted placement cannot become official through approval.
+
+## Existing historical profile values
+
+Confirm they were retained but are no longer treated as authoritative.
+
+## MIS-0001 verification
+
+Report:
+
+- historical submitted roll
+- current Student roll
+- active Enrollment roll
+- value shown to Student
+
+## Registry ↔ Enrollment consistency
+
+Confirm this correction cannot create a new mismatch.
+
+## Promotion / Academic Session
+
+Confirm unchanged.
+
+## Tenant isolation
+
+Confirm unchanged.
+
+## Mobile
+
+Confirm:
+
+`artifacts/benius-mobile/` changed: NO.
+
+## Files changed
+
+## Database/schema changes
+Expected: NONE.
+
+## Existing data changes
+Expected: NONE.
+
+## Tests
+
+Exact pass/fail counts.
+
+## Builds/typecheck
+
+Separate new errors from pre-existing project diagnostics.
+
+## Production
+NOT ACCESSED.
+
+## Deployment
+NONE.
+
+STOP after the report.
