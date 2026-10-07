@@ -121,6 +121,64 @@ paths:
           description: Too many attempts.
         "503":
           description: Password change temporarily unavailable.
+  /student/module-dot-state:
+    get:
+      operationId: getStudentModuleDotState
+      tags: [student-notifications]
+      summary: Get the authenticated Student's module-dot state for the selected session
+      description: Requires an authenticated Student Web session. The session header is validated against the Student's school.
+      parameters:
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Activity state and latest visible cursors for the four supported Student modules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentModuleDotStateResponse"
+        "400":
+          description: A selected Academic Session is required or invalid
+        "401":
+          description: Student Web authentication is required
+        "403":
+          description: The selected session is not available to this Student
+  /student/module-dot-state/seen:
+    post:
+      operationId: markStudentModuleSeen
+      tags: [student-notifications]
+      summary: Persist the authenticated Student's observed activity cursor for one module
+      description: Requires an authenticated Student Web session. The Student and school are derived server-side; only visible activity in the selected session can be marked.
+      parameters:
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudentModuleSeenInput"
+      responses:
+        "200":
+          description: The observed cursor was persisted, or was already superseded by a newer cursor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentModuleSeenResponse"
+        "400":
+          description: The module or activity cursor is invalid
+        "401":
+          description: Student Web authentication is required
+        "403":
+          description: The activity cursor is not visible to this Student in the selected session
 components:
   schemas:
     HealthStatus:
@@ -130,6 +188,64 @@ components:
           type: string
       required:
         - status
+    StudentModuleKey:
+      type: string
+      enum: [homework, classwork, noticeboard, complaints]
+    StudentModuleActivityCursor:
+      type: object
+      additionalProperties: false
+      properties:
+        createdAt:
+          type: string
+          description: Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.
+          maxLength: 26
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"
+        recordId:
+          type: integer
+          minimum: 1
+      required: [createdAt, recordId]
+    StudentModuleDotState:
+      type: object
+      additionalProperties: false
+      properties:
+        hasNewActivity:
+          type: boolean
+        latestActivityCursor:
+          oneOf:
+            - $ref: "#/components/schemas/StudentModuleActivityCursor"
+            - type: "null"
+      required: [hasNewActivity, latestActivityCursor]
+    StudentModuleDotStateResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        homework:
+          $ref: "#/components/schemas/StudentModuleDotState"
+        classwork:
+          $ref: "#/components/schemas/StudentModuleDotState"
+        noticeboard:
+          $ref: "#/components/schemas/StudentModuleDotState"
+        complaints:
+          $ref: "#/components/schemas/StudentModuleDotState"
+      required: [homework, classwork, noticeboard, complaints]
+    StudentModuleSeenInput:
+      type: object
+      additionalProperties: false
+      properties:
+        module:
+          $ref: "#/components/schemas/StudentModuleKey"
+        cursor:
+          $ref: "#/components/schemas/StudentModuleActivityCursor"
+      required: [module, cursor]
+    StudentModuleSeenResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        module:
+          $ref: "#/components/schemas/StudentModuleKey"
+        markedSeen:
+          type: boolean
+      required: [module, markedSeen]
     AdminTimetableContext:
       type: object
       properties:

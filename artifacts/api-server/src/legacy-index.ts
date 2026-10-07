@@ -1340,6 +1340,22 @@ app.use((req, res, next) => {
   // RULE: whenever you add a column to shared/schema.ts you MUST also add a
   // matching `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement to the
   // migration block above.  This check enforces that rule at every startup.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS student_module_seen_state (
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES academic_sessions(id) ON DELETE CASCADE,
+      module_key VARCHAR(20) NOT NULL,
+      seen_activity_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+      seen_activity_record_id INTEGER NOT NULL,
+      CONSTRAINT student_module_seen_state_pk
+        PRIMARY KEY (school_id, student_id, session_id, module_key),
+      CONSTRAINT student_module_seen_state_module_chk
+        CHECK (module_key IN ('homework', 'classwork', 'noticeboard', 'complaints')),
+      CONSTRAINT student_module_seen_state_record_id_chk
+        CHECK (seen_activity_record_id > 0)
+    );
+  `);
   await ensureMobileAuthSchema(pool);
   await assertNoSchemaDrift(pool);
 

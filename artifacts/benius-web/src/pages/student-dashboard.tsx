@@ -5,7 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
 import { apiRequest, queryClient, getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useStudentModuleDotState } from "@/hooks/use-student-module-dot-state";
 import { useSessionView } from "@/contexts/session-view-context";
+import type { StudentModuleKey } from "@workspace/api-client-react";
 import { nextStudentDashboardGreetingHour, studentDashboardGreeting } from "@/lib/student-dashboard-time";
 import {
   canFetchStudentDashboardSessionData,
@@ -86,17 +88,18 @@ interface Tile {
   pulse: boolean;
   noticeKey?: boolean;
   feesKey?: boolean;
+  moduleDotKey?: StudentModuleKey;
 }
 
 const TILES: Tile[] = [
   { id: "profile",          label: "Profile",          emoji: "🎓", accent: "#3b82f6", bg: "#eff6ff", route: "/student-profile",      pulse: false },
   { id: "attendance",       label: "Attendance",       emoji: "✅", accent: "#10b981", bg: "#f0fdf4", route: "/student/attendance",    pulse: false },
-  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: false },
-  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false },
-  { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, noticeKey: true },
+  { id: "homework",         label: "Homework",         emoji: "📝", accent: "#f59e0b", bg: "#fffbeb", route: "/student/homework",      pulse: false, moduleDotKey: "homework" },
+  { id: "classwork",        label: "Classwork",        emoji: "📚", accent: "#8b5cf6", bg: "#f5f3ff", route: "/student/classwork",     pulse: false, moduleDotKey: "classwork" },
+  { id: "noticeboard",      label: "Noticeboard",      emoji: "🔔", accent: "#ef4444", bg: "#fef2f2", route: "/student/noticeboard",  pulse: true, moduleDotKey: "noticeboard" },
   { id: "fees",             label: "Fees",             emoji: "💳", accent: "#06b6d4", bg: "#ecfeff", route: "/student/fees",          pulse: true, feesKey: true },
   { id: "examination",      label: "Examination",      emoji: "🏆", accent: "#f97316", bg: "#fff7ed", route: "/student/examination",  pulse: false },
-  { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false },
+  { id: "complaints",       label: "Complaints",       emoji: "🎭", accent: "#ec4899", bg: "#fdf2f8", route: "/student/complaints",   pulse: false, moduleDotKey: "complaints" },
   { id: "gallery",          label: "Gallery",          emoji: "🎨", accent: "#6366f1", bg: "#eef2ff", route: "/student/gallery",      pulse: false },
   { id: "faculty-info",     label: "Faculty Info",     emoji: "👨‍🏫", accent: "#14b8a6", bg: "#f0fdfa", route: "/student/faculty",     pulse: false },
   { id: "school-calendar",  label: "School Calendar",  emoji: "📅", accent: "#84cc16", bg: "#f7fee7", route: "/student/calendar",    pulse: false },
@@ -171,6 +174,12 @@ export default function StudentDashboard() {
   const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: studentDashboardGlobalQueryKey("/api/student-me"),
     queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  const moduleDotState = useStudentModuleDotState({
+    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
+    studentId: student?.id,
+    poll: true,
   });
 
   const { data: unreadData } = useQuery<{ count: number }>({
@@ -301,9 +310,23 @@ export default function StudentDashboard() {
 
   const firstName = student.name.split(" ")[0];
 
-  const handleTileClick = (label: string, route: string | null) => {
-    if (route) { setLocation(route); return; }
-    toast({ title: label, description: `${label} module coming soon.` });
+  const handleTileClick = (tile: Tile) => {
+    if (tile.route) {
+      const state = tile.moduleDotKey
+        ? moduleDotState.query.data?.[tile.moduleDotKey]
+        : undefined;
+      if (
+        tile.moduleDotKey
+        && selectedSessionId !== null
+        && state?.hasNewActivity
+        && state.latestActivityCursor
+      ) {
+        void moduleDotState.markSeen(tile.moduleDotKey, state.latestActivityCursor).catch(() => undefined);
+      }
+      setLocation(tile.route);
+      return;
+    }
+    toast({ title: tile.label, description: `${tile.label} module coming soon.` });
   };
 
   return (
@@ -574,9 +597,10 @@ export default function StudentDashboard() {
         >
           {TILES.map((tile) => {
             const showPulse =
-              (tile.noticeKey && unreadCount > 0) ||
+              (tile.moduleDotKey !== undefined
+                && (moduleDotState.query.data?.[tile.moduleDotKey]?.hasNewActivity ?? false)) ||
               (tile.feesKey && feesTotalDue > 0) ||
-              (tile.pulse && !tile.noticeKey && !tile.feesKey && (pendingHwCount ?? 0) > 0);
+              (tile.pulse && !tile.moduleDotKey && !tile.noticeKey && !tile.feesKey && (pendingHwCount ?? 0) > 0);
 
             return (
               <motion.button
@@ -589,7 +613,7 @@ export default function StudentDashboard() {
                 }}
                 whileTap={{ scale: 0.97 }}
                 data-testid={`tile-${tile.id}`}
-                onClick={() => handleTileClick(tile.label, tile.route)}
+                onClick={() => handleTileClick(tile)}
                 className="relative text-left focus:outline-none"
                 style={{
                   background: "rgba(255,255,255,0.78)",
@@ -615,8 +639,8 @@ export default function StudentDashboard() {
                     className="absolute top-3 right-3"
                     data-testid={`badge-${tile.id}-pulse`}
                     aria-label={
-                      tile.noticeKey
-                        ? `${unreadCount} unread notices`
+                      tile.moduleDotKey
+                        ? `New ${tile.label} activity`
                         : tile.feesKey
                           ? `${feeRecords.filter(r => r.status !== "Paid").length} fees outstanding`
                           : `${pendingHwCount ?? 0} pending`

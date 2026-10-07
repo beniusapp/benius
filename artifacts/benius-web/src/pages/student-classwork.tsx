@@ -13,6 +13,7 @@ import { classworkQueryKey } from "@/lib/student-work-query-keys";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
 import { useIstDateSelection } from "@/hooks/use-ist-date-selection";
+import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentMeResponse {
@@ -291,7 +292,7 @@ export default function StudentClasswork() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: cwList, isLoading: cwLoading } = useQuery<ClassworkItem[]>({
+  const { data: cwList, isLoading: cwLoading, isError: cwError } = useQuery<ClassworkItem[]>({
     queryKey: classworkQueryKey(selectedSessionId, selectedDate),
     queryFn: async ({ queryKey, signal }) => {
       const [, requestSessionId, requestDate] = queryKey as ReturnType<typeof classworkQueryKey>;
@@ -304,6 +305,13 @@ export default function StudentClasswork() {
     },
     enabled: !!student && selectedSessionId !== null,
   });
+
+  useMarkStudentModuleSeenOnOpen(
+    "classwork",
+    student?.id,
+    !!student && selectedSessionId !== null,
+    !studentLoading && !!student && !cwLoading && !cwError,
+  );
 
   useEffect(() => {
     if (!studentLoading && !student) setLocation("/student-login");

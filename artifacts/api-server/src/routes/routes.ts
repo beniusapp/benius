@@ -59,6 +59,7 @@ import { resolveStudentExaminationSession } from "../student-examination-session
 import { resolveStudentAcademicSession } from "../student-academic-session";
 import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
+import { registerStudentModuleDotStateRoutes } from "../student-module-dot-state-routes";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
 import { calculateLateFee } from "../late-fee-engine";
@@ -6071,6 +6072,7 @@ tfoot td:last-child{text-align:right;}
 
   registerFeesRoutes(app);
   registerStudentPasswordRecoveryRoutes(app);
+  registerStudentModuleDotStateRoutes(app);
   registerTeacherRoutes(app);
   registerMobileAuthRoutes(app);
 

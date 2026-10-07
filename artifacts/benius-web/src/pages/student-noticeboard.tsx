@@ -10,6 +10,7 @@ import { getQueryFn, queryClient, sessionFetchForViewSession } from "@/lib/query
 import { studentNoticeQueryKey } from "@/lib/student-notice-query-key";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
+import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
 
 interface StudentMe {
   id: number;
@@ -76,7 +77,7 @@ export default function StudentNoticeboard() {
     if (!studentLoading && !student) setLocation("/student-login");
   }, [studentLoading, student, setLocation]);
 
-  const { data: notices = [], isLoading: noticesLoading } = useQuery<StudentNotice[]>({
+  const { data: notices = [], isLoading: noticesLoading, isError: noticesError } = useQuery<StudentNotice[]>({
     queryKey: studentNoticeQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
       const requestSessionId = queryKey[1] as number | null;
@@ -87,6 +88,13 @@ export default function StudentNoticeboard() {
     },
     enabled: !!student && sessionId !== null,
   });
+
+  useMarkStudentModuleSeenOnOpen(
+    "noticeboard",
+    student?.id,
+    !!student && sessionId !== null,
+    !studentLoading && !!student && !noticesLoading && !noticesError,
+  );
 
   const markReadMutation = useMutation({
     mutationFn: async ({ ids, sessionId: requestSessionId }: { ids: number[]; sessionId: number }) => {

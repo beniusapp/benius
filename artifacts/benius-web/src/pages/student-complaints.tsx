@@ -16,6 +16,7 @@ import {
 } from "@/lib/student-complaint-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
+import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
 
 interface StudentMe {
   id: number;
@@ -666,7 +667,7 @@ export default function StudentComplaints() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: inboxData = [], isLoading: inboxLoading } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
+  const { data: inboxData = [], isLoading: inboxLoading, isError: inboxError } = useQuery<(ComplaintRecord & { teacherName: string })[]>({
     queryKey: studentComplaintInboxQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
       const requestSessionId = queryKey[1] as number | null;
@@ -681,7 +682,7 @@ export default function StudentComplaints() {
     refetchOnWindowFocus: true,
   });
 
-  const { data: filedData = [], isLoading: filedLoading } = useQuery<ComplaintRecord[]>({
+  const { data: filedData = [], isLoading: filedLoading, isError: filedError } = useQuery<ComplaintRecord[]>({
     queryKey: studentComplaintFiledQueryKey(sessionId),
     queryFn: async ({ queryKey, signal }) => {
       const requestSessionId = queryKey[1] as number | null;
@@ -692,6 +693,13 @@ export default function StudentComplaints() {
     },
     enabled: !!student && sessionId !== null,
   });
+
+  useMarkStudentModuleSeenOnOpen(
+    "complaints",
+    student?.id,
+    !!student && sessionId !== null,
+    !studentLoading && !!student && !inboxLoading && !filedLoading && !inboxError && !filedError,
+  );
 
   const { data: teacherOptions = [], isLoading: teachersLoading } = useQuery<TeacherOption[]>({
     queryKey: ["/api/student/complaint-teachers"],

@@ -13,6 +13,7 @@ import { homeworkPendingDatesQueryKey, homeworkQueryKey } from "@/lib/student-wo
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
 import { useIstDateSelection } from "@/hooks/use-ist-date-selection";
+import { useMarkStudentModuleSeenOnOpen } from "@/hooks/use-student-module-dot-state";
 import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentMeResponse {
@@ -531,7 +532,7 @@ export default function StudentHomework() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: hwList, isLoading: hwLoading } = useQuery<HomeworkItem[]>({
+  const { data: hwList, isLoading: hwLoading, isError: hwError } = useQuery<HomeworkItem[]>({
     queryKey: homeworkQueryKey(selectedSessionId, selectedDate),
     queryFn: async ({ queryKey, signal }) => {
       const [, requestSessionId, requestDate] = queryKey as ReturnType<typeof homeworkQueryKey>;
@@ -544,6 +545,13 @@ export default function StudentHomework() {
     },
     enabled: !!student && selectedSessionId !== null,
   });
+
+  useMarkStudentModuleSeenOnOpen(
+    "homework",
+    student?.id,
+    !!student && selectedSessionId !== null,
+    !studentLoading && !!student && !hwLoading && !hwError,
+  );
 
   useEffect(() => {
     if (!studentLoading && !student) setLocation("/student-login");

@@ -9,6 +9,49 @@ export interface HealthStatus {
   status: string;
 }
 
+export type StudentModuleKey = typeof StudentModuleKey[keyof typeof StudentModuleKey];
+
+
+export const StudentModuleKey = {
+  homework: 'homework',
+  classwork: 'classwork',
+  noticeboard: 'noticeboard',
+  complaints: 'complaints',
+} as const;
+
+export interface StudentModuleActivityCursor {
+  /**
+     * Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.
+     * @maxLength 26
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?$
+     */
+  createdAt: string;
+  /** @minimum 1 */
+  recordId: number;
+}
+
+export interface StudentModuleDotState {
+  hasNewActivity: boolean;
+  latestActivityCursor: StudentModuleActivityCursor | null;
+}
+
+export interface StudentModuleDotStateResponse {
+  homework: StudentModuleDotState;
+  classwork: StudentModuleDotState;
+  noticeboard: StudentModuleDotState;
+  complaints: StudentModuleDotState;
+}
+
+export interface StudentModuleSeenInput {
+  module: StudentModuleKey;
+  cursor: StudentModuleActivityCursor;
+}
+
+export interface StudentModuleSeenResponse {
+  module: StudentModuleKey;
+  markedSeen: boolean;
+}
+
 export interface AdminTimetableContext {
   classes: string[];
   sections: string[];

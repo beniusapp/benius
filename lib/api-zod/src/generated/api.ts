@@ -89,3 +89,100 @@ export const MobileTeacherFirstLoginChangePasswordResponse = zod.object({
 })
 
 
+/**
+ * Requires an authenticated Student Web session. The session header is validated against the Student's school.
+ * @summary Get the authenticated Student's module-dot state for the selected session
+ */
+export const getStudentModuleDotStateHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetStudentModuleDotStateHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getStudentModuleDotStateHeaderXViewSessionIdRegExp)
+})
+
+export const getStudentModuleDotStateResponseHomeworkLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getStudentModuleDotStateResponseHomeworkLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getStudentModuleDotStateResponseClassworkLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getStudentModuleDotStateResponseClassworkLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getStudentModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getStudentModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getStudentModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getStudentModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+
+
+export const GetStudentModuleDotStateResponse = zod.object({
+  "homework": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getStudentModuleDotStateResponseHomeworkLatestActivityCursorOneCreatedAtMax).regex(getStudentModuleDotStateResponseHomeworkLatestActivityCursorOneCreatedAtRegExp).describe('Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.'),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "classwork": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getStudentModuleDotStateResponseClassworkLatestActivityCursorOneCreatedAtMax).regex(getStudentModuleDotStateResponseClassworkLatestActivityCursorOneCreatedAtRegExp).describe('Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.'),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "noticeboard": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getStudentModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtMax).regex(getStudentModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtRegExp).describe('Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.'),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "complaints": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getStudentModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtMax).regex(getStudentModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtRegExp).describe('Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.'),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+})
+})
+
+
+/**
+ * Requires an authenticated Student Web session. The Student and school are derived server-side; only visible activity in the selected session can be marked.
+ * @summary Persist the authenticated Student's observed activity cursor for one module
+ */
+export const markStudentModuleSeenHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const MarkStudentModuleSeenHeader = zod.object({
+  "x-view-session-id": zod.string().regex(markStudentModuleSeenHeaderXViewSessionIdRegExp)
+})
+
+export const markStudentModuleSeenBodyCursorCreatedAtMax = 26;
+
+
+export const markStudentModuleSeenBodyCursorCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+
+
+export const MarkStudentModuleSeenBody = zod.object({
+  "module": zod.enum(['homework', 'classwork', 'noticeboard', 'complaints']),
+  "cursor": zod.object({
+  "createdAt": zod.string().max(markStudentModuleSeenBodyCursorCreatedAtMax).regex(markStudentModuleSeenBodyCursorCreatedAtRegExp).describe('Raw timestamp-without-time-zone text from the source event; used only as an ordering cursor.'),
+  "recordId": zod.number().int().min(1)
+})
+})
+
+export const MarkStudentModuleSeenResponse = zod.object({
+  "module": zod.enum(['homework', 'classwork', 'noticeboard', 'complaints']),
+  "markedSeen": zod.boolean()
+})
+
+
