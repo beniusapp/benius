@@ -1,0 +1,552 @@
+# BENIUS — STUDENT ROLL NUMBER NOT REFLECTING
+# READ-ONLY ROOT-CAUSE AUDIT
+
+## IMPORTANT
+
+DO NOT change code.
+
+DO NOT change database data.
+
+DO NOT fix anything yet.
+
+DO NOT modify Mobile.
+
+DO NOT deploy.
+
+I first want the exact root cause.
+
+---
+
+# REPORTED ISSUE
+
+A Student has edited/submitted their own Profile.
+
+In Student → Verification Details, the form shows:
+
+**Roll Number: 10**
+
+However:
+
+### Student Profile
+
+Roll Number displays:
+
+**—**
+
+### Admin → Student Registry
+
+The same Student also displays:
+
+**Roll# —**
+
+So the Roll Number visible in Student Profile Verification is not reflected in the Student's normal Profile or Admin Student Registry.
+
+I need to understand exactly why before changing anything.
+
+---
+
+# IMPORTANT EXISTING BENIUS RULE
+
+Student Profile intentionally represents the Student's **CURRENT information**.
+
+Do NOT redesign Student Profile into a historical/session-specific profile.
+
+At the same time, BENIUS now has Academic Session Enrollments containing session-specific placement information such as:
+
+- class
+- section
+- roll number
+
+Promotion/Academic Session Stage 3 also established:
+
+> When a target Academic Session is activated, current Student Registry class/section/roll is synchronized from that target-session Enrollment.
+
+Do NOT change this architecture in this audit.
+
+---
+
+# STUDENT TO AUDIT
+
+If the Development data shown in the screenshots is still available, inspect:
+
+**DSID: MIS-0001**
+
+Observed:
+
+- Student name: `student1mis`
+- current class: 1
+- current section: a
+- Verification Details Roll Number: `10`
+- Student Profile Roll Number: `—`
+- Student Registry Roll#: `—`
+
+READ ONLY.
+
+Do not modify this Student.
+
+---
+
+# TRACE THE COMPLETE ROLL-NUMBER FLOW
+
+Trace:
+
+```text
+Student Verification Details
+        ↓
+Student enters Roll Number = 10
+        ↓
+Submit
+        ↓
+API request
+        ↓
+Database
+        ↓
+Pending profile/verification record?
+        ↓
+Approval?
+        ↓
+Current Student record?
+        ↓
+Academic Session Enrollment?
+        ↓
+Student Profile
+        ↓
+Admin Student Registry
+```
+
+I want the exact source at every stage.
+
+---
+
+# 1. STUDENT VERIFICATION FORM
+
+Determine:
+
+- Where does the displayed `Roll Number` value come from?
+- Is it loaded from `students.rollNumber`?
+- selected-session `enrollments.rollNo`?
+- pending profile submission?
+- profile approval snapshot?
+- another table/JSON field?
+
+When Student enters `10` and submits:
+
+- exactly what request field is sent?
+- which API receives it?
+- where is `10` stored?
+
+Give exact file/function/route locations.
+
+---
+
+# 2. PROFILE SUBMISSION / APPROVAL
+
+Determine whether Student profile edits follow:
+
+```text
+Student submits
+→ pending verification
+→ Admin/Teacher approves
+→ Student record updated
+```
+
+or another flow.
+
+For Roll Number specifically determine:
+
+- Is it allowed to be submitted by the Student?
+- Is it persisted in the pending submission?
+- Does approval copy it to `students.rollNumber`?
+- Does approval copy it to `enrollments.rollNo`?
+- Is it deliberately excluded from approval?
+- Is it only displayed in the verification form but never applied?
+
+Do not infer.
+
+Inspect actual code.
+
+---
+
+# 3. CURRENT STUDENT REGISTRY SOURCE
+
+Determine exactly where Admin → Student Registry gets:
+
+- Class
+- Section
+- Roll Number
+
+For each field state the source.
+
+For example:
+
+```text
+Class   → students.class ?
+Section → students.section ?
+Roll    → students.rollNumber ?
+```
+
+or enrollment.
+
+Explain why the screenshot shows:
+
+Class 1
+Section a
+Roll —
+    
+while Verification Details shows Roll 10.
+
+---
+
+# 4. STUDENT PROFILE SOURCE
+
+Determine exactly where Student Profile gets:
+
+- current Class
+- current Section
+- current Roll Number.
+
+Remember the existing product decision:
+
+**Student Profile always shows current information even when an older Academic Session is selected.**
+
+Do not change that rule.
+
+Explain why Profile currently shows `—`.
+
+---
+
+# 5. ACTIVE ACADEMIC SESSION ENROLLMENT
+
+For MIS-0001, inspect the Active Academic Session enrollment read-only.
+
+Report:
+
+- school ID
+- Student ID / DSID
+- Academic Session ID/name
+- enrollment status
+- enrollment class
+- enrollment section
+- enrollment roll number
+
+I specifically want to know whether:
+
+```text
+students.rollNumber = NULL
+```
+
+while:
+
+```text
+enrollments.rollNo = 10
+```
+
+or whether both are NULL and `10` exists only in the profile submission.
+
+---
+
+# 6. PROFILE VERIFICATION DATA
+
+Inspect the pending/approved profile verification record for MIS-0001.
+
+Report where Roll Number `10` currently exists.
+
+Possible examples:
+
+```text
+students.rollNumber
+enrollments.rollNo
+profile submission JSON
+approval snapshot
+pending changes
+```
+
+Do not guess.
+
+---
+
+# 7. APPROVAL STATUS
+
+The screenshots show:
+
+**Profile Verified**
+
+and the Verification Details photo also shows:
+
+**VERIFIED**
+
+Determine whether the profile submission containing Roll Number 10:
+
+- is already approved,
+- is pending,
+- was previously approved,
+- or the `Verified` badge represents something different.
+
+This distinction is important.
+
+Also inspect whether:
+
+**photo verification**
+
+and
+
+**full profile verification**
+
+are separate states.
+
+Do NOT modify the previously established photo-only approval behavior.
+
+---
+
+# 8. SYSTEM-ASSIGNED VS STUDENT-EDITABLE PLACEMENT
+
+The Verification Details UI labels:
+
+- Class: `System-assigned`
+- Section: `System-assigned`
+
+but Roll Number appears editable.
+
+Audit whether that is intentional.
+
+Determine current authorization/business rule for:
+
+- Student editing Class
+- Student editing Section
+- Student editing Roll Number.
+
+Do not change the rule.
+
+If Student Roll Number is editable in UI but backend intentionally refuses to apply it, identify this as a UI/business-rule inconsistency.
+
+---
+
+# 9. PROMOTION / ACADEMIC SESSION IMPACT
+
+Promotion Stage 1–4 is COMPLETE.
+
+Do NOT change Promotion.
+
+Check only whether the current Roll Number behavior interacts with:
+
+```text
+Academic Session Enrollment
+→ Stage 3 activation
+→ Student Registry synchronization
+```
+
+Remember:
+
+Stage 3 synchronizes current Registry:
+
+- class
+- section
+- roll
+
+from the activated target-session Enrollment.
+
+Determine whether allowing Student profile approval to change current Roll Number could create:
+
+```text
+Student Registry roll
+≠
+Active-session Enrollment roll
+```
+
+This is extremely important.
+
+Do NOT fix it yet.
+
+Report it.
+
+---
+
+# 10. DETERMINE THE AUTHORITATIVE SOURCE
+
+Based on the CURRENT BENIUS architecture, identify what is currently authoritative for:
+
+### Current Registry placement
+
+### Active-session academic placement
+
+### Student Profile current Roll Number
+
+### Profile verification submission
+
+Do not redesign the architecture.
+
+If the code currently has conflicting sources of truth, state that clearly.
+
+---
+
+# 11. DEVELOPMENT DATABASE — READ ONLY
+
+If MIS-0001 exists in Development, inspect the relevant records.
+
+Return a simple table:
+
+| Source | Class | Section | Roll |
+|---|---|---|---|
+| Student Registry (`students`) | | | |
+| Active Session Enrollment | | | |
+| Profile submission | | | |
+| Approval snapshot, if applicable | | | |
+
+Also provide verification/submission status.
+
+Do NOT UPDATE anything.
+
+Do NOT clean anything.
+
+Do NOT access Production.
+
+---
+
+# 12. ACADEMIC SESSION SAFETY
+
+Do not change:
+
+- selected-session enrollment architecture
+- historical enrollment rows
+- Promotion behavior
+- Stage 3 synchronization
+- historical Student placement
+
+No historical enrollment rewrite.
+
+---
+
+# 13. TENANT ISOLATION
+
+Confirm all inspected Student/Profile/Enrollment records are scoped to the authenticated school.
+
+Do not introduce any cross-school lookup.
+
+---
+
+# MOBILE FREEZE
+
+Mobile is FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do not redesign Mobile profile behavior.
+
+This audit concerns Web + backend only.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS STUDENT ROLL NUMBER AUDIT
+
+## Overall Verdict
+
+Choose:
+
+- PROFILE APPROVAL BUG
+- REGISTRY SYNCHRONIZATION BUG
+- ENROLLMENT SYNCHRONIZATION BUG
+- UI / SOURCE-OF-TRUTH MISMATCH
+- INTENTIONAL CURRENT BEHAVIOR
+- MULTIPLE CAUSES
+- NEEDS MORE INFORMATION
+
+## Simple explanation
+
+Explain in very simple words:
+
+> Why does Verification Details show Roll Number 10 while Student Profile and Student Registry show —?
+
+## Current data for MIS-0001
+
+Show the requested source table.
+
+## Student Verification source
+
+## Student submission destination
+
+Where exactly is `10` stored?
+
+## Approval behavior
+
+What happens to Roll Number when the profile is approved?
+
+## Student Profile source
+
+Why does it show `—`?
+
+## Student Registry source
+
+Why does it show `—`?
+
+## Active-session Enrollment
+
+What roll number does it contain?
+
+## Source-of-truth analysis
+
+Clearly distinguish:
+
+- current Student record
+- active-session Enrollment
+- profile submission
+- approval snapshot
+
+## Is Student allowed to edit Roll Number?
+
+State current behavior and whether frontend/backend agree.
+
+## Promotion / Stage 3 impact
+
+Would simply copying Student-entered Roll Number into the Registry create a mismatch with active-session Enrollment?
+
+YES / NO
+
+Explain.
+
+## Academic Session verification
+
+## Tenant isolation verification
+
+## Root cause
+
+Give exact files/routes/functions/lines where possible.
+
+## Recommended smallest correction
+
+DO NOT IMPLEMENT.
+
+Recommend the smallest safe correction that preserves:
+
+- current Student Profile behavior
+- Enrollment/session architecture
+- Promotion Stage 1–4
+- historical data
+- tenant isolation.
+
+If a PRODUCT DECISION is required about whether Students should be allowed to change their own Roll Number, say so clearly before recommending implementation.
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Existing data changes
+NONE
+
+## Mobile changes
+NONE
+
+## Production
+NOT ACCESSED
+
+## Deployment
+NONE
+
+STOP after the audit report.
