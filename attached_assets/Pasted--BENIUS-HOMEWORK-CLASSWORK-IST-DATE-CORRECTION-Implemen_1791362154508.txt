@@ -1,0 +1,448 @@
+# BENIUS — HOMEWORK / CLASSWORK IST DATE CORRECTION
+
+Implement the smallest safe correction based on the completed read-only audit.
+
+## SCOPE
+
+Fix ONLY the confirmed Web Homework/Classwork date problems.
+
+Mobile remains FROZEN.
+
+Do NOT redesign Homework or Classwork.
+
+Do NOT change Academic Session behavior.
+
+Do NOT change Homework due-date rules.
+
+Do NOT modify historical database records.
+
+Do NOT deploy.
+
+---
+
+# CONFIRMED ROOT CAUSE
+
+BENIUS business/display timezone is:
+
+**Asia/Kolkata / IST**
+
+Teacher Homework/Classwork forms already display today's correct IST date.
+
+However:
+
+- Homework/Classwork do not store a separate business-date column.
+- `created_at` represents the creation instant using the project's UTC convention.
+- Student Homework/Classwork filtering currently uses raw `created_at::date`.
+- Student cards derive their displayed work date from the raw UTC date portion.
+
+Therefore work created shortly after midnight IST can appear under the previous date.
+
+Example:
+
+```text
+Created:
+07 Oct 2026 01:08 IST
+
+Stored UTC equivalent:
+06 Oct 2026 19:38
+
+Current Student business-date interpretation:
+06 Oct ❌
+
+Correct BENIUS business date:
+07 Oct ✅
+```
+
+Fix this consistently.
+
+---
+
+# FIX 1 — HOMEWORK IST BUSINESS DATE
+
+For Student Homework filtering:
+
+Do NOT treat raw:
+
+`created_at::date`
+
+as the BENIUS business date.
+
+Convert/interpret the stored creation timestamp according to the project's existing UTC timestamp convention and derive its calendar date in:
+
+**Asia/Kolkata**
+
+Then compare that IST calendar date with the Student-selected date.
+
+Keep the existing Homework due-date behavior unchanged.
+
+Homework can continue to match according to the existing intended logic involving:
+
+- IST assignment/creation business date
+- existing due date behavior
+
+Do NOT modify `due_date`.
+
+---
+
+# FIX 2 — CLASSWORK IST BUSINESS DATE
+
+Apply the same principle to Student Classwork.
+
+A Classwork record created on:
+
+07 October IST
+
+must belong to:
+
+07 October
+
+even when its UTC timestamp date portion is 06 October.
+
+Use the IST calendar date consistently for filtering.
+
+---
+
+# FIX 3 — STUDENT CARD DISPLAY DATE
+
+Homework and Classwork Student cards must display the same IST business date used by filtering.
+
+Do NOT use:
+
+`createdAt.split("T")[0]`
+
+as the business date if that represents the UTC calendar date.
+
+Use the existing shared IST/date utilities where practical.
+
+Expected:
+
+```text
+created_at instant:
+2026-10-06 19:38 UTC
+
+Displayed:
+Assigned: 07 Oct 2026
+```
+
+For Classwork:
+
+```text
+created_at instant:
+2026-10-06 19:39 UTC
+
+Displayed work date:
+07 Oct 2026
+```
+
+Do not change timestamps themselves.
+
+---
+
+# FIX 4 — HOMEWORK DATE MARKERS
+
+The audit found Homework pending/calendar markers can already derive an IST date while the main work query uses UTC date filtering.
+
+Make the relevant Homework date behavior internally consistent.
+
+A Homework created on 07 October IST must not:
+
+- appear as a 07 October calendar marker
+- but require selecting 06 October to retrieve it.
+
+Filtering, marker/date availability, and displayed assigned date must agree on the same IST business date.
+
+Do NOT redesign the Homework calendar.
+
+---
+
+# FIX 5 — STUDENT DEFAULT SELECTED DATE
+
+Fresh Student Homework/Classwork pages already correctly initialize to today's IST date.
+
+Preserve this.
+
+Also fix the stale-default case conservatively.
+
+### Required behavior
+
+If the page remains mounted across an IST date rollover and the selected date is still the automatically chosen previous "today", advance it to the new IST today.
+
+Example:
+
+```text
+Page opened:
+06 Oct
+
+Automatic selected date:
+06 Oct
+
+Midnight IST passes
+
+Current date:
+07 Oct
+
+Selected date should become:
+07 Oct
+```
+
+### VERY IMPORTANT
+
+If the Student manually selected another date, DO NOT automatically force them back to today.
+
+Example:
+
+```text
+Today = 07 Oct
+
+Student deliberately selects:
+05 Oct
+
+Keep:
+05 Oct
+```
+
+Do not interfere with intentional historical browsing.
+
+---
+
+# ACADEMIC SESSION SWITCH
+
+The audit found switching Academic Session retains `selectedDate`.
+
+Do NOT automatically change this behavior unless necessary for the confirmed date bug.
+
+Academic Session switching and date selection are separate concerns.
+
+Keep existing session behavior unchanged.
+
+---
+
+# IST REQUIREMENT
+
+Use:
+
+**Asia/Kolkata**
+
+for BENIUS business-day calculations.
+
+Avoid introducing browser-local or server-local calendar-date assumptions.
+
+Use existing shared IST helpers where possible rather than creating multiple incompatible implementations.
+
+---
+
+# DATABASE
+
+NO schema change.
+
+NO migration.
+
+NO historical data rewrite.
+
+Do NOT add an assignment-date column merely for this correction.
+
+The existing `created_at` timestamp remains the creation instant.
+
+The correction is how BENIUS derives the IST business date from it.
+
+---
+
+# HOMEWORK DUE DATE
+
+Do NOT change Homework due-date semantics.
+
+`due_date` remains its existing PostgreSQL DATE/business value.
+
+Do not timezone-shift it.
+
+---
+
+# ACADEMIC SESSION SAFETY
+
+Preserve:
+
+authenticated school
++
+explicit selected Academic Session
++
+selected-session enrollment placement.
+
+No active-session fallback.
+
+Historical-session read behavior remains unchanged.
+
+Historical writes remain prohibited according to existing rules.
+
+---
+
+# TENANT ISOLATION
+
+Preserve all existing school/tenant isolation.
+
+No cross-school Homework/Classwork access.
+
+---
+
+# MOBILE FREEZE
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Mobile feature/business logic remains FROZEN.
+
+If an existing shared backend helper used by Mobile would be affected, report the impact before expanding scope.
+
+---
+
+# FOCUSED TESTS
+
+Test at minimum:
+
+### Homework
+
+1. Created 06 Oct 18:00 UTC
+   → 06 Oct 23:30 IST
+   → business date = 06 Oct
+
+2. Created 06 Oct 18:30 UTC
+   → 07 Oct 00:00 IST
+   → business date = 07 Oct
+
+3. Created 06 Oct 19:38 UTC
+   → 07 Oct 01:08 IST
+   → business date = 07 Oct
+
+4. Selecting 07 Oct retrieves the relevant Homework.
+
+5. Selecting 06 Oct does not retrieve it merely because UTC date is 06 Oct, unless the existing due-date rule independently makes it eligible for that date.
+
+6. Student card displays 07 Oct.
+
+7. Due date remains unchanged.
+
+### Classwork
+
+8. Same midnight-boundary tests.
+
+9. Selecting 07 Oct retrieves Classwork created on 07 Oct IST.
+
+10. Card displays 07 Oct.
+
+### Student selected date
+
+11. Fresh mount on 07 Oct IST → 07 Oct selected.
+
+12. Automatically selected 06 Oct + IST day rolls to 07 Oct → automatically advances to 07 Oct.
+
+13. Student manually selected 05 Oct → midnight/date update does NOT overwrite selection.
+
+### Isolation
+
+14. Session scoping remains correct.
+
+15. Tenant isolation remains correct.
+
+---
+
+# DEVELOPMENT VERIFICATION
+
+Using read-only Development data where practical, verify the previously observed records:
+
+Homework examples around:
+
+`2026-10-06 19:38–19:41 UTC`
+
+should resolve to:
+
+**07 Oct 2026 IST**
+
+Classwork examples around:
+
+`2026-10-06 19:39–19:40 UTC`
+
+should resolve to:
+
+**07 Oct 2026 IST**
+
+Do NOT rewrite those records.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS HOMEWORK / CLASSWORK IST DATE FIX REPORT
+
+## Overall Verdict
+PASS / NEEDS CHANGES
+
+## Root cause corrected
+
+## Homework behavior
+
+Show:
+
+stored timestamp
+→ IST business date
+→ Student selected date
+→ displayed Assigned date
+
+## Classwork behavior
+
+Same.
+
+## Calendar/date marker consistency
+
+## Student midnight rollover
+
+Explain how automatic vs manually selected dates are distinguished.
+
+## Due-date behavior
+
+Confirm unchanged.
+
+## Academic Session behavior
+
+Confirm unchanged.
+
+## Tenant isolation
+
+Confirm unchanged.
+
+## Files changed
+
+List exact files.
+
+## Database/schema changes
+
+Expected: NONE.
+
+## Existing data changes
+
+Expected: NONE.
+
+## Mobile changes
+
+Expected: NONE.
+
+Confirm `artifacts/benius-mobile/` was not modified.
+
+## Tests
+
+Exact pass/fail counts.
+
+## Builds/typecheck
+
+Separate new failures from pre-existing diagnostics.
+
+## Production
+
+NOT ACCESSED.
+
+## Deployment
+
+NONE.
+
+STOP after the report.
