@@ -1,0 +1,735 @@
+BENIUS — PRINCIPAL ATTENDANCE OVERVIEW
+STAGE 1: STUDENT ATTENDANCE ACCURACY & ACADEMIC SESSION CORRECTION
+
+IMPORTANT:
+This is an IMPLEMENTATION task based on the completed read-only audit.
+
+Do NOT perform another broad audit first.
+Do NOT redesign Attendance.
+Do NOT change established BENIUS business rules.
+
+Scope:
+Principal/Admin Portal
+/admin-dashboard/attendance
+
+PRIMARY GOAL
+
+Correct the Student side of Principal Attendance Overview so that:
+
+1. Active/current-session attendance uses the established BENIUS live Student eligibility rule.
+2. All Student attendance metrics use a consistent eligible population.
+3. Academic Session isolation remains strict.
+4. Historical Attendance remains preserved and readable.
+5. Student detail placement/roll uses the selected Academic Session Enrollment.
+6. Existing Attendance records are NOT deleted or rewritten.
+
+DO NOT work on Mobile.
+DO NOT deploy.
+DO NOT access Production.
+
+==================================================
+ESTABLISHED BENIUS RULES — DO NOT CHANGE
+==================================================
+
+1. Multi-tenant isolation is mandatory.
+
+School A must never read or calculate with School B Students, Enrollments, Attendance, Sessions, Teachers, or other data.
+
+2. Academic Session isolation is mandatory.
+
+Attendance data must remain scoped to:
+
+authenticated school
++
+explicitly selected Academic Session
++
+selected attendance date
+
+Do not silently mix sessions.
+
+3. For LIVE/CURRENT Attendance eligibility:
+
+A Student is eligible only when:
+
+- Student belongs to authenticated school
+- students.is_active = true
+- Student has an Enrollment in the explicitly selected Academic Session
+- Enrollment belongs to the same school
+- Enrollment status = Active
+- class/section comes from that selected-session Enrollment
+
+This is the same eligibility principle already established for the corrected Teacher Web live Attendance roster.
+
+4. HISTORICAL ATTENDANCE MUST BE PRESERVED.
+
+Do NOT apply today's Student active status in a way that erases legitimate historical attendance.
+
+Example:
+
+A Student attended school during an old Academic Session and was later deactivated.
+
+That Student's legitimate old Attendance must remain visible in that historical session.
+
+Therefore:
+
+ACTIVE/CURRENT SESSION
+→ use live eligibility:
+Active Student + Active selected-session Enrollment.
+
+ARCHIVED/HISTORICAL SESSION
+→ preserve historical Enrollment/Attendance population according to that historical session.
+→ current Student deactivation must NOT erase historical Attendance.
+→ historical academic content remains read-only.
+
+Do not invent a new historical rule silently.
+
+If the existing historical population logic needs adjustment to safely preserve historical records, explain exactly what you are doing.
+
+5. Admin Attendance "Assigned" Teacher column behavior is intentional.
+
+Do NOT change it.
+
+It may show current Teacher assignments.
+
+6. Teacher Self-Attendance historical stored status is authoritative.
+
+Do NOT recompute old Teacher attendance using current Attendance Policy.
+
+7. IST / Asia-Kolkata remains the business/display timezone.
+
+8. Promotion / Academic Session Stage 3 behavior must remain unchanged.
+
+9. Mobile is frozen.
+
+Do NOT modify:
+artifacts/benius-mobile/
+
+Do not redesign Mobile APIs.
+
+==================================================
+CONFIRMED AUDIT PROBLEM
+==================================================
+
+Development currently has:
+
+Student Registry:
+9 total Student rows
+5 active Students
+4 inactive/deactivated Students
+
+Selected Academic Session 2026-2027:
+9 Enrollment rows
+all currently status Active
+
+Principal Attendance Overview currently shows:
+
+Total Students = 9
+
+But under established LIVE Attendance eligibility:
+
+Active Student + Active selected-session Enrollment
+
+the correct current eligible population is:
+
+5
+
+The existing getAttendancePopulationForSession path is too broad.
+
+It includes selected-session Enrollment identities without filtering Student active status or Enrollment status.
+
+It can also include attendance identities and active-session fallback Students.
+
+DO NOT simply change "9" to "5" in the UI.
+
+Fix the underlying population and aggregation logic correctly.
+
+==================================================
+STAGE 1A — TOTAL STUDENTS
+==================================================
+
+For the ACTIVE/CURRENT selected Academic Session:
+
+Principal Attendance Overview → Student Pulse → Total Students
+
+must count exactly the live eligible Students:
+
+authenticated school
++
+selected session
++
+students.is_active = true
++
+matching Enrollment
++
+Enrollment.status = Active
+
+Use selected-session Enrollment as the academic placement source.
+
+Do NOT include:
+
+- deactivated Students
+- inactive Enrollments
+- Students from another school
+- Enrollments from another session
+- legacy NULL-session identities
+- arbitrary attendance identities outside the live eligible roster
+- active Students with no selected-session Enrollment
+
+IMPORTANT:
+
+Do NOT delete the four deactivated Students' Enrollment records.
+
+Do NOT rewrite their historical Attendance.
+
+This is a read/population correction.
+
+==================================================
+STAGE 1B — CONSISTENT STUDENT METRICS
+==================================================
+
+Correct these Student Pulse metrics together:
+
+- Total Students
+- Total Marked
+- Present
+- Absent
+- Attendance %
+- no-attendance warning
+
+They must not use unrelated population definitions.
+
+For the ACTIVE/CURRENT selected session, first establish ONE eligible roster using the live eligibility rule.
+
+Then calculate selected-date metrics against that eligible roster.
+
+Total Students:
+number of eligible Students.
+
+Total Marked:
+number of eligible Students who have a valid Attendance record for:
+
+authenticated school
++
+selected Academic Session
++
+selected date
+
+Do NOT count an Attendance row belonging to an ineligible/deactivated Student as Total Marked.
+
+Present:
+calculate only from eligible Students' selected-date Attendance records.
+
+Absent:
+calculate only from eligible Students' selected-date Attendance records.
+
+Other statuses:
+Preserve the existing BENIUS status semantics/formula.
+
+Do NOT redesign:
+Present
+Absent
+Late
+Leave
+Half Day
+or their existing attendance weighting rules.
+
+The purpose is population correctness, not a new attendance formula.
+
+==================================================
+STAGE 1C — ATTENDANCE %
+==================================================
+
+Audit confirmed that the current percentage denominator can be based only on class/section contexts that already have Attendance rows.
+
+That is not acceptable for a school-wide live Attendance overview.
+
+Correct the calculation so it uses the established eligible population/eligible selected-date Attendance data consistently.
+
+IMPORTANT:
+Preserve the existing BENIUS weighting semantics:
+
+Present / Late / Leave
+Half Day
+Absent
+
+Do NOT invent new weights.
+
+Before changing the no-marks behavior, inspect the existing intended Web behavior.
+
+If ZERO eligible Students have been marked on the selected date:
+
+Do NOT present 0% as though it were a measured attendance rate if the denominator is actually "no attendance submitted."
+
+Prefer a clear no-data / not-marked state consistent with the existing BENIUS daily-presence semantics.
+
+If UI constraints require a numeric fallback, explain it explicitly in the implementation report.
+
+Do not silently change the business formula.
+
+==================================================
+STAGE 1D — NO ATTENDANCE WARNING
+==================================================
+
+The current warning is based on raw Attendance row count.
+
+Correct it so ineligible/deactivated Student rows cannot suppress the warning.
+
+For example:
+
+If 5 Students are eligible
+and only old/ineligible/deactivated Students have Attendance rows,
+
+the system must NOT treat that as valid current Attendance activity.
+
+The warning must use eligible selected-date Attendance state.
+
+Do not redesign partial-completion reporting in this stage unless required for correctness.
+
+==================================================
+STAGE 1E — CLASS / SECTION DETAIL ROSTER
+==================================================
+
+When Principal selects:
+
+Class
++
+Section
++
+Date
+
+for the ACTIVE/CURRENT session:
+
+the Student detail table must use the same live eligibility rule.
+
+Therefore:
+
+- active Student
+- Active Enrollment
+- selected school
+- selected session
+- selected Enrollment class
+- selected Enrollment section
+
+Deactivated Students must not appear in the live/current Attendance detail roster merely because they still have Enrollment rows.
+
+Preserve historical behavior separately.
+
+==================================================
+STAGE 1F — ROLL NUMBER SOURCE
+==================================================
+
+The audit confirmed the Student Attendance detail currently reads roll from student_profiles.roll_no.
+
+That is incorrect for session-specific Attendance.
+
+For Attendance detail:
+
+ROLL NUMBER MUST COME FROM:
+
+selected Academic Session Enrollment.roll_no
+
+not:
+
+student_profiles.roll_no
+
+not a historical Student-submitted profile value.
+
+This must align with our established rule:
+
+Enrollment = Student academic placement inside a specific Academic Session.
+
+Student Registry/Profile = current/global placement.
+
+Example from Development:
+
+Student ID 3:
+selected-session Enrollment roll = 3
+profile roll = NULL
+
+Attendance detail should show 3.
+
+Student ID 1:
+selected-session Enrollment roll = NULL
+historical profile roll = "10"
+
+Attendance detail should show —
+NOT 10.
+
+Do NOT modify student_profiles data.
+
+Do NOT modify students.roll_number.
+
+Do NOT modify enrollments.roll_no.
+
+This is a display/read-source correction only.
+
+==================================================
+STAGE 1G — CLASS / SECTION FILTERS
+==================================================
+
+Audit the Principal Attendance Class/Section dropdown source during implementation.
+
+For session-specific Attendance navigation, ensure the Principal can select class/section combinations that actually belong to the selected Academic Session.
+
+Do NOT blindly use current school-global metadata if that can make historical-session Attendance impossible or misleading.
+
+Preferred behavior:
+
+derive valid class/section combinations from the selected-session Enrollment/Attendance context while preserving historical navigation.
+
+Do not change school Class/Section master data.
+
+Do not modify Enrollment placement.
+
+If changing the dropdown source would create a broader product behavior change, stop that subpart and report it rather than guessing.
+
+==================================================
+STAGE 1H — API ERROR HANDLING
+==================================================
+
+The audit found that failed Attendance API requests can currently become fabricated zero/empty results.
+
+Example:
+
+403/500
+→ UI can appear as:
+0 Students
+0 Present
+0 Absent
+
+This is misleading.
+
+Correct the Principal Attendance Overview Web behavior so genuine request failures show an error state rather than valid-looking zero Attendance data.
+
+Do NOT expose internal server details to the user.
+
+A legitimate successful response containing zero Attendance must still display as legitimate no-data/zero state.
+
+Differentiate:
+
+successful request with zero data
+
+from
+
+failed request.
+
+==================================================
+HISTORICAL SESSION SAFETY
+==================================================
+
+This is extremely important.
+
+Do NOT fix the active-session 9-vs-5 issue by globally adding:
+
+students.is_active = true
+
+to every historical Attendance query.
+
+That could make a Student disappear from an old Academic Session merely because the Student was deactivated later.
+
+Historical sessions must continue to show legitimate historical Students and Attendance.
+
+Before changing a shared helper, identify all callers.
+
+If a helper is shared between:
+
+live/current Attendance
+and
+historical reporting
+
+prefer introducing or using a purpose-specific live eligibility helper rather than silently changing historical semantics.
+
+No historical Attendance records may be deleted, rewritten, or backfilled.
+
+==================================================
+TEACHER ATTENDANCE
+==================================================
+
+Do NOT redesign Teacher Attendance in this stage.
+
+The audit showed the Development values for 08 Oct are correct:
+
+Faculty = 3
+Present = 0
+Not Marked = 3
+Late = 0
+Half Day = 0
+Leave = 0
+Corrections = 0
+
+Keep:
+
+- selected session/date filtering
+- persisted Self-Attendance status
+- current Assigned display behavior
+- correction behavior
+- IST clock-in/out display
+
+There are two small findings:
+
+1. "Department" column currently displays subjects.
+2. Faculty helper does not explicitly filter inactive Teacher profiles.
+
+DO NOT mix a speculative Faculty rule change into the Student correction.
+
+You MAY correct the obvious Department display mismatch if it is a pure UI label/value correction with no business-rule impact.
+
+For inactive Teacher Faculty counting:
+report the current behavior and leave unchanged unless an existing BENIUS rule clearly establishes Faculty = active Teachers only.
+
+==================================================
+ACADEMIC SESSION REQUIREMENTS
+==================================================
+
+Verify after correction:
+
+ACTIVE SESSION:
+- live eligible population correct
+- selected-session Enrollment placement used
+
+HISTORICAL SESSION:
+- old Attendance remains visible
+- current Student deactivation does not erase legitimate historical records
+- no historical writes introduced
+
+Session switching:
+A → B → A
+
+must not leak:
+
+- Student totals
+- class/section roster
+- Attendance rows
+- roll numbers
+- Teacher Attendance
+
+between sessions.
+
+Do not silently fall back to active session when the Web explicitly supplies a selected valid session.
+
+Foreign-school session IDs must remain rejected.
+
+==================================================
+TENANT ISOLATION
+==================================================
+
+Verify:
+
+School A cannot contribute to School B:
+
+- Total Students
+- Total Marked
+- Present
+- Absent
+- Attendance %
+- class/section detail
+- Enrollment roll
+- Teacher Attendance
+
+Never trust a client-provided school ID for authorization.
+
+Use authenticated school identity.
+
+==================================================
+DEVELOPMENT VERIFICATION
+==================================================
+
+Use Development only.
+
+Production must NOT be accessed.
+
+For the known Development example:
+
+school 2
+selected session 2026-2027
+
+Expected current live Student population:
+
+5
+
+The four deactivated Students must NOT contribute to live/current:
+
+Total Students
+Total Marked
+Present
+Absent
+Attendance %
+or class/section detail roster.
+
+But do NOT delete them or their Enrollments.
+
+For 08 Oct 2026:
+
+there are currently no eligible Student Attendance records.
+
+Verify the corrected UI/API semantics for:
+
+Total Students
+Total Marked
+Present
+Absent
+Attendance %
+warning
+
+and clearly report the exact expected values/state.
+
+Also verify at least one date that HAS Attendance records, if Development data allows, so we are not validating only an empty date.
+
+==================================================
+TESTS REQUIRED
+==================================================
+
+Add focused regression coverage for at least:
+
+1. Active Student + Active Enrollment → included.
+2. Inactive Student + Active Enrollment → excluded from live overview.
+3. Active Student + inactive Enrollment → excluded.
+4. Active Student without selected-session Enrollment → excluded from live overview.
+5. Foreign-school Student → excluded.
+6. Foreign-session Enrollment → excluded.
+7. Ineligible Attendance row does not increase Total Marked.
+8. Ineligible Attendance row does not increase Present/Absent/percentage.
+9. Eligible unmarked Student remains in Total Students.
+10. Enrollment roll is used in class detail.
+11. Historical Student remains visible in historical Attendance after later current deactivation.
+12. Historical Attendance records remain unchanged.
+13. A → B → A session switching does not leak values.
+14. Foreign-school session rejected.
+15. API failure does not render as successful zero Attendance.
+16. Existing Teacher Attendance stored-status semantics remain unchanged.
+
+Keep tests focused.
+Do not attempt to fix unrelated project-wide TypeScript diagnostics.
+
+==================================================
+DO NOT CHANGE
+==================================================
+
+Do NOT:
+
+- delete inactive Students
+- delete stale Enrollment rows
+- rewrite historical Attendance
+- backfill Attendance
+- rewrite Enrollment placement
+- change Promotion Stage 3
+- change Student Registry behavior
+- change Student Profile behavior
+- change Teacher live Attendance permissions
+- change Attendance Policy
+- change Teacher Self-Attendance historical semantics
+- change Admin Assigned historical behavior
+- change Homework/Classwork
+- change Student/Teacher red-dot notifications
+- change Mobile client
+- deploy
+- access Production
+
+==================================================
+DATABASE / SCHEMA
+==================================================
+
+The completed audit indicates that no schema migration is required for these corrections.
+
+Prefer query/business-logic corrections using existing:
+
+Students
+Enrollments
+Attendance
+Academic Sessions
+
+Do NOT create a new table merely to fix the population count.
+
+If you unexpectedly conclude that a schema change is necessary:
+
+STOP
+and report why before making it.
+
+==================================================
+FINAL REPORT REQUIRED
+==================================================
+
+After implementation, give me a structured report:
+
+# BENIUS PRINCIPAL ATTENDANCE OVERVIEW — STUDENT ACCURACY CORRECTION REPORT
+
+## Overall Verdict
+PASS / NEEDS CHANGES
+
+## Root Cause Corrected
+
+## Active Session Eligibility Rule
+Explain exactly which Students now count.
+
+## Development 9 vs 5 Result
+Before:
+After:
+Which Students excluded and why:
+
+## Student Pulse
+- Total Students
+- Total Marked
+- Present
+- Absent
+- Attendance %
+- warning behavior
+
+## Class / Section Detail
+Explain roster eligibility.
+
+## Roll Number
+Confirm selected-session Enrollment roll is used.
+
+## Academic Session
+Explain active and historical behavior separately.
+
+## Historical Attendance Preservation
+Confirm no legitimate old Attendance disappeared.
+
+## Class / Section Filters
+Explain whether/how selected-session navigation was corrected.
+
+## API Error Handling
+
+## Teacher Attendance
+Confirm unchanged behavior and list any pure UI correction made.
+
+## Tenant Isolation
+
+## IST / Date Handling
+
+## Files Changed
+
+## Database / Schema Changes
+Expected: NONE
+
+## Existing Data Changes
+Expected: NONE
+
+## Mobile Changes
+Must say:
+artifacts/benius-mobile/ changed: NO
+
+## Tests
+List exact pass/fail totals.
+
+## Builds / Typecheck
+Separate new failures from pre-existing diagnostics.
+
+## Development Verification
+Show the actual corrected values for school 2/session 2026-2027.
+
+## Production
+NOT ACCESSED
+
+## Deployment
+NONE
+
+Finally answer:
+
+"Is Principal Attendance Overview now internally consistent, correctly Academic-Session scoped, tenant-isolated, and accurate for the established BENIUS live Attendance eligibility rule?"
+
+YES or NO, with any remaining limitations.
+
+STOP after the report.
+Do not begin another stage automatically.
