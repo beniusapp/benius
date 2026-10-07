@@ -1,0 +1,802 @@
+# BENIUS — STUDENT PORTAL RED NOTIFICATION DOTS
+# IMPLEMENTATION
+
+Implement the Student Web Portal red-dot notification feature based on the completed architecture audit and the confirmed product decisions below.
+
+This stage is:
+
+**STUDENT WEB PORTAL ONLY**
+
+Mobile remains FROZEN.
+
+Teacher Portal notification dots are NOT part of this stage.
+
+Do NOT deploy.
+
+---
+
+# CONFIRMED PRODUCT RULE
+
+Add red notification dots ONLY to these four Student Dashboard modules:
+
+1. Homework
+2. Classwork
+3. Noticeboard
+4. Complaints
+
+DO NOT add this feature to any other Student module.
+
+---
+
+# EXPECTED BASIC BEHAVIOR
+
+```text id="notifbasic"
+New relevant activity
+        ↓
+Student Dashboard
+        ↓
+Relevant module shows 🔴
+        ↓
+Student opens that module
+        ↓
+Dot disappears immediately
+        ↓
+Seen state persists
+        ↓
+No dot after refresh/relogin
+        ↓
+New relevant activity later
+        ↓
+Dot appears again
+```
+
+---
+
+# CONFIRMED SCOPE
+
+Notification state must be:
+
+**School + Student + Academic Session + Module**
+
+Therefore:
+
+Student A opening Homework must NOT clear Student B's Homework dot.
+
+Opening Homework in Session A must NOT clear Homework state for Session B.
+
+Each Academic Session has independent module-seen state.
+
+---
+
+# HISTORICAL ACADEMIC SESSIONS
+
+Historical Academic Sessions may have their own module-seen state.
+
+Writing notification/read-state metadata is allowed because it does NOT mutate historical academic content.
+
+Do NOT modify:
+
+- historical Homework
+- historical Classwork
+- historical Notices
+- historical Complaints
+- historical Enrollments
+
+Historical academic content remains read-only.
+
+---
+
+# MODULE 1 — HOMEWORK
+
+Trigger the Homework dot when:
+
+A NEW Homework row becomes visible to that Student under the existing:
+
+- authenticated school
+- selected Academic Session
+- selected-session Enrollment
+- class
+- section
+
+rules.
+
+Use Homework creation activity.
+
+DO NOT use:
+
+- due date
+- pending submission status
+- overdue status
+
+as the red-dot trigger.
+
+Existing Homework due-date and pending behavior remains unchanged.
+
+---
+
+# MODULE 2 — CLASSWORK
+
+Trigger the Classwork dot when:
+
+A NEW Classwork row becomes visible to the Student under the existing:
+
+- school
+- selected Academic Session
+- selected-session Enrollment
+- class
+- section
+
+rules.
+
+Use Classwork creation activity.
+
+Do not modify the recently completed Homework/Classwork IST business-date correction.
+
+Notification ordering uses activity timestamps/cursors, not formatted IST date strings.
+
+---
+
+# MODULE 3 — NOTICEBOARD
+
+Trigger the Noticeboard dot when:
+
+A NEW Notice becomes visible to that Student under the existing Notice visibility/audience rules.
+
+Preserve all existing:
+
+- school
+- Academic Session
+- audience
+- class
+- section
+- Student visibility
+
+rules.
+
+A Notice the Student cannot access must NOT trigger a dot.
+
+---
+
+# IMPORTANT — EXISTING NOTICE READ SYSTEM REMAINS
+
+BENIUS already has:
+
+`notice_reads`
+
+and existing individual Notice unread/count behavior.
+
+DO NOT remove it.
+
+DO NOT replace it.
+
+DO NOT automatically mark all Notices as individually read when the Student opens Noticeboard.
+
+The new dashboard red dot is separate.
+
+Therefore:
+
+```text id="noticedot"
+New Notice
+→ Noticeboard 🔴
+
+Student opens Noticeboard
+→ dashboard 🔴 clears
+
+Individual Notice may still remain unread
+→ existing Notice count/read behavior continues
+```
+
+Keep the existing "X New Notices" behavior/count unless a technical conflict requires reporting.
+
+Do not create a new notification count.
+
+---
+
+# MODULE 4 — COMPLAINTS
+
+This rule is confirmed:
+
+The Complaints red dot should trigger ONLY for a new:
+
+**Teacher/Admin-side Complaint Note**
+
+visible to that Student.
+
+Use the existing Complaint Notes actor/author role.
+
+Qualifying roles:
+
+- teacher
+- admin
+
+Use existing authorized role representation exactly.
+
+If Support Staff currently stores an authorized staff note using the existing `admin` role token, preserve current behavior; do not redesign roles in this stage.
+
+---
+
+# COMPLAINT EVENTS THAT MUST NOT TRIGGER DOT
+
+Student creates Complaint:
+
+NO DOT.
+
+Student adds their own Complaint note:
+
+NO DOT.
+
+Status-only change:
+
+NO DOT for this stage.
+
+Resolution/status change without a Teacher/Admin note:
+
+NO DOT.
+
+We are deliberately NOT building Complaint event/history infrastructure in this stage.
+
+Do not change Complaint status architecture.
+
+---
+
+# COMPLAINT VISIBILITY
+
+A Teacher/Admin note can trigger a dot only if:
+
+- Complaint belongs to authenticated school
+- Complaint belongs to selected Academic Session
+- Student is authorized to see/participate in that Complaint under existing rules
+- note belongs to that Complaint
+- note author role qualifies
+
+Do not expose another Student's Complaint activity.
+
+---
+
+# PERSISTENT MODULE-SEEN STATE
+
+The audit confirmed no suitable generic persistent state currently exists.
+
+Add the minimum persistent state required.
+
+Conceptually one row should represent:
+
+```text id="seenmodel"
+school
+student
+academic_session
+module
+seen activity cursor
+```
+
+Allowed module keys ONLY:
+
+- homework
+- classwork
+- noticeboard
+- complaints
+
+Use an appropriate unique identity equivalent to:
+
+```text id="seenunique"
+school
++
+student
++
+academic session
++
+module
+```
+
+Do not create per-item notification records.
+
+Do not create a general notification center.
+
+---
+
+# ACTIVITY CURSOR
+
+Use a reliable cursor representing the newest visible activity.
+
+Prefer:
+
+**timestamp + record ID tie-breaker**
+
+rather than timestamp alone.
+
+This is important if two records have identical timestamps.
+
+Examples:
+
+Homework:
+`createdAt + homeworkId`
+
+Classwork:
+`createdAt + classworkId`
+
+Noticeboard:
+`createdAt + noticeId`
+
+Complaints:
+`complaintNote.createdAt + complaintNoteId`
+
+Use the existing timestamp storage convention consistently.
+
+Do NOT use IST date strings as ordering cursors.
+
+IST is for business/display date interpretation.
+
+Activity ordering should use reliable instants/timestamps.
+
+---
+
+# RACE-CONDITION REQUIREMENT
+
+DO NOT mark the module seen using blind:
+
+`server now()`
+
+Example:
+
+```text id="racecase"
+Dashboard observes latest Homework A
+        ↓
+Student clicks Homework
+        ↓
+Teacher creates Homework B almost simultaneously
+```
+
+Student opening Homework must mark seen only through:
+
+**Homework A's observed cursor**
+
+Homework B must remain newer than the saved cursor and therefore still be able to trigger 🔴.
+
+---
+
+# DASHBOARD STATE API
+
+Implement the smallest authenticated Student Web API needed to retrieve the four module states.
+
+Conceptually:
+
+`GET /api/student/module-dot-state`
+
+Return for each module:
+
+- hasNewActivity boolean
+- latest visible activity cursor needed for safe marking
+
+Do NOT return unnecessary content.
+
+Do NOT add counts.
+
+Student identity must come from authentication.
+
+School identity must come from authenticated Student.
+
+Selected Academic Session must use the existing Student session context/header and be validated against that school.
+
+---
+
+# MARK-SEEN API
+
+Implement the smallest endpoint needed to persist module seen state.
+
+Conceptually:
+
+`POST /api/student/module-dot-state/seen`
+
+Input should contain only what is necessary, such as:
+
+- module
+- observed activity cursor
+
+Do NOT accept Student ID or school ID as authorization input.
+
+Derive them server-side.
+
+Validate module against the four allowed module keys.
+
+Validate the selected Academic Session through existing Student session resolution.
+
+Never allow Student A to update Student B's state.
+
+---
+
+# FIRST-TIME BEHAVIOR
+
+IMPORTANT:
+
+When no module-seen row exists yet:
+
+If relevant activity exists in the selected Academic Session, treat it as NEW and show 🔴.
+
+This means the Student initially sees the dot for existing relevant activity until they open the module.
+
+After opening:
+
+seen cursor is saved.
+
+Dot stays cleared until newer activity exists.
+
+---
+
+# MODULE OPEN / CLEAR BEHAVIOR
+
+When Student clicks a dashboard module card that has a dot:
+
+1. Clear the dot immediately in Web UI.
+2. Send the observed latest cursor to mark-seen API.
+3. Navigate/open the module.
+4. Persist the state.
+
+If persistence fails:
+
+Do not silently permanently lose notification state.
+
+Invalidate/refetch appropriately so server truth can restore the dot.
+
+---
+
+# IMPORTANT — OPENING MODULE DIRECTLY
+
+A Student might enter Homework/Classwork/etc. without clicking the Dashboard card.
+
+The feature should still behave logically.
+
+When the Student successfully opens one of the four module pages, mark that module seen through the latest activity cursor that is actually known/returned for that module.
+
+Do not require Dashboard navigation as the only way to clear the dot.
+
+Avoid duplicate unsafe mark calls.
+
+---
+
+# DASHBOARD REFRESH
+
+Refresh module-dot state:
+
+- on Dashboard load
+- selected Academic Session change
+- returning/focusing Dashboard
+- after mark-seen mutation
+
+A modest polling interval comparable to the existing Notice behavior is acceptable.
+
+Do NOT introduce WebSocket/SSE architecture just for this feature.
+
+Do not overengineer.
+
+---
+
+# ACADEMIC SESSION SWITCHING
+
+Dot state is session-specific.
+
+Example:
+
+```text id="sessionscope"
+2026–27 Homework
+Student opens
+→ cleared for 2026–27
+
+Student switches to 2025–26
+→ 2025–26 Homework state evaluated independently
+```
+
+Never silently use active session when another selected session is being viewed.
+
+---
+
+# NOTICE COUNT VS RED DOT
+
+Keep existing individual Notice unread count behavior.
+
+The new module dot and existing Notice count have different meanings:
+
+Red dot:
+> New Notice activity since I last opened Noticeboard.
+
+Existing Notice unread count:
+> Individual Notices not yet marked read under existing Notice behavior.
+
+Do not merge these concepts.
+
+---
+
+# TENANT ISOLATION
+
+NON-NEGOTIABLE.
+
+Every query must be scoped to:
+
+authenticated Student
++
+authenticated school
++
+selected Academic Session
++
+existing module visibility rules.
+
+School A must never affect School B.
+
+Do not trust:
+
+- client Student ID
+- client school ID
+- arbitrary session belonging to another school.
+
+---
+
+# DATABASE SAFETY
+
+Add ONLY the minimum schema/table required for module seen state.
+
+Do NOT modify existing:
+
+- Homework schema
+- Classwork schema
+- Notice schema
+- Complaint schema
+- Notice read schema
+- Homework view schema
+- Enrollment schema
+- Promotion schema
+
+Do not backfill or rewrite academic content.
+
+If the required schema cannot be safely added using the project's existing migration/schema mechanism, STOP and report rather than improvising.
+
+---
+
+# EXISTING DATA
+
+Do not alter existing Homework/Classwork/Notice/Complaint records.
+
+Do not mark existing Notices individually read.
+
+Do not delete existing read records.
+
+---
+
+# IST
+
+BENIUS business/display timezone remains:
+
+Asia/Kolkata.
+
+Do not repeat the previous Homework/Classwork UTC-date bug.
+
+For notification activity ordering:
+
+use consistent timestamp/cursor ordering.
+
+For date display:
+
+use existing IST rules.
+
+---
+
+# WEB UI
+
+Add the small red dot to ONLY these Student Dashboard cards:
+
+- Homework
+- Classwork
+- Noticeboard
+- Complaints
+
+Use the existing dashboard red-dot visual style where practical.
+
+Do not redesign the Student Dashboard.
+
+Do not add:
+
+- badge numbers
+- notification center
+- bell icon
+- push notifications
+- popup alerts
+- toast for every new activity.
+
+This stage is RED DOT ONLY.
+
+---
+
+# MOBILE FREEZE
+
+Mobile remains FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+DO NOT modify Mobile UI.
+
+DO NOT implement Mobile notification state.
+
+Do not redesign Mobile APIs.
+
+This stage is Student Web only.
+
+---
+
+# TEACHER PORTAL
+
+DO NOT add Teacher Portal notification dots.
+
+Teacher Portal is a separate future stage.
+
+---
+
+# FOCUSED ACCEPTANCE TESTS
+
+Test at minimum:
+
+## Homework
+
+1. Relevant new Homework → Student A sees Homework 🔴.
+2. Student A opens Homework → Student A dot clears.
+3. Refresh/relogin → remains cleared.
+4. Newer Homework → dot returns.
+5. Homework for another class/section → no dot.
+6. Homework in another session → no dot for current session.
+
+## Classwork
+
+7. Same equivalent tests.
+
+## Noticeboard
+
+8. Relevant visible Notice → 🔴.
+9. Student opens Noticeboard → dashboard dot clears.
+10. Individual Notice unread state/count is NOT automatically cleared.
+11. Notice not visible to Student → no dot.
+
+## Complaints
+
+12. Student creates Complaint → no dot.
+13. Student adds own note → no dot.
+14. Teacher adds visible note → Complaints 🔴.
+15. Admin adds visible note → Complaints 🔴.
+16. Student opens Complaints → dot clears.
+17. Status-only change → no dot.
+18. Another Student's Complaint note → no dot.
+
+## Per Student
+
+19. Student A clears Homework → Student B remains unaffected.
+
+## Per Session
+
+20. Clearing Session A → Session B remains independent.
+
+## Persistence
+
+21. Refresh retains cleared state.
+22. Logout/login retains cleared state.
+
+## Race safety
+
+23. Activity newer than observed cursor is not accidentally cleared.
+
+## Security
+
+24. Student cannot mark another Student's state.
+25. Foreign-school session/activity cannot influence state.
+26. Invalid module key rejected.
+
+## Historical
+
+27. Marking historical-session module seen does not mutate historical academic content.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS STUDENT RED-DOT NOTIFICATION IMPLEMENTATION REPORT
+
+## Overall Verdict
+PASS / NEEDS CHANGES
+
+## Architecture implemented
+
+Explain the persistent state and cursor model.
+
+## Database/schema
+
+Give exact table/columns/unique constraints/indexes added.
+
+## Homework
+
+Trigger and clear behavior.
+
+## Classwork
+
+Trigger and clear behavior.
+
+## Noticeboard
+
+Trigger and clear behavior.
+
+Confirm existing individual Notice read/count behavior remains independent.
+
+## Complaints
+
+Confirm:
+
+- Student activity → no dot
+- Teacher note → dot
+- Admin note → dot
+- status-only → no dot
+
+## Per-Student behavior
+
+## Academic Session behavior
+
+## Historical-session behavior
+
+## Race-condition protection
+
+## Persistence
+
+Confirm refresh and relogin behavior.
+
+## Dashboard UI
+
+List exactly which cards have dots.
+
+## APIs
+
+List endpoints added and authentication/session behavior.
+
+## Tenant isolation/security
+
+## IST/timestamp handling
+
+## Existing content/data
+
+Confirm no academic content was rewritten.
+
+## Mobile
+
+Confirm:
+
+`artifacts/benius-mobile/` changed: NO.
+
+## Teacher Portal
+
+Confirm no Teacher Portal dot changes.
+
+## Files changed
+
+## Tests
+
+Give exact pass/fail counts.
+
+## Builds/typecheck
+
+Separate new errors from existing project diagnostics.
+
+## Production
+
+NOT ACCESSED.
+
+## Deployment
+
+NONE.
+
+## Final acceptance
+
+Answer:
+
+> Do Homework, Classwork, Noticeboard and Complaints now independently show a persistent per-Student, per-session red dot for new qualifying activity and clear it when the Student opens that module?
+
+YES / NO
+
+If NO, list only confirmed blockers.
+
+STOP after the report.
