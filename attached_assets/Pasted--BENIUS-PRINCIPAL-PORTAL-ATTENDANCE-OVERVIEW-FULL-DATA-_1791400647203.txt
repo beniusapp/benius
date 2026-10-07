@@ -1,0 +1,1024 @@
+# BENIUS — PRINCIPAL PORTAL ATTENDANCE OVERVIEW
+# FULL DATA ACCURACY + ACADEMIC SESSION AUDIT
+
+## MODE: READ-ONLY AUDIT ONLY
+
+DO NOT modify code.
+
+DO NOT modify database data.
+
+DO NOT create migrations.
+
+DO NOT change business logic.
+
+DO NOT fix anything yet.
+
+DO NOT modify Mobile.
+
+DO NOT deploy.
+
+Production must NOT be accessed.
+
+You may inspect source code and perform SELECT-only queries against the Development database where necessary.
+
+---
+
+# PURPOSE
+
+Audit the complete Principal/Admin Web Attendance Overview:
+
+`/admin-dashboard/attendance`
+
+I need to know whether EVERY number, roster, percentage, status, filter and Academic Session relationship displayed on this page is actually correct.
+
+Do not assume the existing implementation is correct.
+
+Trace every displayed value:
+
+```text
+Web UI
+→ API request
+→ authentication
+→ selected Academic Session
+→ backend route
+→ storage/query/service
+→ Development DB records
+→ calculated result
+→ displayed value
+```
+
+---
+
+# IMPORTANT OBSERVED EXAMPLE
+
+The current screenshots show:
+
+Student Registry:
+
+```text
+5 active students
+```
+
+while Principal Attendance Overview for 08 Oct 2026 shows:
+
+```text
+Student Pulse — School-wide
+
+Total Students: 9
+Total Marked: 0
+Present: 0
+Absent: 0
+Attendance %: 0%
+```
+
+There are also:
+
+```text
+4 deactivated students
+```
+
+in Deactivated Students.
+
+This looks suspiciously like:
+
+```text
+5 active + 4 inactive = 9
+```
+
+but DO NOT assume that is the cause.
+
+Prove where the Attendance Overview value `9` comes from.
+
+Determine whether inactive/deactivated Students are incorrectly included, whether stale Enrollments are involved, whether the count is enrollment-based, Student-table-based, attendance-record-based, or something else.
+
+Remember that BENIUS previously had inactive Students whose selected-session Enrollments remained `Active`.
+
+The completed Teacher live Attendance correction established that live attendance eligibility must not simply include an inactive Student because an Active Enrollment remains.
+
+Do not modify that completed behavior during this audit.
+
+---
+
+# CORE QUESTION
+
+Answer:
+
+> Is Principal → Attendance Overview currently 100% correct and properly mapped to the selected Academic Session?
+
+Verdict must be one of:
+
+- PASS
+- NEEDS CHANGES
+- PARTIALLY CORRECT
+
+Do not give PASS unless the displayed data can be proven from code + Development data.
+
+---
+
+# 1. IDENTIFY THE COMPLETE MODULE
+
+Inspect the complete `/admin-dashboard/attendance` page.
+
+List every section and displayed metric.
+
+At minimum inspect:
+
+## Section A — Student Pulse / School-wide Student Attendance
+
+- Total Students
+- Total Marked
+- Present
+- Absent
+- Attendance %
+- Target %
+- warning such as “No attendance records found”
+- selected date
+- class filter
+- section filter
+- detailed Student attendance table
+
+## Section B — Teacher Attendance
+
+- Faculty count
+- Present
+- Not Marked
+- Late Arrival
+- Half Day
+- On Leave
+- Correction
+- Teacher rows
+- assigned class/section display
+- Teacher status
+- clock-in
+- clock-out
+- hours
+- search/filter behavior
+
+Also identify any additional metrics/cards not listed above.
+
+---
+
+# 2. ACADEMIC SESSION — TOP PRIORITY
+
+The top bar currently shows a selected Academic Session such as:
+
+`2026-2027 · Active`
+
+Trace exactly how `/admin-dashboard/attendance` receives and uses this selected Academic Session.
+
+For EVERY Student Attendance query determine whether it includes:
+
+```text
+authenticated school
++
+selected Academic Session ID
++
+attendance date
+```
+
+Check whether any route:
+
+- ignores `x-view-session-id`
+- uses active session instead of selected session
+- silently falls back to active session
+- uses current Student Registry placement instead of selected-session Enrollment
+- mixes records from different sessions
+- includes NULL-session legacy records
+- uses session name instead of session ID
+- trusts client school/session values improperly
+
+Show exact file:line evidence.
+
+---
+
+# 3. WHAT SHOULD "TOTAL STUDENTS" MEAN?
+
+Do not assume.
+
+First determine what the current code means by:
+
+`Total Students`
+
+Then compare it with BENIUS attendance semantics.
+
+For the selected:
+
+```text
+School
+Academic Session
+Attendance Date
+```
+
+identify all possible Student populations:
+
+A. All Student Registry rows  
+B. Active Student Registry rows  
+C. All selected-session Enrollment rows  
+D. Active selected-session Enrollment rows  
+E. Active Students + Active selected-session Enrollment  
+F. Students with attendance records for that date  
+G. Some other population
+
+Report which one the current Attendance Overview actually uses.
+
+Then state whether that is consistent with the existing Teacher live Attendance eligibility rule.
+
+---
+
+# 4. INVESTIGATE THE 9 VS 5 EXAMPLE
+
+Using SELECT-only Development queries, reproduce the current school/session example if the Development data still matches it.
+
+Provide a Student-by-Student table containing at least:
+
+```text
+Student ID
+DSID
+Name
+students.is_active
+current Registry class
+current Registry section
+current Registry roll
+selected-session Enrollment exists?
+Enrollment status
+Enrollment class
+Enrollment section
+Enrollment roll
+attendance record exists for selected date?
+attendance status
+included in Attendance Overview Total Students?
+reason included/excluded
+```
+
+Specifically identify the five active Students shown by Student Registry and the four deactivated Students shown by Deactivated Students if they still exist in Development.
+
+Determine whether:
+
+`9 = 5 active + 4 deactivated`
+
+or whether 9 comes from something else.
+
+Do not alter any rows.
+
+---
+
+# 5. ACTIVE STUDENT + ACTIVE ENROLLMENT ELIGIBILITY
+
+Audit whether Principal Attendance Overview uses the same safe live population concept as Teacher Attendance.
+
+For live/current Attendance reporting, check whether eligibility requires:
+
+```text
+Student belongs to authenticated school
+AND
+Student is active
+AND
+Student has Enrollment in selected Academic Session
+AND
+Enrollment is Active
+```
+
+Also apply class/section filtering from the selected-session Enrollment where appropriate.
+
+Check these combinations explicitly:
+
+```text
+Active Student + Active Enrollment
+Active Student + Inactive Enrollment
+Inactive Student + Active Enrollment
+Inactive Student + Inactive Enrollment
+Active Student + no selected-session Enrollment
+Inactive Student + no selected-session Enrollment
+```
+
+Report whether each is included today.
+
+DO NOT change anything.
+
+---
+
+# 6. REGISTRY VS SESSION ENROLLMENT
+
+Remember:
+
+```text
+Student Registry
+= current/global Student placement
+
+Enrollment
+= Student placement within a particular Academic Session
+```
+
+For Attendance Overview determine whether class, section and roll come from:
+
+`students`
+
+or:
+
+`enrollments`
+
+For session-specific attendance reporting, verify whether the selected-session Enrollment is being used consistently.
+
+Identify any places that incorrectly use current:
+
+```text
+students.class
+students.section
+students.roll_number
+```
+
+for a historical or selected-session attendance view.
+
+---
+
+# 7. TOTAL MARKED
+
+Trace exactly how:
+
+`Total Marked`
+
+is calculated.
+
+Determine whether it means:
+
+- eligible Students with a valid attendance record for that date
+- every attendance row in DB
+- distinct Student IDs
+- Present + Absent
+- some other formula
+
+Check whether duplicate attendance rows can inflate it.
+
+Check whether attendance belonging to:
+
+- inactive Students
+- inactive Enrollments
+- foreign session
+- foreign school
+- NULL session
+- wrong class/section
+
+can affect the value.
+
+---
+
+# 8. PRESENT / ABSENT
+
+Trace the exact formulas.
+
+List every Student attendance status supported by the system.
+
+Determine which statuses count as:
+
+- Present
+- Absent
+- Marked
+- excluded
+
+Do not infer.
+
+Use actual code.
+
+Check whether historical/ineligible Student attendance records can still inflate live Present/Absent totals.
+
+Historical attendance data itself must NOT be deleted.
+
+---
+
+# 9. ATTENDANCE %
+
+Trace the exact formula.
+
+For example determine whether current code uses:
+
+```text
+Present / Total Students
+```
+
+or:
+
+```text
+Present / Total Marked
+```
+
+or another formula.
+
+Explain what happens when:
+
+```text
+Total Students > 0
+Total Marked = 0
+```
+
+and when:
+
+```text
+Total Students = 0
+```
+
+Confirm whether displayed `0%` is mathematically and product-wise consistent with the current intended behavior.
+
+Do not change the formula during audit.
+
+---
+
+# 10. "NO ATTENDANCE RECORDS FOUND" WARNING
+
+Audit this message:
+
+> No attendance records found for [date]. Teachers may not have marked attendance yet.
+
+Determine exactly what condition triggers it.
+
+Check whether it can incorrectly appear when:
+
+- some classes have attendance but others do not
+- only inactive Students have attendance records
+- only another session has attendance records
+- eligible Students exist but are unmarked
+- there are no eligible Students at all
+
+Report any misleading cases.
+
+---
+
+# 11. CLASS / SECTION FILTER
+
+Audit:
+
+`All Classes`
+`Select Section`
+
+Verify available classes/sections and detailed Student rows are derived correctly.
+
+Check:
+
+- selected-session Enrollment placement
+- active Student
+- active Enrollment
+- school
+- session
+- selected date
+
+Ensure a Student currently in Class 2/A but historically enrolled in Class 1/B is displayed according to the selected Academic Session, not blindly from current Registry placement.
+
+---
+
+# 12. STUDENT DETAIL TABLE
+
+Trace the detailed Student Attendance table.
+
+For every row determine source of:
+
+- DSID
+- name
+- class
+- section
+- roll
+- attendance status
+- check-in/time if applicable
+- any other fields
+
+Verify the table population and Student Pulse summary use compatible eligibility rules.
+
+A Student must not be excluded from summary but included in detail, or vice versa, without an intentional documented reason.
+
+---
+
+# 13. HISTORICAL ACADEMIC SESSION TEST
+
+Select/read a previous Academic Session in code/data if Development contains one.
+
+Determine what happens when Principal selects an old session.
+
+Expected architecture:
+
+```text
+selected old session
+→ old session Enrollment population
+→ old session attendance
+→ old session placement
+```
+
+Current Student Registry placement must not replace historical placement.
+
+Check whether the page silently falls back to active session anywhere.
+
+Historical Attendance Overview must remain read-only.
+
+Do not modify historical records.
+
+---
+
+# 14. DATE + ACADEMIC SESSION RELATIONSHIP
+
+Audit whether the selected attendance date is valid for the selected Academic Session.
+
+Determine whether the module allows:
+
+- date before session start
+- date after session end
+- future date
+- date belonging to another session
+
+If yes, document current behavior.
+
+Do not automatically add restrictions.
+
+We need to know whether this is intentional or a bug before changing it.
+
+---
+
+# 15. IST
+
+BENIUS business/display timezone is:
+
+`Asia/Kolkata`
+
+Audit all date handling in Attendance Overview.
+
+Check:
+
+- default selected date
+- displayed date
+- API date
+- database attendance date
+- Teacher attendance date
+- Student attendance date
+- date comparisons
+- "today"
+- historical date selection
+
+Identify browser-local or UTC truncation that could shift the business date.
+
+Remember the recently corrected Homework/Classwork UTC-vs-IST issue.
+
+Do not modify date logic during this audit.
+
+---
+
+# 16. TEACHER ATTENDANCE — COMPLETE AUDIT
+
+Now separately audit Section B.
+
+The screenshot currently shows:
+
+```text
+Faculty: 3
+Present: 0
+Not Marked: 3
+```
+
+with three Teachers listed.
+
+Verify exactly where `Faculty = 3` comes from.
+
+Determine whether it includes:
+
+- active Teachers only
+- inactive Teachers
+- Teachers of authenticated school only
+- Support Staff
+- Admin/Principal
+- deleted/deactivated Teachers
+
+Report exact rule.
+
+---
+
+# 17. TEACHER ATTENDANCE SESSION SEMANTICS
+
+Teacher Self-Attendance has existing historical semantics.
+
+Remember the established BENIUS rule:
+
+> Historical Teacher Self-Attendance stored status is authoritative. Later policy edits must not reinterpret/rewrite historical stored status.
+
+Audit whether Principal Attendance Overview follows that.
+
+Check whether this page:
+
+- reads stored Teacher attendance status
+- recomputes status using current policy
+- uses current assignment
+- writes/heals attendance during GET
+- behaves differently for active vs archived session
+
+A GET/read of Principal Attendance Overview must not mutate historical attendance.
+
+Report exact behavior.
+
+DO NOT change it yet.
+
+---
+
+# 18. TEACHER SESSION SCOPING
+
+Check Teacher attendance records against:
+
+```text
+school
+selected Academic Session
+selected attendance date
+Teacher
+```
+
+Determine behavior for legacy Teacher Self-Attendance rows with NULL `session_id`.
+
+Check whether selecting a historical session shows that session's Teacher attendance or active-session attendance.
+
+Check for active-session fallback.
+
+---
+
+# 19. TEACHER ASSIGNED COLUMN
+
+Existing BENIUS decision:
+
+> Admin Attendance “Assigned” may show the Teacher's CURRENT class/section assignment.
+
+This is intentional.
+
+DO NOT flag current assignment display as a historical bug.
+
+But confirm that only the `Assigned` display uses this intentional current behavior; attendance status itself must still use the correct session/date record.
+
+---
+
+# 20. TEACHER STATUS CARDS
+
+Audit each:
+
+- Present
+- Not Marked
+- Late Arrival
+- Half Day
+- On Leave
+- Correction
+
+Trace each number to the underlying records and formulas.
+
+Check whether one Teacher can be counted in more than one mutually exclusive status unexpectedly.
+
+Explain the exact status precedence.
+
+Check whether approved Leave synchronization is reflected correctly.
+
+---
+
+# 21. CLOCK-IN / CLOCK-OUT / HOURS
+
+Verify:
+
+- correct Teacher
+- correct school
+- correct session
+- correct date
+- correct IST display
+- correct duration calculation
+
+Check incomplete check-in/no checkout behavior.
+
+Check whether historical records are recalculated using current policy.
+
+---
+
+# 22. ATTENDANCE CORRECTIONS
+
+Audit what the `Correction` count means.
+
+Determine whether it represents:
+
+- correction request
+- approved correction
+- corrected attendance row
+- some other state
+
+Check school/session/date scope.
+
+Ensure correction data from another session cannot affect selected-session totals.
+
+---
+
+# 23. TENANT ISOLATION
+
+For EVERY Attendance Overview query verify:
+
+```text
+authenticated Principal/Admin school
+```
+
+is authoritative.
+
+Check whether client-supplied:
+
+- schoolId
+- sessionId
+- class
+- section
+- Student ID
+- Teacher ID
+
+can expose another school's attendance data.
+
+Specifically inspect any path/query parameter used by this page.
+
+No cross-school data may contribute to counts or detail tables.
+
+---
+
+# 24. PRINCIPAL / ADMIN AUTHORIZATION
+
+Confirm who can access `/admin-dashboard/attendance` and its APIs.
+
+Determine behavior for:
+
+- Principal/Admin
+- Support Staff
+- Teacher
+- Student
+- unauthenticated user
+
+Do not change permissions.
+
+Just report current behavior and any genuine authorization gap.
+
+---
+
+# 25. COMPARE SUMMARY VS RAW DEVELOPMENT DATA
+
+For the screenshot's Development school/session/date if available, independently calculate from raw DB data:
+
+## Student side
+
+```text
+Eligible Students
+Marked
+Present
+Absent
+Attendance %
+```
+
+## Teacher side
+
+```text
+Eligible Faculty
+Present
+Not Marked
+Late
+Half Day
+Leave
+Correction
+```
+
+Then compare:
+
+```text
+Expected from raw data
+vs
+API result
+vs
+UI display
+```
+
+Use a clear table.
+
+This is critical.
+
+---
+
+# 26. CHECK FOR STALE DATA / CACHE
+
+Determine whether React Query/cache keys include:
+
+- school
+- selected Academic Session
+- selected date
+- class
+- section where relevant
+
+Check whether switching Academic Sessions or dates can temporarily show old counts from another context.
+
+Identify missing query-key dimensions.
+
+Do not fix during audit.
+
+---
+
+# 27. PREVIOUS ATTENDANCE CORRECTION REGRESSION
+
+Do not break or reinterpret the completed Teacher live Attendance roster correction.
+
+Verify whether Principal Attendance Overview still uses an older population helper/query that did NOT receive that correction.
+
+This is especially important because the previous correction intentionally added an active-only selected-session roster for live Web Teacher Attendance while leaving other/shared roster behavior unchanged.
+
+Determine whether `/admin-dashboard/attendance` is currently using one of those older/shared population paths.
+
+---
+
+# 28. DO NOT ASSUME REGISTRY COUNT MUST EQUAL ATTENDANCE COUNT
+
+The Registry shows current active Students globally.
+
+Attendance should be Academic Session/date aware.
+
+Therefore:
+
+```text
+Registry active count != Attendance eligible count
+```
+
+can be legitimate in some situations.
+
+The audit must determine whether THIS mismatch is legitimate or a defect.
+
+Explain why.
+
+---
+
+# 29. CLASSIFY EVERY FINDING
+
+For every issue found classify:
+
+- CRITICAL
+- HIGH
+- MEDIUM
+- LOW
+- INTENTIONAL / NO CHANGE
+
+For each genuine defect provide:
+
+```text
+Observed behavior
+Root cause
+Expected behavior
+Affected file:line
+Whether DB/data correction is required
+Whether schema change is required
+Whether existing historical data must remain untouched
+Recommended smallest correction
+```
+
+Do NOT implement the correction.
+
+---
+
+# 30. REQUIRED FINAL REPORT
+
+Return exactly:
+
+# BENIUS PRINCIPAL ATTENDANCE OVERVIEW — FULL ACCURACY & SESSION AUDIT
+
+## Overall Verdict
+PASS / NEEDS CHANGES / PARTIALLY CORRECT
+
+## Simple explanation
+
+Answer plainly:
+
+> Is every number on Principal Attendance Overview currently trustworthy?
+
+YES / NO.
+
+Then explain why.
+
+## Current architecture
+
+## Academic Session mapping
+
+For Student and Teacher attendance separately.
+
+## Student Pulse — Total Students
+
+Explain exactly where the current number comes from.
+
+## 9 vs 5 investigation
+
+Show Development evidence.
+
+## Student eligibility matrix
+
+Active/inactive Student × active/inactive/missing Enrollment.
+
+## Total Marked
+
+## Present
+
+## Absent
+
+## Attendance %
+
+## No-attendance warning
+
+## Class/Section filters
+
+## Student detail table
+
+## Registry vs Enrollment source of truth
+
+## Historical Academic Session behavior
+
+## Date/session validation
+
+## IST/date handling
+
+## Teacher Attendance — Faculty
+
+## Teacher status calculations
+
+## Teacher historical-status semantics
+
+## Teacher session mapping
+
+## Assigned column
+
+Confirm intentional current-assignment behavior.
+
+## Clock-in / Clock-out / Hours
+
+## Corrections
+
+## Tenant isolation
+
+## Authorization
+
+## Cache/query-key audit
+
+## Development reconciliation
+
+Include:
+
+| Metric | Raw DB expected | API | UI | Correct? |
+
+for both Student and Teacher attendance.
+
+## Confirmed defects
+
+Number each defect with severity.
+
+## Intentional behavior / no change
+
+## Recommended smallest corrections
+
+Prioritize only genuine defects.
+
+## Database/schema impact
+
+## Existing historical data impact
+
+## Mobile impact
+
+Must remain:
+
+`artifacts/benius-mobile/ changed: NO`
+
+## Code changes
+
+NONE.
+
+## Database changes
+
+NONE.
+
+## Production
+
+NOT ACCESSED.
+
+## Deployment
+
+NONE.
+
+## Final answer
+
+Answer:
+
+> Is Principal Attendance Overview 100% accurate and correctly Academic-Session mapped today?
+
+YES / NO.
+
+If NO, state exactly what is wrong in concise bullets.
+
+STOP AFTER THE AUDIT REPORT.
+
+---
+
+Again:
+
+**AUDIT ONLY.**
+
+Do not fix the `9`.
+
+Do not change Student eligibility.
+
+Do not change Academic Session logic.
+
+Do not alter Attendance formulas.
+
+Do not change Teacher attendance.
+
+Do not touch historical records.
+
+Do not touch Mobile.
+
+First prove what is happening.
