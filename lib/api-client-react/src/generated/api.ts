@@ -30,7 +30,10 @@ import type {
   MobileTeacherFirstLoginPasswordChanged,
   StudentModuleDotStateResponse,
   StudentModuleSeenInput,
-  StudentModuleSeenResponse
+  StudentModuleSeenResponse,
+  TeacherModuleDotStateResponse,
+  TeacherModuleSeenInput,
+  TeacherModuleSeenResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -777,5 +780,172 @@ export const useMarkStudentModuleSeen = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMarkStudentModuleSeenMutationOptions(options));
+    }
+
+export const getGetTeacherModuleDotStateUrl = () => {
+
+
+
+
+  return `/api/teacher/module-dot-state`
+}
+
+/**
+ * Requires an authenticated Teacher Web session. Teacher, school, and session ownership are validated server-side.
+ * @summary Get the authenticated Teacher's module-dot state for the selected session
+ */
+export const getTeacherModuleDotState = async ( options?: Parameters<typeof customFetch>[1]): Promise<TeacherModuleDotStateResponse> => {
+
+  return customFetch<TeacherModuleDotStateResponse>(getGetTeacherModuleDotStateUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeacherModuleDotStateQueryKey = () => {
+    return [
+    `/api/teacher/module-dot-state`
+    ] as const;
+    }
+
+
+export const getGetTeacherModuleDotStateQueryOptions = <TData = Awaited<ReturnType<typeof getTeacherModuleDotState>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherModuleDotState>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeacherModuleDotStateQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeacherModuleDotState>>> = ({ signal }) => getTeacherModuleDotState({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeacherModuleDotState>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeacherModuleDotStateQueryResult = NonNullable<Awaited<ReturnType<typeof getTeacherModuleDotState>>>
+export type GetTeacherModuleDotStateQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the authenticated Teacher's module-dot state for the selected session
+ */
+
+export function useGetTeacherModuleDotState<TData = Awaited<ReturnType<typeof getTeacherModuleDotState>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherModuleDotState>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeacherModuleDotStateQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getMarkTeacherModuleSeenUrl = () => {
+
+
+
+
+  return `/api/teacher/module-dot-state/seen`
+}
+
+/**
+ * Accepts only a cursor the Teacher can see in the selected session. Teacher and school are derived server-side.
+ * @summary Persist the authenticated Teacher's observed cursor for one module
+ */
+export const markTeacherModuleSeen = async (teacherModuleSeenInput: TeacherModuleSeenInput, options?: Parameters<typeof customFetch>[1]): Promise<TeacherModuleSeenResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<TeacherModuleSeenResponse>(getMarkTeacherModuleSeenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(teacherModuleSeenInput)
+  }
+);}
+
+
+
+
+
+export const getMarkTeacherModuleSeenMutationKey = () => ['markTeacherModuleSeen'] as const;
+
+export const getMarkTeacherModuleSeenMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markTeacherModuleSeen>>, TError,MarkTeacherModuleSeenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markTeacherModuleSeen>>, TError,MarkTeacherModuleSeenMutationVariables, TContext> => {
+
+const mutationKey = getMarkTeacherModuleSeenMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markTeacherModuleSeen>>, MarkTeacherModuleSeenMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  markTeacherModuleSeen(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkTeacherModuleSeenMutationResult = NonNullable<Awaited<ReturnType<typeof markTeacherModuleSeen>>>
+    export type MarkTeacherModuleSeenMutationBody = BodyType<TeacherModuleSeenInput>
+    export type MarkTeacherModuleSeenMutationError = ErrorType<void>
+    export type MarkTeacherModuleSeenMutationVariables = {data: BodyType<TeacherModuleSeenInput>}
+
+    /**
+ * @summary Persist the authenticated Teacher's observed cursor for one module
+ */
+export const useMarkTeacherModuleSeen = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markTeacherModuleSeen>>, TError,MarkTeacherModuleSeenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markTeacherModuleSeen>>,
+        TError,
+        MarkTeacherModuleSeenMutationVariables,
+        TContext
+      > => {
+      return useMutation(getMarkTeacherModuleSeenMutationOptions(options));
     }
 

@@ -186,3 +186,105 @@ export const MarkStudentModuleSeenResponse = zod.object({
 })
 
 
+/**
+ * Requires an authenticated Teacher Web session. Teacher, school, and session ownership are validated server-side.
+ * @summary Get the authenticated Teacher's module-dot state for the selected session
+ */
+export const getTeacherModuleDotStateHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetTeacherModuleDotStateHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getTeacherModuleDotStateHeaderXViewSessionIdRegExp)
+})
+
+export const getTeacherModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getTeacherModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getTeacherModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getTeacherModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getTeacherModuleDotStateResponseLeaveLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getTeacherModuleDotStateResponseLeaveLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+export const getTeacherModuleDotStateResponseApprovalCenterLatestActivityCursorOneCreatedAtMax = 26;
+
+
+export const getTeacherModuleDotStateResponseApprovalCenterLatestActivityCursorOneCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+
+
+export const GetTeacherModuleDotStateResponse = zod.object({
+  "noticeboard": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getTeacherModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtMax).regex(getTeacherModuleDotStateResponseNoticeboardLatestActivityCursorOneCreatedAtRegExp).describe('Raw source timestamp text used only for deterministic activity ordering.'),
+  "source": zod.enum(['notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo']),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "complaints": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getTeacherModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtMax).regex(getTeacherModuleDotStateResponseComplaintsLatestActivityCursorOneCreatedAtRegExp).describe('Raw source timestamp text used only for deterministic activity ordering.'),
+  "source": zod.enum(['notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo']),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "leave": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getTeacherModuleDotStateResponseLeaveLatestActivityCursorOneCreatedAtMax).regex(getTeacherModuleDotStateResponseLeaveLatestActivityCursorOneCreatedAtRegExp).describe('Raw source timestamp text used only for deterministic activity ordering.'),
+  "source": zod.enum(['notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo']),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+}),
+  "approval_center": zod.object({
+  "hasNewActivity": zod.boolean(),
+  "latestActivityCursor": zod.union([zod.object({
+  "createdAt": zod.string().max(getTeacherModuleDotStateResponseApprovalCenterLatestActivityCursorOneCreatedAtMax).regex(getTeacherModuleDotStateResponseApprovalCenterLatestActivityCursorOneCreatedAtRegExp).describe('Raw source timestamp text used only for deterministic activity ordering.'),
+  "source": zod.enum(['notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo']),
+  "recordId": zod.number().int().min(1)
+}),zod.null()])
+})
+})
+
+
+/**
+ * Accepts only a cursor the Teacher can see in the selected session. Teacher and school are derived server-side.
+ * @summary Persist the authenticated Teacher's observed cursor for one module
+ */
+export const markTeacherModuleSeenHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const MarkTeacherModuleSeenHeader = zod.object({
+  "x-view-session-id": zod.string().regex(markTeacherModuleSeenHeaderXViewSessionIdRegExp)
+})
+
+export const markTeacherModuleSeenBodyCursorCreatedAtMax = 26;
+
+
+export const markTeacherModuleSeenBodyCursorCreatedAtRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$');
+
+
+
+export const MarkTeacherModuleSeenBody = zod.object({
+  "module": zod.enum(['noticeboard', 'complaints', 'leave', 'approval_center']),
+  "cursor": zod.object({
+  "createdAt": zod.string().max(markTeacherModuleSeenBodyCursorCreatedAtMax).regex(markTeacherModuleSeenBodyCursorCreatedAtRegExp).describe('Raw source timestamp text used only for deterministic activity ordering.'),
+  "source": zod.enum(['notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo']),
+  "recordId": zod.number().int().min(1)
+})
+})
+
+export const MarkTeacherModuleSeenResponse = zod.object({
+  "module": zod.enum(['noticeboard', 'complaints', 'leave', 'approval_center']),
+  "markedSeen": zod.boolean()
+})
+
+

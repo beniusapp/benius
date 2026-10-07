@@ -52,6 +52,61 @@ export interface StudentModuleSeenResponse {
   markedSeen: boolean;
 }
 
+export type TeacherModuleKey = typeof TeacherModuleKey[keyof typeof TeacherModuleKey];
+
+
+export const TeacherModuleKey = {
+  noticeboard: 'noticeboard',
+  complaints: 'complaints',
+  leave: 'leave',
+  approval_center: 'approval_center',
+} as const;
+
+export type TeacherModuleActivityCursorSource = typeof TeacherModuleActivityCursorSource[keyof typeof TeacherModuleActivityCursorSource];
+
+
+export const TeacherModuleActivityCursorSource = {
+  notice: 'notice',
+  peer_report: 'peer_report',
+  student_leave: 'student_leave',
+  student_profile_submission: 'student_profile_submission',
+  student_profile_photo: 'student_profile_photo',
+} as const;
+
+export interface TeacherModuleActivityCursor {
+  /**
+     * Raw source timestamp text used only for deterministic activity ordering.
+     * @maxLength 26
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?$
+     */
+  createdAt: string;
+  source: TeacherModuleActivityCursorSource;
+  /** @minimum 1 */
+  recordId: number;
+}
+
+export interface TeacherModuleDotState {
+  hasNewActivity: boolean;
+  latestActivityCursor: TeacherModuleActivityCursor | null;
+}
+
+export interface TeacherModuleDotStateResponse {
+  noticeboard: TeacherModuleDotState;
+  complaints: TeacherModuleDotState;
+  leave: TeacherModuleDotState;
+  approval_center: TeacherModuleDotState;
+}
+
+export interface TeacherModuleSeenInput {
+  module: TeacherModuleKey;
+  cursor: TeacherModuleActivityCursor;
+}
+
+export interface TeacherModuleSeenResponse {
+  module: TeacherModuleKey;
+  markedSeen: boolean;
+}
+
 export interface AdminTimetableContext {
   classes: string[];
   sections: string[];

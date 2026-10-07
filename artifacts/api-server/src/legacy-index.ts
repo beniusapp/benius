@@ -1356,6 +1356,25 @@ app.use((req, res, next) => {
         CHECK (seen_activity_record_id > 0)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS teacher_module_seen_state (
+      school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+      teacher_id INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+      session_id INTEGER NOT NULL REFERENCES academic_sessions(id) ON DELETE CASCADE,
+      module_key VARCHAR(24) NOT NULL,
+      seen_activity_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+      seen_activity_source VARCHAR(40) NOT NULL,
+      seen_activity_record_id INTEGER NOT NULL,
+      CONSTRAINT teacher_module_seen_state_pk
+        PRIMARY KEY (school_id, teacher_id, session_id, module_key),
+      CONSTRAINT teacher_module_seen_state_module_chk
+        CHECK (module_key IN ('noticeboard', 'complaints', 'leave', 'approval_center')),
+      CONSTRAINT teacher_module_seen_state_source_chk
+        CHECK (seen_activity_source IN ('notice', 'peer_report', 'student_leave', 'student_profile_submission', 'student_profile_photo')),
+      CONSTRAINT teacher_module_seen_state_record_id_chk
+        CHECK (seen_activity_record_id > 0)
+    );
+  `);
   await ensureMobileAuthSchema(pool);
   await assertNoSchemaDrift(pool);
 

@@ -179,6 +179,64 @@ paths:
           description: Student Web authentication is required
         "403":
           description: The activity cursor is not visible to this Student in the selected session
+  /teacher/module-dot-state:
+    get:
+      operationId: getTeacherModuleDotState
+      tags: [teacher-notifications]
+      summary: Get the authenticated Teacher's module-dot state for the selected session
+      description: Requires an authenticated Teacher Web session. Teacher, school, and session ownership are validated server-side.
+      parameters:
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: New-activity state and latest visible cursors for the four supported Teacher modules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeacherModuleDotStateResponse"
+        "400":
+          description: A selected Academic Session is required or invalid
+        "401":
+          description: Teacher Web authentication is required
+        "403":
+          description: The selected session is not available to this Teacher
+  /teacher/module-dot-state/seen:
+    post:
+      operationId: markTeacherModuleSeen
+      tags: [teacher-notifications]
+      summary: Persist the authenticated Teacher's observed cursor for one module
+      description: Accepts only a cursor the Teacher can see in the selected session. Teacher and school are derived server-side.
+      parameters:
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeacherModuleSeenInput"
+      responses:
+        "200":
+          description: The cursor was persisted monotonically, or a newer cursor was already saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeacherModuleSeenResponse"
+        "400":
+          description: The module or activity cursor is invalid
+        "401":
+          description: Teacher Web authentication is required
+        "403":
+          description: The activity cursor is not visible to this Teacher in the selected session
 components:
   schemas:
     HealthStatus:
@@ -243,6 +301,67 @@ components:
       properties:
         module:
           $ref: "#/components/schemas/StudentModuleKey"
+        markedSeen:
+          type: boolean
+      required: [module, markedSeen]
+    TeacherModuleKey:
+      type: string
+      enum: [noticeboard, complaints, leave, approval_center]
+    TeacherModuleActivityCursor:
+      type: object
+      additionalProperties: false
+      properties:
+        createdAt:
+          type: string
+          description: Raw source timestamp text used only for deterministic activity ordering.
+          maxLength: 26
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"
+        source:
+          type: string
+          enum: [notice, peer_report, student_leave, student_profile_submission, student_profile_photo]
+        recordId:
+          type: integer
+          minimum: 1
+      required: [createdAt, source, recordId]
+    TeacherModuleDotState:
+      type: object
+      additionalProperties: false
+      properties:
+        hasNewActivity:
+          type: boolean
+        latestActivityCursor:
+          oneOf:
+            - $ref: "#/components/schemas/TeacherModuleActivityCursor"
+            - type: "null"
+      required: [hasNewActivity, latestActivityCursor]
+    TeacherModuleDotStateResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        noticeboard:
+          $ref: "#/components/schemas/TeacherModuleDotState"
+        complaints:
+          $ref: "#/components/schemas/TeacherModuleDotState"
+        leave:
+          $ref: "#/components/schemas/TeacherModuleDotState"
+        approval_center:
+          $ref: "#/components/schemas/TeacherModuleDotState"
+      required: [noticeboard, complaints, leave, approval_center]
+    TeacherModuleSeenInput:
+      type: object
+      additionalProperties: false
+      properties:
+        module:
+          $ref: "#/components/schemas/TeacherModuleKey"
+        cursor:
+          $ref: "#/components/schemas/TeacherModuleActivityCursor"
+      required: [module, cursor]
+    TeacherModuleSeenResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        module:
+          $ref: "#/components/schemas/TeacherModuleKey"
         markedSeen:
           type: boolean
       required: [module, markedSeen]

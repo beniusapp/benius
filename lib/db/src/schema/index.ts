@@ -19,3 +19,4 @@
 
 export * from "./schema";
 export * from "./student-module-seen-state";
+export * from "./teacher-module-seen-state";

@@ -8,6 +8,8 @@ import {
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getQueryFn, sessionFetchForViewSession, setViewSessionId } from "@/lib/queryClient";
+import type { TeacherModuleKey } from "@workspace/api-client-react";
+import { useTeacherModuleDotState } from "@/hooks/use-teacher-module-dot-state";
 
 import ProfileModule from "@/pages/teacher-modules/profile";
 import AttendanceModule from "@/pages/teacher-modules/attendance";
@@ -114,6 +116,13 @@ const TILES: TileConfig[] = [
   { id: "student-profiles",label: "Approval Center",  emoji: "✅", zone: "Administration", desc: "Review and approve student profile edits",   accentColor: "#fb7185" },
 ];
 
+const TEACHER_DOT_MODULE_BY_TILE: Partial<Record<string, TeacherModuleKey>> = {
+  noticeboard: "noticeboard",
+  complaint: "complaints",
+  leave: "leave",
+  "student-profiles": "approval_center",
+};
+
 // ── Noticeboard unread tracking (mirrors noticeboard.tsx localStorage key) ──
 function getDashboardReadIds(teacherId: number): Set<number> {
   try {
@@ -143,11 +152,13 @@ function TileCard({
   tile,
   badge,
   dotColor,
+  notificationDot = false,
   onClick,
 }: {
   tile: TileConfig;
   badge?: number;
   dotColor?: string;
+  notificationDot?: boolean;
   onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -201,13 +212,22 @@ function TileCard({
       {/* count badge (e.g. pending approvals) */}
       {badge !== undefined && badge > 0 && (
         <span
-          className="absolute top-3 right-3 min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1.5"
+          className={`absolute top-3 ${notificationDot ? "right-8" : "right-3"} min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1.5`}
           data-testid={`badge-${tile.id}`}
         >
           {badge > 9 ? "9+" : badge}
         </span>
       )}
 
+      {notificationDot && (
+        <span
+          className="absolute top-3 right-3 h-3 w-3 rounded-full bg-red-500 border-2 border-slate-900 shadow-[0_0_10px_rgba(239,68,68,0.7)]"
+          data-testid={`dot-${tile.id}`}
+          role="img"
+          aria-label="New activity"
+          title="New activity"
+        />
+      )}
 
       {/* emoji icon block */}
       <div
@@ -257,6 +277,9 @@ export default function TeacherDashboard() {
   const [viewingSessionId, setViewingSessionId] = useState<number | null>(null);
   const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
+  const dashboardEntryMarker = useRef<string | null>(null);
+  const handledModuleEntry = useRef<string | null>(null);
+  const previousRouteModule = useRef<string | null>(activeModule ?? null);
 
   const { data: teacher, isLoading, isError } = useQuery<TeacherMe | null>({
     queryKey: ["/api/teacher-me"],
@@ -324,6 +347,90 @@ export default function TeacherDashboard() {
     const readIds = getDashboardReadIds(teacher.id);
     return adminNoticesForBadge.filter(n => !readIds.has(n.id)).length;
   }, [adminNoticesForBadge, teacher?.id]);
+
+  const teacherDotQuery = useTeacherModuleDotState({
+    enabled: !!teacher && selectedSessionId !== null,
+    teacherId: teacher?.id,
+    schoolId: teacher?.schoolId,
+    sessionId: selectedSessionId,
+    poll: true,
+  });
+
+  const openTeacherTile = useCallback(async (tileId: string) => {
+    const moduleKey = TEACHER_DOT_MODULE_BY_TILE[tileId];
+    if (!moduleKey || !teacher || selectedSessionId === null) {
+      setLocation(`/teacher-dashboard/${tileId}`);
+      return;
+    }
+
+    const entryKey = `${teacher.id}:${teacher.schoolId}:${selectedSessionId}:${moduleKey}`;
+    dashboardEntryMarker.current = entryKey;
+
+    let observedState = teacherDotQuery.query.data;
+    if (!observedState) {
+      observedState = (await teacherDotQuery.query.refetch()).data;
+    }
+    const moduleState = observedState?.[moduleKey];
+    if (moduleState?.hasNewActivity && moduleState.latestActivityCursor) {
+      try {
+        await teacherDotQuery.markSeen(moduleKey, moduleState.latestActivityCursor);
+      } catch {
+        // markSeen invalidates the state query on failure; still open the module.
+      }
+    }
+    setLocation(`/teacher-dashboard/${tileId}`);
+  }, [
+    selectedSessionId,
+    setLocation,
+    teacher,
+    teacherDotQuery.markSeen,
+    teacherDotQuery.query,
+  ]);
+
+  useEffect(() => {
+    const priorModule = previousRouteModule.current;
+    previousRouteModule.current = activeModule ?? null;
+    if (!activeModule) {
+      if (priorModule) {
+        handledModuleEntry.current = null;
+        dashboardEntryMarker.current = null;
+        void teacherDotQuery.query.refetch();
+      }
+      return;
+    }
+
+    const moduleKey = TEACHER_DOT_MODULE_BY_TILE[activeModule];
+    if (!moduleKey || !teacher || selectedSessionId === null) return;
+    const entryKey = `${teacher.id}:${teacher.schoolId}:${selectedSessionId}:${moduleKey}`;
+    if (dashboardEntryMarker.current === entryKey) {
+      dashboardEntryMarker.current = null;
+      handledModuleEntry.current = entryKey;
+      return;
+    }
+    if (handledModuleEntry.current === entryKey) return;
+
+    let cancelled = false;
+    void teacherDotQuery.query.refetch().then((result) => {
+      if (cancelled) return;
+      handledModuleEntry.current = entryKey;
+      const moduleState = result.data?.[moduleKey];
+      if (moduleState?.hasNewActivity && moduleState.latestActivityCursor) {
+        void teacherDotQuery.markSeen(moduleKey, moduleState.latestActivityCursor).catch(() => undefined);
+      }
+    }).catch(() => {
+      if (!cancelled) handledModuleEntry.current = entryKey;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeModule,
+    selectedSessionId,
+    teacher?.id,
+    teacher?.schoolId,
+    teacherDotQuery.markSeen,
+    teacherDotQuery.query.refetch,
+  ]);
 
   // Sync viewingSessionId → global queryClient header whenever it changes.
   useEffect(() => {
@@ -788,6 +895,7 @@ export default function TeacherDashboard() {
                       const isAttendance = tile.id === "attendance";
                       const isApproval = tile.id === "student-profiles";
                       const isNoticeboard = tile.id === "noticeboard";
+                      const dotModule = TEACHER_DOT_MODULE_BY_TILE[tile.id];
 
                       const badge = isApproval && pendingProfilesCount > 0
                         ? pendingProfilesCount
@@ -800,10 +908,13 @@ export default function TeacherDashboard() {
                           key={tile.id}
                           tile={tile}
                           badge={badge}
+                          notificationDot={dotModule
+                            ? teacherDotQuery.query.data?.[dotModule]?.hasNewActivity ?? false
+                            : false}
                           dotColor={isAttendance
                             ? (teacher.attendanceDoneToday ? "#10b981" : "#ef4444")
                             : undefined}
-                          onClick={() => setLocation(`/teacher-dashboard/${tile.id}`)}
+                          onClick={() => { void openTeacherTile(tile.id); }}
                         />
                       );
                     })}
