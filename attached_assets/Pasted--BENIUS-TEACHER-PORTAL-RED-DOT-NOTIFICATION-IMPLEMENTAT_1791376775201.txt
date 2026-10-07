@@ -1,0 +1,950 @@
+# BENIUS — TEACHER PORTAL RED-DOT NOTIFICATION
+# IMPLEMENTATION STAGE
+
+Implement the Teacher Web Portal red-dot notification feature based on the completed audit and the CONFIRMED product rules below.
+
+DO NOT perform another architecture redesign.
+
+DO NOT modify Student Portal red-dot behavior.
+
+Mobile remains FROZEN.
+
+DO NOT deploy.
+
+---
+
+# 1. EXACT MODULES
+
+Add red notification dots ONLY to these Teacher Dashboard modules:
+
+1. Noticeboard
+2. Complaints
+3. Leave
+4. Approval Center
+
+DO NOT add dots to any other Teacher module.
+
+---
+
+# 2. CORE MEANING OF THE DOT
+
+The dot means:
+
+> New relevant activity has occurred since this Teacher last opened this module.
+
+It does NOT mean:
+
+> There are still pending/unresolved items.
+
+Example:
+
+```text
+3 Student Leave Requests exist
+        ↓
+Teacher sees Leave 🔴
+        ↓
+Teacher opens Leave
+        ↓
+🔴 clears immediately
+        ↓
+Teacher processes NONE of the requests
+        ↓
+Returns to Dashboard
+        ↓
+NO 🔴
+        ↓
+A new Student submits another Leave Request
+        ↓
+Leave 🔴 appears again
+```
+
+This distinction is mandatory.
+
+---
+
+# 3. CLEARING RULE
+
+When the Teacher opens one of these modules:
+
+- Noticeboard
+- Complaints
+- Leave
+- Approval Center
+
+the corresponding dashboard red dot must clear immediately.
+
+The Teacher does NOT need to:
+
+- open an individual Notice
+- open an individual Complaint
+- approve/reject a Leave
+- approve/reject a profile
+- process every pending item
+
+Opening the MODULE is enough.
+
+Persist the seen state so it remains cleared after:
+
+- returning to Dashboard
+- refresh
+- logout/login
+
+until genuinely newer qualifying activity occurs.
+
+---
+
+# 4. STATE SCOPE
+
+Persistent state must be:
+
+```text
+School
++ Teacher
++ Academic Session
++ Module
+```
+
+Therefore:
+
+```text
+Teacher A opens Leave
+→ only Teacher A's Leave dot clears
+
+Teacher B
+→ unaffected
+```
+
+And:
+
+```text
+Teacher opens Noticeboard in 2026–2027
+→ clears only 2026–2027 Noticeboard state
+
+2025–2026
+→ independent state
+```
+
+Use the explicitly selected Academic Session.
+
+Never silently substitute the active session.
+
+---
+
+# 5. SEPARATE TEACHER STATE
+
+Do NOT reuse or modify:
+
+`student_module_seen_state`
+
+Create separate Teacher state.
+
+Conceptually:
+
+```text
+teacher_module_seen_state
+
+school_id
+teacher_id
+session_id
+module_key
+seen_activity_at
+seen_activity_source
+seen_activity_record_id
+```
+
+Unique identity:
+
+```text
+school_id
++ teacher_id
++ session_id
++ module_key
+```
+
+Allowed module keys ONLY:
+
+```text
+noticeboard
+complaints
+leave
+approval_center
+```
+
+Use the project's existing safe additive schema mechanism.
+
+No destructive migration.
+
+---
+
+# 6. ACTIVITY CURSOR
+
+Use deterministic activity cursors.
+
+Cursor must contain enough information to safely order activity, conceptually:
+
+```text
+timestamp
++ source type
++ source record ID
+```
+
+Persist monotonically.
+
+An older mark-seen request must never move the Teacher's cursor backwards.
+
+DO NOT use:
+
+`server now()`
+
+as the seen point.
+
+---
+
+# 7. RACE-CONDITION PROTECTION
+
+Example:
+
+```text
+Dashboard observed Leave Request A
+        ↓
+Teacher clicks Leave
+        ↓
+Student submits Leave Request B simultaneously
+```
+
+Opening Leave must mark only through:
+
+**Leave Request A's observed cursor.**
+
+Request B must remain newer and therefore still be capable of showing 🔴.
+
+Use the same safe observed-cursor principle already established for Student dots.
+
+---
+
+# 8. NOTICEBOARD — CONFIRMED RULE
+
+The Noticeboard red dot should trigger for a NEW Notice that is actually visible to the Teacher in the Noticeboard module.
+
+This includes eligible Notices from:
+
+- Teacher/Admin feed
+- Student-targeted Notice feed visible in the Teacher's Student tab
+
+Use the EXISTING Noticeboard visibility rules.
+
+Do not expand visibility.
+
+---
+
+# 9. NOTICEBOARD — SELF-CREATED NOTICE
+
+A Notice created by the CURRENT Teacher must NOT trigger that same Teacher's red dot.
+
+Example:
+
+```text
+Teacher A creates Notice
+→ Teacher A: NO new dot because of own Notice
+```
+
+If Teacher B is legitimately allowed to see that Notice under existing visibility rules:
+
+```text
+Teacher B
+→ Noticeboard 🔴
+```
+
+Use existing:
+
+- `createdById`
+- `creatorRole`
+
+and existing visibility rules.
+
+Do not guess identity from display names.
+
+---
+
+# 10. NOTICEBOARD EXISTING COUNT
+
+The existing Teacher Notice unread/count feature must remain unchanged.
+
+The new red dot is separate.
+
+Do NOT remove:
+
+- existing Notice unread count
+- existing localStorage Notice behavior
+- existing Notice tabs
+
+The red dot means:
+
+> New relevant Notice activity since module last opened.
+
+Existing Notice unread/count behavior keeps its current meaning.
+
+Do not merge them.
+
+---
+
+# 11. COMPLAINTS — CLASS FEED ONLY
+
+This is STRICT.
+
+The Teacher Dashboard Complaints red dot must be based ONLY on:
+
+**Complaints → Class Feed**
+
+DO NOT use:
+
+**My Complaints**
+
+for this notification.
+
+---
+
+# 12. COMPLAINTS — CONFIRMED INITIAL TRIGGER
+
+For this stage, the ONLY Complaint trigger is:
+
+> A NEW `student-peer-report` Complaint row that becomes part of this Teacher's existing Class Feed scope.
+
+Use the Complaint's reliable creation timestamp + ID.
+
+Preserve the existing Class Feed rules:
+
+- authenticated school
+- selected Academic Session
+- reported Student
+- exact selected-session Enrollment
+- Teacher's existing assigned class/section scope
+- non-deleted Complaint rules
+
+Do not broaden the feed.
+
+---
+
+# 13. COMPLAINT EVENTS THAT DO NOT TRIGGER
+
+For this stage:
+
+Student creates new Class Feed peer-report:
+→ 🔴
+
+My Complaints:
+→ NO DOT
+
+Complaint note:
+→ NO DOT
+
+Student note/reply:
+→ NO DOT
+
+Teacher note:
+→ NO DOT
+
+Admin note:
+→ NO DOT
+
+status-only change:
+→ NO DOT
+
+Teacher resolves:
+→ NO DOT
+
+Teacher escalates:
+→ NO DOT
+
+Admin/other Teacher status action:
+→ NO DOT
+
+The audit confirmed the current Class Feed does not expose a reliable event model for these other activities.
+
+DO NOT expand Complaint architecture in this stage.
+
+---
+
+# 14. LEAVE — STUDENT LEAVE REQUESTS ONLY
+
+This is STRICT.
+
+The Leave dashboard red dot is ONLY for:
+
+**Leave → Student Leave Requests**
+
+DO NOT use:
+
+**My Leave**
+
+activity.
+
+---
+
+# 15. LEAVE — CONFIRMED TRIGGER
+
+Trigger Leave 🔴 when a NEW Student Leave submission enters this Teacher's existing:
+
+`pending_teacher`
+
+queue under the existing visibility rules.
+
+Use:
+
+- request creation timestamp
+- request ID
+
+and existing:
+
+- authenticated school
+- selected Academic Session
+- exact selected-session Student Enrollment
+- Teacher direct assignment
+- faculty mappings
+
+Do not invent new assignment logic.
+
+---
+
+# 16. LEAVE EVENTS THAT DO NOT TRIGGER
+
+Teacher approves:
+→ NO new dot
+
+Teacher rejects:
+→ NO new dot
+
+Teacher forwards:
+→ NO new dot
+
+Teacher's My Leave:
+→ NO dot
+
+Leave history:
+→ NO dot
+
+Existing old Leave becoming visible only because of later assignment/enrollment changes:
+→ do NOT attempt to create a synthetic notification in this stage.
+
+The initial scope is reliable NEW submissions only.
+
+---
+
+# 17. APPROVAL CENTER — CONFIRMED TRIGGERS
+
+Approval Center dot should trigger for new incoming pending review activity visible to this Teacher.
+
+Include:
+
+### A. Full Student Profile submission
+
+Use the reliable:
+
+`submittedAt`
+
+event.
+
+### B. New pending photo-only upload
+
+Use the existing incoming photo request timestamp/update timestamp only while:
+
+`photoStatus = pending`
+
+and according to the existing Approval Center visibility rules.
+
+---
+
+# 18. APPROVAL CENTER SCOPE
+
+Preserve existing:
+
+- Teacher assignment rules
+- selected-session Enrollment scope
+- school scope
+- pending review rules
+
+Do NOT use Approval History as notification activity.
+
+Do NOT use generic profile updates.
+
+Do NOT make arbitrary `updatedAt` changes trigger notifications.
+
+---
+
+# 19. APPROVAL CENTER — TEACHER ACTIONS
+
+Teacher approves:
+→ NO new dot
+
+Teacher rejects:
+→ NO new dot
+
+Photo approval/rejection:
+→ NO new dot
+
+Review history:
+→ NO dot
+
+Existing pending items may remain pending after Teacher opens Approval Center.
+
+The dot must still remain cleared until a newer qualifying submission arrives.
+
+---
+
+# 20. FIRST-TIME STATE
+
+If no Teacher seen-state row exists:
+
+and qualifying relevant activity already exists in that selected Academic Session:
+
+→ show 🔴.
+
+Once the Teacher opens the module:
+
+→ save the observed cursor.
+
+→ dot clears.
+
+Do NOT automatically seed all modules as already seen just because the feature is newly introduced.
+
+---
+
+# 21. DIRECT MODULE OPEN
+
+Do not rely only on Dashboard-card clicks.
+
+If Teacher directly opens:
+
+- Noticeboard
+- Complaints
+- Leave
+- Approval Center
+
+the module should also mark its qualifying activity seen.
+
+However, preserve race safety.
+
+### Dashboard-card entry
+
+Use the cursor already observed by Dashboard.
+
+### Direct module entry
+
+Use the latest qualifying cursor known from the module/state request associated with that entry.
+
+Do NOT blindly save `now()`.
+
+---
+
+# 22. OPTIMISTIC CLEARING
+
+When Teacher opens a module with a dot:
+
+1. Clear the dot immediately in Web UI.
+2. Persist the observed cursor.
+3. Navigate/open module.
+4. Keep state cleared if persistence succeeds.
+
+If persistence fails:
+
+invalidate/refetch server state so the UI does not permanently pretend the notification was cleared.
+
+---
+
+# 23. TEACHER DOT STATE API
+
+Implement the smallest Teacher-authenticated API.
+
+Conceptually:
+
+`GET /api/teacher/module-dot-state`
+
+Return only the four modules:
+
+- hasNewActivity
+- latest visible activity cursor required for safe marking
+
+No new counts.
+
+Teacher identity must come from authenticated Teacher session.
+
+School must come from authenticated Teacher.
+
+Selected Academic Session must use the existing Teacher session mechanism and be validated against that school.
+
+---
+
+# 24. MARK-SEEN API
+
+Conceptually:
+
+`POST /api/teacher/module-dot-state/seen`
+
+Accept only what is necessary:
+
+- allowed module key
+- observed activity cursor
+
+DO NOT accept client Teacher ID or school ID for authorization.
+
+Server must:
+
+- derive Teacher
+- derive school
+- validate selected session
+- validate module
+- verify submitted cursor belongs to qualifying activity actually visible to that Teacher
+- persist state monotonically
+
+A Teacher must never be able to clear another Teacher's state.
+
+---
+
+# 25. HISTORICAL ACADEMIC SESSIONS
+
+Historical academic content remains STRICTLY READ-ONLY.
+
+However, Teacher module-seen metadata may be written for a historical selected session because it is UI/read metadata, not academic content mutation.
+
+Opening a historical module must NOT modify:
+
+- Notices
+- Complaints
+- Student Leave
+- Student Profiles
+- Enrollments
+- examination data
+- other historical academic content
+
+---
+
+# 26. TENANT ISOLATION
+
+NON-NEGOTIABLE.
+
+All activity and state must be scoped to:
+
+authenticated Teacher
++
+authenticated school
++
+selected Academic Session
++
+existing module visibility rules.
+
+School A must never influence School B.
+
+Do not trust client:
+
+- teacherId
+- schoolId
+
+Do not allow foreign-school session IDs.
+
+---
+
+# 27. ASSIGNMENT RULES
+
+DO NOT invent a generic Teacher assignment rule.
+
+Mirror the CURRENT module behavior exactly.
+
+Noticeboard:
+→ existing Notice visibility/audience/assignment rules.
+
+Complaints:
+→ existing Class Feed assignment scope.
+
+Leave:
+→ existing Student Leave Request queue assignment/faculty mapping scope.
+
+Approval Center:
+→ existing profile-review assignment + selected-session Enrollment scope.
+
+The notification system must never expose activity that the underlying module would not expose.
+
+---
+
+# 28. IST / TIMESTAMPS
+
+BENIUS business/display timezone remains:
+
+`Asia/Kolkata`
+
+Use raw consistently interpreted activity timestamps + deterministic IDs for notification ordering.
+
+Do NOT use formatted IST dates as cursor ordering.
+
+Do NOT change existing module date display behavior.
+
+---
+
+# 29. DASHBOARD UI
+
+Use the existing red-dot visual style where practical.
+
+Add dots ONLY to:
+
+```text
+Noticeboard     🔴
+Complaints      🔴
+Leave           🔴
+Approval Center 🔴
+```
+
+Do not redesign Teacher Dashboard.
+
+Do not add counts as part of this feature.
+
+Existing counts/badges remain independent.
+
+---
+
+# 30. REFRESH BEHAVIOR
+
+Refresh dot state on:
+
+- Teacher Dashboard load
+- selected Academic Session change
+- return/focus of Dashboard
+- successful/failed mark-seen as appropriate
+
+A modest polling interval similar to existing behavior is acceptable.
+
+Do NOT add WebSocket/SSE infrastructure solely for this.
+
+---
+
+# 31. STUDENT RED-DOT FEATURE
+
+DO NOT change:
+
+`student_module_seen_state`
+
+Do NOT modify Student dot APIs.
+
+Do NOT alter Student Dashboard red-dot behavior.
+
+Student notification feature is CLOSED / PASS.
+
+---
+
+# 32. MOBILE FREEZE
+
+Mobile remains FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do not add Mobile Teacher dots.
+
+Do not redesign Mobile notification APIs.
+
+---
+
+# 33. DATABASE SAFETY
+
+Add ONLY the minimum Teacher seen-state table.
+
+No destructive migration.
+
+Do not modify existing academic records.
+
+Do not backfill:
+
+- Notices
+- Complaints
+- Leave
+- profiles
+- enrollments
+
+Do not rewrite existing Student dot state.
+
+If the schema change cannot be safely performed using the existing additive schema mechanism, STOP and report instead of forcing it.
+
+---
+
+# FOCUSED ACCEPTANCE TESTS
+
+Test at minimum:
+
+## Noticeboard
+
+1. Admin creates visible Notice → Teacher sees 🔴.
+2. Another Teacher creates Notice visible to Teacher A → Teacher A sees 🔴.
+3. Teacher A creates own Notice → Teacher A does NOT get 🔴 from it.
+4. Student-targeted Notice visible in Teacher Student tab → 🔴.
+5. Invisible Notice → no dot.
+6. Opening Noticeboard → dot clears.
+7. Existing Notice unread/count behavior remains independent.
+
+## Complaints
+
+8. New eligible Class Feed peer-report → 🔴.
+9. My Complaints activity → no dot.
+10. Complaint note → no dot.
+11. Status-only change → no dot.
+12. Resolve/escalate → no new dot.
+13. Opening Complaints → dot clears.
+
+## Leave
+
+14. New eligible Student Leave Request → 🔴.
+15. My Leave → no dot.
+16. Teacher approve/reject/forward → no new dot.
+17. Existing old item becoming visible only from assignment change does not create synthetic activity.
+18. Opening Leave → dot clears even if requests remain pending.
+
+## Approval Center
+
+19. New eligible full profile submission → 🔴.
+20. New eligible pending photo-only upload → 🔴.
+21. Approval history → no dot.
+22. Teacher approve/reject → no new dot.
+23. Opening Approval Center → dot clears even if items remain pending.
+
+## Persistence
+
+24. Cleared dot remains cleared after Dashboard return.
+25. Refresh keeps it cleared.
+26. Logout/login keeps it cleared.
+27. Newer qualifying activity makes it return.
+
+## Per Teacher
+
+28. Teacher A clears module → Teacher B unaffected.
+
+## Per Session
+
+29. Session A clear → Session B unaffected.
+
+## Race
+
+30. New activity after observed cursor remains new.
+
+## Security
+
+31. Invalid module rejected.
+32. Teacher cannot mark another Teacher's state.
+33. Foreign-school session rejected.
+34. Cursor not visible to Teacher rejected.
+
+## Historical
+
+35. Historical-session seen-state may update.
+36. Historical academic content remains unchanged.
+
+## Regression
+
+37. Student red-dot feature remains unchanged.
+38. Mobile files unchanged.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS TEACHER RED-DOT NOTIFICATION IMPLEMENTATION REPORT
+
+## Overall Verdict
+PASS / NEEDS CHANGES
+
+## Architecture implemented
+
+## Database/schema
+
+Exact table, fields, constraints and indexes.
+
+## Noticeboard
+
+Exact trigger and self-created Notice behavior.
+
+## Complaints — Class Feed Only
+
+Exact trigger and excluded events.
+
+## Leave — Student Leave Requests Only
+
+Exact trigger and excluded events.
+
+## Approval Center
+
+Exact triggers and excluded events.
+
+## Module-open clearing
+
+Confirm opening the module itself clears the dot without processing individual items.
+
+## Pending vs New
+
+Confirm pending items do not cause the dot to return after opening.
+
+## Per-Teacher behavior
+
+## Academic Session behavior
+
+## Historical-session behavior
+
+## Race-condition protection
+
+## Persistence
+
+## Dashboard UI
+
+## APIs
+
+## Tenant isolation/security
+
+## Assignment/visibility preservation
+
+## IST/timestamp handling
+
+## Existing counts/read systems
+
+Confirm Notice count and Approval count remain independent.
+
+## Student Portal
+
+Confirm Student red-dot behavior unchanged.
+
+## Mobile
+
+Confirm:
+
+`artifacts/benius-mobile/` changed: NO.
+
+## Existing academic data
+
+Confirm no academic content rewritten/backfilled.
+
+## Files changed
+
+## Tests
+
+Exact pass/fail counts.
+
+## Builds/typecheck
+
+Separate new errors from pre-existing diagnostics.
+
+## Production
+
+NOT ACCESSED.
+
+## Deployment
+
+NONE.
+
+## Final acceptance
+
+Answer:
+
+> Do Noticeboard, Complaints/Class Feed, Leave/Student Leave Requests and Approval Center now independently show persistent per-Teacher, per-session red dots for new qualifying activity, and does opening the module clear the corresponding dot?
+
+YES / NO
+
+If NO, list only confirmed blockers.
+
+STOP after the report.
