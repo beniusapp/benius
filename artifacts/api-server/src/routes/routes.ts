@@ -65,6 +65,7 @@ import { calculateLateFee } from "../late-fee-engine";
 import { buildLateFeeInfo } from "../late-fee-display";
 import { ledgerPaymentMethodLabel } from "../payment-method-label";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
+import { removeStudentProfilePlacementInput } from "../student-profile-placement-input";
 import { formatPersistedDateTimeIST } from "../persisted-date-time";
 import {
   InvoiceGenerationError,
@@ -1944,9 +1945,6 @@ export async function registerRoutes(
 
   const saveProfileSchema = z.object({
     fullName: z.string().optional(),
-    class: z.string().optional(),
-    section: z.string().optional(),
-    rollNo: z.string().optional(),
     fatherName: z.string().optional(),
     motherName: z.string().optional(),
     presentAddress: z.string().optional(),
@@ -1960,16 +1958,31 @@ export async function registerRoutes(
     email: z.string().email("Invalid email format").optional().or(z.literal("")),
   });
 
-  app.post("/api/student/profile", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+  app.post("/api/student/profile", async (req, res): Promise<void> => {
+    if (!req.session.studentId) {
+      res.status(401).json({ message: "Not authenticated" });
+      return;
+    }
 
     const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    if (!student) {
+      res.status(404).json({ message: "Student not found" });
+      return;
+    }
+
+    const placementInput = removeStudentProfilePlacementInput(req.body);
+    if (!placementInput.ok) {
+      res.status(400).json({ message: placementInput.message });
+      return;
+    }
 
     const existing = await storage.getStudentProfile(req.session.studentId);
 
-    const parsed = saveProfileSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+    const parsed = saveProfileSchema.safeParse(placementInput.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: parsed.error.issues.map(i => i.message).join(", ") });
+      return;
+    }
 
     const resetStatus = existing?.status === "approved" ? "draft" : undefined;
 
@@ -1997,25 +2010,48 @@ export async function registerRoutes(
     res.json({ used, remaining, allowed });
   });
 
-  app.post("/api/student/profile/submit", async (req, res) => {
-    if (!req.session.studentId) return res.status(401).json({ message: "Not authenticated" });
+  app.post("/api/student/profile/submit", async (req, res): Promise<void> => {
+    if (!req.session.studentId) {
+      res.status(401).json({ message: "Not authenticated" });
+      return;
+    }
+
+    const placementInput = removeStudentProfilePlacementInput(req.body);
+    if (!placementInput.ok) {
+      res.status(400).json({ message: placementInput.message });
+      return;
+    }
 
     const student = await storage.getStudentById(req.session.studentId);
-    if (!student) return res.status(404).json({ message: "Student not found" });
+    if (!student) {
+      res.status(404).json({ message: "Student not found" });
+      return;
+    }
 
     const allowed = 3;
     const used = await storage.countMonthlyVerifications(student.schoolId, req.session.studentId);
     if (used >= allowed) {
-      return res.status(429).json({ message: `You have used all ${allowed} verification submissions for this month. Please try again next month.` });
+      res.status(429).json({ message: `You have used all ${allowed} verification submissions for this month. Please try again next month.` });
+      return;
     }
 
     const existing = await storage.getStudentProfile(req.session.studentId);
-    if (!existing) return res.status(400).json({ message: "Please save a draft before submitting" });
-    if (existing.status === "pending") return res.status(409).json({ message: "Profile is already pending review" });
-    if (existing.status === "approved") return res.status(409).json({ message: "Profile is already approved" });
+    if (!existing) {
+      res.status(400).json({ message: "Please save a draft before submitting" });
+      return;
+    }
+    if (existing.status === "pending") {
+      res.status(409).json({ message: "Profile is already pending review" });
+      return;
+    }
+    if (existing.status === "approved") {
+      res.status(409).json({ message: "Profile is already approved" });
+      return;
+    }
 
     if (!existing.fullName || !existing.fatherName || !existing.motherName || !existing.presentAddress) {
-      return res.status(400).json({ message: "Please fill in all required fields: Full Name, Father's Name, Mother's Name, and Present Address" });
+      res.status(400).json({ message: "Please fill in all required fields: Full Name, Father's Name, Mother's Name, and Present Address" });
+      return;
     }
 
     await storage.logVerificationRequest(student.schoolId, req.session.studentId);

@@ -1512,6 +1512,12 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
     fullName: "Verified Name",
   });
   assert.equal(incompleteProfile.response.status, 200);
+  profiles.set(student.id, { ...profiles.get(student.id)!, rollNo: "10" });
+  const profileReadWithHistoricalRoll = await requestStudentProfile(
+    "", "GET", studentLogin.body.accessToken,
+  );
+  assert.equal(profileReadWithHistoricalRoll.response.status, 200);
+  assert.equal(profileReadWithHistoricalRoll.body.profile.rollNo, "7");
   const emptyRequired = await requestStudentProfile(
     "/submit", "POST", studentLogin.body.accessToken,
   );
@@ -1519,10 +1525,7 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.match(emptyRequired.body.message, /fill in all required fields/i);
   const savedProfile = await requestStudentProfile("", "POST", studentLogin.body.accessToken, {
     fullName: "Verified Name",
-    class: "Client Class",
-    section: "Client Section",
-    studentId: 302,
-    schoolId: 2,
+    rollNo: "7",
     fatherName: "Father",
     motherName: "Mother",
     presentAddress: "Present Address",
@@ -1531,8 +1534,39 @@ test("mobile auth endpoints authenticate each role and enforce credential lifecy
   assert.equal(savedProfile.response.status, 200);
   assert.equal(savedProfile.body.class, student.class);
   assert.equal(savedProfile.body.section, student.section);
+  assert.equal(savedProfile.body.rollNo, "7");
   assert.equal(savedProfile.body.studentId, student.id);
   assert.equal(savedProfile.body.schoolId, school.id);
+  assert.equal(profileMetrics.lastProfileSave.rollNo, "10", "unchanged Mobile roll echoes must not overwrite historical profile data");
+
+  const profileBeforePlacementAttempts = structuredClone(profiles.get(student.id));
+  const studentPlacementBeforeAttempts = {
+    class: student.class,
+    section: student.section,
+    rollNumber: student.rollNumber,
+  };
+  for (const body of [
+    { class: "Client Class" },
+    { section: "Client Section" },
+    { rollNo: "10" },
+    { class: "Client Class", section: "Client Section", rollNo: "10" },
+  ]) {
+    const attemptedPlacementChange = await requestStudentProfile(
+      "", "POST", studentLogin.body.accessToken, body,
+    );
+    assert.equal(attemptedPlacementChange.response.status, 400);
+    assert.deepEqual(profiles.get(student.id), profileBeforePlacementAttempts);
+    assert.deepEqual({
+      class: student.class,
+      section: student.section,
+      rollNumber: student.rollNumber,
+    }, studentPlacementBeforeAttempts);
+  }
+  const craftedSubmission = await requestStudentProfile(
+    "/submit", "POST", studentLogin.body.accessToken,
+    { class: "Client Class", section: "Client Section", rollNo: "10" },
+  );
+  assert.equal(craftedSubmission.response.status, 400);
   const firstSubmission = await requestStudentProfile(
     "/submit", "POST", studentLogin.body.accessToken,
   );

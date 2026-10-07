@@ -7,6 +7,7 @@ import multer from "multer";
 import sharp from "sharp";
 import { z } from "zod/v4";
 import { storage } from "./storage";
+import { removeStudentProfilePlacementInput } from "./student-profile-placement-input";
 
 type MobileStudentPrincipal = {
   id: number;
@@ -22,9 +23,6 @@ type MobileStudentRequest = Request & {
 
 const saveProfileSchema = z.object({
   fullName: z.string().optional(),
-  class: z.string().optional(),
-  section: z.string().optional(),
-  rollNo: z.string().optional(),
   fatherName: z.string().optional(),
   motherName: z.string().optional(),
   presentAddress: z.string().optional(),
@@ -212,7 +210,14 @@ export function registerMobileStudentProfileRoutes(
         schoolCode: school.code,
         schoolId: student.schoolId,
       },
-      profile: profile ?? null,
+      profile: profile
+        ? {
+            ...profile,
+            class: student.class,
+            section: student.section,
+            rollNo: student.rollNumber == null ? null : String(student.rollNumber),
+          }
+        : null,
       approvedSnapshot: parseJson(profile?.approvedSnapshot),
       liveData: {
         name: student.name,
@@ -230,12 +235,22 @@ export function registerMobileStudentProfileRoutes(
   app.post("/api/mobile/student/profile", requireBearer, async (req, res) => {
     const authorized = await getAuthorizedStudent(req, res);
     if (!authorized) return;
-    const parsed = saveProfileSchema.safeParse(req.body);
+    const existing = await storage.getStudentProfile(authorized.studentId);
+    const currentRollNo = authorized.student.rollNumber == null
+      ? ""
+      : String(authorized.student.rollNumber);
+    const placementInput = removeStudentProfilePlacementInput(req.body, {
+      allowUnchangedRollNo: currentRollNo,
+    });
+    if (!placementInput.ok) {
+      reject(res, 400, placementInput.message);
+      return;
+    }
+    const parsed = saveProfileSchema.safeParse(placementInput.body);
     if (!parsed.success) {
       reject(res, 400, parsed.error.issues.map((issue) => issue.message).join(", "));
       return;
     }
-    const existing = await storage.getStudentProfile(authorized.studentId);
     const profile = await storage.upsertStudentProfile({
       ...parsed.data,
       studentId: authorized.studentId,
@@ -243,12 +258,22 @@ export function registerMobileStudentProfileRoutes(
       class: authorized.student.class,
       section: authorized.student.section,
     }, existing?.status === "approved" ? "draft" : undefined);
-    res.json(profile);
+    res.json({
+      ...profile,
+      class: authorized.student.class,
+      section: authorized.student.section,
+      rollNo: currentRollNo || null,
+    });
   });
 
   app.post("/api/mobile/student/profile/submit", requireBearer, async (req, res) => {
     const authorized = await getAuthorizedStudent(req, res);
     if (!authorized) return;
+    const placementInput = removeStudentProfilePlacementInput(req.body);
+    if (!placementInput.ok) {
+      reject(res, 400, placementInput.message);
+      return;
+    }
     const allowed = 3;
     const used = await storage.countMonthlyVerifications(authorized.school.id, authorized.studentId);
     if (used >= allowed) {

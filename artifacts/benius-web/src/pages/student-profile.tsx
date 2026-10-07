@@ -10,6 +10,7 @@ import {
 
 const CROP_SIZE = 260; // diameter of crop circle in px
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { officialRollNumberDisplayValue } from "@/lib/official-roll-number-display";
 import { useToast } from "@/hooks/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -215,7 +216,6 @@ export default function StudentProfile() {
 
   const [form, setForm] = useState({
     fullName: "",
-    rollNo: "",
     fatherName: "",
     motherName: "",
     presentAddress: "",
@@ -265,7 +265,6 @@ export default function StudentProfile() {
     // Build pre-filled values: prefer saved profile fields, fall back to live student record
     const vals = {
       fullName:       profile?.fullName       || student.name            || "",
-      rollNo:         profile?.rollNo         || (student.rollNumber != null ? String(student.rollNumber) : ""),
       fatherName:     profile?.fatherName     || student.fatherName      || "",
       motherName:     profile?.motherName     || student.motherName      || "",
       presentAddress: profile?.presentAddress || student.address         || "",
@@ -780,7 +779,7 @@ export default function StudentProfile() {
                     <InfoField label="Class" value={student.class} />
                     <InfoField label="Section" value={student.section} />
                     <InfoField label="Gender" value={student.gender || "—"} />
-                    <InfoField label="Roll Number" value={student.rollNumber != null ? String(student.rollNumber) : "—"} />
+                    <InfoField label="Roll Number" value={officialRollNumberDisplayValue(student.rollNumber)} />
                     <InfoField label="Guardian Name" value={student.guardianName || "—"} />
                     <InfoField label="Phone" value={student.phone} mono />
                     <InfoField label="Email" value={student.email || "—"} />
@@ -978,13 +977,11 @@ export default function StudentProfile() {
                       </select>
                     </div>
 
-                    {/* Roll Number */}
-                    <div>
-                      <label className="text-xs font-medium text-slate-500 mb-1.5 block">Roll Number</label>
-                      <input type="text" value={form.rollNo}
-                        onChange={(e) => setForm((f) => ({ ...f, rollNo: e.target.value }))}
-                        placeholder="e.g. 01" className={`${inputBase} ${editingBorder}`} style={inputStyle} data-testid="input-roll-no" />
-                    </div>
+                    <ReadOnlyField
+                      label="Roll Number (System-assigned)"
+                      value={officialRollNumberDisplayValue(student.rollNumber)}
+                      testId="readonly-roll-no"
+                    />
 
                     {/* Guardian Name */}
                     <div>
