@@ -1,0 +1,391 @@
+# BENIUS — PROMOTION ↔ ACADEMIC SESSION FINAL AUDIT
+
+## READ-ONLY AUDIT ONLY
+
+DO NOT change code.  
+DO NOT change database data.  
+DO NOT modify Mobile.  
+DO NOT deploy.
+
+I want to understand the **CURRENT FINAL SITUATION** of Promotion in BENIUS after Promotion Stage 3.
+
+My main question is:
+
+> **Is Promotion now completely and correctly connected to Academic Sessions, or are there still Promotion/session gaps remaining?**
+
+Do not assume Stage 3 means the entire Promotion module is complete. Inspect the actual current code and database model.
+
+---
+
+# ALREADY COMPLETED — STAGE 3
+
+Promotion Stage 3 has already PASSED.
+
+Current Academic Session activation behavior is:
+
+- Target-session Enrollment is the placement source of truth.
+- Every Active Student must have exactly one valid Active enrollment in the target Academic Session.
+- Missing/invalid target enrollment blocks activation.
+- Activation does not guess/create placement.
+- On activation, current Student Registry class/section/roll is synchronized from target-session enrollment.
+- Inactive Students remain inactive.
+- Historical Enrollment rows are preserved.
+- Promotion decisions/history are preserved.
+- Placement synchronization and session activation are atomic.
+- Cross-school protection is enforced.
+- Active-session deletion does not silently activate another session.
+- Admin-only Session Management remains.
+- No schema migration was performed.
+
+Do NOT change Stage 3.
+
+---
+
+# WHAT I WANT TO AUDIT NOW
+
+Trace the entire Promotion lifecycle.
+
+Conceptually I want to understand whether BENIUS now behaves like:
+
+Current Academic Session
+        ↓
+Student enrollment in Current Session
+        ↓
+Promotion decision
+        ↓
+Target Academic Session
+        ↓
+Target-session enrollment
+        ↓
+Target session activated
+        ↓
+Student Registry synchronized
+
+Verify whether this is actually true in the current implementation.
+
+---
+
+# 1. PROMOTION SOURCE SESSION
+
+When Promotion is performed:
+
+- Is there an explicit SOURCE Academic Session?
+- Is that session validated as belonging to the authenticated school?
+- Does Promotion read the Student's class/section/roll from the source-session Enrollment?
+- Or does any Promotion path still rely on current `students.class`, `students.section`, or `students.rollNumber`?
+
+Identify every Promotion path.
+
+---
+
+# 2. TARGET ACADEMIC SESSION
+
+Does Promotion explicitly identify a TARGET Academic Session?
+
+Verify:
+
+- target session belongs to same school
+- target session is different from source session
+- target session is valid for Promotion
+- Promotion cannot accidentally target another school's session
+- no silent active-session fallback occurs.
+
+---
+
+# 3. TARGET ENROLLMENT
+
+This is extremely important.
+
+When a Student is promoted, what happens to the target-session Enrollment?
+
+Determine exactly whether Promotion:
+
+A. creates the target-session Enrollment,
+
+B. updates/reconciles an existing target-session Enrollment,
+
+C. only records a Promotion decision and expects Enrollment to be created elsewhere,
+
+or
+
+D. behaves differently depending on the Promotion path.
+
+Explain precisely.
+
+---
+
+# 4. PROMOTION DECISION VS ACTUAL PLACEMENT
+
+Clearly distinguish:
+
+### Promotion Decision / Promotion History
+
+from:
+
+### Academic Session Enrollment
+
+from:
+
+### Current Student Registry placement.
+
+Tell me which one is authoritative at each stage.
+
+Stage 3 established:
+
+> At Academic Session activation, target-session Enrollment is authoritative for current Registry placement.
+
+Confirm how Promotion interacts with that rule.
+
+---
+
+# 5. PROMOTE / RETAIN / OTHER OUTCOMES
+
+Audit all supported Promotion outcomes.
+
+For example, if present:
+
+- Promote
+- Retain
+- Hold
+- Override
+- manual Promotion
+- bulk Promotion
+- automatic Promotion
+- Admin override
+
+For each outcome explain what happens to:
+
+- source-session enrollment
+- target-session enrollment
+- Promotion decision/history
+- current Student Registry.
+
+Do not invent outcomes that do not exist.
+
+---
+
+# 6. HISTORICAL SESSION SAFETY
+
+Verify that Promotion cannot rewrite historical Academic Session placement incorrectly.
+
+Check:
+
+- source enrollment remains preserved
+- old session enrollment is not converted into the new class
+- target enrollment is separate
+- historical Promotion history remains preserved
+- archived Academic Session operational data remains read-only.
+
+---
+
+# 7. CURRENT STUDENT REGISTRY
+
+Determine whether Promotion itself still directly changes:
+
+- `students.class`
+- `students.section`
+- `students.rollNumber`
+
+If YES, explain exactly where and why.
+
+This is important because Stage 3 established that Registry placement should synchronize from the target Enrollment when the target Academic Session is activated.
+
+Identify any remaining Promotion path that can make:
+
+Student Registry placement
+
+different from:
+
+selected/target-session Enrollment placement.
+
+---
+
+# 8. EXAMINATION / PROMOTION DECISIONS
+
+Trace how Examination results connect to Promotion.
+
+Determine:
+
+- whether Promotion decisions are Academic-Session-scoped
+- whether Exam Controller decisions are session-scoped
+- whether Teacher Promotion Decisions are session-scoped
+- whether Admin overrides are session-scoped
+- whether any Promotion lookup/write can accidentally cross Academic Sessions.
+
+Do NOT fix anything.
+
+---
+
+# 9. PROMOTION LEDGER / DATABASE CONSTRAINT
+
+We previously had a known concern that Promotion ledger/conflict identity may not include Academic Session.
+
+Re-check the CURRENT schema and code.
+
+Tell me:
+
+- Is this still true?
+- Is runtime protection still only fail-safe/409?
+- Can legitimate same-Student Promotion activity across different Academic Sessions conflict because the database uniqueness identity lacks Session ID?
+
+Classify this separately.
+
+Do NOT migrate schema.
+
+---
+
+# 10. TENANT ISOLATION
+
+Promotion must always be scoped by:
+
+authenticated school
++
+source Academic Session
++
+target Academic Session
++
+Student belonging to same school.
+
+School A must never promote or modify School B Students/enrollments.
+
+Verify every Promotion route.
+
+---
+
+# 11. STAGE 3 CONNECTION
+
+Explain exactly how Stage 3 fits with Promotion.
+
+For example:
+
+Does Promotion prepare target-session enrollment and Stage 3 later activate it?
+
+Or does another workflow create target enrollment?
+
+Or is Promotion currently only informational and Stage 3 relies on separately prepared enrollments?
+
+I want this explained very clearly.
+
+---
+
+# 12. REAL DEVELOPMENT DATA
+
+READ-ONLY only.
+
+If safe and useful, inspect current Development data and show an example of:
+
+Student
+→ source-session Enrollment
+→ Promotion decision/history
+→ target-session Enrollment
+→ current Registry placement.
+
+Do NOT insert/update/delete anything.
+
+Do NOT access Production.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS PROMOTION ↔ ACADEMIC SESSION AUDIT
+
+## Overall Verdict
+
+Choose one:
+
+- FULLY SESSION-INTEGRATED
+- MOSTLY SESSION-INTEGRATED — MINOR GAPS
+- NEEDS CHANGES
+- CRITICAL SESSION GAP
+
+## Simple answer
+
+Answer in very simple words:
+
+> Is BENIUS Promotion now properly connected to Academic Sessions?
+
+YES / PARTIALLY / NO
+
+Explain why in 3–5 sentences.
+
+## Current Promotion flow
+
+Show a simple diagram.
+
+## Source Academic Session
+
+## Target Academic Session
+
+## Target Enrollment behavior
+
+State clearly:
+
+**Who creates/updates the target-session Enrollment?**
+
+## Promotion Decision vs Enrollment vs Student Registry
+
+Explain the responsibility of each.
+
+## Promotion outcomes
+
+## Historical-session safety
+
+## Student Registry synchronization
+
+State whether Promotion can still directly cause Registry ↔ Enrollment mismatch.
+
+## Examination / Promotion Decision session scoping
+
+## Promotion ledger session-key status
+
+## Tenant isolation
+
+## Stage 3 relationship
+
+Explain exactly what Stage 3 solved and what it did NOT solve.
+
+## Development data example
+
+If available safely.
+
+## Remaining Promotion/session defects
+
+For every confirmed defect provide:
+
+- severity
+- exact route/file
+- current behavior
+- expected behavior
+- recommended future correction
+
+DO NOT IMPLEMENT.
+
+## Policy decisions required
+
+Only include genuine decisions I need to make.
+
+## Recommended next Promotion stage
+
+If something remains, tell me exactly what **Stage 4** should address.
+
+If nothing remains, state that Promotion ↔ Academic Session integration is complete.
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Mobile changes
+NONE
+
+## Production
+NOT ACCESSED
+
+## Deployment
+NONE
+
+STOP after the report.
