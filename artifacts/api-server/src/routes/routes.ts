@@ -2217,23 +2217,32 @@ export async function registerRoutes(
   });
 
   // ===== STUDENT HOMEWORK ROUTES =====
-  app.get("/api/student/homework", async (req, res) => {
+  app.get("/api/student/homework", async (req, res): Promise<void> => {
     const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
-    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return;
+    }
     const date = (req.query.date as string) || undefined;
-    const items = await storage.getStudentHomework(
+    const items = await storage.getStudentHomeworkForWeb(
       context.schoolId, context.enrollment.className, context.enrollment.sectionName,
       context.student.id, date, context.sessionId,
     );
     res.json(items);
   });
 
-  app.get("/api/student/homework/pending-dates", async (req, res) => {
+  app.get("/api/student/homework/pending-dates", async (req, res): Promise<void> => {
     const month = (req.query.month as string) || "";
-    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ message: "month must be YYYY-MM" });
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      res.status(400).json({ message: "month must be YYYY-MM" });
+      return;
+    }
     const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
-    if (!context.ok) return res.status(context.status).json({ message: context.message });
-    const dates = await storage.getStudentHomeworkPendingDates(
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return;
+    }
+    const dates = await storage.getStudentHomeworkPendingDatesForWeb(
       context.schoolId, context.enrollment.className, context.enrollment.sectionName,
       context.student.id, month, context.sessionId,
     );
@@ -2455,11 +2464,14 @@ export async function registerRoutes(
   });
 
   // ===== STUDENT CLASSWORK ROUTES =====
-  app.get("/api/student/classwork", async (req, res) => {
+  app.get("/api/student/classwork", async (req, res): Promise<void> => {
     const context = await resolveStudentWorkSession(req.session.studentId, req.headers["x-view-session-id"], storage);
-    if (!context.ok) return res.status(context.status).json({ message: context.message });
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return;
+    }
     const date = (req.query.date as string) || undefined;
-    const items = await storage.getStudentClasswork(
+    const items = await storage.getStudentClassworkForWeb(
       context.schoolId, context.enrollment.className, context.enrollment.sectionName, date, context.sessionId,
     );
     res.json(items);

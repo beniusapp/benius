@@ -66,6 +66,7 @@ import { studentTimetableScope } from "./student-timetable-visibility";
 import { requireStudentComplaintSession, studentComplaintSessionScope } from "./student-complaint-scope";
 import { requireTeacherComplaintSession, teacherComplaintSessionScope } from "./teacher-complaint-scope";
 import { requireStudentLeaveSession, studentLeaveSessionScope } from "./student-leave-scope";
+import { studentWorkCreatedAtDateSql, type StudentWorkDateMode } from "./student-work-date";
 import {
   teacherStudentLeaveEnrollmentJoin,
   teacherStudentLeaveAssignments,
@@ -1563,7 +1564,27 @@ export class DatabaseStorage {
     return result[0]?.count || 0;
   }
 
-  async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string, sessionId?: number | null): Promise<{
+  async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string, sessionId?: number | null) {
+    return this.getStudentHomeworkWithDateMode(
+      schoolId, cls, section, studentId, date, sessionId, "LEGACY_UTC_DATE",
+    );
+  }
+
+  async getStudentHomeworkForWeb(schoolId: number, cls: string, section: string, studentId: number, date?: string, sessionId?: number | null) {
+    return this.getStudentHomeworkWithDateMode(
+      schoolId, cls, section, studentId, date, sessionId, "IST_BUSINESS_DATE",
+    );
+  }
+
+  private async getStudentHomeworkWithDateMode(
+    schoolId: number,
+    cls: string,
+    section: string,
+    studentId: number,
+    date: string | undefined,
+    sessionId: number | null | undefined,
+    dateMode: StudentWorkDateMode,
+  ): Promise<{
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; dueDate: string | null;
     createdAt: Date; teacherName: string; submission: HomeworkSubmission | null;
@@ -1578,8 +1599,9 @@ export class DatabaseStorage {
       eq(homework.sessionId, sessionId),
     ];
     if (date) {
+      const createdAtDate = studentWorkCreatedAtDateSql(homework.createdAt, dateMode);
       conditions.push(or(
-        sql`${homework.createdAt}::date = ${date}::date`,
+        sql`${createdAtDate} = ${date}::date`,
         eq(homework.dueDate, date),
       )!);
     }
@@ -1609,7 +1631,27 @@ export class DatabaseStorage {
     return rows.map(r => ({ ...r, submission: subMap.get(r.id) ?? null }));
   }
 
-  async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string, sessionId?: number | null): Promise<string[]> {
+  async getStudentHomeworkPendingDates(schoolId: number, cls: string, section: string, studentId: number, month: string, sessionId?: number | null) {
+    return this.getStudentHomeworkPendingDatesWithDateMode(
+      schoolId, cls, section, studentId, month, sessionId, "LEGACY_UTC_DATE",
+    );
+  }
+
+  async getStudentHomeworkPendingDatesForWeb(schoolId: number, cls: string, section: string, studentId: number, month: string, sessionId?: number | null) {
+    return this.getStudentHomeworkPendingDatesWithDateMode(
+      schoolId, cls, section, studentId, month, sessionId, "IST_BUSINESS_DATE",
+    );
+  }
+
+  private async getStudentHomeworkPendingDatesWithDateMode(
+    schoolId: number,
+    cls: string,
+    section: string,
+    studentId: number,
+    month: string,
+    sessionId: number | null | undefined,
+    dateMode: StudentWorkDateMode,
+  ): Promise<string[]> {
     if (typeof sessionId !== "number" || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
       throw new Error("Student Homework dates require a valid academic session");
     }
@@ -1621,13 +1663,14 @@ export class DatabaseStorage {
     const lastDay   = new Date(year, mon, 0).getDate();
     const endDate   = `${month}-${String(lastDay).padStart(2, "0")}`;
 
+    const createdAtDate = studentWorkCreatedAtDateSql(homework.createdAt, dateMode);
     const dateConditions: SQL<unknown>[] = [
       eq(homework.schoolId, schoolId),
       eq(homework.class, cls),
       eq(homework.section, section),
       eq(homework.sessionId, sessionId),
       or(
-        sql`${homework.createdAt}::date BETWEEN ${startDate}::date AND ${endDate}::date`,
+        sql`${createdAtDate} BETWEEN ${startDate}::date AND ${endDate}::date`,
         sql`${homework.dueDate} BETWEEN ${startDate} AND ${endDate}`,
       )!,
     ];
@@ -1655,7 +1698,26 @@ export class DatabaseStorage {
     return Array.from(pendingDates);
   }
 
-  async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string, sessionId?: number | null): Promise<{
+  async getStudentClasswork(schoolId: number, cls: string, section: string, date?: string, sessionId?: number | null) {
+    return this.getStudentClassworkWithDateMode(
+      schoolId, cls, section, date, sessionId, "LEGACY_UTC_DATE",
+    );
+  }
+
+  async getStudentClassworkForWeb(schoolId: number, cls: string, section: string, date?: string, sessionId?: number | null) {
+    return this.getStudentClassworkWithDateMode(
+      schoolId, cls, section, date, sessionId, "IST_BUSINESS_DATE",
+    );
+  }
+
+  private async getStudentClassworkWithDateMode(
+    schoolId: number,
+    cls: string,
+    section: string,
+    date: string | undefined,
+    sessionId: number | null | undefined,
+    dateMode: StudentWorkDateMode,
+  ): Promise<{
     id: number; schoolId: number; teacherId: number; class: string; section: string;
     subject: string; content: string; fileUrl: string | null; createdAt: Date; teacherName: string;
   }[]> {
@@ -1669,7 +1731,8 @@ export class DatabaseStorage {
       eq(classwork.sessionId, sessionId),
     ];
     if (date) {
-      conditions.push(sql`${classwork.createdAt}::date = ${date}::date`);
+      const createdAtDate = studentWorkCreatedAtDateSql(classwork.createdAt, dateMode);
+      conditions.push(sql`${createdAtDate} = ${date}::date`);
     }
     const rows = await db.select({
       id: classwork.id,

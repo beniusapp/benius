@@ -12,7 +12,8 @@ import { getQueryFn, apiRequest, queryClient, sessionFetchForViewSession } from 
 import { homeworkPendingDatesQueryKey, homeworkQueryKey } from "@/lib/student-work-query-keys";
 import { useToast } from "@/hooks/use-toast";
 import { useSessionView } from "@/contexts/session-view-context";
-import { todayInIST } from "@shared/ist-time";
+import { useIstDateSelection } from "@/hooks/use-ist-date-selection";
+import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentMeResponse {
   id: number;
@@ -55,20 +56,24 @@ function toISODate(d: Date): string {
 }
 
 
-function getWeekDates(anchor: Date): Date[] {
-  const day = anchor.getDay();
-  const monday = new Date(anchor);
-  monday.setDate(anchor.getDate() - (day === 0 ? 6 : day - 1));
-  return Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+function getWeekDates(anchor: string): string[] {
+  const weekday = calendarWeekday(anchor);
+  if (weekday === null) return [];
+  const monday = addCalendarDays(anchor, weekday === 0 ? -6 : 1 - weekday);
+  return Array.from({ length: 6 }, (_, i) => addCalendarDays(monday, i));
 }
 
 const SHORT_DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LONG_DAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTH_NAMES = ["January","February","March","April","May","June",
   "July","August","September","October","November","December"];
+
+function formatCalendarDate(date: string): string {
+  const dateParts = dateOnlyParts(date);
+  const weekday = calendarWeekday(date);
+  if (!dateParts || weekday === null) return date;
+  return `${LONG_DAY[weekday]} ${dateParts.day} ${MONTH_NAMES[dateParts.month - 1]}`;
+}
 
 function getSubjectColor(subject: string): string {
   const colors: Record<string, string> = {
@@ -305,7 +310,7 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
           <div>
             <p className="text-xs text-slate-400 mb-1">Assigned by {hw.teacherName}</p>
             <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-              <span>Assigned: {fmtDate(hw.createdAt.split("T")[0])}</span>
+              <span>Assigned: {fmtDate(dateOnlyInIST(hw.createdAt))}</span>
               {hw.dueDate && (
                 <span className={isOverdue && !hw.submission ? "text-red-600 font-semibold" : ""}>
                   · Due: {fmtDate(hw.dueDate)}
@@ -513,14 +518,13 @@ export default function StudentHomework() {
   const { selectedSession } = useSessionView();
   const selectedSessionId = selectedSession?.id ?? null;
 
-  const today = new Date();
-  const [selectedDate, setSelectedDate] = useState(() => toISODate(today));
+  const { today: todayStr, selectedDate, selectDate } = useIstDateSelection();
   const [showCalendar, setShowCalendar] = useState(false);
   const [activeHw, setActiveHw] = useState<{ sessionId: number; homework: HomeworkItem } | null>(null);
 
   useEffect(() => { setActiveHw(null); }, [selectedSessionId]);
 
-  const weekDates = getWeekDates(new Date(selectedDate + "T12:00:00"));
+  const weekDates = getWeekDates(selectedDate);
 
   const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
@@ -546,9 +550,9 @@ export default function StudentHomework() {
   }, [studentLoading, student, setLocation]);
 
   const handleDateSelect = useCallback((d: string) => {
-    setSelectedDate(d);
+    selectDate(d);
     setActiveHw(null);
-  }, []);
+  }, [selectDate]);
 
   if (studentLoading) {
     return (
@@ -558,8 +562,6 @@ export default function StudentHomework() {
     );
   }
   if (!student) return null;
-
-  const todayStr = toISODate(today);
 
   return (
     <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
@@ -616,8 +618,9 @@ export default function StudentHomework() {
         {/* Smart Date Navigation */}
         <div className="rounded-2xl p-3 bg-white/80 border border-white/70 shadow-sm">
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
-            {weekDates.map(d => {
-              const iso = toISODate(d);
+            {weekDates.map(iso => {
+              const dateParts = dateOnlyParts(iso);
+              const weekday = calendarWeekday(iso) ?? 0;
               const isFuture = iso > todayStr;
               const isSelected = iso === selectedDate;
               const isToday = iso === todayStr;
@@ -636,8 +639,8 @@ export default function StudentHomework() {
                   `}
                   data-testid={`date-chip-${iso}`}
                 >
-                  <span className="text-[10px] uppercase tracking-wide opacity-80">{SHORT_DAY[d.getDay()]}</span>
-                  <span className="text-sm font-bold">{d.getDate()}</span>
+                  <span className="text-[10px] uppercase tracking-wide opacity-80">{SHORT_DAY[weekday]}</span>
+                  <span className="text-sm font-bold">{dateParts?.day}</span>
                   {isToday && !isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
                 </button>
               );
@@ -653,7 +656,7 @@ export default function StudentHomework() {
             </button>
           </div>
           <p className="text-xs text-slate-400 mt-2 text-center">
-            Showing homework for <span className="font-semibold text-slate-600">{new Date(selectedDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</span>
+            Showing homework for <span className="font-semibold text-slate-600">{formatCalendarDate(selectedDate)}</span>
           </p>
         </div>
 
@@ -677,8 +680,7 @@ export default function StudentHomework() {
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {hwList.map(hw => {
-              const today2 = toISODate(new Date());
-              const isOverdue = hw.dueDate && hw.dueDate < today2 && !hw.submission;
+              const isOverdue = hw.dueDate && hw.dueDate < todayStr && !hw.submission;
               const subColor = getSubjectColor(hw.subject);
               return (
                 <button
@@ -697,7 +699,7 @@ export default function StudentHomework() {
                   <div className="flex items-center justify-between text-[11px] text-slate-400 mt-auto">
                     <span>By {hw.teacherName}</span>
                     <div className="flex flex-col items-end gap-0.5">
-                      <span>Assigned: {fmtDate(hw.createdAt.split("T")[0])}</span>
+                      <span>Assigned: {fmtDate(dateOnlyInIST(hw.createdAt))}</span>
                       {hw.dueDate && (
                         <span className={isOverdue ? "text-red-500 font-semibold" : ""}>
                           Due: {fmtDate(hw.dueDate)}

@@ -12,7 +12,8 @@ import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
 import { classworkQueryKey } from "@/lib/student-work-query-keys";
 import { useSessionView } from "@/contexts/session-view-context";
 import { SessionArchiveBanner } from "@/components/session-archive-banner";
-import { todayInIST } from "@shared/ist-time";
+import { useIstDateSelection } from "@/hooks/use-ist-date-selection";
+import { addCalendarDays, calendarWeekday, dateOnlyInIST, dateOnlyParts } from "@shared/ist-time";
 
 interface StudentMeResponse {
   id: number;
@@ -43,20 +44,24 @@ function toISODate(d: Date): string {
 }
 
 
-function getWeekDates(anchor: Date): Date[] {
-  const day = anchor.getDay();
-  const monday = new Date(anchor);
-  monday.setDate(anchor.getDate() - (day === 0 ? 6 : day - 1));
-  return Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    return d;
-  });
+function getWeekDates(anchor: string): string[] {
+  const weekday = calendarWeekday(anchor);
+  if (weekday === null) return [];
+  const monday = addCalendarDays(anchor, weekday === 0 ? -6 : 1 - weekday);
+  return Array.from({ length: 6 }, (_, i) => addCalendarDays(monday, i));
 }
 
 const SHORT_DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LONG_DAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MONTH_NAMES = ["January","February","March","April","May","June",
   "July","August","September","October","November","December"];
+
+function formatCalendarDate(date: string): string {
+  const dateParts = dateOnlyParts(date);
+  const weekday = calendarWeekday(date);
+  if (!dateParts || weekday === null) return date;
+  return `${LONG_DAY[weekday]} ${dateParts.day} ${MONTH_NAMES[dateParts.month - 1]}`;
+}
 
 function getResourceTag(fileUrl: string | null): { label: string; icon: typeof FileText; color: string } | null {
   if (!fileUrl) return null;
@@ -109,7 +114,7 @@ function ClassworkViewer({ cw, onClose }: { cw: ClassworkItem; onClose: () => vo
           </button>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm truncate">{cw.subject}</p>
-            <p className="text-emerald-100 text-xs">{fmtDate(cw.createdAt.split("T")[0])} · {cw.teacherName}</p>
+            <p className="text-emerald-100 text-xs">{fmtDate(dateOnlyInIST(cw.createdAt))} · {cw.teacherName}</p>
           </div>
           {cw.fileUrl && (
             <a
@@ -274,16 +279,13 @@ export default function StudentClasswork() {
   const selectedSessionId = selectedSession?.id ?? null;
   const [, setLocation] = useLocation();
 
-  const today = new Date();
-  const [selectedDate, setSelectedDate] = useState(() => toISODate(today));
+  const { today: todayStr, selectedDate, selectDate } = useIstDateSelection();
   const [showCalendar, setShowCalendar] = useState(false);
   const [activeCw, setActiveCw] = useState<{ sessionId: number; classwork: ClassworkItem } | null>(null);
 
   useEffect(() => { setActiveCw(null); }, [selectedSessionId]);
 
-  const weekDates = getWeekDates(new Date(selectedDate + "T12:00:00"));
-  const todayStr = toISODate(today);
-
+  const weekDates = getWeekDates(selectedDate);
   const { data: student, isLoading: studentLoading } = useQuery<StudentMeResponse | null>({
     queryKey: ["/api/student-me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -308,9 +310,9 @@ export default function StudentClasswork() {
   }, [studentLoading, student, setLocation]);
 
   const handleDateSelect = useCallback((d: string) => {
-    setSelectedDate(d);
+    selectDate(d);
     setActiveCw(null);
-  }, []);
+  }, [selectDate]);
 
   if (studentLoading) {
     return (
@@ -385,8 +387,9 @@ export default function StudentClasswork() {
         {/* Smart Date Navigation */}
         <div className="rounded-2xl p-3 bg-white/80 border border-white/70 shadow-sm">
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
-            {weekDates.map(d => {
-              const iso = toISODate(d);
+            {weekDates.map(iso => {
+              const dateParts = dateOnlyParts(iso);
+              const weekday = calendarWeekday(iso) ?? 0;
               const isFuture = iso > todayStr;
               const isSelected = iso === selectedDate;
               const isToday = iso === todayStr;
@@ -405,8 +408,8 @@ export default function StudentClasswork() {
                   `}
                   data-testid={`date-chip-${iso}`}
                 >
-                  <span className="text-[10px] uppercase tracking-wide opacity-80">{SHORT_DAY[d.getDay()]}</span>
-                  <span className="text-sm font-bold">{d.getDate()}</span>
+                  <span className="text-[10px] uppercase tracking-wide opacity-80">{SHORT_DAY[weekday]}</span>
+                  <span className="text-sm font-bold">{dateParts?.day}</span>
                   {isToday && !isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
                 </button>
               );
@@ -422,7 +425,7 @@ export default function StudentClasswork() {
             </button>
           </div>
           <p className="text-xs text-slate-400 mt-2 text-center">
-            Classwork for <span className="font-semibold text-slate-600">{new Date(selectedDate + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}</span>
+            Classwork for <span className="font-semibold text-slate-600">{formatCalendarDate(selectedDate)}</span>
           </p>
         </div>
 
@@ -467,7 +470,7 @@ export default function StudentClasswork() {
                       )}
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-1 text-[11px] text-slate-400">
-                      <span>{fmtDate(cw.createdAt.split("T")[0])}</span>
+                      <span>{fmtDate(dateOnlyInIST(cw.createdAt))}</span>
                     </div>
                   </div>
                   <p className="text-sm text-slate-700 leading-relaxed line-clamp-2">{cw.content}</p>
