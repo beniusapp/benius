@@ -9,6 +9,7 @@ import {
   academicSessions,
   enrollments,
   promotionDecisions,
+  schoolMetadata,
   schools,
   students,
 } from "@workspace/db";
@@ -19,6 +20,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
   skip: developmentDbTestEnabled ? false : "set BENIUS_STAGE2B_DEV_DB_TEST=1 for disposable Development DB verification",
 }, async (t) => {
   let schoolId: number | undefined;
+  let foreignSchoolId: number | undefined;
   t.after(async () => {
     if (schoolId === undefined) return;
     await db.transaction(async tx => {
@@ -28,6 +30,9 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       await tx.delete(students).where(eq(students.schoolId, schoolId!));
       await tx.delete(academicSessions).where(eq(academicSessions.schoolId, schoolId!));
       await tx.delete(schools).where(eq(schools.id, schoolId!));
+      if (foreignSchoolId !== undefined) {
+        await tx.delete(schools).where(eq(schools.id, foreignSchoolId));
+      }
     });
   });
 
@@ -38,6 +43,33 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       code: `P2B${suffix}`,
     }).returning({ id: schools.id });
     schoolId = school.id;
+    const [foreignSchool] = await tx.insert(schools).values({
+      name: `Stage 2B foreign ${suffix}`,
+      code: `F${suffix}`,
+    }).returning({ id: schools.id });
+    foreignSchoolId = foreignSchool.id;
+    await tx.insert(schoolMetadata).values([
+      {
+        schoolId: school.id,
+        metaKey: "classes",
+        metaValue: JSON.stringify(["4", "5", "6", "7"]),
+      },
+      {
+        schoolId: school.id,
+        metaKey: "class_sections",
+        metaValue: JSON.stringify({ "4": ["C"], "5": ["A"], "6": ["B"], "7": ["A"] }),
+      },
+      {
+        schoolId: foreignSchool.id,
+        metaKey: "classes",
+        metaValue: JSON.stringify(["9"]),
+      },
+      {
+        schoolId: foreignSchool.id,
+        metaKey: "class_sections",
+        metaValue: JSON.stringify({ "9": ["Z"] }),
+      },
+    ]);
 
     const [sourceSession] = await tx.insert(academicSessions).values({
       schoolId: school.id,
@@ -56,7 +88,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       status: "draft",
     }).returning({ id: academicSessions.id });
 
-    const createdStudents = await tx.insert(students).values([1, 2, 3].map(index => ({
+    const createdStudents = await tx.insert(students).values([1, 2, 3, 4].map(index => ({
       schoolId: school.id,
       digitalStudentId: `P2B-${suffix}-${index}`,
       name: `Stage 2B Student ${index}`,
@@ -96,7 +128,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     });
 
     await tx.insert(promotionDecisions).values([
-      ...createdStudents.map(student => ({
+      ...createdStudents.slice(0, 3).map(student => ({
         schoolId: school.id,
         class: "5",
         section: "A",
@@ -155,6 +187,84 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     totalMax: 600,
     percentage: 80,
   };
+
+  const invalidClassItem = {
+    ...commonItem,
+    studentId: seeded.createdStudents[0].id,
+    nextClass: "9",
+    nextSection: "Z",
+  };
+  await assert.rejects(
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [invalidClassItem],
+      "Stage 2B Year End",
+      { id: 7, role: "support_staff" },
+    ),
+    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+  );
+  await assert.rejects(
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [{ ...commonItem, studentId: seeded.createdStudents[0].id, nextSection: "Z" }],
+      "Stage 2B Year End",
+      { id: 7, role: "support_staff" },
+    ),
+    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+  );
+
+  await assert.rejects(
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [
+        { ...commonItem, studentId: seeded.createdStudents[0].id },
+        { ...commonItem, studentId: seeded.createdStudents[2].id, nextSection: "Z" },
+      ],
+      "Stage 2B Year End",
+      { id: 7, role: "support_staff" },
+    ),
+    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+  );
+  const afterInvalidDestination = await db.select({
+    studentId: academicHistory.studentId,
+  }).from(academicHistory).where(and(
+    eq(academicHistory.schoolId, fixtureSchoolId),
+    inArray(academicHistory.studentId, [seeded.createdStudents[0].id, seeded.createdStudents[2].id]),
+  ));
+  assert.deepEqual(afterInvalidDestination, []);
+  const afterInvalidTargetEnrollments = await db.select({
+    studentId: enrollments.studentId,
+  }).from(enrollments).where(and(
+    eq(enrollments.schoolId, fixtureSchoolId),
+    eq(enrollments.sessionId, seeded.targetSession.id),
+    inArray(enrollments.studentId, [seeded.createdStudents[0].id, seeded.createdStudents[2].id]),
+  ));
+  assert.deepEqual(afterInvalidTargetEnrollments, []);
+
+  const nonExecutedLockCount = await storage.setPromotionLedgerLock(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+    true,
+  );
+  assert.equal(nonExecutedLockCount, 3);
+  const nonExecutedUnlockCount = await storage.setPromotionLedgerLock(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+    false,
+  );
+  assert.equal(nonExecutedUnlockCount, 3);
 
   await assert.rejects(
     storage.executePromotionTransaction(
@@ -284,6 +394,189 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     toClass: "6",
     toSection: "B",
   });
+
+  const executedReplay = await storage.executePromotionTransaction(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    seeded.targetSession.id,
+    [{ ...commonItem, studentId: successStudent.id }],
+    "Stage 2B Year End",
+    { id: 7, role: "support_staff" },
+  );
+  assert.equal(executedReplay.prepared, 0);
+  assert.equal(executedReplay.alreadyPrepared, 1);
+  assert.equal(executedReplay.idempotent, true);
+  assert.equal(executedReplay.targetEnrollmentsCreated, 0);
+  const replayedHistory = await db.select({
+    id: academicHistory.id,
+  }).from(academicHistory).where(and(
+    eq(academicHistory.schoolId, fixtureSchoolId),
+    eq(academicHistory.sessionId, seeded.sourceSession.id),
+    eq(academicHistory.targetSessionId, seeded.targetSession.id),
+    eq(academicHistory.studentId, successStudent.id),
+  ));
+  assert.equal(replayedHistory.length, 1);
+  const replayedTargetEnrollments = await db.select({
+    id: enrollments.id,
+  }).from(enrollments).where(and(
+    eq(enrollments.schoolId, fixtureSchoolId),
+    eq(enrollments.sessionId, seeded.targetSession.id),
+    eq(enrollments.studentId, successStudent.id),
+  ));
+  assert.equal(replayedTargetEnrollments.length, 1);
+
+  await assert.rejects(
+    storage.savePromotionDecisions(
+      fixtureSchoolId,
+      "5",
+      "A",
+      "Stage 2B Year End",
+      7,
+      true,
+      [{
+        studentId: successStudent.id,
+        decision: "retained",
+        targetClass: "5",
+        targetSection: "A",
+        editCount: 3,
+      }],
+      seeded.sourceSession.id,
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+  await assert.rejects(
+    storage.setPromotionLedgerLock(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      "5",
+      "A",
+      "Stage 2B Year End",
+      false,
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+  await assert.rejects(
+    storage.deletePromotionDecision(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      "5",
+      "A",
+      "Stage 2B Year End",
+      successStudent.id,
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+  await assert.rejects(
+    storage.deletePromotionDecisionsByCohort(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      "5",
+      "A",
+      "Stage 2B Year End",
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+  await assert.rejects(
+    storage.deletePromotionDecisionsByTerm(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      "Stage 2B Year End",
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+  await assert.rejects(
+    storage.deletePromotionDecisionsByTerms(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      [
+        "Stage 2B Year End",
+        `mobile-session-${seeded.sourceSession.id}:Stage 2B Year End`,
+      ],
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+  );
+
+  const noLedgerStudent = seeded.createdStudents[3];
+  const noLedgerDecisions = await db.select({
+    id: promotionDecisions.id,
+  }).from(promotionDecisions).where(and(
+    eq(promotionDecisions.schoolId, fixtureSchoolId),
+    eq(promotionDecisions.sessionId, seeded.sourceSession.id),
+    eq(promotionDecisions.class, "5"),
+    eq(promotionDecisions.section, "A"),
+    eq(promotionDecisions.term, "Stage 2B Year End"),
+    eq(promotionDecisions.studentId, noLedgerStudent.id),
+  ));
+  assert.deepEqual(noLedgerDecisions, []);
+  const firstNoLedgerExecution = await storage.executePromotionTransaction(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    seeded.targetSession.id,
+    [{ ...commonItem, studentId: noLedgerStudent.id }],
+    "Stage 2B Year End",
+    { id: 7, role: "support_staff" },
+  );
+  assert.equal(firstNoLedgerExecution.prepared, 1);
+  assert.equal(firstNoLedgerExecution.alreadyPrepared, 0);
+  assert.equal(firstNoLedgerExecution.targetEnrollmentsCreated, 1);
+  const secondNoLedgerExecution = await storage.executePromotionTransaction(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    seeded.targetSession.id,
+    [{ ...commonItem, studentId: noLedgerStudent.id }],
+    "Stage 2B Year End",
+    { id: 7, role: "support_staff" },
+  );
+  assert.equal(secondNoLedgerExecution.prepared, 0);
+  assert.equal(secondNoLedgerExecution.alreadyPrepared, 1);
+  assert.equal(secondNoLedgerExecution.idempotent, true);
+  assert.equal(secondNoLedgerExecution.targetEnrollmentsCreated, 0);
+  const noLedgerHistory = await db.select({
+    id: academicHistory.id,
+  }).from(academicHistory).where(and(
+    eq(academicHistory.schoolId, fixtureSchoolId),
+    eq(academicHistory.sessionId, seeded.sourceSession.id),
+    eq(academicHistory.targetSessionId, seeded.targetSession.id),
+    eq(academicHistory.studentId, noLedgerStudent.id),
+  ));
+  assert.equal(noLedgerHistory.length, 1);
+  const noLedgerTargetEnrollments = await db.select({
+    id: enrollments.id,
+  }).from(enrollments).where(and(
+    eq(enrollments.schoolId, fixtureSchoolId),
+    eq(enrollments.sessionId, seeded.targetSession.id),
+    eq(enrollments.studentId, noLedgerStudent.id),
+  ));
+  assert.equal(noLedgerTargetEnrollments.length, 1);
+  const noLedgerRegistry = await db.select({
+    class: students.class,
+    section: students.section,
+    rollNumber: students.rollNumber,
+  }).from(students).where(and(
+    eq(students.schoolId, fixtureSchoolId),
+    eq(students.id, noLedgerStudent.id),
+  ));
+  assert.deepEqual(noLedgerRegistry, [{
+    class: "5",
+    section: "A",
+    rollNumber: noLedgerStudent.rollNumber,
+  }]);
+  const noLedgerSourceEnrollment = await db.select({
+    className: enrollments.className,
+    sectionName: enrollments.sectionName,
+    rollNo: enrollments.rollNo,
+    status: enrollments.status,
+  }).from(enrollments).where(and(
+    eq(enrollments.schoolId, fixtureSchoolId),
+    eq(enrollments.sessionId, seeded.sourceSession.id),
+    eq(enrollments.studentId, noLedgerStudent.id),
+  ));
+  assert.deepEqual(noLedgerSourceEnrollment, [{
+    className: "5",
+    sectionName: "A",
+    rollNo: noLedgerStudent.rollNumber,
+    status: "Active",
+  }]);
 
   const decisions = await db.select({
     sessionId: promotionDecisions.sessionId,

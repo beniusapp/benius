@@ -1,6 +1,6 @@
 import type { AcademicSession } from "@workspace/db";
 import type { Express, Request, RequestHandler, Response } from "express";
-import { attendanceCorrectionRequests, attendancePolicies, classwork, homework, promotionDecisions, studentProfiles, teacherSelfAttendance } from "@workspace/db";
+import { attendanceCorrectionRequests, attendancePolicies, classwork, homework, studentProfiles, teacherSelfAttendance } from "@workspace/db";
 import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db } from "./db";
 import fs from "node:fs";
@@ -21,6 +21,7 @@ import {
   teacherOwnsComplaintInSession,
 } from "./teacher-complaint-scope";
 import { isClassworkOwnedByTeacherInScope } from "./teacher-classwork-policy";
+import { PromotionStage1Error } from "./promotion-stage1";
 
 type Teacher = NonNullable<Awaited<ReturnType<typeof storage.getTeacherWithSchool>>>;
 type TeacherScope = { className: string; section: string; subject: string | null };
@@ -1490,22 +1491,24 @@ async function postModuleAction(req: Request, res: Response): Promise<void> {
         fail(res, 409, "The saved promotion ledger contains a student outside this session roster; it was not changed.");
         return;
       }
-      const updated = await db.update(promotionDecisions)
-        .set({ locked, lockedAt: locked ? new Date() : null, updatedAt: new Date() })
-        .where(and(
-          eq(promotionDecisions.schoolId, account.school.id),
-          eq(promotionDecisions.class, className),
-          eq(promotionDecisions.section, section),
-          eq(promotionDecisions.term, term),
-          eq(promotionDecisions.sessionId, session.id),
-        ))
-        .returning({ id: promotionDecisions.id });
-      if (!updated.length) { fail(res, 409, "No promotion decisions for this session were changed."); return; }
-      res.json({ locked, count: updated.length });
+      const updated = await storage.setPromotionLedgerLock(
+        account.school.id,
+        session.id,
+        className,
+        section,
+        term,
+        locked,
+      );
+      if (!updated) { fail(res, 409, "No promotion decisions for this session were changed."); return; }
+      res.json({ locked, count: updated });
       return;
     }
     fail(res, 404, "This action is not available.");
   } catch (error) {
+    if (error instanceof PromotionStage1Error) {
+      fail(res, error.statusCode, error.message);
+      return;
+    }
     if (error instanceof PrivateUploadValidationError) {
       fail(res, 400, error.message);
       return;

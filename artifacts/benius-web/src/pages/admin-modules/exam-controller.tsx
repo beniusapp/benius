@@ -539,8 +539,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     },
     onSuccess: (d) => {
       toast({
-        title: "Promotion Prepared",
-        description: `${d.prepared} student(s) prepared for ${d.targetSessionName}. Student Registry placement and source enrollment remain unchanged.`,
+        title: d.idempotent ? "Promotion Already Prepared" : "Promotion Prepared",
+        description: d.idempotent
+          ? `${d.alreadyPrepared} student(s) were already prepared for ${d.targetSessionName}. No changes were made.`
+          : `${d.prepared} student(s) newly prepared${d.alreadyPrepared ? `; ${d.alreadyPrepared} already prepared` : ""} for ${d.targetSessionName}. Student Registry placement and source enrollment remain unchanged.`,
         duration: 6000,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ledger-status"] });

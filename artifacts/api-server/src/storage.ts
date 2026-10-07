@@ -6500,6 +6500,8 @@ export class DatabaseStorage {
     actor: { id: number; role: "admin" | "support_staff" },
   ): Promise<{
     prepared: number;
+    alreadyPrepared: number;
+    idempotent: boolean;
     targetEnrollmentsCreated: number;
     targetSessionId: number;
     targetSessionName: string;
@@ -6554,6 +6556,42 @@ export class DatabaseStorage {
         targetSession,
       );
 
+      const metadataRows = await tx
+        .select({
+          metaKey: schoolMetadata.metaKey,
+          metaValue: schoolMetadata.metaValue,
+        })
+        .from(schoolMetadata)
+        .where(and(
+          eq(schoolMetadata.schoolId, schoolId),
+          inArray(schoolMetadata.metaKey, ["classes", "class_sections"]),
+        ))
+        .for("update");
+      const metadataByKey = new Map(metadataRows.map(row => [row.metaKey, row.metaValue]));
+      let configuredClasses: string[] = [];
+      let configuredSections: Record<string, unknown> = {};
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("classes") ?? "[]");
+        if (Array.isArray(value)) configuredClasses = value.filter((item): item is string => typeof item === "string");
+      } catch {}
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("class_sections") ?? "{}");
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          configuredSections = value as Record<string, unknown>;
+        }
+      } catch {}
+      if (items.some(item =>
+        !configuredClasses.includes(item.nextClass)
+        || !Array.isArray(configuredSections[item.nextClass])
+        || !(configuredSections[item.nextClass] as unknown[]).includes(item.nextSection)
+      )) {
+        throw new PromotionStage1Error(
+          "Every target class and section must be configured for this school.",
+          400,
+          "TARGET_PLACEMENT_NOT_CONFIGURED",
+        );
+      }
+
       const studentIds = items.map(item => item.studentId);
       const [studentRows, enrollmentRows] = await Promise.all([
         tx.select({
@@ -6568,6 +6606,7 @@ export class DatabaseStorage {
             eq(students.schoolId, schoolId),
             inArray(students.id, studentIds),
           ))
+          .orderBy(students.id)
           .for("update"),
         tx.select({
           studentId: enrollments.studentId,
@@ -6583,33 +6622,40 @@ export class DatabaseStorage {
             eq(enrollments.sessionId, sourceSessionId),
             inArray(enrollments.studentId, studentIds),
           ))
+          .orderBy(enrollments.studentId)
           .for("update"),
       ]);
 
-      const roster = validatePromotionExecutionRoster(
-        schoolId,
-        sourceSessionId,
-        items,
-        studentRows,
-        enrollmentRows,
-      );
       const cohort = items[0];
-
-      const existingDecisions = await tx
-        .select({ adminExecuted: promotionDecisions.adminExecuted })
-        .from(promotionDecisions)
+      const priorHistory = await tx
+        .select({
+          studentId: academicHistory.studentId,
+          fromClass: academicHistory.fromClass,
+          fromSection: academicHistory.fromSection,
+          toClass: academicHistory.toClass,
+          toSection: academicHistory.toSection,
+          examType: academicHistory.examType,
+          totalObtained: academicHistory.totalObtained,
+          totalMax: academicHistory.totalMax,
+          percentage: academicHistory.percentage,
+          gradeLabel: academicHistory.gradeLabel,
+          gradePoint: academicHistory.gradePoint,
+          remarks: academicHistory.remarks,
+        })
+        .from(academicHistory)
         .where(and(
-          eq(promotionDecisions.schoolId, schoolId),
-          eq(promotionDecisions.sessionId, sourceSessionId),
-          eq(promotionDecisions.class, cohort.fromClass),
-          eq(promotionDecisions.section, cohort.fromSection),
-          eq(promotionDecisions.term, term),
-          inArray(promotionDecisions.studentId, studentIds),
+          eq(academicHistory.schoolId, schoolId),
+          eq(academicHistory.sessionId, sourceSessionId),
+          eq(academicHistory.targetSessionId, targetSessionId),
+          inArray(academicHistory.studentId, studentIds),
         ))
+        .orderBy(academicHistory.studentId, academicHistory.id)
         .for("update");
-
-      if (existingDecisions.some(decision => decision.adminExecuted)) {
-        throw promotionAlreadyExecutedError();
+      const historyByStudent = new Map<number, typeof priorHistory>();
+      for (const history of priorHistory) {
+        const rows = historyByStudent.get(history.studentId) ?? [];
+        rows.push(history);
+        historyByStudent.set(history.studentId, rows);
       }
 
       const targetEnrollmentRows = await tx
@@ -6624,9 +6670,11 @@ export class DatabaseStorage {
         })
         .from(enrollments)
         .where(and(
+          eq(enrollments.schoolId, schoolId),
           eq(enrollments.sessionId, targetSessionId),
           inArray(enrollments.studentId, studentIds),
         ))
+        .orderBy(enrollments.studentId)
         .for("update");
 
       const targetEnrollmentsByStudent = new Map<number, PromotionTargetEnrollmentRow[]>();
@@ -6636,8 +6684,88 @@ export class DatabaseStorage {
         targetEnrollmentsByStudent.set(enrollment.studentId, rows);
       }
 
-      let targetEnrollmentsCreated = 0;
+      const alreadyPreparedIds = new Set<number>();
       for (const item of items) {
+        const histories = historyByStudent.get(item.studentId) ?? [];
+        if (histories.length === 0) continue;
+        const exactHistory = histories.length === 1 && histories.every(history =>
+          history.fromClass === item.fromClass
+          && history.fromSection === item.fromSection
+          && history.toClass === item.nextClass
+          && history.toSection === item.nextSection
+          && history.examType === item.examType
+          && history.totalObtained === item.totalObtained
+          && history.totalMax === item.totalMax
+          && history.percentage === item.percentage
+          && history.gradeLabel === (item.gradeLabel ?? null)
+          && history.gradePoint === (item.gradePoint ?? null)
+          && history.remarks === (item.gradeRemarks ?? null)
+        );
+        const existingRows = targetEnrollmentsByStudent.get(item.studentId) ?? [];
+        const matchingPreparedEnrollment =
+          existingRows.length === 1
+          && existingRows[0].schoolId === schoolId
+          && existingRows[0].studentId === item.studentId
+          && existingRows[0].sessionId === targetSessionId
+          && existingRows[0].className === item.nextClass
+          && existingRows[0].sectionName === item.nextSection
+          && existingRows[0].status === "Active";
+        if (!exactHistory || !matchingPreparedEnrollment) {
+          throw new PromotionStage1Error(
+            "This Student already has a different or incomplete Promotion execution for the selected sessions.",
+            409,
+            "PROMOTION_EXECUTION_CONFLICT",
+          );
+        }
+        alreadyPreparedIds.add(item.studentId);
+      }
+
+      const itemsToPrepare = items.filter(item => !alreadyPreparedIds.has(item.studentId));
+      if (itemsToPrepare.length === 0) {
+        return {
+          prepared: 0,
+          alreadyPrepared: alreadyPreparedIds.size,
+          idempotent: true,
+          targetEnrollmentsCreated: 0,
+          targetSessionId,
+          targetSessionName: targetSession.sessionName,
+          students: [],
+        };
+      }
+
+      const itemsToPrepareIds = itemsToPrepare.map(item => item.studentId);
+      const studentsToPrepare = studentRows.filter(student => itemsToPrepareIds.includes(student.id));
+      const enrollmentsToPrepare = enrollmentRows.filter(enrollment =>
+        itemsToPrepareIds.includes(enrollment.studentId),
+      );
+      const roster = validatePromotionExecutionRoster(
+        schoolId,
+        sourceSessionId,
+        itemsToPrepare,
+        studentsToPrepare,
+        enrollmentsToPrepare,
+      );
+
+      const existingDecisions = await tx
+        .select({ adminExecuted: promotionDecisions.adminExecuted })
+        .from(promotionDecisions)
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sourceSessionId),
+          eq(promotionDecisions.class, cohort.fromClass),
+          eq(promotionDecisions.section, cohort.fromSection),
+          eq(promotionDecisions.term, term),
+          inArray(promotionDecisions.studentId, itemsToPrepareIds),
+        ))
+        .orderBy(promotionDecisions.studentId)
+        .for("update");
+
+      if (existingDecisions.some(decision => decision.adminExecuted)) {
+        throw promotionAlreadyExecutedError();
+      }
+
+      let targetEnrollmentsCreated = 0;
+      for (const item of itemsToPrepare) {
         const existingRows = targetEnrollmentsByStudent.get(item.studentId) ?? [];
         const disposition = validatePromotionTargetEnrollment(
           schoolId,
@@ -6717,7 +6845,7 @@ export class DatabaseStorage {
           eq(examScores.class, cohort.fromClass),
           eq(examScores.section, cohort.fromSection),
           eq(examScores.examType, cohort.examType),
-          inArray(examScores.studentId, studentIds),
+          inArray(examScores.studentId, itemsToPrepareIds),
         ));
 
       const scoresByStudent = new Map<number, typeof scoreRows>();
@@ -6728,7 +6856,7 @@ export class DatabaseStorage {
       }
       const placementByStudent = new Map(roster.map(placement => [placement.studentId, placement]));
       const archivedAt = new Date();
-      const historyRecords: InsertAcademicHistory[] = items.map(item => {
+      const historyRecords: InsertAcademicHistory[] = itemsToPrepare.map(item => {
         const placement = placementByStudent.get(item.studentId)!;
         const actorSnapshot = actor.role === "admin"
           ? { actorRole: "admin", adminId: actor.id }
@@ -6792,11 +6920,13 @@ export class DatabaseStorage {
           eq(promotionDecisions.section, cohort.fromSection),
           eq(promotionDecisions.term, term),
           eq(promotionDecisions.adminExecuted, false),
-          inArray(promotionDecisions.studentId, studentIds),
+          inArray(promotionDecisions.studentId, itemsToPrepareIds),
         ));
 
       return {
-        prepared: items.length,
+        prepared: itemsToPrepare.length,
+        alreadyPrepared: alreadyPreparedIds.size,
+        idempotent: itemsToPrepare.length === 0 && alreadyPreparedIds.size > 0,
         targetEnrollmentsCreated,
         targetSessionId,
         targetSessionName: targetSession.sessionName,
@@ -8079,11 +8209,56 @@ export class DatabaseStorage {
       // The conflict identity includes sessionId; serialize concurrent saves
       // only for the same school/session/cohort/student identity.
       const studentIds = [...new Set(entries.map(entry => entry.studentId))].sort((a, b) => a - b);
+      if (studentIds.length > 0) {
+        const lockedStudents = await tx
+          .select({ id: students.id })
+          .from(students)
+          .where(and(
+            eq(students.schoolId, schoolId),
+            inArray(students.id, studentIds),
+          ))
+          .orderBy(students.id)
+          .for("update");
+        if (lockedStudents.length !== studentIds.length) {
+          throw new PromotionStage1Error(
+            "Promotion decisions include a Student outside this school.",
+            403,
+            "STUDENT_NOT_ACCESSIBLE",
+          );
+        }
+      }
       for (const studentId of studentIds) {
         const conflictIdentity = JSON.stringify([schoolId, sessionId, cls, section, term, studentId]);
         await tx.execute(sql`
           SELECT pg_advisory_xact_lock(hashtextextended(${conflictIdentity}, 0))
         `);
+      }
+
+      const existingCohortRows = await tx
+        .select({
+          studentId: promotionDecisions.studentId,
+          adminExecuted: promotionDecisions.adminExecuted,
+        })
+        .from(promotionDecisions)
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.term, term),
+          eq(promotionDecisions.sessionId, sessionId),
+        ))
+        .orderBy(promotionDecisions.studentId)
+        .for("update");
+      const affectedStudentIds = new Set([
+        ...studentIds,
+        ...(!lock ? existingCohortRows.map(row => row.studentId) : []),
+      ]);
+      if (existingCohortRows.some(row => row.adminExecuted && affectedStudentIds.has(row.studentId))) {
+        throw new PromotionStage1Error(
+          "An executed Promotion decision is locked and cannot be changed.",
+          409,
+          "PROMOTION_DECISION_EXECUTED",
+        );
       }
 
       // When unlocking, clear only locked rows from the selected session.
@@ -8096,6 +8271,7 @@ export class DatabaseStorage {
             eq(promotionDecisions.section, section),
             eq(promotionDecisions.term, term),
             eq(promotionDecisions.sessionId, sessionId),
+            eq(promotionDecisions.adminExecuted, false),
           ));
       }
 
@@ -8348,6 +8524,54 @@ export class DatabaseStorage {
     ));
   }
 
+  async setPromotionLedgerLock(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+    locked: boolean,
+  ): Promise<number> {
+    return db.transaction(async (tx) => {
+      const entries = await tx
+        .select({
+          id: promotionDecisions.id,
+          adminExecuted: promotionDecisions.adminExecuted,
+        })
+        .from(promotionDecisions)
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sessionId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.term, term),
+        ))
+        .orderBy(promotionDecisions.id)
+        .for("update");
+      if (entries.some(entry => entry.adminExecuted)) {
+        throw new PromotionStage1Error(
+          "An executed Promotion decision is locked and cannot be unlocked or relocked.",
+          409,
+          "PROMOTION_DECISION_EXECUTED",
+        );
+      }
+      if (entries.length === 0) return 0;
+      const updated = await tx
+        .update(promotionDecisions)
+        .set({ locked, lockedAt: locked ? new Date() : null, updatedAt: new Date() })
+        .where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sessionId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.term, term),
+          eq(promotionDecisions.adminExecuted, false),
+        ))
+        .returning({ id: promotionDecisions.id });
+      return updated.length;
+    });
+  }
+
   async markLedgerExecuted(
     schoolId: number,
     sessionId: number,
@@ -8411,15 +8635,85 @@ export class DatabaseStorage {
     return ordered;
   }
 
+  private async deletePromotionDecisionRows(
+    schoolId: number,
+    sessionId: number,
+    terms: string[],
+    scope?: { className?: string; section?: string; studentId?: number },
+  ): Promise<number> {
+    const uniqueTerms = [...new Set(terms)];
+    if (uniqueTerms.length === 0) return 0;
+    const where = and(
+      eq(promotionDecisions.schoolId, schoolId),
+      eq(promotionDecisions.sessionId, sessionId),
+      inArray(promotionDecisions.term, uniqueTerms),
+      scope?.className === undefined ? undefined : eq(promotionDecisions.class, scope.className),
+      scope?.section === undefined ? undefined : eq(promotionDecisions.section, scope.section),
+      scope?.studentId === undefined ? undefined : eq(promotionDecisions.studentId, scope.studentId),
+    );
+    return db.transaction(async (tx) => {
+      const rows = await tx
+        .select({
+          id: promotionDecisions.id,
+          adminExecuted: promotionDecisions.adminExecuted,
+        })
+        .from(promotionDecisions)
+        .where(where)
+        .orderBy(promotionDecisions.id)
+        .for("update");
+      if (rows.some(row => row.adminExecuted)) {
+        throw new PromotionStage1Error(
+          "The selected Promotion ledger contains an executed decision and cannot be deleted.",
+          409,
+          "PROMOTION_DECISION_EXECUTED",
+        );
+      }
+      const deleted = await tx
+        .delete(promotionDecisions)
+        .where(where)
+        .returning({ id: promotionDecisions.id });
+      return deleted.length;
+    });
+  }
+
+  async deletePromotionDecision(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+    studentId: number,
+  ): Promise<boolean> {
+    return (await this.deletePromotionDecisionRows(schoolId, sessionId, [term], {
+      className: cls,
+      section,
+      studentId,
+    })) > 0;
+  }
+
+  async deletePromotionDecisionsByCohort(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+  ): Promise<number> {
+    return this.deletePromotionDecisionRows(schoolId, sessionId, [term], {
+      className: cls,
+      section,
+    });
+  }
+
+  async deletePromotionDecisionsByTerms(
+    schoolId: number,
+    sessionId: number,
+    terms: string[],
+  ): Promise<number> {
+    return this.deletePromotionDecisionRows(schoolId, sessionId, terms);
+  }
+
   async deletePromotionDecisionsByTerm(schoolId: number, sessionId: number, term: string): Promise<number> {
-    const deleted = await db.delete(promotionDecisions)
-      .where(and(
-        eq(promotionDecisions.schoolId, schoolId),
-        eq(promotionDecisions.sessionId, sessionId),
-        eq(promotionDecisions.term, term),
-      ))
-      .returning();
-    return deleted.length;
+    return this.deletePromotionDecisionsByTerms(schoolId, sessionId, [term]);
   }
 
   // ── ACADEMIC SESSIONS ───────────────────────────────────────────────────────

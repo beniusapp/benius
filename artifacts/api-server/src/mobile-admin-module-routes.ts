@@ -15,6 +15,7 @@ import {
   AcademicSessionActivationBlockedError,
   AcademicSessionActivationNotFoundError,
 } from "./academic-session-activation";
+import { PromotionStage1Error } from "./promotion-stage1";
 import { aggregateStudentAttendance } from "./student-attendance-calculation";
 import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import { replaceCalendarYear } from "@shared/ist-time";
@@ -1900,7 +1901,11 @@ export function registerMobileAdminModuleRoutes(
           session.id,
         );
         res.json({ message: "Session-scoped exam decision saved.", sessionId: session.id });
-      } catch {
+      } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
+          return;
+        }
         reject(res, 503, "Unable to save the exam decision.");
       }
     },
@@ -1929,32 +1934,28 @@ export function registerMobileAdminModuleRoutes(
         return;
       }
       try {
-        const [configuredTerms, mapping, prior] = await Promise.all([
+        const [configuredTerms, mapping] = await Promise.all([
           storage.getSchoolMetadata(user.schoolId, "exam_types"),
           storage.getClassSectionsMap(user.schoolId),
-          storage.getPromotionDecisions(user.schoolId, parsed.data.class, parsed.data.section, isolatedTerm(session.id, parsed.data.term), session.id),
         ]);
         if (!configuredTerms.includes(parsed.data.term) || !(mapping[parsed.data.class] || []).includes(parsed.data.section)) {
           reject(res, 400, "The exam cohort is not configured for this school.");
           return;
         }
-        const decision = prior.find(item => item.studentId === parsed.data.studentId);
-        if (decision?.adminExecuted) {
-          reject(res, 409, "An executed promotion decision cannot be cleared.");
+        await storage.deletePromotionDecision(
+          user.schoolId,
+          session.id,
+          parsed.data.class,
+          parsed.data.section,
+          isolatedTerm(session.id, parsed.data.term),
+          parsed.data.studentId,
+        );
+        res.json({ message: "Session-scoped exam decision cleared.", sessionId: session.id });
+      } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
           return;
         }
-        if (decision) {
-          await db.delete(promotionDecisions).where(and(
-            eq(promotionDecisions.schoolId, user.schoolId),
-            eq(promotionDecisions.sessionId, session.id),
-            eq(promotionDecisions.class, parsed.data.class),
-            eq(promotionDecisions.section, parsed.data.section),
-            eq(promotionDecisions.term, isolatedTerm(session.id, parsed.data.term)),
-            eq(promotionDecisions.studentId, parsed.data.studentId),
-          ));
-        }
-        res.json({ message: "Session-scoped exam decision cleared.", sessionId: session.id });
-      } catch {
         reject(res, 503, "Unable to clear the exam decision.");
       }
     },
@@ -1995,7 +1996,13 @@ export function registerMobileAdminModuleRoutes(
             autoSuggestion: cohort.find(student => student.studentId === item.studentId)!.percentage >= 35 ? "promoted" : "retained",
           })), session.id);
         res.json({ saved: parsed.data.items.length, sessionId: session.id });
-      } catch { reject(res, 503, "Unable to save the selected session-scoped decisions."); }
+      } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
+          return;
+        }
+        reject(res, 503, "Unable to save the selected session-scoped decisions.");
+      }
     },
   );
 
@@ -2011,14 +2018,21 @@ export function registerMobileAdminModuleRoutes(
       const parsed = z.object({ class: z.string().min(1), section: z.string().min(1), term: z.string().min(1) }).safeParse(req.body);
       if (!parsed.success) { reject(res, 400, "Provide a class, section, and exam term."); return; }
       try {
-        const deleted = await db.delete(promotionDecisions).where(and(
-          eq(promotionDecisions.schoolId, user.schoolId), eq(promotionDecisions.sessionId, session.id),
-          eq(promotionDecisions.class, parsed.data.class), eq(promotionDecisions.section, parsed.data.section),
-          eq(promotionDecisions.term, isolatedTerm(session.id, parsed.data.term)),
-          eq(promotionDecisions.adminExecuted, false),
-        )).returning({ id: promotionDecisions.id });
-        res.json({ cleared: deleted.length, sessionId: session.id });
-      } catch { reject(res, 503, "Unable to clear this session-scoped cohort."); }
+        const deleted = await storage.deletePromotionDecisionsByCohort(
+          user.schoolId,
+          session.id,
+          parsed.data.class,
+          parsed.data.section,
+          isolatedTerm(session.id, parsed.data.term),
+        );
+        res.json({ cleared: deleted, sessionId: session.id });
+      } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
+          return;
+        }
+        reject(res, 503, "Unable to clear this session-scoped cohort.");
+      }
     },
   );
 
@@ -2231,6 +2245,40 @@ export function registerMobileAdminModuleRoutes(
           return;
         }
         const promoted = await db.transaction(async (tx) => {
+          const lockedStudents = await tx
+            .select({ id: students.id })
+            .from(students)
+            .where(and(
+              eq(students.schoolId, user.schoolId),
+              eq(students.class, cls),
+              eq(students.section, section),
+              inArray(students.id, selectedIds),
+            ))
+            .orderBy(students.id)
+            .for("update");
+          if (lockedStudents.length !== selectedIds.length) {
+            throw new Error("Student cohort changed during promotion.");
+          }
+          const lockedDecisions = await tx
+            .select({ adminExecuted: promotionDecisions.adminExecuted })
+            .from(promotionDecisions)
+            .where(and(
+              eq(promotionDecisions.schoolId, user.schoolId),
+              eq(promotionDecisions.sessionId, session.id),
+              eq(promotionDecisions.class, cls),
+              eq(promotionDecisions.section, section),
+              eq(promotionDecisions.term, isolatedTerm(session.id, term)),
+              inArray(promotionDecisions.studentId, selectedIds),
+            ))
+            .orderBy(promotionDecisions.studentId)
+            .for("update");
+          if (lockedDecisions.some(item => item.adminExecuted)) {
+            throw new PromotionStage1Error(
+              "One or more selected students have already been executed in this academic session.",
+              409,
+              "PROMOTION_DECISION_EXECUTED",
+            );
+          }
           await tx.insert(academicHistory).values(historyRows);
           for (const history of historyRows) {
             const updated = await tx.update(students)
@@ -2285,6 +2333,10 @@ export function registerMobileAdminModuleRoutes(
           return cohort.find(item => item.studentId === studentId)!;
         }
       } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
+          return;
+        }
         reject(res, 503, error instanceof Error && error.message === "Student cohort changed during promotion."
           ? error.message : "Unable to execute promotion for this academic session.");
       }
@@ -2318,13 +2370,17 @@ export function registerMobileAdminModuleRoutes(
           reject(res, 400, "The selected exam type is not configured for this school.");
           return;
         }
-        await db.delete(promotionDecisions).where(and(
-          eq(promotionDecisions.schoolId, user.schoolId),
-          eq(promotionDecisions.sessionId, session.id),
-          inArray(promotionDecisions.term, [isolatedTerm(session.id, term.data), term.data]),
-        ));
-        res.json({ message: "Session promotion ledger deleted." });
-      } catch {
+        const deleted = await storage.deletePromotionDecisionsByTerms(
+          user.schoolId,
+          session.id,
+          [isolatedTerm(session.id, term.data), term.data],
+        );
+        res.json({ message: "Session promotion ledger deleted.", deleted });
+      } catch (error) {
+        if (error instanceof PromotionStage1Error) {
+          reject(res, error.statusCode, error.message);
+          return;
+        }
         reject(res, 503, "Unable to delete the promotion ledger.");
       }
     },

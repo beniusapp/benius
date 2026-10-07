@@ -4456,6 +4456,7 @@ export function registerTeacherRoutes(app: Express) {
       );
       res.json({ deleted, message: `Removed ${deleted} promotion record(s) for "${term}"` });
     } catch (err: any) {
+      if (respondWithPromotionStage1Error(res, err)) return;
       res.status(500).json({ message: err?.message ?? "Failed to delete term ledger" });
     }
   });
@@ -4836,11 +4837,15 @@ Thank you for your prompt attention to this matter.
     // ── 4. Respond immediately — post-pipeline runs without blocking client ───
     res.json({
       prepared: execution.prepared,
+      alreadyPrepared: execution.alreadyPrepared,
+      idempotent: execution.idempotent,
       targetEnrollmentsCreated: execution.targetEnrollmentsCreated,
       targetSessionId: execution.targetSessionId,
       targetSessionName: execution.targetSessionName,
-      pipelineQueued: true,
+      pipelineQueued: execution.prepared > 0,
     });
+
+    if (execution.prepared === 0) return;
 
     // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
     (async () => {
@@ -6561,6 +6566,7 @@ Thank you for your prompt attention to this matter.
       }
       res.json({ message: lock ? "Ledger locked and saved" : "Ledger draft saved" });
     } catch (err: any) {
+      if (respondWithPromotionStage1Error(res, err)) return;
       res.status(500).json({ message: err?.message ?? "Failed to save promotion decisions" });
     }
   });
