@@ -1,0 +1,371 @@
+# BENIUS — STUDENT HOMEWORK & CLASSWORK DATE ISSUE
+# READ-ONLY ROOT-CAUSE AUDIT
+
+## IMPORTANT
+
+DO NOT change any code.
+
+DO NOT change database data.
+
+DO NOT fix anything yet.
+
+DO NOT modify Mobile.
+
+DO NOT deploy.
+
+I first want the exact root cause.
+
+---
+
+# REPORTED ISSUE
+
+Current real-world date is:
+
+**07 October 2026**
+
+A Teacher assigns Homework/Classwork around this date.
+
+However, in the Student Portal the Homework/Classwork screens can default/display:
+
+**Tuesday 06 October**
+
+instead of:
+
+**Wednesday 07 October**
+
+Examples observed:
+
+Homework screen:
+- selected date: TUE 6
+- WED 7 is visible but not selected
+- text says: `Showing homework for Tuesday 6 October`
+
+Classwork screen:
+- selected date: TUE 6
+- WED 7 is visible but not selected
+- text says: `Classwork for Tuesday 6 October`
+
+A Homework card also displays:
+
+`Assigned: 06 Oct 2026`
+
+I want to know WHY before making any correction.
+
+---
+
+# AUDIT BOTH SIDES
+
+Trace the complete date flow for:
+
+## Teacher → Homework
+
+From:
+
+Teacher opens Homework
+→ date/default date shown to Teacher
+→ Teacher creates Homework
+→ frontend request payload
+→ API
+→ server date parsing
+→ database stored date/timestamp
+→ Student Homework API
+→ Student frontend date selection
+→ Student displayed assigned date
+
+## Teacher → Classwork
+
+Do the same:
+
+Teacher opens Classwork
+→ date/default date
+→ create Classwork
+→ request payload
+→ API
+→ database
+→ Student API
+→ Student date selector
+→ displayed Classwork date.
+
+---
+
+# MAIN QUESTIONS
+
+Determine exactly which of these is happening:
+
+### A. Teacher actually submits 06 October
+
+or
+
+### B. Teacher submits 07 October but backend converts/stores 06 October
+
+or
+
+### C. Database correctly stores 07 October but Student API converts it to 06 October
+
+or
+
+### D. API correctly returns 07 October but Student frontend defaults/selects 06 October
+
+or
+
+### E. The Student screen intentionally selects the most recent date containing Homework/Classwork rather than today's date
+
+or
+
+### F. Another cause
+
+Do not guess.
+
+Prove it from current code and, where safe, read-only Development data.
+
+---
+
+# IST REQUIREMENT
+
+BENIUS business/display timezone is:
+
+**Asia/Kolkata / IST**
+
+Audit for timezone mistakes such as:
+
+- `new Date()`
+- `toISOString()`
+- `toISOString().split("T")[0]`
+- `Date.parse`
+- UTC midnight conversion
+- browser local timezone
+- server local timezone
+- PostgreSQL date/timestamp conversion
+- manual timezone offset
+- locale formatting
+- date-only strings interpreted as UTC
+
+Identify every relevant date conversion in these Homework/Classwork paths.
+
+The Student UI should not become one day behind because of UTC/browser/server conversion.
+
+---
+
+# VERY IMPORTANT — DISTINGUISH THESE DATES
+
+Do not mix different concepts.
+
+For Homework identify separately:
+
+1. Homework assignment/business date
+2. `created_at`
+3. due date
+4. Student selected calendar date
+5. date used by API filtering
+
+For Classwork identify separately:
+
+1. Classwork business/date
+2. `created_at`
+3. Student selected calendar date
+4. date used by API filtering
+
+Explain which date controls the Student date selector.
+
+---
+
+# STUDENT DEFAULT DATE LOGIC
+
+Inspect the Student Homework and Classwork Web frontend carefully.
+
+Determine how the initial selected date is chosen.
+
+Is it:
+
+- today's IST date?
+- browser's local date?
+- latest date containing records?
+- first date returned by API?
+- yesterday?
+- persisted React state?
+- query/cache state?
+- URL state?
+- some week-navigation calculation?
+
+Also check what happens when:
+
+- today has Homework/Classwork
+- today has none
+- yesterday has records
+- Student refreshes the page
+- Student switches Academic Session
+- Student navigates away and returns.
+
+---
+
+# TEACHER DEFAULT DATE LOGIC
+
+Inspect Teacher Homework/Classwork creation forms.
+
+Determine:
+
+- what date defaults when the page opens
+- whether Teacher explicitly chooses assignment/classwork date
+- whether today's date comes from browser time or IST
+- exactly what value is sent to backend.
+
+---
+
+# DATABASE — READ ONLY
+
+If safe, inspect the relevant Development records corresponding to the observed 06/07 October examples.
+
+For each relevant Homework/Classwork row report the exact stored values for:
+
+- business/assignment date
+- created timestamp
+- due date if Homework
+- Academic Session ID
+- school ID
+
+Do NOT modify anything.
+
+Do NOT access Production.
+
+If you cannot confidently identify the exact screenshot records, say so rather than guessing.
+
+---
+
+# ACADEMIC SESSION
+
+Homework/Classwork session behavior was already corrected previously.
+
+Do NOT redesign it.
+
+Only confirm the affected records/queries remain scoped by:
+
+authenticated school
++
+selected Academic Session.
+
+No active-session fallback should be introduced.
+
+Historical-session read-only behavior must remain unchanged.
+
+---
+
+# TENANT ISOLATION
+
+Do not alter existing tenant isolation.
+
+All inspected Homework/Classwork data must remain school-scoped.
+
+---
+
+# MOBILE FREEZE
+
+Mobile is FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do not audit Mobile unless a shared backend function directly relevant to this Web issue requires mentioning its impact.
+
+This task is about the **Web Student/Teacher Homework and Classwork flow**.
+
+---
+
+# REQUIRED REPORT
+
+Return:
+
+# BENIUS HOMEWORK / CLASSWORK DATE AUDIT
+
+## Overall Verdict
+
+Choose:
+
+- FRONTEND DATE BUG
+- BACKEND DATE BUG
+- TIMEZONE BUG
+- DATA/TEACHER-SELECTION ISSUE
+- INTENTIONAL CURRENT BEHAVIOR
+- MULTIPLE CAUSES
+- NEEDS MORE INFORMATION
+
+## Simple explanation
+
+Explain in very simple words why the Student is seeing 06 October when the current date is 07 October.
+
+## Homework flow
+
+Teacher
+→ request
+→ database
+→ Student API
+→ Student UI
+
+Show the exact date at each stage.
+
+## Classwork flow
+
+Same analysis.
+
+## Teacher default-date behavior
+
+## Student default selected-date behavior
+
+This is especially important.
+
+State exactly why **TUE 6** becomes selected instead of **WED 7**.
+
+## IST / UTC analysis
+
+List relevant code locations and state whether each is correct or incorrect.
+
+## Development database evidence
+
+Read-only only.
+
+## Academic Session verification
+
+## Tenant isolation verification
+
+## Root cause
+
+Give exact file(s), function(s), and lines where possible.
+
+## Is Homework and Classwork the same bug?
+
+YES / NO
+
+Explain.
+
+## Recommended correction
+
+Describe the **smallest safe correction only**.
+
+DO NOT IMPLEMENT IT.
+
+Do not redesign the Homework/Classwork module.
+
+Do not change due-date business rules.
+
+Do not change Academic Session behavior.
+
+Do not change historical records.
+
+Do not modify Mobile.
+
+## Code changes
+NONE
+
+## Database changes
+NONE
+
+## Mobile changes
+NONE
+
+## Production
+NOT ACCESSED
+
+## Deployment
+NONE
+
+STOP after the audit report.
