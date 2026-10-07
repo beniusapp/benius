@@ -1,0 +1,437 @@
+# BENIUS — PROMOTION STAGE 4
+# ESSENTIAL INTEGRITY FIXES ONLY
+
+Implement ONLY the confirmed essential Promotion integrity fixes below.
+
+This is NOT a Promotion redesign.
+
+Do NOT expand the scope.
+
+---
+
+# CURRENT BASELINE
+
+Promotion Stages 1–3 are already established.
+
+The current intended Web flow is:
+
+Source Academic Session
+→ Source-session Enrollment
+→ Promotion Decision / Exam result
+→ Explicit Target Academic Session
+→ Target-session Enrollment prepared
+→ Target Academic Session activated
+→ Student Registry synchronized from target-session Enrollment
+
+This architecture must remain unchanged.
+
+Stage 3 is already COMPLETE/PASS.
+
+Do NOT rewrite Stage 3.
+
+---
+
+# STAGE 4 SCOPE
+
+Implement ONLY these 3 items:
+
+## 1. MAKE PROMOTION EXECUTION IDEMPOTENT
+
+Confirmed problem:
+
+Some Students can be processed again if `/api/admin/promote` is replayed, especially when no source Promotion decision row exists.
+
+This can create duplicate `academic_history` records even though the target enrollment already exists.
+
+### Required behavior
+
+The same logical Promotion execution for the same:
+
+- school
+- source Academic Session
+- target Academic Session
+- Student
+
+must NOT create duplicate Promotion history or duplicate target-placement preparation.
+
+Example:
+
+First request:
+
+Student A
+2026–27 Class 5A
+→
+2027–28 Class 6A
+
+Result:
+
+SUCCESS
+
+If the exact same execution request is replayed:
+
+DO NOT create another `academic_history` row.
+
+DO NOT create another enrollment.
+
+DO NOT modify the Student Registry.
+
+Return a safe already-executed/idempotent result.
+
+### Important
+
+Do not depend only on an existing Teacher Promotion decision having `adminExecuted=true`.
+
+The protection must also work for:
+
+- default Promotion outcomes
+- override-only Promotion outcomes
+- Students without an existing Teacher Promotion decision row
+
+Preserve transaction atomicity.
+
+Do NOT delete existing historical records.
+
+---
+
+# 2. PROTECT EXECUTED PROMOTION DECISIONS
+
+Confirmed problem:
+
+Some routes can still update/delete Promotion decision rows after Admin Promotion execution.
+
+This can make:
+
+Promotion decision
+≠
+prepared target enrollment
+≠
+academic history
+
+### Required behavior
+
+Once a Promotion decision has been executed by Admin:
+
+`adminExecuted = true`
+
+normal Promotion decision mutation must be rejected.
+
+Protect executed decisions against:
+
+- update
+- overwrite/upsert
+- individual delete
+- cohort/bulk delete
+- term-level/broad delete
+- unlock/clear operations
+
+where those operations affect executed Promotion decisions.
+
+### Important
+
+Enforce this at the backend/storage level wherever practical.
+
+Do not rely only on hiding buttons in the Web UI.
+
+Return a clear conflict/error response when someone attempts to modify an executed decision.
+
+### DO NOT build a reversal system
+
+A controlled Promotion reversal/correction workflow is OUT OF SCOPE.
+
+For Stage 4:
+
+Executed Promotion = locked.
+
+---
+
+# 3. VALIDATE TARGET CLASS + SECTION BEFORE PREPARING ENROLLMENT
+
+Confirmed problem:
+
+The server can currently accept target class/section values from the Promotion request without fully validating that the destination is valid for that school.
+
+Stage 3 may later catch invalid placement, but invalid target enrollment should not be created in the first place.
+
+### Required behavior
+
+Before creating or accepting the target-session Enrollment, backend must verify:
+
+- target Academic Session belongs to authenticated school
+- target Academic Session is already valid under existing Promotion rules
+- target Class exists/configured for that school
+- target Section is valid/configured for that Class/school
+
+If destination placement is invalid:
+
+REJECT THE PROMOTION TRANSACTION.
+
+Do NOT create target enrollment.
+
+Do NOT create academic history.
+
+Do NOT change Promotion execution state.
+
+Do NOT change Student Registry.
+
+Transaction must roll back completely.
+
+---
+
+# VERY IMPORTANT — DO NOT CHANGE THESE
+
+Do NOT:
+
+- redesign Promotion
+- change Promotion formulas
+- change Exam result calculations
+- change pass/fail/grace logic
+- introduce new Promotion outcomes
+- implement Hold
+- implement Promotion reversal
+- force target session to be the immediately next session
+- change `promotionStrategy`
+- implement defer/immediate behavior
+- require roll number during Promotion
+- invent target roll numbers
+- redesign Academic Session activation
+- change Stage 3 Registry synchronization
+- rewrite historical enrollments
+- delete historical Promotion history
+- change Attendance
+- change Daily Presence
+- change Student Registry CRUD
+- change Support Staff permissions
+- change `/uploads`
+- change unrelated Teacher/Student modules
+
+---
+
+# MOBILE FREEZE
+
+Mobile feature/business-logic development remains FROZEN.
+
+DO NOT modify:
+
+`artifacts/benius-mobile/`
+
+Do NOT redesign Mobile Promotion.
+
+Do NOT standardize Mobile/Web Promotion term keys in this stage.
+
+Do NOT attempt Mobile parity.
+
+The old Mobile Promotion architecture is outside this Stage 4 implementation.
+
+If a shared backend change would unexpectedly affect Mobile, REPORT IT before expanding scope.
+
+---
+
+# ROLL NUMBER
+
+Do NOT solve roll-number assignment in Stage 4.
+
+Current target enrollment roll-number behavior is outside this stage.
+
+Do not generate a roll number.
+
+Do not redesign roll-number allocation.
+
+Report the existing behavior only.
+
+---
+
+# TENANT ISOLATION
+
+All new checks must remain scoped to the authenticated school.
+
+School A must never validate against or use:
+
+- School B classes
+- School B sections
+- School B Academic Sessions
+- School B Students
+- School B enrollments
+- School B Promotion decisions/history
+
+---
+
+# ACADEMIC SESSION SAFETY
+
+Preserve:
+
+- explicit source Academic Session
+- explicit target Academic Session
+- source enrollment as historical placement
+- separate target enrollment
+- historical source enrollment unchanged
+- archived-session write protection
+- no silent active-session fallback
+- Stage 3 target-enrollment authority
+
+---
+
+# TRANSACTION SAFETY
+
+Promotion execution must remain atomic.
+
+If ANY Student in the transaction fails required validation:
+
+Do not leave partial:
+
+- target enrollments
+- academic history
+- executed flags
+- Registry changes
+
+Use the existing transaction architecture rather than creating a parallel Promotion system.
+
+---
+
+# TEST ONLY THE NECESSARY CASES
+
+Add focused regression coverage for:
+
+### Idempotency
+
+1. Execute Promotion once → success.
+2. Replay exact same execution → no duplicate history.
+3. No duplicate target enrollment.
+4. Works even when Student had no Teacher Promotion decision row.
+
+### Executed-decision protection
+
+5. Executed decision cannot be updated.
+6. Executed decision cannot be deleted through broad/term deletion.
+7. Non-executed decision retains existing allowed behavior.
+
+### Destination validation
+
+8. Valid same-school class/section → succeeds.
+9. Invalid class → rejected.
+10. Invalid section → rejected.
+11. Foreign-school class/section → rejected.
+12. Failed validation leaves no partial Promotion writes.
+
+### Existing behavior
+
+13. Source enrollment remains unchanged.
+14. Target enrollment remains separate.
+15. Student Registry remains unchanged until Stage 3 activation.
+16. Historical Promotion data remains preserved.
+17. Tenant isolation remains enforced.
+
+Do not run unnecessary unrelated test suites if focused tests plus required builds are sufficient.
+
+---
+
+# DEVELOPMENT DATABASE
+
+Development DB may be used for read-only verification and safe transactional tests if necessary.
+
+Do NOT modify persistent Development data merely to clean up this issue.
+
+Any temporary test fixture must be transactionally isolated or safely removed.
+
+DO NOT access Production.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+# BENIUS PROMOTION STAGE 4 REPORT
+
+## Overall Verdict
+
+PASS / NEEDS CHANGES
+
+## Changes made
+
+List exact files changed.
+
+## 1. Promotion idempotency
+
+Explain how duplicate execution is now prevented.
+
+Show:
+
+First execution → result
+
+Second identical execution → result
+
+History count after both.
+
+## 2. Executed decision protection
+
+List every mutation path protected.
+
+Confirm executed decisions cannot be normally edited/deleted.
+
+## 3. Target class/section validation
+
+Explain how school/class/section validity is checked.
+
+Confirm invalid destination produces zero partial writes.
+
+## Transaction atomicity
+
+## Academic Session behavior
+
+Confirm Stage 1–3 architecture remains unchanged.
+
+## Historical data preservation
+
+## Tenant isolation
+
+## Mobile
+
+Confirm:
+
+`artifacts/benius-mobile/` changed: YES/NO
+
+Expected: NO.
+
+Report any shared-backend impact on existing Mobile behavior separately.
+
+## Roll number
+
+State existing behavior only.
+
+Confirm no new roll-number logic was introduced.
+
+## Database/schema changes
+
+Expected: NONE unless an absolutely necessary integrity constraint was discovered.
+
+If you believe a schema change is necessary, STOP and report before implementing it.
+
+## Tests
+
+Give exact pass/fail counts.
+
+## Builds/typecheck
+
+Separate new Stage 4 failures from pre-existing project diagnostics.
+
+## Production
+
+NOT ACCESSED.
+
+## Deployment
+
+NONE.
+
+## Final Promotion status
+
+Answer:
+
+> After Stage 4, is the Web Promotion → Academic Session → Target Enrollment → Stage 3 Activation flow safe enough to consider Promotion session integration COMPLETE?
+
+YES / NO
+
+If NO, list ONLY confirmed blocking defects.
+
+Do not recommend optional enhancements as blockers.
+
+STOP after the report.
