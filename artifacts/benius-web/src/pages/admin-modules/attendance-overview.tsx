@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { formatDateOnly, formatDateTimeIST, formatTimeIST, todayInIST } from "@shared/ist-time";
 import { formatAttendanceMarkedBy } from "@/lib/attendance-marked-by";
+import { attendanceOverviewQueryKeys, requireAttendanceJson } from "@/lib/attendance-overview-api";
 import { useSessionView } from "@/contexts/session-view-context";
 
 interface Props {
@@ -35,6 +36,7 @@ interface StudentSummary {
 interface SchoolConfig {
   classes: string[];
   sections: string[];
+  classSections: Array<{ className: string; sectionName: string }>;
   subjects: string[];
   attendanceTarget?: number;
 }
@@ -49,7 +51,7 @@ interface AttendanceOverview {
   halfDay?: number;
   missing?: number;
   unknown?: number;
-  percentage: number;
+  percentage: number | null;
 }
 
 interface StudentAttendance {
@@ -199,6 +201,15 @@ function MiniAnalyticsCard({ label, value, color, bg, icon: Icon }: { label: str
   );
 }
 
+function AttendanceErrorNotice({ message }: { message: string }) {
+  return (
+    <div role="alert" className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+      <p>{message}</p>
+    </div>
+  );
+}
+
 function SkeletonRow({ cols }: { cols: number }) {
   return (
     <tr>
@@ -240,78 +251,114 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/overview", viewSessionId, date] });
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/attendance/teacher-summary", viewSessionId, date] });
+    setFilterClass("");
+    setFilterSection("");
+    setStudentSearch("");
+  }, [viewSessionId]);
+
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: attendanceOverviewQueryKeys.overview(schoolId, viewSessionId, date) });
+    queryClient.invalidateQueries({ queryKey: attendanceOverviewQueryKeys.teacherSummary(schoolId, viewSessionId, date) });
     if (filterClass && filterSection) {
       queryClient.invalidateQueries({
-        queryKey: ["/api/admin/attendance/class-detail", viewSessionId, filterClass, filterSection, date],
+        queryKey: attendanceOverviewQueryKeys.classDetail(
+          schoolId, viewSessionId, filterClass, filterSection, date,
+        ),
       });
     }
-  }, [date, filterClass, filterSection, viewSessionId, queryClient]);
+  }, [date, filterClass, filterSection, schoolId, viewSessionId, queryClient]);
 
-  const { data: schoolConfig, isLoading: configLoading } = useQuery<SchoolConfig>({
-    queryKey: ["/api/admin/attendance/context", schoolId],
-    queryFn: async () => {
-      const r = await sessionFetch("/api/admin/attendance/context");
-      return r.ok
-        ? r.json()
-        : { classes: [], sections: [], subjects: [], attendanceTarget: 85 };
+  const { data: schoolConfig, isLoading: configLoading, isError: configError } = useQuery<SchoolConfig>({
+    queryKey: attendanceOverviewQueryKeys.context(schoolId, viewSessionId),
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetchForViewSession(
+        "/api/admin/attendance/context",
+        viewSessionId,
+        { signal },
+      );
+      return requireAttendanceJson<SchoolConfig>(
+        response,
+        "Unable to load class and section options for this session.",
+      );
     },
-    enabled: !!schoolId,
+    enabled: !!schoolId && !!session && viewSessionId != null,
   });
 
+  const classSections = schoolConfig?.classSections ?? [];
   const hasClasses = (schoolConfig?.classes ?? []).length > 0;
-  const hasSections = (schoolConfig?.sections ?? []).length > 0;
+  const hasSections = classSections.length > 0;
+  const sectionsForClass = classSections
+    .filter(option => !filterClass || option.className === filterClass)
+    .map(option => option.sectionName);
 
-  const { data: overview, isLoading: overviewLoading } = useQuery<AttendanceOverview>({
-    queryKey: ["/api/admin/attendance/overview", viewSessionId, date],
+  const { data: overview, isLoading: overviewLoading, isError: overviewError } = useQuery<AttendanceOverview>({
+    queryKey: attendanceOverviewQueryKeys.overview(schoolId, viewSessionId, date),
     queryFn: async ({ signal }) => {
-      const r = await sessionFetchForViewSession(`/api/admin/attendance/overview?date=${date}`, viewSessionId, { signal });
-      return r.ok ? r.json() : { enrolledTotal: 0, markedTotal: 0, present: 0, absent: 0, leave: 0, percentage: 0 };
+      const response = await sessionFetchForViewSession(
+        `/api/admin/attendance/overview?date=${date}`,
+        viewSessionId,
+        { signal },
+      );
+      return requireAttendanceJson<AttendanceOverview>(
+        response,
+        "Unable to load Student attendance for this session and date.",
+      );
     },
-    enabled: !!schoolId && !!date,
+    enabled: !!schoolId && !!session && viewSessionId != null && !!date,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
-  const { data: teacherSummaryData, isLoading: teacherLoading } = useQuery<TeacherSummaryResponse>({
-    queryKey: ["/api/admin/attendance/teacher-summary", viewSessionId, date],
+  const { data: teacherSummaryData, isLoading: teacherLoading, isError: teacherError } = useQuery<TeacherSummaryResponse>({
+    queryKey: attendanceOverviewQueryKeys.teacherSummary(schoolId, viewSessionId, date),
     queryFn: async ({ signal }) => {
-      const r = await sessionFetchForViewSession(`/api/admin/attendance/teacher-summary?date=${date}`, viewSessionId, { signal });
-      return r.ok ? r.json() : { summary: { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, pendingCorrections: 0, totalCorrections: 0 }, teachers: [] };
+      const response = await sessionFetchForViewSession(
+        `/api/admin/attendance/teacher-summary?date=${date}`,
+        viewSessionId,
+        { signal },
+      );
+      return requireAttendanceJson<TeacherSummaryResponse>(
+        response,
+        "Unable to load Teacher attendance for this session and date.",
+      );
     },
-    enabled: !!schoolId && !!date,
+    enabled: !!schoolId && !!session && viewSessionId != null && !!date,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
-  const { data: classDetail, isLoading: studentLoading } = useQuery<ClassDetailResponse>({
-    queryKey: ["/api/admin/attendance/class-detail", viewSessionId, filterClass, filterSection, date],
+  const { data: classDetail, isLoading: studentLoading, isError: studentError } = useQuery<ClassDetailResponse>({
+    queryKey: attendanceOverviewQueryKeys.classDetail(
+      schoolId, viewSessionId, filterClass, filterSection, date,
+    ),
     queryFn: async ({ signal }) => {
-      const r = await sessionFetchForViewSession(
+      const response = await sessionFetchForViewSession(
         `/api/admin/attendance/class-detail?class=${encodeURIComponent(filterClass)}&section=${encodeURIComponent(filterSection)}&date=${date}`,
         viewSessionId,
         { signal },
       );
-      return r.ok ? r.json() : { meta: { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null }, students: [] };
+      return requireAttendanceJson<ClassDetailResponse>(
+        response,
+        "Unable to load Student attendance details for this class and session.",
+      );
     },
-    enabled: !!date && !!filterClass && !!filterSection,
+    enabled: !!session && !!date && !!filterClass && !!filterSection && viewSessionId != null,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
-  const studentAttTarget = schoolConfig?.attendanceTarget ?? 85;
+  const studentAttTarget = schoolConfig?.attendanceTarget ?? null;
 
   const studentData = classDetail?.students ?? [];
   const submissionMeta = classDetail?.meta ?? { isSubmitted: false, submittedBy: null, submittedAt: null, lastModifiedAt: null, modifiedBy: null };
 
   const safeStudentData = useMemo<StudentAttendance[]>(() => {
-    const noRecordsExist = !overviewLoading && (overview?.markedTotal ?? 1) === 0;
+    const noRecordsExist = !overviewLoading && !overviewError && !!overview && overview.markedTotal === 0;
     if (noRecordsExist && studentData.some(s => s.status !== "not-marked")) {
       return studentData.map(s => ({ ...s, status: "not-marked" as const }));
     }
     return studentData;
-  }, [studentData, overview, overviewLoading]);
+  }, [studentData, overview, overviewLoading, overviewError]);
 
   const classStats = useMemo(() => {
     const total   = safeStudentData.length;
@@ -354,7 +401,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
   }, [teacherSummaryData, teacherSearch, teacherStatusFilter]);
 
   const { data: selectedStudentDetail, isLoading: studentDetailLoading } = useQuery<StudentSummary>({
-    queryKey: ["/api/admin/students", selectedStudentId, "summary"],
+    queryKey: ["/api/admin/students", schoolId, selectedStudentId, "summary"],
     queryFn: async () => {
       const r = await sessionFetch(`/api/admin/students/${selectedStudentId}/summary`);
       if (!r.ok) throw new Error("Failed to fetch student");
@@ -371,6 +418,14 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
   const displayDate = formatDateOnly(date);
   const teacherSummary = teacherSummaryData?.summary ?? { totalFaculty: 0, present: 0, notMarked: 0, lateArrivals: 0, onLeave: 0, halfDay: 0, pendingCorrections: 0, totalCorrections: 0 };
 
+  if (viewSessionId == null) {
+    return <p className="p-6 text-white/70">Select an Academic Session to view attendance.</p>;
+  }
+
+  if (!session) {
+    return <p role="alert" className="p-6 text-red-300">The selected Academic Session is unavailable. Attendance data was not loaded.</p>;
+  }
+
   if (!date) {
     return <p className="p-6 text-white/70">Attendance dates for this Session have not started yet.</p>;
   }
@@ -385,35 +440,39 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
         </div>
 
         <div className="flex flex-col items-end gap-3">
-          <div className="flex items-stretch gap-0 rounded-xl border border-white/10 overflow-hidden bg-[#1A2942]" data-testid="card-teacher-quickstat">
-            <div className="flex items-center gap-2 px-4 py-2 border-r border-white/10">
-              <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
-              <div>
-                <p className="text-[10px] text-white/40 uppercase tracking-wider">Faculty</p>
-                <p className="text-lg font-bold text-white" data-testid="stat-faculty-total">
-                  {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.totalFaculty}
-                </p>
+          {teacherError ? (
+            <AttendanceErrorNotice message="Unable to load Teacher attendance summary." />
+          ) : (
+            <div className="flex items-stretch gap-0 rounded-xl border border-white/10 overflow-hidden bg-[#1A2942]" data-testid="card-teacher-quickstat">
+              <div className="flex items-center gap-2 px-4 py-2 border-r border-white/10">
+                <GraduationCap className="w-4 h-4 text-[#D4AF37]" />
+                <div>
+                  <p className="text-[10px] text-white/40 uppercase tracking-wider">Faculty</p>
+                  <p className="text-lg font-bold text-white" data-testid="stat-faculty-total">
+                    {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.totalFaculty}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 px-4 py-2 border-r border-white/10">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                <div>
+                  <p className="text-[10px] text-white/40 uppercase tracking-wider">Present</p>
+                  <p className="text-lg font-bold text-emerald-400" data-testid="stat-faculty-present">
+                    {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.present}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 px-4 py-2">
+                <UserX className="w-4 h-4 text-red-400" />
+                <div>
+                  <p className="text-[10px] text-white/40 uppercase tracking-wider">Not Marked</p>
+                  <p className="text-lg font-bold text-red-400" data-testid="stat-faculty-notmarked">
+                    {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.notMarked}
+                  </p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-4 py-2 border-r border-white/10">
-              <CheckCircle className="w-4 h-4 text-emerald-400" />
-              <div>
-                <p className="text-[10px] text-white/40 uppercase tracking-wider">Present</p>
-                <p className="text-lg font-bold text-emerald-400" data-testid="stat-faculty-present">
-                  {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.present}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 px-4 py-2">
-              <UserX className="w-4 h-4 text-red-400" />
-              <div>
-                <p className="text-[10px] text-white/40 uppercase tracking-wider">Not Marked</p>
-                <p className="text-lg font-bold text-red-400" data-testid="stat-faculty-notmarked">
-                  {teacherLoading ? <span className="inline-block w-6 h-4 rounded bg-white/10 animate-pulse" /> : teacherSummary.notMarked}
-                </p>
-              </div>
-            </div>
-          </div>
+          )}
 
           <div>
             <label className="block text-xs text-white/40 mb-1 text-right">Date</label>
@@ -435,34 +494,48 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
         <h3 className="text-xs font-bold text-[#D4AF37] uppercase tracking-wider mb-3 flex items-center gap-2">
           <TrendingUp className="w-3.5 h-3.5" /> Student Pulse — School-Wide
         </h3>
-        {overviewLoading ? (
+        {overviewError ? (
+          <AttendanceErrorNotice message="Unable to load Student attendance for this session and date." />
+        ) : overviewLoading ? (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {[1,2,3,4,5].map(i => <div key={i} className="h-20 rounded-xl bg-white/5 animate-pulse" />)}
           </div>
-        ) : (
+        ) : overview && (
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            <StatCard label="Total Students" value={overview?.enrolledTotal ?? 0} color="text-blue-400" bg="bg-blue-500/20" icon={Users} />
-            <StatCard label="Total Marked" value={overview?.markedTotal ?? 0} color="text-indigo-400" bg="bg-indigo-500/20" icon={CheckCircle} />
-            <StatCard label="Present" value={overview?.present ?? 0} color="text-emerald-400" bg="bg-emerald-500/20" icon={CheckCircle} />
-            <StatCard label="Absent" value={overview?.absent ?? 0} color="text-red-400" bg="bg-red-500/20" icon={UserX} />
-            <StatCard label="Attendance %" value={`${overview?.percentage ?? 0}%`} color="text-[#D4AF37]" bg="bg-yellow-500/20" icon={TrendingUp} />
+            <StatCard label="Total Students" value={overview.enrolledTotal} color="text-blue-400" bg="bg-blue-500/20" icon={Users} />
+            <StatCard label="Total Marked" value={overview.markedTotal} color="text-indigo-400" bg="bg-indigo-500/20" icon={CheckCircle} />
+            <StatCard label="Present" value={overview.present} color="text-emerald-400" bg="bg-emerald-500/20" icon={CheckCircle} />
+            <StatCard label="Absent" value={overview.absent} color="text-red-400" bg="bg-red-500/20" icon={UserX} />
+            <StatCard label="Attendance %" value={overview.percentage === null ? "N/A" : `${overview.percentage}%`} color="text-[#D4AF37]" bg="bg-yellow-500/20" icon={TrendingUp} />
           </div>
         )}
-        {!overviewLoading && (
+        {!overviewLoading && !overviewError && overview && (
           <div className="mt-3">
-            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-700"
-                style={{ width: `${overview?.percentage ?? 0}%`, background: "linear-gradient(90deg, #D4AF37, #F4D03F)" }} />
-            </div>
-            <div className="flex justify-between mt-1 text-[10px] text-white/30">
-              <span>0%</span><span>Target: {studentAttTarget}%</span><span>100%</span>
-            </div>
+            {overview.percentage === null ? (
+              <p className="text-xs text-white/40">Attendance percentage is unavailable until eligible attendance is marked.</p>
+            ) : (
+              <>
+                <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${overview.percentage}%`, background: "linear-gradient(90deg, #D4AF37, #F4D03F)" }} />
+                </div>
+                <div className="flex justify-between mt-1 text-[10px] text-white/30">
+                  <span>0%</span><span>Target: {studentAttTarget == null ? "Unavailable" : `${studentAttTarget}%`}</span><span>100%</span>
+                </div>
+              </>
+            )}
           </div>
         )}
-        {!overviewLoading && (overview?.markedTotal ?? 0) === 0 && (
+        {!overviewLoading && !overviewError && overview && (
+          overview.enrolledTotal === 0 || overview.markedTotal === 0
+        ) && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10">
             <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-            <p className="text-xs text-amber-300">No attendance records found for {displayDate}. Teachers may not have marked attendance yet.</p>
+            <p className="text-xs text-amber-300">
+              {overview.enrolledTotal === 0
+                ? "No eligible Students are enrolled in this Academic Session."
+                : `No eligible attendance records found for ${displayDate}. Eligible Students are Not Marked.`}
+            </p>
           </div>
         )}
       </div>
@@ -484,7 +557,9 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
           <p className="text-xs font-bold text-white/50 uppercase tracking-wider mb-3 flex items-center gap-2">
             <Filter className="w-3.5 h-3.5" /> Class Filter
           </p>
-          {configLoading ? (
+          {configError ? (
+            <AttendanceErrorNotice message="Unable to load class and section options for this session." />
+          ) : configLoading ? (
             <div className="flex gap-3">
               <div className="h-11 flex-1 rounded-xl bg-white/5 animate-pulse" />
               <div className="h-11 flex-1 rounded-xl bg-white/5 animate-pulse" />
@@ -493,7 +568,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
             <div className="flex items-center gap-2 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10">
               <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
               <p className="text-xs text-amber-300">
-                No classes or sections configured. Go to <strong>School Settings → Metadata</strong> to add them.
+                No class/section combinations are available for this Academic Session.
               </p>
             </div>
           ) : (
@@ -507,7 +582,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                   data-testid="select-filter-class"
                 >
                   <option value="">All Classes</option>
-                  {(schoolConfig?.classes ?? []).map(c => <option key={c} value={c}>Class {c}</option>)}
+                  {schoolConfig?.classes.map(c => <option key={c} value={c}>Class {c}</option>)}
                 </select>
               </div>
               <div className="flex-1 min-w-[110px]">
@@ -519,7 +594,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                   data-testid="select-filter-section"
                 >
                   <option value="">Select Section</option>
-                  {(schoolConfig?.sections ?? []).map(s => <option key={s} value={s}>{s}</option>)}
+                  {[...new Set(sectionsForClass)].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
             </div>
@@ -529,6 +604,10 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
         {/* Class-level detail */}
         {filterClass && filterSection && (
           <div className="space-y-4">
+            {studentError ? (
+              <AttendanceErrorNotice message="Unable to load Student attendance details for this class and session." />
+            ) : (
+              <>
             {studentLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[1,2,3].map(i => <div key={i} className="h-24 rounded-xl bg-white/5 animate-pulse" />)}
@@ -655,7 +734,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                       <tr>
                         <td colSpan={4} className="px-3 py-12 text-center text-white/40 text-sm">
                           {studentData.length === 0
-                            ? `No students found in Class ${filterClass}-${filterSection}`
+                            ? `No eligible Students are enrolled in Class ${filterClass}-${filterSection} for this session`
                             : "No students match your search"}
                         </td>
                       </tr>
@@ -705,6 +784,8 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
                 </div>
               )}
             </div>
+              </>
+            )}
           </div>
         )}
 
@@ -734,6 +815,8 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
           <div className="flex gap-3 flex-wrap">
             {[1,2,3,4].map(i => <div key={i} className="flex-1 min-w-[100px] h-16 rounded-xl bg-white/5 animate-pulse" />)}
           </div>
+        ) : teacherError ? (
+          <AttendanceErrorNotice message="Unable to load Teacher attendance analytics." />
         ) : (
           <div className="flex gap-3 flex-wrap" data-testid="section-b-analytics">
             <MiniAnalyticsCard label="Total Present" value={teacherSummary.present} color="text-emerald-400" bg="bg-emerald-500/20" icon={CheckCircle} />
@@ -781,7 +864,7 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
               <thead>
                 <tr className="bg-[#0A1628]">
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Teacher Name</th>
-                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Department</th>
+                  <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Subjects</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Assigned</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">Status</th>
                   <th className="text-left px-3 py-3 text-xs font-bold text-white/50 uppercase tracking-wider border-b border-white/10">
@@ -798,6 +881,12 @@ export default function AttendanceOverview({ schoolId, viewSessionId = null, onV
               <tbody>
                 {teacherLoading ? (
                   Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={7} />)
+                ) : teacherError ? (
+                  <tr>
+                    <td colSpan={7} className="px-3 py-12 text-center">
+                      <AttendanceErrorNotice message="Unable to load Teacher attendance records." />
+                    </td>
+                  </tr>
                 ) : filteredTeachers.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-3 py-12 text-center text-white/40 text-sm">

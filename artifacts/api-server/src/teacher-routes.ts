@@ -3468,7 +3468,11 @@ export function registerTeacherRoutes(app: Express) {
     const schoolId = req.session.schoolId;
     if (!schoolId) return res.status(403).json({ message: "School access denied" });
     try {
-      const [metadata, policies] = await Promise.all([
+      const attendanceSession = await resolveAttendanceReadSession(
+        schoolId,
+        (req as any).viewSessionId,
+      );
+      const [metadata, policies, classSections] = await Promise.all([
         storage.getAllSchoolMetadata(schoolId),
         db.select().from(attendancePolicies).where(
           and(
@@ -3476,15 +3480,20 @@ export function registerTeacherRoutes(app: Express) {
             eq(attendancePolicies.isActive, true),
           ),
         ),
+        storage.getAttendanceClassSectionOptions(schoolId, attendanceSession.id),
       ]);
       const studentPolicy = resolvePolicy(policies, "STUDENT", "");
+      const classes = [...new Set(classSections.map(option => option.className))];
+      const sections = [...new Set(classSections.map(option => option.sectionName))];
       return res.json({
-        classes: metadata.classes ?? [],
-        sections: metadata.sections ?? [],
+        classes,
+        sections,
+        classSections,
         subjects: metadata.subjects ?? [],
         attendanceTarget: studentPolicy.attendanceTarget,
       });
-    } catch {
+    } catch (error) {
+      if (sendAttendanceReadSessionError(res, error)) return;
       return res.status(500).json({ message: "Failed to load Attendance Overview context" });
     }
   });

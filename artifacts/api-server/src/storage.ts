@@ -83,6 +83,7 @@ import {
   type StudentAttendanceAggregation,
 } from "./student-attendance-calculation";
 import { isEligibleForLiveStudentAttendance } from "./student-attendance-live-eligibility";
+import { normalizeAttendanceClassSections } from "./student-attendance-overview";
 import { getStudentAttendanceWorkingDates } from "./student-attendance-working-days";
 import {
   CURRENT_FEE_AUDIT_ACTION_OPTIONS,
@@ -1289,6 +1290,66 @@ export class DatabaseStorage {
       }
     }
     return [...result.values()];
+  }
+
+  async getAttendanceClassSectionOptions(
+    schoolId: number,
+    sessionId: number,
+  ): Promise<Array<{ className: string; sectionName: string }>> {
+    const session = await this.getAcademicSessionForSchool(sessionId, schoolId);
+    if (!session) return [];
+
+    const enrollmentConditions = [
+      eq(enrollments.schoolId, schoolId),
+      eq(students.schoolId, schoolId),
+      eq(enrollments.sessionId, sessionId),
+    ];
+    if (session.isActive) {
+      enrollmentConditions.push(
+        eq(enrollments.status, "Active"),
+        eq(students.isActive, true),
+      );
+    }
+
+    const enrollmentRows = await db
+      .select({ student: students, enrollment: enrollments })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, enrollments.schoolId),
+      ))
+      .where(and(...enrollmentConditions));
+
+    const selectedSessionEnrollments = session.isActive
+      ? enrollmentRows.filter(({ student, enrollment }) => isEligibleForLiveStudentAttendance(
+          student,
+          enrollment,
+          {
+            schoolId,
+            sessionId,
+            className: enrollment.className,
+            sectionName: enrollment.sectionName,
+          },
+        ))
+      : enrollmentRows;
+
+    const historicalAttendanceRows = session.isActive
+      ? []
+      : await db.selectDistinct({
+          className: attendanceRecords.class,
+          sectionName: attendanceRecords.section,
+        }).from(attendanceRecords).where(and(
+          eq(attendanceRecords.schoolId, schoolId),
+          eq(attendanceRecords.sessionId, sessionId),
+        ));
+
+    return normalizeAttendanceClassSections([
+      ...selectedSessionEnrollments.map(({ enrollment }) => ({
+        className: enrollment.className,
+        sectionName: enrollment.sectionName,
+      })),
+      ...historicalAttendanceRows,
+    ]);
   }
 
   async getAttendancePopulationForSession(schoolId: number, sessionId: number): Promise<number> {

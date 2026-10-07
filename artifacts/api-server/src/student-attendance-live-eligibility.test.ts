@@ -51,6 +51,10 @@ test("active Student with an inactive enrollment is ineligible", () => {
   );
 });
 
+test("active Student without a selected-session enrollment is ineligible", () => {
+  assert.equal(isEligibleForLiveStudentAttendance(student, undefined, scope), false);
+});
+
 test("session, school, class, section, and Student/enrollment identity must all match", () => {
   const invalidRows: Array<[LiveAttendanceStudent, LiveAttendanceEnrollment]> = [
     [student, { ...enrollment, sessionId: 21 }],

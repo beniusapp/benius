@@ -32,7 +32,7 @@ import { getStudentAttendanceWorkingDates } from "../student-attendance-working-
 import { getWorkingDays, parseWorkingDays, saveWorkingDays } from "../teacher-working-days";
 import { feePeriodLabel } from "../fee-period";
 import {
-  insertSchoolSchema, attendanceRecords, studentProfiles, students, schools,
+  insertSchoolSchema, attendanceRecords, enrollments, studentProfiles, students, schools,
   teacherSelfAttendance, attendanceCorrectionRequests, facultyMappings,
   attendancePolicies, insertAttendancePolicySchema,
   schoolMetadata, timetableStructure, timetableEntries, calendarEvents,
@@ -63,6 +63,12 @@ import { registerStudentModuleDotStateRoutes } from "../student-module-dot-state
 import { registerTeacherModuleDotStateRoutes } from "../teacher-module-dot-state-routes";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
+import {
+  buildHistoricalStudentAttendanceOverview,
+  buildLiveStudentAttendanceOverview,
+  mapEnrollmentRollNumbers,
+  selectAttendanceRoster,
+} from "../student-attendance-overview";
 import { calculateLateFee } from "../late-fee-engine";
 import { buildLateFeeInfo } from "../late-fee-display";
 import { ledgerPaymentMethodLabel } from "../payment-method-label";
@@ -81,7 +87,7 @@ import {
 } from "../manual-invoice-validation";
 import { addSSEClient, broadcastSessionActivated, broadcastSessionDeleted } from "../sse";
 import { db } from "../db";
-import { eq, and, sql, inArray, not } from "drizzle-orm";
+import { eq, and, sql, inArray, not, desc } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import {
   generatePasswordRecoveryOtp,
@@ -2957,43 +2963,80 @@ export async function registerRoutes(
       const attendanceSession = await resolveAttendanceReadSession(
         schoolId,
         (req as any).viewSessionId,
-        { allowActiveFallback: true },
       );
       requireAttendanceDateInSession(date, attendanceSession);
-      const historicalRoster = await storage.getAttendanceReportRosterForSessionClass(
-        schoolId, attendanceSession.id, cls, section,
-      );
-      const studentIdList = historicalRoster.map(student => student.id);
-      const identityKeyList = historicalRoster.map(student => student.identityKey);
-      const profileRows = studentIdList.length > 0
-        ? await db.select({
-            studentId: studentProfiles.studentId,
-            rollNo: studentProfiles.rollNo,
-          }).from(studentProfiles).where(inArray(studentProfiles.studentId, studentIdList))
+      const liveRoster = attendanceSession.isActive
+        ? (await storage.getLiveAttendanceRosterForSessionClass(
+            schoolId, attendanceSession.id, cls, section,
+          )).map(student => ({
+            id: student.id,
+            name: student.name,
+            digitalStudentId: student.digitalStudentId,
+            photoUrl: student.photoUrl,
+            identityKey: student.attendanceIdentityKey,
+          }))
         : [];
-      const rollNoByStudent = new Map(profileRows.map(profile => [profile.studentId, profile.rollNo ?? ""]));
-      const studentRows = historicalRoster.map(student => ({
+      const historicalRoster = attendanceSession.isActive
+        ? []
+        : await storage.getAttendanceReportRosterForSessionClass(
+            schoolId, attendanceSession.id, cls, section,
+          );
+      const attendanceRoster = selectAttendanceRoster(
+        attendanceSession.isActive,
+        liveRoster,
+        historicalRoster,
+      );
+      const studentIdList = attendanceRoster.map(student => student.id);
+      const positiveStudentIds = studentIdList.filter(studentId => studentId > 0);
+      const identityKeyList = attendanceRoster.map(student => student.identityKey);
+      const rollConditions = [
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, attendanceSession.id),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+        inArray(enrollments.studentId, positiveStudentIds),
+      ];
+      if (attendanceSession.isActive) {
+        rollConditions.push(eq(enrollments.status, "Active"));
+      }
+      const enrollmentRollRows = positiveStudentIds.length > 0
+        ? await db.select({
+            studentId: enrollments.studentId,
+            rollNo: enrollments.rollNo,
+          }).from(enrollments).where(and(...rollConditions))
+        : [];
+      const rollNoByStudent = mapEnrollmentRollNumbers(enrollmentRollRows);
+      const studentRows = attendanceRoster.map(student => ({
         id: student.id,
         name: student.name,
         digitalStudentId: student.digitalStudentId,
         photoUrl: student.photoUrl,
+        identityKey: student.identityKey,
         rollNo: rollNoByStudent.get(student.id) ?? "",
       }));
-      const filteredRecords = studentIdList.length > 0
-        ? await db.select().from(attendanceRecords).where(
-            and(
+      const filteredRecords = attendanceSession.isActive
+        ? positiveStudentIds.length > 0
+          ? await db.select().from(attendanceRecords).where(and(
+              eq(attendanceRecords.schoolId, schoolId),
+              eq(attendanceRecords.date, date),
+              eq(attendanceRecords.sessionId, attendanceSession.id),
+              inArray(attendanceRecords.studentId, positiveStudentIds),
+            )).orderBy(desc(attendanceRecords.markedAt))
+          : []
+        : studentIdList.length > 0
+          ? await db.select().from(attendanceRecords).where(and(
               eq(attendanceRecords.schoolId, schoolId),
               eq(attendanceRecords.class, cls),
               eq(attendanceRecords.section, section),
               eq(attendanceRecords.date, date),
               inArray(attendanceRecords.identityKey, identityKeyList),
               eq(attendanceRecords.sessionId, attendanceSession.id),
-            )
-          )
-        : [];
+            ))
+          : [];
       const result = studentRows.map(student => {
-        const rosterStudent = historicalRoster.find(candidate => candidate.id === student.id);
-        const record = filteredRecords.find(r => r.identityKey === rosterStudent?.identityKey);
+        const record = attendanceSession.isActive
+          ? filteredRecords.find(r => r.studentId === student.id)
+          : filteredRecords.find(r => r.identityKey === student.identityKey);
         return {
           studentId: student.id,
           name: student.name,
@@ -3002,14 +3045,18 @@ export async function registerRoutes(
           status: (record && record.status) ? record.status : "not-marked",
         };
       });
-      const workingDates = await getStudentAttendanceWorkingDates({
-        schoolId,
-        sessionId: attendanceSession.id,
-        class: cls,
-        section,
-        startDate: date,
-        endDate: date,
-      });
+      const workingDates = attendanceSession.isActive
+        ? filteredRecords.length > 0
+          ? [date]
+          : []
+        : await getStudentAttendanceWorkingDates({
+            schoolId,
+            sessionId: attendanceSession.id,
+            class: cls,
+            section,
+            startDate: date,
+            endDate: date,
+          });
       const summary = aggregateStudentAttendance({
         schoolId,
         sessionId: attendanceSession.id,
@@ -3064,29 +3111,21 @@ export async function registerRoutes(
       const attendanceSession = await resolveAttendanceReadSession(
         schoolId,
         (req as any).viewSessionId,
-        { allowActiveFallback: true },
       );
       requireAttendanceDateInSession(date, attendanceSession);
-      const enrolledTotal = await storage.getAttendancePopulationForSession(
-        schoolId, attendanceSession.id,
-      );
-      const summary = await storage.getDailyAttendanceSummary(
-        schoolId, attendanceSession.id, date,
-      );
+      if (attendanceSession.isActive) {
+        const liveSummary = await storage.getWebDailyAttendanceSummary(
+          schoolId, attendanceSession.id, date,
+        );
+        res.json(buildLiveStudentAttendanceOverview(liveSummary));
+        return;
+      }
 
-      res.json({
-        enrolledTotal,
-        markedTotal: summary.total,
-        applicableTotal: summary.applicableTotal,
-        present: summary.present,
-        absent: summary.absent,
-        leave: summary.leave,
-        late: summary.late,
-        halfDay: summary.halfDay,
-        missing: summary.missing,
-        unknown: summary.unknown,
-        percentage: summary.percentage,
-      });
+      const [enrolledTotal, summary] = await Promise.all([
+        storage.getAttendancePopulationForSession(schoolId, attendanceSession.id),
+        storage.getDailyAttendanceSummary(schoolId, attendanceSession.id, date),
+      ]);
+      res.json(buildHistoricalStudentAttendanceOverview(enrolledTotal, summary));
     } catch (err) {
       if (sendAttendanceReadSessionError(res, err)) return;
       res.status(500).json({ message: "Failed to fetch attendance overview" });

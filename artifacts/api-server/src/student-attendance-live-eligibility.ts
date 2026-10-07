@@ -22,9 +22,10 @@ export type LiveAttendanceEnrollment = {
 
 export function isEligibleForLiveStudentAttendance(
   student: LiveAttendanceStudent,
-  enrollment: LiveAttendanceEnrollment,
+  enrollment: LiveAttendanceEnrollment | null | undefined,
   scope: LiveAttendanceScope,
 ): boolean {
+  if (!enrollment) return false;
   return student.id === enrollment.studentId
     && student.schoolId === scope.schoolId
     && enrollment.schoolId === scope.schoolId
