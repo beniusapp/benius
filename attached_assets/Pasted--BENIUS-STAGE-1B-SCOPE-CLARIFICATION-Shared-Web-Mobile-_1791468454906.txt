@@ -1,0 +1,119 @@
+# BENIUS — STAGE 1B SCOPE CLARIFICATION
+## Shared Web + Mobile Backend Promotion Security
+
+I approve the following scope clarification.
+
+**Mobile CLIENT remains completely FROZEN.**
+
+However, security corrections to the Mobile Admin promotion BACKEND endpoint are explicitly permitted because the audit confirmed a critical promotion-policy bypass.
+
+The affected endpoint is:
+
+`POST /api/mobile/admin/modules/exam-controller/execute`
+
+### APPROVED DIRECTION
+
+Implement a single authoritative promotion eligibility and execution policy shared by all Admin promotion execution paths, including Web and Mobile.
+
+Do not maintain separate, inconsistent promotion business rules.
+
+### NON-NEGOTIABLE REQUIREMENTS
+
+1. Do not modify React Native Mobile frontend files.
+2. Preserve existing Mobile authentication and request/response contracts where safely possible.
+3. Do not preserve unsafe behavior merely for backward compatibility.
+4. Enforce authenticated school and exact source/target Academic Session boundaries.
+5. Require the selected term's applicable configured examination scores.
+6. Reject Students with no applicable marks as Incomplete / Pending Result.
+7. Require a matching, valid, locked Teacher decision for the correct Student, school, session, class/section and term.
+8. Reject conflicting, incomplete, stale, missing or unauthorized promotion decisions.
+9. Do not trust client-supplied marks, percentages, eligibility or decision status.
+10. Do not directly mutate current Student Registry placement during promotion preparation.
+11. Preserve the established Promotion Stage 3 architecture: prepare validated target-session Enrollment/history first; synchronize current Registry placement only through the authorized atomic session-activation process.
+12. Preserve existing locked ledgers, examination marks, history and Student records.
+13. Enforce server-side validation before any promotion-related writes.
+14. Ensure validation and execution are transactionally safe, including concurrency considerations.
+15. Preserve strict multi-tenant isolation and archived-session read-only rules.
+16. No Production access or deployment.
+
+### IMPORTANT IMPLEMENTATION SAFEGUARD
+
+Before editing, confirm whether the Mobile endpoint's existing request contains enough information to resolve the authoritative source session, target session, examination term and locked Teacher decision.
+
+If any of these cannot be determined unambiguously, STOP and report the exact missing contract information.
+
+Do not guess a term or silently choose the current session.
+
+Do not create a fallback that permits promotion without a valid result or ledger.
+
+If the existing Mobile contract cannot safely support the new policy, return a proposed minimal compatible API-contract change for approval before implementing it.
+
+### IMPLEMENTATION SEQUENCE
+
+**Step 1 — Shared execution design**
+
+Identify every Web and Mobile Admin promotion execution path and their shared or separate transaction implementations.
+
+Propose the smallest safe shared backend validator and execution flow.
+
+Confirm that direct Registry mutation from the Mobile endpoint will be removed in favor of the existing validated promotion-preparation and session-activation architecture.
+
+**Step 2 — Stop for approval if blocked**
+
+If any existing Mobile API semantics conflict with the approved promotion architecture, explain the conflict and its impact before making changes.
+
+Do not silently change Mobile behavior.
+
+**Step 3 — Implement Stage 1B**
+
+Once compatibility and transaction safety are established, implement the previously approved Stage 1B scope:
+
+- Correct active-session Results roster.
+- Derive Incomplete / Pending Result for no applicable marks.
+- Remove automatic promoted defaults.
+- Protect draft/lock operations.
+- Preserve conflicting historical locked decisions.
+- Enforce authoritative promotion eligibility across Web and Mobile backend execution paths.
+
+**Step 4 — Regression verification**
+
+Test both Web and Mobile backend promotion endpoints for:
+
+- No applicable marks.
+- Only unrelated exam-type marks.
+- Missing locked Teacher decision.
+- Conflicting locked decision.
+- Incorrect Academic Session.
+- Cross-school access.
+- Archived-session mutation.
+- Invalid target Enrollment.
+- Valid completed result with valid locked decision.
+- No direct Registry placement mutation.
+- Preservation of existing Promotion Stage 3 atomic activation behavior.
+
+Use isolated test fixtures, not real application records.
+
+### REQUIRED REPORT
+
+Provide:
+
+1. Overall verdict.
+2. Shared backend promotion execution architecture.
+3. Exact Web and Mobile endpoint changes.
+4. Mobile API compatibility.
+5. Any blocked or changed contract.
+6. Stage 1B implementation status.
+7. Regression test results.
+8. Files and schema changes.
+9. Confirmation that Mobile frontend files remain unchanged.
+10. Production/deployment confirmation.
+
+### FINAL INSTRUCTION
+
+Security must be consistent across Web and Mobile.
+
+Mobile frontend remains frozen.
+
+Do not implement a partial fix that protects Web while leaving Mobile able to bypass promotion eligibility.
+
+If a safe shared execution design is not possible without additional product decisions, stop and request approval before editing.
