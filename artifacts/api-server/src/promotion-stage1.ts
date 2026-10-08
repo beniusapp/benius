@@ -116,6 +116,12 @@ export interface PromotionExecutionPlacement {
   name: string;
   fromClass: string;
   fromSection: string;
+  toClass?: string;
+  toSection?: string;
+  examType?: string;
+  totalObtained?: number;
+  totalMax?: number;
+  percentage?: number;
 }
 
 export class PromotionStage1Error extends Error {
@@ -127,6 +133,91 @@ export class PromotionStage1Error extends Error {
     super(message);
     this.name = "PromotionStage1Error";
   }
+}
+
+export interface PromotionTermComponent {
+  sourceExam: string;
+  weight: number;
+}
+
+/** Resolve one exact weighted-term key. Raw exam-type aliases are not accepted. */
+export function resolvePromotionTermComponents(
+  rawWeights: string,
+  requestedTerm: string,
+): PromotionTermComponent[] {
+  if (!requestedTerm || requestedTerm !== requestedTerm.trim()) {
+    throw new PromotionStage1Error(
+      "Provide the exact configured examination-term key.",
+      400,
+      "PROMOTION_TERM_INVALID",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawWeights);
+  } catch {
+    throw new PromotionStage1Error(
+      "The configured examination-term policy is invalid.",
+      409,
+      "PROMOTION_TERM_POLICY_INVALID",
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new PromotionStage1Error(
+      "The configured examination-term policy is invalid.",
+      409,
+      "PROMOTION_TERM_POLICY_INVALID",
+    );
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  const normalizedMatches = entries.filter(([key]) => key.trim() === requestedTerm);
+  if (normalizedMatches.length !== 1 || normalizedMatches[0][0] !== requestedTerm) {
+    throw new PromotionStage1Error(
+      "The requested term is not one unambiguous, exact configured examination term.",
+      400,
+      "PROMOTION_TERM_INVALID",
+    );
+  }
+
+  const configuredComponents = normalizedMatches[0][1];
+  if (!Array.isArray(configuredComponents) || configuredComponents.length === 0) {
+    throw new PromotionStage1Error(
+      "The configured examination term has no applicable assessment components.",
+      409,
+      "PROMOTION_TERM_POLICY_INVALID",
+    );
+  }
+
+  const components: PromotionTermComponent[] = [];
+  const sourceExams = new Set<string>();
+  for (const component of configuredComponents) {
+    if (!component || typeof component !== "object" || Array.isArray(component)) {
+      throw new PromotionStage1Error(
+        "The configured examination-term components are invalid.",
+        409,
+        "PROMOTION_TERM_POLICY_INVALID",
+      );
+    }
+    const sourceExam = (component as Record<string, unknown>).source_exam;
+    const weight = (component as Record<string, unknown>).weight;
+    if (
+      typeof sourceExam !== "string" || !sourceExam || sourceExam !== sourceExam.trim() ||
+      typeof weight !== "number" || !Number.isFinite(weight) || weight <= 0 ||
+      sourceExams.has(sourceExam)
+    ) {
+      throw new PromotionStage1Error(
+        "The configured examination-term components are invalid or ambiguous.",
+        409,
+        "PROMOTION_TERM_POLICY_INVALID",
+      );
+    }
+    sourceExams.add(sourceExam);
+    components.push({ sourceExam, weight });
+  }
+
+  return components;
 }
 
 export function validatePromotionExecutionBatch(

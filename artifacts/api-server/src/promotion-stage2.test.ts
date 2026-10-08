@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PromotionStage1Error,
+  resolvePromotionTermComponents,
   validatePromotionTargetEnrollment,
   validatePromotionTargetSession,
   type PromotionExecutionItem,
@@ -37,6 +38,32 @@ const expectedEnrollment: PromotionTargetEnrollmentRow = {
   rollNo: null,
   status: "Active",
 };
+
+test("Promotion term resolution accepts only one exact weighted term and its configured components", () => {
+  const weights = JSON.stringify({
+    "Annual result": [
+      { source_exam: "Unit Test 2", weight: 20 },
+      { source_exam: "Annual", weight: 80 },
+    ],
+  });
+  assert.deepEqual(resolvePromotionTermComponents(weights, "Annual result"), [
+    { sourceExam: "Unit Test 2", weight: 20 },
+    { sourceExam: "Annual", weight: 80 },
+  ]);
+  for (const invalid of ["Annual", " Annual result", "Annual result "]) {
+    assert.throws(
+      () => resolvePromotionTermComponents(weights, invalid),
+      (error: unknown) => error instanceof PromotionStage1Error && error.code === "PROMOTION_TERM_INVALID",
+    );
+  }
+  assert.throws(
+    () => resolvePromotionTermComponents(JSON.stringify({
+      "Annual result": [{ source_exam: "Annual", weight: 100 }],
+      " Annual result ": [{ source_exam: "Annual", weight: 100 }],
+    }), "Annual result"),
+    (error: unknown) => error instanceof PromotionStage1Error && error.code === "PROMOTION_TERM_INVALID",
+  );
+});
 
 test("Promotion target must be explicit, school-owned, different from source, and non-archived", () => {
   assert.doesNotThrow(() =>

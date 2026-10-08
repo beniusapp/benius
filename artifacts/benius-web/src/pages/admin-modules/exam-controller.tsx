@@ -43,7 +43,7 @@ interface LedgerDecision {
 
 interface AggStudent {
   studentId: number; dsid: string; name: string;
-  totalObtained: number; totalMax: number; percentage: number; subjects: string[];
+  totalObtained: number; totalMax: number; percentage: number | null; resultStatus: "complete" | "incomplete"; subjects: string[];
   gradeLabel: string | null; gradePoint: string | null; gradeRemarks: string | null;
   tierPassThreshold: number;
   ledger: LedgerDecision | null;
@@ -286,6 +286,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (filterPctVal !== "") {
         const pct = parseFloat(filterPctVal);
         if (!isNaN(pct)) {
+          if (s.percentage === null) return false;
           if (filterPctOp === "gte" && s.percentage < pct) return false;
           if (filterPctOp === "lte" && s.percentage > pct) return false;
         }
@@ -513,19 +514,20 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       const targetStudents = executionScope !== null
         ? agg.students.filter(s => executionScope.has(s.studentId))
         : agg.students;
+      if (targetStudents.some(student =>
+        student.resultStatus !== "complete" ||
+        !student.ledger?.locked ||
+        !["promoted", "retained"].includes(student.ledger.decision),
+      )) {
+        throw new Error("Every selected Student needs a complete result and a matching locked Teacher decision before Promotion can be prepared.");
+      }
       const items = targetStudents.map(s => {
-        const ov  = overrides[s.studentId];
         const led = s.ledger;
-        let nc: string, ns: string;
-        if (ov?.status === "retain")         { nc = cohort.class;   ns = cohort.section; }
-        else if (ov)                          { nc = ov.nextClass || led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = ov.nextSection || led?.targetSection || cohort.section; }
-        else if (led?.decision === "retained"){ nc = cohort.class;   ns = cohort.section; }
-        else                                  { nc = led?.targetClass || nxtCls(cohort.class, schoolClasses); ns = led?.targetSection || cohort.section; }
         return {
           studentId: s.studentId, fromClass: cohort.class, fromSection: cohort.section,
-          nextClass: nc, nextSection: ns, examType,
-          totalObtained: s.totalObtained, totalMax: s.totalMax, percentage: Math.round(s.percentage),
-          gradeLabel: s.gradeLabel ?? null, gradePoint: s.gradePoint ?? null, gradeRemarks: s.gradeRemarks ?? null,
+          nextClass: led!.targetClass, nextSection: led!.targetSection, examType: cohort.term,
+          totalObtained: 0, totalMax: 100, percentage: 0,
+          gradeLabel: null, gradePoint: null, gradeRemarks: null,
         };
       });
       const res = await apiRequestForViewSession(
@@ -944,7 +946,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       const ov       = overrides[s.studentId];
                       const isManual = !!led?.manualIntervention;
                       const thresh   = s.tierPassThreshold ?? agg.passThreshold;
-                      const passing  = s.percentage >= thresh;
+                      const passing  = s.percentage !== null && s.percentage >= thresh;
                       return (
                         <tr key={s.studentId}
                           className={`border-b border-[#1e2d44]/50 transition-colors ${selectedStudents.has(s.studentId) ? "bg-[#D4AF37]/5" : isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
@@ -975,12 +977,14 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                             )}
                           </td>
                           <td className="px-4 py-3 text-white font-medium">
-                            {s.totalObtained}<span className="text-slate-500">/{s.totalMax}</span>
+                            {s.resultStatus === "complete"
+                              ? <>{s.totalObtained}<span className="text-slate-500">/{s.totalMax}</span></>
+                              : <span className="text-amber-400 text-xs">Pending</span>}
                           </td>
                           <td className="px-4 py-3">
-                            <span className={`font-semibold ${passing ? "text-emerald-400" : "text-red-400"}`}>
-                              {s.percentage.toFixed(1)}%
-                            </span>
+                            {s.resultStatus === "complete" && s.percentage !== null
+                              ? <span className={`font-semibold ${passing ? "text-emerald-400" : "text-red-400"}`}>{s.percentage.toFixed(1)}%</span>
+                              : <span className="text-amber-400 text-xs">Incomplete / Pending</span>}
                           </td>
                           <td className="px-4 py-3">
                             {led ? (

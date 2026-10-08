@@ -14,3 +14,9 @@ description: The relationship between Student Registry placement, active-session
 **Why:** The user defined Stage 2 as preparation for a chosen target session, not as moving the Student's current placement.
 
 **How to apply:** Keep preparation separate from Registry Add/Edit synchronization. Do not treat an existing target enrollment or a prepared Promotion as permission to rewrite current placement or activate a session.
+
+**Promotion execution authority:** Web and approved Mobile Admin execution must use the shared server transaction, require an explicit target session and an exact weighted result-term key, recompute eligibility from complete applicable marks and current policy, and match a locked Teacher decision. Ignore client-supplied marks and destination decisions. Execution stages target-session Enrollment and history only; session activation performs the Registry synchronization.
+
+**Why:** The user approved a strict backend contract so both execution paths enforce the same eligibility and old or ambiguous requests fail closed, while preserving the current Registry and source enrollment.
+
+**How to apply:** Reject missing or ambiguous target/term inputs, incomplete results, or a missing/mismatched locked Teacher decision. Never update Student Registry placement directly during promotion execution.

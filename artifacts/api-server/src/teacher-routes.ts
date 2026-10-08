@@ -32,6 +32,7 @@ import {
 } from "./teacher-academic-session";
 import {
   PromotionStage1Error,
+  resolvePromotionTermComponents,
   validatePromotionExecutionBatch,
   validatePromotionSessionContext,
   type PromotionSessionContextResult,
@@ -4661,12 +4662,34 @@ export function registerTeacherRoutes(app: Express) {
     }
   });
 
-  // ── Available terms — all exam types configured in school setup ─────────────
+  // ── Available terms — exact weighted terms configured in exam policy ────────
   app.get("/api/admin/ledger-terms", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     try {
-      const terms = await storage.getSchoolMetadata(req.session.schoolId!, "exam_types");
-      res.json(terms);
+      const tiers = await storage.getExamPolicyTiers(req.session.schoolId!);
+      const terms = new Set<string>();
+      for (const tier of tiers) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(tier.examWeights || "{}"); } catch { continue; }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+        let resultsConfig: Record<string, any> = {};
+        try {
+          const value: unknown = JSON.parse(tier.resultsConfig || "{}");
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            resultsConfig = value as Record<string, any>;
+          }
+        } catch {}
+        for (const term of Object.keys(parsed)) {
+          if (term !== term.trim()) continue;
+          const termConfig = resultsConfig.termConfigs?.[term] ?? resultsConfig[term] ?? {};
+          if (termConfig.promotionGate === false) continue;
+          try {
+            resolvePromotionTermComponents(tier.examWeights, term);
+            terms.add(term);
+          } catch {}
+        }
+      }
+      res.json([...terms]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message ?? "Failed to fetch terms" });
     }
@@ -4801,61 +4824,77 @@ Thank you for your prompt attention to this matter.
   app.get("/api/admin/exam/aggregated", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { class: cls, section, examType, term } = req.query as Record<string, string>;
-    if (!cls || !section || !examType)
-      return res.status(400).json({ message: "class, section, and examType are required" });
+    if (!cls || !section || !examType || !term || term !== term.trim())
+      return res.status(400).json({ message: "class, section, source exam type, and exact weighted term are required" });
     const selectedSession = await requireAdminPromotionSession(req, res, "read");
     if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
-    const [studentsData, overrides, meta, classSubjectsMap] = await Promise.all([
-      storage.getExamAggregated(schoolId, cls, section, examType, selectedSession.sessionId),
+    try {
+    const [evaluation, overrides, meta, classSubjectsMap, ledgerDecisions] = await Promise.all([
+      storage.getPromotionCohortEvaluation(schoolId, selectedSession.sessionId, cls, section, term),
       storage.getPromotionOverrides(schoolId, selectedSession.sessionId, cls, section, examType),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
+      storage.getPromotionDecisions(schoolId, cls, section, term, selectedSession.sessionId),
     ]);
 
-    // Resolve the subjects that are actually mapped to this class.
-    // Keys in classSubjectsMap may be "Class 6" or "6" — normalise before comparing.
-    const clsNoPrefix = cls.trim().toLowerCase().replace(/^class\s+/, "");
-    let mappedSubjectsForClass: string[] | null = null;
-    for (const [key, subjects] of Object.entries(classSubjectsMap)) {
-      if (key.trim().toLowerCase().replace(/^class\s+/, "") === clsNoPrefix) {
-        mappedSubjectsForClass = subjects;
-        break;
-      }
-    }
-    // Audit only the subjects that are mapped to this class.
-    // Fall back to the school-wide list if no per-class mapping has been configured.
-    const configuredSubjects: string[] =
-      mappedSubjectsForClass !== null && mappedSubjectsForClass.length > 0
-        ? mappedSubjectsForClass
-        : (meta.subjects || []);
-
-    const presentSubjects = Array.from(new Set(studentsData.flatMap(s => s.subjects)));
-    const missingSubjects = configuredSubjects.filter(s => !presentSubjects.includes(s));
-    const passPolicy = await storage.resolveClassPassPolicy(schoolId, cls);
-    if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${cls}` });
-    const studentsWithGrades = await Promise.all(studentsData.map(async (s) => {
-      const grade = await storage.resolveGrade(schoolId, cls, s.percentage);
-      return { ...s, gradeLabel: grade.gradeLabel, gradePoint: grade.gradePoint, gradeRemarks: grade.remarks, tierPassThreshold: grade.passPercentage };
-    }));
-    const passThreshold = passPolicy.passPercentage;
-
-    // If a term is provided, enrich each student with their ledger row
-    let ledgerDecisions: import("@workspace/db/schema").PromotionDecision[] = [];
-    if (term) {
-      ledgerDecisions = await storage.getPromotionDecisions(
-        schoolId,
-        cls,
-        section,
-        term,
-        selectedSession.sessionId,
-      );
-    }
     const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
-    const studentsEnriched = studentsWithGrades.map(s => ({
-      ...s,
-      ledger: ledgerMap.get(s.studentId) ?? null,
-    }));
+    const resultsByStudent = evaluation.resultsByStudent as Map<number, {
+      studentId: number; name: string; digitalStudentId: string; rollNumber: number | null;
+      resultStatus: "complete" | "incomplete"; termAverages: Record<string, number | null>;
+      termResults: Record<string, Array<{ subject: string; status: string; percentage: number | null }>>;
+    }>;
+    const termSources = new Set<string>(evaluation.components.map((component: { sourceExam: string }) => component.sourceExam));
+    const evaluationScores = evaluation.scoreRows as Array<{
+      studentId: number; subject: string; examType: string; marks: number;
+      totalMarks: number; isAbsent: boolean;
+    }>;
+    const gradingRuleRows = evaluation.gradingRules as Array<{
+      minPercent: number; maxPercent: number; gradeLabel: string;
+      gradePoint: string | null; remarks: string | null;
+    }>;
+    const scoresByStudent = new Map<number, typeof evaluationScores>();
+    for (const score of evaluationScores) {
+      if (!termSources.has(score.examType)) continue;
+      const scores = scoresByStudent.get(score.studentId) ?? [];
+      scores.push(score);
+      scoresByStudent.set(score.studentId, scores);
+    }
+    const normalizedClass = cls.trim().toLowerCase().replace(/^class\s+/, "");
+    const subjectMatches = Object.entries(classSubjectsMap)
+      .filter(([key]) => key.trim().toLowerCase().replace(/^class\s+/, "") === normalizedClass)
+      .map(([, subjects]) => subjects);
+    const expectedSubjects = subjectMatches.length === 1 && Array.isArray(subjectMatches[0])
+      ? subjectMatches[0] : [];
+    const presentSubjects = new Set(evaluationScores.map(score => score.subject));
+    const missingSubjects = expectedSubjects.filter(subject => !presentSubjects.has(subject));
+    const passThreshold = evaluation.gradingTier.passPercentage;
+    const studentsEnriched = evaluation.rosterRows.map((student: {
+      studentId: number; dsid: string; name: string;
+    }) => {
+      const result = resultsByStudent.get(student.studentId)!;
+      const average = result.termAverages[term];
+      const gradeRule = average === null || average === undefined ? undefined
+        : gradingRuleRows.find(rule =>
+          average >= Number(rule.minPercent) && average <= Number(rule.maxPercent),
+        );
+      const scores = scoresByStudent.get(student.studentId) ?? [];
+      return {
+        studentId: student.studentId,
+        dsid: student.dsid,
+        name: student.name,
+        totalObtained: scores.reduce((sum, score) => sum + (score.isAbsent ? 0 : Number(score.marks)), 0),
+        totalMax: scores.reduce((sum, score) => sum + Number(score.totalMarks), 0),
+        percentage: result.resultStatus === "complete" ? average ?? null : null,
+        resultStatus: result.resultStatus,
+        subjects: result.termResults[term]?.map(subject => subject.subject) ?? [],
+        gradeLabel: gradeRule?.gradeLabel ?? null,
+        gradePoint: gradeRule?.gradePoint ?? null,
+        gradeRemarks: gradeRule?.remarks ?? null,
+        tierPassThreshold: passThreshold,
+        ledger: ledgerMap.get(student.studentId) ?? null,
+      };
+    });
 
     res.json({
       students: studentsEnriched,
@@ -4864,6 +4903,11 @@ Thank you for your prompt attention to this matter.
       missingSubjects,
       passThreshold,
     });
+    } catch (error) {
+      if (respondWithPromotionStage1Error(res, error)) return;
+      req.log?.error({ err: error }, "Failed to compute session-scoped Promotion results");
+      res.status(409).json({ message: "Unable to calculate results for this exact session, class-section and weighted term." });
+    }
   });
 
   app.post("/api/admin/exam/override", async (req, res) => {
@@ -5010,7 +5054,7 @@ Thank you for your prompt attention to this matter.
     }
     const promoteSchema = z.object({
       targetSessionId: z.number().int().positive(),
-      term: z.string().min(1),
+      term: z.string().min(1).max(80).refine(value => value === value.trim()),
       items: z.array(z.object({
         studentId: z.number().int().positive(),
         nextClass: z.string().min(1),
@@ -5083,13 +5127,20 @@ Thank you for your prompt attention to this matter.
       try {
         const now = new Date();
         const ts  = now.toISOString().replace("T", " ").slice(0, 19);
-        const examType = items[0]?.examType ?? term;
 
         // 6a. Structured audit log per student
         // Support Staff are recorded using their positive staff ID and explicit role.
         for (const item of items) {
           const info = execution.students.find(student => student.studentId === item.studentId);
-          if (!info) continue;
+          if (
+            !info ||
+            info.toClass === undefined ||
+            info.toSection === undefined ||
+            info.examType === undefined ||
+            info.totalObtained === undefined ||
+            info.totalMax === undefined ||
+            info.percentage === undefined
+          ) continue;
           const actorLabel = actor.role === "support_staff" ? "Support Staff" : "Admin";
           await storage.createAuditLog({
             schoolId,
@@ -5099,7 +5150,7 @@ Thank you for your prompt attention to this matter.
             entityId:      item.studentId,
             actionBy:      actor.id,
             actionByRole:  actor.role,
-            details: `[${ts}] - ${actorLabel} ${actor.id} prepared Student ${info.dsid} (${info.name}) for Academic Session ${execution.targetSessionName} (ID ${execution.targetSessionId}), from Class ${info.fromClass}-${info.fromSection} to Class ${item.nextClass}-${item.nextSection}. Student Registry and source enrollment were not changed. Exam: ${examType}. Marks: ${item.totalObtained}/${item.totalMax} (${item.percentage}%).`,
+            details: `[${ts}] - ${actorLabel} ${actor.id} prepared Student ${info.dsid} (${info.name}) for Academic Session ${execution.targetSessionName} (ID ${execution.targetSessionId}), from Class ${info.fromClass}-${info.fromSection} to Class ${info.toClass}-${info.toSection}. Student Registry and source enrollment were not changed. Exam: ${info.examType}. Marks: ${info.totalObtained}/${info.totalMax} (${info.percentage}%).`,
           });
         }
       } catch (pipelineErr) {
@@ -6689,23 +6740,44 @@ Thank you for your prompt attention to this matter.
       const studentList = await storage.getStudentsByClassSectionForExamSession(
         schoolId, context.sessionId, cls, section,
       );
+      const classSubjectsMap = await storage.getClassSubjectsMap(schoolId);
+      const normalizedClass = cls.trim().toLowerCase().replace(/^class\s+/, "");
+      const subjectMatches = Object.entries(classSubjectsMap)
+        .filter(([key]) => key.trim().toLowerCase().replace(/^class\s+/, "") === normalizedClass)
+        .map(([, subjects]) => subjects);
+      if (subjectMatches.length !== 1 || !Array.isArray(subjectMatches[0]) || subjectMatches[0].length === 0) {
+        return res.status(409).json({ message: "A unique Class–Subject mapping is required to determine whether the selected term is complete." });
+      }
+      const expectedSubjects = subjectMatches[0].map(subject => subject.trim()).filter(Boolean);
       const results = await Promise.all(studentList.map(async (s) => {
         const scores = await storage.getTeacherExamScoresByStudentInClassSession(
           s.id, schoolId, context.sessionId, cls, section,
         );
+        const resultScores = scores.map(sc => ({
+          subject: sc.subject,
+          examType: sc.examType,
+          marks: sc.marks ?? 0,
+          totalMarks: sc.totalMarks ?? 100,
+          isAbsent: sc.isAbsent ?? false,
+        }));
+        for (const subject of expectedSubjects) {
+          if (!resultScores.some(score => score.subject.trim() === subject)) {
+            resultScores.push({
+              subject,
+              examType: "__MISSING_APPLICABLE_SCORE__",
+              marks: 0,
+              totalMarks: 0,
+              isAbsent: false,
+            });
+          }
+        }
         return {
           studentId: s.id,
           name: s.name,
           digitalStudentId: s.digitalStudentId,
           rollNumber: s.rollNumber,
           photoUrl: s.photoUrl ?? null,
-          scores: scores.map(sc => ({
-            subject: sc.subject,
-            examType: sc.examType,
-            marks: sc.marks ?? 0,
-            totalMarks: sc.totalMarks ?? 100,
-            isAbsent: sc.isAbsent ?? false,
-          })),
+          scores: resultScores,
         };
       }));
       res.json(results);
@@ -6769,10 +6841,24 @@ Thank you for your prompt attention to this matter.
     if (!context) return;
     const { teacher } = context;
     try {
-      const { class: cls, section, term, lock, entries } = req.body;
-      if (!cls || !section || !term || !Array.isArray(entries)) {
-        return res.status(400).json({ message: "class, section, term, and entries are required" });
+      const parsed = z.object({
+        class: z.string().trim().min(1).max(80),
+        section: z.string().trim().min(1).max(40),
+        term: z.string().min(1).max(80).refine(value => value === value.trim()),
+        lock: z.boolean(),
+        entries: z.array(z.object({
+          studentId: z.number().int().positive(),
+          decision: z.enum(["promoted", "retained"]),
+          targetClass: z.string().trim().min(1).max(80),
+          targetSection: z.string().trim().min(1).max(40),
+          editCount: z.number().int().nonnegative(),
+          autoSuggestion: z.enum(["promoted", "retained"]),
+        })).min(1),
+      }).safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Provide an exact weighted term, a lock choice, and explicit decisions for complete Students." });
       }
+      const { class: cls, section, term, lock, entries } = parsed.data;
       // Verify teacher is assigned to this class-section
       const allMappings = await storage.getFacultyMappingsByTeacher(teacher.id);
       const isAssigned = allMappings.some(m => m.className === cls && m.section === section)
@@ -6780,17 +6866,19 @@ Thank you for your prompt attention to this matter.
       if (!isAssigned) {
         return res.status(403).json({ message: "Not authorized: you are not assigned to this class-section" });
       }
-      const placements = await Promise.all(entries.map((entry: any) =>
-        storage.resolveAttendanceClassSectionForStudent(context.schoolId, context.sessionId, Number(entry.studentId)),
-      ));
-      if (placements.some(placement =>
-        !placement || placement.class !== cls || placement.section !== section
-      )) {
+      const roster = await storage.getStudentsByClassSectionForExamSession(
+        context.schoolId,
+        context.sessionId,
+        cls,
+        section,
+      );
+      const rosterIds = new Set(roster.map(student => student.id));
+      if (entries.some(entry => !rosterIds.has(entry.studentId))) {
         return res.status(403).json({ message: "Promotion decisions include a student outside the selected session roster" });
       }
 
       const saved = await storage.savePromotionDecisions(
-        context.schoolId, cls, section, term, teacher.id, !!lock, entries, context.sessionId,
+        context.schoolId, cls, section, term, teacher.id, lock, entries, context.sessionId,
       );
       if (!saved) {
         return res.status(409).json({ message: "A promotion decision for this student is already stored in another academic session. No changes were made." });

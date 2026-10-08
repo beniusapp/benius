@@ -113,7 +113,8 @@ export interface ComputedStudentResult {
   cumulativePercentage: number | null;
   allTermFailCounts: Record<string, number>;
   attendancePct: number | null;
-  promoted: boolean;
+  resultStatus: "complete" | "incomplete";
+  promoted: boolean | null;
   promotionReason: string;
   detentionViolations: string[];
 }
@@ -266,11 +267,12 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
       const subjectResults: SubjectTermResult[] = [];
       for (const subject of Object.keys(bySubject)) {
         const subjectScores = bySubject[subject];
-        let weightedSum = 0, totalWeight = 0, hasAbsent = false, hasData = false;
+        let weightedSum = 0, totalWeight = 0, hasAbsent = false, hasData = false, hasMissing = false;
         const breakdown: ComponentBreakdown[] = [];
         for (const comp of weights[termName] || []) {
           const record = subjectScores.find(s => s.examType === comp.source_exam);
           if (!record) {
+            hasMissing = true;
             breakdown.push({ sourceExam: comp.source_exam, weight: comp.weight, marks: null, totalMarks: null, isAbsent: false, pct: null, contribution: null, status: "missing" });
             continue;
           }
@@ -288,7 +290,7 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
         }
         let percentage: number | null = null, passed: boolean | null = null;
         let status: SubjectTermResult["status"] = "incomplete";
-        if (!hasData) status = "incomplete";
+        if (!hasData || hasMissing) status = "incomplete";
         else if (hasAbsent) { status = "absent"; percentage = 0; passed = false; }
         else {
           const ep = totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0;
@@ -356,13 +358,24 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
       cumulativePercentage,
       termResults,
     });
+    const applicableSources = currentTerm ? weights[currentTerm.trim()] ?? [] : [];
+    const selectedTermSubjects = currentTerm ? termResults[currentTerm.trim()] ?? [] : [];
+    const hasApplicableMarks = !currentTerm || (
+      applicableSources.length > 0 &&
+      selectedTermSubjects.length > 0 &&
+      selectedTermSubjects.every(subject => subject.status !== "incomplete") &&
+      applicableSources.some(component =>
+        student.scores.some(score => score.examType === component.source_exam),
+      )
+    );
     return {
       schoolId: context.schoolId, sessionId: context.sessionId,
       studentId: student.studentId, name: student.name, digitalStudentId: student.digitalStudentId, rollNumber: student.rollNumber,
       termResults, termAverages, cumulativePercentage, allTermFailCounts, attendancePct: attPct,
-      promoted: promotion.promoted,
-      promotionReason: promotion.promotionReason,
-      detentionViolations: promotion.violations,
+      resultStatus: hasApplicableMarks ? "complete" : "incomplete",
+      promoted: hasApplicableMarks ? promotion.promoted : null,
+      promotionReason: hasApplicableMarks ? promotion.promotionReason : "Incomplete / Pending Result — no applicable marks for this term.",
+      detentionViolations: hasApplicableMarks ? promotion.violations : [],
     };
   });
 }

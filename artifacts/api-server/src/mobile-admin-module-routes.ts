@@ -2118,227 +2118,88 @@ export function registerMobileAdminModuleRoutes(
       const parsed = z.object({
         class: z.string().trim().min(1).max(80),
         section: z.string().trim().min(1).max(40),
-        term: z.string().trim().min(1).max(80),
+        term: z.string().min(1).max(80).refine(value => value === value.trim()),
+        targetSessionId: z.number().int().positive(),
         studentIds: z.array(z.number().int().positive()).optional(),
       }).safeParse(req.body);
       if (!parsed.success) {
-        reject(res, 400, "Provide a class, section, exam type, and optional student ID selection.");
+        reject(res, 400, "Provide class, section, an exact weighted examination-term key, targetSessionId, and an optional Student selection.");
         return;
       }
-      const cls = parsed.data.class;
-      const section = parsed.data.section;
-      const term = parsed.data.term;
+      const { class: cls, section, term, targetSessionId, studentIds } = parsed.data;
       try {
-        const configuredTerms = await storage.getSchoolMetadata(user.schoolId, "exam_types");
         const configuredClasses = await storage.getSchoolMetadata(user.schoolId, "classes");
         const classSections = await storage.getClassSectionsMap(user.schoolId);
-        if (!configuredTerms.includes(term) || !configuredClasses.includes(cls) || !(classSections[cls] || []).includes(section)) {
+        if (!configuredClasses.includes(cls) || !(classSections[cls] || []).includes(section)) {
           reject(res, 400, "The requested promotion cohort is not configured for this school.");
           return;
         }
-        const passPolicy = await storage.resolveClassPassPolicy(user.schoolId, cls);
-        if (!passPolicy) {
-          reject(res, 409, `No grading tier is configured for ${cls}.`);
+        const enrolledStudents = await storage.getStudentsByClassSectionForExamSession(
+          user.schoolId,
+          session.id,
+          cls,
+          section,
+        );
+        const selectedIds = studentIds ?? enrolledStudents.map(student => student.id);
+        if (
+          !selectedIds.length ||
+          new Set(selectedIds).size !== selectedIds.length ||
+          selectedIds.some(id => !enrolledStudents.some(student => student.id === id))
+        ) {
+          reject(res, 400, "Every selected Student must be actively enrolled in this exact source-session class-section.");
           return;
         }
-        const cohort = await storage.getExamAggregated(user.schoolId, cls, section, term, session.id);
-        const selectedIds = parsed.data.studentIds ?? cohort.map(student => student.studentId);
-        if (!selectedIds.length || new Set(selectedIds).size !== selectedIds.length
-          || selectedIds.some(id => !cohort.some(student => student.studentId === id))) {
-          reject(res, 400, "Every selected student must have results in this class, exam type, and academic session.");
-          return;
-        }
-        const [scopedDecisions, legacyDecisions, rules, scoreRows, studentRows] = await Promise.all([
-          storage.getPromotionDecisions(user.schoolId, cls, section, isolatedTerm(session.id, term), session.id),
-          storage.getPromotionDecisions(user.schoolId, cls, section, term, session.id),
-          storage.getGradingRules(user.schoolId, passPolicy.id),
-          db.select({
-            studentId: examScores.studentId, subject: examScores.subject, marks: examScores.marks,
-            totalMarks: examScores.totalMarks, isAbsent: examScores.isAbsent,
-          }).from(examScores).where(and(
-            eq(examScores.schoolId, user.schoolId),
-            eq(examScores.class, cls),
-            eq(examScores.section, section),
-            eq(examScores.examType, term),
-            eq(examScores.sessionId, session.id),
-            inArray(examScores.studentId, selectedIds),
-          )),
-          db.select().from(students).where(and(
-            eq(students.schoolId, user.schoolId),
-            eq(students.class, cls),
-            eq(students.section, section),
-            inArray(students.id, selectedIds),
-          )),
-        ]);
-        const savedDecisions = scopedDecisions.length ? scopedDecisions : legacyDecisions;
-        if (savedDecisions.some(item => selectedIds.includes(item.studentId) && item.adminExecuted)) {
-          reject(res, 409, "One or more selected students have already been executed in this academic session.");
-          return;
-        }
-        if (studentRows.length !== selectedIds.length) {
-          reject(res, 409, "One or more selected students are no longer enrolled in this cohort.");
-          return;
-        }
-        const classIndex = configuredClasses.findIndex(name => name === cls);
-        const defaultNextClass = classIndex >= 0 && classIndex < configuredClasses.length - 1
-          ? configuredClasses[classIndex + 1] : cls;
-        const decisionByStudent = new Map(savedDecisions.map(item => [item.studentId, item]));
-        const scoreByStudent = new Map<number, typeof scoreRows>();
-        for (const score of scoreRows) {
-          const list = scoreByStudent.get(score.studentId) ?? [];
-          list.push(score);
-          scoreByStudent.set(score.studentId, list);
-        }
-        const now = new Date();
-        const historyRows = selectedIds.map(studentId => {
-          const studentResult = cohort.find(item => item.studentId === studentId)!;
-          const saved = decisionByStudent.get(studentId);
-          const retained = saved?.decision === "retained";
-          const targetClass = retained ? cls : saved?.targetClass || defaultNextClass;
-          const targetSection = retained ? section : saved?.targetSection || section;
-          const percentage = Math.round(studentResult.percentage);
-          const grade = rules.find(rule => percentage >= Number(rule.minPercent) && percentage <= Number(rule.maxPercent));
-          const breakdown = scoreByStudent.get(studentId) ?? [];
+        const decisions = await storage.getPromotionDecisions(
+          user.schoolId,
+          cls,
+          section,
+          term,
+          session.id,
+        );
+        const decisionByStudent = new Map(decisions.map(decision => [decision.studentId, decision]));
+        const items = selectedIds.map(studentId => {
+          const decision = decisionByStudent.get(studentId);
+          if (!decision) {
+            throw new PromotionStage1Error(
+              "Every selected Student needs a matching locked Teacher decision for the exact weighted term.",
+              409,
+              "PROMOTION_DECISION_MISSING",
+            );
+          }
           return {
-            schoolId: user.schoolId,
-            sessionId: session.id,
             studentId,
             fromClass: cls,
             fromSection: section,
-            toClass: targetClass,
-            toSection: targetSection,
+            nextClass: decision.targetClass,
+            nextSection: decision.targetSection,
             examType: term,
-            totalObtained: studentResult.totalObtained,
-            totalMax: studentResult.totalMax,
-            percentage,
-            gradeLabel: grade?.gradeLabel ?? null,
-            gradePoint: grade?.gradePoint ?? null,
-            remarks: grade?.remarks ?? null,
-            snapshotJson: {
-              archivedAt: now.toISOString(),
-              adminId: user.id,
-              schoolId: user.schoolId,
-              sessionId: session.id,
-              studentDsid: studentResult.dsid,
-              studentName: studentResult.name,
-              fromClass: cls,
-              fromSection: section,
-              toClass: targetClass,
-              toSection: targetSection,
-              examType: term,
-              term,
-              totalObtained: studentResult.totalObtained,
-              totalMax: studentResult.totalMax,
-              percentage,
-              gradeLabel: grade?.gradeLabel ?? null,
-              gradePoint: grade?.gradePoint ?? null,
-              gradeRemarks: grade?.remarks ?? null,
-              examBreakdown: breakdown,
-            },
+            totalObtained: 0,
+            totalMax: 100,
+            percentage: 0,
+            gradeLabel: null,
+            gradePoint: null,
+            gradeRemarks: null,
           };
         });
-        if (historyRows.some(history =>
-          !configuredClasses.includes(history.toClass)
-          || !(classSections[history.toClass] || []).includes(history.toSection)
-        )) {
-          reject(res, 409, "A saved promotion destination is no longer configured for this school.");
-          return;
-        }
-        const promoted = await db.transaction(async (tx) => {
-          const lockedStudents = await tx
-            .select({ id: students.id })
-            .from(students)
-            .where(and(
-              eq(students.schoolId, user.schoolId),
-              eq(students.class, cls),
-              eq(students.section, section),
-              inArray(students.id, selectedIds),
-            ))
-            .orderBy(students.id)
-            .for("update");
-          if (lockedStudents.length !== selectedIds.length) {
-            throw new Error("Student cohort changed during promotion.");
-          }
-          const lockedDecisions = await tx
-            .select({ adminExecuted: promotionDecisions.adminExecuted })
-            .from(promotionDecisions)
-            .where(and(
-              eq(promotionDecisions.schoolId, user.schoolId),
-              eq(promotionDecisions.sessionId, session.id),
-              eq(promotionDecisions.class, cls),
-              eq(promotionDecisions.section, section),
-              eq(promotionDecisions.term, isolatedTerm(session.id, term)),
-              inArray(promotionDecisions.studentId, selectedIds),
-            ))
-            .orderBy(promotionDecisions.studentId)
-            .for("update");
-          if (lockedDecisions.some(item => item.adminExecuted)) {
-            throw new PromotionStage1Error(
-              "One or more selected students have already been executed in this academic session.",
-              409,
-              "PROMOTION_DECISION_EXECUTED",
-            );
-          }
-          await tx.insert(academicHistory).values(historyRows);
-          for (const history of historyRows) {
-            const updated = await tx.update(students)
-              .set({ class: history.toClass, section: history.toSection, idCardPendingReissue: true })
-              .where(and(
-                eq(students.id, history.studentId),
-                eq(students.schoolId, user.schoolId),
-                eq(students.class, cls),
-                eq(students.section, section),
-              ))
-              .returning({ id: students.id });
-            if (!updated.length) throw new Error("Student cohort changed during promotion.");
-            const previous = decisionByStudent.get(history.studentId);
-            const autoSuggestion = studentResultFor(history.studentId).percentage >= passPolicy.passPercentage ? "promoted" : "retained";
-            await tx.insert(promotionDecisions).values({
-              schoolId: user.schoolId,
-              class: cls,
-              section,
-              term: isolatedTerm(session.id, term),
-              studentId: history.studentId,
-              decision: previous?.decision ?? autoSuggestion,
-              targetClass: history.toClass,
-              targetSection: history.toSection,
-              editCount: previous?.editCount ?? 0,
-              processedByTeacherId: null,
-              locked: true,
-              lockedAt: now,
-              autoSuggestion,
-              manualIntervention: !!previous?.manualIntervention,
-              adminExecuted: true,
-              adminExecutedAt: now,
-              updatedAt: now,
-              sessionId: session.id,
-            }).onConflictDoUpdate({
-              target: [promotionDecisions.schoolId, promotionDecisions.class, promotionDecisions.section, promotionDecisions.term, promotionDecisions.studentId],
-              set: {
-                targetClass: history.toClass,
-                targetSection: history.toSection,
-                locked: true,
-                lockedAt: now,
-                adminExecuted: true,
-                adminExecutedAt: now,
-                updatedAt: now,
-                sessionId: session.id,
-              },
-            });
-          }
-          return historyRows.length;
+        const execution = await storage.executePromotionTransaction(
+          user.schoolId,
+          session.id,
+          targetSessionId,
+          items,
+          term,
+          { id: user.id, role: "admin" },
+        );
+        res.json({
+          message: "Promotion prepared in the target session; Student Registry placement remains unchanged until that session is activated.",
+          ...execution,
+          sourceSessionId: session.id,
         });
-        res.json({ message: "Promotion executed and session history archived.", promoted, sessionId: session.id });
-        function studentResultFor(studentId: number) {
-          return cohort.find(item => item.studentId === studentId)!;
-        }
       } catch (error) {
         if (error instanceof PromotionStage1Error) {
           reject(res, error.statusCode, error.message);
           return;
         }
-        reject(res, 503, error instanceof Error && error.message === "Student cohort changed during promotion."
-          ? error.message : "Unable to execute promotion for this academic session.");
+        reject(res, 503, "Unable to prepare Promotion for this target Academic Session.");
       }
     },
   );

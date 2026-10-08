@@ -57,7 +57,8 @@ function computeStudentSuggestion(
   _ruleTermAvg: { enabled: boolean; minPct: number },
   _isCumulativeTerm: boolean,
   _cumulConfig: CumulConfigShape,
-): "promoted" | "retained" {
+): "promoted" | "retained" | null {
+  if (s.resultStatus !== "complete" || s.promoted === null) return null;
   // All four rules are now evaluated inside computeAllStudentResults and encoded
   // in s.promoted / s.detentionViolations. Simply reflect that result here.
   return s.promoted ? "promoted" : "retained";
@@ -249,6 +250,7 @@ function buildDetentionReasons(
   student: ComputedStudentResult,
   isManualOverride: boolean,
 ): string[] {
+  if (student.resultStatus !== "complete") return ["Incomplete / Pending Result — applicable marks are missing."];
   if (isManualOverride) {
     return ["The teacher has manually designated this student as Detained, overriding the automated promotion criteria."];
   }
@@ -276,7 +278,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
   const components = weights[term] ?? [];
 
   // Pre-compute detention reasons for the DETAINED verdict block
-  const isDetained = promoEntry?.decision === "retained";
+  const isDetained = student.resultStatus === "complete" && promoEntry?.decision === "retained";
   // "Manual override" = teacher says retained but policy engine says promoted
   const isManualOverride = isDetained && student.promoted === true;
   const detentionReasons = isDetained
@@ -924,6 +926,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const [promoMap, setPromoMap] = useState<Record<number, PromoEntry>>({});
   const [promoLocked, setPromoLocked] = useState(false);
+  const canSaveLedger = allResults.some(result =>
+    result.resultStatus === "complete" && !!promoMap[result.studentId],
+  );
+  const canLockLedger = allResults.length > 0 && allResults.every(result =>
+    result.resultStatus === "complete" && !!promoMap[result.studentId],
+  );
 
   // Fetch any previously saved decisions for this class/section/term
   const { data: savedDecisions = [] } = useQuery<Array<{
@@ -1029,8 +1037,8 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
     const next: Record<number, PromoEntry> = {};
     for (const s of freshResults) {
-      // computeStudentSuggestion now simply reads s.promoted (all rules in engine)
       const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, false, freshCumulConfig);
+      if (!decision) continue;
       next[s.studentId] = {
         decision,
         targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
@@ -1042,26 +1050,35 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
     const promoted = Object.values(next).filter(e => e.decision === "promoted").length;
     const retained = Object.values(next).filter(e => e.decision === "retained").length;
+    const pending = freshResults.filter(result => result.resultStatus !== "complete").length;
 
     setPromoMap(next);
     toast({
       title: "Auto-suggestion applied",
-      description: `${freshResults.length} student(s) evaluated — ${promoted} to promote, ${retained} to retain. Review and adjust as needed.`,
+      description: `${freshResults.length - pending} complete result(s) evaluated — ${promoted} to promote, ${retained} to retain; ${pending} pending result(s) need applicable marks.`,
       duration: 4000,
     });
   }
 
   const saveLedgerMutation = useMutation({
     mutationFn: async (lock: boolean) => {
-      const entries = allResults.map(s => ({
-        studentId: s.studentId,
-        decision: promoMap[s.studentId]?.decision ?? "promoted",
-        targetClass: promoMap[s.studentId]?.targetClass ?? getNextClass(resClass, classes),
-        targetSection: promoMap[s.studentId]?.targetSection ?? resSection,
-        editCount: promoMap[s.studentId]?.editCount ?? 0,
-        // Use the full 4-rule engine so the saved baseline matches what runAutoSuggestion produces
-        autoSuggestion: computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig),
-      }));
+      const entries = allResults.flatMap(s => {
+        const current = promoMap[s.studentId];
+        const autoSuggestion = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
+        if (!current || !autoSuggestion) return [];
+        return [{
+          studentId: s.studentId,
+          decision: current.decision,
+          targetClass: current.targetClass,
+          targetSection: current.targetSection,
+          editCount: current.editCount,
+          autoSuggestion,
+        }];
+      });
+      if (entries.length === 0) throw new Error("There are no complete Student results with an explicit Teacher decision to save.");
+      if (lock && entries.length !== allResults.length) {
+        throw new Error("Every Student must have complete applicable marks and an explicit decision before locking the ledger.");
+      }
       if (!selectedSessionId) throw new Error("A selected academic session is required");
       const res = await sessionFetchForViewSession("/api/teacher/promotion-decisions", selectedSessionId, {
         method: "POST",
@@ -1078,10 +1095,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       // Update lock state immediately — do NOT wait for the query refetch cycle
       setPromoLocked(!!lock);
       toast({
-        title: lock ? "🔒 Ledger Locked & Saved" : "🔓 Ledger Unlocked — Saved as Draft",
+        title: lock ? "🔒 Ledger Locked & Saved" : "Draft Saved",
         description: lock
           ? "Promotion decisions are now permanent."
-          : "Ledger is now editable. You can adjust decisions and re-lock when ready.",
+          : "Complete, explicitly decided results were saved as a draft. Existing locked decisions are not changed.",
         duration: 4000,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/promotion-decisions", teacher.schoolId, selectedSessionId, resClass, resSection, resTerm] });
@@ -1216,11 +1233,12 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           ) : (
             <div className="rounded-2xl border border-[#1e293b] bg-[#0f172a] overflow-hidden" data-testid="results-table">
               {/* Stats bar */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-[#1e293b] border-b border-[#1e293b]">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-[#1e293b] border-b border-[#1e293b]">
                 {[
                   { label: "Total Students", value: filteredResults.length },
                   { label: "Promoted", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "promoted").length, color: "text-emerald-400" },
                   { label: "Retained", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "retained").length, color: "text-red-400" },
+                  { label: "Pending", value: filteredResults.filter(r => r.resultStatus !== "complete" || !promoMap[r.studentId]).length, color: "text-amber-400" },
                   {
                     label: "Avg Attendance",
                     value: (() => {
@@ -1260,17 +1278,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </div>
                   {isPromotionTerm && isAssignedTeacher && (
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* Unlock button — only visible when ledger is locked */}
-                      {promoLocked && (
-                        <button
-                          onClick={() => saveLedgerMutation.mutate(false)}
-                          disabled={isArchiveMode || saveLedgerMutation.isPending}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                          data-testid="btn-unlock-ledger">
-                          {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>🔓</span>}
-                          Unlock Ledger
-                        </button>
-                      )}
                       <button
                         onClick={runAutoSuggestion}
                         disabled={isArchiveMode || promoLocked || allResults.length === 0 || isSyncingPolicy}
@@ -1282,7 +1289,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(false)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || !canSaveLedger}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-semibold hover:bg-yellow-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-save-ledger">
                         {saveLedgerMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1290,7 +1297,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                       </button>
                       <button
                         onClick={() => saveLedgerMutation.mutate(true)}
-                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || allResults.length === 0}
+                        disabled={isArchiveMode || promoLocked || saveLedgerMutation.isPending || !canLockLedger}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-semibold hover:bg-emerald-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         data-testid="btn-lock-ledger">
                         <GraduationCap className="w-3.5 h-3.5" /> Lock & Save Ledger
@@ -1347,8 +1354,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </thead>
                   <tbody>
                     {filteredResults.map((student, idx) => {
-                      const weightedAvg = student.termAverages[resTerm] ?? null;
-                      const failCount = student.allTermFailCounts[resTerm] ?? 0;
+                      const completeTerm = student.resultStatus === "complete";
+                      const weightedAvg = completeTerm ? student.termAverages[resTerm] ?? null : null;
+                      const failCount = completeTerm ? student.allTermFailCounts[resTerm] ?? 0 : null;
                       const att = student.attendancePct;
 
                       const cumulativePct = isCumulativeTerm ? student.cumulativePercentage : null;
@@ -1408,9 +1416,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Subject Fails */}
                           {showCol.subjectFails && (
                             <td className="py-3 px-4 text-center">
-                              <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold border ${failCount === 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : failCount <= 2 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
-                                {failCount}
-                              </span>
+                              {failCount === null
+                                ? <span className="text-xs text-amber-400">Pending</span>
+                                : <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold border ${failCount === 0 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : failCount <= 2 ? "bg-amber-500/10 border-amber-500/30 text-amber-400" : "bg-red-500/10 border-red-500/30 text-red-400"}`}>
+                                    {failCount}
+                                  </span>}
                             </td>
                           )}
 
@@ -1433,17 +1443,27 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Promotion Gate — interactive ledger cell */}
                           {showCol.promotionGate && (
                             <td className="py-3 px-4 text-center">
-                              <PromoCell
-                                studentId={student.studentId}
-                                entry={promoMap[student.studentId]}
-                                isLocked={promoLocked}
-                                canEdit={isPromotionTerm && isAssignedTeacher}
-                                resClass={resClass}
-                                resSection={resSection}
-                                allSections={allSections}
-                                allClasses={classes}
-                                onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
-                              />
+                              {student.resultStatus === "complete" ? (
+                                <PromoCell
+                                  studentId={student.studentId}
+                                  entry={promoMap[student.studentId]}
+                                  isLocked={promoLocked}
+                                  canEdit={isPromotionTerm && isAssignedTeacher}
+                                  resClass={resClass}
+                                  resSection={resSection}
+                                  allSections={allSections}
+                                  allClasses={classes}
+                                  onChange={(id, next) => setPromoMap(prev => ({ ...prev, [id]: next }))}
+                                />
+                              ) : (
+                                <div className="flex flex-col items-center gap-1 text-amber-400">
+                                  <span className="text-xs font-semibold">Pending</span>
+                                  <span className="text-[10px] text-slate-500">Applicable marks incomplete</span>
+                                  {promoLocked && promoMap[student.studentId] && (
+                                    <span className="text-[10px] text-red-400">Existing locked decision needs review</span>
+                                  )}
+                                </div>
+                              )}
                             </td>
                           )}
 
