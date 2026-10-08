@@ -136,8 +136,6 @@ export default function StudentNoticeboard() {
     );
   }
 
-  const unreadCount = notices.filter(n => !n.isRead).length;
-
   return (
     <div className="min-h-screen flex flex-col relative" style={{ background: "#f8fafc" }}>
 
@@ -176,11 +174,6 @@ export default function StudentNoticeboard() {
               <p className="font-bold text-sm text-slate-800">Noticeboard</p>
               <p className="text-[11px] text-slate-400 truncate">Class {student.class} – {student.section}</p>
             </div>
-            {unreadCount > 0 && (
-              <span className="ml-1 text-[10px] font-bold text-white bg-red-500 px-1.5 py-0.5 rounded-full" data-testid="badge-header-unread">
-                {unreadCount} new
-              </span>
-            )}
           </div>
         </div>
       </header>
@@ -244,14 +237,6 @@ export default function StudentNoticeboard() {
                       </span>
                       {notice.targetType === "whole_school" && (
                         <span className="text-xs text-gray-300">· School-wide</span>
-                      )}
-                      {!notice.isRead && (
-                        <span
-                          className="text-[10px] font-bold text-white bg-[#FF0000] px-1.5 py-0.5 rounded-full"
-                          data-testid={`badge-unread-${notice.id}`}
-                        >
-                          NEW
-                        </span>
                       )}
                     </div>
                     <p className="text-sm font-bold text-black leading-relaxed line-clamp-2">{notice.content}</p>
