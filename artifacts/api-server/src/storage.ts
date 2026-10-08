@@ -74,7 +74,7 @@ import {
   teacherStudentLeaveSessionScope,
   teacherStudentLeaveStudentJoin,
 } from "./teacher-student-leave-scope";
-import { eq, sql, like, count, and, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
+import { eq, sql, like, count, and, asc, desc, gte, gt, lte, lt, or, ilike, isNull, isNotNull, inArray, ne, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -120,6 +120,11 @@ import {
   hashPasswordRecoverySecret,
   passwordRecoverySecretsEqual,
 } from "./password-recovery-crypto";
+import {
+  homeworkReviewStatusForAction,
+  isHomeworkReviewRosterEligible,
+  type HomeworkReviewAction,
+} from "./homework-review-policy";
 
 function isValidStudentRecoveryEmail(email: string | null): email is string {
   return typeof email === "string"
@@ -1580,6 +1585,90 @@ export class DatabaseStorage {
     return rows.map(r => r.student);
   }
 
+  async getHomeworkRosterInSession(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    isActiveSession: boolean,
+  ) {
+    const enrolledRows = await db.select({
+      studentId: students.id,
+      studentName: students.name,
+      digitalStudentId: students.digitalStudentId,
+      studentSchoolId: students.schoolId,
+      studentIsActive: students.isActive,
+      enrollmentSchoolId: enrollments.schoolId,
+      enrollmentSessionId: enrollments.sessionId,
+      enrollmentStatus: enrollments.status,
+      className: enrollments.className,
+      sectionName: enrollments.sectionName,
+      rollNo: enrollments.rollNo,
+    }).from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+        eq(students.schoolId, schoolId),
+      ))
+      .orderBy(asc(students.name), asc(enrollments.rollNo));
+
+    return enrolledRows.filter((row) =>
+      isHomeworkReviewRosterEligible(
+        row.studentIsActive,
+        row.enrollmentStatus,
+        isActiveSession,
+      ),
+    );
+  }
+
+  async getHomeworkReviewRoster(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    homeworkId: number,
+    isActiveSession: boolean,
+  ) {
+    const eligibleRows = await this.getHomeworkRosterInSession(
+      schoolId, sessionId, cls, section, isActiveSession,
+    );
+    if (eligibleRows.length === 0) return [];
+
+    const studentIds = [...new Set(eligibleRows.map((row) => row.studentId))];
+    const submissions = await db.select().from(homeworkSubmissions).where(and(
+      eq(homeworkSubmissions.homeworkId, homeworkId),
+      eq(homeworkSubmissions.schoolId, schoolId),
+      inArray(homeworkSubmissions.studentId, studentIds),
+    ));
+    const latestSubmissionByStudent = new Map<number, HomeworkSubmission>();
+    for (const submission of submissions) {
+      const current = latestSubmissionByStudent.get(submission.studentId);
+      if (!current || submission.submittedAt.getTime() >= current.submittedAt.getTime()) {
+        latestSubmissionByStudent.set(submission.studentId, submission);
+      }
+    }
+
+    return eligibleRows.map((row) => {
+      const submission = latestSubmissionByStudent.get(row.studentId);
+      return {
+        ...row,
+        submission: submission ? {
+          id: submission.id,
+          status: submission.status,
+          submittedAt: submission.submittedAt,
+          textAnswer: submission.textAnswer,
+          reviewedAt: submission.reviewedAt,
+          reviewedBy: submission.reviewedBy,
+          teacherComment: submission.teacherComment,
+          hasAttachment: Boolean(submission.fileUrl),
+        } : null,
+      };
+    });
+  }
+
   async updateHomework(
     id: number,
     schoolId: number,
@@ -1611,18 +1700,35 @@ export class DatabaseStorage {
     return hw;
   }
 
-  async recordHomeworkView(homeworkId: number, studentId: number): Promise<void> {
-    const existing = await db.select().from(homeworkViews).where(
-      and(eq(homeworkViews.homeworkId, homeworkId), eq(homeworkViews.studentId, studentId))
-    );
-    if (existing.length === 0) {
-      await db.insert(homeworkViews).values({ homeworkId, studentId });
-    }
+  async recordHomeworkView(homeworkId: number, studentId: number): Promise<boolean> {
+    const inserted = await db.insert(homeworkViews).values({ homeworkId, studentId })
+      .onConflictDoNothing({
+        target: [homeworkViews.homeworkId, homeworkViews.studentId],
+      })
+      .returning({ id: homeworkViews.id });
+    return inserted.length > 0;
   }
 
-  async getHomeworkViewCount(homeworkId: number): Promise<number> {
-    const result = await db.select({ count: count() }).from(homeworkViews).where(eq(homeworkViews.homeworkId, homeworkId));
-    return result[0]?.count || 0;
+  async getHomeworkViewedStudentIds(
+    homeworkId: number,
+    eligibleStudentIds?: readonly number[],
+  ): Promise<number[]> {
+    if (eligibleStudentIds && eligibleStudentIds.length === 0) return [];
+    const conditions = [eq(homeworkViews.homeworkId, homeworkId)];
+    if (eligibleStudentIds) {
+      conditions.push(inArray(homeworkViews.studentId, [...new Set(eligibleStudentIds)]));
+    }
+    const rows = await db.select({ studentId: homeworkViews.studentId })
+      .from(homeworkViews)
+      .where(and(...conditions));
+    return [...new Set(rows.map((row) => row.studentId))];
+  }
+
+  async getHomeworkViewCount(
+    homeworkId: number,
+    eligibleStudentIds?: readonly number[],
+  ): Promise<number> {
+    return (await this.getHomeworkViewedStudentIds(homeworkId, eligibleStudentIds)).length;
   }
 
   async getStudentHomework(schoolId: number, cls: string, section: string, studentId: number, date?: string, sessionId?: number | null) {
@@ -1820,6 +1926,66 @@ export class DatabaseStorage {
     return sub;
   }
 
+  async getHomeworkSubmissionForReview(
+    schoolId: number,
+    homeworkId: number,
+    submissionId: number,
+  ): Promise<HomeworkSubmission | undefined> {
+    const [submission] = await db.select().from(homeworkSubmissions).where(and(
+      eq(homeworkSubmissions.id, submissionId),
+      eq(homeworkSubmissions.homeworkId, homeworkId),
+      eq(homeworkSubmissions.schoolId, schoolId),
+    ));
+    return submission;
+  }
+
+  async reviewHomeworkSubmission(data: {
+    schoolId: number;
+    homeworkId: number;
+    submissionId: number;
+    studentId: number;
+    reviewerId: number;
+    expectedSubmittedAt: Date;
+    action: HomeworkReviewAction;
+    teacherComment: string | null;
+  }): Promise<
+    | { kind: "updated"; submission: HomeworkSubmission }
+    | { kind: "not_found" }
+    | { kind: "conflict" }
+  > {
+    return db.transaction(async (tx) => {
+      // Student resubmission and Teacher review share this lock so a stale
+      // review cannot approve or reject a newer answer.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${data.homeworkId}, ${data.studentId})`);
+      const [current] = await tx.select().from(homeworkSubmissions).where(and(
+        eq(homeworkSubmissions.id, data.submissionId),
+        eq(homeworkSubmissions.homeworkId, data.homeworkId),
+        eq(homeworkSubmissions.schoolId, data.schoolId),
+        eq(homeworkSubmissions.studentId, data.studentId),
+      )).limit(1).for("update");
+      if (!current) return { kind: "not_found" as const };
+      if (
+        current.status !== "submitted"
+        || current.submittedAt.getTime() !== data.expectedSubmittedAt.getTime()
+      ) {
+        return { kind: "conflict" as const };
+      }
+
+      const [updated] = await tx.update(homeworkSubmissions).set({
+        status: homeworkReviewStatusForAction(data.action),
+        reviewedAt: new Date(),
+        reviewedBy: data.reviewerId,
+        teacherComment: data.teacherComment,
+      }).where(and(
+        eq(homeworkSubmissions.id, current.id),
+        eq(homeworkSubmissions.status, "submitted"),
+        eq(homeworkSubmissions.submittedAt, current.submittedAt),
+      )).returning();
+      if (!updated) return { kind: "conflict" as const };
+      return { kind: "updated" as const, submission: updated };
+    });
+  }
+
   async getHomeworkSubmissionByFileUrl(fileUrl: string): Promise<{
     submission: HomeworkSubmission;
     homework: Homework;
@@ -1902,28 +2068,46 @@ export class DatabaseStorage {
   }
 
   async upsertHomeworkSubmission(data: { homeworkId: number; studentId: number; schoolId: number; fileUrl?: string | null; textAnswer?: string | null }): Promise<HomeworkSubmission> {
-    const existing = await this.getHomeworkSubmission(data.homeworkId, data.studentId);
-    if (existing) {
-      const [updated] = await db.update(homeworkSubmissions)
+    return db.transaction(async (tx) => {
+      // Serialize the first submit and every resubmission with Teacher review.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${data.homeworkId}, ${data.studentId})`);
+      const [existing] = await tx.select().from(homeworkSubmissions).where(and(
+        eq(homeworkSubmissions.homeworkId, data.homeworkId),
+        eq(homeworkSubmissions.studentId, data.studentId),
+        eq(homeworkSubmissions.schoolId, data.schoolId),
+      )).orderBy(desc(homeworkSubmissions.submittedAt)).limit(1).for("update");
+      if (existing?.status === "approved") {
+        throw new Error("HOMEWORK_SUBMISSION_APPROVED");
+      }
+      if (existing) {
+        const [updated] = await tx.update(homeworkSubmissions)
         .set({
           fileUrl: data.fileUrl !== undefined ? data.fileUrl : existing.fileUrl,
           textAnswer: data.textAnswer !== undefined ? data.textAnswer : existing.textAnswer,
           status: "submitted",
           submittedAt: new Date(),
+          reviewedAt: null,
+          reviewedBy: null,
+          teacherComment: null,
         })
-        .where(eq(homeworkSubmissions.id, existing.id))
+        .where(and(
+          eq(homeworkSubmissions.id, existing.id),
+          ne(homeworkSubmissions.status, "approved"),
+        ))
         .returning();
-      return updated;
-    }
-    const [created] = await db.insert(homeworkSubmissions).values({
-      homeworkId: data.homeworkId,
-      studentId: data.studentId,
-      schoolId: data.schoolId,
-      fileUrl: data.fileUrl ?? null,
-      textAnswer: data.textAnswer ?? null,
-      status: "submitted",
-    }).returning();
-    return created;
+        if (!updated) throw new Error("HOMEWORK_SUBMISSION_APPROVED");
+        return updated;
+      }
+      const [created] = await tx.insert(homeworkSubmissions).values({
+        homeworkId: data.homeworkId,
+        studentId: data.studentId,
+        schoolId: data.schoolId,
+        fileUrl: data.fileUrl ?? null,
+        textAnswer: data.textAnswer ?? null,
+        status: "submitted",
+      }).returning();
+      return created;
+    });
   }
 
   async getStudentCountByClassSection(schoolId: number, cls: string, section: string): Promise<number> {

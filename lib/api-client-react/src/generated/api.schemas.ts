@@ -153,3 +153,70 @@ export const MobileTeacherFirstLoginPasswordChangedValue = {
 } as const;
 export type MobileTeacherFirstLoginPasswordChanged = typeof MobileTeacherFirstLoginPasswordChangedValue;
 
+export interface StudentHomeworkViewResult {
+  recorded: boolean;
+}
+
+export type HomeworkReviewInputAction = typeof HomeworkReviewInputAction[keyof typeof HomeworkReviewInputAction];
+
+
+export const HomeworkReviewInputAction = {
+  approve: 'approve',
+  request_resubmission: 'request_resubmission',
+} as const;
+
+export interface HomeworkReviewInput {
+  action: HomeworkReviewInputAction;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  comment?: string | null;
+  expectedSubmittedAt: string;
+}
+
+export interface HomeworkReviewSubmissionSummary {
+  id: number;
+  status: string;
+  submittedAt: string;
+  /** @nullable */
+  textAnswer: string | null;
+  /** @nullable */
+  reviewedAt: string | null;
+  /** @nullable */
+  reviewedBy: number | null;
+  /** @nullable */
+  teacherComment: string | null;
+  hasAttachment: boolean;
+}
+
+export interface TeacherHomeworkReviewRosterEntry {
+  studentId: number;
+  studentName: string;
+  digitalStudentId: string;
+  className: string;
+  sectionName: string;
+  /** @nullable */
+  rollNumber: number | null;
+  viewed: boolean;
+  submission: HomeworkReviewSubmissionSummary | null;
+}
+
+export type HomeworkReviewResultStatus = typeof HomeworkReviewResultStatus[keyof typeof HomeworkReviewResultStatus];
+
+
+export const HomeworkReviewResultStatus = {
+  approved: 'approved',
+  rejected: 'rejected',
+} as const;
+
+export interface HomeworkReviewResult {
+  id: number;
+  status: HomeworkReviewResultStatus;
+  submittedAt: string;
+  reviewedAt: string;
+  reviewedBy: number;
+  /** @nullable */
+  teacherComment: string | null;
+}
+

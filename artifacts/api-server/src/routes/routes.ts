@@ -42,6 +42,7 @@ import {
    examScores, complaints, notices, visitorLogs,
   feeRecords, academicHistory, homework, classwork, users,
 } from "@workspace/db";
+import { RecordStudentHomeworkViewResponse } from "@workspace/api-zod";
 import { resolvePolicy, isLateCheckIn, DEFAULT_POLICY } from "../attendance-policy-engine";
 import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
@@ -2284,6 +2285,39 @@ export async function registerRoutes(
     res.json(items);
   });
 
+  app.post("/api/student/homework/:id/view", async (req, res): Promise<void> => {
+    const context = await resolveStudentWorkSession(
+      req.session.studentId,
+      req.headers["x-view-session-id"],
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return;
+    }
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    if (!/^[1-9]\d*$/.test(rawId)) {
+      res.status(400).json({ message: "Invalid homework ID" });
+      return;
+    }
+    const homeworkId = Number(rawId);
+    if (!Number.isSafeInteger(homeworkId)) {
+      res.status(400).json({ message: "Invalid homework ID" });
+      return;
+    }
+    const hw = await storage.getHomeworkById(homeworkId);
+    if (!hw) {
+      res.status(404).json({ message: "Homework not found" });
+      return;
+    }
+    if (!homeworkBelongsToStudentWorkSession(hw, context)) {
+      res.status(403).json({ message: "Access denied" });
+      return;
+    }
+    const recorded = await storage.recordHomeworkView(homeworkId, context.student.id);
+    res.json(RecordStudentHomeworkViewResponse.parse({ recorded }));
+  });
+
   app.get("/api/student/homework/pending-dates", async (req, res): Promise<void> => {
     const month = (req.query.month as string) || "";
     if (!/^\d{4}-\d{2}$/.test(month)) {
@@ -2382,13 +2416,23 @@ export async function registerRoutes(
       }
       const today = todayInIST();
       const isLate = hw.dueDate ? hw.dueDate < today : false;
-      const submission = await storage.upsertHomeworkSubmission({
-        homeworkId: hwId,
-        studentId: context.student.id,
-        schoolId: context.schoolId,
-        fileUrl,
-        textAnswer,
-      });
+      let submission;
+      try {
+        submission = await storage.upsertHomeworkSubmission({
+          homeworkId: hwId,
+          studentId: context.student.id,
+          schoolId: context.schoolId,
+          fileUrl,
+          textAnswer,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "HOMEWORK_SUBMISSION_APPROVED") {
+          return res.status(409).json({
+            message: "This homework has already been approved and cannot be re-submitted",
+          });
+        }
+        throw error;
+      }
       res.json({ submission, isLate });
     });
   }

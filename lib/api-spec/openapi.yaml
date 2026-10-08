@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: student-homework
+    description: Student Homework actions
+  - name: teacher-homework-review
+    description: Teacher Homework review actions
 paths:
   /healthz:
     get:
@@ -237,6 +241,124 @@ paths:
           description: Teacher Web authentication is required
         "403":
           description: The activity cursor is not visible to this Teacher in the selected session
+  /student/homework/{id}/view:
+    post:
+      operationId: recordStudentHomeworkView
+      tags: [student-homework]
+      summary: Record an explicit open of one Homework detail panel
+      description: The authenticated Student and school are derived server-side. The selected-session Enrollment must match the Homework class and section. Repeated opens are idempotent.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Whether this request created the Student's first view record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentHomeworkViewResult"
+        "400":
+          description: Homework ID or selected session is invalid
+        "401":
+          description: Student Web authentication is required
+        "403":
+          description: The Homework is outside the Student's selected-session Enrollment
+        "404":
+          description: Homework not found
+  /homework/{homeworkId}/submissions:
+    get:
+      operationId: getTeacherHomeworkSubmissions
+      tags: [teacher-homework-review]
+      summary: Get the authorized Student roster and submissions for one Homework
+      description: Teacher, school, selected session, and class/section assignment are validated server-side. Student attachment URLs and file paths are never returned.
+      parameters:
+        - in: path
+          name: homeworkId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Student-wise review roster for the selected session
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeacherHomeworkReviewRosterEntry"
+        "400":
+          description: Homework ID or selected session is invalid
+        "401":
+          description: Teacher Web authentication is required
+        "403":
+          description: Teacher is not assigned to the selected-session class and section
+        "404":
+          description: Homework not found in the selected session
+  /homework/{homeworkId}/submissions/{submissionId}/review:
+    patch:
+      operationId: reviewTeacherHomeworkSubmission
+      tags: [teacher-homework-review]
+      summary: Approve a submission or request resubmission
+      description: Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+      parameters:
+        - in: path
+          name: homeworkId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: path
+          name: submissionId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HomeworkReviewInput"
+      responses:
+        "200":
+          description: The review result without attachment URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomeworkReviewResult"
+        "400":
+          description: Review action, timestamp, or optional comment is invalid
+        "401":
+          description: Teacher Web authentication is required
+        "403":
+          description: Teacher is not authorized to review this Student
+        "404":
+          description: Homework, submission, or selected-session enrollment not found
+        "409":
+          description: Submission changed, was already reviewed, or contains an attachment that cannot be securely reviewed yet
 components:
   schemas:
     HealthStatus:
@@ -467,4 +589,107 @@ components:
           type: string
           const: password_changed
       required: [state]
+    StudentHomeworkViewResult:
+      type: object
+      additionalProperties: false
+      properties:
+        recorded:
+          type: boolean
+      required: [recorded]
+    HomeworkReviewInput:
+      type: object
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [approve, request_resubmission]
+        comment:
+          type: ["string", "null"]
+          maxLength: 2000
+        expectedSubmittedAt:
+          type: string
+          format: date-time
+      required: [action, expectedSubmittedAt]
+    HomeworkReviewSubmissionSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        submittedAt:
+          type: string
+          format: date-time
+        textAnswer:
+          type: ["string", "null"]
+        reviewedAt:
+          type: ["string", "null"]
+          format: date-time
+        reviewedBy:
+          type: ["integer", "null"]
+        teacherComment:
+          type: ["string", "null"]
+        hasAttachment:
+          type: boolean
+      required:
+        - id
+        - status
+        - submittedAt
+        - textAnswer
+        - reviewedAt
+        - reviewedBy
+        - teacherComment
+        - hasAttachment
+    TeacherHomeworkReviewRosterEntry:
+      type: object
+      additionalProperties: false
+      properties:
+        studentId:
+          type: integer
+        studentName:
+          type: string
+        digitalStudentId:
+          type: string
+        className:
+          type: string
+        sectionName:
+          type: string
+        rollNumber:
+          type: ["integer", "null"]
+        viewed:
+          type: boolean
+        submission:
+          oneOf:
+            - $ref: "#/components/schemas/HomeworkReviewSubmissionSummary"
+            - type: "null"
+      required:
+        - studentId
+        - studentName
+        - digitalStudentId
+        - className
+        - sectionName
+        - rollNumber
+        - viewed
+        - submission
+    HomeworkReviewResult:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [approved, rejected]
+        submittedAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
+        reviewedBy:
+          type: integer
+        teacherComment:
+          type: ["string", "null"]
+      required: [id, status, submittedAt, reviewedAt, reviewedBy, teacherComment]
 

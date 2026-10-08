@@ -20,3 +20,9 @@ Keep new Student-submitted files outside any unauthenticated static upload tree.
 **Why:** An unguessable URL in a public static folder is still downloadable without authentication; a same-school Teacher alone is not entitled to another Teacher's Student submissions.
 
 **How to apply:** For each new upload flow, enforce role, school, record, and reviewer ownership before reading the file, deny invalid bearer headers even when a cookie exists, and verify replacement/cleanup behavior.
+
+For BENIUS Homework, secure attachment review is deferred until persistent App Storage is available. Keep the existing Student upload path unchanged in the meantime; never add a temporary-file workaround or expose raw/public submission URLs or Teacher download links. Submissions with unreadable attachments must not be reviewable.
+
+**Why:** The Web review work is text-only while durable storage is pending. A new link or temporary disk path would not provide the required access control, and existing public URLs remain a known risk rather than a resolved one.
+
+**How to apply:** Revisit attachment review only with persistent storage and server-side Student ownership or exact-session assigned-Teacher checks before file access. Do not silently change legacy upload behavior as part of unrelated Web work.

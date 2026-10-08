@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, FileDown, Upload, X, Eye, Pencil, Trash2,
@@ -17,6 +17,9 @@ import { queryClient, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pages/teacher-dashboard";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { addCalendarDays, todayInIST } from "@shared/ist-time";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 interface HomeworkEntry {
   id: number;
@@ -31,6 +34,49 @@ interface HomeworkEntry {
   viewCount: number;
   totalStudents: number;
   teacherName: string;
+  canReviewSubmissions: boolean;
+}
+
+interface HomeworkReviewSubmission {
+  id: number;
+  status: string;
+  submittedAt: string;
+  textAnswer: string | null;
+  reviewedAt: string | null;
+  reviewedBy: number | null;
+  teacherComment: string | null;
+  hasAttachment: boolean;
+}
+
+interface HomeworkReviewRosterEntry {
+  studentId: number;
+  studentName: string;
+  digitalStudentId: string;
+  className: string;
+  sectionName: string;
+  rollNumber: number | null;
+  viewed: boolean;
+  submission: HomeworkReviewSubmission | null;
+}
+
+function homeworkReviewStatusLabel(status: string | undefined): string {
+  if (status === "approved") return "Approved";
+  if (status === "rejected") return "Resubmission Requested";
+  if (status === "submitted") return "Submitted";
+  return "Pending";
+}
+
+function formatIstDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 const SUBJECT_COLORS: Record<string, string> = {
@@ -119,6 +165,8 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
   const [editContent, setEditContent] = useState("");
   const [editDueDate, setEditDueDate] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [submissionsHomeworkId, setSubmissionsHomeworkId] = useState<number | null>(null);
+  const [reviewComments, setReviewComments] = useState<Record<number, string>>({});
 
   const tomorrow = useMemo(() => addCalendarDays(todayInIST(), 1), []);
 
@@ -218,6 +266,85 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    setSubmissionsHomeworkId(null);
+    setReviewComments({});
+  }, [selectedSessionId]);
+
+  const submissionsQueryKey = [
+    "/api/homework", "submissions", selectedSessionId, submissionsHomeworkId,
+  ] as const;
+  const { data: submissionRoster = [], isLoading: submissionsLoading, isError: submissionsError } =
+    useQuery<HomeworkReviewRosterEntry[]>({
+      queryKey: submissionsQueryKey,
+      queryFn: async ({ signal }) => {
+        if (selectedSessionId === null || submissionsHomeworkId === null) {
+          throw new Error("Academic session and Homework are required");
+        }
+        const response = await sessionFetchForViewSession(
+          `/api/homework/${submissionsHomeworkId}/submissions`,
+          selectedSessionId,
+          { signal },
+        );
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ message: "Unable to load submissions" }));
+          throw new Error(error.message);
+        }
+        return response.json();
+      },
+      enabled: submissionsHomeworkId !== null && selectedSessionId !== null,
+      staleTime: 0,
+    });
+
+  const reviewMutation = useMutation({
+    mutationFn: async (variables: {
+      homeworkId: number;
+      submissionId: number;
+      sessionId: number;
+      action: "approve" | "request_resubmission";
+      comment: string;
+      expectedSubmittedAt: string;
+    }) => {
+      const response = await sessionFetchForViewSession(
+        `/api/homework/${variables.homeworkId}/submissions/${variables.submissionId}/review`,
+        variables.sessionId,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: variables.action,
+            comment: variables.comment.trim() || null,
+            expectedSubmittedAt: variables.expectedSubmittedAt,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: "Unable to save the review" }));
+        throw new Error(error.message);
+      }
+      return response.json();
+    },
+    onSuccess: (_result, variables) => {
+      toast({
+        title: variables.action === "approve" ? "Homework approved" : "Resubmission requested",
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/homework", "submissions", variables.sessionId, variables.homeworkId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/homework", teacher.schoolId, selectedClass, selectedSection, variables.sessionId],
+      });
+      setReviewComments((current) => {
+        const next = { ...current };
+        delete next[variables.submissionId];
+        return next;
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Review not saved", description: error.message, variant: "destructive" });
     },
   });
 
@@ -565,12 +692,29 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                       </a>
                     )}
 
-                    <div className="flex items-center justify-between mt-4 pt-3 border-t">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        <Eye className="w-3.5 h-3.5" />
-                        <span data-testid={`text-views-${entry.id}`}>
-                          Viewed by {entry.viewCount} / {entry.totalStudents} students
-                        </span>
+                    <div className="flex flex-col gap-2 mt-4 pt-3 border-t sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Eye className="w-3.5 h-3.5" />
+                          <span data-testid={`text-views-${entry.id}`}>
+                            Viewed by {entry.viewCount} / {entry.totalStudents} students
+                          </span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 rounded-lg text-xs"
+                          onClick={() => {
+                            setReviewComments({});
+                            setSubmissionsHomeworkId(entry.id);
+                          }}
+                          disabled={!entry.canReviewSubmissions}
+                          title={!entry.canReviewSubmissions ? "You are not assigned to review this class and section." : undefined}
+                          data-testid={`button-view-submissions-${entry.id}`}
+                        >
+                          <Eye className="w-3.5 h-3.5 mr-1.5" />
+                          View Submissions
+                        </Button>
                       </div>
                       {isOwner && !isEditing && (
                         <div className="flex items-center gap-1">
@@ -623,6 +767,163 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
           </div>
         )}
       </div>
+      <Dialog
+        open={submissionsHomeworkId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSubmissionsHomeworkId(null);
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[88vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>
+              Submissions — {entries.find((entry) => entry.id === submissionsHomeworkId)?.subject ?? "Homework"}
+            </DialogTitle>
+            <DialogDescription>
+              Student placement and roll number are from the selected Academic Session. Attachment contents are not shown here.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            {submissionsLoading && (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading submissions…
+              </div>
+            )}
+            {!submissionsLoading && submissionsError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+                Unable to load the selected Homework submissions.
+              </div>
+            )}
+            {!submissionsLoading && !submissionsError && submissionRoster.length === 0 && (
+              <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                No eligible Students are enrolled in this Homework class and section for the selected session.
+              </div>
+            )}
+            {!submissionsLoading && !submissionsError && submissionRoster.map((row) => {
+              const submission = row.submission;
+              const canReview = submission?.status === "submitted" && !submission.hasAttachment && !isArchiveMode;
+              return (
+                <article
+                  key={row.studentId}
+                  className="rounded-xl border bg-card p-4 space-y-3"
+                  data-testid={`homework-submission-row-${row.studentId}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-sm">{row.studentName}</h3>
+                      <p className="text-xs text-muted-foreground">{row.digitalStudentId}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Class {row.className} · Section {row.sectionName} · Roll {row.rollNumber ?? "—"}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge variant={submission?.status === "approved" ? "default" : "secondary"}>
+                        {homeworkReviewStatusLabel(submission?.status)}
+                      </Badge>
+                      <span className="text-[11px] text-muted-foreground">
+                        {row.viewed ? "Viewed" : "Not Viewed"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {submission ? (
+                    <>
+                      <p className="text-xs text-muted-foreground">
+                        Submitted: {formatIstDateTime(submission.submittedAt)} IST
+                      </p>
+                      {submission.textAnswer && (
+                        <div className="rounded-lg border bg-muted/30 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                            Written answer
+                          </p>
+                          <p className="text-sm whitespace-pre-wrap break-words">{submission.textAnswer}</p>
+                        </div>
+                      )}
+                      {submission.hasAttachment && (
+                        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                          An attachment was submitted. Secure attachment viewing is not available yet; no file link is provided.
+                        </p>
+                      )}
+                      {submission.teacherComment && (
+                        <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800 mb-1">
+                            Previous Teacher comment
+                          </p>
+                          <p className="text-sm whitespace-pre-wrap break-words text-indigo-950">
+                            {submission.teacherComment}
+                          </p>
+                        </div>
+                      )}
+                      {submission.status === "submitted" && submission.hasAttachment && (
+                        <p className="text-xs text-muted-foreground">
+                          Review actions are unavailable until the attachment can be accessed securely.
+                        </p>
+                      )}
+                      {submission.status === "submitted" && !submission.hasAttachment && isArchiveMode && (
+                        <p className="text-xs text-amber-700">
+                          Historical submissions are read-only.
+                        </p>
+                      )}
+                      {canReview && selectedSessionId !== null && (
+                        <div className="space-y-2 border-t pt-3">
+                          <Textarea
+                            value={reviewComments[submission.id] ?? ""}
+                            onChange={(event) => setReviewComments((current) => ({
+                              ...current,
+                              [submission.id]: event.target.value,
+                            }))}
+                            maxLength={2000}
+                            rows={2}
+                            placeholder="Optional comment for the Student"
+                            aria-label={`Optional Teacher comment for ${row.studentName}`}
+                            data-testid={`input-review-comment-${submission.id}`}
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              onClick={() => reviewMutation.mutate({
+                                homeworkId: submissionsHomeworkId!,
+                                submissionId: submission.id,
+                                sessionId: selectedSessionId,
+                                action: "approve",
+                                comment: reviewComments[submission.id] ?? "",
+                                expectedSubmittedAt: submission.submittedAt,
+                              })}
+                              disabled={reviewMutation.isPending}
+                              data-testid={`button-approve-submission-${submission.id}`}
+                            >
+                              {reviewMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <CheckCircle className="h-3.5 w-3.5 mr-1" />}
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => reviewMutation.mutate({
+                                homeworkId: submissionsHomeworkId!,
+                                submissionId: submission.id,
+                                sessionId: selectedSessionId,
+                                action: "request_resubmission",
+                                comment: reviewComments[submission.id] ?? "",
+                                expectedSubmittedAt: submission.submittedAt,
+                              })}
+                              disabled={reviewMutation.isPending}
+                              data-testid={`button-request-resubmission-${submission.id}`}
+                            >
+                              <AlertCircle className="h-3.5 w-3.5 mr-1" />
+                              Request Resubmission
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No submission received.</p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

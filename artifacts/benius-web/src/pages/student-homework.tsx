@@ -35,6 +35,9 @@ interface HomeworkSubmission {
   fileUrl: string | null;
   textAnswer: string | null;
   submittedAt: string;
+  reviewedAt: string | null;
+  reviewedBy: number | null;
+  teacherComment: string | null;
 }
 
 interface HomeworkItem {
@@ -100,6 +103,19 @@ function isDueWithin24h(dueDate: string | null): boolean {
   return diff >= 0 && diff <= 24 * 60 * 60 * 1000;
 }
 
+function formatHomeworkTimestamp(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function StatusBadge({ submission, dueDate }: { submission: HomeworkSubmission | null; dueDate: string | null }) {
   if (!submission) {
     const pulsing = isDueWithin24h(dueDate);
@@ -115,8 +131,8 @@ function StatusBadge({ submission, dueDate }: { submission: HomeworkSubmission |
     </span>
   );
   if (submission.status === "rejected") return (
-    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-300">
-      <AlertCircle className="w-3 h-3" /> Pending
+    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+      <AlertCircle className="w-3 h-3" /> Resubmission Requested
     </span>
   );
   return (
@@ -353,7 +369,7 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
             }`}>
               <p className="text-xs font-semibold text-slate-600 mb-1">Current Submission</p>
               <p className="text-xs text-slate-400">
-                Submitted: {new Date(hw.submission.submittedAt).toLocaleDateString("en-GB")}
+                Submitted: {formatHomeworkTimestamp(hw.submission.submittedAt)} IST
               </p>
               {hw.submission.textAnswer && (
                 <div className="mt-2 p-2 bg-white/70 rounded-lg border border-slate-200">
@@ -375,6 +391,19 @@ function SubmitDrawer({ hw, studentId, sessionId, onClose, onSuccess }: {
                 >
                   <ExternalLink className="w-3 h-3" /> View submitted file
                 </a>
+              )}
+              {hw.submission.teacherComment && (
+                <div
+                  className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2"
+                  data-testid="text-teacher-homework-comment"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 mb-1">
+                    Teacher comment
+                  </p>
+                  <p className="text-xs text-amber-900 whitespace-pre-wrap leading-relaxed">
+                    {hw.submission.teacherComment}
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -562,6 +591,31 @@ export default function StudentHomework() {
     setActiveHw(null);
   }, [selectDate]);
 
+  const openHomework = useCallback((homework: HomeworkItem) => {
+    const sessionId = selectedSessionId;
+    if (sessionId === null) return;
+    setActiveHw({ sessionId, homework });
+    void sessionFetchForViewSession(`/api/student/homework/${homework.id}/view`, sessionId, {
+      method: "POST",
+      credentials: "include",
+    }).then(async (response) => {
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: "Unable to record this Homework view." }));
+        toast({
+          title: "Homework opened",
+          description: error.message || "Unable to record this Homework view.",
+          variant: "destructive",
+        });
+      }
+    }).catch(() => {
+      toast({
+        title: "Homework opened",
+        description: "Unable to record this Homework view.",
+        variant: "destructive",
+      });
+    });
+  }, [selectedSessionId, toast]);
+
   if (studentLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#f8fafc" }}>
@@ -693,9 +747,7 @@ export default function StudentHomework() {
               return (
                 <button
                   key={hw.id}
-                  onClick={() => {
-                    if (selectedSessionId !== null) setActiveHw({ sessionId: selectedSessionId, homework: hw });
-                  }}
+                  onClick={() => openHomework(hw)}
                   className="text-left rounded-2xl bg-white/80 border border-white/70 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all p-4 flex flex-col gap-3 focus:outline-none focus:ring-2 focus:ring-[#10b981] focus:ring-offset-2"
                   data-testid={`card-homework-${hw.id}`}
                 >

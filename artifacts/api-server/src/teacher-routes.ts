@@ -7,6 +7,11 @@ import path from "path";
 import fs from "fs";
 import ExcelJS from "exceljs";
 import { db } from "./db";
+import {
+  GetTeacherHomeworkSubmissionsResponse,
+  ReviewTeacherHomeworkSubmissionBody,
+  ReviewTeacherHomeworkSubmissionResponse,
+} from "@workspace/api-zod";
 import { teacherSelfAttendance, attendanceCorrectionRequests, attendancePolicies, academicSessions, studentProfiles, students, removedTeachersLog, users, facultyMappings } from "@workspace/db";
 import { eq, and, gte, lte, desc } from "drizzle-orm";
 import { evaluateAttendanceStatus, resolvePolicy, utcToISTHHMM, DEFAULT_POLICY, recomputeStatus } from "./attendance-policy-engine";
@@ -38,6 +43,11 @@ import {
   isHomeworkClassSectionConfigured,
   isHomeworkSubjectConfigured,
 } from "./teacher-homework-policy";
+import {
+  isHomeworkReviewRosterEligible,
+  teacherMayReviewHomework,
+  teacherMayReviewStudentHomework,
+} from "./homework-review-policy";
 import { isClassworkOwnedByTeacherInScope, parsePositiveSafeIntegerPathParam } from "./teacher-classwork-policy";
 import {
   isTeacherNoticeAudienceWithinSchool,
@@ -1280,20 +1290,232 @@ export function registerTeacherRoutes(app: Express) {
 
       const [list, roster] = await Promise.all([
         storage.getHomeworkByClass(context.schoolId, cls, section, context.session.id),
-        storage.getStudentsByClassSectionInSession(context.schoolId, cls, section, context.session.id),
+        storage.getHomeworkRosterInSession(
+          context.schoolId,
+          context.session.id,
+          cls,
+          section,
+          context.session.isActive,
+        ),
       ]);
-      const totalStudents = countDistinctHomeworkStudents(roster);
+      const rosterStudentIds = roster.map((student) => student.studentId);
+      const totalStudents = countDistinctHomeworkStudents(
+        roster.map((student) => ({ id: student.studentId })),
+      );
+      const assignments = await getTeacherProfileAssignments(context.teacher);
 
       const teacherCache = new Map<number, string>();
       const enriched = await Promise.all(list.map(async (hw) => {
-        const viewCount = await storage.getHomeworkViewCount(hw.id);
+        const viewCount = await storage.getHomeworkViewCount(hw.id, rosterStudentIds);
         if (!teacherCache.has(hw.teacherId)) {
           const author = await storage.getTeacherById(hw.teacherId);
           teacherCache.set(hw.teacherId, author?.schoolId === context.schoolId ? author.fullName : "Unknown");
         }
-        return { ...hw, viewCount, totalStudents, teacherName: teacherCache.get(hw.teacherId)! };
+        const canReviewSubmissions = teacherMayReviewHomework(assignments, {
+          authenticatedSchoolId: context.schoolId,
+          teacherSchoolId: context.teacher.schoolId,
+          homeworkSchoolId: hw.schoolId,
+          selectedSessionId: context.session.id,
+          homeworkSessionId: hw.sessionId,
+          homeworkClass: hw.class,
+          homeworkSection: hw.section,
+        });
+        return {
+          ...hw,
+          viewCount: Math.min(viewCount, totalStudents),
+          totalStudents,
+          canReviewSubmissions,
+          teacherName: teacherCache.get(hw.teacherId)!,
+        };
       }));
       res.json(enriched);
+    },
+  );
+
+  app.get(
+    "/api/homework/:homeworkId/submissions",
+    withTeacherHomeworkContext("SELECTED_SESSION_REQUIRED"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) return;
+      const homeworkId = parseLegacyHomeworkId(req.params.homeworkId);
+      if (!homeworkId) {
+        res.status(400).json({ message: "Invalid homework ID." });
+        return;
+      }
+      const hw = await storage.getHomeworkById(homeworkId);
+      if (!hw || hw.schoolId !== context.schoolId || hw.sessionId !== context.session.id) {
+        res.status(404).json({ message: "Homework not found in the selected session." });
+        return;
+      }
+
+      const assignments = await getTeacherProfileAssignments(context.teacher);
+      const baseScope = {
+        authenticatedSchoolId: context.schoolId,
+        teacherSchoolId: context.teacher.schoolId,
+        homeworkSchoolId: hw.schoolId,
+        selectedSessionId: context.session.id,
+        homeworkSessionId: hw.sessionId,
+        homeworkClass: hw.class,
+        homeworkSection: hw.section,
+      };
+      if (!teacherMayReviewHomework(assignments, baseScope)) {
+        res.status(403).json({ message: "You are not assigned to review this class and section." });
+        return;
+      }
+
+      const roster = await storage.getHomeworkReviewRoster(
+        context.schoolId,
+        context.session.id,
+        hw.class,
+        hw.section,
+        hw.id,
+        context.session.isActive,
+      );
+      const viewedStudentIds = new Set(await storage.getHomeworkViewedStudentIds(
+        hw.id,
+        roster.map((student) => student.studentId),
+      ));
+      const isAuthorizedRoster = roster.every((student) =>
+        teacherMayReviewStudentHomework(assignments, {
+          ...baseScope,
+          studentSchoolId: student.studentSchoolId,
+          enrollmentSchoolId: student.enrollmentSchoolId,
+          enrollmentSessionId: student.enrollmentSessionId,
+          enrollmentClass: student.className,
+          enrollmentSection: student.sectionName,
+        }),
+      );
+      if (!isAuthorizedRoster) {
+        res.status(403).json({ message: "A Student is outside the authorized class or session." });
+        return;
+      }
+      const result = roster.map((student) => ({
+          studentId: student.studentId,
+          studentName: student.studentName,
+          digitalStudentId: student.digitalStudentId,
+          className: student.className,
+          sectionName: student.sectionName,
+          rollNumber: student.rollNo,
+          viewed: viewedStudentIds.has(student.studentId),
+          submission: student.submission,
+        }));
+      res.json(GetTeacherHomeworkSubmissionsResponse.parse(result));
+    },
+  );
+
+  app.patch(
+    "/api/homework/:homeworkId/submissions/:submissionId/review",
+    withTeacherHomeworkContext("CURRENT_SESSION_WRITE"),
+    async (req, res) => {
+      const context = getTeacherHomeworkContext(req, res);
+      if (!context) return;
+      const homeworkId = parseLegacyHomeworkId(req.params.homeworkId);
+      const submissionId = parseLegacyHomeworkId(req.params.submissionId);
+      if (!homeworkId || !submissionId) {
+        res.status(400).json({ message: "Invalid Homework or submission ID." });
+        return;
+      }
+      const parsed = ReviewTeacherHomeworkSubmissionBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ message: "Invalid review action or comment." });
+        return;
+      }
+
+      const hw = await storage.getHomeworkById(homeworkId);
+      if (!hw || hw.schoolId !== context.schoolId || hw.sessionId !== context.session.id) {
+        res.status(404).json({ message: "Homework not found in the active session." });
+        return;
+      }
+      const assignments = await getTeacherProfileAssignments(context.teacher);
+      const baseScope = {
+        authenticatedSchoolId: context.schoolId,
+        teacherSchoolId: context.teacher.schoolId,
+        homeworkSchoolId: hw.schoolId,
+        selectedSessionId: context.session.id,
+        homeworkSessionId: hw.sessionId,
+        homeworkClass: hw.class,
+        homeworkSection: hw.section,
+      };
+      if (!teacherMayReviewHomework(assignments, baseScope)) {
+        res.status(403).json({ message: "You are not assigned to review this class and section." });
+        return;
+      }
+
+      const existing = await storage.getHomeworkSubmissionForReview(
+        context.schoolId,
+        homeworkId,
+        submissionId,
+      );
+      if (!existing) {
+        res.status(404).json({ message: "Submission not found in the selected Homework." });
+        return;
+      }
+      if (existing.fileUrl) {
+        res.status(409).json({
+          message: "Review actions are unavailable for submissions with attachments until secure attachment review is available.",
+        });
+        return;
+      }
+      const [student, enrollment] = await Promise.all([
+        storage.getStudentById(existing.studentId),
+        storage.resolveEnrollmentForStudentSession(
+          context.schoolId,
+          existing.studentId,
+          context.session.id,
+        ),
+      ]);
+      if (!student || !enrollment) {
+        res.status(404).json({ message: "Student is not enrolled in the selected session." });
+        return;
+      }
+      if (!isHomeworkReviewRosterEligible(
+        student.isActive,
+        enrollment.status,
+        context.session.isActive,
+      )) {
+        res.status(404).json({ message: "Student is not in the eligible Homework roster." });
+        return;
+      }
+      const authorized = teacherMayReviewStudentHomework(assignments, {
+        ...baseScope,
+        studentSchoolId: student.schoolId,
+        enrollmentSchoolId: enrollment.schoolId,
+        enrollmentSessionId: enrollment.sessionId,
+        enrollmentClass: enrollment.className,
+        enrollmentSection: enrollment.sectionName,
+      });
+      if (!authorized) {
+        res.status(403).json({ message: "Not authorized to review this Student's submission." });
+        return;
+      }
+
+      const result = await storage.reviewHomeworkSubmission({
+        schoolId: context.schoolId,
+        homeworkId,
+        submissionId,
+        studentId: student.id,
+        reviewerId: context.teacher.id,
+        expectedSubmittedAt: parsed.data.expectedSubmittedAt,
+        action: parsed.data.action,
+        teacherComment: parsed.data.comment?.trim() || null,
+      });
+      if (result.kind === "not_found") {
+        res.status(404).json({ message: "Submission not found in the selected Homework." });
+        return;
+      }
+      if (result.kind === "conflict") {
+        res.status(409).json({ message: "This submission changed. Refresh the review list and try again." });
+        return;
+      }
+      res.json(ReviewTeacherHomeworkSubmissionResponse.parse({
+        id: result.submission.id,
+        status: result.submission.status,
+        submittedAt: result.submission.submittedAt,
+        reviewedAt: result.submission.reviewedAt,
+        reviewedBy: result.submission.reviewedBy,
+        teacherComment: result.submission.teacherComment,
+      }));
     },
   );
 

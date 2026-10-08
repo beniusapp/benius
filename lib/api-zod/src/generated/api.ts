@@ -288,3 +288,106 @@ export const MarkTeacherModuleSeenResponse = zod.object({
 })
 
 
+/**
+ * The authenticated Student and school are derived server-side. The selected-session Enrollment must match the Homework class and section. Repeated opens are idempotent.
+ * @summary Record an explicit open of one Homework detail panel
+ */
+
+
+
+export const RecordStudentHomeworkViewParams = zod.object({
+  "id": zod.coerce.number().int().min(1)
+})
+
+export const recordStudentHomeworkViewHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const RecordStudentHomeworkViewHeader = zod.object({
+  "x-view-session-id": zod.string().regex(recordStudentHomeworkViewHeaderXViewSessionIdRegExp)
+})
+
+export const RecordStudentHomeworkViewResponse = zod.object({
+  "recorded": zod.boolean()
+})
+
+
+/**
+ * Teacher, school, selected session, and class/section assignment are validated server-side. Student attachment URLs and file paths are never returned.
+ * @summary Get the authorized Student roster and submissions for one Homework
+ */
+
+
+
+export const GetTeacherHomeworkSubmissionsParams = zod.object({
+  "homeworkId": zod.coerce.number().int().min(1)
+})
+
+export const getTeacherHomeworkSubmissionsHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetTeacherHomeworkSubmissionsHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getTeacherHomeworkSubmissionsHeaderXViewSessionIdRegExp)
+})
+
+export const GetTeacherHomeworkSubmissionsResponseItem = zod.object({
+  "studentId": zod.number().int(),
+  "studentName": zod.string(),
+  "digitalStudentId": zod.string(),
+  "className": zod.string(),
+  "sectionName": zod.string(),
+  "rollNumber": zod.number().int().nullable(),
+  "viewed": zod.boolean(),
+  "submission": zod.union([zod.object({
+  "id": zod.number().int(),
+  "status": zod.string(),
+  "submittedAt": zod.coerce.date(),
+  "textAnswer": zod.string().nullable(),
+  "reviewedAt": zod.coerce.date().nullable(),
+  "reviewedBy": zod.number().int().nullable(),
+  "teacherComment": zod.string().nullable(),
+  "hasAttachment": zod.boolean()
+}),zod.null()])
+})
+export const GetTeacherHomeworkSubmissionsResponse = zod.array(GetTeacherHomeworkSubmissionsResponseItem)
+
+
+/**
+ * Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+ * @summary Approve a submission or request resubmission
+ */
+
+
+
+
+export const ReviewTeacherHomeworkSubmissionParams = zod.object({
+  "homeworkId": zod.coerce.number().int().min(1),
+  "submissionId": zod.coerce.number().int().min(1)
+})
+
+export const reviewTeacherHomeworkSubmissionHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const ReviewTeacherHomeworkSubmissionHeader = zod.object({
+  "x-view-session-id": zod.string().regex(reviewTeacherHomeworkSubmissionHeaderXViewSessionIdRegExp)
+})
+
+export const reviewTeacherHomeworkSubmissionBodyCommentMax = 2000;
+
+
+
+export const ReviewTeacherHomeworkSubmissionBody = zod.object({
+  "action": zod.enum(['approve', 'request_resubmission']),
+  "comment": zod.string().max(reviewTeacherHomeworkSubmissionBodyCommentMax).nullish(),
+  "expectedSubmittedAt": zod.coerce.date()
+})
+
+export const ReviewTeacherHomeworkSubmissionResponse = zod.object({
+  "id": zod.number().int(),
+  "status": zod.enum(['approved', 'rejected']),
+  "submittedAt": zod.coerce.date(),
+  "reviewedAt": zod.coerce.date(),
+  "reviewedBy": zod.number().int(),
+  "teacherComment": zod.string().nullable()
+})
+
+

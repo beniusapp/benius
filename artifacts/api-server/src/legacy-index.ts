@@ -1375,6 +1375,14 @@ app.use((req, res, next) => {
         CHECK (seen_activity_record_id > 0)
     );
   `);
+  // Safe, additive Homework review migration. The view-table uniqueness index
+  // was preflighted against the application database before being added.
+  await pool.query(`
+    ALTER TABLE homework_submissions
+      ADD COLUMN IF NOT EXISTS teacher_comment TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS homework_views_homework_student_uidx
+      ON homework_views(homework_id, student_id);
+  `);
   await ensureMobileAuthSchema(pool);
   await assertNoSchemaDrift(pool);
 

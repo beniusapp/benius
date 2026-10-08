@@ -26,11 +26,15 @@ import type {
   AdminNoticeboardContext,
   AdminTimetableContext,
   HealthStatus,
+  HomeworkReviewInput,
+  HomeworkReviewResult,
   MobileTeacherFirstLoginPasswordChange,
   MobileTeacherFirstLoginPasswordChanged,
+  StudentHomeworkViewResult,
   StudentModuleDotStateResponse,
   StudentModuleSeenInput,
   StudentModuleSeenResponse,
+  TeacherHomeworkReviewRosterEntry,
   TeacherModuleDotStateResponse,
   TeacherModuleSeenInput,
   TeacherModuleSeenResponse
@@ -947,5 +951,250 @@ export const useMarkTeacherModuleSeen = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getMarkTeacherModuleSeenMutationOptions(options));
+    }
+
+export const getRecordStudentHomeworkViewUrl = (id: number,) => {
+
+
+
+
+  return `/api/student/homework/${id}/view`
+}
+
+/**
+ * The authenticated Student and school are derived server-side. The selected-session Enrollment must match the Homework class and section. Repeated opens are idempotent.
+ * @summary Record an explicit open of one Homework detail panel
+ */
+export const recordStudentHomeworkView = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<StudentHomeworkViewResult> => {
+
+  return customFetch<StudentHomeworkViewResult>(getRecordStudentHomeworkViewUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRecordStudentHomeworkViewMutationKey = () => ['recordStudentHomeworkView'] as const;
+
+export const getRecordStudentHomeworkViewMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordStudentHomeworkView>>, TError,RecordStudentHomeworkViewMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordStudentHomeworkView>>, TError,RecordStudentHomeworkViewMutationVariables, TContext> => {
+
+const mutationKey = getRecordStudentHomeworkViewMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordStudentHomeworkView>>, RecordStudentHomeworkViewMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  recordStudentHomeworkView(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordStudentHomeworkViewMutationResult = NonNullable<Awaited<ReturnType<typeof recordStudentHomeworkView>>>
+
+    export type RecordStudentHomeworkViewMutationError = ErrorType<void>
+    export type RecordStudentHomeworkViewMutationVariables = {id: number}
+
+    /**
+ * @summary Record an explicit open of one Homework detail panel
+ */
+export const useRecordStudentHomeworkView = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordStudentHomeworkView>>, TError,RecordStudentHomeworkViewMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordStudentHomeworkView>>,
+        TError,
+        RecordStudentHomeworkViewMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRecordStudentHomeworkViewMutationOptions(options));
+    }
+
+export const getGetTeacherHomeworkSubmissionsUrl = (homeworkId: number,) => {
+
+
+
+
+  return `/api/homework/${homeworkId}/submissions`
+}
+
+/**
+ * Teacher, school, selected session, and class/section assignment are validated server-side. Student attachment URLs and file paths are never returned.
+ * @summary Get the authorized Student roster and submissions for one Homework
+ */
+export const getTeacherHomeworkSubmissions = async (homeworkId: number, options?: Parameters<typeof customFetch>[1]): Promise<TeacherHomeworkReviewRosterEntry[]> => {
+
+  return customFetch<TeacherHomeworkReviewRosterEntry[]>(getGetTeacherHomeworkSubmissionsUrl(homeworkId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeacherHomeworkSubmissionsQueryKey = (homeworkId: number,) => {
+    return [
+    `/api/homework/${homeworkId}/submissions`
+    ] as const;
+    }
+
+
+export const getGetTeacherHomeworkSubmissionsQueryOptions = <TData = Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>, TError = ErrorType<void>>(homeworkId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeacherHomeworkSubmissionsQueryKey(homeworkId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>> = ({ signal }) => getTeacherHomeworkSubmissions(homeworkId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: homeworkId !== null && homeworkId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeacherHomeworkSubmissionsQueryResult = NonNullable<Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>>
+export type GetTeacherHomeworkSubmissionsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the authorized Student roster and submissions for one Homework
+ */
+
+export function useGetTeacherHomeworkSubmissions<TData = Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>, TError = ErrorType<void>>(
+ homeworkId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherHomeworkSubmissions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeacherHomeworkSubmissionsQueryOptions(homeworkId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getReviewTeacherHomeworkSubmissionUrl = (homeworkId: number,
+    submissionId: number,) => {
+
+
+
+
+  return `/api/homework/${homeworkId}/submissions/${submissionId}/review`
+}
+
+/**
+ * Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+ * @summary Approve a submission or request resubmission
+ */
+export const reviewTeacherHomeworkSubmission = async (homeworkId: number,
+    submissionId: number,
+    homeworkReviewInput: HomeworkReviewInput, options?: Parameters<typeof customFetch>[1]): Promise<HomeworkReviewResult> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<HomeworkReviewResult>(getReviewTeacherHomeworkSubmissionUrl(homeworkId,submissionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(homeworkReviewInput)
+  }
+);}
+
+
+
+
+
+export const getReviewTeacherHomeworkSubmissionMutationKey = () => ['reviewTeacherHomeworkSubmission'] as const;
+
+export const getReviewTeacherHomeworkSubmissionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>, TError,ReviewTeacherHomeworkSubmissionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>, TError,ReviewTeacherHomeworkSubmissionMutationVariables, TContext> => {
+
+const mutationKey = getReviewTeacherHomeworkSubmissionMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>, ReviewTeacherHomeworkSubmissionMutationVariables> = (props) => {
+          const {homeworkId,submissionId,data} = props ?? {};
+
+          return  reviewTeacherHomeworkSubmission(homeworkId,submissionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReviewTeacherHomeworkSubmissionMutationResult = NonNullable<Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>>
+    export type ReviewTeacherHomeworkSubmissionMutationBody = BodyType<HomeworkReviewInput>
+    export type ReviewTeacherHomeworkSubmissionMutationError = ErrorType<void>
+    export type ReviewTeacherHomeworkSubmissionMutationVariables = {homeworkId: number;submissionId: number;data: BodyType<HomeworkReviewInput>}
+
+    /**
+ * @summary Approve a submission or request resubmission
+ */
+export const useReviewTeacherHomeworkSubmission = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>, TError,ReviewTeacherHomeworkSubmissionMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reviewTeacherHomeworkSubmission>>,
+        TError,
+        ReviewTeacherHomeworkSubmissionMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReviewTeacherHomeworkSubmissionMutationOptions(options));
     }
 
