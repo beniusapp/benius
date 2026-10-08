@@ -4649,16 +4649,20 @@ export function registerTeacherRoutes(app: Express) {
 
   // ── Ledger Status Overview (admin) ──────────────────────────────────────────
   app.get("/api/admin/ledger-status", async (req, res) => {
-    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
+    if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return undefined;
     const { term } = req.query as Record<string, string>;
     if (!term) return res.status(400).json({ message: "term is required" });
     const selectedSession = await requireAdminPromotionSession(req, res, "read");
-    if (!selectedSession) return;
+    if (!selectedSession) return undefined;
     try {
-      const data = await storage.getLedgerStatus(req.session.schoolId!, term, selectedSession.sessionId);
-      res.json(data);
+      const data = await storage.getPromotionLedgerReadinessStatus(
+        req.session.schoolId!,
+        term,
+        selectedSession.sessionId,
+      );
+      return res.json(data);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
+      return res.status(500).json({ message: err?.message ?? "Failed to fetch ledger status" });
     }
   });
 

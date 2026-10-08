@@ -18,6 +18,11 @@ import {
   sessionFetchForViewSession,
 } from "@/lib/queryClient";
 import { useSessionView } from "@/contexts/session-view-context";
+import {
+  getPromotionPreview,
+  summarizePromotionPreviews,
+  type PromotionReadiness,
+} from "@/lib/examination-promotion-preview";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,8 +36,15 @@ interface LedgerRow {
   adminExecuted: boolean;
   // Tripartite student-level state counts
   executedCount: number;  // admin finalized these students through wizard
-  readyCount: number;     // teacher-locked, awaiting admin action
-  pendingCount: number;   // no lock yet — teacher hasn't submitted
+  readyCount: number;     // execution-compatible teacher-locked students
+  pendingCount: number;   // missing or unlocked decisions
+  ineligibleCount: number;
+  historicalCount: number;
+  readyStudentIds: number[];
+  pendingStudentIds: number[];
+  ineligibleStudentIds: number[];
+  historicalStudentIds: number[];
+  executedStudentIds: number[];
 }
 
 interface LedgerDecision {
@@ -116,8 +128,7 @@ function Chip({ c, icon, label, onClick, active }: { c: ChipColor; icon?: ReactN
 }
 
 // ── Tripartite fractional pills for each section row ──────────────────────────
-// Shows up to 3 pills — one per occupied state bucket — so a partially-executed
-// cohort displays e.g. "1 Executed  1 Ready  38 Pending" side-by-side.
+// Show the full mixed-cohort readiness breakdown, not just whether a ledger is locked.
 function LedgerPills({ row }: { row: LedgerRow }) {
   if (row.totalStudents === 0)
     return <Chip c="slate" icon={<Clock className="w-3 h-3"/>} label="Not Started" />;
@@ -131,9 +142,17 @@ function LedgerPills({ row }: { row: LedgerRow }) {
         <Chip c="emerald" icon={<Lock className="w-3 h-3"/>}
           label={`${row.readyCount} Ready`} />
       )}
+      {row.ineligibleCount > 0 && (
+        <Chip c="red" icon={<AlertTriangle className="w-3 h-3"/>}
+          label={`${row.ineligibleCount} Requires Review`} />
+      )}
       {row.pendingCount > 0 && (
         <Chip c="amber" icon={<Clock className="w-3 h-3"/>}
           label={`${row.pendingCount} Pending`} />
+      )}
+      {row.historicalCount > 0 && (
+        <Chip c="slate" icon={<Lock className="w-3 h-3"/>}
+          label={`${row.historicalCount} Historical`} />
       )}
     </div>
   );
@@ -510,10 +529,15 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (!selectedTargetSession || targetSessionId === null) {
         throw new Error("Select a target Academic Session before preparing Promotion.");
       }
-      // Scope to selected students only, or full cohort if no selection was active
-      const targetStudents = executionScope !== null
-        ? agg.students.filter(s => executionScope.has(s.studentId))
-        : agg.students;
+      const eligibleStudentIds = new Set(cohort.readyStudentIds);
+      // Never send Pending, Ineligible, Historical or already Executed Students.
+      const targetStudents = agg.students.filter(student =>
+        eligibleStudentIds.has(student.studentId) &&
+        (executionScope === null || executionScope.has(student.studentId)),
+      );
+      if (targetStudents.length === 0) {
+        throw new Error("There are no backend-approved Students ready for Promotion in this selection.");
+      }
       if (targetStudents.some(student =>
         student.resultStatus !== "complete" ||
         !student.ledger?.locked ||
@@ -555,19 +579,19 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   });
 
   // ── KPI stats — tripartite state machine ──────────────────────────────────
-  // lockedReady  = sections that have ≥1 locked-not-yet-executed student (ready for admin action)
+  // lockedReady  = sections with at least one execution-compatible student
   // executed     = sections where EVERY student has been wizard-executed (fully done)
-  // pending      = sections with zero locked students and zero executed students (teacher hasn't locked yet)
+  // pending      = sections containing Students with missing or unlocked decisions
   const kpi = useMemo(() => {
     const totalClasses  = new Set(ledgerRows.map(r => r.class)).size;
     const totalSections = ledgerRows.length;
     const lockedReady   = ledgerRows.filter(r => r.readyCount > 0).length;
     const executed      = ledgerRows.filter(r => r.adminExecuted).length;
-    // "Pending" = exclusively untouched or draft-only (no locked students, no executed students)
-    const pending       = ledgerRows.filter(r => r.readyCount === 0 && r.executedCount === 0).length;
+    const pending       = ledgerRows.filter(r => r.pendingCount > 0).length;
+    const needsReview   = ledgerRows.filter(r => r.ineligibleCount > 0).length;
     const inProgress    = ledgerRows.filter(r => r.status === "draft").length;
     const notStarted    = ledgerRows.filter(r => r.status === "none").length;
-    return { totalClasses, totalSections, lockedReady, executed, pending, inProgress, notStarted };
+    return { totalClasses, totalSections, lockedReady, executed, pending, needsReview, inProgress, notStarted };
   }, [ledgerRows]);
 
   // ── Filter options — live from school setup (props from school_metadata) ──
@@ -590,8 +614,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     if (filterSection !== "all" && row.section !== filterSection) return false;
     // "ready"   = at least one locked-not-executed student (even if partially executed)
     if (statusFilter === "ready"   && row.readyCount === 0) return false;
-    // "pending" = no locked students at all AND not executed — purely untouched/draft
-    if (statusFilter === "pending" && (row.readyCount > 0 || row.executedCount > 0)) return false;
+    // "pending" = at least one Student still has a missing or unlocked decision
+    if (statusFilter === "pending" && row.pendingCount === 0) return false;
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
       if (!row.class.toLowerCase().includes(q) &&
@@ -610,23 +634,57 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     return groups;
   }, [filteredRows]);
 
+  function readinessForStudent(student: AggStudent): PromotionReadiness {
+    if (cohort?.executedStudentIds?.includes(student.studentId)) return "executed";
+    if (cohort?.readyStudentIds?.includes(student.studentId)) return "ready";
+    if (cohort?.ineligibleStudentIds?.includes(student.studentId)) return "ineligible";
+    if (cohort?.historicalStudentIds?.includes(student.studentId)) return "historical";
+    return "pending";
+  }
+
+  function previewForStudent(student: AggStudent) {
+    const override = overrides[student.studentId];
+    return getPromotionPreview({
+      resultStatus: student.resultStatus,
+      readiness: readinessForStudent(student),
+      override,
+      ledgerDecision: student.ledger ? {
+        decision: student.ledger.decision,
+        targetClass: student.ledger.targetClass,
+        targetSection: student.ledger.targetSection,
+      } : null,
+      sourceClass: cohort?.class ?? "",
+      sourceSection: cohort?.section ?? "",
+    });
+  }
+
+  function includeInPromotionSummary(student: AggStudent): boolean {
+    if (executionScope === null || executionScope.has(student.studentId)) return true;
+    return ["pending", "ineligible", "historical", "executed"].includes(readinessForStudent(student));
+  }
+
   // ── Dynamic counters for step 3 (scoped to executionScope when active) ──────
   const counters = useMemo(() => {
-    if (!agg) return { total: 0, promote: 0, retain: 0, grace: 0 };
-    // If a selection scope is set, only count those students
-    const students = executionScope !== null
-      ? agg.students.filter(s => executionScope.has(s.studentId))
-      : agg.students;
-    let promote = 0, retain = 0, grace = 0;
-    for (const s of students) {
-      const ov = overrides[s.studentId];
-      if (ov?.status === "retain")     { retain++; continue; }
-      if (ov?.status === "grace_pass") { grace++;  continue; }
-      if (ov?.status === "promote")    { promote++; continue; }
-      s.ledger?.decision === "retained" ? retain++ : promote++;
+    if (!agg) {
+      return { total: 0, promote: 0, retain: 0, grace: 0, pending: 0, review: 0, historical: 0, eligible: 0 };
     }
-    return { total: students.length, promote, retain, grace };
-  }, [agg, overrides, executionScope]);
+    const students = agg.students.filter(includeInPromotionSummary);
+    const summary = summarizePromotionPreviews(students.map(previewForStudent));
+    const eligible = agg.students.filter(student =>
+      readinessForStudent(student) === "ready" &&
+      (executionScope === null || executionScope.has(student.studentId)),
+    ).length;
+    return {
+      total: students.length,
+      promote: summary.promoted,
+      retain: summary.retained,
+      grace: summary.grace_pass,
+      pending: summary.pending,
+      review: summary.review,
+      historical: summary.historical,
+      eligible,
+    };
+  }, [agg, cohort, overrides, executionScope]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function handleRefresh() { refetchTerms(); if (selectedTerm) refetchLedger(); }
@@ -927,7 +985,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                           data-testid="checkbox-select-all"
                         />
                       </th>
-                      {["DSID","Name","Marks","%","Teacher Decision","Admin Override"].map(h => (
+                      {["DSID","Name","Marks","%","Ledger Eligibility","Teacher Decision","Admin Override"].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">{h}</th>
                       ))}
                     </tr>
@@ -935,7 +993,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   <tbody>
                     {filteredStudents.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">
+                        <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
                           <Filter className="w-6 h-6 mx-auto mb-2 opacity-30" />
                           No students match the current filters.
                           <button onClick={resetAuditFilters} className="ml-2 text-[#D4AF37] underline text-xs">Reset</button>
@@ -947,6 +1005,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                       const isManual = !!led?.manualIntervention;
                       const thresh   = s.tierPassThreshold ?? agg.passThreshold;
                       const passing  = s.percentage !== null && s.percentage >= thresh;
+                      const ledgerReadiness = readinessForStudent(s);
                       return (
                         <tr key={s.studentId}
                           className={`border-b border-[#1e2d44]/50 transition-colors ${selectedStudents.has(s.studentId) ? "bg-[#D4AF37]/5" : isManual ? "bg-amber-500/5 hover:bg-amber-500/10" : idx%2===0 ? "hover:bg-[#0A1628]/30" : "bg-[#0A1628]/20 hover:bg-[#0A1628]/30"}`}
@@ -985,6 +1044,19 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                             {s.resultStatus === "complete" && s.percentage !== null
                               ? <span className={`font-semibold ${passing ? "text-emerald-400" : "text-red-400"}`}>{s.percentage.toFixed(1)}%</span>
                               : <span className="text-amber-400 text-xs">Incomplete / Pending</span>}
+                          </td>
+                          <td className="px-4 py-3">
+                            {ledgerReadiness === "ready" ? (
+                              <Chip c="emerald" icon={<Lock className="w-3 h-3"/>} label="Ready" />
+                            ) : ledgerReadiness === "ineligible" ? (
+                              <Chip c="red" icon={<AlertTriangle className="w-3 h-3"/>} label="Ineligible · Requires Review" />
+                            ) : ledgerReadiness === "historical" ? (
+                              <Chip c="slate" icon={<Lock className="w-3 h-3"/>} label="Historical · Read-only" />
+                            ) : ledgerReadiness === "executed" ? (
+                              <Chip c="blue" icon={<CheckCircle2 className="w-3 h-3"/>} label="Executed" />
+                            ) : (
+                              <Chip c="amber" icon={<Clock className="w-3 h-3"/>} label="Pending" />
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             {led ? (
@@ -1061,8 +1133,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 </p>
                 <Button
                   onClick={() => {
-                    // Snapshot selection: if rows are checked, scope to them; else use full cohort
-                    setExecutionScope(selectedStudents.size > 0 ? new Set(selectedStudents) : null);
+                    const eligibleIds = cohort?.readyStudentIds ?? [];
+                    const scopedEligibleIds = selectedStudents.size > 0
+                      ? eligibleIds.filter(id => selectedStudents.has(id))
+                      : eligibleIds;
+                    setExecutionScope(new Set(scopedEligibleIds));
                     setConfirmed(false);
                     setStep(3);
                   }}
@@ -1071,8 +1146,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                   disabled={isArchiveMode}
                   data-testid="btn-step2-next">
                   {selectedStudents.size > 0
-                    ? `Next — Execute for ${selectedStudents.size} Selected →`
-                    : "Next — Execute Promotion →"}
+                    ? `Next — Review ${cohort?.readyStudentIds.filter(id => selectedStudents.has(id)).length ?? 0} Eligible →`
+                    : `Next — Review ${cohort?.readyCount ?? 0} Eligible →`}
                 </Button>
               </div>
 
@@ -1232,17 +1307,22 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               data-testid="execution-scope-banner">
               <CheckSquare className="w-3.5 h-3.5 shrink-0" />
               <span>
-                Executing for <strong>{executionScope.size}</strong> selected student{executionScope.size !== 1 ? "s" : ""} only.
-                <span className="text-slate-400 ml-1">Unselected students will not be modified.</span>
+                Executing for <strong>{counters.eligible}</strong> backend-approved eligible Student{counters.eligible !== 1 ? "s" : ""} only.
+                <span className="text-slate-400 ml-1">
+                  {counters.pending} Pending and {counters.review} requiring review are excluded and remain unchanged.
+                </span>
               </span>
             </div>
           )}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
             {[
               { label:"Total Students",   val: counters.total,   color:"text-white",       icon:<Users      className="w-5 h-5 text-[#D4AF37]"     /> },
               { label:"Will Be Promoted", val: counters.promote, color:"text-emerald-400", icon:<TrendingUp className="w-5 h-5 text-emerald-400"    /> },
               { label:"Repeating Year",   val: counters.retain,  color:"text-red-400",     icon:<UserX      className="w-5 h-5 text-red-400"        /> },
               { label:"Grace Passes",     val: counters.grace,   color:"text-purple-400",  icon:<Award      className="w-5 h-5 text-purple-400"     /> },
+              { label:"Pending",          val: counters.pending, color:"text-amber-400",   icon:<Clock      className="w-5 h-5 text-amber-400"      /> },
+              { label:"Requires Review",  val: counters.review,  color:"text-red-400",     icon:<AlertTriangle className="w-5 h-5 text-red-400"    /> },
+              { label:"Historical",       val: counters.historical, color:"text-slate-400", icon:<Lock       className="w-5 h-5 text-slate-400"     /> },
             ].map(({ label, val, color, icon }) => (
               <div key={label} className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
                 {icon}
@@ -1260,32 +1340,33 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 <GraduationCap className="w-4 h-4 text-[#D4AF37]" />Final Promotion Summary
               </h3>
               <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                {(executionScope !== null
-                  ? agg.students.filter(s => executionScope.has(s.studentId))
-                  : agg.students
-                ).map(s => {
-                  const ov  = overrides[s.studentId];
-                  const led = s.ledger;
-                  let fin: AdminDecision;
-                  if (ov)                             fin = ov.status;
-                  else if (led?.decision==="retained") fin = "retain";
-                  else                                fin = "promote";
-                  // Priority: admin override → teacher ledger → cohort default
-                  const destCls = ov?.nextClass
-                    ?? (fin==="retain" ? cohort.class : (led?.targetClass || nxtCls(cohort.class, schoolClasses)));
-                  const destSec = ov?.nextSection
-                    ?? (fin==="retain" ? cohort.section : (led?.targetSection || cohort.section));
-                  const destLabel = fin==="retain"
-                    ? `Retained in Class ${destCls} — ${destSec}`
-                    : `→ Class ${destCls} — ${destSec}`;
+                {agg.students.filter(includeInPromotionSummary).map(s => {
+                  const preview = previewForStudent(s);
+                  const { outcome, destination } = preview;
+                  const statusLabel = outcome === "pending"
+                    ? s.resultStatus === "incomplete" ? "Pending — No marks" : "Pending — No locked decision"
+                    : outcome === "review" ? "Ineligible — Requires Review"
+                    : outcome === "historical" ? "Historical — Read-only"
+                    : outcome === "retained"
+                    ? `Retained in Class ${destination?.className} — ${destination?.sectionName}`
+                    : outcome === "grace_pass"
+                    ? `Grace Pass → Class ${destination?.className} — ${destination?.sectionName}`
+                    : `Promoted → Class ${destination?.className} — ${destination?.sectionName}`;
+                  const color = outcome === "promoted" ? "emerald"
+                    : outcome === "retained" ? "red"
+                    : outcome === "grace_pass" ? "purple"
+                    : outcome === "review" ? "red"
+                    : outcome === "historical" ? "slate" : "amber";
+                  const icon = outcome === "promoted" ? <TrendingUp className="w-3 h-3"/>
+                    : outcome === "retained" ? <UserX className="w-3 h-3"/>
+                    : outcome === "grace_pass" ? <Award className="w-3 h-3"/>
+                    : outcome === "review" ? <AlertTriangle className="w-3 h-3"/>
+                    : outcome === "historical" ? <Lock className="w-3 h-3"/>
+                    : <Clock className="w-3 h-3"/>;
                   return (
                     <div key={s.studentId} className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-[#0A1628]/50">
                       <span className="text-slate-300">{s.name} <span className="text-slate-500 font-mono">({s.dsid})</span></span>
-                      <Chip
-                        c={fin==="promote" ? "emerald" : fin==="retain" ? "red" : "purple"}
-                        icon={fin==="promote" ? <TrendingUp className="w-3 h-3"/> : fin==="retain" ? <UserX className="w-3 h-3"/> : <Award className="w-3 h-3"/>}
-                        label={fin==="grace_pass" ? `Grace ${destLabel}` : destLabel}
-                      />
+                      <Chip c={color} icon={icon} label={statusLabel} />
                     </div>
                   );
                 })}
@@ -1311,7 +1392,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 ← Back to Review
               </Button>
               <Button
-                disabled={!confirmed || !selectedTargetSession || executeMut.isPending || !agg || counters.total === 0 || isArchiveMode}
+                disabled={!confirmed || !selectedTargetSession || executeMut.isPending || !agg || counters.eligible === 0 || isArchiveMode}
                 onClick={() => executeMut.mutate()}
                 className="h-9 px-8 font-bold text-sm"
                 style={{ background: confirmed ? "linear-gradient(135deg,#D4AF37,#b8972e)" : undefined, color: confirmed ? "#0A1628" : undefined }}
@@ -1415,7 +1496,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
         <>
           {/* ── KPI Summary Banner ──────────────────────────────────────────── */}
           {!ledgerLoading && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               {/* Non-interactive cards */}
               <div className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
                 <GraduationCap className="w-5 h-5 text-[#D4AF37]" />
@@ -1443,7 +1524,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 <Lock className="w-5 h-5 text-emerald-400" />
                 <div>
                   <p className="text-2xl font-bold text-emerald-400">{kpi.lockedReady}</p>
-                  <p className="text-xs text-slate-400">Ready to Advance</p>
+                  <p className="text-xs text-slate-400">Sections with Ready Students</p>
                 </div>
                 {statusFilter === "ready" && (
                   <span className="ml-auto text-[10px] font-bold text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded-full">ON</span>
@@ -1461,12 +1542,22 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 <AlertTriangle className="w-5 h-5 text-amber-400" />
                 <div>
                   <p className="text-2xl font-bold text-amber-400">{kpi.pending}</p>
-                  <p className="text-xs text-slate-400">Pending Ledgers</p>
+                  <p className="text-xs text-slate-400">Sections with Pending Students</p>
                 </div>
                 {statusFilter === "pending" && (
                   <span className="ml-auto text-[10px] font-bold text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded-full">ON</span>
                 )}
               </div>
+            <div
+              data-testid="kpi-card-review"
+              className="rounded-xl border border-red-500/30 p-4 flex items-center gap-3"
+              style={{ background:"rgba(239,68,68,0.06)" }}>
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <div>
+                <p className="text-2xl font-bold text-red-400">{kpi.needsReview}</p>
+                <p className="text-xs text-slate-400">Sections Requiring Review</p>
+              </div>
+            </div>
             </div>
           )}
 
@@ -1578,9 +1669,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                     {isExpanded && (
                       <div className="border-t border-[#1e2d44]">
                         {rows.map((row, idx) => {
-                          // "isPending" controls the Remind button:
-                          // show it only when no students are locked yet (teacher hasn't submitted any locks)
-                          const isPending = row.readyCount === 0 && !row.adminExecuted;
+                          // Remind only when a current Student has a missing/unlocked decision.
+                          const isPending = row.pendingCount > 0 && row.readyCount === 0 && row.executedCount === 0;
                           const rKey = `${row.class}|${row.section}`;
                           return (
                             <div key={row.section}
@@ -1652,14 +1742,27 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                     View Results
                                   </Button>
                                 ) : row.readyCount > 0 ? (
-                                  // ≥1 locked student awaiting admin action (including partial-execution cohorts)
+                                  // Execute only the backend-approved subset of a mixed cohort.
                                   <Button size="sm"
                                     className="text-xs h-8 font-semibold px-3"
                                     style={{ background:"linear-gradient(135deg,#D4AF37,#b8972e)", color:"#0A1628" }}
                                     onClick={() => openWizard(row)}
                                     disabled={isArchiveMode}
                                     data-testid={`btn-review-${row.class}-${row.section}`}>
-                                    <Play className="w-3 h-3 mr-1.5"/>Review & Execute
+                                    <Play className="w-3 h-3 mr-1.5"/>Review & Execute ({row.readyCount} eligible)
+                                  </Button>
+                                ) : row.ineligibleCount > 0 ? (
+                                  <Button size="sm" disabled variant="outline"
+                                    className="border-red-500/30 text-red-300 text-xs h-8"
+                                    data-testid={`btn-ineligible-${row.class}-${row.section}`}>
+                                    Requires Review
+                                  </Button>
+                                ) : row.historicalCount > 0 ? (
+                                  <Button size="sm" variant="outline"
+                                    className="border-slate-700 text-slate-500 text-xs h-8"
+                                    onClick={() => openWizard(row)}
+                                    data-testid={`btn-historical-${row.class}-${row.section}`}>
+                                    View Historical · Read-only
                                   </Button>
                                 ) : (
                                   // No locked students yet — teacher hasn't locked the ledger

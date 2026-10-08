@@ -23,6 +23,7 @@ test("Web Promotion routes require and preserve the selected school session", as
     [88, { id: 88, schoolId: 12, isActive: true }],
   ]);
   const ledgerReads: Array<[number, string, number | undefined]> = [];
+  const ledgerReadinessReads: Array<[number, string, number | undefined]> = [];
   const decisionReads: Array<[number, string, string, string, number | undefined]> = [];
   const aggregateReads: Array<[number, string, string, string, number | undefined]> = [];
   const deletionCalls: Array<[number, number, string]> = [];
@@ -45,6 +46,14 @@ test("Web Promotion routes require and preserve the selected school session", as
   });
   replace(storage, "getLedgerStatus", async (schoolId: number, term: string, sessionId?: number) => {
     ledgerReads.push([schoolId, term, sessionId]);
+    return [];
+  });
+  replace(storage, "getPromotionLedgerReadinessStatus", async (
+    schoolId: number,
+    term: string,
+    sessionId: number,
+  ) => {
+    ledgerReadinessReads.push([schoolId, term, sessionId]);
     return [];
   });
   replace(storage, "deletePromotionDecisionsByTerm", async (
@@ -74,6 +83,23 @@ test("Web Promotion routes require and preserve the selected school session", as
   ) => {
     aggregateReads.push([schoolId, cls, section, examType, sessionId]);
     return [];
+  });
+  replace(storage, "getPromotionCohortEvaluation", async (
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+  ) => {
+    aggregateReads.push([schoolId, cls, section, term, sessionId]);
+    return {
+      components: [{ sourceExam: term }],
+      scoreRows: [],
+      gradingRules: [],
+      gradingTier: { passPercentage: 35 },
+      rosterRows: [],
+      resultsByStudent: new Map(),
+    } as any;
   });
   replace(storage, "getPromotionOverrides", async (...args: any[]) => {
     overrideReads.push(args);
@@ -211,7 +237,7 @@ test("Web Promotion routes require and preserve the selected school session", as
     grants: examGrant,
     viewSessionId: 41,
   })).status, 200, "archived-session reads remain available");
-  assert.deepEqual(ledgerReads, [[11, "Term 2", 41]]);
+  assert.deepEqual(ledgerReadinessReads, [[11, "Term 2", 41]]);
 
   const archivedAggregate = await request(
     "/api/admin/exam/aggregated?class=5&section=A&examType=Term%202&term=Term%202",

@@ -106,9 +106,12 @@ import {
   userSessionRevocationSid,
 } from "./session-revocation";
 import {
+  checkLockedPromotionDecision,
+  evaluatePromotionLedgerReadiness,
   PromotionStage1Error,
   promotionAlreadyExecutedError,
   resolvePromotionTermComponents,
+  summarizePromotionLedgerReadiness,
   validatePromotionExecutionBatch,
   validatePromotionExecutionRoster,
   validatePromotionTargetEnrollment,
@@ -116,6 +119,7 @@ import {
   type PromotionExecutionItem,
   type PromotionExecutionPlacement,
   type PromotionTargetEnrollmentRow,
+  type PromotionLedgerReadiness,
 } from "./promotion-stage1";
 import {
   hasActiveStudentPlacementChanged,
@@ -285,9 +289,11 @@ async function loadPromotionCohortEvaluation(
   section: string,
   term: string,
   allowArchivedSession = false,
+  lockRows = true,
 ) {
-  await lockPromotionConfiguration(tx, schoolId);
-  const [session] = await tx.select({
+  const withOptionalUpdateLock = (query: any) => lockRows ? query.for("update") : query;
+  if (lockRows) await lockPromotionConfiguration(tx, schoolId);
+  const [session] = await withOptionalUpdateLock(tx.select({
     id: academicSessions.id,
     schoolId: academicSessions.schoolId,
     isActive: academicSessions.isActive,
@@ -296,7 +302,7 @@ async function loadPromotionCohortEvaluation(
   }).from(academicSessions).where(and(
     eq(academicSessions.id, sessionId),
     eq(academicSessions.schoolId, schoolId),
-  )).for("update");
+  )));
   if (!session || (!session.isActive && !allowArchivedSession)) {
     throw new PromotionStage1Error(
       "Promotion decisions can only be saved for the active Academic Session.",
@@ -305,10 +311,9 @@ async function loadPromotionCohortEvaluation(
     );
   }
 
-  const policyTiers = await tx.select().from(examPolicyTiers)
+  const policyTiers = await withOptionalUpdateLock(tx.select().from(examPolicyTiers)
     .where(eq(examPolicyTiers.schoolId, schoolId))
-    .orderBy(examPolicyTiers.createdAt)
-    .for("update");
+    .orderBy(examPolicyTiers.createdAt));
   const matchingPolicies = policyTiers.filter((policy: ExamPolicyTier) =>
     (policy.applicableClasses ?? []).some(value => value.trim() === cls.trim()),
   );
@@ -335,13 +340,13 @@ async function loadPromotionCohortEvaluation(
     );
   }
 
-  const examMetadataRows = await tx.select({
+  const examMetadataRows = await withOptionalUpdateLock(tx.select({
     metaKey: schoolMetadata.metaKey,
     metaValue: schoolMetadata.metaValue,
   }).from(schoolMetadata).where(and(
     eq(schoolMetadata.schoolId, schoolId),
     inArray(schoolMetadata.metaKey, ["exam_types", "class_exam_types", "class_subjects"]),
-  )).for("update");
+  )));
   const examMetadata = new Map<string, string>(examMetadataRows.map((row: {
     metaKey: string; metaValue: string;
   }) => [row.metaKey, row.metaValue]));
@@ -389,7 +394,7 @@ async function loadPromotionCohortEvaluation(
   }
   const configuredSubjects = (classSubjects as string[]).map(subject => subject.trim());
 
-  const rosterRows = await tx.select({
+  const rosterRows = await withOptionalUpdateLock(tx.select({
     studentId: students.id,
     schoolId: students.schoolId,
     isActive: students.isActive,
@@ -413,8 +418,7 @@ async function loadPromotionCohortEvaluation(
       eq(enrollments.status, "Active"),
       session.isActive ? eq(students.isActive, true) : undefined,
     ))
-    .orderBy(students.id)
-    .for("update");
+    .orderBy(students.id));
   if (!rosterRows.length) {
     throw new PromotionStage1Error(
       "There are no active Students in this exact session and class-section.",
@@ -424,7 +428,7 @@ async function loadPromotionCohortEvaluation(
   }
 
   const studentIds = rosterRows.map((row: { studentId: number }) => row.studentId);
-  const scoreRows = await tx.select({
+  const scoreRows = await withOptionalUpdateLock(tx.select({
     studentId: examScores.studentId,
     subject: examScores.subject,
     examType: examScores.examType,
@@ -438,15 +442,14 @@ async function loadPromotionCohortEvaluation(
     eq(examScores.section, section),
     inArray(examScores.studentId, studentIds),
     inArray(examScores.examType, allSourceExams),
-  )).for("update");
+  )));
   const applicableScoreRows = scoreRows.filter((row: { subject: string }) =>
     configuredSubjects.includes(row.subject.trim()),
   );
 
-  const storedGradingTiers = await tx.select().from(gradingTiers)
+  const storedGradingTiers = await withOptionalUpdateLock(tx.select().from(gradingTiers)
     .where(eq(gradingTiers.schoolId, schoolId))
-    .orderBy(gradingTiers.sortOrder)
-    .for("update");
+    .orderBy(gradingTiers.sortOrder));
   const gradingTier = storedGradingTiers.find((tier: GradingTier) =>
     (tier.classes ?? []).some(value => value.trim() === cls.trim()),
   ) as GradingTier | undefined;
@@ -457,13 +460,12 @@ async function loadPromotionCohortEvaluation(
       "GRADING_POLICY_MISSING",
     );
   }
-  const storedRules = await tx.select().from(gradingRules)
+  const storedRules = await withOptionalUpdateLock(tx.select().from(gradingRules)
     .where(and(
       eq(gradingRules.schoolId, schoolId),
       eq(gradingRules.tierId, gradingTier.id),
     ))
-    .orderBy(gradingRules.sortOrder)
-    .for("update");
+    .orderBy(gradingRules.sortOrder));
   const normalizedRules = storedRules.map((rule: StoredGradingRule) => normalizeStoredGradingRule(rule));
   const { ruleTermAverage, cumulativeConfig } = parseStoredPromotionRules(
     policy.promotionFailRules,
@@ -482,7 +484,7 @@ async function loadPromotionCohortEvaluation(
     lte(attendanceRecords.date, attendanceEndDate),
   ));
   const workingDates = workingDateRows.map((row: { date: string }) => row.date).sort();
-  const attendanceRows = workingDates.length ? await tx.select({
+  const attendanceRows = workingDates.length ? await withOptionalUpdateLock(tx.select({
     identityKey: attendanceRecords.identityKey,
     date: attendanceRecords.date,
     status: attendanceRecords.status,
@@ -493,7 +495,7 @@ async function loadPromotionCohortEvaluation(
     eq(attendanceRecords.section, section),
     gte(attendanceRecords.date, session.startDate),
     lte(attendanceRecords.date, attendanceEndDate),
-  )).for("update") : [];
+  ))) : [];
   const attendanceByIdentityDate = new Map(attendanceRows.map((row: {
     identityKey: string; date: string; status: string;
   }) => [`${row.identityKey}:${row.date}`, row.status]));
@@ -6976,9 +6978,10 @@ export class DatabaseStorage {
     section: string,
     term: string,
   ) {
-    return db.transaction(tx =>
-      loadPromotionCohortEvaluation(tx, schoolId, sessionId, cls, section, term, true),
-    );
+    return db.transaction(async tx => {
+      await tx.execute(sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`);
+      return loadPromotionCohortEvaluation(tx, schoolId, sessionId, cls, section, term, true, false);
+    });
   }
 
   async getExamAggregated(schoolId: number, cls: string, section: string, examType: string, sessionId: number): Promise<{
@@ -7541,44 +7544,26 @@ export class DatabaseStorage {
       const canonicalItems: PromotionExecutionItem[] = [];
       for (const { item, result } of selectedResultRows) {
         const decision = decisionByStudent.get(item.studentId) as PromotionDecision | undefined;
-        if (
-          !decision ||
-          !decision.locked ||
-          !decision.processedByTeacherId ||
-          !validTeacherIds.has(decision.processedByTeacherId) ||
-          !["promoted", "retained"].includes(decision.decision)
-        ) {
-          throw new PromotionStage1Error(
-            "Promotion requires a valid locked Teacher decision; missing, unlocked or unsupported decisions cannot be executed.",
-            409,
-            "PROMOTION_DECISION_INVALID",
-          );
+        const decisionCheck = checkLockedPromotionDecision({
+          resultStatus: result.resultStatus,
+          promoted: result.promoted,
+          decision,
+          teacherIsValid: !!decision?.processedByTeacherId
+            && validTeacherIds.has(decision.processedByTeacherId),
+          targetPlacementIsConfigured: !!decision
+            && configuredClasses.includes(decision.targetClass)
+            && Array.isArray(configuredSections[decision.targetClass])
+            && (configuredSections[decision.targetClass] as unknown[]).includes(decision.targetSection),
+          sourceClass: cohort.fromClass,
+          sourceSection: cohort.fromSection,
+          requestedTarget: { className: item.nextClass, sectionName: item.nextSection },
+        });
+        if (!decisionCheck.ok) {
+          throw new PromotionStage1Error(decisionCheck.message, 409, decisionCheck.code);
         }
-        const currentSuggestion = result.promoted ? "promoted" : "retained";
-        if (
-          decision.autoSuggestion !== currentSuggestion ||
-          decision.manualIntervention !== (decision.decision !== currentSuggestion)
-        ) {
+        if (!decision) {
           throw new PromotionStage1Error(
-            "The locked Teacher decision is stale or conflicts with the current examination result. Preserve it and have an authorized Teacher review the ledger.",
-            409,
-            "PROMOTION_DECISION_CONFLICT",
-          );
-        }
-        if (
-          item.nextClass !== decision.targetClass ||
-          item.nextSection !== decision.targetSection
-        ) {
-          throw new PromotionStage1Error(
-            "The requested Promotion destination does not match the locked Teacher decision.",
-            409,
-            "PROMOTION_DECISION_CONFLICT",
-          );
-        }
-        if (decision.decision === "retained"
-          && (decision.targetClass !== cohort.fromClass || decision.targetSection !== cohort.fromSection)) {
-          throw new PromotionStage1Error(
-            "A retained decision must keep the Student in the current class and section.",
+            "Promotion requires a valid locked Teacher decision.",
             409,
             "PROMOTION_DECISION_INVALID",
           );
@@ -9592,6 +9577,206 @@ export class DatabaseStorage {
       const ib = orderedClasses.indexOf(b.class);
       const ca = (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
       return ca !== 0 ? ca : a.section.localeCompare(b.section);
+    });
+  }
+
+  /**
+   * Web-only, read-only readiness projection. Mobile keeps the legacy ledger
+   * response contract; execution still revalidates every submitted Student.
+   */
+  async getPromotionLedgerReadinessStatus(schoolId: number, term: string, sessionId: number) {
+    const rows = await this.getLedgerStatus(schoolId, term, sessionId);
+    return db.transaction(async tx => {
+      await tx.execute(sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`);
+      const [session] = await tx.select({
+        id: academicSessions.id,
+        schoolId: academicSessions.schoolId,
+        isActive: academicSessions.isActive,
+      }).from(academicSessions).where(and(
+        eq(academicSessions.id, sessionId),
+        eq(academicSessions.schoolId, schoolId),
+      ));
+      if (!session) {
+        throw new PromotionStage1Error(
+          "The selected Academic Session is not accessible.",
+          403,
+          "SESSION_NOT_ACCESSIBLE",
+        );
+      }
+
+      const decisions = await tx.select({
+        className: promotionDecisions.class,
+        sectionName: promotionDecisions.section,
+        studentId: promotionDecisions.studentId,
+        decision: promotionDecisions.decision,
+        targetClass: promotionDecisions.targetClass,
+        targetSection: promotionDecisions.targetSection,
+        locked: promotionDecisions.locked,
+        autoSuggestion: promotionDecisions.autoSuggestion,
+        manualIntervention: promotionDecisions.manualIntervention,
+        processedByTeacherId: promotionDecisions.processedByTeacherId,
+        adminExecuted: promotionDecisions.adminExecuted,
+      }).from(promotionDecisions).where(and(
+        eq(promotionDecisions.schoolId, schoolId),
+        eq(promotionDecisions.sessionId, sessionId),
+        eq(promotionDecisions.term, term),
+      ));
+      const decisionsByCohort = new Map<string, typeof decisions>();
+      for (const decision of decisions) {
+        const key = `${decision.className}|${decision.sectionName}`;
+        const bucket = decisionsByCohort.get(key) ?? [];
+        bucket.push(decision);
+        decisionsByCohort.set(key, bucket);
+      }
+
+      const rosterByCohort = new Map<string, Set<number>>();
+      if (session.isActive) {
+        const rosterRows = await tx.select({
+          studentId: students.id,
+          className: enrollments.className,
+          sectionName: enrollments.sectionName,
+        }).from(enrollments).innerJoin(students, and(
+          eq(students.id, enrollments.studentId),
+          eq(students.schoolId, enrollments.schoolId),
+        )).where(and(
+          eq(enrollments.schoolId, schoolId),
+          eq(enrollments.sessionId, sessionId),
+          eq(enrollments.status, "Active"),
+          eq(students.isActive, true),
+        ));
+        for (const roster of rosterRows) {
+          const key = `${roster.className}|${roster.sectionName}`;
+          const bucket = rosterByCohort.get(key) ?? new Set<number>();
+          bucket.add(roster.studentId);
+          rosterByCohort.set(key, bucket);
+        }
+      }
+
+      const teacherIds = [...new Set(decisions
+        .map(decision => decision.processedByTeacherId)
+        .filter((id): id is number => id !== null))];
+      const validTeacherIds = new Set(teacherIds.length
+        ? (await tx.select({ id: teachers.id }).from(teachers).where(and(
+            eq(teachers.schoolId, schoolId),
+            inArray(teachers.id, teacherIds),
+          ))).map(teacher => teacher.id)
+        : []);
+      const configRows = await tx.select({
+        metaKey: schoolMetadata.metaKey,
+        metaValue: schoolMetadata.metaValue,
+      }).from(schoolMetadata).where(and(
+        eq(schoolMetadata.schoolId, schoolId),
+        inArray(schoolMetadata.metaKey, ["classes", "class_sections"]),
+      ));
+      const config = new Map(configRows.map(row => [row.metaKey, row.metaValue]));
+      let configuredClasses: string[] = [];
+      let configuredSections: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(config.get("classes") ?? "[]");
+        if (Array.isArray(parsed)) configuredClasses = parsed.filter((value): value is string => typeof value === "string");
+      } catch {}
+      try {
+        const parsed: unknown = JSON.parse(config.get("class_sections") ?? "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          configuredSections = parsed as Record<string, unknown>;
+        }
+      } catch {}
+
+      const projectedRows = [];
+      for (const row of rows) {
+        const key = `${row.class}|${row.section}`;
+        const cohortDecisions = decisionsByCohort.get(key) ?? [];
+        const rosterIds = rosterByCohort.get(key) ?? new Set<number>();
+        let evaluation: Awaited<ReturnType<typeof loadPromotionCohortEvaluation>> | null = null;
+        if (session.isActive && cohortDecisions.some(decision => decision.locked && !decision.adminExecuted)) {
+          try {
+            evaluation = await loadPromotionCohortEvaluation(
+              tx, schoolId, sessionId, row.class, row.section, term, true, false,
+            );
+            assertPromotionGateEnabled(evaluation.policy, term);
+          } catch (error) {
+            if (!(error instanceof PromotionStage1Error)) throw error;
+            evaluation = null;
+          }
+        }
+
+        const resultsByStudent = evaluation?.resultsByStudent as Map<number, {
+          resultStatus: "complete" | "incomplete";
+          promoted: boolean | null;
+        }> | undefined;
+        const decisionsByStudent = new Map<number, typeof cohortDecisions>();
+        for (const decision of cohortDecisions) {
+          const bucket = decisionsByStudent.get(decision.studentId) ?? [];
+          bucket.push(decision);
+          decisionsByStudent.set(decision.studentId, bucket);
+        }
+        const studentIds = new Set<number>([
+          ...rosterIds,
+          ...decisionsByStudent.keys(),
+        ]);
+        const readinessEntries: Array<{
+          studentId: number;
+          readiness: PromotionLedgerReadiness;
+        }> = [];
+        for (const studentId of studentIds) {
+          const studentDecisions = decisionsByStudent.get(studentId) ?? [];
+          let readiness: PromotionLedgerReadiness;
+          if (studentDecisions.length > 1) {
+            readiness = studentDecisions.some(decision => decision.adminExecuted)
+              ? "executed"
+              : studentDecisions.some(decision => decision.locked) ? "ineligible" : "pending";
+          } else {
+            const decision = studentDecisions[0];
+            const result = resultsByStudent?.get(studentId);
+            const targetIsConfigured = !!decision
+              && configuredClasses.includes(decision.targetClass)
+              && Array.isArray(configuredSections[decision.targetClass])
+              && (configuredSections[decision.targetClass] as unknown[]).includes(decision.targetSection);
+            readiness = evaluatePromotionLedgerReadiness({
+              sessionIsActive: session.isActive,
+              studentIsInSourceRoster: rosterIds.has(studentId),
+              resultStatus: result?.resultStatus,
+              promoted: result?.promoted,
+              decision,
+              teacherIsValid: !!decision?.processedByTeacherId
+                && validTeacherIds.has(decision.processedByTeacherId),
+              targetPlacementIsConfigured: targetIsConfigured,
+              sourceClass: row.class,
+              sourceSection: row.section,
+              adminExecuted: decision?.adminExecuted,
+            });
+          }
+          readinessEntries.push({ studentId, readiness });
+        }
+
+        const { counts: readinessCounts, studentIds: readinessIds } =
+          summarizePromotionLedgerReadiness(readinessEntries);
+        const totalStudents = studentIds.size;
+        projectedRows.push({
+          ...row,
+          status: totalStudents === 0 ? "none" as const
+            : readinessCounts.pending > 0 ? "draft" as const : "locked" as const,
+          totalStudents,
+          lockedCount: readinessCounts.ready + readinessCounts.ineligible
+            + readinessCounts.historical + readinessCounts.executed,
+          adminExecuted: totalStudents > 0 && (
+            session.isActive
+              ? readinessCounts.executed === totalStudents
+              : row.adminExecuted
+          ),
+          executedCount: readinessCounts.executed,
+          readyCount: readinessCounts.ready,
+          pendingCount: readinessCounts.pending,
+          ineligibleCount: readinessCounts.ineligible,
+          historicalCount: readinessCounts.historical,
+          readyStudentIds: readinessIds.ready,
+          pendingStudentIds: readinessIds.pending,
+          ineligibleStudentIds: readinessIds.ineligible,
+          historicalStudentIds: readinessIds.historical,
+          executedStudentIds: readinessIds.executed,
+        });
+      }
+      return projectedRows;
     });
   }
 

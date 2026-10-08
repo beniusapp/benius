@@ -17,6 +17,10 @@ import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pag
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
 import {
+  reportCardAverage,
+  reportCardFailureCount,
+} from "@/lib/examination-promotion-preview";
+import {
   computeAllStudentResults as calculateExaminationResults,
   computeGrade as calculateExaminationGrade,
   type ComputedStudentResult,
@@ -285,7 +289,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
     ? buildDetentionReasons(student, isManualOverride)
     : [];
 
-  const overallAvg = student.termAverages[term] ?? null;
+  const overallAvg = reportCardAverage(student.resultStatus, student.termAverages[term] ?? null);
   const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
 
   return (
@@ -320,20 +324,27 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
           <div><span className="text-slate-500 text-xs block">Student Name</span><span className="text-white font-semibold">{student.name}</span></div>
           <div><span className="text-slate-500 text-xs block">DSID</span><span className="text-slate-300 font-mono text-xs">{student.digitalStudentId}</span></div>
           {student.rollNumber !== null && <div><span className="text-slate-500 text-xs block">Roll No.</span><span className="text-slate-300">{student.rollNumber}</span></div>}
+          {student.resultStatus !== "complete" && (
+            <div className="flex items-end" data-testid="report-result-status">
+              <span className="px-3 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-semibold">
+                Incomplete / Pending Result
+              </span>
+            </div>
+          )}
           <div className="ml-auto flex items-end gap-4">
             <div className="text-right">
               <span className="text-slate-500 text-xs block">Term Average</span>
-              <span className="text-yellow-400 font-bold text-lg">{overallAvg !== null ? `${overallAvg}%` : "—"}</span>
+              <span className="text-yellow-400 font-bold text-lg">{overallAvg !== null ? `${overallAvg}%` : "No data"}</span>
             </div>
-            {overallGrade && (
-              <div className="text-right">
-                <span className="text-slate-500 text-xs block">Overall Grade</span>
+            <div className="text-right">
+              <span className="text-slate-500 text-xs block">Overall Grade</span>
+              {overallGrade ? (
                 <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${overallGrade.color} ${overallGrade.bg}`}
                   title={overallGrade.remarks ?? ""}>
                   {overallGrade.label}
                 </span>
-              </div>
-            )}
+              ) : <span className="text-slate-400 font-bold text-lg">—</span>}
+            </div>
           </div>
         </div>
 
@@ -417,10 +428,20 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
               <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Failure Count per Term</h3>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(student.allTermFailCounts).map(([t, n]) => (
-                  <div key={t} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${n > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
-                    <span className={n > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
-                    <span className={`font-bold ${n > 0 ? "text-red-300" : "text-emerald-300"}`}>{n} fail{n !== 1 ? "s" : ""}</span>
-                  </div>
+                  (() => {
+                    const count = reportCardFailureCount(
+                      t === term ? student.resultStatus : "complete",
+                      n,
+                    );
+                    return (
+                      <div key={t} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${count === null ? "border-amber-500/30 bg-amber-500/10" : count > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
+                        <span className={count === null ? "text-amber-300" : count > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
+                        <span className={`font-bold ${count === null ? "text-amber-200" : count > 0 ? "text-red-300" : "text-emerald-300"}`}>
+                          {count === null ? "Not evaluated" : `${count} fail${count !== 1 ? "s" : ""}`}
+                        </span>
+                      </div>
+                    );
+                  })()
                 ))}
               </div>
             </div>
@@ -429,8 +450,17 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
           {/* ── Promotion Verdict Block ───────────────────────────────────────
                Shown only when the active term has promotionGateVerdict enabled.
                Reads from the teacher's manually-set Promotion Ledger entry.      ── */}
-          {showPromoVerdict ? (
-            promoEntry ? (
+          {showPromoVerdict || student.resultStatus !== "complete" ? (
+            student.resultStatus !== "complete" ? (
+              <div className="rounded-xl p-4 border border-amber-500/30 bg-amber-500/10 flex items-start gap-3"
+                data-testid="report-promotion-pending">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-200">{showPromoVerdict ? "Promotion Gate" : "Promotion Assessment"}</p>
+                  <p className="text-sm font-bold text-amber-300 mt-1">Pending — No marks</p>
+                </div>
+              </div>
+            ) : promoEntry ? (
               /* Ledger entry exists → render final verdict */
               <div className={`rounded-xl border overflow-hidden ${promoEntry.decision === "promoted" ? "border-emerald-500/30" : "border-red-500/30"}`}>
                 {/* Coloured verdict banner */}

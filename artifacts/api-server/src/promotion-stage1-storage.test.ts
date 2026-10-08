@@ -64,6 +64,7 @@ function fakePromotionTransaction(fixture: Fixture) {
     const stagedStudentUpdates: any[] = [];
     const stagedDecisionUpdates: any[] = [];
     const tx: any = {
+      execute: async () => ({}),
       select: () => {
         let table: unknown;
         const query: any = {

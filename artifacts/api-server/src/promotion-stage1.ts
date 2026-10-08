@@ -110,6 +110,132 @@ export interface PromotionTargetEnrollmentRow {
   status: string;
 }
 
+export interface LockedPromotionDecisionInput {
+  resultStatus: "complete" | "incomplete" | undefined;
+  promoted: boolean | null | undefined;
+  decision: {
+    locked: boolean;
+    decision: string;
+    targetClass: string;
+    targetSection: string;
+    autoSuggestion: string | null;
+    manualIntervention: boolean;
+  } | undefined;
+  teacherIsValid: boolean;
+  targetPlacementIsConfigured: boolean;
+  sourceClass: string;
+  sourceSection: string;
+  requestedTarget?: { className: string; sectionName: string };
+}
+
+export type LockedPromotionDecisionCheck =
+  | { ok: true; suggestion: "promoted" | "retained" }
+  | {
+      ok: false;
+      code: "PROMOTION_RESULT_INCOMPLETE" | "PROMOTION_DECISION_INVALID" | "PROMOTION_DECISION_CONFLICT";
+      message: string;
+    };
+
+/** Shared locked-ledger compatibility rules for readiness projection and execution. */
+export function checkLockedPromotionDecision(
+  input: LockedPromotionDecisionInput,
+): LockedPromotionDecisionCheck {
+  if (input.resultStatus !== "complete" || input.promoted === null || input.promoted === undefined) {
+    return {
+      ok: false,
+      code: "PROMOTION_RESULT_INCOMPLETE",
+      message: "Promotion is blocked because this Student has no complete applicable result for the selected term.",
+    };
+  }
+  const decision = input.decision;
+  if (
+    !decision ||
+    !decision.locked ||
+    !input.teacherIsValid ||
+    !["promoted", "retained"].includes(decision.decision)
+  ) {
+    return {
+      ok: false,
+      code: "PROMOTION_DECISION_INVALID",
+      message: "Promotion requires a valid locked Teacher decision; missing, unlocked or unsupported decisions cannot be executed.",
+    };
+  }
+
+  const suggestion = input.promoted ? "promoted" : "retained";
+  if (
+    decision.autoSuggestion !== suggestion ||
+    decision.manualIntervention !== (decision.decision !== suggestion)
+  ) {
+    return {
+      ok: false,
+      code: "PROMOTION_DECISION_CONFLICT",
+      message: "The locked Teacher decision is stale or conflicts with the current examination result. Preserve it and have an authorized Teacher review the ledger.",
+    };
+  }
+  if (
+    !input.targetPlacementIsConfigured ||
+    (input.requestedTarget && (
+      input.requestedTarget.className !== decision.targetClass ||
+      input.requestedTarget.sectionName !== decision.targetSection
+    ))
+  ) {
+    return {
+      ok: false,
+      code: "PROMOTION_DECISION_CONFLICT",
+      message: "The locked Teacher decision has an invalid or conflicting Promotion destination.",
+    };
+  }
+  if (
+    decision.decision === "retained" &&
+    (decision.targetClass !== input.sourceClass || decision.targetSection !== input.sourceSection)
+  ) {
+    return {
+      ok: false,
+      code: "PROMOTION_DECISION_INVALID",
+      message: "A retained decision must keep the Student in the current class and section.",
+    };
+  }
+  return { ok: true, suggestion };
+}
+
+export type PromotionLedgerReadiness = "ready" | "pending" | "ineligible" | "historical" | "executed";
+
+export function evaluatePromotionLedgerReadiness(input: LockedPromotionDecisionInput & {
+  sessionIsActive: boolean;
+  studentIsInSourceRoster: boolean;
+  adminExecuted?: boolean;
+}): PromotionLedgerReadiness {
+  if (!input.sessionIsActive) return input.decision?.locked ? "historical" : "pending";
+  if (input.adminExecuted) return "executed";
+  if (!input.decision || !input.decision.locked) return "pending";
+  if (!input.studentIsInSourceRoster) return "ineligible";
+  return checkLockedPromotionDecision(input).ok ? "ready" : "ineligible";
+}
+
+export function summarizePromotionLedgerReadiness(
+  entries: Array<{ studentId: number; readiness: PromotionLedgerReadiness }>,
+) {
+  const counts: Record<PromotionLedgerReadiness, number> = {
+    ready: 0,
+    pending: 0,
+    ineligible: 0,
+    historical: 0,
+    executed: 0,
+  };
+  const studentIds: Record<PromotionLedgerReadiness, number[]> = {
+    ready: [],
+    pending: [],
+    ineligible: [],
+    historical: [],
+    executed: [],
+  };
+  for (const entry of entries) {
+    counts[entry.readiness]++;
+    studentIds[entry.readiness].push(entry.studentId);
+  }
+  return { counts, studentIds };
+}
+
 export interface PromotionExecutionPlacement {
   studentId: number;
   dsid: string;
