@@ -1,0 +1,150 @@
+# BENIUS — TEACHER HOMEWORK SUBMISSION, VIEW TRACKING & FEEDBACK AUDIT
+
+## STRICT INSTRUCTION: READ-ONLY AUDIT FIRST
+
+Do NOT modify any code, database, schema, API, Web UI, or Mobile application.
+
+I want to understand the complete Homework workflow before approving changes.
+
+### Module paths
+- Teacher Portal: `/teacher-dashboard/homework`
+- Student Portal: Student Homework module
+
+### Current observation
+
+The Teacher can assign Homework and see a card displaying "Viewed by 0 / 5 students".
+
+The Student can open Homework, write an answer, upload a file, and submit Homework.
+
+I want to understand how the Teacher can view submitted Homework, see Student-wise submission and view status, and give feedback.
+
+## AUDIT 1 — Student Homework Submission
+
+Trace the entire workflow:
+
+Student opens Homework → enters answer/uploads file → submits → API → database.
+
+Verify:
+
+1. Is Student Homework submission fully implemented?
+2. Where are text answers stored?
+3. Where are uploaded files stored?
+4. Can a Student submit both text and a file?
+5. Can the Student edit or resubmit?
+6. Does the system distinguish Pending, Submitted, Reviewed, and other statuses?
+7. Does each submission link to the correct Homework, Student, school, and Academic Session?
+8. Can submissions from an archived session be changed?
+9. Are attachments securely authorized?
+
+Identify exact routes, database tables, fields, and relevant source files.
+
+## AUDIT 2 — Teacher Viewing Student Submissions
+
+Inspect `/teacher-dashboard/homework`.
+
+Verify:
+
+1. Is there already a Teacher interface to view submitted Homework?
+2. Can the Teacher open an individual Homework and see its Students?
+3. Can the Teacher identify which Students submitted and which have not?
+4. Can the Teacher read each Student's written answer?
+5. Can the Teacher view/download each Student's uploaded attachment?
+6. Is there an existing Student-wise submission status?
+7. Are the backend APIs already available but not connected to the Web Teacher UI?
+8. Does the current Teacher Homework card have a submission-details action?
+
+Do not assume missing UI means missing backend functionality.
+
+## AUDIT 3 — "Viewed by 0 / 5 Students"
+
+This is especially important.
+
+Trace exactly how this number is calculated.
+
+Check:
+
+1. What does "Viewed" mean in the current system?
+2. Does opening the Student Homework card or detail panel record a view?
+3. Is there a database table such as `homework_views`?
+4. Is there an API that records Student views?
+5. Is that API actually called by the Student Web UI?
+6. Is each Student counted only once per Homework?
+7. Where does the denominator (5 Students) come from?
+8. Does it use the selected Academic Session's Enrollment?
+9. Does it exclude inactive Students and inactive Enrollments for current-session live tracking?
+10. Can the counter remain at zero even after Students open Homework?
+
+Explain whether "Viewed by 0 / 5" is reliable or misleading, with evidence.
+
+## AUDIT 4 — Teacher Comments and Feedback
+
+Check whether the existing system supports:
+
+1. Teacher comments on individual Student submissions.
+2. Feedback saved per Student and per Homework.
+3. Student viewing the Teacher's feedback.
+4. Teacher updating feedback.
+5. Review status such as Submitted / Reviewed.
+6. Any existing database columns, tables, routes, or UI components for feedback.
+
+If missing, identify the smallest safe addition needed.
+
+Do NOT implement it yet.
+
+## AUDIT 5 — Permissions and Academic Session
+
+Preserve existing BENIUS business rules.
+
+- Strict school/tenant isolation.
+- Homework and submissions must belong to the correct Academic Session.
+- Historical Academic Sessions remain strictly read-only for academic content.
+- Student placement must come from selected-session Enrollment.
+- Preserve the existing Web Homework rule allowing authenticated same-school Teachers to assign Homework to valid classes/sections.
+- Do not invent a new Teacher assignment restriction.
+- Determine and explain the existing authorization rules for viewing submissions and giving feedback.
+- Do not allow cross-school access or unauthorized Student submission access.
+- IST (Asia/Kolkata) remains the business/display timezone.
+
+## AUDIT 6 — Recommended Teacher Experience
+
+Based on the existing architecture, recommend the smallest changes needed for:
+
+Teacher Homework Card
+→ View Student Submissions
+→ Student-wise list
+→ View answer and attachment
+→ Add Teacher comment/feedback
+→ Student sees feedback.
+
+Also recommend how to make the existing "Viewed by X / Y students" count accurate.
+
+Reuse existing APIs and database structures wherever possible. Avoid duplicate implementations and unnecessary redesign.
+
+## FINAL REPORT REQUIRED
+
+Provide:
+
+1. Overall verdict: PASS / NEEDS CHANGES
+2. Simple explanation of current Homework workflow
+3. Student submission functionality: working or not
+4. Teacher submission viewing: working or missing
+5. Viewed-by counter: exact formula and accuracy
+6. Teacher feedback: existing or missing
+7. Academic Session and tenant-isolation findings
+8. Exact files/routes/tables involved
+9. Smallest recommended corrections, prioritized
+10. Whether a database/schema change is genuinely necessary
+11. What can be fixed using Web UI alone
+12. Any security or historical-session risks
+
+### STRICT RESTRICTIONS
+
+- READ-ONLY AUDIT.
+- NO CODE CHANGES.
+- NO DATABASE CHANGES.
+- NO MOBILE CHANGES — MOBILE IS FROZEN.
+- NO PRODUCTION ACCESS.
+- NO DEPLOYMENT.
+- Do not redesign the Homework module.
+
+Return the audit report and WAIT for my approval before implementation.
