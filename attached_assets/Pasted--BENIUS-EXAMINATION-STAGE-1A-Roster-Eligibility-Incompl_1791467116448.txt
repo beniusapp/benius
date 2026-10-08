@@ -1,0 +1,325 @@
+# BENIUS EXAMINATION — STAGE 1A
+## Roster Eligibility + Incomplete Results + Locked Ledger Impact Audit
+### STRICT READ-ONLY — NO IMPLEMENTATION
+
+We have completed the full BENIUS Examination audit.
+
+The approved new business rule is:
+
+**When a Student has no examination marks, show "Incomplete / Pending Result". Do not automatically promote or retain the Student.**
+
+Before implementing any changes, perform a focused impact and dependency audit.
+
+BENIUS is currently in DEVELOPMENT.
+
+### NON-NEGOTIABLE RULES
+
+1. READ-ONLY. Do not modify code, database, schema, configuration, application data, tests, or files.
+2. Do not execute database migrations or repair scripts.
+3. Do not unlock, delete, overwrite, recalculate-and-save, or otherwise modify existing Teacher promotion ledgers.
+4. Do not change existing marks, scores, grades, policies or historical decisions.
+5. Do not access Production or deploy.
+6. Mobile application remains FROZEN.
+7. Preserve strict authenticated School ID and selected Academic Session ID isolation.
+8. Archived Academic Sessions remain read-only.
+9. Use selected-session Enrollment as the authoritative source of examination placement.
+10. Preserve existing examination policy settings unless explicitly approved.
+11. Return findings and wait for approval.
+
+---
+
+# PART 1 — CONFIRM EXACT RESULTS ROSTER ELIGIBILITY
+
+The previous audit found:
+
+- School ID: 2
+- Academic Session ID: 2
+- Session: 2026–2027, Active
+- Class: 1
+- Section: a
+- Current Teacher Results roster: 5 Students
+- Expected active eligible roster: 2 Students
+
+The three additional Students are:
+
+- MIS-0004
+- MIS-0006
+- MIS-0007
+
+They have inactive Student accounts but Active selected-session Enrollments.
+
+### Proposed active-session rule
+
+A Student belongs in the active-session Results roster only when:
+
+- Student belongs to the authenticated school.
+- Student account is Active.
+- Student has an exact Enrollment in the selected Academic Session.
+- Enrollment status is Active.
+- Enrollment Class and Section match the selected filters.
+
+No fallback to current Registry placement or Attendance snapshots when exact session Enrollment is missing.
+
+### Audit requirements
+
+1. Trace every Results roster call path.
+2. Identify all consumers of the shared roster helper.
+3. Determine whether changing that helper would unintentionally affect Attendance, Add Marks, View Marks, Student Reports or Admin Exam Controller.
+4. Recommend the smallest Results-specific correction rather than changing a broadly shared helper unnecessarily.
+5. Preserve historical roster visibility for legitimately enrolled Students, including Students deactivated after the historical session.
+6. Determine whether inactive Students' existing marks and ledger rows remain preserved but excluded from the active live roster.
+7. Verify active-session roster totals and attendance summary calculations after the proposed eligibility correction, without writing data.
+8. Verify that the proposed roster does not exclude legitimate active Students with valid selected-session Enrollments.
+
+Do not change Enrollment statuses or Student account statuses.
+
+---
+
+# PART 2 — DEFINE THE INCOMPLETE RESULT CONTRACT
+
+Approved behavior:
+
+**No marks = Incomplete / Pending Result.**
+
+Investigate how to represent this state consistently across:
+
+- Teacher Results
+- Weighted Average
+- Grade
+- Subject Failures
+- Promotion Gate
+- Auto-Suggestion
+- Save Draft
+- Lock & Save Ledger
+- Student Report
+- Admin Exam Controller
+- Promotion execution
+- Student-facing published results, where relevant
+
+### Critical distinctions
+
+Determine how the current calculation engine represents:
+
+1. No subject scores at all.
+2. A configured subject with no marks.
+3. A subject with one required assessment component missing.
+4. A Student explicitly marked Absent.
+5. A Student who legitimately scores zero.
+6. A Student with partial term data.
+7. A Student with all required assessment components completed.
+
+Do not automatically equate all these cases.
+
+The approved no-marks rule is definitive.
+
+For partially completed results, identify the current semantics and propose whether they should also be considered Incomplete, but DO NOT silently change the business rule.
+
+### Required proposed UI behavior
+
+For a Student with no marks:
+
+- Weighted Average: No data
+- Grade: —
+- Result Status: Incomplete / Pending Result
+- Promotion Gate: Pending — No marks
+- No automatic promotion
+- No automatic retention
+
+Determine how this can be represented without inventing a fake numeric score or grade.
+
+Identify whether an additive database state or schema migration is required.
+
+---
+
+# PART 3 — INVESTIGATE EXISTING LOCKED LEDGER DECISIONS
+
+The previous audit found five Teacher decisions for Class 1/a.
+
+All are:
+
+- Locked
+- Not Admin-executed
+- No manual intervention
+
+Three Students with no marks have stored promotion decisions to Class 2/a.
+
+### Mandatory impact analysis
+
+For each of the five decisions, report:
+
+- Student DSID
+- School ID
+- Academic Session ID
+- Class/Section
+- Term
+- Existing saved decision
+- Locked state
+- Admin-executed state
+- Whether examination marks exist
+- Proposed new calculated result
+- Whether saved decision conflicts with the approved incomplete-result rule
+
+DO NOT MODIFY THESE RECORDS.
+
+### Evaluate safe handling options
+
+A. Preserve existing ledger records unchanged, flag conflicting decisions in the UI, and block their execution until an authorized resolution.
+
+B. Require an authorized unlock/review process before conflicting decisions can proceed.
+
+C. Introduce a new pending/incomplete ledger state through an additive migration, if existing schema cannot safely represent it.
+
+For each option explain:
+
+- Data integrity consequences
+- Historical compatibility
+- API changes
+- Admin Exam Controller consequences
+- Schema requirements
+- Risk of accidental promotion
+- Recommended approach
+
+Do not automatically convert stored promoted decisions to retained, incomplete, or deleted.
+
+Explicitly identify the server-side enforcement point needed to prevent an invalid locked decision from reaching Admin promotion execution.
+
+---
+
+# PART 4 — AUTO-SUGGESTION AND SAVE DEFAULTS
+
+The previous audit found that the Results UI can default a missing promotion decision to "promoted" during Save.
+
+Trace:
+
+- Run Auto-Suggestion
+- Save Draft
+- Lock & Save Ledger
+- Unlock Ledger
+- Manual decision
+- Stored auto-suggestion
+- Existing saved decision
+- Admin execution
+
+Propose the smallest correction that:
+
+1. Prevents a Student with no marks from being automatically promoted or retained.
+2. Prevents an undecided Student from silently defaulting to Promoted.
+3. Prevents incomplete results from being locked as final academic decisions.
+4. Preserves valid completed Student results.
+5. Does not overwrite existing locked ledgers.
+6. Rejects unsafe direct API requests, not merely UI actions.
+7. Prevents stale or conflicting saved decisions from being executed by Admin.
+
+Determine whether partial drafts may safely be saved with incomplete Students without inventing a promotion decision.
+
+Report any required changes to database constraints or existing API response contracts.
+
+---
+
+# PART 5 — ADMIN EXAM CONTROLLER DEPENDENCIES
+
+Trace the exact relationship between:
+
+- Teacher Results ledger
+- Teacher locked decisions
+- Admin Exam Controller
+- Promotion execution
+- Promotion history
+- Target-session Enrollment
+- Current Student Registry synchronization
+
+Identify whether Admin promotion execution:
+
+- Requires an Admin-executed or approved Teacher ledger.
+- Validates that each Student has a completed result.
+- Validates that the stored decision is still eligible under the current result calculation.
+- Can consume a locked but invalid no-marks promotion.
+- Can execute decisions for inactive Students.
+- Can accidentally mix sessions.
+- Preserves historical records correctly.
+
+IMPORTANT:
+
+Promotion Stage 3 previously established strict target-session Enrollment validation and atomic Registry synchronization.
+
+Do not change or weaken those protections.
+
+If the invalid Teacher ledger cannot currently reach Admin execution, demonstrate that through exact call paths and validation.
+
+If it can, classify the issue as critical and identify the smallest server-side execution guard.
+
+---
+
+# PART 6 — ACADEMIC SESSION AND HISTORICAL BEHAVIOR
+
+Verify:
+
+- Active-session Results use active Student + Active exact-session Enrollment.
+- Archived sessions retain authorized historical roster visibility.
+- No current Registry fallback changes historical placement.
+- Historical results remain readable.
+- Archived-session academic writes are rejected.
+- Existing historical locked decisions remain preserved.
+- Current school-wide policy behavior is documented without silently introducing policy snapshots.
+- No cross-school or cross-session decision can affect another school/session.
+
+---
+
+# PART 7 — REGRESSION TEST PLAN
+
+Design focused tests for:
+
+1. Active Student + Active Enrollment.
+2. Inactive Student + Active Enrollment.
+3. Active Student + Inactive Enrollment.
+4. Missing selected-session Enrollment.
+5. Historical deactivated Student.
+6. No marks.
+7. Zero marks.
+8. Absent.
+9. Partial marks.
+10. Completed marks.
+11. Save Draft without auto-suggestion.
+12. Lock with incomplete Student.
+13. Direct API attempt to save promoted decision without marks.
+14. Existing locked conflicting ledger.
+15. Admin promotion execution against conflicting ledger.
+16. Session switching.
+17. Cross-school isolation.
+18. Archived-session write rejection.
+19. Valid completed Student promotion.
+20. Existing Promotion Stage 3 invariants.
+
+Do not execute destructive tests against the existing development database.
+
+---
+
+# FINAL REPORT REQUIRED
+
+Return:
+
+1. Overall verdict
+2. Exact active roster rule and affected code paths
+3. Shared-helper dependency risks
+4. Incomplete-result state design
+5. No marks versus zero/absent/partial marks distinctions
+6. Five existing ledger decisions and their conflict status
+7. Recommended locked-ledger handling
+8. Auto-suggestion and Save-default correction plan
+9. Admin Exam Controller execution risk
+10. Academic Session and historical behavior
+11. Schema migration required: YES/NO and why
+12. Minimal phased implementation plan
+13. Regression test plan
+14. Exact source file/function/line references
+15. Explicit confirmation of no changes
+
+### FINAL INSTRUCTION
+
+This is STAGE 1A — READ-ONLY IMPACT AUDIT ONLY.
+
+Do not implement Stage 1B.
+
+Do not change existing locked decisions or historical data.
+
+Return the findings and wait for approval.
