@@ -7,7 +7,6 @@ import {
   examTypeAffectsLockedPromotionTerm,
   parseTeacherExamMarksSubmission,
   publicationStateForExamScore,
-  teacherCanSaveExamMarksForScope,
 } from "./examination-marks-write-policy";
 import { PromotionStage1Error } from "./promotion-stage1";
 
@@ -111,56 +110,6 @@ test("requires the request to explicitly identify absence status", () => {
     scores: [{ studentId: 10, marks: 0 }],
   });
   assert.equal(result.ok, false);
-});
-
-const teacherAssignment = {
-  teacherClass: "Class 5",
-  teacherSection: "A",
-  teacherSubjects: "Mathematics, Science",
-  mappings: [] as Array<{ className: string; section: string; subject: string | null }>,
-  className: "Class 5",
-  section: "A",
-  subject: "Mathematics",
-};
-
-test("allows legacy Teacher assignment only for its exact class, section, and subject", () => {
-  assert.equal(teacherCanSaveExamMarksForScope(teacherAssignment), true);
-  assert.equal(teacherCanSaveExamMarksForScope({ ...teacherAssignment, section: "B" }), false);
-  assert.equal(teacherCanSaveExamMarksForScope({ ...teacherAssignment, subject: "English" }), false);
-  assert.equal(teacherCanSaveExamMarksForScope({
-    ...teacherAssignment,
-    teacherClass: "Class 5",
-  }), true);
-});
-
-test("allows exact Faculty Mapping subject assignment", () => {
-  assert.equal(teacherCanSaveExamMarksForScope({
-    ...teacherAssignment,
-    mappings: [{ className: "Class 5", section: "A", subject: "Mathematics" }],
-  }), true);
-});
-
-test("denies a subject not present in the exact Faculty Mapping", () => {
-  assert.equal(teacherCanSaveExamMarksForScope({
-    ...teacherAssignment,
-    mappings: [{ className: "Class 5", section: "A", subject: "Science" }],
-  }), false);
-});
-
-test("Faculty Mappings take precedence over legacy assignment fields", () => {
-  assert.equal(teacherCanSaveExamMarksForScope({
-    ...teacherAssignment,
-    className: "Class 6",
-    section: "B",
-    mappings: [{ className: "Class 5", section: "A", subject: "Mathematics" }],
-  }), false);
-});
-
-test("a mapping without its own subject uses the Teacher's configured subject list", () => {
-  assert.equal(teacherCanSaveExamMarksForScope({
-    ...teacherAssignment,
-    mappings: [{ className: "Class 5", section: "A", subject: null }],
-  }), true);
 });
 
 test("class-scoped configuration resolves equivalent Class labels", () => {

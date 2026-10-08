@@ -42,7 +42,6 @@ import {
   configuredClassName,
   configuredName,
   parseTeacherExamMarksSubmission,
-  teacherCanSaveExamMarksForScope,
 } from "./examination-marks-write-policy";
 import { isTeacherLeaveDateRangeWithinSession } from "./teacher-leave-scope";
 import {
@@ -2634,24 +2633,6 @@ export function registerTeacherRoutes(app: Express) {
       const resolvedSection = configuredName(configuredSections, requestedSection);
       if (!resolvedSection) {
         return res.status(400).json({ message: "The selected section is not configured for this class." });
-      }
-
-      const schoolMappings = await storage.getFacultyMappingsForTeacherInSchool(
-        teacher.id,
-        context.schoolId,
-      );
-      if (!teacherCanSaveExamMarksForScope({
-        teacherClass: teacher.assignedClass,
-        teacherSection: teacher.assignedSection,
-        teacherSubjects: teacher.subject,
-        mappings: schoolMappings,
-        className: resolvedClass,
-        section: resolvedSection,
-        subject: submission.subject,
-      })) {
-        return res.status(403).json({
-          message: "You are not assigned to enter marks for this subject, class, and section.",
-        });
       }
 
       const configuredSubjects = classScopedConfigValues(classSubjectsMap, resolvedClass);

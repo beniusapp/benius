@@ -126,59 +126,8 @@ export function parseTeacherExamMarksSubmission(raw: unknown): TeacherExamMarksS
   };
 }
 
-function normalizedSubjectSet(raw: string | null | undefined): Set<string> {
-  return new Set(
-    (raw ?? "")
-      .split(",")
-      .map(value => value.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
 function normalizedClassName(value: string): string {
   return value.trim().toLowerCase().replace(/^class\s+/, "");
-}
-
-function sameClassName(left: string | null | undefined, right: string): boolean {
-  return typeof left === "string" && normalizedClassName(left) === normalizedClassName(right);
-}
-
-function sameSectionName(left: string | null | undefined, right: string): boolean {
-  return typeof left === "string" && left.trim().toLowerCase() === right.trim().toLowerCase();
-}
-
-export function teacherCanSaveExamMarksForScope(input: {
-  teacherClass: string | null | undefined;
-  teacherSection: string | null | undefined;
-  teacherSubjects: string | null | undefined;
-  mappings: Array<{
-    className: string;
-    section: string;
-    subject: string | null;
-  }>;
-  className: string;
-  section: string;
-  subject: string;
-}): boolean {
-  const wantedSubject = input.subject.trim().toLowerCase();
-  const teacherSubjects = normalizedSubjectSet(input.teacherSubjects);
-
-  // Faculty mappings are the current assignment source when present. Legacy
-  // Teacher columns remain the fallback for unmapped accounts.
-  if (input.mappings.length > 0) {
-    return input.mappings.some(mapping => {
-      if (!sameClassName(mapping.className, input.className)
-        || !sameSectionName(mapping.section, input.section)) return false;
-      const assignedSubjects = mapping.subject
-        ? normalizedSubjectSet(mapping.subject)
-        : teacherSubjects;
-      return assignedSubjects.has(wantedSubject);
-    });
-  }
-
-  return sameClassName(input.teacherClass, input.className)
-    && sameSectionName(input.teacherSection, input.section)
-    && teacherSubjects.has(wantedSubject);
 }
 
 export function configuredClassName(

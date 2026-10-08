@@ -1,0 +1,186 @@
+# BENIUS EXAMINATION — STAGE 1 ACCESS SIMPLIFICATION
+## Allow Same-School Teachers to Add Marks
+### CONTROLLED IMPLEMENTATION — BEFORE STAGE 2B
+
+The read-only audit has confirmed the root cause of the Web Teacher Add Marks error.
+
+Current behavior:
+
+Web `POST /api/exam-scores` rejects marks entry with HTTP 403 when the Teacher's Faculty Mapping or legacy assignment does not match the selected class, section and subject.
+
+This restriction was introduced during Stage 1.
+
+The owner has approved a simpler business rule.
+
+## APPROVED BUSINESS RULE
+
+Any authenticated, active Teacher belonging to the same school may add or correct examination marks for any valid class, section and subject in that school's active Academic Session.
+
+Faculty Mapping and teaching assignment must NOT be required for Web Add Marks.
+
+This is a school-wide Teacher marks-entry permission, NOT cross-school permission.
+
+## 1. STRICT SCOPE
+
+Implement only the Web Teacher Add Marks authorization correction.
+
+Do not change:
+
+- Mobile frontend.
+- Mobile Teacher assignment checks.
+- Mobile-specific backend routes.
+- Teacher View Marks authorization.
+- Teacher Results authorization.
+- Teacher ledger Save/Lock authorization.
+- Principal Exam Controller.
+- Promotion execution.
+- Principal overrides.
+- Examination policy or grading.
+- Academic Session activation.
+- Student Registry placement.
+- Existing examination records.
+
+No Production access or deployment.
+
+## 2. REMOVE ONLY THE WEB ASSIGNMENT GATE
+
+Inspect Web `POST /api/exam-scores`.
+
+Remove the requirement that the Teacher must have a matching Faculty Mapping or legacy teaching assignment for the selected class, section and subject.
+
+Do not remove authentication or Teacher active-status validation.
+
+Do not remove School ID validation.
+
+Do not remove Academic Session validation.
+
+Do not remove Student Enrollment validation.
+
+Do not remove Subject or Exam Type configuration validation.
+
+Do not remove marks validation.
+
+Do not remove locked-ledger protection.
+
+If the assignment check exists inside shared storage or helpers, ensure removing it does not weaken Mobile-specific checks or other endpoints.
+
+Do not broaden the scope of unrelated Teacher APIs.
+
+## 3. PRESERVE SECURITY
+
+The backend must continue verifying:
+
+1. Authenticated Teacher.
+2. Active Teacher account.
+3. Teacher belongs to the authenticated School.
+4. Explicit selected Academic Session.
+5. Session belongs to that School.
+6. Session is active and writable.
+7. Selected Class and Section belong to that School.
+8. Subject and Exam Type are valid for that School and class.
+9. Each Student belongs to the same School.
+10. Each Student has an Active Enrollment in the exact selected Academic Session and Class/Section.
+11. Marks are valid and within the permitted range.
+12. Duplicate or invalid batch submissions are rejected.
+13. Existing locked-ledger safeguards still return HTTP 409 where applicable.
+14. Successful Web saves retain the approved immediate Student marks visibility behavior.
+15. Existing Teacher attribution is preserved.
+
+Never trust School ID or Teacher ID supplied by the client.
+
+## 4. KEEP MOBILE UNCHANGED
+
+The Mobile Teacher endpoint uses separate assignment checks.
+
+Preserve those checks exactly as they are.
+
+Verify that shared score storage changes do not accidentally bypass Mobile authorization.
+
+Do not modify Mobile files.
+
+## 5. TEACHER ATTRIBUTION
+
+When Teacher A creates marks and Teacher B later corrects them:
+
+- Preserve existing creator attribution where supported.
+- Record the correcting Teacher using existing fields where supported.
+- Do not fabricate a complete historical audit trail if the schema does not support one.
+- Report any limitation in identifying previous editors.
+
+Do not introduce a schema migration in this stage.
+
+## 6. REGRESSION TESTS
+
+Add focused tests confirming:
+
+1. Active same-school Teacher can save marks without a matching Faculty Mapping.
+2. Active same-school Teacher can save marks without a matching legacy assignment.
+3. Authorized Teacher can save for another same-school class.
+4. Authorized Teacher can save for another same-school subject.
+5. Inactive Teacher is rejected.
+6. Unauthenticated request is rejected.
+7. Cross-school access is rejected.
+8. Missing or invalid Academic Session is rejected.
+9. Archived-session marks writes are rejected.
+10. Invalid Student Enrollment is rejected.
+11. Invalid marks are rejected.
+12. Invalid Subject/Exam Type is rejected.
+13. Locked-ledger marks writes remain blocked.
+14. Successful Web saves preserve immediate Student visibility.
+15. Mobile Teacher assignment restrictions remain effective.
+16. Existing Teacher Results and ledger authorization remain unchanged.
+
+Use isolated fixtures. Do not modify existing Development academic records.
+
+## 7. VERIFICATION
+
+After implementation:
+
+- Run focused marks authorization tests.
+- Run existing Stage 1 marks regression tests.
+- Run locked-ledger transaction tests where safely possible.
+- Run relevant Mobile assignment regression tests.
+- Run Web and API builds.
+- Compare typecheck results against the existing baseline.
+- Verify no cross-school or cross-session permission expansion.
+- Confirm no changes to existing marks or ledgers.
+
+Do not claim Mobile behavior is verified without tests or direct source evidence.
+
+## 8. FINAL REPORT
+
+Provide:
+
+1. PASS / NEEDS CHANGES / BLOCKED.
+2. Exact assignment restriction removed.
+3. Exact files changed.
+4. Same-school Teacher authorization behavior.
+5. Active Teacher verification.
+6. Tenant and Academic Session isolation.
+7. Locked-ledger protection.
+8. Marks validation.
+9. Student immediate visibility.
+10. Teacher attribution behavior and limitations.
+11. Mobile authorization preservation.
+12. Tests passed/failed.
+13. Web/API builds.
+14. Typecheck comparison.
+15. Database/schema changes.
+16. Existing academic records changed: YES/NO.
+17. Mobile frontend changed: YES/NO.
+18. Mobile backend changed: YES/NO.
+19. Production accessed: YES/NO.
+20. Deployment performed: YES/NO.
+21. Remaining risks.
+
+## FINAL INSTRUCTION
+
+Implement only this narrow Web Teacher Add Marks authorization change.
+
+Keep BENIUS Examination simple.
+
+Do not start Stage 2B.
+
+Do not deploy.
+
+If a required security safeguard cannot be preserved, STOP and report before implementing an unsafe change.
