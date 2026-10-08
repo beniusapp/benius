@@ -21,3 +21,4 @@
 - [Support Staff Admin Profile boundary](support-staff-admin-profile-boundary.md) — keep Principal/Admin profile and account controls unavailable to Support Staff while retaining their own header identity and logout.
 - [Support Staff scoped permissions](support-staff-scoped-permissions.md) — Approval/Leave children authorize independently; history is read-only; legacy Staff-management grants never authorize.
 - [Support Staff dashboard shell](support-staff-dashboard-shell.md) — omit the full summary bar; Removed History is read-only Teacher Registry base access inside the shell.
+- [Homework review timestamp precision](homework-review-timestamp-precision.md) — preserve PostgreSQL sub-millisecond precision in optimistic review tokens; JavaScript Date round-trips only milliseconds.
