@@ -5,13 +5,14 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, AlertTriangle, CheckCircle, Clock, Timer,
   LogIn, LogOut, TrendingUp, Calendar, Edit3, ChevronDown,
-  Loader2, Flame, BarChart2, X, UserX, History, ChevronRight, ChevronLeft, Archive,
+  Loader2, Flame, BarChart2, X, History, ChevronRight, ChevronLeft, Archive,
 } from "lucide-react";
 import type { TeacherMe } from "@/pages/teacher-dashboard";
-import { useArchiveMode } from "@/pages/teacher-dashboard";
+import { useArchiveMode, useTeacherSelectedSession } from "@/pages/teacher-dashboard";
 import AttendanceHistoryView from "./attendance-history";
 import { isWorkingDate, type TeacherSelfRate } from "./teacher-self-rate";
 import { isSessionAttendanceDate, recentSessionAttendanceDates } from "./teacher-attendance-display-dates";
+import { calculateTeacherSelfAttendanceKpis } from "./teacher-self-attendance-kpis";
 import { useISTToday } from "@/hooks/use-ist-today";
 import {
   addCalendarDays,
@@ -25,14 +26,6 @@ import {
   instantEpochMillis,
   minutesSinceMidnightIST,
 } from "@shared/ist-time";
-
-interface AcademicSession {
-  id: number;
-  sessionName: string;
-  startDate: string;
-  endDate: string;
-  isActive: boolean;
-}
 
 interface SelfAttRecord {
   id: number;
@@ -101,7 +94,9 @@ function getDayLabel(dateStr: string): string {
 
 export default function MyAttendanceModule({ teacher, onBack }: { teacher: TeacherMe; onBack: () => void }) {
   const { toast } = useToast();
-  const isArchiveMode = useArchiveMode();
+  const archiveModeContext = useArchiveMode();
+  const currentSession = useTeacherSelectedSession();
+  const isArchiveMode = currentSession ? !currentSession.isActive : archiveModeContext;
 
   // ── Reactive school date — updates automatically at IST midnight ──────────────
   const today = useISTToday();
@@ -127,26 +122,10 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
     );
   }, []);
 
-  // ── Session selector ─────────────────────────────────────────────────────────
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
-
-  const { data: sessions = [] } = useQuery<AcademicSession[]>({
-    queryKey: ["/api/teacher/academic-sessions"],
-    queryFn: async () => { const r = await fetch("/api/teacher/academic-sessions", { credentials: "include" }); return r.ok ? r.json() : []; },
-    staleTime: 300000,
-  });
-
-  useEffect(() => {
-    if (sessions.length > 0 && selectedSessionId === null) {
-      setSelectedSessionId((sessions.find(s => s.isActive) ?? sessions[0]).id);
-    }
-  }, [sessions, selectedSessionId]);
-
-  const currentSession: AcademicSession | null =
-    sessions.find(s => s.id === selectedSessionId) ?? sessions.find(s => s.isActive) ?? sessions[0] ?? null;
+  // My Attendance uses the Dashboard's selected Session for all reads, writes, and cache identities.
+  const selectedSessionId = currentSession?.id ?? null;
   const sessionStartDate = currentSession?.startDate ?? "";
   const sessionEndDate   = currentSession?.endDate   ?? "";
-  const sessionName      = currentSession?.sessionName ?? "";
   const sessionFetch = (url: string, init: RequestInit = {}) =>
     sessionFetchForViewSession(url, selectedSessionId, init);
   const sessionMutation = async (url: string, body: unknown) => {
@@ -257,13 +236,13 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
   // ── Derived analytics ────────────────────────────────────────────────────────
   const kpi = useMemo(() => {
-    const workdays = history.filter(r => rate && isWorkingDate(r.attendanceDate, rate));
-    const present  = workdays.filter(r => r.status === "Present").length;
-    const late     = workdays.filter(r => r.status === "Late").length;
-    const halfDay  = workdays.filter(r => r.status === "Half Day").length;
-    const absent   = workdays.filter(r => r.status === "Absent").length;
-    const durations = history.filter(r => r.totalWorkingMinutes > 0).map(r => r.totalWorkingMinutes);
-    const avgDur   = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : 0;
+    const { present, late, halfDay, avgDur } = calculateTeacherSelfAttendanceKpis(
+      history,
+      today,
+      sessionStartDate,
+      sessionEndDate,
+      date => !!rate && isWorkingDate(date, rate),
+    );
 
     // Streak: consecutive Present/Late days going back from yesterday
     const sorted = [...history].sort((a, b) => b.attendanceDate.localeCompare(a.attendanceDate));
@@ -280,8 +259,8 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
       } else { if (streak === 0) streak = 0; cur = 0; }
       prevDate = r.attendanceDate;
     }
-    return { present, late, halfDay, absent, avgDur, streak, longest };
-  }, [history, today, rate]);
+    return { present, late, halfDay, avgDur, streak, longest };
+  }, [history, today, rate, sessionStartDate, sessionEndDate]);
 
   function isPrevWorkday(earlier: string, later: string): boolean {
     const diff = calendarDayDifference(earlier, later);
@@ -379,9 +358,23 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
   })();
 
   // ── Render ───────────────────────────────────────────────────────────────────
+  if (!currentSession) {
+    return (
+      <div className="space-y-3 pb-24" data-testid="status-no-selected-session">
+        <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-white/60 hover:text-white transition-colors" data-testid="button-back">
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <p role="status" className="text-sm text-white/60">
+          {isArchiveMode
+            ? "The selected historical Academic Session is unavailable."
+            : "No active Academic Session is currently available."}
+        </p>
+      </div>
+    );
+  }
+
   if (showHistory) {
-    if (selectedSessionId === null) return null;
-    return <AttendanceHistoryView teacher={teacher} sessionId={selectedSessionId} sessionStart={sessionStartDate} sessionEnd={sessionEndDate} onBack={() => setShowHistory(false)} />;
+    return <AttendanceHistoryView teacher={teacher} sessionId={currentSession.id} sessionStart={sessionStartDate} sessionEnd={sessionEndDate} onBack={() => setShowHistory(false)} />;
   }
 
   return (
@@ -564,13 +557,12 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
 
       {/* ── KPI Row ── */}
       {rateError && <p role="alert" className="text-red-300 text-xs">Could not load the Attendance rate. Please retry later.</p>}
-      <div className="grid grid-cols-2 gap-3" data-testid="section-kpi">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid="section-kpi">
         {[
           { label: "Attendance Rate (Session)", value: rate ? `${rate.attendanceRate.toFixed(1)}%` : "—", icon: TrendingUp, color: "text-[#D4AF37]", bg: "bg-[#D4AF37]/10" },
           { label: "Present (Month)", value: kpi.present,              icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-500/10" },
           { label: "Late Arrivals",   value: kpi.late,                 icon: AlertTriangle, color: "text-amber-400",  bg: "bg-amber-500/10"  },
           { label: "Half Day",        value: kpi.halfDay,              icon: Clock,       color: "text-orange-400", bg: "bg-orange-500/10" },
-          { label: "Absent Days",     value: kpi.absent,               icon: UserX,       color: "text-red-400",    bg: "bg-red-500/10"    },
           { label: "Avg Duration",    value: fmtDuration(kpi.avgDur),  icon: BarChart2,   color: "text-sky-400",    bg: "bg-sky-500/10"    },
         ].map(({ label, value, icon: Icon, color, bg }) => (
           <div key={label} className="rounded-xl border border-white/10 bg-[#1A2942] p-4" data-testid={`kpi-${label.toLowerCase().replace(/\s+/g, "-")}`}>
@@ -594,25 +586,6 @@ export default function MyAttendanceModule({ teacher, onBack }: { teacher: Teach
         </div>
         <p className="text-[10px] text-white/30 text-right leading-tight">Consecutive<br/>workdays</p>
       </div>
-
-      {/* ── Session selector ── */}
-      {sessions.length > 0 && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-white/40 uppercase tracking-wider shrink-0">Session</span>
-          <select
-            value={selectedSessionId ?? ""}
-            onChange={e => setSelectedSessionId(Number(e.target.value))}
-            className="flex-1 bg-[#1A2942] border border-white/10 rounded-lg px-3 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/40 min-h-[40px]"
-            data-testid="select-session"
-          >
-            {sessions.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.sessionName}{s.isActive ? " (Active)" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {/* ── Timeline / Calendar toggle ── */}
       <div className="flex rounded-xl overflow-hidden border border-white/10 bg-white/5 p-0.5 gap-0.5" data-testid="tab-toggle">

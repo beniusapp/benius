@@ -297,9 +297,8 @@ export default function TeacherDashboard() {
   const viewingSession = viewingSessionId != null
     ? (allSessions.find(s => s.id === viewingSessionId) ?? null)
     : null;
-  const selectedSessionId = viewingSessionId != null
-    ? (viewingSession?.id ?? null)
-    : (activeSession?.id ?? null);
+  const selectedSession = viewingSessionId != null ? viewingSession : activeSession;
+  const selectedSessionId = selectedSession?.id ?? null;
 
   const { data: pendingProfilesData } = useQuery<{ count: number } | null>({
     queryKey: ["/api/teacher/pending-profiles/count", teacher?.schoolId ?? null, teacher?.id ?? null, selectedSessionId],
@@ -554,7 +553,7 @@ export default function TeacherDashboard() {
   const initials = teacher.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
-    <TeacherSelectedSessionContext.Provider value={viewingSession ?? activeSession}>
+    <TeacherSelectedSessionContext.Provider value={selectedSession}>
     <div className="min-h-screen" style={{ background: "#0f172a" }}>
 
       {/* Decorative radial blobs */}
