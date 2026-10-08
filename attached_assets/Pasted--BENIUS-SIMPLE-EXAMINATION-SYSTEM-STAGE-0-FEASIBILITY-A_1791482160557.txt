@@ -1,0 +1,265 @@
+# BENIUS — SIMPLE EXAMINATION SYSTEM
+## STAGE 0: FEASIBILITY AND SIMPLIFICATION AUDIT
+### STRICTLY READ-ONLY — DO NOT IMPLEMENT YET
+
+I am the owner of BENIUS, a multi-tenant School Management Information System.
+
+I want to simplify the entire Examination experience.
+
+I do not want a complicated Examination system. I want a very simple, reliable and understandable process for Teachers, Students and Principals.
+
+The existing Web application is the source of truth.
+
+I have provided screenshots of:
+
+1. Principal Portal — Exam Controller.
+2. Teacher Portal — Examination.
+3. Student Portal — Examination.
+4. Principal Portal — Performance Analytics.
+
+Study the existing implementation and determine whether the simple workflow below can be achieved safely by reusing the current architecture.
+
+**DO NOT MODIFY ANY FILES OR DATABASE RECORDS IN THIS STAGE.**
+
+---
+
+# MY REQUIRED SIMPLE WORKFLOW
+
+## STEP 1 — TEACHER ADDS MARKS
+
+Inside Teacher Portal → Examination → Add Marks:
+
+Teacher selects:
+
+- Class
+- Section
+- Subject
+- Exam Type
+- Total Marks
+
+Teacher enters marks for Students and saves.
+
+The marks must be saved against the authenticated School and selected Academic Session.
+
+Do not mix records from different sessions or schools.
+
+## STEP 2 — MARKS APPEAR IN VIEW MARKS
+
+After Teacher saves marks:
+
+**Principal Portal → Performance Analytics → View Marks**
+
+The latest saved marks must be visible without manual copying, synchronization jobs or duplicate marks tables.
+
+**Student Portal → Examination → View Marks**
+
+The same latest marks must become visible as soon as they are authorized for Student publication.
+
+If the current system already has a marks-publication setting, preserve it and explain how it works.
+
+If marks are already published and the Teacher makes an authorized edit, the updated published marks should appear promptly in both portals.
+
+I want one authoritative marks source for all three portals.
+
+Explain whether this can work with the existing APIs and database.
+
+## STEP 3 — TEACHER RESULTS
+
+Inside Teacher Portal → Examination → Results:
+
+The system automatically calculates results from the saved examination marks.
+
+Use the existing configured school examination policy, including:
+
+- Applicable examination terms and components.
+- Weightages.
+- Pass percentages.
+- Subject failure rules.
+- Grade calculations.
+- Promotion and retention suggestions.
+
+Do not invent a new promotion policy.
+
+A Student without applicable marks must remain Incomplete / Pending Result.
+
+The Teacher reviews the calculated results.
+
+After verification, the Teacher saves and locks the promotion ledger.
+
+Do not allow incomplete or invalid results to be locked as final promotion decisions.
+
+## STEP 4 — PRINCIPAL EXAM CONTROLLER
+
+Inside Principal Portal → Exam Controller:
+
+The Principal sees the Teacher's locked ledger.
+
+The Principal reviews:
+
+- Student
+- Calculated result
+- Teacher promotion/retention decision
+- Eligibility and readiness
+- Final destination Class/Section
+
+The Principal makes the final authorized promotion/retention decision and executes it.
+
+Preserve the existing secure backend promotion transaction.
+
+The Principal must not be able to bypass incomplete marks, invalid locked decisions, School ID isolation or Academic Session validation.
+
+Promotion execution prepares target-session Enrollment and history.
+
+It must not directly rewrite current Student Registry placement.
+
+Registry synchronization remains part of the existing authorized Academic Session activation process.
+
+## STEP 5 — STUDENT RESULTS AND PRINCIPAL PERFORMANCE ANALYTICS
+
+After the authorized result-publication and promotion workflow:
+
+Student Portal → Examination → Results should show the appropriate published examination results and final promotion/retention outcome.
+
+Principal Portal → Performance Analytics → Results should show the same authoritative academic results and promotion outcome.
+
+Do not expose unpublished results to Students.
+
+Do not confuse a Teacher's proposed promotion decision with the Principal's final executed decision.
+
+---
+
+# ACADEMIC SESSION — MANDATORY
+
+All examination operations must be strictly scoped to:
+
+1. Authenticated School ID.
+2. Selected Academic Session ID.
+3. Correct Class and Section.
+4. Correct Student.
+5. Correct Examination Term.
+
+When a new Academic Session starts, it must have its own marks, results, ledgers and promotion context.
+
+Historical records must remain preserved.
+
+Archived Academic Sessions must be read-only.
+
+Student Profile current Registry placement is a separate existing product rule and must not be changed.
+
+---
+
+# IMPORTANT SIMPLICITY REQUIREMENT
+
+I do not want additional unnecessary modules, buttons, approval layers, duplicate workflows or complicated settings.
+
+Reuse these existing screens:
+
+**Teacher:** Add Marks, View Marks, Results.
+
+**Student:** View Marks, Results.
+
+**Principal:** View Marks, Results/Performance Analytics, Exam Controller.
+
+Make the existing features work together through one consistent academic workflow.
+
+Keep the interface understandable for ordinary school Teachers and Principals.
+
+Do not redesign the UI in this audit.
+
+---
+
+# IMPORTANT QUESTIONS TO ANSWER
+
+Please inspect the actual code, API routes, database schema and current business logic and answer:
+
+1. Is my proposed simple Examination workflow technically possible using the current BENIUS architecture?
+2. Which parts already work correctly?
+3. Which parts are partially implemented?
+4. Which parts are broken or unnecessarily complicated?
+5. Are Teacher, Student and Principal View Marks reading the same authoritative marks records?
+6. How do marks publication and subsequent mark corrections currently work?
+7. How do the three portals refresh after a mark is saved or edited? Can we provide prompt synchronization without excessive polling?
+8. Is the existing promotion calculation correct for complete, incomplete, zero-mark, absent and partially marked Students?
+9. Does the Teacher ledger properly depend on the current authoritative marks and examination policy?
+10. What happens if marks change after the Teacher locks the ledger?
+11. Does Principal Exam Controller execute only valid locked decisions?
+12. Can Student Results and Principal Performance Analytics consistently reflect the final authorized outcome?
+13. Are Academic Session and tenant isolation enforced in every relevant read/write path?
+14. Can this be simplified without rebuilding the entire Examination module?
+15. Which existing features or workflows can be reused unchanged?
+
+---
+
+# REQUIRED AUDIT REPORT
+
+Provide a simple table:
+
+| Workflow | Current status | Existing implementation | Changes needed |
+|---|---|---|---|
+
+Cover:
+
+- Teacher Add Marks.
+- Teacher View Marks.
+- Student View Marks.
+- Principal View Marks.
+- Teacher Results calculation.
+- Teacher ledger Save/Lock.
+- Principal Exam Controller.
+- Final result publication.
+- Student Results.
+- Principal Performance Analytics.
+- Academic Session isolation.
+- Tenant isolation.
+- Marks-change/ledger consistency.
+
+Then provide:
+
+### A. FEASIBILITY VERDICT
+
+YES / YES WITH CHANGES / NO
+
+### B. SIMPLEST RECOMMENDED DESIGN
+
+Explain the simplest reliable end-to-end workflow in plain English.
+
+### C. WHAT WE CAN KEEP
+
+List the existing code, APIs, tables and modules that can remain unchanged.
+
+### D. MINIMUM REQUIRED CHANGES
+
+Identify only the essential changes, in recommended implementation order.
+
+Separate necessary correctness/security changes from optional UI improvements.
+
+### E. CRITICAL RISKS
+
+Identify publication leaks, stale ledgers, invalid promotion calculations, historical-data issues and cross-school/session risks.
+
+### F. IMPLEMENTATION PLAN
+
+Propose small, safe implementation stages.
+
+Do not begin any stage.
+
+### G. EXACT SOURCE REFERENCES
+
+Provide file paths and functions for each important finding.
+
+---
+
+# STRICT FINAL INSTRUCTIONS
+
+THIS IS A READ-ONLY FEASIBILITY AUDIT.
+
+- Do not modify code.
+- Do not modify database records.
+- Do not run destructive tests.
+- Do not change the Mobile frontend.
+- Do not change examination policies.
+- Do not change historical records.
+- Do not deploy.
+- Do not access Production.
+
+**First tell me whether my simple Examination system is possible and exactly what must change. Wait for my approval before implementation.**
