@@ -1,0 +1,364 @@
+# BENIUS EXAMINATION — STAGE 1C
+## Incomplete Results, Admin Promotion Preview & Locked Ledger Readiness
+### CONTROLLED IMPLEMENTATION — STRICT SCOPE
+
+We have completed:
+
+- Stage 1A — Read-only impact audit
+- Stage 1B — Promotion security implementation
+- Stage 1B — Strict read-only verification
+
+**Stage 1B is NOT READY TO CLOSE** because three inconsistencies remain.
+
+Implement only the three corrections described below, with focused regression tests.
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+---
+
+## 1. NON-NEGOTIABLE SAFETY RULES
+
+1. Do not modify the React Native Mobile application.
+2. Preserve the existing Web and Mobile Admin promotion backend safeguards.
+3. Do not modify existing examination marks, grades, Attendance records, policies, Student records or Enrollment records.
+4. Do not modify, delete, unlock or overwrite existing locked Teacher promotion decisions.
+5. Preserve authenticated School ID isolation.
+6. Preserve exact selected Academic Session ID isolation.
+7. Archived Academic Sessions must remain read-only for academic operations.
+8. Preserve historical examination and promotion records.
+9. Do not change examination weightages, pass percentages, grading thresholds or failure-count rules.
+10. Do not change the current behavior for legitimate zero marks, explicit Absent results or partially completed examination components.
+11. Do not change Promotion Stage 3 activation or atomic Student Registry synchronization.
+12. Do not perform unrelated backend refactoring or UI redesign.
+13. Do not access Production or deploy.
+14. Do not perform destructive testing on existing Development records.
+
+**Important:** If any requested correction requires changing a business rule, historical record, database schema or Mobile frontend, STOP and report the blocker before implementing that part.
+
+---
+
+# FIX 1 — TEACHER REPORT CARD: INCORRECT SUBJECT FAILURE COUNT
+
+### Current problem
+
+The examination calculation engine correctly identifies a Student with no applicable examination marks as:
+
+- `resultStatus = incomplete`
+- `promoted = null`
+- No weighted average
+- No grade
+
+However, the Teacher Report Card still displays:
+
+`0 fails`
+
+This is misleading because the Student has not been evaluated.
+
+### Required correction
+
+For a Student whose result status is Incomplete:
+
+- Weighted Average: `No data`
+- Grade: `—`
+- Subject Failures: `—` or `Not evaluated`
+- Result Status: `Incomplete / Pending Result`
+- Promotion Gate: `Pending — No marks`
+
+Do not display a numeric failure count for an incomplete result.
+
+### Preserve existing behavior
+
+- A Student who legitimately scores zero must still receive an evaluated result.
+- An explicitly Absent Student must retain existing examination behavior.
+- A Student with partial marks must retain the currently configured calculation behavior.
+- Completed results must continue to use existing grading and failure-count rules.
+
+Prefer a narrow presentation correction.
+
+Do not change the underlying calculation engine unless absolutely necessary.
+
+### Relevant source
+
+`artifacts/benius-web/src/pages/teacher-modules/examination.tsx`
+
+Previously identified around lines 414–424.
+
+---
+
+# FIX 2 — ADMIN FINAL PROMOTION SUMMARY: INCOMPLETE STUDENTS SHOWN AS PROMOTED
+
+### Current problem
+
+The Admin Exam Controller Final Promotion Summary currently defaults to `promote` when no override or retained Teacher decision exists.
+
+It does not consistently check the calculated `resultStatus`.
+
+Therefore, an incomplete Student can appear as Promoted in the Admin preview.
+
+The backend execution transaction already rejects incomplete results, but the UI must not display an invalid promotion suggestion.
+
+### Required correction
+
+For a Student with `resultStatus = incomplete`:
+
+- Display `Incomplete / Pending Result`.
+- Do not display Promoted.
+- Do not display Retained.
+- Do not show a promotion destination.
+- Do not include the Student in Promoted totals.
+- Do not include the Student in Retained totals.
+- Do not indicate that the Student is eligible for execution.
+
+### Important calculation rule
+
+The Final Promotion Summary must distinguish:
+
+1. Promoted
+2. Retained
+3. Pending / Incomplete
+
+Do not automatically classify Pending Students as Retained.
+
+Do not invent a promotion decision for an incomplete Student.
+
+### Preserve existing behavior
+
+For Students with completed examination results:
+
+- Preserve existing promotion policy calculations.
+- Preserve authorized Admin overrides.
+- Preserve valid Teacher ledger decisions.
+- Preserve existing configured pass/fail rules.
+
+The Admin preview must agree with the authoritative backend execution eligibility.
+
+### Relevant source
+
+`artifacts/benius-web/src/pages/admin-modules/exam-controller.tsx`
+
+Previously identified around lines 1260–1288.
+
+---
+
+# FIX 3 — LOCKED TEACHER LEDGER: INCORRECT READY STATUS
+
+### Current problem
+
+The Admin ledger-status calculation currently counts locked decisions as Ready without sufficiently checking current eligibility.
+
+This allows inactive Students with no applicable examination marks to appear Ready.
+
+The Admin UI can also offer `Review & Execute` for a cohort containing ineligible decisions.
+
+### Required correction
+
+A locked decision must not automatically mean that the Student is eligible for promotion execution.
+
+Determine readiness using authoritative backend information, including:
+
+- Authenticated School ID
+- Source Academic Session ID
+- Student ID
+- Student active status for executable current-session operations
+- Exact source-session Enrollment
+- Enrollment active status
+- Source Class and Section
+- Selected examination term
+- Applicable examination marks
+- Calculated result completeness
+- Existing locked Teacher decision
+- Compatibility between the stored decision and calculated eligibility
+
+### Required status behavior
+
+For an eligible locked decision:
+
+`Ready`
+
+For an ineligible or conflicting locked decision:
+
+`Ineligible / Requires Review`
+
+For a missing or undecided decision:
+
+`Pending`
+
+Do not count an ineligible decision as Ready.
+
+Do not count an incomplete Student as Promoted or Retained.
+
+Do not present a partially eligible cohort as fully Ready.
+
+If an execution action remains available for eligible Students in a mixed cohort, clearly identify the executable subset and ensure the backend independently validates the exact submitted batch. Never imply the entire cohort is ready.
+
+### Critical Development example
+
+School ID: 2
+
+Academic Session ID: 2
+
+Session: 2026–2027
+
+Class: 1
+
+Section: a
+
+Term: Half Yearly result
+
+Current saved ledger decisions:
+
+| Student | Existing decision | Expected readiness |
+|---|---|---|
+| MIS-0001 | Promoted → 2/a | Ready, subject to all execution checks |
+| MIS-0002 | Retained → 1/a | Ready, subject to all execution checks |
+| MIS-0004 | Promoted → 2/a | Ineligible / Requires Review |
+| MIS-0006 | Promoted → 2/a | Ineligible / Requires Review |
+| MIS-0007 | Promoted → 2/a | Ineligible / Requires Review |
+
+MIS-0004, MIS-0006 and MIS-0007 are currently inactive and have no applicable examination marks.
+
+### ABSOLUTELY DO NOT
+
+- Delete these records.
+- Unlock these records.
+- Convert their stored decisions.
+- Change their target classes.
+- Change Student statuses.
+- Change Enrollment statuses.
+- Rewrite promotion history.
+
+The existing database records must remain preserved.
+
+Only the derived readiness presentation and associated safe read logic should change.
+
+### Backend design requirement
+
+Do not implement a separate frontend-only eligibility calculation that can drift from the execution rules.
+
+Prefer a shared authoritative backend eligibility evaluator or safe read-only projection of the existing execution requirements.
+
+However, do not invoke a write-producing promotion transaction merely to calculate readiness.
+
+If the current backend cannot expose trustworthy readiness without a substantial architectural redesign, STOP and report the blocker before proceeding.
+
+### Historical session safeguard
+
+Historical locked ledgers must remain visible under existing authorization.
+
+Do not treat a Student's current inactive status as grounds to erase or hide their historical decision.
+
+Distinguish historical record visibility from current promotion execution eligibility.
+
+### Relevant sources
+
+`artifacts/api-server/src/storage.ts`
+
+Previously identified around lines 9440–9514.
+
+`artifacts/benius-web/src/pages/admin-modules/exam-controller.tsx`
+
+Previously identified around lines 121–132 and 1654–1662.
+
+---
+
+# 4. REGRESSION TESTS
+
+Add focused regression tests covering the following.
+
+### Teacher Report Card
+
+1. No marks displays no evaluated subject-failure count.
+2. Legitimate zero marks retains the correct failure count.
+3. Explicit Absent remains correctly evaluated.
+4. Partial marks retain existing calculation semantics.
+5. Completed marks retain their existing grades and failure counts.
+
+### Admin Final Promotion Summary
+
+6. Incomplete Student displays Pending.
+7. Incomplete Student has no promotion destination.
+8. Incomplete Student is excluded from Promoted totals.
+9. Incomplete Student is excluded from Retained totals.
+10. Completed eligible Student retains the correct promotion suggestion.
+11. Valid authorized Admin overrides continue to behave correctly.
+
+### Locked Ledger Readiness
+
+12. Inactive Student with locked decision is not Ready.
+13. Active Student with no applicable marks is not Ready.
+14. Active Student with a valid completed result and matching locked decision is Ready.
+15. Conflicting stored decision is not Ready.
+16. Missing or unlocked decision is not Ready.
+17. Mixed eligible/ineligible cohort does not appear fully Ready.
+18. Existing locked records remain unchanged.
+19. Historical locked decisions remain readable.
+
+### Security and Session Isolation
+
+20. Cross-school records cannot influence readiness.
+21. Cross-session records cannot influence readiness.
+22. Archived-session writes remain rejected.
+23. Web and Mobile backend execution guards remain intact.
+24. Promotion Stage 3 activation protections remain intact.
+
+Run relevant existing tests as well.
+
+Do not run destructive database tests against existing Development records.
+
+---
+
+# 5. VERIFICATION REQUIREMENTS
+
+After implementation:
+
+1. Run focused tests.
+2. Run relevant existing examination/promotion regression tests.
+3. Run Web and backend builds.
+4. Identify new versus pre-existing typecheck errors.
+5. Verify current Development records using read-only queries only.
+6. Verify that the five existing locked Teacher decisions still exist with their original current values.
+7. Where no pre-implementation snapshot exists, do not claim historical values were proven unchanged.
+8. Attempt authenticated Teacher and Admin UI verification if the available environment permits.
+9. Clearly disclose any UI or database transaction behavior that could not be verified.
+10. Confirm that Mobile frontend files remain unchanged.
+
+Do not declare full production readiness based only on unit tests or successful builds.
+
+---
+
+# 6. REQUIRED FINAL REPORT
+
+Provide the following:
+
+1. **Overall verdict:** PASS / NEEDS CHANGES / BLOCKED.
+2. Teacher Report Card correction.
+3. Admin Final Promotion Summary correction.
+4. Locked-ledger readiness correction.
+5. Whether readiness matches backend execution eligibility.
+6. Exact source files changed.
+7. Schema/database changes: YES/NO.
+8. Existing locked-decision preservation findings.
+9. Tests executed, including exact pass/fail counts.
+10. Web and backend build results.
+11. New or existing typecheck issues.
+12. Authenticated UI verification results.
+13. Unverified database transaction or concurrency behavior.
+14. Academic Session and tenant-isolation verification.
+15. Mobile frontend changed: YES/NO.
+16. Production accessed: YES/NO.
+17. Deployment performed: YES/NO.
+18. Remaining issues and recommended next stage.
+
+### FINAL INSTRUCTION
+
+Implement **Stage 1C only**.
+
+Do not reopen the entire Examination module.
+
+Do not modify existing examination records or locked decisions.
+
+Do not change Mobile frontend files.
+
+Do not deploy.
+
+If any critical dependency cannot be corrected safely within this scope, stop and report before making unsafe changes.
