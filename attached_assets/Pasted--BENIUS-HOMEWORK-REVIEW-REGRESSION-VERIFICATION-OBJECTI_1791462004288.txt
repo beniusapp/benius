@@ -1,0 +1,128 @@
+# BENIUS — HOMEWORK REVIEW REGRESSION VERIFICATION
+
+## OBJECTIVE
+
+Verify the recently implemented Teacher Homework Review and Homework View Tracking features.
+
+Stages 1 and 2 have been implemented, but full database-backed regression verification and authenticated UI verification remain outstanding.
+
+This is a TEST-FIRST follow-up.
+
+Do not redesign or extend the Homework functionality.
+
+### STRICT RULES
+
+1. Keep Mobile FROZEN.
+2. Do not modify Mobile files or Mobile APIs.
+3. Do not implement attachment storage or attachment migration.
+4. Do not expose Student attachment URLs.
+5. Preserve strict school/tenant isolation.
+6. Preserve selected Academic Session isolation.
+7. Archived Academic Sessions remain read-only.
+8. Preserve existing Teacher assignment and review authorization rules.
+9. Do not access Production or deploy.
+10. Use isolated test fixtures and a disposable test database, never destructive operations on existing application data.
+11. Do not fix unrelated repository-wide TypeScript errors.
+12. Do not make implementation changes unless a regression test demonstrates a defect. Report any defect and the proposed minimal correction before implementing it.
+
+## PART A — DATABASE-BACKED REGRESSION TESTS
+
+Test the complete Teacher Homework review lifecycle:
+
+1. Student submits a text-only Homework answer.
+2. Authorized assigned Teacher can read that submission.
+3. Teacher approves with a comment.
+4. Student sees the approval and comment.
+5. Approved submission cannot be edited or resubmitted.
+6. Teacher requests resubmission on a separate submitted answer.
+7. Student sees the request and comment.
+8. Student resubmits successfully.
+9. Previous review metadata does not incorrectly describe the new submission.
+10. Teacher can review the resubmitted answer again.
+11. Review actions work without requiring a comment.
+12. Submissions containing attachments remain blocked from Teacher review under the current deferred-storage policy.
+
+## PART B — SECURITY TESTS
+
+Verify:
+
+- Teacher cannot access another school's submissions.
+- Teacher cannot review outside the established assigned class/section authorization.
+- Student cannot read another Student's private answer or Teacher feedback.
+- Cross-session submission access is rejected.
+- Archived-session review writes are rejected.
+- Student resubmission in archived sessions is rejected.
+- Client-supplied school or reviewer IDs cannot bypass server-side authorization.
+- Teacher review API does not expose attachment URLs.
+
+## PART C — VIEW TRACKING
+
+Verify:
+
+- Student opening Homework records a view.
+- Merely loading the Homework list does not record a view.
+- Reopening does not increase the count.
+- Concurrent opens cannot create duplicate view records.
+- Active roster counts only eligible active Students with active selected-session Enrollments.
+- Archived-session counts follow historical roster rules.
+- View tracking does not modify academic content in archived sessions.
+- Existing Homework red-dot notifications are unaffected.
+
+## PART D — AUTHENTICATED WEB UI
+
+Where an authenticated development test environment is available, verify:
+
+- Teacher Homework card displays View Submissions.
+- Teacher can open and read a text submission.
+- Approve and Request Resubmission work.
+- Optional Teacher comment is displayed correctly.
+- Student sees the correct review state.
+- Viewed-by counts update correctly.
+- Session switching does not show stale data from another session.
+
+If authenticated browser testing is unavailable, report NOT VERIFIED. Do not claim visual PASS.
+
+## PART E — UPDATE-DEPTH ERROR INVESTIGATION
+
+The previous implementation report mentioned repeated React update-depth errors on an authenticated view.
+
+Investigate this issue read-only first.
+
+Determine:
+
+- Exact route and component involved.
+- Whether it is reproducible.
+- Whether it existed before the Homework changes.
+- Whether it affects Student or Teacher Homework.
+- Whether it prevents normal interaction.
+
+Do not fix unrelated components.
+
+If a Homework-specific defect is confirmed, provide the smallest proposed fix and report it before changing code.
+
+## PART F — FINAL REPORT
+
+Provide:
+
+1. Overall verdict: PASS / NEEDS CHANGES
+2. Database-backed test results
+3. Security test results
+4. View-tracking test results
+5. Authenticated UI verification results
+6. Update-depth investigation findings
+7. Exact test files added or modified
+8. Any confirmed implementation defects
+9. Existing attachment security risk
+10. Mobile files changed: YES/NO
+11. Production accessed: YES/NO
+12. Deployment performed: YES/NO
+
+Do not claim the complete Homework system is secure while existing public attachment URLs remain exposed.
+
+### FINAL INSTRUCTION
+
+Focus on verification and regression coverage.
+
+Preserve all existing BENIUS business rules.
+
+Do not implement the postponed attachment-storage work.
