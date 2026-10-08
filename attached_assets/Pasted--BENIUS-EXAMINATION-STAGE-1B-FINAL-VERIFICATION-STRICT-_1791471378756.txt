@@ -1,0 +1,113 @@
+# BENIUS EXAMINATION — STAGE 1B FINAL VERIFICATION
+## STRICT READ-ONLY — NO CHANGES
+
+Stage 1B implementation has been reported as PASS.
+
+Before formally closing Stage 1B, verify every approved requirement against the actual implemented source code and existing development records.
+
+Do not modify code, schema, data, tests, Mobile files or configuration. Do not deploy or access Production.
+
+### 1. RESULTS ROSTER
+
+Verify that active-session Teacher Results uses:
+
+- Active Student account.
+- Active exact-session Enrollment.
+- Authenticated school.
+- Selected Academic Session.
+- Matching Class and Section.
+
+For School 2, Session 2, Class 1/a, confirm the Results roster now contains only MIS-0001 and MIS-0002.
+
+Verify MIS-0004, MIS-0006 and MIS-0007 remain stored but are excluded from active Results.
+
+Confirm historical roster visibility is preserved.
+
+### 2. INCOMPLETE RESULT
+
+Verify that a Student with no applicable marks in the selected examination term displays:
+
+- Incomplete / Pending Result.
+- No numeric weighted average.
+- No grade.
+- No evaluated subject-failure count.
+- No automatic promotion or retention.
+
+Confirm zero marks, explicit Absent and partial marks retain their existing behavior.
+
+### 3. AUTO-SUGGESTION AND SAVE
+
+Verify:
+
+- No implicit Promoted fallback.
+- No automatic promotion or retention for incomplete Students.
+- Save Draft does not unlock or overwrite existing locked decisions.
+- Locking an incomplete result is rejected server-side.
+- Direct Teacher API requests cannot bypass these checks.
+
+### 4. EXISTING LOCKED LEDGERS
+
+Read-only verify the five existing decisions for School 2, Session 2, Class 1/a, Half Yearly result.
+
+Confirm:
+
+- MIS-0001 and MIS-0002 remain unchanged.
+- MIS-0004, MIS-0006 and MIS-0007 retain their original stored locked decisions.
+- Conflicting decisions cannot be executed.
+- No historical rows were rewritten.
+- Conflicts are visibly identified rather than presented as valid final decisions.
+
+### 5. WEB AND MOBILE PROMOTION BACKEND
+
+Verify every promotion execution endpoint now requires:
+
+- Authenticated school.
+- Explicit source and target sessions.
+- Strict examination-term identity.
+- Complete applicable marks.
+- Matching locked Teacher decision.
+- Server-derived result and destination.
+- No direct Registry placement mutation.
+
+Confirm old Mobile requests fail closed.
+
+Verify that validation is inside the authoritative transaction and cannot be bypassed by another route.
+
+### 6. TEST AND VERIFICATION COVERAGE
+
+List the eight focused tests that passed and state exactly which requirements each test covers.
+
+Identify missing tests, especially:
+
+- Database transaction atomicity and rollback.
+- Concurrent execution.
+- Existing locked-ledger preservation.
+- Authenticated Teacher Results UI.
+- Authenticated Admin promotion flow.
+- Cross-school and cross-session isolation.
+- Archived-session write rejection.
+- Promotion Stage 3 activation invariants.
+
+Do not claim unexecuted tests passed.
+
+### FINAL REPORT
+
+Provide a requirement-by-requirement table with:
+
+- PASS
+- FAIL
+- NOT VERIFIED
+
+For every item include exact source file/function references and evidence.
+
+Clearly separate implemented behavior from tested behavior.
+
+End with:
+
+1. Stage 1B closure recommendation.
+2. Remaining blockers.
+3. Confirmation of no changes.
+4. Mobile frontend unchanged.
+5. Production/deployment unchanged.
+
+STRICT READ-ONLY VERIFICATION ONLY.
