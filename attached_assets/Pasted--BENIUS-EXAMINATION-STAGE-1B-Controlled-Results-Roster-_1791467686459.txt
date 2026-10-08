@@ -1,0 +1,284 @@
+# BENIUS EXAMINATION — STAGE 1B
+## Controlled Results Roster, Incomplete Results and Promotion Execution Protection
+
+The Stage 1A read-only impact audit is complete.
+
+Implement only the approved Stage 1B corrections.
+
+BENIUS is a multi-tenant school MIS in DEVELOPMENT.
+
+### APPROVED BUSINESS RULE
+
+When a Student has **no applicable examination marks for the selected term**, the Student's result must be:
+
+**Incomplete / Pending Result**
+
+Such a Student must NOT be automatically promoted or retained.
+
+A missing result is not equivalent to zero marks, an Absent result, or a failed examination.
+
+### STRICT RULES
+
+1. Keep Mobile FROZEN. Do not modify Mobile files or Mobile-specific APIs.
+2. Preserve strict authenticated School ID and selected Academic Session ID isolation.
+3. Archived Academic Sessions remain read-only.
+4. Do not rewrite, delete, unlock, or overwrite existing locked Teacher ledger decisions.
+5. Do not change existing marks, scores, attendance records, Student statuses, or Enrollment statuses.
+6. Do not change configured examination policies, grade thresholds, weights, or subject-failure rules.
+7. Do not alter the current partial-marks, zero-marks, or explicit-Absent calculation semantics.
+8. Do not change shared Attendance-history roster behavior.
+9. Do not weaken existing Promotion Stage 3 target-session Enrollment validation or atomic Registry synchronization.
+10. No Production access or deployment.
+11. No unrelated refactoring.
+12. Stop and report before making changes if a necessary business rule or safe migration cannot be established.
+
+---
+
+# STEP 1 — CORRECT ACTIVE RESULTS ROSTER
+
+The existing Teacher Results path uses a broad Attendance roster helper.
+
+Implement a Results-specific active-session roster rule requiring:
+
+- Authenticated school ownership.
+- Active Student account.
+- Exact selected Academic Session Enrollment.
+- Active Enrollment status.
+- Matching Enrollment Class and Section.
+
+Do not use current Registry or Attendance fallback placement for active Results.
+
+For archived sessions, preserve legitimately enrolled historical Students, including Students deactivated later.
+
+Do not globally change `getAttendanceRosterForSessionClass`.
+
+Do not delete excluded Students' scores or ledger records.
+
+### Development verification
+
+For School 2, Session 2, Class 1/a:
+
+Expected eligible active Results roster:
+
+- MIS-0001
+- MIS-0002
+
+MIS-0004, MIS-0006 and MIS-0007 must be excluded from the active Results display but their existing data must remain preserved.
+
+Verify the resulting active-roster attendance mean against existing records, without changing Attendance calculations or denominator rules.
+
+---
+
+# STEP 2 — DERIVE AN EXPLICIT INCOMPLETE RESULT
+
+Update the shared examination calculation contract minimally.
+
+For the selected school, session, class, section and term, determine whether at least one applicable configured assessment score exists.
+
+If NO applicable marks exist:
+
+- Overall result status = Incomplete.
+- Weighted average = null.
+- Grade = null / not evaluated.
+- Subject failures = not evaluated, not zero.
+- Promotion suggestion = Pending / no decision.
+- No automatic promotion.
+- No automatic retention.
+
+Do not represent Pending as a numeric zero or as a boolean promoted/retained decision.
+
+Preserve existing calculations for:
+
+- Legitimate zero scores.
+- Explicit Absent score records.
+- Partially scored subjects or components.
+- Fully evaluated results.
+
+Use the correct term configuration; a mark from an unrelated term must not make this term complete.
+
+If existing consumers require a boolean promoted field, maintain backward compatibility without allowing an incomplete result to be interpreted as promoted or retained. Audit every consumer and reject unsafe assumptions.
+
+Do not expose unpublished Teacher result calculations through Student Portal endpoints.
+
+---
+
+# STEP 3 — UPDATE TEACHER RESULTS UI
+
+For no-mark Students, display:
+
+- Weighted Average: No data
+- Grade: —
+- Subject Failures: —
+- Result Status: Incomplete / Pending Result
+- Promotion Gate: Pending — No marks
+
+Do not show Promoted or Retained.
+
+Keep existing BENIUS UI design.
+
+For saved locked decisions that conflict with the newly derived result:
+
+- Preserve the original saved decision.
+- Clearly show that the decision conflicts with the current result eligibility.
+- Do not label the conflicting decision as valid or final.
+- Do not automatically unlock or change it.
+
+Ensure the Results summary counts distinguish:
+
+- Promoted
+- Retained
+- Pending / Incomplete
+
+Do not count an incomplete Student as promoted or retained.
+
+Preserve historical result visibility and historical ledger records.
+
+---
+
+# STEP 4 — REMOVE UNSAFE AUTO-SUGGESTION DEFAULTS
+
+Correct:
+
+- Run Auto-Suggestion
+- Save Draft
+- Lock & Save Ledger
+- Manual Promotion Gate
+- Existing saved decision loading
+
+Requirements:
+
+1. No-mark Students cannot receive an automatic promoted or retained suggestion.
+2. Missing local decisions must not default to promoted.
+3. Draft saves must not create promotion decisions for incomplete or undecided Students.
+4. Saving a draft must not unlock or overwrite previously locked decisions.
+5. Locking must reject incomplete or undecided decisions.
+6. Direct Teacher API requests must enforce the same rules.
+7. Valid completed Student decisions must retain existing policy behavior.
+8. Existing conflicting locked decisions must remain unchanged.
+
+If the current storage contract cannot safely support partial drafts, do not invent a new state or perform destructive rewrites. Report the blocker and propose the smallest safe alternative.
+
+---
+
+# STEP 5 — PROTECT ADMIN PROMOTION EXECUTION
+
+This is a critical server-side requirement.
+
+The Stage 1A audit identified that the Admin promotion API can accept client-supplied totals and percentages without independently requiring a completed result and matching locked Teacher decision.
+
+Implement an authoritative guard inside `executePromotionTransaction`, BEFORE any target Enrollment, promotion history, ledger or Registry-related writes.
+
+The guard must:
+
+1. Resolve the authenticated school and exact source Academic Session.
+2. Validate the Student's exact active source-session Enrollment and source class/section.
+3. Identify the applicable examination term and its configured components.
+4. Re-evaluate result completeness from persisted, correctly scoped examination records.
+5. Reject no-mark or incomplete results under the approved rule.
+6. Require a matching valid Teacher promotion decision for the same school, session, Student, source class/section and term.
+7. Require the decision to be locked and eligible for execution.
+8. Reject conflicting, missing, stale or invalid decisions.
+9. Never trust client-supplied percentages, grade, promotion eligibility or decision status as authority.
+10. Preserve the existing target-session checks and Promotion Stage 3 protections.
+
+If the existing Admin wizard uses a different term identifier from raw exam-score types, resolve the mapping through authoritative term configuration. Do not guess, silently fall back, or treat an empty score aggregation as complete.
+
+If safe mapping or stale-decision verification cannot be established with existing data, fail closed and report the blocker. Do not invent a permissive fallback.
+
+Ensure the complete validation and subsequent writes remain atomic and safe against concurrent score, ledger or promotion changes. If the current transaction boundaries cannot guarantee this, report the required locking/versioning design before implementing a partial guard.
+
+For the existing three conflicting locked decisions:
+
+- Preserve the rows.
+- Do not execute them.
+- Do not change their stored status.
+- Surface the conflict to Admin where feasible.
+
+Do not silently perform a bulk repair.
+
+---
+
+# STEP 6 — ACADEMIC SESSION AND TENANT SAFETY
+
+Verify every changed path uses:
+
+Authenticated School ID + Selected Academic Session ID + Student ID + applicable Class/Section/Term.
+
+Archived-session writes must be rejected.
+
+Historical result reads must remain available under existing permissions.
+
+No cross-school or cross-session records may be used for calculation or execution.
+
+Do not change current Registry placement rules or historical Student Profile behavior.
+
+---
+
+# STEP 7 — REGRESSION TESTS
+
+Add focused tests using isolated fixtures and disposable database resources where needed.
+
+Required cases:
+
+1. Active Student with Active Enrollment appears.
+2. Inactive Student with Active Enrollment is excluded from active Results.
+3. Active Student with inactive Enrollment is excluded.
+4. Missing exact-session Enrollment is excluded.
+5. Historical deactivated Student remains visible in the correct historical roster.
+6. No marks returns Pending without promotion or retention.
+7. Zero marks remains evaluated zero.
+8. Explicit Absent remains distinct from no marks.
+9. Partial marks retain existing calculation semantics.
+10. Completed marks retain configured grades and weighted averages.
+11. Missing decision never defaults to promoted.
+12. Draft save does not overwrite or unlock locked decisions.
+13. Locking an incomplete decision is rejected.
+14. Direct API promoted decision without marks is rejected.
+15. Existing conflicting locked records remain unchanged.
+16. Admin promotion without a matching locked Teacher decision is rejected.
+17. Admin promotion for an active no-mark Student is rejected.
+18. Admin promotion for a valid completed Student follows existing approved policy.
+19. Cross-school and cross-session attempts are rejected.
+20. Archived-session writes are rejected.
+21. Target-session Enrollment validation remains intact.
+22. Promotion Stage 3 activation and atomic Registry synchronization tests continue to pass.
+23. Results summary totals match the eligible roster.
+24. No unrelated Attendance or Student Portal behavior changes.
+
+Do not use the existing Development database for destructive testing.
+
+---
+
+# STEP 8 — REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall verdict: PASS / NEEDS CHANGES
+2. Active Results roster correction
+3. Incomplete-result calculation behavior
+4. Teacher Results UI behavior
+5. Auto-Suggestion behavior
+6. Save Draft and Lock behavior
+7. Existing locked-decision preservation
+8. Admin promotion execution protection
+9. Academic Session isolation
+10. Tenant isolation
+11. Exact files changed
+12. Schema changes, if any
+13. Tests and builds run, with results
+14. Any blocked or unverified behavior
+15. Mobile files changed: YES/NO
+16. Production accessed: YES/NO
+17. Deployment performed: YES/NO
+
+Do not claim PASS if an active Student with no marks can still be promoted through a direct Admin API request.
+
+### FINAL INSTRUCTION
+
+Implement Stage 1B only.
+
+Preserve existing examination policies, historical data and locked ledgers.
+
+Fail closed on unresolved promotion eligibility.
+
+Do not deploy.
