@@ -12,10 +12,10 @@ export type StudentSchoolJoin = {
   school: SchoolLogoIdentity;
 };
 
-export async function loadStudentMeIdentity(
+export async function loadStudentMeIdentity<T extends StudentSchoolJoin>(
   authenticatedStudentId: number,
-  getStudentWithSchool: (studentId: number) => Promise<StudentSchoolJoin | null | undefined>,
-): Promise<{ data: StudentSchoolJoin; logoUrl: string | null } | null> {
+  getStudentWithSchool: (studentId: number) => Promise<T | null | undefined>,
+): Promise<{ data: T; logoUrl: string | null } | null> {
   const data = await getStudentWithSchool(authenticatedStudentId);
   if (!data) return null;
 

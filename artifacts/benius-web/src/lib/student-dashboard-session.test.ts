@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   canFetchStudentDashboardSessionData,
   studentDashboardGlobalQueryKey,
+  studentDashboardIdentityQueryPolicy,
   studentDashboardSessionIdFromQueryKey,
   studentDashboardSessionQueryKey,
   resetStudentDashboardIdentity,
@@ -56,5 +57,14 @@ test("account-switch refresh resets only the Student identity cache key", () => 
   assert.deepEqual(resetFilters, {
     queryKey: ["/api/student-me"],
     exact: true,
+  });
+});
+
+test("Student identity is always refreshed on Dashboard mount and not retained after unmount", () => {
+  assert.deepEqual(studentDashboardIdentityQueryPolicy, {
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
   });
 });

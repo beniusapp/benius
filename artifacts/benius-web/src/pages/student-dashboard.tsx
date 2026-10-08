@@ -12,6 +12,7 @@ import { nextStudentDashboardGreetingHour, studentDashboardGreeting } from "@/li
 import {
   canFetchStudentDashboardSessionData,
   studentDashboardGlobalQueryKey,
+  studentDashboardIdentityQueryPolicy,
   studentDashboardSessionIdFromQueryKey,
   studentDashboardSessionQueryKey,
   resetStudentDashboardIdentity,
@@ -183,10 +184,7 @@ export default function StudentDashboard() {
       if (!response.ok) throw new Error(`Student identity fetch failed: ${response.status}`);
       return response.json() as Promise<StudentMeResponse>;
     },
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: false,
+    ...studentDashboardIdentityQueryPolicy,
   });
   const schoolLogoUrl = safeStudentSchoolLogoUrl(student?.logoUrl, student?.schoolId);
 

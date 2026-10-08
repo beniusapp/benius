@@ -2,6 +2,13 @@ export function studentDashboardGlobalQueryKey(resource: string) {
   return [resource] as const;
 }
 
+export const studentDashboardIdentityQueryPolicy = {
+  staleTime: 0,
+  gcTime: 0,
+  refetchOnMount: "always",
+  refetchOnWindowFocus: false,
+} as const;
+
 export function resetStudentDashboardIdentity(
   resetQueries: (filters: { queryKey: readonly unknown[]; exact: true }) => unknown,
 ): void {
