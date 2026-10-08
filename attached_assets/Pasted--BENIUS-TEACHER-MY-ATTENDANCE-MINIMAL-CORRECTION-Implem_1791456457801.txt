@@ -1,0 +1,54 @@
+# BENIUS — TEACHER MY ATTENDANCE: MINIMAL CORRECTION
+
+Implement ONLY the following approved changes in the **Web Teacher Portal → My Attendance** (`/teacher-dashboard/attendance`).
+
+### Change 1 — Correct Present (Month)
+
+- Keep the card label **Present (Month)**.
+- Count only stored `Present` attendance records within the current calendar month in **Asia/Kolkata (IST)**.
+- Restrict the calculation to the selected Academic Session and its date boundaries.
+- Do not include future dates.
+- Do not count `Late`, `Half Day`, or other statuses as Present.
+- Preserve all other attendance formulas and stored records.
+- Ensure month boundaries work correctly when the current month overlaps the start or end of an Academic Session.
+
+### Change 2 — Synchronize Academic Session
+
+- Use the Teacher Dashboard's selected Academic Session as the single source of truth for My Attendance.
+- Remove or synchronize the independent My Attendance session selection so it cannot disagree with the Dashboard.
+- Ensure all attendance queries, query-cache keys, displayed data, and read-only controls use that same session.
+- Historical Academic Sessions must show their own records and remain strictly read-only.
+- Backend must continue rejecting historical attendance writes.
+- Never silently fall back to the active session when a historical session is selected.
+- Preserve school/tenant isolation.
+
+### Change 3 — Remove Absent Days KPI
+
+- Remove the **Absent Days** card from the My Attendance summary.
+- Adjust the summary-card layout cleanly without redesigning the module.
+- Do NOT delete or modify stored Absent attendance records.
+- Do NOT change Attendance History or its existing status displays.
+- Do NOT change the Attendance Rate (Session) calculation or its treatment of missing attendance.
+
+### Strict scope
+
+- Web Teacher Portal and only necessary shared backend changes.
+- Mobile remains FROZEN.
+- No changes to attendance policy, approved-leave calculations, historical attendance statuses, check-in/check-out, correction rules, or Teacher assignment.
+- No unrelated refactoring, database changes, or schema migrations unless absolutely necessary and explained before proceeding.
+- No Production access or deployment.
+
+### Verification required
+
+Test current-month boundaries, selected-session boundaries, archived-session read-only behavior, cross-school isolation, removal of the Absent Days card, and regression of the remaining KPI calculations.
+
+Run focused tests and API/Web builds. Report any existing unrelated typecheck failures separately.
+
+Finally provide a concise report with:
+1. Overall PASS / NEEDS CHANGES
+2. Files changed
+3. Confirmation of all three requested changes
+4. Tests and builds
+5. Database/Mobile/Production impact
+
+Do not implement additional attendance business-rule changes.
