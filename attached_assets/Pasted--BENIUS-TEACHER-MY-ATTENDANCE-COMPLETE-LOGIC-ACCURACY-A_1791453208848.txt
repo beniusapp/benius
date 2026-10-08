@@ -1,0 +1,238 @@
+# BENIUS — TEACHER MY ATTENDANCE COMPLETE LOGIC & ACCURACY AUDIT
+
+## IMPORTANT — READ-ONLY AUDIT FIRST
+
+Do not modify any code, database, schema, attendance record, calculation, API, UI, or business logic.
+
+Do not deploy anything.
+
+Mobile development remains FROZEN.
+
+I want a complete technical and business-logic audit of:
+
+**Teacher Portal → `/teacher-dashboard/attendance` → My Attendance**
+
+I am the product owner and want to understand how the Teacher's attendance is calculated and whether every displayed value is correct.
+
+## 1. Current screenshot values
+
+My Teacher Attendance screen currently displays:
+
+- Attendance Rate (Session): 87.5%
+- Present (Month): 2
+- Late Arrivals: 1
+- Half Day: 1
+- Absent Days: 0
+- Average Duration: 7h 27m
+
+Do not assume these values are correct.
+
+Trace each value from the Web UI through its API, backend calculation, database queries, and attendance policy.
+
+## 2. Attendance Rate (Session) — MOST IMPORTANT
+
+Explain exactly:
+
+1. Which Academic Session is used?
+2. What is the session start date and end date?
+3. What is the exact start and end date of the percentage calculation?
+4. Is the calculation from session start through today, through yesterday, or through the last marked attendance date?
+5. Are future session dates excluded?
+6. Are Sundays, holidays, non-working days, and approved leave excluded or included?
+7. Are unmarked working days counted as absent, excluded, or treated differently?
+8. How do Present, Late, Half Day, Absent, Leave, and corrected attendance contribute?
+9. Does Late count as full attendance or partial attendance?
+10. Does Half Day count as 0.5, or something else?
+11. Does approved leave affect the numerator or denominator?
+12. What happens if there are no eligible working days?
+13. What is the exact formula, including rounding?
+
+Show the actual numerator and denominator used to produce 87.5%.
+
+For example, explain whether the calculation is based on weighted attendance days divided by eligible working days, or a completely different formula.
+
+Do not invent a formula. Report the formula actually implemented in the code.
+
+## 3. Present (Month)
+
+Explain:
+
+- Does Month mean the current calendar month in IST?
+- Does it mean the month selected in the attendance calendar?
+- Does it mean the current month within the selected Academic Session?
+- What exact dates are included?
+- Is Present counted only when the stored status is Present?
+- Do Late and Half Day count as Present?
+- Are future dates excluded?
+- Are approved corrections included?
+- Does switching Academic Sessions change this count?
+
+Show the exact records that produce the displayed value of 2.
+
+## 4. Late Arrivals, Half Day, and Absent Days
+
+For each metric, explain:
+
+- Exact calculation and date range
+- Whether it is session-wide, monthly, or based on another period
+- Whether it uses stored attendance status or recalculates status
+- How attendance policy thresholds affect the count
+- Whether missing attendance is counted as Absent
+- Whether corrected records are included
+- Whether approved leave affects it
+
+I specifically want to know why the screen displays 1 Late Arrival, 1 Half Day, and 0 Absent Days.
+
+## 5. Average Duration
+
+Explain exactly how 7h 27m is calculated.
+
+Identify:
+
+- Which attendance records are included
+- Whether the range is monthly or session-wide
+- Whether only completed check-in/check-out records count
+- Whether missing checkout is excluded
+- Whether Half Day and Late records count
+- Whether corrected attendance durations count
+- Whether duration comes from stored working minutes or timestamps
+- Whether break time is deducted
+- How rounding is performed
+
+Show the exact total working minutes, number of records, and division used.
+
+## 6. Academic Session integration
+
+Verify that My Attendance is properly integrated with the selected Academic Session.
+
+Check:
+
+- Selected session ID is passed correctly from the Teacher Web Portal.
+- Backend validates the session belongs to the authenticated Teacher's school.
+- Active-session reads use the selected active session.
+- Historical-session reads use the selected historical session.
+- Switching sessions changes the correct session-sensitive metrics.
+- No records from another session are mixed.
+- NULL-session legacy records do not leak into selected-session calculations.
+- No silent fallback to the active session occurs when a different session is selected.
+- Historical sessions remain read-only.
+- Query/cache keys include the selected session wherever necessary.
+
+Also identify any metrics that intentionally remain current/global rather than session-specific.
+
+## 7. Historical attendance policy
+
+BENIUS has an established requirement:
+
+**Historical Teacher Self-Attendance status must retain its original stored meaning.**
+
+Verify:
+
+- GET requests do not rewrite stored historical attendance status.
+- Current attendance policy changes do not reinterpret historical stored statuses.
+- Teacher assignment changes do not alter historical attendance results.
+- Archived-session reads do not recalculate historical statuses using current policy.
+- Approved corrections follow the existing authorization and historical rules.
+
+If any path violates this, report it as a finding. Do not fix it yet.
+
+## 8. Attendance policy and working-day logic
+
+Trace the exact source of:
+
+- Working days
+- Weekly holidays
+- School holidays
+- Teacher leave
+- Attendance cutoff/grace time
+- Half-day rules
+- Late-arrival rules
+- Missing checkout
+- Attendance corrections
+
+Determine whether the displayed statistics use the same policy consistently or mix different definitions.
+
+Explain whether working-day and holiday policy is current/global or historically snapshotted.
+
+## 9. Development database verification
+
+If Development database access is available, perform SELECT-only queries.
+
+Use the authenticated-school-equivalent filters and the exact Teacher and Academic Session corresponding to the screenshot, if they can be identified reliably.
+
+Show a date-by-date table containing:
+
+| Date (IST) | Session | Working Day? | Stored Status | Check-in | Check-out | Working Minutes | Contribution to Attendance Rate |
+|---|---|---|---|---|---|---|---|
+
+Then independently calculate all six displayed metrics from the actual Development records and implemented business rules.
+
+If the screenshot's Teacher cannot be identified confidently, say so. Do not claim the Development records prove the screenshot values without establishing the identity.
+
+Do not insert, update, delete, backfill, or correct any attendance data.
+
+## 10. Tenant isolation and security
+
+Verify:
+
+- Teacher identity is derived from authentication.
+- School ID is server-trusted.
+- Another Teacher's attendance cannot be accessed by manipulating IDs.
+- Another school's attendance cannot enter the calculations.
+- Academic Session belongs to the authenticated school.
+- Read and correction permissions remain properly enforced.
+
+## 11. Required final report
+
+Provide:
+
+### A. Overall verdict
+Choose PASS, NEEDS CHANGES, or UNVERIFIED, based on actual evidence.
+
+### B. Simple explanation
+Explain in non-technical language how Teacher attendance works.
+
+### C. Metric calculation table
+
+| Metric | Date range | Formula | Actual data used | Expected value | Displayed value | PASS/FAIL |
+|---|---|---|---|---|---|---|
+
+Include all six metrics.
+
+### D. Attendance Rate breakdown
+Show the exact numerator, denominator, weighting, date boundaries, and calculation.
+
+### E. Academic Session verification
+Clearly distinguish active and historical behavior.
+
+### F. Policy verification
+Explain working days, holidays, leave, late, half-day, absence, corrections, and historical status preservation.
+
+### G. Identified bugs
+For each bug provide:
+- Severity
+- File and line numbers
+- Root cause
+- Expected behavior
+- Recommended smallest correction
+
+### H. Impact
+State whether fixing any issue would change existing business logic or merely correct an implementation error.
+
+### I. Change confirmation
+Explicitly state:
+- Code changes: NONE
+- Database changes: NONE
+- Mobile changes: NONE
+- Production accessed: NO
+- Deployment: NONE
+
+## FINAL INSTRUCTION
+
+This is strictly a READ-ONLY audit.
+
+Do not implement any correction yet.
+
+I will review your report first and decide which changes are necessary.
+
+The goal is to establish whether every My Attendance metric is mathematically correct, accurately date-scoped, Academic-Session-aware, tenant-isolated, and consistent with BENIUS attendance policies.
