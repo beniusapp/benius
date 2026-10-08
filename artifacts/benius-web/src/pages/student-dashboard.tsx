@@ -207,22 +207,6 @@ export default function StudentDashboard() {
     poll: true,
   });
 
-  const { data: unreadData } = useQuery<{ count: number }>({
-    queryKey: studentDashboardSessionQueryKey("/api/student/notices/unread-count", selectedSessionId),
-    queryFn: async ({ queryKey, signal }) => {
-      const requestSessionId = studentDashboardSessionIdFromQueryKey(queryKey);
-      const response = await sessionFetchForViewSession(
-        "/api/student/notices/unread-count", requestSessionId, { signal },
-      );
-      if (!response.ok) throw new Error(`Notice count fetch failed: ${response.status}`);
-      return response.json() as Promise<{ count: number }>;
-    },
-    enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
-    refetchInterval: 60000,
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
-
   const { data: attendanceStats } = useQuery<AttendanceStatsResponse>({
     queryKey: studentDashboardSessionQueryKey("/api/student/attendance/stats", selectedSessionId),
     queryFn: async ({ queryKey, signal }) => {
@@ -315,8 +299,6 @@ export default function StudentDashboard() {
       (hw) => hw.submission === null || hw.submission.status === "rejected"
     ).length;
   }, [homeworkItems]);
-
-  const unreadCount = unreadData?.count ?? 0;
 
   const feesTotalDue = feeRecords.filter(r => r.status !== "Paid").reduce((s, r) => s + r.amount, 0);
   const feesOverdueCount = feeRecords.filter(r => r.status === "Overdue").length;
@@ -538,7 +520,7 @@ export default function StudentDashboard() {
               </div>
 
               {/* Quick stats pills — always rendered once data loads */}
-              <div className="flex flex-wrap justify-center sm:justify-start gap-2 mt-3">
+              <div className="flex justify-center sm:justify-start mt-3">
                 <span
                   className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
                   style={{
@@ -551,16 +533,6 @@ export default function StudentDashboard() {
                   <span>📊</span>
                   Attendance: {attendPct !== null ? `${attendPct}%` : "—"}
                 </span>
-                {unreadCount > 0 && (
-                  <span
-                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-sm"
-                    style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca" }}
-                    data-testid="badge-unread-notices"
-                  >
-                    <span>🔔</span>
-                    {unreadCount} New Notice{unreadCount !== 1 ? "s" : ""}
-                  </span>
-                )}
               </div>
             </div>
 
