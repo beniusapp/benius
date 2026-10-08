@@ -1,0 +1,311 @@
+# BENIUS EXAMINATION — SIMPLIFICATION STAGE 1
+## Secure Marks Entry, Academic Session Isolation and Immediate Marks Visibility
+### CONTROLLED IMPLEMENTATION — NO DEPLOYMENT
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner has approved the following business decisions:
+
+**DECISION 1 — IMMEDIATE MARKS VISIBILITY**
+
+Once an authorized Teacher successfully saves or corrects marks, those marks must be visible in:
+
+- Teacher Portal → Examination → View Marks
+- Student Portal → Examination → View Marks
+- Principal Portal → Performance Analytics → View Marks
+
+There must be NO separate Teacher Publish button for marks.
+
+**DECISION 2 — PRINCIPAL FINAL AUTHORITY**
+
+The Teacher calculates, reviews and locks the promotion/retention recommendation.
+
+The Principal has final authority to confirm or make an authorized, audited override.
+
+This second decision is approved as the target business contract, but implementation of the Principal override is OUT OF SCOPE for Stage 1.
+
+Do not change promotion execution or override behavior during this stage.
+
+---
+
+# 1. STAGE 1 OBJECTIVE
+
+Implement the smallest safe changes necessary to ensure:
+
+1. Only authorized Teachers can enter or modify marks.
+2. Marks are validated on the backend.
+3. All marks belong to the correct School and Academic Session.
+4. A successful marks save makes the latest marks eligible for immediate Student visibility without a separate publication action.
+5. Teacher, Student and Principal View Marks use the same authoritative `exam_scores` records.
+6. No cross-school or cross-session data leakage occurs.
+7. Existing historical examination records remain preserved.
+
+Reuse the existing database and APIs wherever safely possible.
+
+Do not introduce a second marks table.
+
+Do not redesign the Examination interface.
+
+---
+
+# 2. STRICT SAFETY REQUIREMENTS
+
+- Mobile frontend is FROZEN.
+- Do not change Mobile screens, navigation or components.
+- Preserve existing Mobile API contracts unless an unsafe contract requires fail-closed protection; report such a blocker before changing it.
+- Preserve all existing examination marks and history.
+- Do not delete or overwrite existing locked Teacher decisions.
+- Do not modify promotion execution, Principal override processing or session activation.
+- Do not modify examination policies, grading thresholds or weightages.
+- Preserve school/tenant isolation.
+- Preserve selected Academic Session ID isolation.
+- Archived Academic Sessions must remain read-only.
+- Do not use current Student Registry class/section as a substitute for selected-session Enrollment.
+- Do not access Production.
+- Do not deploy.
+- Do not run destructive tests against existing Development records.
+
+If an essential change cannot be made safely within this scope, STOP and report it before proceeding.
+
+---
+
+# 3. TEACHER ADD MARKS — SERVER-SIDE AUTHORIZATION
+
+Inspect the existing Teacher Add Marks API.
+
+The backend must independently verify:
+
+1. Authenticated Teacher identity.
+2. Authenticated School ID.
+3. Explicit selected Academic Session ID.
+4. Session belongs to the authenticated School.
+5. Session is currently active and writable.
+6. Teacher is assigned to the requested Class, Section and Subject for marks entry.
+7. Student belongs to the same School.
+8. Student has an Active Enrollment in the exact selected Academic Session and requested Class/Section.
+9. Subject is configured for that School and Class.
+10. Exam Type is configured and applicable.
+11. Score belongs to the selected examination configuration.
+
+**Important:** Teacher Examination must enforce its assignment restrictions even though other Teacher modules may use broader same-school permissions.
+
+Do not trust Class ID, Section ID, School ID or Teacher ID supplied by the browser without server-side validation.
+
+Reject unauthorized direct API requests.
+
+Preserve valid Teacher marks-entry workflows.
+
+---
+
+# 4. MARKS VALIDATION
+
+Validate on the backend before saving:
+
+- Marks must be a valid finite numeric value where a numeric score is applicable.
+- Marks cannot be negative.
+- Marks cannot exceed the configured maximum.
+- Total Marks must be valid and consistent with the configured examination component.
+- Invalid or unsupported Subject/Exam Type combinations must be rejected.
+- Missing marks must not silently become zero.
+- Explicit Absent must remain distinct from zero marks.
+- Partial or missing weighted components must remain incomplete under the existing authoritative result engine.
+
+Preserve the existing valid score and absence semantics.
+
+Do not change the calculation engine or grading rules merely to simplify marks entry.
+
+Avoid partially committing invalid batch submissions. Inspect existing save behavior and use safe transactional validation where needed.
+
+---
+
+# 5. IMMEDIATE STUDENT MARKS VISIBILITY
+
+The owner has explicitly decided:
+
+**A successful Teacher save is sufficient to make that saved mark visible to its authorized Student.**
+
+There must be no separate marks-publication step.
+
+The existing `exam_scores` table contains a `published` flag, and Student reads currently require `published=true`.
+
+Implement the smallest safe solution using the existing table and field.
+
+For a successfully saved or corrected mark in the active Academic Session:
+
+- Ensure the mark is immediately eligible for Student View Marks.
+- Preserve authenticated Student-only access.
+- Preserve exact School ID and Academic Session ID filtering.
+- Preserve exact Student Enrollment and Class/Section scope.
+- Do not expose other Students' marks.
+- Do not expose another school's marks.
+- Do not expose marks from another Academic Session.
+- Do not expose an unsaved or rejected score.
+
+Prefer keeping the existing `published` field for backward compatibility rather than removing the column.
+
+Do not perform a bulk publication of existing historical unpublished marks.
+
+Do not retroactively expose existing unpublished scores merely because this new policy has been approved.
+
+**Important:** Existing legacy unpublished marks require a separate, explicit decision if they need migration or publication.
+
+If existing Mobile score-saving endpoints have different publication behavior, audit and report the difference. Do not modify the frozen Mobile frontend or silently change Mobile-specific behavior outside this approved Stage 1 scope.
+
+---
+
+# 6. TEACHER AND PRINCIPAL VIEW MARKS
+
+All three portals must read authoritative marks from the existing `exam_scores` records.
+
+Teacher View Marks:
+
+- Must reflect successfully saved marks.
+- Must respect Teacher Examination authorization and session scope.
+
+Principal View Marks:
+
+- Must show the latest saved marks for the selected Academic Session.
+- Must use exact selected-session Enrollment for Class and Section.
+- Must not use current Student Registry placement for historical examination grouping.
+- Must not mix marks from different Academic Sessions.
+- Must require explicit School and Session context.
+
+Student View Marks:
+
+- Must show the authenticated Student's saved marks under the approved immediate-visibility policy.
+- Must not expose other Students' records.
+- Must remain correctly scoped to the selected Academic Session.
+
+For older Admin marks endpoints that currently accept an omitted Academic Session:
+
+- Require an explicit valid selected-session context.
+- Reject missing, invalid or cross-school session requests.
+- Remove unsafe cross-session fallback behavior.
+- Preserve authorized historical reads.
+- Reject writes to archived sessions.
+
+Do not broaden access permissions to achieve synchronization.
+
+---
+
+# 7. REFRESH AFTER SAVE
+
+After a successful Teacher marks save or correction:
+
+- Teacher View Marks should reflect the latest saved value.
+- Principal View Marks should reflect the latest saved value.
+- Student View Marks should reflect the latest saved value.
+
+Use the same authoritative backend data.
+
+For Stage 1, prefer a minimal reliable refresh mechanism using existing React Query invalidation, refetch-on-focus or bounded polling.
+
+If cross-client push updates are needed to guarantee immediate refresh while another portal is already open, report the smallest safe event-based solution and whether it fits this stage.
+
+Do not introduce excessive polling, a new messaging infrastructure or a broad real-time rewrite.
+
+Distinguish clearly between:
+
+1. Immediate visibility at the API/database level.
+2. Immediate visual refresh in an already-open browser tab.
+
+Do not claim real-time visual synchronization unless it is actually implemented and tested.
+
+---
+
+# 8. LOCKED TEACHER LEDGER SAFETY
+
+The feasibility audit found that marks can currently be edited after the Teacher ledger is locked.
+
+This creates a stale-decision risk.
+
+For Stage 1:
+
+- Do not silently unlock or rewrite locked Teacher decisions.
+- Do not modify existing locked ledgers.
+- Preserve current promotion execution revalidation.
+- Do not add a new promotion decision workflow.
+- Identify any marks correction that could affect an existing locked ledger.
+- Report whether the current backend can safely reject or flag such edits until Stage 4 ledger freshness protection is implemented.
+
+**If immediate mark corrections could allow stale locked decisions to remain executable, STOP before enabling that unsafe path and report the smallest necessary safeguard.**
+
+Do not weaken ledger security to achieve immediate marks visibility.
+
+---
+
+# 9. REGRESSION TESTS
+
+Add focused tests covering:
+
+1. Authorized Teacher can save valid marks.
+2. Unassigned Teacher cannot save marks for another Class/Section/Subject.
+3. Cross-school marks writes are rejected.
+4. Cross-session marks writes are rejected.
+5. Archived-session marks writes are rejected.
+6. Missing session context is rejected.
+7. Invalid or unsupported Subject/Exam Type is rejected.
+8. Negative marks are rejected.
+9. Marks above maximum are rejected.
+10. Invalid maximum marks are rejected.
+11. Missing marks are not converted to zero.
+12. Explicit Absent remains distinct from zero.
+13. Successful marks save sets the correct immediate-visibility state.
+14. Rejected saves do not expose marks.
+15. Student reads only their own marks.
+16. Principal View Marks uses exact-session Enrollment.
+17. Historical Principal marks views do not use current Registry placement.
+18. Existing historical unpublished scores remain unchanged.
+19. Mark corrections preserve School and Session isolation.
+20. Existing promotion execution safeguards remain intact.
+
+Use isolated test fixtures.
+
+Do not modify existing Development academic records merely to run tests.
+
+---
+
+# 10. REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall verdict: PASS / NEEDS CHANGES / BLOCKED.
+2. Teacher marks authorization results.
+3. Backend marks validation results.
+4. Student immediate-visibility implementation.
+5. Teacher/Principal/Student View Marks consistency.
+6. Academic Session and tenant-isolation verification.
+7. Existing unpublished marks preservation.
+8. Locked-ledger safety assessment.
+9. Exact source files changed.
+10. Schema/database changes: YES/NO.
+11. Test names and pass/fail counts.
+12. Web and API build results.
+13. Existing versus new typecheck errors.
+14. Authenticated UI verification results.
+15. API-level visibility versus live browser-refresh behavior.
+16. Mobile frontend changed: YES/NO.
+17. Mobile-specific backend behavior changed: YES/NO.
+18. Production accessed: YES/NO.
+19. Deployment performed: YES/NO.
+20. Remaining blockers and next recommended stage.
+
+---
+
+# FINAL INSTRUCTION
+
+Implement only Stage 1.
+
+Keep the examination system SIMPLE.
+
+Do not add unnecessary settings, modules or approval screens.
+
+Do not implement Principal override changes yet.
+
+Do not change promotion execution or session activation.
+
+Do not change Mobile frontend.
+
+Do not deploy.
+
+If any safety blocker requires a larger change, STOP and request approval before continuing.
