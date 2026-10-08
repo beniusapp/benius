@@ -1,0 +1,537 @@
+# BENIUS — CRITICAL EXAMINATION SYSTEM AUDIT
+## Teacher Portal: Add Marks, View Marks, Results
+### STRICT READ-ONLY AUDIT — DO NOT IMPLEMENT FIXES
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The application is intended for commercial use by schools, including schools with 20,000+ Students.
+
+The Examination module is business-critical. Incorrect Student rosters, marks, grades, attendance, or promotion decisions are unacceptable.
+
+I have identified a possible serious mismatch in the Teacher Examination Results screen.
+
+**DO NOT CHANGE ANY CODE, DATABASE SCHEMA, APPLICATION DATA, TEST DATA, CONFIGURATION, OR BUSINESS LOGIC YET.**
+
+Audit the complete existing implementation first and return detailed, evidence-based findings.
+
+Do not deploy or access Production.
+
+Mobile application is FROZEN. Audit Web and shared backend only. Do not modify Mobile.
+
+---
+
+# PART 1 — INVESTIGATE THE EXACT REPORTED MISMATCH
+
+Teacher route:
+
+`/teacher-dashboard/examination`
+
+Selected tab: Results
+
+Selected Academic Session: 2026–2027 (Active)
+
+Selected filters:
+- Class: 1
+- Section: a
+- Term: Half Yearly result
+
+The Teacher Results screen displays:
+
+- Total Students: 5
+- Promoted: 4
+- Retained: 1
+- Average Attendance: 38%
+
+Displayed Student rows include:
+
+- MIS-0001 — student1mis
+- MIS-0002 — student2mis
+- MIS-0004 — bysupportstaff
+- MIS-0006 — bysupportstaff2
+- MIS-0007 — bysupportstaff3
+
+However, Principal Student Registry currently displays five active Students across the school, of whom only:
+
+- MIS-0001
+- MIS-0002
+
+appear in Class 1 / Section a.
+
+The other three displayed Results Students currently appear in Class 2 in Principal Registry.
+
+IMPORTANT:
+
+The current Registry placement is not automatically the correct historical/session-specific placement.
+
+Determine whether the mismatch is caused by:
+
+1. Incorrect selected-session Enrollment records.
+2. Results using stale or historical placement.
+3. Results ignoring selected Class/Section.
+4. Missing session or school filters.
+5. Incorrect joins or duplicate Enrollment records.
+6. Promotion data carrying over between sessions.
+7. Results relying on current Student Registry placement instead of selected-session Enrollment.
+8. Incorrect cached or previously locked ledger data.
+9. A legitimate difference between current Registry and selected-session Enrollment.
+
+Inspect the actual development records read-only, if available and authorized.
+
+For all five Students, report:
+
+- DSID
+- Current Registry Class/Section
+- Selected-session Enrollment Class/Section
+- Enrollment status
+- Student status
+- Selected Academic Session ID
+- Whether the Student belongs in the selected Results roster
+- Exact reason for inclusion or exclusion
+
+Also check whether the selected-session Enrollment contains multiple active rows for the same Student.
+
+DO NOT assume that Registry is the correct source for historical academic results.
+
+Identify the authoritative roster contract and whether the code follows it.
+
+---
+
+# PART 2 — COMPLETE ADD MARKS AUDIT
+
+Trace the Add Marks workflow end to end:
+
+Frontend → API → authentication → authorization → validation → database → subsequent reads.
+
+Verify:
+
+1. Correct selected Academic Session.
+2. Correct school/tenant.
+3. Correct Class and Section.
+4. Correct Student roster from selected-session Enrollment.
+5. Student/Enrollment active-status rules.
+6. Teacher subject/class assignment authorization.
+7. Subject selection and subject ownership.
+8. Term and examination configuration.
+9. Maximum marks and pass marks.
+10. Valid marks range and numeric precision.
+11. Zero marks versus missing marks.
+12. Absent, exempt, not evaluated, and missing-mark semantics, where supported.
+13. Duplicate mark prevention.
+14. Editing and resaving behavior.
+15. Concurrent Teacher updates.
+16. Marks belonging to the correct Student, subject, term, school and session.
+17. Archived-session write protection.
+18. Error handling and misleading success messages.
+19. Bulk mark entry behavior and partial-save risks.
+20. Whether marks can be saved against inactive or invalid enrollments.
+
+Inspect all relevant backend endpoints and helper functions.
+
+Identify any authorization gaps, including whether Teachers can write marks for classes/subjects they are not authorized to assess.
+
+Do not change the existing authorization policy during this audit.
+
+---
+
+# PART 3 — COMPLETE VIEW MARKS AUDIT
+
+Verify that View Marks displays exactly the marks persisted through Add Marks.
+
+Check:
+
+- Same authenticated school.
+- Same selected Academic Session.
+- Same Class/Section.
+- Same term and examination.
+- Same subject.
+- Same Student identities.
+- Correct stored marks.
+- Correct total and percentage calculations.
+- Correct grade calculation.
+- Missing versus zero marks.
+- Duplicate or stale mark records.
+- Marks edited after initial submission.
+- Correct read-only behavior in archived sessions.
+- Cross-school and cross-session isolation.
+- Consistency between Add Marks, View Marks and Results.
+
+Identify whether changing filters can display stale data from the previous selection.
+
+Inspect query-cache keys and session-switching behavior.
+
+---
+
+# PART 4 — COMPLETE RESULTS CALCULATION AUDIT
+
+This is the highest-priority calculation audit.
+
+Trace the complete calculation pipeline from raw stored marks to final displayed Results.
+
+Do not merely inspect the React component.
+
+Verify every formula, intermediate calculation, source table and policy lookup.
+
+## A. Student roster
+
+- Exact selected-session Enrollment membership.
+- School and Academic Session filtering.
+- Class and Section filtering.
+- Active versus inactive eligibility.
+- Historical roster behavior.
+- Duplicate prevention.
+- Promotion-related roster changes.
+- Correct count in Total Students.
+
+## B. Marks and percentages
+
+- Raw subject marks.
+- Subject maximum marks.
+- Term totals.
+- Subject percentage.
+- Overall percentage.
+- Weighted average.
+- Term weighting.
+- Missing marks handling.
+- Zero marks handling.
+- Rounding and precision.
+- Grade thresholds.
+- Subject-failure calculation.
+
+Verify calculations against the actual configured school examination policies.
+
+Do not invent a universal passing percentage.
+
+## C. Attendance
+
+Investigate the displayed 38% average attendance.
+
+Trace:
+
+- Student Attendance source.
+- School and Academic Session.
+- Class and Section.
+- Attendance date range.
+- Term-specific attendance period.
+- Working-day denominator.
+- Holidays and non-working days.
+- Present, Late, Half Day, Leave, Absent and missing-record treatment.
+- Students with zero attendance.
+- Class average aggregation method.
+- Rounding.
+
+Verify whether Attendance used for Results matches the authoritative attendance policy for the selected term.
+
+Do not change the attendance business rules without approval.
+
+## D. Promotion and retention
+
+Audit the exact configured policy for Class 1 and Class 2.
+
+Verify:
+
+- Policy applicability.
+- Minimum marks.
+- Subject failure limits.
+- Weighted average thresholds.
+- Attendance gates, if configured.
+- Term weighting.
+- Grade thresholds.
+- Missing marks behavior.
+- Auto-suggestion rules.
+- Manual overrides.
+- Draft saving.
+- Ledger locking.
+- Ledger unlocking.
+- Recalculation behavior.
+- Historical decisions.
+- Final promotion destination.
+- Whether promotion decisions can become stale after marks or policy changes.
+
+SPECIAL INVESTIGATION:
+
+The screenshot shows three Students with:
+
+- No weighted-average data
+- No grade
+- Zero subject failures
+- 0% attendance
+- Promotion Gate: Promoted → 2-a
+
+Determine exactly why these Students are shown as promoted.
+
+Are these:
+- Stored locked decisions?
+- Default suggestions?
+- Manual overrides?
+- Fallback values?
+- Policy-derived decisions?
+- Stale results?
+
+Do not assume that a missing mark equals a pass.
+
+Determine whether the displayed result is correct under the actual configured policy.
+
+## E. Ledger integrity
+
+The screenshot shows "Ledger Locked".
+
+Verify:
+
+- Which records are locked.
+- Whether lock state is scoped by school, session, class, section and term.
+- Who may lock or unlock.
+- Whether locked results can change through other routes.
+- Whether the displayed ledger is a saved snapshot or live recomputation.
+- Whether historical locked results remain stable.
+- Whether changing the Academic Session can show the wrong ledger.
+- Whether unlock and relock can accidentally overwrite existing decisions.
+- Whether manual overrides are preserved correctly.
+- Whether concurrent operations can cause conflicting results.
+
+## F. Student report
+
+Trace the Report button end to end.
+
+Verify:
+
+- Correct Student.
+- Correct school.
+- Correct selected Academic Session.
+- Correct term.
+- Correct marks and grades.
+- Correct attendance.
+- Correct promotion decision.
+- Correct school identity and Student placement.
+- No data leakage across Students, schools or sessions.
+- Correct behavior for missing/incomplete results.
+- Correct behavior for archived sessions.
+
+---
+
+# PART 5 — ACADEMIC SESSION ISOLATION
+
+BENIUS has a strict Academic Session architecture.
+
+All examination operations must be scoped to:
+
+**Authenticated School ID + Selected Academic Session ID + relevant Class/Section/Term/Student/Subject.**
+
+Verify this for:
+
+- Add Marks reads and writes.
+- View Marks.
+- Results.
+- Examination policies.
+- Term configuration.
+- Promotion decisions.
+- Draft ledgers.
+- Locked ledgers.
+- Overrides.
+- Reports.
+- Examination history.
+- Cached results.
+- Background or helper calculations.
+
+A new Academic Session must not inherit the previous session's operational examination data unless explicitly required by a documented business rule.
+
+Archived sessions must allow authorized reads but reject academic-content writes.
+
+Inspect nullable session IDs, legacy fallback behavior, and missing session filters.
+
+Check frontend, backend and database boundaries independently.
+
+---
+
+# PART 6 — SECURITY AND AUTHORIZATION
+
+Audit:
+
+1. Cross-school Student access.
+2. Cross-school marks access.
+3. Cross-school result access.
+4. Cross-session marks and results access.
+5. Teacher class/section authorization.
+6. Teacher subject authorization.
+7. Unauthorized ledger modification.
+8. Student access to unpublished results.
+9. Principal/Admin examination permissions.
+10. Client-supplied school/session/Student identifiers.
+11. Direct API access bypassing UI restrictions.
+12. Missing authentication or authorization middleware.
+13. Result publication and visibility rules.
+
+IMPORTANT:
+
+There is a previously identified open Teacher Examination assignment-authorization issue.
+
+Determine whether it is still present.
+
+Do not silently introduce or change authorization rules.
+
+---
+
+# PART 7 — LARGE-SCHOOL SCALABILITY
+
+Evaluate the Examination module for schools with 20,000+ Students.
+
+Inspect:
+
+- Query efficiency.
+- Database indexes.
+- N+1 queries.
+- Unbounded roster loading.
+- Pagination.
+- Server-side filtering.
+- Repeated calculation per Student.
+- Expensive joins.
+- Concurrent mark entry.
+- Locking and transactions.
+- Batch processing.
+- Memory usage.
+- Query-cache behavior.
+- Database connection usage.
+- Timeout and partial-failure handling.
+
+Do not claim the system supports 20,000+ Students without actual evidence.
+
+If performance testing is unavailable, report the unverified risks and propose a safe future load-test plan.
+
+Do not generate large test datasets in the existing development database.
+
+---
+
+# PART 8 — CROSS-MODULE CONSISTENCY
+
+Compare examination data with:
+
+- Principal Student Registry.
+- Selected-session Enrollment.
+- Student Examination Portal.
+- Student result publication rules.
+- Teacher Add Marks.
+- Teacher View Marks.
+- Teacher Results.
+- Principal/Admin Exam Controller.
+- Promotion history.
+
+Determine whether all modules use consistent authoritative data and policy semantics.
+
+Identify where current Registry data is intentionally different from historical/session-specific Enrollment data.
+
+Do not modify Student Profile behavior; its current-placement display is an existing approved rule.
+
+---
+
+# PART 9 — TEST COVERAGE AUDIT
+
+Identify existing automated tests for:
+
+- Marks validation.
+- Marks calculations.
+- Grades.
+- Weighted averages.
+- Subject failures.
+- Attendance gates.
+- Promotion and retention.
+- Ledger locking.
+- Session switching.
+- Tenant isolation.
+- Teacher authorization.
+- Student result visibility.
+- Large-roster performance.
+
+Report missing test coverage.
+
+If feasible, independently recalculate a small sample of actual development results using read-only database values and the exact configured policy.
+
+Show the complete calculation steps and expected versus actual values.
+
+Do not write or modify database records.
+
+---
+
+# REQUIRED FINAL REPORT
+
+Return a detailed audit with these sections:
+
+## 1. Overall verdict
+PASS / NEEDS CHANGES / CRITICAL
+
+## 2. Class 1/A mismatch
+Exact root cause, evidence, source files, and database records.
+
+## 3. Add Marks
+PASS / NEEDS CHANGES with findings.
+
+## 4. View Marks
+PASS / NEEDS CHANGES with findings.
+
+## 5. Results
+PASS / NEEDS CHANGES with findings.
+
+## 6. Calculation verification
+Formulas, configured policy values, independent recalculation and discrepancies.
+
+## 7. Attendance calculation
+Exact source and denominator.
+
+## 8. Promotion/retention
+Policy, missing-data handling, auto-suggestions, manual overrides and locked decisions.
+
+## 9. Academic Session isolation
+Every discovered violation, with exact code locations.
+
+## 10. Tenant isolation and authorization
+Every discovered violation, with exact code locations.
+
+## 11. Student Reports
+Correctness and access controls.
+
+## 12. Scalability
+20,000+ Student risks, query bottlenecks and required verification.
+
+## 13. Test coverage
+Existing tests and missing critical regression cases.
+
+## 14. Prioritized findings
+Categorize each issue as:
+- P0 — Critical data corruption, security or incorrect final academic decisions
+- P1 — Incorrect calculations, roster, session or authorization behavior
+- P2 — UI, reporting, performance or consistency issues
+- P3 — Minor presentation issues
+
+For each finding provide:
+
+- Evidence
+- Exact file/function/line
+- Affected workflow
+- Business impact
+- Proposed smallest safe correction
+- Whether a schema migration is required
+- Regression tests required
+
+## 15. Implementation plan
+Propose a safe phased correction plan.
+
+Do not implement anything.
+
+## 16. Change confirmation
+
+Explicitly confirm:
+
+- Code changed: NO
+- Database/schema changed: NO
+- Application data changed: NO
+- Mobile changed: NO
+- Production accessed: NO
+- Deployment performed: NO
+
+### FINAL INSTRUCTION
+
+This is a STRICT READ-ONLY EXAMINATION AUDIT.
+
+Do not fix the visible Class 1/A mismatch before identifying the authoritative selected-session roster and root cause.
+
+Do not change marks, grades, examination policies, promotion decisions, historical ledgers, or Academic Session behavior.
+
+Return the complete audit report and wait for approval.
