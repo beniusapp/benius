@@ -14,5 +14,10 @@ export interface HomeworkReviewInput {
      * @nullable
      */
   comment?: string | null;
-  expectedSubmittedAt: Date;
+  /**
+     * @minLength 26
+     * @maxLength 26
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$
+     */
+  expectedSubmissionToken: string;
 }

@@ -1638,27 +1638,32 @@ export class DatabaseStorage {
     if (eligibleRows.length === 0) return [];
 
     const studentIds = [...new Set(eligibleRows.map((row) => row.studentId))];
-    const submissions = await db.select().from(homeworkSubmissions).where(and(
+    const submissions = await db.select({
+      submission: homeworkSubmissions,
+      reviewToken: sql<string>`to_char(${homeworkSubmissions.submittedAt}, 'YYYY-MM-DD HH24:MI:SS.US')`,
+    }).from(homeworkSubmissions).where(and(
       eq(homeworkSubmissions.homeworkId, homeworkId),
       eq(homeworkSubmissions.schoolId, schoolId),
       inArray(homeworkSubmissions.studentId, studentIds),
     ));
-    const latestSubmissionByStudent = new Map<number, HomeworkSubmission>();
-    for (const submission of submissions) {
-      const current = latestSubmissionByStudent.get(submission.studentId);
-      if (!current || submission.submittedAt.getTime() >= current.submittedAt.getTime()) {
-        latestSubmissionByStudent.set(submission.studentId, submission);
+    const latestSubmissionByStudent = new Map<number, (typeof submissions)[number]>();
+    for (const row of submissions) {
+      const current = latestSubmissionByStudent.get(row.submission.studentId);
+      if (!current || row.reviewToken >= current.reviewToken) {
+        latestSubmissionByStudent.set(row.submission.studentId, row);
       }
     }
 
     return eligibleRows.map((row) => {
-      const submission = latestSubmissionByStudent.get(row.studentId);
+      const reviewRow = latestSubmissionByStudent.get(row.studentId);
+      const submission = reviewRow?.submission;
       return {
         ...row,
-        submission: submission ? {
+        submission: submission && reviewRow ? {
           id: submission.id,
           status: submission.status,
           submittedAt: submission.submittedAt,
+          reviewToken: reviewRow.reviewToken,
           textAnswer: submission.textAnswer,
           reviewedAt: submission.reviewedAt,
           reviewedBy: submission.reviewedBy,
@@ -1945,7 +1950,7 @@ export class DatabaseStorage {
     submissionId: number;
     studentId: number;
     reviewerId: number;
-    expectedSubmittedAt: Date;
+    expectedSubmissionToken: string;
     action: HomeworkReviewAction;
     teacherComment: string | null;
   }): Promise<
@@ -1957,16 +1962,20 @@ export class DatabaseStorage {
       // Student resubmission and Teacher review share this lock so a stale
       // review cannot approve or reject a newer answer.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${data.homeworkId}, ${data.studentId})`);
-      const [current] = await tx.select().from(homeworkSubmissions).where(and(
+      const [currentRow] = await tx.select({
+        submission: homeworkSubmissions,
+        reviewToken: sql<string>`to_char(${homeworkSubmissions.submittedAt}, 'YYYY-MM-DD HH24:MI:SS.US')`,
+      }).from(homeworkSubmissions).where(and(
         eq(homeworkSubmissions.id, data.submissionId),
         eq(homeworkSubmissions.homeworkId, data.homeworkId),
         eq(homeworkSubmissions.schoolId, data.schoolId),
         eq(homeworkSubmissions.studentId, data.studentId),
       )).limit(1).for("update");
+      const current = currentRow?.submission;
       if (!current) return { kind: "not_found" as const };
       if (
         current.status !== "submitted"
-        || current.submittedAt.getTime() !== data.expectedSubmittedAt.getTime()
+        || currentRow.reviewToken !== data.expectedSubmissionToken
       ) {
         return { kind: "conflict" as const };
       }
@@ -1979,7 +1988,7 @@ export class DatabaseStorage {
       }).where(and(
         eq(homeworkSubmissions.id, current.id),
         eq(homeworkSubmissions.status, "submitted"),
-        eq(homeworkSubmissions.submittedAt, current.submittedAt),
+        sql`${homeworkSubmissions.submittedAt} = ${data.expectedSubmissionToken}::timestamp`,
       )).returning();
       if (!updated) return { kind: "conflict" as const };
       return { kind: "updated" as const, submission: updated };

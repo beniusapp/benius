@@ -316,7 +316,7 @@ paths:
       operationId: reviewTeacherHomeworkSubmission
       tags: [teacher-homework-review]
       summary: Approve a submission or request resubmission
-      description: Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+      description: Review writes require the active Academic Session and an authorized Teacher assignment. The full-precision submission token prevents a stale review from changing a newer resubmission.
       parameters:
         - in: path
           name: homeworkId
@@ -606,10 +606,12 @@ components:
         comment:
           type: ["string", "null"]
           maxLength: 2000
-        expectedSubmittedAt:
+        expectedSubmissionToken:
           type: string
-          format: date-time
-      required: [action, expectedSubmittedAt]
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$"
+      required: [action, expectedSubmissionToken]
     HomeworkReviewSubmissionSummary:
       type: object
       additionalProperties: false
@@ -621,6 +623,11 @@ components:
         submittedAt:
           type: string
           format: date-time
+        reviewToken:
+          type: string
+          minLength: 26
+          maxLength: 26
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$"
         textAnswer:
           type: ["string", "null"]
         reviewedAt:
@@ -636,6 +643,7 @@ components:
         - id
         - status
         - submittedAt
+        - reviewToken
         - textAnswer
         - reviewedAt
         - reviewedBy

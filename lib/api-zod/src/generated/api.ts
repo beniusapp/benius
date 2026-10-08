@@ -329,6 +329,13 @@ export const GetTeacherHomeworkSubmissionsHeader = zod.object({
   "x-view-session-id": zod.string().regex(getTeacherHomeworkSubmissionsHeaderXViewSessionIdRegExp)
 })
 
+export const getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenMin = 26;
+export const getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenMax = 26;
+
+
+export const getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$');
+
+
 export const GetTeacherHomeworkSubmissionsResponseItem = zod.object({
   "studentId": zod.number().int(),
   "studentName": zod.string(),
@@ -341,6 +348,7 @@ export const GetTeacherHomeworkSubmissionsResponseItem = zod.object({
   "id": zod.number().int(),
   "status": zod.string(),
   "submittedAt": zod.coerce.date(),
+  "reviewToken": zod.string().min(getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenMin).max(getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenMax).regex(getTeacherHomeworkSubmissionsResponseSubmissionOneReviewTokenRegExp),
   "textAnswer": zod.string().nullable(),
   "reviewedAt": zod.coerce.date().nullable(),
   "reviewedBy": zod.number().int().nullable(),
@@ -352,7 +360,7 @@ export const GetTeacherHomeworkSubmissionsResponse = zod.array(GetTeacherHomewor
 
 
 /**
- * Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+ * Review writes require the active Academic Session and an authorized Teacher assignment. The full-precision submission token prevents a stale review from changing a newer resubmission.
  * @summary Approve a submission or request resubmission
  */
 
@@ -373,12 +381,17 @@ export const ReviewTeacherHomeworkSubmissionHeader = zod.object({
 
 export const reviewTeacherHomeworkSubmissionBodyCommentMax = 2000;
 
+export const reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenMin = 26;
+export const reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenMax = 26;
+
+
+export const reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$');
 
 
 export const ReviewTeacherHomeworkSubmissionBody = zod.object({
   "action": zod.enum(['approve', 'request_resubmission']),
   "comment": zod.string().max(reviewTeacherHomeworkSubmissionBodyCommentMax).nullish(),
-  "expectedSubmittedAt": zod.coerce.date()
+  "expectedSubmissionToken": zod.string().min(reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenMin).max(reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenMax).regex(reviewTeacherHomeworkSubmissionBodyExpectedSubmissionTokenRegExp)
 })
 
 export const ReviewTeacherHomeworkSubmissionResponse = zod.object({

@@ -41,6 +41,7 @@ interface HomeworkReviewSubmission {
   id: number;
   status: string;
   submittedAt: string;
+  reviewToken: string;
   textAnswer: string | null;
   reviewedAt: string | null;
   reviewedBy: number | null;
@@ -306,7 +307,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
       sessionId: number;
       action: "approve" | "request_resubmission";
       comment: string;
-      expectedSubmittedAt: string;
+      expectedSubmissionToken: string;
     }) => {
       const response = await sessionFetchForViewSession(
         `/api/homework/${variables.homeworkId}/submissions/${variables.submissionId}/review`,
@@ -317,7 +318,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
           body: JSON.stringify({
             action: variables.action,
             comment: variables.comment.trim() || null,
-            expectedSubmittedAt: variables.expectedSubmittedAt,
+            expectedSubmissionToken: variables.expectedSubmissionToken,
           }),
         },
       );
@@ -886,7 +887,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                                 sessionId: selectedSessionId,
                                 action: "approve",
                                 comment: reviewComments[submission.id] ?? "",
-                                expectedSubmittedAt: submission.submittedAt,
+                                expectedSubmissionToken: submission.reviewToken,
                               })}
                               disabled={reviewMutation.isPending}
                               data-testid={`button-approve-submission-${submission.id}`}
@@ -903,7 +904,7 @@ export default function HomeworkModule({ teacher }: { teacher: TeacherMe }) {
                                 sessionId: selectedSessionId,
                                 action: "request_resubmission",
                                 comment: reviewComments[submission.id] ?? "",
-                                expectedSubmittedAt: submission.submittedAt,
+                                expectedSubmissionToken: submission.reviewToken,
                               })}
                               disabled={reviewMutation.isPending}
                               data-testid={`button-request-resubmission-${submission.id}`}

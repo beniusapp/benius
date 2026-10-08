@@ -1116,7 +1116,7 @@ export const getReviewTeacherHomeworkSubmissionUrl = (homeworkId: number,
 }
 
 /**
- * Review writes require the active Academic Session and an authorized Teacher assignment. The expected submittedAt value prevents a stale review from changing a newer resubmission.
+ * Review writes require the active Academic Session and an authorized Teacher assignment. The full-precision submission token prevents a stale review from changing a newer resubmission.
  * @summary Approve a submission or request resubmission
  */
 export const reviewTeacherHomeworkSubmission = async (homeworkId: number,

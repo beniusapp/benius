@@ -456,12 +456,15 @@ test("Homework review and view tracking regression checks use only a disposable 
       sessionId: fixture!.activeSessionId,
     });
     assert.equal(reviewList.status, 200);
-    const studentEntry = (reviewList.body as Array<{ studentId: number; submission: Record<string, unknown> | null }>)
+    const studentEntry = (reviewList.body as Array<{
+      studentId: number;
+      submission: (Record<string, unknown> & { id: number; submittedAt: string; reviewToken: string }) | null;
+    }>)
       .find((entry) => entry.studentId === fixture!.studentAId);
     assert.equal(studentEntry?.submission?.textAnswer, "First answer for approval");
     assert.equal(Object.hasOwn(studentEntry?.submission ?? {}, "fileUrl"), false);
-    const teacherVisibleSubmittedAt = (studentEntry!.submission as { submittedAt: string }).submittedAt;
-    const reviewSubmissionId = (studentEntry!.submission as { id: number }).id;
+    const teacherReviewToken = studentEntry!.submission!.reviewToken;
+    const reviewSubmissionId = studentEntry!.submission!.id;
     const storedSubmission = await storage.getHomeworkSubmission(
       fixture!.activeHomeworkId,
       fixture!.studentAId,
@@ -472,14 +475,15 @@ test("Homework review and view tracking regression checks use only a disposable 
     );
     assert.equal(storedSubmission?.status, "submitted");
     assert.equal(
-      new Date(teacherVisibleSubmittedAt).getTime(),
+      new Date((studentEntry!.submission as { submittedAt: string }).submittedAt).getTime(),
       storedSubmission?.submittedAt.getTime(),
       "The timestamp displayed in the review roster must match the unchanged submission",
     );
     const timestampEvidence = {
-      reviewRosterTimestamp: teacherVisibleSubmittedAt,
+      reviewRosterToken: teacherReviewToken,
       databaseTimestamp: exactTimestamp.rows[0]?.submitted_at_exact,
     };
+    assert.equal(teacherReviewToken, exactTimestamp.rows[0]?.submitted_at_exact);
 
     const review = await request(
       `/api/homework/${fixture!.activeHomeworkId}/submissions/${reviewSubmissionId}/review`,
@@ -490,7 +494,7 @@ test("Homework review and view tracking regression checks use only a disposable 
         json: {
           action: "approve",
           comment: "Good work",
-          expectedSubmittedAt: teacherVisibleSubmittedAt,
+          expectedSubmissionToken: teacherReviewToken,
           schoolId: fixture!.foreignSchoolId,
           reviewerId: fixture!.foreignTeacherId,
         },
@@ -516,7 +520,7 @@ test("Homework review and view tracking regression checks use only a disposable 
       method: "POST",
       form: resubmitForm,
     });
-    assert.ok(resubmit.status >= 400);
+    assert.equal(resubmit.status, 400);
     assert.equal((resubmit.body as { submission?: { textAnswer?: string } }).submission?.textAnswer, undefined);
   });
 
@@ -536,9 +540,13 @@ test("Homework review and view tracking regression checks use only a disposable 
       sessionId: fixture!.activeSessionId,
     });
     assert.equal(firstReviewList.status, 200);
-    const firstTeacherEntry = (firstReviewList.body as Array<{ studentId: number; submission: { submittedAt: string } | null }>)
+    const firstTeacherEntry = (firstReviewList.body as Array<{
+      studentId: number;
+      submission: { submittedAt: string; reviewToken: string } | null;
+    }>)
       .find((entry) => entry.studentId === fixture!.studentAId);
-    const firstTeacherVisibleSubmittedAt = firstTeacherEntry!.submission!.submittedAt;
+    const firstTeacherSubmission = firstTeacherEntry!.submission!;
+    const firstTeacherReviewToken = firstTeacherSubmission.reviewToken;
 
     const requestResubmission = await request(
       `/api/homework/${fixture!.secondHomeworkId}/submissions/${firstSubmission.id}/review`,
@@ -549,7 +557,7 @@ test("Homework review and view tracking regression checks use only a disposable 
         json: {
           action: "request_resubmission",
           comment: "Please revise the last step",
-          expectedSubmittedAt: firstTeacherVisibleSubmittedAt,
+          expectedSubmissionToken: firstTeacherReviewToken,
         },
       },
     );
@@ -593,9 +601,13 @@ test("Homework review and view tracking regression checks use only a disposable 
       sessionId: fixture!.activeSessionId,
     });
     assert.equal(revisedReviewList.status, 200);
-    const revisedTeacherEntry = (revisedReviewList.body as Array<{ studentId: number; submission: { submittedAt: string } | null }>)
+    const revisedTeacherEntry = (revisedReviewList.body as Array<{
+      studentId: number;
+      submission: { submittedAt: string; reviewToken: string } | null;
+    }>)
       .find((entry) => entry.studentId === fixture!.studentAId);
-    const revisedTeacherVisibleSubmittedAt = revisedTeacherEntry!.submission!.submittedAt;
+    const revisedTeacherReviewToken = revisedTeacherEntry!.submission!.reviewToken;
+    assert.notEqual(revisedTeacherReviewToken, firstTeacherReviewToken);
 
     const staleReview = await request(
       `/api/homework/${fixture!.secondHomeworkId}/submissions/${revisedSubmission.id}/review`,
@@ -605,7 +617,7 @@ test("Homework review and view tracking regression checks use only a disposable 
         method: "PATCH",
         json: {
           action: "approve",
-          expectedSubmittedAt: firstTeacherVisibleSubmittedAt,
+          expectedSubmissionToken: firstTeacherReviewToken,
         },
       },
     );
@@ -619,12 +631,22 @@ test("Homework review and view tracking regression checks use only a disposable 
         method: "PATCH",
         json: {
           action: "approve",
-          expectedSubmittedAt: revisedTeacherVisibleSubmittedAt,
+          expectedSubmissionToken: revisedTeacherReviewToken,
         },
       },
     );
     assert.equal(finalReview.status, 200);
     assert.equal((finalReview.body as { teacherComment: string | null }).teacherComment, null);
+    const finalStudentList = await request(activeListPath, {
+      principal: "student-a",
+      sessionId: fixture!.activeSessionId,
+    });
+    const finalStudentEntry = (finalStudentList.body as Array<{
+      id: number;
+      submission: { status: string; teacherComment: string | null } | null;
+    }>).find((row) => row.id === fixture!.secondHomeworkId);
+    assert.equal(finalStudentEntry?.submission?.status, "approved");
+    assert.equal(finalStudentEntry?.submission?.teacherComment, null);
   });
 
   await t.test("Student sees only their own answer and unauthorized Teachers cannot read submissions", async () => {
@@ -675,11 +697,24 @@ test("Homework review and view tracking regression checks use only a disposable 
         method: "PATCH",
         json: {
           action: "approve",
-          expectedSubmittedAt: new Date().toISOString(),
+          expectedSubmissionToken: "2026-10-08 12:35:19.199898",
         },
       },
     );
     assert.equal(blocked.status, 409);
+    const invalidToken = await request(
+      `/api/homework/${fixture!.attachmentHomeworkId}/submissions/${entry!.submission!.id}/review`,
+      {
+        principal: "teacher-assigned",
+        sessionId: fixture!.activeSessionId,
+        method: "PATCH",
+        json: {
+          action: "approve",
+          expectedSubmissionToken: "not-a-timestamp",
+        },
+      },
+    );
+    assert.equal(invalidToken.status, 400);
   });
 
   await t.test("foreign sessions and archived writes are rejected without changing Homework content", async () => {
@@ -703,7 +738,7 @@ test("Homework review and view tracking regression checks use only a disposable 
         method: "PATCH",
         json: {
           action: "approve",
-          expectedSubmittedAt: new Date().toISOString(),
+          expectedSubmissionToken: "2026-10-08 12:35:19.199898",
         },
       },
     );

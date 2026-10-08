@@ -172,13 +172,24 @@ export interface HomeworkReviewInput {
      * @nullable
      */
   comment?: string | null;
-  expectedSubmittedAt: string;
+  /**
+     * @minLength 26
+     * @maxLength 26
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$
+     */
+  expectedSubmissionToken: string;
 }
 
 export interface HomeworkReviewSubmissionSummary {
   id: number;
   status: string;
   submittedAt: string;
+  /**
+     * @minLength 26
+     * @maxLength 26
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{6}$
+     */
+  reviewToken: string;
   /** @nullable */
   textAnswer: string | null;
   /** @nullable */

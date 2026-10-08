@@ -1496,7 +1496,7 @@ export function registerTeacherRoutes(app: Express) {
         submissionId,
         studentId: student.id,
         reviewerId: context.teacher.id,
-        expectedSubmittedAt: parsed.data.expectedSubmittedAt,
+        expectedSubmissionToken: parsed.data.expectedSubmissionToken,
         action: parsed.data.action,
         teacherComment: parsed.data.comment?.trim() || null,
       });
