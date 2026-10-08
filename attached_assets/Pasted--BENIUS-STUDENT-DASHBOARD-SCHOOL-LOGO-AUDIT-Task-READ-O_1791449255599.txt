@@ -1,0 +1,127 @@
+# BENIUS — STUDENT DASHBOARD SCHOOL LOGO AUDIT
+
+## Task: READ-ONLY AUDIT — DO NOT MODIFY CODE
+
+**Module:** Student Portal → Dashboard → Top-right School Identity
+
+### Current problem
+
+In Principal Settings → School, the Principal can upload, replace, and remove the school logo.
+
+However, in the Student Dashboard's top-right school identity area, the application currently displays a generic graduation-cap icon with the school code underneath.
+
+### Expected behavior
+
+1. Display the school's actual uploaded logo in the existing top-right icon position.
+2. Keep the school code underneath the logo.
+3. If the Principal replaces the logo, the Student Dashboard should display the updated logo.
+4. If no school logo exists, retain the existing graduation-cap fallback.
+5. Preserve the existing Dashboard layout, sizing, spacing, and styling.
+
+### CRITICAL — Multi-tenant isolation
+
+BENIUS is a multi-tenant School Management Application.
+
+Every Student must see **only the logo belonging to their authenticated school**.
+
+For example:
+
+- School A Student → School A logo
+- School B Student → School B logo
+- School A Student must never receive School B's logo.
+
+Never trust a client-supplied `schoolId` for authorization.
+
+The school identity must be derived from the authenticated Student and verified server-side.
+
+### Audit requirements
+
+**1. Principal logo storage**
+
+Identify:
+
+- Where the Principal uploads the school logo.
+- Which database field stores the logo reference.
+- Which API handles upload, replacement, and removal.
+- Whether the logo is stored as a URL, path, or another representation.
+
+**2. Student Dashboard**
+
+Identify:
+
+- The exact component rendering the top-right graduation-cap icon.
+- Where the school code `MIS` comes from.
+- Whether the Student Dashboard already receives the school logo in an existing API response.
+- Whether the logo is missing from the API response or simply not being rendered.
+
+**3. Authentication and tenant isolation**
+
+Verify that:
+
+- The Student's school is resolved from the authenticated Student identity.
+- The logo belongs to that same school.
+- Another school's logo cannot be requested through ID manipulation.
+- No cross-school caching or fallback can display the wrong logo.
+
+**4. Logo updates**
+
+Check whether replacing or removing the Principal's school logo is reflected correctly in the Student Dashboard after refresh.
+
+Check whether existing query caching could retain an outdated logo.
+
+**5. Image accessibility and security**
+
+Verify that the logo URL or image endpoint is safe for the intended school branding use.
+
+Do not broaden access to private Student documents, profile photos, or other uploaded files.
+
+Do not modify the existing legacy `/uploads` security architecture as part of this audit.
+
+**6. Academic Session**
+
+School logo and school code are school-level identity fields.
+
+They should not change when the Student switches Academic Sessions.
+
+Confirm this behavior.
+
+### Recommended minimal correction
+
+After completing the audit, recommend the smallest safe change needed to:
+
+- Replace the generic icon with the authenticated school's uploaded logo.
+- Preserve the graduation-cap fallback when no logo exists.
+- Keep the school code underneath.
+- Preserve the existing design.
+- Maintain strict school/tenant isolation.
+
+Prefer reusing an existing authenticated school-data API rather than introducing a duplicate endpoint unnecessarily.
+
+### Restrictions
+
+- READ-ONLY AUDIT.
+- No code changes.
+- No database changes.
+- No Mobile changes.
+- No Production access.
+- No deployment.
+- Do not change Principal logo upload behavior.
+- Do not redesign the Student Dashboard.
+- Do not change Academic Session behavior.
+
+### Final report
+
+Provide:
+
+1. Overall verdict.
+2. Current logo storage and upload flow.
+3. Current Student Dashboard icon implementation.
+4. Existing Student API availability of school logo.
+5. Tenant-isolation verification.
+6. Logo replacement/removal and cache behavior.
+7. Academic Session independence.
+8. Exact files requiring changes.
+9. Recommended minimal implementation.
+10. Whether any database migration is necessary.
+
+**STOP after the audit. Do not implement until I approve.**
