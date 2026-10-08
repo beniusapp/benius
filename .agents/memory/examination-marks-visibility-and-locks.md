@@ -3,8 +3,8 @@ name: BENIUS exam marks visibility and locked-ledger protection
 description: Web Student-visible marks saves and the exact locked-ledger write boundary.
 ---
 
-**Rule:** Successful authorized Web Teacher mark saves or corrections make only the changed rows Student-visible; untouched unpublished scores remain unchanged. Reject edits that affect an exact locked cohort decision term or its configured failed-subject/cumulative dependencies until an authorized correction path exists. Keep Mobile frontend and business logic frozen; the shared lock guard may fail closed there, but Web-only validation and publication behavior must not leak into Mobile.
+**Rule:** Any active, authenticated same-school Teacher may save or correct Web marks for a school-configured class, section, subject, and exam type in the active Academic Session; Faculty Mapping and legacy assigned-class/subject matches do not gate Web Add Marks. Successful saves expose only changed rows. Reject edits affecting an exact locked cohort decision term or its configured dependencies. Mobile retains its separate assignment rules and behavior.
 
-**Why:** The user approved immediate Web visibility, no historical bulk publishing, and a 409 lock until an authorized correction workflow, while preserving Mobile behavior.
+**Why:** The user approved broader same-school access only for Web Add Marks, while preserving current-session/enrollment checks, immediate visibility, exact locked-ledger protection, and Mobile behavior.
 
-**How to apply:** Set the existing published flag only for successful Web score writes. Keep the lock check shared and scoped to school, session, class, section, and actual policy dependencies.
+**How to apply:** Do not add assignment checks to the Web Add Marks route. Keep school/session/configuration/enrollment validation, mark attribution, and the shared lock check; publish only rows successfully saved by Web. Do not change Mobile-specific validation or publication behavior.
