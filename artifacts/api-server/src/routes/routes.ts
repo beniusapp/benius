@@ -63,6 +63,7 @@ import { registerStudentModuleDotStateRoutes } from "../student-module-dot-state
 import { registerTeacherModuleDotStateRoutes } from "../teacher-module-dot-state-routes";
 import { homeworkBelongsToStudentWorkSession, resolveStudentWorkSession } from "../student-work-session";
 import { requireAttendanceDateInSession, resolveAttendanceReadSession, sendAttendanceReadSessionError } from "../attendance-read-session";
+import { loadStudentMeIdentity } from "../student-school-logo";
 import {
   buildHistoricalStudentAttendanceOverview,
   buildLiveStudentAttendanceOverview,
@@ -1552,15 +1553,22 @@ export async function registerRoutes(
     res.json({ message: "Login successful" });
   });
 
-  app.get("/api/student-me", async (req, res) => {
+  app.get("/api/student-me", async (req, res): Promise<void> => {
+    res.setHeader("Cache-Control", "no-store");
     if (!req.session.studentId) {
-      return res.status(401).json({ message: "Not authenticated" });
+      res.status(401).json({ message: "Not authenticated" });
+      return;
     }
 
-    const data = await storage.getStudentWithSchool(req.session.studentId);
-    if (!data) {
-      return res.status(401).json({ message: "Student not found" });
+    const identity = await loadStudentMeIdentity(
+      req.session.studentId,
+      studentId => storage.getStudentWithSchool(studentId),
+    );
+    if (!identity) {
+      res.status(401).json({ message: "Student not found" });
+      return;
     }
+    const { data, logoUrl } = identity;
 
     res.json({
       id: data.student.id,
@@ -1587,6 +1595,7 @@ export async function registerRoutes(
       schoolName: data.school.name,
       schoolCode: data.school.code,
       schoolId: data.student.schoolId,
+      logoUrl,
     });
   });
 

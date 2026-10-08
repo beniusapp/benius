@@ -2,6 +2,15 @@ export function studentDashboardGlobalQueryKey(resource: string) {
   return [resource] as const;
 }
 
+export function resetStudentDashboardIdentity(
+  resetQueries: (filters: { queryKey: readonly unknown[]; exact: true }) => unknown,
+): void {
+  resetQueries({
+    queryKey: studentDashboardGlobalQueryKey("/api/student-me"),
+    exact: true,
+  });
+}
+
 export function studentDashboardSessionQueryKey(resource: string, sessionId: number | null) {
   return [resource, sessionId] as const;
 }

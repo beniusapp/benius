@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { GraduationCap, Loader2, LogOut, Lock, ChevronDown, History, PartyPopper, RefreshCw, Shield, CreditCard, AlertTriangle, ExternalLink } from "lucide-react";
-import { apiRequest, queryClient, getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
+import { apiRequest, queryClient, sessionFetch, sessionFetchForViewSession } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useStudentModuleDotState } from "@/hooks/use-student-module-dot-state";
 import { useSessionView } from "@/contexts/session-view-context";
@@ -14,7 +14,9 @@ import {
   studentDashboardGlobalQueryKey,
   studentDashboardSessionIdFromQueryKey,
   studentDashboardSessionQueryKey,
+  resetStudentDashboardIdentity,
 } from "@/lib/student-dashboard-session";
+import { safeStudentSchoolLogoUrl } from "@/lib/student-school-logo";
 import {
   millisecondsUntilNextISTHour,
   minutesSinceMidnightIST,
@@ -33,6 +35,7 @@ interface StudentMeResponse {
   schoolName: string;
   schoolCode: string;
   schoolId?: number;
+  logoUrl?: string | null;
 }
 
 interface AttendanceStatsResponse {
@@ -147,6 +150,7 @@ export default function StudentDashboard() {
   const selectedSessionId = selectedSession?.id ?? null;
   const [greetingMinutes, setGreetingMinutes] = useState(minutesSinceMidnightIST);
   const [sessionDropdownOpen, setSessionDropdownOpen] = useState(false);
+  const [schoolLogoLoadFailed, setSchoolLogoLoadFailed] = useState(false);
   const sessionDropdownRef = useRef<HTMLDivElement>(null);
 
   const greeting = studentDashboardGreeting(greetingMinutes);
@@ -173,8 +177,31 @@ export default function StudentDashboard() {
 
   const { data: student, isLoading, isError } = useQuery<StudentMeResponse | null>({
     queryKey: studentDashboardGlobalQueryKey("/api/student-me"),
-    queryFn: getQueryFn({ on401: "returnNull" }),
+    queryFn: async ({ signal }) => {
+      const response = await sessionFetch("/api/student-me", { signal, cache: "no-store" });
+      if (response.status === 401) return null;
+      if (!response.ok) throw new Error(`Student identity fetch failed: ${response.status}`);
+      return response.json() as Promise<StudentMeResponse>;
+    },
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
   });
+  const schoolLogoUrl = safeStudentSchoolLogoUrl(student?.logoUrl, student?.schoolId);
+
+  useEffect(() => {
+    setSchoolLogoLoadFailed(false);
+  }, [student?.schoolId, student?.logoUrl]);
+
+  useEffect(() => {
+    const refreshStudentIdentity = () => {
+      resetStudentDashboardIdentity(filters => queryClient.resetQueries(filters));
+    };
+
+    window.addEventListener("focus", refreshStudentIdentity);
+    return () => window.removeEventListener("focus", refreshStudentIdentity);
+  }, []);
 
   const moduleDotState = useStudentModuleDotState({
     enabled: canFetchStudentDashboardSessionData(!!student, isSessionsLoading, selectedSessionId),
@@ -545,7 +572,20 @@ export default function StudentDashboard() {
                 className="w-12 h-12 rounded-xl flex items-center justify-center"
                 style={{ background: "linear-gradient(135deg, #3b82f6, #6366f1)", boxShadow: "0 4px 12px rgba(99,102,241,0.3)" }}
               >
-                <GraduationCap className="w-6 h-6 text-white" />
+                {schoolLogoUrl && !schoolLogoLoadFailed ? (
+                  <img
+                    src={schoolLogoUrl}
+                    alt={`${student.schoolName} logo`}
+                    className="w-full h-full rounded-xl object-contain p-1"
+                    data-testid="img-school-logo"
+                    onError={() => setSchoolLogoLoadFailed(true)}
+                  />
+                ) : (
+                  <GraduationCap
+                    className="w-6 h-6 text-white"
+                    data-testid="img-school-logo-fallback"
+                  />
+                )}
               </div>
               <p className="text-[10px] text-slate-400 font-mono font-semibold">{student.schoolCode}</p>
             </div>

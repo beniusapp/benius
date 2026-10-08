@@ -5,6 +5,7 @@ import {
   studentDashboardGlobalQueryKey,
   studentDashboardSessionIdFromQueryKey,
   studentDashboardSessionQueryKey,
+  resetStudentDashboardIdentity,
 } from "./student-dashboard-session";
 
 const sessionResources = [
@@ -43,4 +44,17 @@ test("global identity and portal configuration keys do not depend on academic se
   const portalInfo = studentDashboardGlobalQueryKey("/api/student/fees/portal-info");
   assert.deepEqual(identity, ["/api/student-me"]);
   assert.deepEqual(portalInfo, ["/api/student/fees/portal-info"]);
+});
+
+test("account-switch refresh resets only the Student identity cache key", () => {
+  let resetFilters: { queryKey: readonly unknown[]; exact: true } | null = null;
+
+  resetStudentDashboardIdentity(filters => {
+    resetFilters = filters;
+  });
+
+  assert.deepEqual(resetFilters, {
+    queryKey: ["/api/student-me"],
+    exact: true,
+  });
 });

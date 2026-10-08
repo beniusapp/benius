@@ -1,0 +1,161 @@
+# BENIUS — STUDENT DASHBOARD SCHOOL LOGO CORRECTION
+
+## TASK: IMPLEMENT MINIMAL WEB FIX
+
+The read-only audit is complete and confirmed the root cause.
+
+**Implement the correction now.**
+
+### Objective
+
+In Student Portal → Dashboard → Top-right School Identity, replace the generic graduation-cap icon with the actual school logo uploaded by the Principal.
+
+Keep the school code underneath the logo.
+
+### 1. Backend correction
+
+File:
+`artifacts/api-server/src/routes/routes.ts`
+
+Update the existing:
+
+`GET /api/student-me`
+
+Include the authenticated Student's school's `logoUrl` in the existing school response object.
+
+Requirements:
+
+- Resolve Student identity from the authenticated session.
+- Derive school from the authenticated Student's school relationship.
+- Never trust a client-supplied school ID.
+- Return the logo URL only for that Student's school.
+- Return null if no logo is configured.
+- Preserve all existing response fields and authentication behavior.
+- Do not introduce a new endpoint.
+
+### 2. Student Dashboard correction
+
+File:
+`artifacts/benius-web/src/pages/student-dashboard.tsx`
+
+Locate the existing top-right school identity component.
+
+Currently it displays:
+
+- Generic graduation-cap icon
+- School code underneath
+
+Change it to:
+
+- Uploaded school logo when available
+- Existing graduation-cap fallback when unavailable
+- Existing school code underneath
+
+Requirements:
+
+- Preserve the current 48 × 48 icon area.
+- Preserve the current layout, alignment, spacing, and visual styling.
+- Keep the logo proportional and centered.
+- Do not stretch or distort the image.
+- If the image fails to load, display the original graduation-cap fallback.
+- Handle null, empty, and invalid logo references safely.
+- Do not introduce a new external image host or unrestricted image URL handling.
+- Do not redesign the Dashboard.
+
+### 3. Multi-tenant isolation — CRITICAL
+
+BENIUS is multi-tenant.
+
+Expected:
+
+School A Student → School A logo.
+
+School B Student → School B logo.
+
+School A Student must never display School B's logo due to an API request, cached response, or account switch.
+
+Use the existing authenticated Student identity.
+
+Do not add a school-ID query parameter or client-controlled school selection.
+
+Add focused regression coverage for authenticated school resolution and isolation.
+
+### 4. Logo replacement and removal
+
+When a Principal replaces the school logo:
+
+- The updated logo should appear when the Student Dashboard refreshes its identity data.
+
+When the Principal removes the logo:
+
+- The Student Dashboard should show the original graduation-cap fallback.
+
+Address the audit's Student identity query caching issue with the smallest safe approach.
+
+Requirements:
+
+- Refresh Student identity data on Dashboard entry/remount or appropriate focus, without creating excessive polling.
+- Prevent stale logo display after Student account switching in the same browser.
+- Preserve existing login/logout cache-clearing behavior.
+- Do not globally change React Query caching defaults.
+- Do not affect unrelated Student API queries.
+
+### 5. Academic Session
+
+The school logo is school-level identity information.
+
+Switching Academic Sessions must not change which school's logo is displayed.
+
+Do not make logo selection dependent on Enrollment or selected Academic Session.
+
+### 6. Restrictions
+
+- Student Web Portal only.
+- Mobile remains FROZEN.
+- Do not modify `artifacts/benius-mobile/`.
+- No Mobile API redesign.
+- No database schema changes.
+- No migration.
+- No existing data modification.
+- No Principal Settings redesign.
+- No unrelated Dashboard changes.
+- Do not modify legacy `/uploads` architecture.
+- Do not alter Student Profile photos or private attachment access.
+- No Production access.
+- No deployment.
+
+### 7. Verification
+
+Test the following:
+
+1. School with uploaded logo → correct logo displayed.
+2. School without logo → original icon displayed.
+3. Logo replacement → updated logo after refresh.
+4. Logo removal → fallback icon after refresh.
+5. Invalid/broken image → fallback icon.
+6. School A Student cannot receive School B logo through the Student API.
+7. Account switching does not retain another school's logo.
+8. Academic Session switching does not change the school logo.
+9. School code remains visible underneath.
+10. Existing Dashboard functionality remains unchanged.
+
+Run focused tests and API/Web builds.
+
+Do not fix unrelated project-wide TypeScript errors.
+
+### 8. Final report
+
+Provide:
+
+- Overall PASS / NEEDS CHANGES verdict.
+- Exact changes made.
+- Tenant isolation verification.
+- Cache and replacement/removal verification.
+- Academic Session verification.
+- Files changed.
+- Tests and builds.
+- Database changes.
+- Mobile changes.
+- Production/deployment status.
+
+Do not claim signed-in visual verification unless it was actually performed.
