@@ -1,0 +1,267 @@
+# BENIUS — TEACHER HOMEWORK REVIEW SYSTEM
+## Controlled Web-First Implementation
+
+Implement the approved Teacher Homework review workflow based on the completed read-only Homework audit.
+
+**Approved product behavior:**
+- Teacher can view individual Student Homework submissions.
+- Teacher can read written answers and securely access attachments.
+- Teacher can Approve or Request Resubmission.
+- Teacher can provide an optional comment.
+- Student can see the Teacher's decision and comment.
+- "Viewed by X / Y Students" must accurately represent distinct Students who opened the Homework.
+
+### CRITICAL DEVELOPMENT RULES
+
+1. Mobile application is FROZEN. Do not modify `artifacts/benius-mobile/` or redesign Mobile APIs.
+2. Web application is the current product source of truth.
+3. Preserve strict school/tenant isolation.
+4. Preserve Academic Session isolation and historical read-only rules.
+5. Preserve IST (Asia/Kolkata) business/display dates.
+6. Do not delete or rewrite existing Homework, submissions, files, attendance, or enrollments.
+7. Do not change the existing rule that any authenticated same-school Teacher can assign Homework to a valid class/section.
+8. Do not assume that broad assignment permission automatically authorizes reading private Student answers. Explicitly verify the existing reviewer authorization model before implementing review access.
+9. Do not perform unrelated refactoring, Production access, or deployment.
+10. Implement in the stages below, verifying each before proceeding. If a security or authorization policy cannot be safely established, stop that stage and report the decision needed rather than inventing permissions.
+
+---
+
+## STAGE 1 — SECURE STUDENT HOMEWORK ATTACHMENTS
+
+The audit confirmed that Web Student Homework submission files are stored under publicly served `/uploads/homework-submissions`.
+
+This is a privacy/security issue.
+
+### Required
+
+- Create an authenticated, authorized download/view mechanism for Homework submission attachments.
+- Student may access their own submission attachment.
+- An explicitly authorized same-school Teacher reviewer may access the relevant submission attachment.
+- Enforce the correct Homework, Student, school and Academic Session relationship.
+- Reject unauthenticated, cross-school, cross-Student, and unauthorized Teacher access.
+- Store newly uploaded private submissions outside the publicly served uploads directory.
+- Preserve access to existing legitimate submissions.
+- Inspect the existing public static mount and plan a safe transition for legacy files.
+
+**Important:** An authenticated replacement endpoint alone is insufficient if the same legacy file remains accessible through its original public URL.
+
+Before modifying legacy files or URL handling, identify whether the proposed protection affects other `/uploads` content. Do not disable all public uploads or delete files.
+
+If the legacy file transition cannot be completed safely within the Homework scope, report the blocker and stop before claiming attachment security is complete.
+
+No unrelated global uploads redesign.
+
+### Stage 1 verification
+
+- Student can access their own file.
+- Authorized Teacher can access the file.
+- Other Students and unauthorized Teachers cannot.
+- Cross-school access is denied.
+- Old public direct URLs no longer expose private Homework submissions.
+- Existing valid attachments remain accessible through authorized access.
+
+---
+
+## STAGE 2 — TEACHER SUBMISSION VIEWER
+
+Teacher Web route:
+`/teacher-dashboard/homework`
+
+Add a **View Submissions** action to each Homework card.
+
+Opening it should display the Students belonging to that Homework's class/section in the selected Academic Session.
+
+### Student-wise information
+
+- Student name
+- DSID
+- Class / Section
+- Roll Number from selected-session Enrollment
+- Submission status
+- Submission date/time in IST
+- Written answer, when submitted
+- Secure attachment access, when submitted
+- Teacher feedback/review information, when available
+
+Use existing `homework_submissions` records and existing Student/Enrollment data wherever possible.
+
+### Required security
+
+- Resolve Teacher identity and school from authenticated server-side identity.
+- Verify the Homework belongs to that school and selected Academic Session.
+- Apply the established authorized-reviewer policy.
+- Use selected-session Enrollment for Student placement.
+- Do not expose another school's Students or submissions.
+- For active-session live rosters, exclude inactive Students and inactive Enrollments.
+- Preserve historical submission visibility under existing authorized read rules.
+- Historical sessions must remain read-only.
+
+Do not introduce an assignment restriction on Homework creation.
+
+### UI
+
+Keep the existing Teacher Homework design.
+
+Use a simple Student-wise submission panel or drawer, consistent with the existing BENIUS interface.
+
+Do not redesign the module.
+
+---
+
+## STAGE 3 — TEACHER REVIEW AND FEEDBACK
+
+Implement these actions:
+
+### Approve
+
+An authorized Teacher can approve a submitted Homework response.
+
+- Save status as `approved`.
+- Save the reviewer identity.
+- Save the review timestamp.
+- Allow an optional Teacher comment.
+- Student sees **Completed / Approved** and any feedback.
+- Preserve the existing rule that approved submissions cannot be resubmitted.
+
+### Request Resubmission
+
+An authorized Teacher can request that the Student correct and resubmit the Homework.
+
+- Reuse the existing `rejected` status if compatible with the current Student submission flow.
+- Allow an optional Teacher comment.
+- Student sees **Resubmission Requested**, not merely an unexplained Pending state.
+- Student can revise the answer and/or file and submit again.
+- Resubmission returns the status to `submitted`.
+- Prevent stale approval/rejection decisions from being mistaken for the latest review.
+
+### Feedback persistence
+
+- Reuse existing `status`, `reviewedAt`, and `reviewedBy` fields.
+- Add only the minimal nullable comment field needed for durable feedback.
+- Use the repository's safe additive migration mechanism.
+- Do not overwrite existing submission content during review.
+- Do not introduce a feedback-history table unless genuinely necessary; explain first if it is.
+
+### Authorization
+
+- Review actions must be restricted to authorized Teachers.
+- Enforce school, Homework, Student and Academic Session boundaries.
+- Archived-session reviews must be rejected server-side.
+- Do not trust client-supplied school ID, Teacher ID, reviewer ID, or session ownership.
+- Prevent duplicate/conflicting review actions through appropriate validation and concurrency safeguards.
+
+### Student Web UI
+
+Show the Teacher's latest review decision and optional comment in the Student Homework detail panel.
+
+Preserve existing answer and file submission functionality.
+
+---
+
+## STAGE 4 — ACCURATE HOMEWORK VIEW TRACKING
+
+The audit confirmed that `homework_views` exists but Student Web does not record actual opens.
+
+### Required
+
+Define a view as:
+
+**An authenticated Student explicitly opening an individual Homework detail panel.**
+
+Do not count merely loading the Homework list or Dashboard.
+
+- Record the first valid view for that Student and Homework.
+- Count each Student only once per Homework.
+- Reopening must not increment the count.
+- Enforce Student identity, selected Academic Session, Homework visibility, and school ownership on the server.
+- Prevent duplicate rows under concurrent requests using an appropriate database uniqueness guarantee and conflict-safe insertion.
+- Safely inspect and handle any existing duplicate records before applying the constraint. Do not delete records without explaining and validating the migration.
+- Keep Student Dashboard module red-dot seen-state separate from Homework view tracking.
+
+### Denominator
+
+For the active Academic Session:
+
+Count distinct active Students with Active Enrollment in the Homework's selected-session class/section.
+
+For historical sessions:
+
+Preserve the established historical roster/read behavior; do not apply today's active-status filtering retroactively without justification.
+
+Ensure numerator and denominator use compatible eligibility rules, so the displayed count cannot be inflated by duplicate or ineligible Student views.
+
+### Teacher UI
+
+Display:
+
+**Viewed by X / Y Students**
+
+Optionally show which eligible Students have viewed the Homework inside the submission viewer, if the existing data supports this safely.
+
+---
+
+## STAGE 5 — UPLOAD FORMAT CONSISTENCY
+
+The audit found a mismatch:
+
+Student UI mentions DOC files, while the API accepts only JPG, PNG, WebP and PDF.
+
+For now, update the Web UI helper text to match the actual supported formats.
+
+Do not expand upload formats or weaken server validation.
+
+Preserve the existing 10 MB upload limit.
+
+---
+
+## STAGE 6 — FINAL TESTING AND REPORT
+
+Verify:
+
+1. Student submits text-only Homework.
+2. Student submits file-only Homework.
+3. Student submits both text and file.
+4. Teacher opens the correct Student's submission.
+5. Teacher approves with and without a comment.
+6. Teacher requests resubmission with and without a comment.
+7. Student sees feedback and can resubmit after a resubmission request.
+8. Approved submissions remain locked.
+9. A Student opening Homework is counted exactly once.
+10. Concurrent opens cannot create duplicate counts.
+11. Active roster excludes inactive Students/Enrollments.
+12. Historical Homework remains readable but cannot be modified.
+13. Cross-school and cross-Student access is denied.
+14. Unauthorized Teachers cannot access private submissions or review them.
+15. Legacy and new private attachments are not publicly accessible.
+16. Existing Homework assignment/edit/delete rules remain unchanged.
+17. Student and Teacher red-dot notification features remain unchanged.
+18. Academic Session switching does not leak cached submissions between sessions.
+
+Run focused tests, API/Web builds, and relevant regression tests.
+
+### FINAL REPORT FORMAT
+
+Provide:
+
+- Overall verdict: PASS / NEEDS CHANGES
+- Stage-by-stage PASS / FAIL
+- Exact files changed
+- Database/schema changes
+- Attachment security verification, including legacy URLs
+- Teacher submission/review functionality
+- Student feedback functionality
+- View tracking accuracy
+- Academic Session and tenant isolation
+- Test and build results
+- Existing unrelated typecheck diagnostics
+- Mobile files changed: YES/NO
+- Production accessed: YES/NO
+- Deployment performed: YES/NO
+
+### FINAL INSTRUCTION
+
+Do not claim overall PASS if private Homework submission files remain publicly accessible, Teacher review permissions are unresolved, or historical-session writes are possible.
+
+Preserve existing BENIUS data and behavior outside this approved Homework workflow.
+
+Mobile remains FROZEN.
