@@ -1,0 +1,376 @@
+# BENIUS EXAMINATION — STAGE 2A
+## Student & Principal Results Consistency
+### STRICT READ-ONLY CODE AND DATA-FLOW AUDIT
+### DO NOT IMPLEMENT ANYTHING YET
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+Stage 1 — Secure Marks Entry and Immediate Marks Visibility — has been completed and transaction-tested successfully.
+
+Now I want to simplify the Examination Results workflow.
+
+**IMPORTANT: FIRST INSPECT WHAT IS ALREADY IMPLEMENTED IN REPLIT. DO NOT START CODING.**
+
+My objective is very simple:
+
+Teacher Results, Student Results and Principal Performance Analytics must show consistent examination calculations from the same authoritative marks, examination policy and Academic Session.
+
+I do not want three separate calculation systems.
+
+I do not want to rebuild the Examination module.
+
+I want to reuse the existing working architecture.
+
+---
+
+# 1. STRICT SAFETY RULES
+
+This is a READ-ONLY audit.
+
+- Do not modify source code.
+- Do not modify database records.
+- Do not create or modify schemas.
+- Do not modify tests or fixtures.
+- Do not modify Mobile frontend or backend.
+- Do not change existing examination marks.
+- Do not change Teacher locked ledgers.
+- Do not change Principal promotion decisions or overrides.
+- Do not modify Student Registry or Enrollments.
+- Do not change examination policies, grades, weightages or thresholds.
+- Do not access Production.
+- Do not deploy.
+- Do not run database-writing tests.
+
+Use source inspection and SELECT-only Development queries if necessary.
+
+If database access is unavailable, clearly state that limitation.
+
+---
+
+# 2. FIRST IDENTIFY THE CURRENT ARCHITECTURE
+
+Inspect these existing modules:
+
+### A. Teacher Portal → Examination
+
+- Add Marks
+- View Marks
+- Results
+
+Determine:
+
+1. Which API supplies Teacher Results?
+2. Which calculation engine is used?
+3. How are examination terms resolved?
+4. How are configured subjects and weighted components identified?
+5. How are incomplete results represented?
+6. How are zero marks, Absent and partial marks handled?
+7. How is the selected Academic Session applied?
+8. What information is available to the Teacher Results UI?
+
+### B. Student Portal → Examination
+
+- View Marks
+- Results
+
+Determine:
+
+1. Which API supplies Student Results?
+2. Does it use the shared authoritative calculation engine?
+3. Does it calculate results independently in the browser?
+4. Can it treat missing components as completed results?
+5. Can it omit configured subjects that have no score rows?
+6. How are unpublished historical marks handled under the newly approved immediate-visibility policy?
+7. How does it enforce Student identity and selected Academic Session?
+8. How does it determine whether a result is authorized for Student visibility?
+
+### C. Principal Portal → Performance Analytics
+
+- View Marks
+- Results
+
+Determine:
+
+1. Which APIs supply the Principal Results screen?
+2. Does it use the authoritative shared calculation engine?
+3. Does it calculate results independently in the browser?
+4. Can it normalize incomplete weighted results incorrectly?
+5. Does it include configured subjects with missing marks?
+6. Does it distinguish Teacher recommendation from Principal-final executed promotion?
+7. Does it use exact selected-session Enrollment rather than current Registry placement?
+8. Does it enforce authenticated School ID and selected Academic Session?
+
+---
+
+# 3. EXAMINATION CALCULATION AUTHORITY
+
+Locate and inspect the existing shared backend examination calculation engine.
+
+Previously identified:
+
+`artifacts/api-server/src/shared/examination-calculation-engine.ts`
+
+Also inspect the related storage and API calculation paths.
+
+Determine whether it already provides:
+
+- Weighted examination percentage.
+- Subject-level totals.
+- Overall percentage.
+- Grade.
+- Subject failure count.
+- Complete / Incomplete result status.
+- Explicit Absent handling.
+- Legitimate zero-mark handling.
+- Partial-component handling.
+- Configured expected-subject roster.
+- Promotion/retention suggestion.
+- Academic Session scope.
+
+Do not assume every frontend can directly consume its current output.
+
+Identify the smallest safe API response or read-only adapter needed to reuse the authoritative calculation.
+
+Do not duplicate the calculation engine in Student or Principal browser code.
+
+---
+
+# 4. SIMPLE RESULT DISPLAY CONTRACT
+
+I want the following consistent behavior.
+
+### COMPLETE RESULT
+
+When all required marks and components are available:
+
+- Show the correct calculated percentage.
+- Show the correct grade.
+- Show the correct evaluated subject failures.
+- Show the correct result status.
+- Use the same configured examination policy.
+
+### INCOMPLETE RESULT
+
+When required examination marks or components are missing:
+
+- Show `Incomplete / Pending Result`.
+- Do not invent missing marks.
+- Do not silently treat missing components as zero.
+- Do not normalize partial marks into a final complete result.
+- Do not display a final weighted percentage or grade as if the result were complete.
+- Do not automatically mark the Student Promoted or Retained.
+
+### ZERO MARKS
+
+A legitimately recorded zero must remain a valid evaluated score, not be confused with a missing score.
+
+### ABSENT
+
+Explicit Absent must retain the existing authoritative engine's semantics.
+
+### ACADEMIC SESSION
+
+Every result must use the exact selected Academic Session and authenticated School.
+
+Historical results must use historical session Enrollment, not current Student Registry placement.
+
+Archived sessions remain read-only.
+
+---
+
+# 5. IMPORTANT: RESULT PUBLICATION AND PRIVACY
+
+The owner has approved:
+
+**Saved Teacher marks become immediately Student-visible without a separate marks-publication action.**
+
+Stage 1 implemented this for successful Web marks saves.
+
+However, result publication and final promotion publication may be separate concepts.
+
+Inspect the current implementation and report:
+
+1. Does Student Results have a separate result-publication gate?
+2. Does the backend currently authorize Student access to calculated results?
+3. Can Student Results expose unpublished legacy marks?
+4. Can a Student infer hidden marks through calculated averages or grades?
+5. Does Principal Results have different visibility rules?
+6. Can we reuse the existing marks visibility contract without adding unnecessary publication controls?
+7. Does showing calculated results before the Principal executes promotion create confusion with final promotion status?
+
+Do not change publication rules during this audit.
+
+Clearly distinguish:
+
+- Saved/published marks.
+- Calculated examination results.
+- Teacher locked promotion recommendation.
+- Principal final executed promotion outcome.
+
+Do not assume that immediate marks visibility automatically authorizes exposing a final promotion decision.
+
+---
+
+# 6. CURRENT DEVELOPMENT DATA — READ-ONLY VERIFICATION
+
+If available, use SELECT-only queries to inspect the existing Development example:
+
+- School ID: 2
+- Academic Session ID: 2
+- Class: 1
+- Section: a
+- Term: Half Yearly result
+
+Previously identified:
+
+- MIS-0001
+- MIS-0002
+
+Check whether the existing authoritative backend calculation and Student/Principal browser calculations produce the same results for these Students.
+
+Do not assume previous percentages remain unchanged.
+
+Report current marks and calculated results only if verified from current data.
+
+Do not modify records.
+
+If the current data cannot be checked, use source-based comparison and clearly mark the data comparison NOT VERIFIED.
+
+---
+
+# 7. IDENTIFY THE MINIMUM NECESSARY CHANGES
+
+For every discrepancy, explain:
+
+1. Exact current behavior.
+2. Why it is incorrect or inconsistent.
+3. Which existing backend engine or API can be reused.
+4. Whether a new read-only API is actually necessary.
+5. Which frontend calculations can be removed or replaced.
+6. Whether Student publication/privacy behavior is affected.
+7. Whether Teacher Results remains unchanged.
+8. Whether historical Academic Session behavior is preserved.
+9. What regression tests would be required.
+
+Avoid proposing a new results table, duplicate marks store or unnecessary UI workflow.
+
+---
+
+# 8. IMPORTANT SCOPE EXCLUSIONS
+
+Stage 2 is NOT intended to change:
+
+- Teacher Add Marks authorization.
+- Stage 1 marks publication behavior.
+- Locked Teacher ledger safeguards.
+- Teacher ledger Save/Lock workflow.
+- Principal final promotion execution.
+- Principal override behavior.
+- Promotion Stage 3 activation.
+- Student Registry synchronization.
+- Examination policies or grading rules.
+- Mobile frontend or backend.
+
+If any of these areas is a dependency, identify it as a separate blocker or later-stage requirement.
+
+Do not silently expand scope.
+
+---
+
+# 9. REQUIRED FINAL AUDIT REPORT
+
+Provide the following sections.
+
+## A. CURRENT DATA FLOW
+
+Show:
+
+Teacher Add Marks → `exam_scores` → Teacher Results / Student Results / Principal Results.
+
+Identify the actual API and calculation paths.
+
+## B. FEATURE COMPARISON
+
+Provide a table:
+
+| Feature | Teacher Results | Student Results | Principal Results | Consistent? |
+|---|---|---|---|---|
+
+Include:
+
+- Marks source.
+- Expected subjects.
+- Weighted components.
+- Incomplete results.
+- Zero marks.
+- Absent.
+- Percentage.
+- Grade.
+- Failure count.
+- Academic Session.
+- Enrollment scope.
+- Student publication/privacy.
+- Promotion status.
+
+## C. EXISTING REUSABLE CODE
+
+List exact files, functions and APIs that can remain unchanged.
+
+## D. VERIFIED PROBLEMS
+
+Separate:
+
+- Confirmed defects.
+- Potential risks.
+- Already correct behavior.
+- Not verified.
+
+## E. MINIMUM IMPLEMENTATION PLAN
+
+Propose the smallest safe Stage 2B changes.
+
+Specify:
+
+- Exact files likely to change.
+- Whether a read-only API is necessary.
+- Whether schema changes are necessary.
+- Whether existing frontend calculations can be removed.
+- Required tests.
+- Any authentication or publication concerns.
+
+## F. SAFETY ASSESSMENT
+
+Confirm how the plan preserves:
+
+- School isolation.
+- Academic Session isolation.
+- Historical results.
+- Student-only privacy.
+- Archived-session read-only behavior.
+- Stage 1 marks visibility.
+- Locked Teacher decisions.
+- Existing promotion execution.
+
+## G. FINAL VERDICT
+
+Choose:
+
+- READY FOR SMALL IMPLEMENTATION
+- NEEDS BUSINESS DECISION
+- BLOCKED
+
+Explain why.
+
+---
+
+# FINAL INSTRUCTION
+
+**DO NOT IMPLEMENT STAGE 2B.**
+
+Do not modify code, data, tests, schemas or Mobile files.
+
+Do not deploy.
+
+First report exactly what exists in Replit, what is working, what is inconsistent and the minimum changes required.
+
+Wait for my approval before implementation.
