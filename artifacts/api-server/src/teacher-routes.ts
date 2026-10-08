@@ -37,6 +37,13 @@ import {
   validatePromotionSessionContext,
   type PromotionSessionContextResult,
 } from "./promotion-stage1";
+import {
+  classScopedConfigValues,
+  configuredClassName,
+  configuredName,
+  parseTeacherExamMarksSubmission,
+  teacherCanSaveExamMarksForScope,
+} from "./examination-marks-write-policy";
 import { isTeacherLeaveDateRangeWithinSession } from "./teacher-leave-scope";
 import {
   countDistinctHomeworkStudents,
@@ -2595,55 +2602,130 @@ export function registerTeacherRoutes(app: Express) {
   app.post("/api/exam-scores", async (req, res) => {
     try {
       const context = await resolveTeacherExaminationContext(req, res, "CURRENT_SESSION_WRITE");
-      if (!context) return;
+      if (!context) return undefined;
       const { teacher } = context;
 
-      const { scores, subject, examType, totalMarks, class: cls, section } = req.body;
-      if (!Array.isArray(scores) || !subject || !examType) return res.status(400).json({ message: "Scores, subject, and examType required" });
-      const submittedStudentIds = scores.map((s: any) => Number.parseInt(s.studentId, 10));
-      if (submittedStudentIds.some((id: number) => !Number.isSafeInteger(id) || id <= 0)) {
-        return res.status(400).json({ message: "Invalid student ID" });
+      const parsedSubmission = parseTeacherExamMarksSubmission(req.body);
+      if (!parsedSubmission.ok) return res.status(400).json({ message: parsedSubmission.message });
+      const submission = parsedSubmission.data;
+      const requestedClass = submission.className || teacher.assignedClass?.trim();
+      const requestedSection = submission.section || teacher.assignedSection?.trim();
+      if (!requestedClass || !requestedSection) {
+        return res.status(400).json({ message: "Class and section are required to resolve the examination roster." });
       }
 
-      const resolvedClass = cls || teacher.assignedClass || null;
-      const resolvedSection = section || teacher.assignedSection || null;
-      if (!resolvedClass) return res.status(400).json({ message: "Class is required to resolve the examination pass policy" });
-      if (!resolvedSection) return res.status(400).json({ message: "Section is required to resolve the examination roster" });
-      const placements = await Promise.all(submittedStudentIds.map(id =>
-        storage.resolveAttendanceClassSectionForStudent(context.schoolId, context.sessionId, id),
-      ));
-      if (placements.some(placement =>
-        !placement || placement.class !== resolvedClass || placement.section !== resolvedSection
-      )) {
-        return res.status(403).json({ message: "Scores include a student outside the selected session roster" });
+      const [classSubjectsMap, classSectionsMap, classExamTypesMap, schoolMetadata] = await Promise.all([
+        storage.getClassSubjectsMap(context.schoolId),
+        storage.getClassSectionsMap(context.schoolId),
+        storage.getClassExamTypesMap(context.schoolId),
+        storage.getAllSchoolMetadata(context.schoolId),
+      ]);
+      const resolvedClass = configuredClassName(
+        schoolMetadata.classes ?? [],
+        classSubjectsMap,
+        requestedClass,
+      );
+      if (!resolvedClass) {
+        return res.status(400).json({ message: "The selected class is not configured for this school." });
       }
+      const configuredSections = classScopedConfigValues(classSectionsMap, resolvedClass)
+        ?? schoolMetadata.sections
+        ?? [];
+      const resolvedSection = configuredName(configuredSections, requestedSection);
+      if (!resolvedSection) {
+        return res.status(400).json({ message: "The selected section is not configured for this class." });
+      }
+
+      const schoolMappings = await storage.getFacultyMappingsForTeacherInSchool(
+        teacher.id,
+        context.schoolId,
+      );
+      if (!teacherCanSaveExamMarksForScope({
+        teacherClass: teacher.assignedClass,
+        teacherSection: teacher.assignedSection,
+        teacherSubjects: teacher.subject,
+        mappings: schoolMappings,
+        className: resolvedClass,
+        section: resolvedSection,
+        subject: submission.subject,
+      })) {
+        return res.status(403).json({
+          message: "You are not assigned to enter marks for this subject, class, and section.",
+        });
+      }
+
+      const configuredSubjects = classScopedConfigValues(classSubjectsMap, resolvedClass);
+      if (!configuredSubjects || configuredSubjects.length === 0) {
+        return res.status(409).json({ message: "The selected class has no unambiguous configured subject list." });
+      }
+      const subject = configuredName(configuredSubjects, submission.subject);
+      if (!subject) {
+        return res.status(400).json({ message: "The subject is not configured for the selected class." });
+      }
+
+      const globalExamTypes = schoolMetadata.exam_types ?? [];
+      const classExamTypes = classScopedConfigValues(classExamTypesMap, resolvedClass);
+      const configuredClassExamType = classExamTypes === null
+        ? undefined
+        : configuredName(classExamTypes, submission.examType);
+      const configuredGlobalExamType = globalExamTypes.length
+        ? configuredName(globalExamTypes, submission.examType)
+        : undefined;
+      const examType = configuredGlobalExamType ?? configuredClassExamType;
+      if (
+        !examType ||
+        (globalExamTypes.length > 0 && !configuredGlobalExamType) ||
+        (classExamTypes !== null && !configuredClassExamType)
+      ) {
+        return res.status(400).json({ message: "The examination type is not configured for the selected class." });
+      }
+
+      const roster = await storage.getStudentsByClassSectionForExamSession(
+        context.schoolId,
+        context.sessionId,
+        resolvedClass,
+        resolvedSection,
+      );
+      const rosterIds = new Set(roster.map(student => student.id));
+      if (submission.scores.some(score => !rosterIds.has(score.studentId))) {
+        return res.status(403).json({
+          message: "Every Student must have an active Enrollment in this exact school, Academic Session, class, and section.",
+        });
+      }
+
       const passPolicy = await storage.resolveClassPassPolicy(context.schoolId, resolvedClass);
       if (!passPolicy) return res.status(404).json({ message: `No grading tier configured for class ${resolvedClass}` });
-      const maxMarks = parseInt(totalMarks) || 100;
+      const maxMarks = submission.totalMarks;
       // passMarks is retained only for legacy display/storage compatibility.
       // Its value is always derived from the server-resolved class policy.
       const pMarks = Math.ceil(maxMarks * passPolicy.passPercentage / 100);
-      const formattedScores = scores.map((s: any) => ({
-        studentId: parseInt(s.studentId),
+      const formattedScores = submission.scores.map(score => ({
+        studentId: score.studentId,
         teacherId: teacher.id,
         schoolId: context.schoolId,
         subject,
         examType,
-        marks: s.isAbsent ? 0 : parseInt(s.marks) || 0,
+        marks: score.marks,
         totalMarks: maxMarks,
         passMarks: pMarks,
-        isAbsent: !!s.isAbsent,
-        class: resolvedClass || null,
-        section: resolvedSection || null,
+        isAbsent: score.isAbsent,
+        class: resolvedClass,
+        section: resolvedSection,
         updatedBy: teacher.fullName,
         sessionId: context.sessionId,
+        published: true,
       }));
 
-      const saved = await storage.upsertExamScores(formattedScores);
+      const saved = await storage.upsertExamScores(formattedScores, {
+        enforceTeacherWebRules: true,
+      });
       res.json({ message: `Saved ${saved.length} scores`, count: saved.length });
+      return undefined;
     } catch (err: any) {
+      if (respondWithPromotionStage1Error(res, err)) return undefined;
       console.error("POST /api/exam-scores error:", err);
       res.status(500).json({ message: err?.message || "Failed to save exam scores" });
+      return undefined;
     }
   });
 
@@ -2665,11 +2747,13 @@ export function registerTeacherRoutes(app: Express) {
       if (!schoolId) {
         return res.status(400).json({ message: "class, section, examType, schoolId required" });
       }
-      const sid = parseInt(schoolId);
+      const sid = Number(schoolId);
       if (req.session.schoolId !== sid) {
         return res.status(403).json({ message: "Not authorized for this school" });
       }
-      const count = await storage.publishExamScores(sid, cls, section, examType, (req as any).viewSessionId ?? undefined);
+      const selectedSession = await requireAdminPromotionSession(req, res, "write");
+      if (!selectedSession) return;
+      const count = await storage.publishExamScores(sid, cls, section, examType, selectedSession.sessionId);
       res.json({ message: `Published ${count} scores`, count });
     } catch (err: any) {
       console.error("POST /api/exam-scores/publish error:", err);
@@ -5962,11 +6046,17 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/admin/analytics/sections", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const { class: cls } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
     try {
-      const sections = await storage.getDistinctSectionsByClass(schoolId, cls);
+      const sections = await storage.getDistinctEnrollmentSectionsForExamSession(
+        schoolId,
+        selectedSession.sessionId,
+        cls,
+      );
       res.json(sections);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to fetch sections" });
@@ -5975,11 +6065,18 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/admin/analytics/exam-types", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const { class: cls, section } = req.query as Record<string, string>;
     if (!cls) return res.status(400).json({ message: "class is required" });
     const schoolId = req.session.schoolId!;
     try {
-      const examTypes = await storage.getDistinctExamTypesByClass(schoolId, cls, section || undefined);
+      const examTypes = await storage.getDistinctExamTypesForExamSession(
+        schoolId,
+        selectedSession.sessionId,
+        cls,
+        section || undefined,
+      );
       res.json(examTypes);
     } catch (error: any) {
       res.status(500).json({ message: error.message || "Failed to fetch exam types" });
@@ -6025,17 +6122,26 @@ Thank you for your prompt attention to this matter.
   // ── Admin analytics: weighted data endpoints (mirrors teacher module) ─────
   app.get("/api/admin/analytics/class-scores/:class/:section", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
-    // Scope student list and scores to the viewed session when in archive mode.
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const studentList = viewSessionId
-        ? await storage.getStudentsByClassSectionInSession(schoolId, cls, section, viewSessionId)
-        : await storage.getStudentsByClassSection(schoolId, cls, section);
+      const studentList = await storage.getStudentsByClassSectionForExamSession(
+        schoolId,
+        selectedSession.sessionId,
+        cls,
+        section,
+      );
       const results = await Promise.all(studentList.map(async (s) => {
-        const scores = await storage.getExamScoresByStudent(s.id, schoolId, viewSessionId ?? null);
+        const scores = await storage.getTeacherExamScoresByStudentInClassSession(
+          s.id,
+          schoolId,
+          selectedSession.sessionId,
+          cls,
+          section,
+        );
         return {
           studentId: s.id,
           name: s.name,
@@ -6105,38 +6211,65 @@ Thank you for your prompt attention to this matter.
 
   app.get("/api/admin/analytics/view-marks/:class/:section/:subject/:examType", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
     const subject = decodeURIComponent(req.params.subject);
     const examType = decodeURIComponent(req.params.examType);
-    const viewSessionId: number | undefined = (req as any).viewSessionId ?? undefined;
     try {
-      const list = await storage.getExamScores(schoolId, subject, examType, cls, section, viewSessionId);
+      const list = await storage.getTeacherExamScoresForSession(
+        schoolId,
+        subject,
+        examType,
+        cls,
+        section,
+        selectedSession.sessionId,
+      );
       res.json(list);
     } catch { res.status(500).json({ message: "Failed to fetch exam scores" }); }
   });
 
   app.get("/api/admin/analytics/student-scores/:studentId", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
     const schoolId = req.session.schoolId!;
-    const studentId = parseInt(req.params.studentId);
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
+    if (!selectedSession) return;
+    const studentId = Number(req.params.studentId);
+    const cls = typeof req.query.class === "string" ? req.query.class : "";
+    const section = typeof req.query.section === "string" ? req.query.section : "";
+    if (!Number.isSafeInteger(studentId) || studentId <= 0 || !cls || !section) {
+      return res.status(400).json({ message: "A valid Student, class, and section are required." });
+    }
     try {
-      const list = await storage.getExamScoresByStudent(studentId, schoolId, viewSessionId);
+      const list = await storage.getTeacherExamScoresByStudentInClassSession(
+        studentId,
+        schoolId,
+        selectedSession.sessionId,
+        cls,
+        section,
+      );
       res.json(list);
     } catch { res.status(500).json({ message: "Failed to fetch student scores" }); }
   });
 
   app.get("/api/admin/analytics/class-average/:class/:section/:subject", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
     const cls = decodeURIComponent(req.params.class);
     const section = decodeURIComponent(req.params.section);
     const subject = decodeURIComponent(req.params.subject);
-    const viewSessionId: number | null = (req as any).viewSessionId ?? null;
     try {
-      const averages = await storage.getClassAverages(schoolId, cls, section, subject, viewSessionId);
+      const averages = await storage.getTeacherClassAveragesForSession(
+        schoolId,
+        cls,
+        section,
+        subject,
+        selectedSession.sessionId,
+      );
       res.json(averages);
     } catch { res.status(500).json({ message: "Failed to fetch class averages" }); }
   });

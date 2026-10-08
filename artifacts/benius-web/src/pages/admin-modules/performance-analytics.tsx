@@ -242,29 +242,33 @@ function buildDetentionReasons(student: ComputedStudentResult, isManualOverride:
 
 // ── Admin Student Timeline (mirrors teacher's StudentTimeline) ─────────────────
 function AdminStudentTimeline({
-  studentId, studentName, subject, examTypes: allExamTypes, viewClass, viewSection, gradingRules,
+  studentId, studentName, subject, examTypes: allExamTypes, viewClass, viewSection, gradingRules, sessionId,
 }: {
   studentId: number; studentName: string; subject: string;
   examTypes: string[]; viewClass: string; viewSection: string; gradingRules: GradingRuleClient[];
+  sessionId: number | null;
 }) {
   const { data: scores = [], isLoading } = useQuery<StudentExamScore[]>({
-    queryKey: ["/api/admin/analytics/student-scores", studentId],
+    queryKey: ["/api/admin/analytics/student-scores", studentId, viewClass, viewSection, sessionId],
     queryFn: async () => {
-      const r = await sessionFetch(`/api/admin/analytics/student-scores/${studentId}`);
+      const r = await sessionFetch(
+        `/api/admin/analytics/student-scores/${studentId}?class=${encodeURIComponent(viewClass)}&section=${encodeURIComponent(viewSection)}`
+      );
       return r.ok ? r.json() : [];
     },
     staleTime: 0,
+    enabled: !!sessionId && !!viewClass && !!viewSection,
   });
 
   const { data: classAverages = [] } = useQuery<ClassAvgEntry[]>({
-    queryKey: ["/api/admin/analytics/class-average", viewClass, viewSection, subject],
+    queryKey: ["/api/admin/analytics/class-average", viewClass, viewSection, subject, sessionId],
     queryFn: async () => {
       const r = await sessionFetch(
         `/api/admin/analytics/class-average/${encodeURIComponent(viewClass)}/${encodeURIComponent(viewSection)}/${encodeURIComponent(subject)}`
       );
       return r.ok ? r.json() : [];
     },
-    enabled: !!viewClass && !!viewSection && !!subject,
+    enabled: !!sessionId && !!viewClass && !!viewSection && !!subject,
   });
 
   const subjectScores = useMemo(() => scores.filter(s => s.subject === subject && !s.isAbsent), [scores, subject]);
@@ -1169,7 +1173,7 @@ export default function PerformanceAnalytics({
                             </tr>
                             {isExpanded && (
                               <tr><td colSpan={7} className="p-0 bg-[#020617]">
-                                {viewGradingRules.length > 0 && <AdminStudentTimeline studentId={s.studentId} studentName={s.studentName} subject={viewSubject} examTypes={viewExamTypeOpts} viewClass={viewClass} viewSection={viewSection} gradingRules={viewGradingRules} />}
+                                {viewGradingRules.length > 0 && <AdminStudentTimeline studentId={s.studentId} studentName={s.studentName} subject={viewSubject} examTypes={viewExamTypeOpts} viewClass={viewClass} viewSection={viewSection} gradingRules={viewGradingRules} sessionId={sessionId} />}
                               </td></tr>
                             )}
                           </Fragment>

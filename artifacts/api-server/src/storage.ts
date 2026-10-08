@@ -122,6 +122,10 @@ import {
   type PromotionLedgerReadiness,
 } from "./promotion-stage1";
 import {
+  examTypeAffectsLockedPromotionTerm,
+  publicationStateForExamScore,
+} from "./examination-marks-write-policy";
+import {
   hasActiveStudentPlacementChanged,
   isConfiguredStudentPlacement,
 } from "./student-registry-placement";
@@ -3569,10 +3573,33 @@ export class DatabaseStorage {
   }
 
   // ===== EXAM SCORE METHODS =====
-  async upsertExamScores(scores: Array<InsertExamScore & { sessionId: number }>): Promise<ExamScore[]> {
+  async upsertExamScores(
+    scores: Array<InsertExamScore & { sessionId: number }>,
+    options: { enforceTeacherWebRules?: boolean } = {},
+  ): Promise<ExamScore[]> {
     if (!scores.length) return [];
     if (scores.some(score => !score.class?.trim() || !score.section?.trim())) {
       throw new Error("Class and section are required to save examination scores.");
+    }
+    if (options.enforceTeacherWebRules && scores.some(score => {
+      const marks = score.marks;
+      const totalMarks = score.totalMarks;
+      return !Number.isSafeInteger(score.studentId) ||
+        !Number.isSafeInteger(score.schoolId) ||
+        !Number.isSafeInteger(score.sessionId) ||
+        !Number.isSafeInteger(marks) ||
+        typeof totalMarks !== "number" ||
+        !Number.isSafeInteger(totalMarks) ||
+        marks < 0 ||
+        totalMarks <= 0 ||
+        marks > totalMarks ||
+        (score.isAbsent && marks !== 0);
+    })) {
+      throw new PromotionStage1Error(
+        "Class, section, Student, session, and valid marks are required to save examination scores.",
+        400,
+        "EXAM_MARKS_INVALID",
+      );
     }
     return db.transaction(async (tx) => {
       const cohortKeys = [...new Set(scores.map(score =>
@@ -3581,6 +3608,164 @@ export class DatabaseStorage {
       for (const key of cohortKeys) {
         const [schoolId, sessionId, cls, section] = JSON.parse(key) as [number, number, string, string];
         await lockPromotionCohort(tx, schoolId, sessionId, cls, section);
+      }
+
+      const scoresByCohort = new Map<string, Array<(typeof scores)[number]>>();
+      for (const score of scores) {
+        const key = JSON.stringify([score.schoolId, score.sessionId, score.class, score.section]);
+        scoresByCohort.set(key, [...(scoresByCohort.get(key) ?? []), score]);
+      }
+
+      for (const [key, cohortScores] of scoresByCohort) {
+        const [schoolId, sessionId, cls, section] = JSON.parse(key) as [number, number, string, string];
+        if (options.enforceTeacherWebRules) {
+          const [session] = await tx.select({
+            id: academicSessions.id,
+            isActive: academicSessions.isActive,
+          }).from(academicSessions).where(and(
+            eq(academicSessions.id, sessionId),
+            eq(academicSessions.schoolId, schoolId),
+          )).for("update");
+          if (!session?.isActive) {
+            throw new PromotionStage1Error(
+              "Examination marks can only be saved to the active Academic Session.",
+              403,
+              "SESSION_NOT_WRITABLE",
+            );
+          }
+
+          const studentIds = [...new Set(cohortScores.map(score => score.studentId))];
+          const enrolledStudents = await tx.select({
+            studentId: enrollments.studentId,
+          }).from(enrollments)
+            .innerJoin(students, and(
+              eq(students.id, enrollments.studentId),
+              eq(students.schoolId, schoolId),
+              eq(students.isActive, true),
+            ))
+            .where(and(
+              eq(enrollments.schoolId, schoolId),
+              eq(enrollments.sessionId, sessionId),
+              eq(enrollments.className, cls),
+              eq(enrollments.sectionName, section),
+              eq(enrollments.status, "Active"),
+              inArray(enrollments.studentId, studentIds),
+            )).for("update");
+          const enrolledIds = new Set(enrolledStudents.map(row => row.studentId));
+          if (studentIds.some(studentId => !enrolledIds.has(studentId))) {
+            throw new PromotionStage1Error(
+              "Every Student must have an active Enrollment in this exact school, Academic Session, class, and section.",
+              403,
+              "STUDENT_ENROLLMENT_REQUIRED",
+            );
+          }
+        }
+
+        const lockedDecisions = await tx.select({
+          term: promotionDecisions.term,
+        }).from(promotionDecisions).where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sessionId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.locked, true),
+        )).orderBy(promotionDecisions.term).for("update");
+
+        if (lockedDecisions.length > 0) {
+          await lockPromotionConfiguration(tx, schoolId);
+          const policies = await tx.select().from(examPolicyTiers)
+            .where(eq(examPolicyTiers.schoolId, schoolId))
+            .for("update");
+          const matchingPolicies = policies.filter(policy =>
+            (policy.applicableClasses ?? []).some(value =>
+              String(value).trim().toLowerCase().replace(/^class\s+/, "") ===
+              cls.trim().toLowerCase().replace(/^class\s+/, "")
+            )
+          );
+          if (matchingPolicies.length !== 1) {
+            throw new PromotionStage1Error(
+              "The locked promotion ledger cannot be checked against one unambiguous examination policy; marks are locked pending an authorized correction workflow.",
+              409,
+              "PROMOTION_TERM_POLICY_INVALID",
+            );
+          }
+
+          const policy = matchingPolicies[0];
+          const examTypes = [...new Set(cohortScores.map(score => score.examType.trim()))];
+          for (const examType of examTypes) {
+            const affectedTerms: string[] = [];
+            for (const { term } of lockedDecisions) {
+              try {
+                if (examTypeAffectsLockedPromotionTerm({
+                  examWeights: policy.examWeights ?? "{}",
+                  promotionFailRules: policy.promotionFailRules ?? "{}",
+                  resultsConfig: policy.resultsConfig ?? "{}",
+                  examType,
+                  lockedTerm: term,
+                })) {
+                  affectedTerms.push(term);
+                }
+              } catch {
+                throw new PromotionStage1Error(
+                  `Cannot verify whether ${examType} affects the locked ${term} decision; marks are locked pending an authorized correction workflow.`,
+                  409,
+                  "PROMOTION_TERM_POLICY_INVALID",
+                );
+              }
+            }
+            if (affectedTerms.length > 0) {
+              throw new PromotionStage1Error(
+                `Marks for ${examType} cannot be saved because they affect locked term${affectedTerms.length > 1 ? "s" : ""} ${affectedTerms.join(", ")}; marks are locked pending an authorized correction workflow.`,
+                409,
+                "PROMOTION_DECISION_LOCKED",
+              );
+            }
+          }
+        }
+
+        if (options.enforceTeacherWebRules) {
+          const componentTotals = new Map<string, number>();
+          for (const score of cohortScores) {
+            const totalMarks = score.totalMarks;
+            if (typeof totalMarks !== "number") {
+              throw new PromotionStage1Error(
+                "Total marks must be a positive whole number.",
+                400,
+                "EXAM_MARKS_INVALID",
+              );
+            }
+            const componentKey = JSON.stringify([score.subject, score.examType]);
+            const priorTotal = componentTotals.get(componentKey);
+            if (priorTotal !== undefined && priorTotal !== totalMarks) {
+              throw new PromotionStage1Error(
+                "All Students in one subject and examination component must use the same total marks.",
+                400,
+                "EXAM_TOTAL_MARKS_MISMATCH",
+              );
+            }
+            componentTotals.set(componentKey, totalMarks);
+          }
+          for (const [componentKey, totalMarks] of componentTotals) {
+            const [subject, examType] = JSON.parse(componentKey) as [string, string];
+            const existingRows = await tx.select({
+              totalMarks: examScores.totalMarks,
+            }).from(examScores).where(and(
+              eq(examScores.schoolId, schoolId),
+              eq(examScores.sessionId, sessionId),
+              eq(examScores.class, cls),
+              eq(examScores.section, section),
+              eq(examScores.subject, subject),
+              eq(examScores.examType, examType),
+            )).for("update");
+            if (existingRows.some(row => row.totalMarks !== totalMarks)) {
+              throw new PromotionStage1Error(
+                "The total marks for this subject and examination component must match the existing cohort records.",
+                409,
+                "EXAM_TOTAL_MARKS_MISMATCH",
+              );
+            }
+          }
+        }
       }
 
       const results: ExamScore[] = [];
@@ -3607,6 +3792,7 @@ export class DatabaseStorage {
               updatedBy: score.updatedBy ?? null,
               updatedAt: new Date(),
               sessionId: score.sessionId,
+              ...publicationStateForExamScore(score.published),
             })
             .where(eq(examScores.id, existing[0].id)).returning();
           results.push(updated);
@@ -3678,6 +3864,7 @@ export class DatabaseStorage {
         eq(enrollments.sessionId, sessionId),
         eq(enrollments.className, cls),
         eq(enrollments.sectionName, section),
+        eq(enrollments.status, "Active"),
       ))
       .innerJoin(students, and(
         eq(examScores.studentId, students.id),
@@ -3718,6 +3905,7 @@ export class DatabaseStorage {
         eq(enrollments.sessionId, sessionId),
         eq(enrollments.className, cls),
         eq(enrollments.sectionName, section),
+        eq(enrollments.status, "Active"),
       ))
       .where(and(
         eq(examScores.studentId, studentId),
@@ -3842,6 +4030,7 @@ export class DatabaseStorage {
         eq(enrollments.sessionId, sessionId),
         eq(enrollments.className, cls),
         eq(enrollments.sectionName, section),
+        eq(enrollments.status, "Active"),
       ))
       .where(and(
         eq(examScores.schoolId, schoolId),
@@ -8003,6 +8192,30 @@ export class DatabaseStorage {
     return rows.map(r => r.section).filter(Boolean).sort() as string[];
   }
 
+  async getDistinctEnrollmentSectionsForExamSession(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+  ): Promise<string[]> {
+    const session = await this.getAcademicSessionForSchool(sessionId, schoolId);
+    if (!session) return [];
+    const rows = await db.selectDistinct({
+      section: enrollments.sectionName,
+    }).from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.status, "Active"),
+        session.isActive ? eq(students.isActive, true) : undefined,
+      ));
+    return rows.map(row => row.section).filter(Boolean).sort();
+  }
+
   async getDistinctExamTypesByClass(schoolId: number, cls: string, section?: string): Promise<string[]> {
     const conditions: SQL<unknown>[] = [
       eq(examScores.schoolId, schoolId),
@@ -8013,6 +8226,41 @@ export class DatabaseStorage {
       .from(examScores)
       .where(and(...conditions));
     return rows.map(r => r.examType).filter(Boolean).sort() as string[];
+  }
+
+  async getDistinctExamTypesForExamSession(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section?: string,
+  ): Promise<string[]> {
+    const session = await this.getAcademicSessionForSchool(sessionId, schoolId);
+    if (!session) return [];
+    const conditions: SQL<unknown>[] = [
+      eq(examScores.schoolId, schoolId),
+      eq(examScores.sessionId, sessionId),
+      eq(examScores.class, cls),
+      eq(enrollments.schoolId, schoolId),
+      eq(enrollments.sessionId, sessionId),
+      eq(enrollments.className, cls),
+      eq(enrollments.status, "Active"),
+      ...(section ? [eq(examScores.section, section), eq(enrollments.sectionName, section)] : []),
+      ...(session.isActive ? [eq(students.isActive, true)] : []),
+    ];
+    const rows = await db.selectDistinct({
+      examType: examScores.examType,
+    }).from(examScores)
+      .innerJoin(enrollments, and(
+        eq(enrollments.studentId, examScores.studentId),
+        eq(enrollments.className, examScores.class),
+        eq(enrollments.sectionName, examScores.section),
+      ))
+      .innerJoin(students, and(
+        eq(students.id, examScores.studentId),
+        eq(students.schoolId, schoolId),
+      ))
+      .where(and(...conditions));
+    return rows.map(row => row.examType).filter(Boolean).sort();
   }
 
   async getAnalyticsData(
@@ -8404,6 +8652,22 @@ export class DatabaseStorage {
       subject: facultyMappings.subject,
     }).from(facultyMappings)
       .where(eq(facultyMappings.teacherId, teacherId))
+      .orderBy(facultyMappings.className, facultyMappings.section);
+  }
+
+  async getFacultyMappingsForTeacherInSchool(
+    teacherId: number,
+    schoolId: number,
+  ): Promise<{ className: string; section: string; subject: string | null }[]> {
+    return db.select({
+      className: facultyMappings.className,
+      section: facultyMappings.section,
+      subject: facultyMappings.subject,
+    }).from(facultyMappings)
+      .where(and(
+        eq(facultyMappings.teacherId, teacherId),
+        eq(facultyMappings.schoolId, schoolId),
+      ))
       .orderBy(facultyMappings.className, facultyMappings.section);
   }
 
