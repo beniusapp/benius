@@ -1,0 +1,92 @@
+# BENIUS EXAMINATION — STAGE 1 FINAL TRANSACTION VERIFICATION
+## Isolated Locked-Ledger Database Test
+### TESTING ONLY — NO FEATURE IMPLEMENTATION
+
+Stage 1 implementation has passed 54 focused tests, and Web/API builds pass.
+
+Before closing Stage 1, verify the locked-ledger marks-write safeguard against an actual database transaction.
+
+## STRICT SAFETY RULES
+
+1. Use an isolated disposable TEST database only.
+2. Never use the existing Development database containing real school records.
+3. Never access Production.
+4. Never run destructive tests against existing school data.
+5. Do not modify application business logic, schemas or Mobile files.
+6. Changes to isolated test fixtures and test files are permitted.
+7. Do not deploy.
+8. If a genuinely isolated database cannot be established and verified, STOP and report NOT VERIFIED.
+
+## TEST REQUIREMENTS
+
+Create disposable fixtures for:
+
+- School A and School B.
+- Academic Session A and Session B.
+- Teacher assignments.
+- Active Student Enrollments.
+- Configured examination components.
+- Existing marks.
+- Locked Teacher decisions.
+- Unlocked Teacher decisions.
+
+Verify:
+
+1. Authorized marks save commits successfully without a conflicting locked ledger.
+2. Marks save affecting a locked ledger returns HTTP 409.
+3. Rejected saves leave existing marks unchanged.
+4. Rejected batch saves do not partially commit.
+5. Unrelated classes and sections remain writable.
+6. Unrelated Academic Sessions remain isolated.
+7. Unrelated examination terms remain writable when the configured policy permits.
+8. Cross-school marks changes are rejected.
+9. Invalid marks cause complete batch rejection.
+10. An ambiguous policy fails closed.
+11. Existing locked decisions remain unchanged.
+12. Student visibility is updated only for successfully committed marks.
+13. A failed transaction does not publish any marks.
+14. Concurrent marks writes cannot bypass the locked-ledger safeguard.
+15. Existing promotion execution safeguards remain intact.
+
+For concurrency testing, use a controlled isolated fixture and explicitly report whether true concurrent database transactions were exercised.
+
+Do not weaken application validation to make a test pass.
+
+## VERIFY DATABASE ISOLATION BEFORE RUNNING
+
+Before creating or deleting test fixtures, confirm:
+
+- The test database connection is separate from the existing Development database.
+- The target database is disposable.
+- The connection does not point to Production.
+- The test runner cannot accidentally fall back to the Development database.
+- Cleanup operations are restricted to disposable fixtures.
+
+If these conditions cannot be proven, do not run database-writing tests.
+
+## FINAL REPORT
+
+Provide:
+
+1. Overall PASS / FAIL / NOT VERIFIED.
+2. Test database isolation evidence.
+3. Exact tests executed and results.
+4. Transaction rollback findings.
+5. Locked-ledger protection findings.
+6. Concurrent-write findings.
+7. Marks-publication atomicity findings.
+8. Files changed.
+9. Application business logic changed: YES/NO.
+10. Existing Development records changed: YES/NO.
+11. Mobile frontend changed: YES/NO.
+12. Production accessed: YES/NO.
+13. Deployment performed: YES/NO.
+14. Remaining verification gaps.
+
+Do not begin Stage 2.
+
+Do not implement a marks-correction workflow.
+
+Do not modify Principal promotion authority yet.
+
+Wait for approval after reporting the results.
