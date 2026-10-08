@@ -1,0 +1,160 @@
+# BENIUS EXAMINATION — TEACHER MARKS ACCESS POLICY
+## READ-ONLY AUDIT BEFORE STAGE 2B
+### DO NOT IMPLEMENT YET
+
+I want to simplify the Teacher Examination → Add Marks workflow.
+
+Currently, when a Teacher tries to save marks for a class/section/subject outside their assigned teaching subjects, BENIUS displays:
+
+"You are not assigned to enter marks for this subject, class, and section."
+
+I do NOT want this assignment restriction for Add Marks.
+
+### MY PROPOSED BUSINESS RULE
+
+Any authenticated, active Teacher belonging to the same school should be able to add or edit examination marks for any valid class, section and subject in that school's active Academic Session.
+
+Teacher assignment should NOT be required for marks entry.
+
+This should behave similarly to the broader same-school Teacher access model used in other BENIUS modules, while preserving examination-specific academic safeguards.
+
+Before implementing, audit whether this rule can be introduced safely.
+
+## 1. STRICT AUDIT RULES
+
+- READ-ONLY source inspection.
+- No code changes.
+- No database changes.
+- No schema changes.
+- No test modifications.
+- No Mobile frontend or backend changes.
+- No Production access or deployment.
+- Do not change marks, Teacher ledgers or promotion history.
+
+## 2. INVESTIGATE THE CURRENT ERROR
+
+Inspect the actual code path responsible for the error:
+
+"You are not assigned to enter marks for this subject, class, and section."
+
+Identify:
+
+1. The exact API route and validation function.
+2. The assignment lookup currently performed.
+3. Whether the selected Teacher is authenticated and belongs to the school.
+4. Whether assignment checks are applied only to Add Marks or also to View Marks and Results.
+5. Whether class/section/subject dropdowns currently show options that the backend later rejects.
+6. Whether this restriction was introduced during Stage 1.
+7. Whether other Teacher Examination APIs use different authorization rules.
+
+Explain the exact reason for the screenshot error based on source code. Do not assume an actual Teacher assignment without verifying the relevant records.
+
+## 3. AUDIT THE SIMPLER ACCESS RULE
+
+Evaluate the feasibility of:
+
+"Any active authenticated same-school Teacher can enter marks for any valid class, section and subject within the active selected Academic Session."
+
+Determine which assignment checks can be removed without removing:
+
+- Authenticated Teacher authorization.
+- Active Teacher account validation.
+- Authenticated School ID isolation.
+- Explicit active Academic Session validation.
+- Exact selected-session Student Enrollment.
+- Valid Class and Section.
+- Configured Subject and Exam Type.
+- Marks range validation.
+- Duplicate Student validation.
+- Atomic batch saving.
+- Existing marks publication behavior.
+- Locked-ledger HTTP 409 safeguards.
+- Teacher identity and marks audit trail.
+
+Do not remove these safeguards.
+
+## 4. CHECK EXISTING MARKS AND AUDIT HISTORY
+
+If Teacher A entered marks and Teacher B later corrects them:
+
+- Can the system preserve who originally entered the marks?
+- Can it record who last updated the marks?
+- Does the current schema already support this?
+- Would allowing same-school Teacher edits overwrite attribution?
+- Would any additional audit record be necessary?
+
+Do not introduce schema changes during the audit.
+
+Clearly distinguish current attribution from a complete edit-history audit trail.
+
+## 5. CHECK THE ENTIRE TEACHER EXAMINATION MODULE
+
+Inspect:
+
+- Add Marks.
+- View Marks.
+- Results.
+- Teacher ledger Save/Lock.
+
+Determine whether allowing all same-school Teachers to enter marks creates inconsistencies elsewhere.
+
+In particular:
+
+- Can a Teacher see marks they are allowed to edit?
+- Can the existing Results page calculate results for that class/section?
+- Can another Teacher overwrite a locked decision?
+- Can a Teacher save or lock a ledger for a class they are not assigned to?
+- Are there additional assignment restrictions in examination-related endpoints?
+
+Do not silently expand the proposed access change to Teacher ledger locking or promotion authority.
+
+Report any such dependency separately.
+
+## 6. MOBILE FREEZE
+
+The Mobile frontend is FROZEN.
+
+Do not modify Mobile files.
+
+Identify whether Web and Mobile share the same marks writer and whether changing Web assignment authorization could indirectly change Mobile behavior.
+
+If it would affect Mobile-specific behavior, report the exact impact and the safest way to keep the Mobile contract unchanged.
+
+## 7. REQUIRED FINAL REPORT
+
+Provide:
+
+1. Root cause of the screenshot error.
+2. Exact source files/functions involved.
+3. Current Teacher marks authorization rules.
+4. Feasibility of same-school Teacher Add Marks access.
+5. Safeguards that must remain.
+6. Teacher attribution and audit-history findings.
+7. Impact on Teacher View Marks and Results.
+8. Impact on Teacher ledger Save/Lock.
+9. Impact on Student and Principal View Marks.
+10. Impact on Stage 1 locked-ledger protection.
+11. Impact on Mobile.
+12. Minimum code changes required.
+13. Required regression tests.
+14. Any unresolved business or security decisions.
+
+### FINAL VERDICT
+
+Choose:
+
+- SAFE TO IMPLEMENT
+- SAFE WITH CONDITIONS
+- BLOCKED
+
+Explain why.
+
+## FINAL INSTRUCTION
+
+This is an AUDIT ONLY.
+
+Do not implement anything.
+
+Do not proceed with Stage 2B.
+
+Wait for my approval after reporting the findings.
