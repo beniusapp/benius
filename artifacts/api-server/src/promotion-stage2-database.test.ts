@@ -1,3 +1,4 @@
+import "../test-support/stage3b4-test-entry-guard.cjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -24,8 +25,8 @@ import {
 
 const developmentDbTestEnabled = process.env.BENIUS_STAGE2B_DEV_DB_TEST === "1";
 
-test("Stage 2B keeps source placement/history scoped and rolls back target conflicts in Development DB", {
-  skip: developmentDbTestEnabled ? false : "set BENIUS_STAGE2B_DEV_DB_TEST=1 for disposable Development DB verification",
+test("Stage 2B keeps source placement/history scoped and rolls back target conflicts in isolated PostgreSQL", {
+  skip: developmentDbTestEnabled ? false : "set BENIUS_STAGE2B_DEV_DB_TEST=1 only through the verified Stage 3B-4 test runner",
 }, async (t) => {
   let schoolId: number | undefined;
   let foreignSchoolId: number | undefined;

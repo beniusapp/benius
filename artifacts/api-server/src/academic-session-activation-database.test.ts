@@ -1,3 +1,4 @@
+import "../test-support/stage3b4-test-entry-guard.cjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -23,7 +24,7 @@ const developmentDbTestEnabled = process.env.BENIUS_STAGE3_DEV_DB_TEST === "1";
 test("Stage 3 activation synchronizes valid current placement, blocks conflicts, and rolls back update failures", {
   skip: developmentDbTestEnabled
     ? false
-    : "set BENIUS_STAGE3_DEV_DB_TEST=1 for disposable Development DB verification",
+    : "set BENIUS_STAGE3_DEV_DB_TEST=1 only through the verified Stage 3B-4 test runner",
 }, async (t) => {
   let schoolId: number | undefined;
   let otherSchoolId: number | undefined;
