@@ -1,0 +1,167 @@
+# BENIUS — FEES & PAYMENTS
+## Complete Global vs Academic Session Classification
+### STRICT READ-ONLY AUDIT
+
+Before continuing Examination Stage 3B-2, audit the CURRENT BENIUS Fees & Payments implementation.
+
+Do not modify code, database records, schema, payments, receipts, invoices, configurations or permissions.
+
+Do not deploy or access Production.
+
+## OBJECTIVE
+
+Determine exactly which Fees & Payments features are:
+
+1. GLOBAL — school-wide and independent of Academic Session.
+2. ACADEMIC SESSION BASED — explicitly bound to a selected Academic Session.
+3. HYBRID — global configuration combined with session-specific financial records.
+4. PARTIALLY SCOPED / UNSAFE — intended to be session-based but missing a necessary session check.
+
+Do not infer classification from UI labels or the presence of an Academic Session selector.
+
+Trace each feature through frontend, API, storage queries and database schema.
+
+## 1. PRINCIPAL PORTAL
+
+Audit every feature and subfeature under Fees & Payments, including:
+
+- Financial Analytics and dashboard totals.
+- Fee Structures and fee categories.
+- Class-wise and Student-wise fee configuration.
+- Fee assignments.
+- Installments and due dates.
+- Discounts, concessions and waivers.
+- Ledger and Transactions.
+- Offline payment recording.
+- Online payment reconciliation.
+- Payment adjustments and corrections.
+- Refunds.
+- Invoice generation.
+- Receipts and downloads.
+- Outstanding dues.
+- Reminders and templates.
+- Payment gateway configuration.
+- External payment portal.
+- Audit logs.
+- Exports and reports.
+
+If a listed feature does not exist, mark NOT IMPLEMENTED.
+
+Include any existing feature omitted from this list.
+
+## 2. STUDENT PORTAL
+
+Audit:
+
+- Fees dashboard.
+- Fee summary.
+- Current dues.
+- Previous-session dues.
+- Fee details.
+- Installments.
+- Payment history.
+- Online payment initiation.
+- Payment verification.
+- Failed payment handling.
+- Invoices.
+- Receipts.
+- Historical Academic Session fee records.
+- Archived-session behavior.
+- Payment gateway information.
+
+## 3. EXACT ROUTE INVENTORY
+
+For EVERY feature report:
+
+- Portal and screen.
+- Frontend file and component.
+- Exact HTTP method and API route.
+- Backend handler.
+- Storage method.
+- Database table(s).
+- Whether the table has `school_id`.
+- Whether the table has `session_id`.
+- Whether the request sends `x-view-session-id`.
+- Whether the backend validates the selected session.
+- Whether the storage query filters the session.
+- Whether the feature is GLOBAL, SESSION, HYBRID or PARTIAL.
+- Whether archived sessions allow reads.
+- Whether archived sessions reject financial writes.
+- Whether the operation affects historical money records.
+- Exact file paths and line numbers.
+
+## 4. FINANCIAL SAFETY
+
+Check:
+
+- Cross-school isolation.
+- Cross-session isolation.
+- Student payment ownership.
+- Duplicate payment prevention.
+- Gateway callback verification.
+- Receipt ownership.
+- Refund authorization.
+- Payment reconciliation.
+- Session switching and frontend cache keys.
+- Legacy records with missing session IDs.
+- Whether previous dues are explicitly carried forward or accidentally mixed.
+- Whether changing Academic Sessions alters old receipts or payment history.
+- Whether all-session financial reporting is explicitly distinguished from selected-session reporting.
+
+Do not initiate real payments or refunds.
+
+## 5. IMPORTANT BUSINESS QUESTIONS
+
+Answer these explicitly:
+
+A. When a Principal switches from 2025–2026 to 2026–2027, exactly which Fees & Payments screens change?
+
+B. Which Principal configurations remain the same across sessions?
+
+C. Does creating a new Academic Session automatically copy fee structures, installments or assignments?
+
+D. Can a Student view old-session fee records and receipts?
+
+E. Can a Student pay dues belonging to an archived session? What does the current code actually permit?
+
+F. Are payment transactions permanently traceable even when the original session is archived?
+
+G. Are Fee Structures global templates or session-specific fee schedules?
+
+H. Can an authorized Support Staff user see and modify the same financial data as the Principal, subject to grants?
+
+I. Does the Student's selected Academic Session control all fee summaries, payment history and payment actions consistently?
+
+J. Does any global configuration unintentionally overwrite historical fee amounts?
+
+## 6. FINAL REPORT
+
+Provide two complete feature-by-feature tables:
+
+TABLE A — PRINCIPAL FEES & PAYMENTS
+
+TABLE B — STUDENT FEES & PAYMENTS
+
+Then provide:
+
+1. GLOBAL features.
+2. SESSION-BASED features.
+3. HYBRID features.
+4. PARTIALLY SCOPED / UNSAFE features.
+5. Exact routes and files.
+6. Database tables and session columns.
+7. Session-switching behavior.
+8. Archived-session behavior.
+9. Payment and receipt preservation.
+10. School isolation.
+11. Financial risks.
+12. Recommendations, without implementation.
+13. Any features whose classification cannot be established from source.
+
+Use exact source evidence.
+
+Do not change anything.
+
+Do not begin Examination Stage 3B-2.
+
+Return the complete audit and wait for owner approval.
