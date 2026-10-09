@@ -1,0 +1,242 @@
+# BENIUS — EXAMINATION STAGE 3B-4
+## SAFE DATABASE & AUTHENTICATED UI VERIFICATION READINESS
+### PHASE A — STRICT READ-ONLY FEASIBILITY AUDIT
+
+BENIUS is in DEVELOPMENT, not Production.
+
+We have completed:
+- Stage 3B-1: Audited Principal promotion override proposals.
+- Stage 3B-2: Final-decision execution implementation.
+- Stage 3B-3: Final verification, overall PARTIALLY VERIFIED.
+
+Stage 3B-3 reported:
+- 80 executed API tests passed.
+- 16 Web tests passed.
+- Two database integration tests skipped.
+- No database integration tests executed during Stage 3B-3.
+- API and Web builds passed.
+- Mobile typecheck passed.
+- Teacher recommendation and Principal final-decision logic passed source/unit verification.
+- Authenticated Principal Exam Controller UI was not verified.
+- Promotion and activation database end-to-end scenarios were not verified.
+- No files, schemas, configuration or existing Development records were changed.
+
+The owner authorizes ONLY the Stage 3B-4 Phase A READ-ONLY FEASIBILITY AUDIT.
+
+DO NOT BEGIN PHASE B OR RUN THE MISSING DATABASE TESTS YET.
+
+# ABSOLUTE SAFETY RESTRICTIONS
+
+DO NOT:
+1. Modify any application source file.
+2. Modify database schemas, tables, functions or triggers.
+3. Run migrations.
+4. Create or delete a database.
+5. Create, change or delete database records.
+6. Run promotion execution or Academic Session activation.
+7. Create, modify or reset user accounts or credentials.
+8. Change environment variables or secrets.
+9. Connect to Production.
+10. Deploy or publish the application.
+11. Modify Fees & Payments.
+12. Modify Mobile routes or frontend.
+13. Touch the untracked `artifacts/api-server/uploads/schools/3/` directory.
+14. Run integration tests that create fixtures or temporary database DDL.
+15. Print database passwords, connection strings, session cookies, API keys or other secrets.
+
+If a step requires any mutation, STOP and describe the required action instead.
+
+# PART 1 — DATABASE ENVIRONMENT DISCOVERY
+
+Inspect the existing Replit project configuration, test scripts and database setup.
+
+Identify:
+- Which database technology BENIUS uses.
+- Which environment variables select the database, without revealing their values.
+- Whether Development and test database configurations are separated.
+- Whether any isolated disposable test database already exists.
+- Whether the existing database tests can be pointed to an isolated database.
+- Whether a database connection can accidentally fall back to the main Development database.
+- Whether test setup or teardown uses destructive SQL or DDL.
+- Whether a test could touch existing school, Student, Teacher, session or payment records.
+- Whether test data cleanup is reliable when a test crashes.
+
+Read configuration and code only.
+
+Do not connect to a database merely to inspect its contents.
+
+Do not expose secret values.
+
+For every conclusion, provide the relevant file and line references.
+
+# PART 2 — DATABASE TEST SAFETY ANALYSIS
+
+Inspect the exact tests skipped during Stage 3B-3:
+
+1. Stage 2B promotion database integration.
+2. Stage 3 Academic Session activation database integration.
+
+Also inspect Stage 3B-2 database tests for:
+- Audited proposal resolution.
+- Actual promotion execution.
+- Target enrollment preparation.
+- Atomic final-decision audit.
+- Concurrent execution.
+- Idempotent retries.
+- Rollback after failure.
+
+For each test, identify:
+- Test file and test name.
+- Environment conditions required.
+- Tables and records read.
+- Tables and records written.
+- Any CREATE/DROP/ALTER statements.
+- Any temporary functions or triggers.
+- Whether the test creates its own school and Students.
+- Whether it could modify existing Development records.
+- Cleanup behavior.
+- Failure/crash cleanup risks.
+- Whether it is safe only in an isolated disposable database.
+
+Do not execute these tests.
+
+# PART 3 — PROPOSE AN ISOLATED TEST ENVIRONMENT
+
+Recommend the safest practical way to run the missing tests.
+
+The preferred design is:
+
+- A completely separate PostgreSQL database.
+- No existing BENIUS school or Student records.
+- Separate test-only credentials.
+- No access to Production.
+- No connection to the existing Development database.
+- Explicit test database selection.
+- Fail-closed configuration if the test database is missing.
+- No fallback to the main Development database.
+- Permission to create temporary test fixtures only inside the isolated database.
+- Clear cleanup and disposal procedure.
+
+Assess whether this can be achieved with the project's existing Replit environment.
+
+If it cannot, explain the blockers and provide an alternative that does not risk existing records.
+
+Do not provision or create anything during this audit.
+
+Estimate whether an isolated database would introduce additional Replit costs, where this can be established from the existing project setup. If cost cannot be determined, state UNKNOWN rather than guessing.
+
+# PART 4 — PRINCIPAL AUTHENTICATED UI FEASIBILITY
+
+Inspect:
+- Principal/Admin login flow.
+- Authentication session handling.
+- Admin PIN requirements, if applicable.
+- Exam Controller route guards.
+- Academic Session selector.
+- Relevant test-user fixtures.
+- Existing browser automation or UI test setup.
+- Whether a disposable authenticated Principal account can be created in an isolated test environment.
+- Whether the preview browser can reach the Exam Controller after authentication.
+
+Do not sign in using real credentials.
+
+Do not create or reset an account.
+
+Do not bypass authentication.
+
+Do not print passwords, PINs, cookies or tokens.
+
+Determine the safest future verification approach for:
+- Teacher recommendation display.
+- Principal override save/edit/clear.
+- Required reason validation.
+- Readiness display.
+- Final execution confirmation.
+- Executed outcome and audit evidence.
+- Session switching.
+- Unauthorized Support Staff behavior.
+
+Explain what can be checked through browser automation, what can be checked through component tests, and what requires database integration.
+
+# PART 5 — HISTORICAL EVIDENCE CONTRACT
+
+Stage 3B-3 reported that:
+- The final execution audit records both Teacher recommendation and final decision.
+- `academicHistory` stores final placement and examination evidence.
+- The Teacher recommendation was not found duplicated inside `academicHistory.snapshotJson`.
+
+Perform a READ-ONLY trace of:
+- `academic_history` records.
+- Execution audit events.
+- Actor and reason fields.
+- School and Academic Session linkage.
+- Student and term linkage.
+- Execution identifiers.
+- Whether audit and history can be reliably correlated.
+- Whether clearing/editing proposals affects historical executed decisions.
+- Whether the final executed decision remains understandable after session archiving.
+
+Answer:
+
+1. Can the Teacher recommendation and executed final outcome always be reconstructed together?
+2. Is the linkage explicit and stable, or does it rely on ambiguous matching?
+3. Does any audit deletion or retention policy threaten this linkage?
+4. Does current behavior meet the existing BENIUS historical-preservation contract?
+5. Is embedding the Teacher recommendation in `academicHistory.snapshotJson` necessary, or merely an optional redundancy?
+
+Do not recommend schema changes unless a concrete integrity gap is identified.
+
+Do not change history or audit records.
+
+# PART 6 — VERIFY MOBILE AND FEES ISOLATION
+
+Inspect whether the proposed future tests could unintentionally:
+- Exercise Mobile promotion execution with Web-only proposals.
+- Change Mobile authentication or route behavior.
+- Modify Fees & Payments records.
+- Trigger real payment-provider calls.
+- Trigger real notifications.
+- Touch external integrations.
+
+Recommend safeguards to ensure the future tests remain entirely within the isolated examination environment.
+
+No external payment, refund or notification action is authorized.
+
+# PART 7 — REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall status: READY / BLOCKED / NEEDS OWNER DECISION.
+2. Whether a separate test database currently exists: YES / NO / UNKNOWN.
+3. Whether the existing Development database is at risk from current test scripts.
+4. Exact skipped database tests and their prerequisites.
+5. Tables and database objects each test can mutate.
+6. DDL and trigger/function risks.
+7. Current test cleanup and crash risks.
+8. Recommended isolated database setup.
+9. Required environment-variable separation, using names only.
+10. Estimated additional cost: known amount or UNKNOWN.
+11. Whether authenticated Principal UI testing is feasible.
+12. Safe test-account strategy.
+13. Browser verification prerequisites.
+14. Historical Teacher/final-decision correlation assessment.
+15. Whether `academicHistory.snapshotJson` needs additional evidence.
+16. Mobile compatibility safeguards.
+17. Fees & Payments isolation safeguards.
+18. Exact source files inspected, with line references.
+19. Actions requiring explicit owner approval.
+20. Recommended Phase B verification plan.
+21. Files modified: expected NONE.
+22. Database records modified: expected NONE.
+23. Schemas/configuration modified: expected NONE.
+24. Production accessed: expected NO.
+25. Deployment performed: expected NO.
+26. Remaining blockers and unresolved questions.
+
+## STOP CONDITION
+
+STOP after the read-only feasibility report.
+
+Do not create a test database, modify code, create credentials, run database integration tests, perform authenticated UI actions or activate any Academic Session.
+
+Wait for the owner's explicit approval before proceeding to Stage 3B-4 Phase B.
