@@ -1,0 +1,362 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1A-1 — HISTORICAL STUDENT CLASS/SECTION DISPLAY INVESTIGATION
+### HIGH PRIORITY — STRICT READ-ONLY — NO CHANGES
+
+We have identified a possible historical Academic Session placement bug during manual testing of BENIUS Fees & Payments.
+
+The owner requires a VERY THOROUGH root-cause investigation before any implementation.
+
+THIS IS INVESTIGATION ONLY.
+
+DO NOT CHANGE ANYTHING.
+
+## 1. EXACT REPORTED BUG
+
+Example Student: Ram Jaiswal.
+
+Academic Session 2026–2027:
+- Student belongs to Class 1-A.
+- Principal generates an invoice.
+- Invoice, ledger and transactions operate correctly in that session.
+
+Academic Session 2027–2028:
+- Student is promoted to Class 2-A.
+- Current Student Registry shows Class 2-A.
+
+Now switch Principal Fees & Payments back to Academic Session 2026–2027 in read-only mode.
+
+ACTUAL:
+- Historical Fees records show Class 2-A.
+
+EXPECTED:
+- Historical Fees records should show Class 1-A.
+
+The same incorrect historical class/section appears to affect:
+- Principal Fees & Payments.
+- Student Fees & Payments.
+- Fees reports.
+
+The owner has manually observed the issue.
+
+Do not assume the exact root cause. Investigate and prove it from source code.
+
+Do not change any records or code.
+
+## 2. IMPORTANT BUSINESS REQUIREMENT
+
+For session-specific financial records, historical Student placement must reflect the selected Academic Session.
+
+Example:
+
+2026–2027 → Class 1-A
+2027–2028 → Class 2-A
+
+When viewing 2026–2027:
+- Historical invoice should display Class 1-A.
+- Historical ledger should display Class 1-A.
+- Historical transactions should display Class 1-A.
+- Historical reports should display Class 1-A.
+
+Also investigate receipts, payment history, fee summaries, student fee dashboards and exports.
+
+The Student Profile page is a separate feature that intentionally displays current Student information.
+
+DO NOT change Student Profile behavior.
+
+## 3. NON-NEGOTIABLE RESTRICTIONS
+
+DO NOT:
+
+- Modify source code.
+- Modify database schema.
+- Modify any Development records.
+- Modify Student Registry.
+- Modify enrollment history.
+- Modify Academic Sessions.
+- Generate invoices.
+- Initiate payments.
+- Trigger refunds.
+- Run migrations.
+- Execute database writes.
+- Run application tests that mutate data.
+- Start background jobs.
+- Contact payment gateways.
+- Change Mobile functionality.
+- Change Examination or Promotion logic.
+- Access Production.
+- Deploy anything.
+
+Use source-code inspection only.
+
+Do not query the live Development database unless separately authorized.
+
+## 4. INVESTIGATE STUDENT PLACEMENT SOURCES
+
+Identify all relevant placement sources, including:
+
+- Current Student Registry.
+- Student Academic Session enrollment records.
+- Academic History.
+- Promotion destination enrollment.
+- Any historical class/section/roll snapshots stored in invoices, payments or receipts.
+
+For each source, document:
+- Table name.
+- Relevant fields.
+- School ID.
+- Academic Session ID.
+- Class ID/name.
+- Section ID/name.
+- Roll number.
+- Creation/update behavior.
+- Historical reliability.
+
+Determine whether an authoritative historical placement record already exists.
+
+Do not assume Academic History or enrollment is always complete for legacy Students.
+
+## 5. TRACE THE PRINCIPAL FEES MODULE
+
+Inspect every relevant Fees & Payments page and backend API, including:
+
+- Fee invoice generation.
+- Generated invoice lists.
+- Invoice details.
+- Student fee ledger.
+- Payment transactions.
+- Fee collection history.
+- Student fee details.
+- Receipts.
+- Due reports.
+- Paid/unpaid reports.
+- Financial analytics.
+- Exports and print views.
+
+For each screen:
+
+1. Identify the React component.
+2. Identify the API endpoint.
+3. Identify the backend handler.
+4. Identify the storage/database query.
+5. Identify the exact source of displayed class and section.
+6. Identify whether selected Academic Session ID is passed.
+7. Identify whether backend uses the selected Session ID.
+8. Identify whether placement is taken from current Registry.
+9. Identify whether the UI overrides historical placement with current Student data.
+10. Identify whether the result changes after promotion.
+
+Provide exact file names and line numbers.
+
+## 6. TRACE STUDENT FEES & PAYMENTS
+
+Repeat the investigation for the Student Portal.
+
+Check:
+
+- Student Fees dashboard.
+- Fee invoices.
+- Invoice details.
+- Payment history.
+- Receipts.
+- Downloaded/printed documents.
+- Fee status and summaries.
+
+Determine whether the Student Portal uses:
+- Selected Academic Session placement.
+- Current Registry placement.
+- Historical invoice snapshot.
+- Another source.
+
+Identify any Web/Mobile differences.
+
+Do not change the Student Profile page.
+
+## 7. TRACE FEES REPORTS
+
+Inspect all Principal Fees reporting surfaces:
+
+- Class-wise fee collection.
+- Section-wise fee collection.
+- Student-wise reports.
+- Paid/unpaid reports.
+- Outstanding dues.
+- Collection summaries.
+- Payment transactions.
+- Downloaded PDF/CSV/Excel reports, where present.
+
+For each report determine:
+
+- Which Academic Session is selected.
+- Which Session ID the query uses.
+- Whether historical placement is used for class/section grouping.
+- Whether current Student Registry is used for grouping.
+- Whether report totals could move between classes after promotion.
+- Whether class/section filters operate on historical or current placement.
+- Whether financial totals remain session-isolated.
+
+Pay particular attention to this question:
+
+Could a payment collected when a Student was in Class 1-A later appear under Class 2-A in a historical class-wise financial report?
+
+If yes, document the exact cause and affected calculations.
+
+## 8. TRACE THE FULL DATA FLOW
+
+Follow the actual code path:
+
+Academic Session Selector
+→ Frontend Session State/Header
+→ Fees API Request
+→ Backend Session Resolution
+→ Database Query
+→ Student Placement Join
+→ API Response
+→ UI Class/Section Display
+
+Identify the exact point where historical placement is lost or replaced.
+
+Investigate:
+- Missing session filters.
+- Joins to current Student Registry.
+- Incomplete enrollment joins.
+- Frontend mapping mistakes.
+- Caching/query-key issues.
+- Fallback to current placement.
+- Stored historical snapshot omissions.
+- Class/section name resolution.
+- Legacy NULL-session records.
+
+Distinguish confirmed defects from possible causes.
+
+## 9. VERIFY MULTI-TENANT AND SESSION ISOLATION
+
+Ensure all proposed future solutions would preserve:
+
+- Authenticated school/tenant isolation.
+- Selected Academic Session ID.
+- Correct historical enrollment.
+- Archived-session read-only behavior.
+- No cross-school Student placement leakage.
+- No cross-session financial record leakage.
+
+Check whether a session-specific invoice can accidentally be joined with a different session's enrollment.
+
+## 10. EDGE CASES TO INVESTIGATE
+
+Evaluate source-code behavior for:
+
+A. Student promoted from Class 1-A to Class 2-A.
+
+B. Student retained in Class 1-A.
+
+C. Student changes section without changing class.
+
+D. Student roll number changes.
+
+E. Student transfers schools.
+
+F. Student leaves the school.
+
+G. Historical enrollment missing.
+
+H. Legacy invoice has NULL Session ID.
+
+I. Invoice generated before promotion.
+
+J. Receipt generated before promotion.
+
+K. Current-session class corrected after an invoice is generated.
+
+L. Multiple enrollments or inconsistent historical records.
+
+M. Archived Academic Session selected.
+
+N. Historical reports grouped by class/section.
+
+O. Student WebView/Mobile consumers of the same Fees API.
+
+For unsupported scenarios, clearly say NOT VERIFIED.
+
+## 11. HISTORICAL DISPLAY VS FINANCIAL CALCULATION
+
+Investigate these separately.
+
+A. DISPLAY INTEGRITY:
+Does the historical screen show the correct class, section and roll number?
+
+B. REPORT GROUPING:
+Does a historical class-wise report attribute records to the correct historical class?
+
+C. FINANCIAL INTEGRITY:
+Are invoice amounts, payments, dues and balances preserved correctly?
+
+D. FEE STRUCTURE APPLICATION:
+Can current global fee structures or current Student placement alter historical invoice calculations?
+
+Do not assume that a display-only issue has no financial consequences.
+
+Determine whether this is:
+- UI display only.
+- API response mapping.
+- Database query/join.
+- Historical reporting calculation.
+- Financial data mutation.
+- Multiple issues.
+
+## 12. COMPARE WITH EXAMINATION HISTORICAL PLACEMENT
+
+The Examination module previously implemented session-aware Student placement and promotion/activation behavior.
+
+Inspect the existing architecture to determine whether Fees & Payments can safely reuse its authoritative historical enrollment logic.
+
+Do not change Examination.
+
+Do not create a new helper yet.
+
+Identify whether the historical enrollment source is sufficient for Fees and whether invoice-time snapshots might be needed.
+
+Do not choose an architecture without owner review.
+
+## 13. REQUIRED ROOT-CAUSE REPORT
+
+Return:
+
+1. Overall investigation status: CONFIRMED / PARTIALLY CONFIRMED / INCONCLUSIVE.
+2. Reproduction scenario based on the reported example.
+3. Exact source of current Student class/section.
+4. Exact source of historical Student placement.
+5. Root cause of the incorrect historical display.
+6. Exact affected Principal Fees screens.
+7. Exact affected Student Fees screens.
+8. Exact affected financial reports.
+9. Whether receipt/download/print views are affected.
+10. Whether historical class-wise totals or filters are affected.
+11. Whether invoice/payment amounts are affected.
+12. Whether Academic Session IDs are correctly enforced.
+13. Whether school/tenant isolation is preserved.
+14. Whether the issue is frontend, backend, database or combined.
+15. Whether historical enrollment data already exists.
+16. Legacy and missing-enrollment risks.
+17. Recommended fix approaches, WITHOUT IMPLEMENTING.
+18. Recommended safest fix approach and tradeoffs.
+19. Web/Mobile compatibility impact.
+20. Exact file paths and line numbers supporting every major finding.
+21. Files modified: NONE.
+22. Database records modified: NONE.
+23. Production accessed: NO.
+24. Deployment performed: NO.
+25. Payment actions performed: NONE.
+
+## MANDATORY STOP
+
+Complete only the investigation.
+
+DO NOT FIX ANYTHING.
+
+DO NOT MODIFY SOURCE CODE.
+
+DO NOT MODIFY DATABASE RECORDS.
+
+DO NOT RUN FINANCIAL OPERATIONS.
+
+Wait for explicit owner approval before any implementation.
