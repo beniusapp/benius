@@ -1,0 +1,267 @@
+# BENIUS EXAMINATION — STAGE 2B
+## Unified Examination Results — Controlled Implementation
+
+Stage 2A read-only audit is complete.
+
+The owner has approved Stage 2B.
+
+BENIUS is currently in DEVELOPMENT.
+
+### MAIN OBJECTIVE
+
+Make the Examination Results displayed in these three portals consistent:
+
+1. Teacher Portal → Examination → Results
+2. Student Portal → Examination → Results
+3. Principal Portal → Performance Analytics → Results
+
+All three must use the same authoritative backend examination calculation engine.
+
+Keep the existing UI simple. Do not rebuild the Examination module.
+
+## 1. STRICT SAFETY RULES
+
+- Mobile frontend and Mobile-specific backend behavior remain FROZEN.
+- Do not modify Teacher Add Marks or View Marks permissions.
+- Do not reintroduce Teacher Faculty Mapping restrictions for Web Add Marks.
+- Do not modify marks-saving or immediate Student visibility behavior.
+- Do not publish existing unpublished marks.
+- Do not modify existing examination marks or Student records.
+- Do not modify locked Teacher ledgers.
+- Do not change promotion execution or Principal overrides.
+- Do not modify Academic Session activation or Registry synchronization.
+- Do not change grading policies, weightages or pass thresholds.
+- Preserve School ID and Academic Session ID isolation.
+- Preserve historical session enrollments.
+- Archived sessions remain read-only.
+- No Production access or deployment.
+
+If any required change violates these boundaries, STOP and report before proceeding.
+
+## 2. ONE AUTHORITATIVE RESULT CALCULATION
+
+Reuse the existing backend engine:
+
+`artifacts/api-server/src/shared/examination-calculation-engine.ts`
+
+Use its existing calculation rules for:
+
+- Weighted subject results.
+- Overall percentage.
+- Grade.
+- Subject failure count.
+- Complete or Incomplete status.
+- Missing components.
+- Missing configured subjects.
+- Recorded zero marks.
+- Explicit Absent.
+
+Create the smallest safe read-only results service or adapter.
+
+Do not introduce another calculation formula or results database table.
+
+## 3. TEACHER RESULTS
+
+Teacher Results must consume the authoritative calculated result.
+
+Preserve:
+
+- Existing layout.
+- Class and Section selection.
+- Examination term selection.
+- Teacher Results access rules.
+- Teacher ledger Save/Lock workflow.
+- Existing locked-decision protection.
+
+Do not modify Teacher ledger write behavior.
+
+If replacing the calculation source would break the existing ledger workflow, STOP and report.
+
+## 4. STUDENT RESULTS
+
+Student Results must show only the authenticated Student's results for the selected Academic Session.
+
+Calculate using only marks authorized for Student visibility.
+
+Preserve the existing `published=true` privacy boundary.
+
+Do not expose unpublished marks, hidden averages, Teacher recommendations or Principal internal overrides.
+
+If required marks are missing or unpublished, display:
+
+`Incomplete / Pending Result`
+
+Do not calculate a misleading final percentage from partial marks.
+
+Do not automatically publish historical unpublished records.
+
+## 5. PRINCIPAL RESULTS
+
+Principal Performance Analytics must use the same authoritative backend calculation engine.
+
+Preserve:
+
+- Authenticated School ID.
+- Explicit selected Academic Session.
+- Exact selected-session Class and Section.
+- Historical Enrollment.
+- Authorized Principal access to unpublished marks.
+
+Do not group historical Students using their current Registry placement.
+
+## 6. COMPLETE AND INCOMPLETE RESULTS
+
+For complete results, display:
+
+- Subject percentages.
+- Weighted average.
+- Grade.
+- Evaluated failure count.
+- Complete status.
+
+For incomplete results, display:
+
+- Incomplete / Pending Result.
+- No final weighted average.
+- No final grade.
+- No final evaluated failure count.
+- No automatic promotion or retention.
+
+Never treat missing marks as zero.
+
+Never normalize partial components into a complete result.
+
+Preserve existing zero-mark and Absent semantics.
+
+## 7. PROMOTION STATUS LABELS
+
+In Principal Performance Analytics, distinguish:
+
+1. Calculated examination result.
+2. Teacher's promotion/retention recommendation.
+3. Principal's final executed decision.
+
+Do not label an unexecuted Teacher recommendation as a final promotion.
+
+Use clear labels such as:
+
+- Teacher Recommended: Promoted
+- Teacher Recommended: Retained
+- Pending Principal Decision
+
+Display a final Principal outcome only when an authoritative executed record exists.
+
+Do not implement or change Principal override logic in this stage.
+
+Do not expose internal Teacher decisions to Students.
+
+## 8. ACADEMIC SESSION ISOLATION
+
+Every Results API must enforce:
+
+- Authenticated School ID.
+- Selected Academic Session ID.
+- Exact Student or class/section cohort.
+- Correct examination term.
+- Correct selected-session Enrollment.
+
+Historical results must remain accessible through authorized read-only access.
+
+Do not mix current and historical session records.
+
+## 9. REFRESH BEHAVIOR
+
+Ensure results refresh when relevant marks change.
+
+Use School ID, Academic Session ID, role and Student/cohort context in cache keys where applicable.
+
+Existing bounded polling is acceptable for this stage.
+
+Do not introduce a new real-time messaging system.
+
+## 10. REGRESSION TESTS
+
+Add focused tests for:
+
+1. Complete weighted results.
+2. Missing examination component.
+3. Missing configured subject.
+4. Partial marks.
+5. Zero marks.
+6. Absent.
+7. Mixed Absent and missing marks.
+8. Correct grade.
+9. Correct failure count.
+10. Incomplete result without final average.
+11. Incomplete result without final grade.
+12. Student published-only privacy.
+13. Student identity isolation.
+14. School isolation.
+15. Academic Session isolation.
+16. Historical enrollment.
+17. Archived-session read access.
+18. Teacher Results consistency.
+19. Principal Results consistency.
+20. Teacher recommendation versus Principal final execution.
+21. Stage 1 immediate marks visibility remains intact.
+22. Locked-ledger protection remains intact.
+23. Same-school Web Teacher Add Marks remains unrestricted by Faculty Mapping.
+
+Use isolated test fixtures.
+
+Do not modify existing Development academic records.
+
+## 11. VERIFICATION
+
+After implementation:
+
+- Run focused tests.
+- Run relevant existing examination regression tests.
+- Run Web and API builds.
+- Compare typecheck diagnostics against baseline.
+- Verify Student privacy and publication rules.
+- Verify School and Academic Session isolation.
+- Confirm Teacher ledger and promotion execution behavior remain unchanged.
+- Use SELECT-only Development queries if needed.
+- Attempt authenticated UI verification only with authorized access.
+
+Do not claim signed-in UI verification based on the public landing page.
+
+## 12. FINAL REPORT
+
+Provide:
+
+1. Overall PASS / NEEDS CHANGES / BLOCKED.
+2. Teacher Results changes.
+3. Student Results changes.
+4. Principal Results changes.
+5. Authoritative calculation source.
+6. Incomplete result behavior.
+7. Student privacy verification.
+8. Teacher recommendation versus Principal execution labeling.
+9. Exact files changed.
+10. Database/schema changes.
+11. Tests passed/failed.
+12. Web/API build results.
+13. Typecheck comparison.
+14. School and Academic Session isolation.
+15. Historical-session behavior.
+16. Authenticated UI verification.
+17. Existing marks and locked-ledger preservation.
+18. Mobile frontend changed: YES/NO.
+19. Mobile backend changed: YES/NO.
+20. Production accessed: YES/NO.
+21. Deployment performed: YES/NO.
+22. Remaining risks.
+
+### FINAL INSTRUCTION
+
+Implement Stage 2B only.
+
+Keep BENIUS Examination simple.
+
+Do not modify marks entry, marks publication, Teacher ledger writes, Principal promotion execution, Principal overrides, Mobile or Academic Session activation.
+
+Do not deploy.
+
+If implementation requires a broader change, STOP and request approval first.
