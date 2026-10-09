@@ -1,0 +1,298 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1 — HISTORICAL STUDENT PLACEMENT DISPLAY CORRECTION
+### IMPLEMENTATION PROMPT — AWAITING OWNER APPROVAL
+
+IMPORTANT: This prompt is prepared for owner review. Do not execute it until the owner explicitly authorizes Stage 1C-1 implementation.
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner has approved the following business policies:
+
+1. Historical financial placement uses the exact Academic Session enrollment (Option A).
+2. Missing historical placement must display as unavailable, never guessed from current Registry.
+3. Unresolved financial rows must remain in grand totals and later appear in a separately identifiable unresolved report group.
+4. Mismatched payment/invoice Session IDs must be flagged, not silently repaired.
+5. Shared Mobile Admin analytics may eventually receive corrected class attribution without changing Mobile files or API response shape.
+6. Direct document session-authorization hardening belongs to Stage 1C-3, not Stage 1C-1.
+7. Student Profile must continue showing current Registry placement.
+
+## OBJECTIVE
+
+Correct historical Student class, section and roll-number display in the approved Principal and Student Fees & Payments surfaces.
+
+Example:
+
+Student Ram Jaiswal:
+
+- 2026–2027 enrollment: Class 1-A.
+- 2027–2028 enrollment: Class 2-A.
+- Current Student Registry: Class 2-A.
+
+When viewing 2026–2027 financial records, the displayed placement must be Class 1-A.
+
+When viewing 2027–2028 financial records, the displayed placement must be Class 2-A.
+
+This stage must not modify financial values or existing data.
+
+## PHASE A — MANDATORY READ-ONLY PRE-IMPLEMENTATION CHECK
+
+Before modifying anything:
+
+1. Reinspect the exact affected source functions and callers.
+2. Confirm the current implementation still matches Stage 1B.
+3. Confirm all existing unrelated working-tree changes will be preserved.
+4. Identify all Principal and Student Fees display endpoints within this stage.
+5. Confirm the exact placement fields used by each endpoint.
+6. Identify any shared helpers consumed by Mobile or financial reports.
+7. Confirm the proposed changes can remain limited to Stage 1C-1.
+8. Identify the existing test infrastructure and whether safe mocked tests can run without a database connection.
+9. Confirm no database schema or migration is necessary.
+10. Produce a short Phase A safety report.
+
+If a required change would alter financial analytics, reports, Mobile contracts, payment processing or authorization semantics, STOP and request owner review.
+
+Do not proceed automatically if the scope cannot be safely isolated.
+
+## PHASE B — HISTORICAL PLACEMENT RESOLUTION
+
+Implement a narrowly scoped backend resolution mechanism.
+
+For every session-specific fee record, resolve placement using:
+
+- Authenticated school ID.
+- Fee record Student ID.
+- Fee record Session ID.
+
+Match against the exact `enrollments` record.
+
+Requirements:
+
+1. Enforce all three identity keys.
+2. Never join enrollment by Student ID alone.
+3. Never substitute the selected UI session for the fee record's actual Session ID.
+4. Never fall back to current `students.class`, `students.section`, or `students.rollNumber`.
+5. Preserve Student ownership and existing school authorization.
+6. Preserve archived-session read-only behavior.
+7. Do not mutate enrollment, Registry, invoices or payments.
+8. Preserve existing financial values.
+9. Avoid N+1 database queries in lists.
+10. Prefer a school/session/student-keyed LEFT JOIN for bulk queries.
+11. Keep unresolved fee records visible.
+12. Do not arbitrarily select one row if multiple conflicting historical enrollments are detected.
+
+The existing resolver is located around:
+
+`artifacts/api-server/src/storage.ts:11900–11925`
+
+Reuse it only where its behavior is safe for this purpose.
+
+## PHASE C — UNRESOLVED PLACEMENT
+
+If a fee record has no matching enrollment:
+
+- Keep the fee record.
+- Return an explicit unresolved placement state.
+- Display "Historical placement unavailable".
+- Do not show the current Registry class as historical.
+- Do not assign the fee record to a guessed class or section.
+- Do not modify the financial record.
+- Do not automatically create or backfill enrollment.
+
+If the fee record has a NULL Session ID:
+
+- Treat historical placement as unresolved.
+- Do not infer the active session.
+- Do not assign it to a selected session.
+- Preserve existing record-selection and authorization behavior.
+
+Use backward-compatible response fields wherever possible.
+
+Ensure unresolved class, section and roll values are represented consistently and do not accidentally render as "undefined", "null", or the current Registry placement.
+
+Do not add the unresolved financial-report grouping in this stage; that belongs to Stage 1C-2.
+
+## PHASE D — PRINCIPAL FEES DISPLAY CORRECTIONS
+
+Inspect and update only the relevant placement projections for:
+
+1. Generated invoice list.
+2. Fee ledger display.
+3. Transaction detail display.
+4. Transaction printable detail.
+5. Principal invoice HTML/PDF.
+6. Principal receipt HTML/PDF.
+7. Payment receipt display.
+
+Relevant source files include:
+
+- `artifacts/api-server/src/routes/routes.ts`
+- `artifacts/api-server/src/fees-routes.ts`
+- `artifacts/api-server/src/transaction-detail-data.ts`
+- `artifacts/api-server/src/storage.ts`, only if a narrowly scoped helper is necessary.
+- `artifacts/benius-web/src/pages/admin-modules/fees-manager.tsx`, only if unresolved placement needs explicit rendering.
+
+For each modified path:
+
+- Use the fee record's own Session ID.
+- Resolve its exact historical enrollment.
+- Display the correct class, section and roll.
+- Preserve invoice and transaction identity.
+- Preserve payment and receipt amounts.
+- Preserve existing document formatting except necessary placement labels.
+- Preserve existing access-control behavior until Stage 1C-3.
+
+Do not alter Principal class/section report filters, CSV/PDF financial reports, aging reports or analytics in this stage.
+
+If a list filter and its displayed historical placement would become inconsistent, document the issue and stop that affected path for owner review rather than silently broadening scope.
+
+## PHASE E — STUDENT FEES DISPLAY CORRECTIONS
+
+Inspect and update only the affected Student Web financial documents:
+
+1. Student invoice HTML/PDF.
+2. Student receipt HTML/PDF.
+3. Any Student fee detail display that actually exposes class, section or roll.
+
+Relevant file:
+
+`artifacts/api-server/src/routes/routes.ts`
+
+Update `artifacts/benius-web/src/pages/student-fees.tsx` only if needed for correct unresolved placement rendering.
+
+Requirements:
+
+- Preserve authenticated Student identity.
+- Preserve authenticated school identity.
+- Preserve existing selected-session filtering.
+- Resolve placement from the financial record's own session.
+- Do not use current Student Registry placement for historical financial documents.
+- Preserve document download functionality.
+- Do not modify Student Profile.
+- Do not change Mobile Student Fees routes.
+
+## PHASE F — LINKED PAYMENT SAFETY
+
+For payment-related placement:
+
+1. Inspect the linked fee record.
+2. Use the linked fee record's Session ID for historical placement.
+3. If payment and fee Session IDs disagree, identify and flag the discrepancy.
+4. Do not rewrite either Session ID.
+5. Do not silently reassign a payment.
+6. Do not change payment amount, status, verification or receipt identity.
+7. Do not change gateway or webhook behavior.
+
+If a payment has no valid linked fee record, do not invent placement.
+
+Report such cases as unresolved.
+
+## PHASE G — STRICT OUT-OF-SCOPE PROTECTION
+
+DO NOT:
+
+- Modify database schemas.
+- Modify existing database records.
+- Backfill historical enrollment.
+- Recalculate invoices.
+- Recalculate dues.
+- Recalculate late fees.
+- Change payment processing.
+- Change gateway verification.
+- Change refunds.
+- Change financial analytics.
+- Change class-wise report aggregation.
+- Change CSV/PDF financial reports.
+- Change aging reports.
+- Change Principal report filters.
+- Change document session authorization.
+- Change Student Profile.
+- Modify Mobile files.
+- Modify Examination or Promotion.
+- Change Academic Session activation.
+- Start scheduled financial jobs.
+- Initiate external payment transactions.
+- Access Production.
+- Deploy the application.
+- Touch unrelated working-tree changes or uploads.
+
+Do not use real Development Student records as test fixtures.
+
+## PHASE H — TESTING
+
+Add or update narrowly scoped tests for:
+
+1. Student Class 1-A in 2026–2027.
+2. Same Student Class 2-A in 2027–2028.
+3. Archived 2026–2027 financial display returns 1-A.
+4. Principal fee list displays historical placement.
+5. Principal invoice displays historical placement.
+6. Principal receipt displays historical placement.
+7. Principal transaction detail displays historical placement.
+8. Student invoice displays historical placement.
+9. Student receipt displays historical placement.
+10. Missing enrollment returns unavailable.
+11. NULL-session record does not inherit current placement.
+12. Cross-school enrollment cannot be joined.
+13. Cross-session enrollment cannot be substituted.
+14. Student Registry remains unchanged.
+15. Existing financial amounts remain unchanged.
+16. Student Profile still uses current Registry.
+17. Archived-session writes remain blocked.
+18. Mobile routes and contracts remain unchanged.
+19. No unexpected report or analytics changes.
+20. Payment/fee Session ID mismatch is surfaced without repair.
+
+Use mocks or source-level tests where appropriate.
+
+Database-dependent tests must use a positively verified disposable isolated PostgreSQL environment with fail-closed identity guards.
+
+Never connect tests to the existing Development database.
+
+Do not assume the earlier Examination Stage 3B-4 test database is automatically authorized for Fees testing. If isolated database testing requires a new setup or permission, report the requirement and stop that portion.
+
+Do not start the normal API server, background financial jobs or payment providers.
+
+## PHASE I — REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / FAIL / BLOCKED.
+2. Phase A safety assessment.
+3. Exact files modified.
+4. Historical placement resolution design.
+5. Principal screens corrected.
+6. Student screens corrected.
+7. Documents corrected.
+8. Missing-enrollment behavior.
+9. NULL-session behavior.
+10. Linked-payment mismatch handling.
+11. Tenant isolation evidence.
+12. Academic Session isolation evidence.
+13. Archived-session behavior.
+14. Financial amount preservation.
+15. Existing Student Registry preservation.
+16. Student Profile compatibility.
+17. Mobile compatibility.
+18. Reports/analytics unchanged.
+19. Test names and results.
+20. Tests not executed and reasons.
+21. Existing baseline build/typecheck issues.
+22. Any new diagnostics.
+23. Database schema changes: expected NONE.
+24. Existing database records changed: expected NONE.
+25. Production accessed: expected NO.
+26. Deployment performed: expected NO.
+27. External payment actions: expected NONE.
+28. Remaining Stage 1C-2 dependencies.
+29. Remaining Stage 1C-3 dependencies.
+30. Any blocked or unresolved issues.
+
+## MANDATORY STOP CONDITION
+
+After implementing and testing the approved Stage 1C-1 scope:
+
+STOP.
+
+Do not begin Stage 1C-2, Stage 1C-3 or Stage 1C-4 automatically.
+
+Wait for explicit owner approval before any further implementation.
