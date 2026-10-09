@@ -32,6 +32,7 @@ test("Web Promotion routes require and preserve the selected school session", as
     sessionId: number;
     targetSessionId: number;
     actor: { id: number; role: "admin" | "support_staff" };
+    mode?: string;
   }> = [];
   const auditRows: any[] = [];
   const overrideReads: unknown[][] = [];
@@ -84,7 +85,7 @@ test("Web Promotion routes require and preserve the selected school session", as
     aggregateReads.push([schoolId, cls, section, examType, sessionId]);
     return [];
   });
-  replace(storage, "getPromotionCohortEvaluation", async (
+  replace(storage, "getPromotionCohortFinalDecisions", async (
     schoolId: number,
     sessionId: number,
     cls: string,
@@ -93,12 +94,16 @@ test("Web Promotion routes require and preserve the selected school session", as
   ) => {
     aggregateReads.push([schoolId, cls, section, term, sessionId]);
     return {
-      components: [{ sourceExam: term }],
-      scoreRows: [],
-      gradingRules: [],
-      gradingTier: { passPercentage: 35 },
-      rosterRows: [],
-      resultsByStudent: new Map(),
+      evaluation: {
+        components: [{ sourceExam: term }],
+        scoreRows: [],
+        gradingRules: [],
+        gradingTier: { passPercentage: 35 },
+        rosterRows: [],
+        resultsByStudent: new Map(),
+      },
+      ledgerDecisions: [],
+      finalDecisions: [],
     } as any;
   });
   replace(storage, "getPromotionOverrides", async (...args: any[]) => {
@@ -124,8 +129,9 @@ test("Web Promotion routes require and preserve the selected school session", as
     _items: unknown[],
     _term: string,
     actor: { id: number; role: "admin" | "support_staff" },
+    options?: { mode?: string },
   ) => {
-    executions.push({ schoolId, sessionId, targetSessionId, actor });
+    executions.push({ schoolId, sessionId, targetSessionId, actor, mode: options?.mode });
     return {
       prepared: 1,
       targetEnrollmentsCreated: 1,
@@ -257,10 +263,9 @@ test("Web Promotion routes require and preserve the selected school session", as
   );
   assert.equal(archivedAggregate.status, 200);
   assert.deepEqual(aggregateReads, [[11, "5", "A", "Term 2", 41]]);
-  assert.deepEqual(decisionReads.at(-1), [11, "5", "A", "Term 2", 41]);
   assert.deepEqual(archivedAggregate.body.overrides, []);
   assert.equal(archivedAggregate.body.overrideSessionIsolation, "SESSION_AWARE");
-  assert.deepEqual(overrideReads, [[11, 41, "5", "A", "Term 2"]]);
+  assert.deepEqual(overrideReads, [[11, 41, "5", "A", "Term 2", []]]);
 
   const analyticsWithoutSession = await request(
     "/api/admin/analytics/promotion-decisions/5/A/Term%202",
@@ -371,14 +376,10 @@ test("Web Promotion routes require and preserve the selected school session", as
     sessionId: 42,
     targetSessionId: 44,
     actor: { id: 7, role: "support_staff" },
+    mode: "web-audited",
   }]);
-  await auditComplete;
-  assert.equal(auditRows[0].sessionId, 42);
-  assert.equal(auditRows[0].actionBy, 7);
-  assert.equal(auditRows[0].actionByRole, "support_staff");
-  assert.match(auditRows[0].details, /Support Staff 7/);
-  assert.match(auditRows[0].details, /Academic Session 2027–2028 \(ID 44\)/);
-  assert.match(auditRows[0].details, /Student Registry and source enrollment were not changed/);
+  assert.equal(promoted.body.pipelineQueued, false);
+  assert.deepEqual(auditRows, [], "final audit evidence is written atomically by the storage transaction");
 
   const overrideRequests = [
     ["POST", "/api/admin/exam/override", {

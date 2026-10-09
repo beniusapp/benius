@@ -4,6 +4,14 @@ import { db } from "./db";
 import { storage } from "./storage";
 import {
   academicHistory,
+  attendanceRecords,
+  examPolicyTiers,
+  gradingRules,
+  gradingTiers,
+  nonTeachingStaff,
+  schoolMetadata,
+  teachers,
+  users,
   academicSessions,
   enrollments,
   examScores,
@@ -67,35 +75,120 @@ function fakePromotionTransaction(fixture: Fixture) {
       execute: async () => ({}),
       select: () => {
         let table: unknown;
+        let joined = false;
         const query: any = {
           from(value: unknown) { table = value; return query; },
           where() { return query; },
           for() { return query; },
+          orderBy() { return query; },
+          innerJoin() { joined = true; return query; },
           then(resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) {
+            const allStudents = [fixture.student, ...(fixture.additionalStudents ?? [])];
+            const decisionRows = fixture.existingDecisions
+              ? fixture.existingDecisions.map((decision, index) => ({
+                  studentId: allStudents[index]?.id ?? fixture.student.id,
+                  decision: "promoted",
+                  targetClass: "6",
+                  targetSection: "A",
+                  processedByTeacherId: 31,
+                  locked: true,
+                  lockedAt: new Date("2026-10-01T10:00:00.000Z"),
+                  autoSuggestion: "promoted",
+                  manualIntervention: false,
+                  ...decision,
+                }))
+              : allStudents.map(student => ({
+                  studentId: student.id,
+                  decision: "promoted",
+                  targetClass: "6",
+                  targetSection: "A",
+                  processedByTeacherId: 31,
+                  locked: true,
+                  lockedAt: new Date("2026-10-01T10:00:00.000Z"),
+                  autoSuggestion: "promoted",
+                  manualIntervention: false,
+                  adminExecuted: false,
+                }));
+            const sourceSession = {
+              id: 42, schoolId: 11, isActive: true,
+              startDate: "2035-04-01", endDate: "2036-03-31",
+            };
+            const metadataRows = [
+              { metaKey: "classes", metaValue: JSON.stringify(["5", "6"]) },
+              { metaKey: "class_sections", metaValue: JSON.stringify({ "5": ["A"], "6": ["A"] }) },
+              { metaKey: "exam_types", metaValue: JSON.stringify(["Term 2"]) },
+              { metaKey: "class_exam_types", metaValue: JSON.stringify({ "5": ["Term 2"] }) },
+              { metaKey: "class_subjects", metaValue: JSON.stringify({ "5": ["Mathematics"] }) },
+            ];
             const rows = table === academicSessions
-              ? (++academicSessionSelects === 1
-                  ? [{ id: 42, schoolId: 11, isActive: true }]
-                  : [fixture.targetSession ?? {
+              ? (++academicSessionSelects === 2
+                  ? [fixture.targetSession ?? {
                       id: 44, schoolId: 11, status: "draft", sessionName: "2027–2028",
-                    }])
-              : table === students
-                ? [fixture.student, ...(fixture.additionalStudents ?? [])]
-                : table === enrollments
-                  ? (++enrollmentSelects === 1
-                      ? [fixture.enrollment, ...(fixture.additionalEnrollments ?? [])]
-                      : (fixture.targetEnrollments ?? []))
-                  : table === promotionDecisions
-                    ? (fixture.existingDecisions ?? [])
-                    : table === examScores
-                      ? [{
-                          studentId: fixture.student.id,
-                          subject: "Mathematics",
-                          examType: "Term 2",
-                          marks: 80,
-                          totalMarks: 100,
-                          isAbsent: false,
-                        }]
-                      : [];
+                    }]
+                  : [sourceSession])
+              : table === users
+                ? [{ id: 7, schoolId: 11, role: "admin", isActive: true }]
+                : table === nonTeachingStaff
+                  ? [{ id: 7, schoolId: 11, isActive: true, allowedModules: ["exam-controller"] }]
+                  : table === teachers
+                    ? [{ id: 31, schoolId: 11 }]
+                    : table === schoolMetadata
+                      ? metadataRows
+                      : table === examPolicyTiers
+                        ? [{
+                            id: 1, schoolId: 11, tierName: "Test policy", applicableClasses: ["5"],
+                            examWeights: JSON.stringify({ "Term 2": [{ source_exam: "Term 2", weight: 100 }] }),
+                            promotionFailRules: JSON.stringify({
+                              rule_term_avg: { enabled: true, minPct: 35 },
+                            }),
+                            resultsConfig: "{}",
+                          }]
+                        : table === gradingTiers
+                          ? [{
+                              id: 1, schoolId: 11, name: "Test grading", classes: ["5"],
+                              passPercentage: 35, gradingSystem: "percentage", passingGrades: [], sortOrder: 0,
+                            }]
+                          : table === gradingRules
+                            ? [{
+                                id: 1, schoolId: 11, tierId: 1, gradeLabel: "Pass",
+                                minPercent: "0", maxPercent: "100", gradePoint: "4",
+                                remarks: "Pass", sortOrder: 0,
+                              }]
+                            : table === students
+                              ? allStudents
+                              : table === enrollments && joined
+                                ? allStudents
+                                    .filter(student => student.isActive)
+                                    .map(student => ({
+                                      studentId: student.id,
+                                      schoolId: 11,
+                                      isActive: true,
+                                      dsid: student.digitalStudentId,
+                                      name: student.name,
+                                      rollNumber: null,
+                                      identityKey: `test-${student.id}`,
+                                      enrollmentStatus: "Active",
+                                      enrollmentClass: "5",
+                                      enrollmentSection: "A",
+                                    }))
+                                : table === enrollments
+                                  ? (++enrollmentSelects === 1
+                                      ? [fixture.enrollment, ...(fixture.additionalEnrollments ?? [])]
+                                      : (fixture.targetEnrollments ?? []))
+                                  : table === promotionDecisions
+                                    ? decisionRows
+                                    : table === examScores
+                                      ? allStudents.map(student => ({
+                                          studentId: student.id,
+                                          subject: "Mathematics",
+                                          examType: "Term 2",
+                                          marks: 80,
+                                          totalMarks: 100,
+                                          isAbsent: false,
+                                        }))
+                                      : table === attendanceRecords
+                                        ? []
+                                        : [];
             return Promise.resolve(rows).then(resolve, reject);
           },
         };

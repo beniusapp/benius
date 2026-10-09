@@ -38,7 +38,6 @@ import {
 import {
   PromotionStage1Error,
   resolvePromotionTermComponents,
-  validatePromotionExecutionBatch,
   validatePromotionSessionContext,
   type PromotionSessionContextResult,
 } from "./promotion-stage1";
@@ -4920,21 +4919,38 @@ Thank you for your prompt attention to this matter.
   app.get("/api/admin/exam/aggregated", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "exam-controller", "Exam Controller")) return;
     const { class: cls, section, examType, term } = req.query as Record<string, string>;
-    if (!cls || !section || !examType || !term || term !== term.trim())
+    if (!cls || !section || !examType || !term || term !== term.trim() || examType !== term)
       return res.status(400).json({ message: "class, section, source exam type, and exact weighted term are required" });
     const selectedSession = await requireAdminPromotionSession(req, res, "read");
     if (!selectedSession) return;
     const schoolId = req.session.schoolId!;
     try {
-    const [evaluation, overrides, meta, classSubjectsMap, ledgerDecisions] = await Promise.all([
-      storage.getPromotionCohortEvaluation(schoolId, selectedSession.sessionId, cls, section, term),
-      storage.getPromotionOverridesWithAudit(schoolId, selectedSession.sessionId, cls, section, examType),
+    const promotionData = await storage.getPromotionCohortFinalDecisions(
+      schoolId,
+      selectedSession.sessionId,
+      cls,
+      section,
+      term,
+    );
+    const evaluation = promotionData.evaluation;
+    const [overrides, meta, classSubjectsMap] = await Promise.all([
+      storage.getPromotionOverridesWithAudit(
+        schoolId,
+        selectedSession.sessionId,
+        cls,
+        section,
+        examType,
+        evaluation.rosterRows.map((row: { studentId: number }) => row.studentId),
+      ),
       storage.getAllSchoolMetadata(schoolId),
       storage.getClassSubjectsMap(schoolId),
-      storage.getPromotionDecisions(schoolId, cls, section, term, selectedSession.sessionId),
     ]);
 
+    const ledgerDecisions = promotionData.ledgerDecisions;
     const ledgerMap = new Map(ledgerDecisions.map(d => [d.studentId, d]));
+    const finalDecisionMap = new Map(
+      promotionData.finalDecisions.map((decision: { studentId: number }) => [decision.studentId, decision]),
+    );
     const resultsByStudent = evaluation.resultsByStudent as Map<number, {
       studentId: number; name: string; digitalStudentId: string; rollNumber: number | null;
       resultStatus: "complete" | "incomplete"; termAverages: Record<string, number | null>;
@@ -4989,11 +5005,13 @@ Thank you for your prompt attention to this matter.
         gradeRemarks: gradeRule?.remarks ?? null,
         tierPassThreshold: passThreshold,
         ledger: ledgerMap.get(student.studentId) ?? null,
+        finalDecision: finalDecisionMap.get(student.studentId) ?? null,
       };
     });
 
     return res.json({
       students: studentsEnriched,
+      finalDecisions: promotionData.finalDecisions,
       overrides,
       overrideSessionIsolation: "SESSION_AWARE",
       missingSubjects,
@@ -5180,7 +5198,39 @@ Thank you for your prompt attention to this matter.
         gradePoint: z.string().nullable().optional(),
         gradeRemarks: z.string().nullable().optional(),
       })).min(1),
+    }).superRefine(({ term, items }, context) => {
+      const first = items[0];
+      const studentIds = items.map(item => item.studentId);
+      if (new Set(studentIds).size !== studentIds.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "A Student may appear only once in a Promotion batch.",
+          path: ["items"],
+        });
+      }
+      if (items.some(item =>
+        item.fromClass !== first.fromClass ||
+        item.fromSection !== first.fromSection ||
+        item.examType !== term
+      )) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Promotion items must use one exact source cohort and the selected examination term.",
+          path: ["items"],
+        });
+      }
     });
+    const rawItems = req.body?.items;
+    if (Array.isArray(rawItems)) {
+      const rawStudentIds = rawItems.map(item => item?.studentId);
+      if (new Set(rawStudentIds).size !== rawStudentIds.length) {
+        res.status(400).json({
+          code: "DUPLICATE_STUDENT",
+          message: "A Student may appear only once in a Promotion batch.",
+        });
+        return;
+      }
+    }
     const parsed = promoteSchema.safeParse(req.body);
     if (!parsed.success) {
       const targetIssue = parsed.error.issues.some(issue => issue.path[0] === "targetSessionId");
@@ -5197,12 +5247,6 @@ Thank you for your prompt attention to this matter.
     const targetSessionId = parsed.data.targetSessionId;
     const items     = parsed.data.items;
     const term      = parsed.data.term;
-    try {
-      validatePromotionExecutionBatch(items, term);
-    } catch (error) {
-      if (respondWithPromotionStage1Error(res, error)) return;
-      throw error;
-    }
     let execution: Awaited<ReturnType<typeof storage.executePromotionTransaction>>;
     try {
       execution = await storage.executePromotionTransaction(
@@ -5212,6 +5256,7 @@ Thank you for your prompt attention to this matter.
         items,
         term,
         actor,
+        { mode: "web-audited" },
       );
     } catch (error) {
       if (respondWithPromotionStage1Error(res, error)) return;
@@ -5228,47 +5273,8 @@ Thank you for your prompt attention to this matter.
       targetEnrollmentsCreated: execution.targetEnrollmentsCreated,
       targetSessionId: execution.targetSessionId,
       targetSessionName: execution.targetSessionName,
-      pipelineQueued: execution.prepared > 0,
+      pipelineQueued: false,
     });
-
-    if (execution.prepared === 0) return;
-
-    // ── 6. Async post-promotion pipeline (fire-and-forget after response) ─────
-    (async () => {
-      try {
-        const now = new Date();
-        const ts  = now.toISOString().replace("T", " ").slice(0, 19);
-
-        // 6a. Structured audit log per student
-        // Support Staff are recorded using their positive staff ID and explicit role.
-        for (const item of items) {
-          const info = execution.students.find(student => student.studentId === item.studentId);
-          if (
-            !info ||
-            info.toClass === undefined ||
-            info.toSection === undefined ||
-            info.examType === undefined ||
-            info.totalObtained === undefined ||
-            info.totalMax === undefined ||
-            info.percentage === undefined
-          ) continue;
-          const actorLabel = actor.role === "support_staff" ? "Support Staff" : "Admin";
-          await storage.createAuditLog({
-            schoolId,
-            sessionId: selectedSession.sessionId,
-            actionType:    "PROMOTION_EXECUTED",
-            entityType:    "student",
-            entityId:      item.studentId,
-            actionBy:      actor.id,
-            actionByRole:  actor.role,
-            details: `[${ts}] - ${actorLabel} ${actor.id} prepared Student ${info.dsid} (${info.name}) for Academic Session ${execution.targetSessionName} (ID ${execution.targetSessionId}), from Class ${info.fromClass}-${info.fromSection} to Class ${info.toClass}-${info.toSection}. Student Registry and source enrollment were not changed. Exam: ${info.examType}. Marks: ${info.totalObtained}/${info.totalMax} (${info.percentage}%).`,
-          });
-        }
-      } catch (pipelineErr) {
-        // Pipeline errors are non-fatal — core promotion already succeeded
-        req.log?.error({ err: pipelineErr }, "Promotion audit pipeline failed");
-      }
-    })();
   });
 
   // ===== CLEAR ID CARD REISSUE FLAG =====

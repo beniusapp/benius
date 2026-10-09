@@ -53,12 +53,47 @@ interface LedgerDecision {
   locked: boolean; lockedAt: string | null;
 }
 
+interface FinalDecisionRecord {
+  readiness: "ready" | "pending" | "blocked" | "historical" | "executed";
+  code?: string;
+  message?: string;
+  teacherRecommendation: {
+    status: "PROMOTE" | "RETAIN";
+    nextClass: string;
+    nextSection: string;
+  } | null;
+  proposal: {
+    eventId: number;
+    status: "PROMOTE" | "RETAIN";
+    nextClass: string;
+    nextSection: string;
+    reason: string;
+    actorId: number;
+    actorRole: "admin" | "support_staff";
+    createdAt: string;
+  } | null;
+  finalDecision: {
+    status: "PROMOTE" | "RETAIN" | null;
+    nextClass: string;
+    nextSection: string;
+  } | null;
+  overrideApplied: boolean | null;
+  execution: {
+    targetSessionId: number;
+    executedAt: string | null;
+    actorId: number | null;
+    actorRole: "admin" | "support_staff" | null;
+    evidenceStatus: "atomic" | "legacy";
+  } | null;
+}
+
 interface AggStudent {
   studentId: number; dsid: string; name: string;
   totalObtained: number; totalMax: number; percentage: number | null; resultStatus: "complete" | "incomplete"; subjects: string[];
   gradeLabel: string | null; gradePoint: string | null; gradeRemarks: string | null;
   tierPassThreshold: number;
   ledger: LedgerDecision | null;
+  finalDecision: FinalDecisionRecord | null;
 }
 
 interface PromotionOverrideAudit {
@@ -70,6 +105,7 @@ interface PromotionOverrideAudit {
 
 interface AggData {
   students: AggStudent[];
+  finalDecisions: Array<FinalDecisionRecord & { studentId: number }>;
   overrides: {
     studentId: number;
     overrideStatus: string;
@@ -321,7 +357,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }, [ledgerRows.length, selectedTerm]);
 
   // ── Fetch aggregated student data (wizard) ────────────────────────────────
-  const { data: agg, isLoading: aggLoading } = useQuery<AggData | null>({
+  const { data: agg, isLoading: aggLoading, isError: aggError, error: aggQueryError } = useQuery<AggData | null>({
     queryKey: ["/api/admin/exam/aggregated", selectedSessionId, cohort?.class, cohort?.section, examType, cohort?.term],
     queryFn: async ({ queryKey, signal }) => {
       const [, querySessionId, queryClass, querySection, queryExamType, queryTerm] = queryKey as [
@@ -330,7 +366,11 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (querySessionId === null || !queryClass || !querySection || !queryExamType || !queryTerm) return null;
       const p = new URLSearchParams({ class: queryClass, section: querySection, examType: queryExamType, term: queryTerm });
       const r = await sessionFetchForViewSession(`/api/admin/exam/aggregated?${p}`, querySessionId, { signal });
-      return r.ok ? r.json() : null;
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error((body as any)?.message ?? "Unable to resolve this Promotion cohort safely.");
+      }
+      return r.json();
     },
     enabled: selectedSessionId !== null && !!cohort && !!examType,
     staleTime: 0,
@@ -557,10 +597,10 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (!selectedTargetSession || targetSessionId === null) {
         throw new Error("Select a target Academic Session before preparing Promotion.");
       }
-      const eligibleStudentIds = new Set(cohort.readyStudentIds);
       // Never send Pending, Ineligible, Historical or already Executed Students.
       const targetStudents = agg.students.filter(student =>
-        eligibleStudentIds.has(student.studentId) &&
+        readinessForStudent(student) === "ready" &&
+        student.finalDecision?.finalDecision !== null &&
         (executionScope === null || executionScope.has(student.studentId)),
       );
       if (targetStudents.length === 0) {
@@ -569,15 +609,16 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       if (targetStudents.some(student =>
         student.resultStatus !== "complete" ||
         !student.ledger?.locked ||
-        !["promoted", "retained"].includes(student.ledger.decision),
+        !["promoted", "retained"].includes(student.ledger.decision) ||
+        !student.finalDecision?.finalDecision,
       )) {
-        throw new Error("Every selected Student needs a complete result and a matching locked Teacher decision before Promotion can be prepared.");
+        throw new Error("Every selected Student needs a complete result and a server-validated final decision before Promotion can be prepared.");
       }
       const items = targetStudents.map(s => {
-        const led = s.ledger;
+        const resolved = s.finalDecision!.finalDecision!;
         return {
           studentId: s.studentId, fromClass: cohort.class, fromSection: cohort.section,
-          nextClass: led!.targetClass, nextSection: led!.targetSection, examType: cohort.term,
+          nextClass: resolved.nextClass, nextSection: resolved.nextSection, examType: cohort.term,
           totalObtained: 0, totalMax: 100, percentage: 0,
           gradeLabel: null, gradePoint: null, gradeRemarks: null,
         };
@@ -662,7 +703,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     return groups;
   }, [filteredRows]);
 
-  function readinessForStudent(student: AggStudent): PromotionReadiness {
+  function teacherReadinessForStudent(student: AggStudent): PromotionReadiness {
     if (cohort?.executedStudentIds?.includes(student.studentId)) return "executed";
     if (cohort?.readyStudentIds?.includes(student.studentId)) return "ready";
     if (cohort?.ineligibleStudentIds?.includes(student.studentId)) return "ineligible";
@@ -670,10 +711,19 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
     return "pending";
   }
 
+  function readinessForStudent(student: AggStudent): PromotionReadiness {
+    if (!student.finalDecision) return "blocked";
+    if (student.finalDecision.readiness === "historical") return "historical";
+    if (student.finalDecision.readiness === "blocked") return "blocked";
+    if (student.finalDecision.readiness === "executed") return "executed";
+    if (student.finalDecision.readiness === "ready") return "ready";
+    return "pending";
+  }
+
   function canSaveOverride(student: AggStudent): boolean {
     return overridesAvailable &&
       student.resultStatus === "complete" &&
-      readinessForStudent(student) === "ready" &&
+      teacherReadinessForStudent(student) === "ready" &&
       !cohort?.executedStudentIds?.includes(student.studentId);
   }
 
@@ -719,11 +769,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
   }
 
   function previewForStudent(student: AggStudent) {
-    const override = overrides[student.studentId];
     return getPromotionPreview({
       resultStatus: student.resultStatus,
       readiness: readinessForStudent(student),
-      override: override?.isProposal ? undefined : override,
+      resolved: {
+        readiness: student.finalDecision?.readiness ?? "blocked",
+        finalDecision: student.finalDecision?.finalDecision ?? null,
+      },
       ledgerDecision: student.ledger ? {
         decision: student.ledger.decision,
         targetClass: student.ledger.targetClass,
@@ -736,13 +788,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
 
   function includeInPromotionSummary(student: AggStudent): boolean {
     if (executionScope === null || executionScope.has(student.studentId)) return true;
-    return ["pending", "ineligible", "historical", "executed"].includes(readinessForStudent(student));
+    return ["pending", "ineligible", "blocked", "historical", "executed"].includes(readinessForStudent(student));
   }
 
   // ── Dynamic counters for step 3 (scoped to executionScope when active) ──────
   const counters = useMemo(() => {
     if (!agg) {
-      return { total: 0, promote: 0, retain: 0, grace: 0, pending: 0, review: 0, historical: 0, eligible: 0 };
+      return { total: 0, promote: 0, retain: 0, grace: 0, pending: 0, review: 0, historical: 0, executed: 0, eligible: 0 };
     }
     const students = agg.students.filter(includeInPromotionSummary);
     const summary = summarizePromotionPreviews(students.map(previewForStudent));
@@ -758,6 +810,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
       pending: summary.pending,
       review: summary.review,
       historical: summary.historical,
+      executed: summary.executed,
       eligible,
     };
   }, [agg, cohort, overrides, executionScope]);
@@ -868,6 +921,13 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
             <strong className="text-white">{cohort.teacherName}</strong>{" on "}
             <strong className="text-white">{fmt(cohort.lockedAt)}</strong>
           </p>
+        </div>
+      )}
+      {aggError && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">
+          {aggQueryError instanceof Error
+            ? aggQueryError.message
+            : "The Promotion cohort could not be resolved safely. Refresh or review the saved records."}
         </div>
       )}
 
@@ -1128,6 +1188,8 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                           <td className="px-4 py-3">
                             {ledgerReadiness === "ready" ? (
                               <Chip c="emerald" icon={<Lock className="w-3 h-3"/>} label="Ready" />
+                            ) : ledgerReadiness === "blocked" ? (
+                              <Chip c="red" icon={<AlertTriangle className="w-3 h-3"/>} label="Blocked · Review Required" />
                             ) : ledgerReadiness === "ineligible" ? (
                               <Chip c="red" icon={<AlertTriangle className="w-3 h-3"/>} label="Ineligible · Requires Review" />
                             ) : ledgerReadiness === "historical" ? (
@@ -1188,7 +1250,17 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                     />
                                     <span className="text-[10px] font-bold tracking-wide text-amber-300"
                                       data-testid={`status-override-not-executed-${s.studentId}`}>
-                                      NOT YET EXECUTED
+                                      {isExecuted
+                                        ? s.finalDecision?.overrideApplied === true
+                                          ? "APPLIED IN EXECUTED DECISION"
+                                          : s.finalDecision?.overrideApplied === false
+                                            ? "NOT APPLIED · TEACHER DECISION EXECUTED"
+                                            : "EXECUTION EVIDENCE UNAVAILABLE"
+                                        : s.finalDecision?.readiness === "blocked"
+                                          ? "BLOCKED · REVIEW REQUIRED"
+                                          : s.finalDecision?.readiness === "historical"
+                                            ? "HISTORICAL · READ ONLY"
+                                          : "NOT YET EXECUTED"}
                                     </span>
                                   </div>
                                   {ov.audit ? (
@@ -1204,9 +1276,25 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                                     </p>
                                   )}
                                   <p className="text-[10px] text-slate-400">
-                                    Proposed destination: Class {ov.nextClass} — {ov.nextSection}; target-session validation is pending Stage 3B-2.
-                                    {isExecuted ? " · execution is locked; this override was not applied" : ""}
+                                    Saved proposal destination: Class {ov.nextClass} — {ov.nextSection}.
+                                    {isExecuted && s.finalDecision?.overrideApplied === true ? " · this audited proposal was applied" : ""}
+                                    {isExecuted && s.finalDecision?.overrideApplied === false ? " · this proposal was not applied" : ""}
+                                    {isExecuted && s.finalDecision?.overrideApplied === null ? " · legacy execution; proposal application cannot be confirmed" : ""}
+                                    {!isExecuted && s.finalDecision?.readiness === "ready" ? " · validated, pending execution" : ""}
                                   </p>
+                                  {s.finalDecision?.readiness === "blocked" && s.finalDecision.message && (
+                                    <p className="text-[10px] text-red-300" role="alert">{s.finalDecision.message}</p>
+                                  )}
+                                  {isExecuted && s.finalDecision?.execution?.evidenceStatus === "legacy" && (
+                                    <p className="text-[10px] text-amber-300">
+                                      Existing execution history predates atomic final-decision evidence.
+                                    </p>
+                                  )}
+                                  {!isExecuted && ov.rawStatus === "GRACE_PASS" && (
+                                    <p className="text-[10px] text-purple-300">
+                                      Legacy Grace remains unchanged and does not authorize a new Promote/Retain execution.
+                                    </p>
+                                  )}
                                   <button
                                     onClick={() => requestOverrideClear(s.studentId)}
                                     disabled={isExecuted || !ov.isProposal || savingStudents.has(s.studentId) || !overridesAvailable}
@@ -1534,6 +1622,7 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
               { label:"Grace Passes",     val: counters.grace,   color:"text-purple-400",  icon:<Award      className="w-5 h-5 text-purple-400"     /> },
               { label:"Pending",          val: counters.pending, color:"text-amber-400",   icon:<Clock      className="w-5 h-5 text-amber-400"      /> },
               { label:"Requires Review",  val: counters.review,  color:"text-red-400",     icon:<AlertTriangle className="w-5 h-5 text-red-400"    /> },
+              { label:"Executed",         val: counters.executed, color:"text-blue-400",   icon:<CheckCircle2 className="w-5 h-5 text-blue-400" /> },
               { label:"Historical",       val: counters.historical, color:"text-slate-400", icon:<Lock       className="w-5 h-5 text-slate-400"     /> },
             ].map(({ label, val, color, icon }) => (
               <div key={label} className="rounded-xl border border-[#1e2d44] p-4 flex items-center gap-3" style={{ background:"#1A2942" }}>
@@ -1555,21 +1644,25 @@ export default function ExamController({ examTypes, classes: schoolClasses, sect
                 {agg.students.filter(includeInPromotionSummary).map(s => {
                   const preview = previewForStudent(s);
                   const { outcome, destination } = preview;
-                  const statusLabel = outcome === "pending"
+                  const statusLabel = outcome === "executed"
+                    ? `Executed${s.finalDecision?.finalDecision?.status ? ` · ${s.finalDecision.finalDecision.status}` : ""} → Class ${destination?.className} — ${destination?.sectionName}${s.finalDecision?.overrideApplied === true ? " · audited override applied" : s.finalDecision?.overrideApplied === false ? " · Teacher recommendation" : " · legacy evidence"}`
+                    : outcome === "pending"
                     ? s.resultStatus === "incomplete" ? "Pending — No marks" : "Pending — No locked decision"
                     : outcome === "review" ? "Ineligible — Requires Review"
                     : outcome === "historical" ? "Historical — Read-only"
                     : outcome === "retained"
-                    ? `Retained in Class ${destination?.className} — ${destination?.sectionName}`
+                    ? `${s.finalDecision?.overrideApplied ? "Validated override · " : "Ready to execute · "}Retain in Class ${destination?.className} — ${destination?.sectionName}`
                     : outcome === "grace_pass"
                     ? `Grace Pass → Class ${destination?.className} — ${destination?.sectionName}`
-                    : `Promoted → Class ${destination?.className} — ${destination?.sectionName}`;
-                  const color = outcome === "promoted" ? "emerald"
+                    : `Ready to execute · ${s.finalDecision?.overrideApplied ? "Validated override · " : ""}Promote → Class ${destination?.className} — ${destination?.sectionName}`;
+                  const color = outcome === "executed" ? "blue"
+                    : outcome === "promoted" ? "emerald"
                     : outcome === "retained" ? "red"
                     : outcome === "grace_pass" ? "purple"
                     : outcome === "review" ? "red"
                     : outcome === "historical" ? "slate" : "amber";
-                  const icon = outcome === "promoted" ? <TrendingUp className="w-3 h-3"/>
+                  const icon = outcome === "executed" ? <CheckCircle2 className="w-3 h-3"/>
+                    : outcome === "promoted" ? <TrendingUp className="w-3 h-3"/>
                     : outcome === "retained" ? <UserX className="w-3 h-3"/>
                     : outcome === "grace_pass" ? <Award className="w-3 h-3"/>
                     : outcome === "review" ? <AlertTriangle className="w-3 h-3"/>

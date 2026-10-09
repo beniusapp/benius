@@ -122,6 +122,11 @@ import {
   type PromotionLedgerReadiness,
 } from "./promotion-stage1";
 import {
+  resolvePromotionFinalDecision,
+  promotionTeacherRecommendationMatchesSnapshot,
+  type PromotionFinalDecisionProposal,
+} from "./promotion-override-policy";
+import {
   assertPromotionOverrideActorRecord,
   assertPromotionOverrideBatch,
   requirePromotionOverrideReason,
@@ -444,17 +449,214 @@ type PromotionOverrideAuditEvent = {
   details: any;
 };
 
+type PromotionExecutionDecisionEvidence = {
+  teacherRecommendation: { status: "PROMOTE" | "RETAIN"; nextClass: string; nextSection: string };
+  teacherLedgerSnapshot: ReturnType<typeof promotionTeacherRecommendationSnapshot>;
+  finalDecision: { status: "PROMOTE" | "RETAIN"; nextClass: string; nextSection: string };
+  overrideApplied: boolean;
+  proposal: PromotionFinalDecisionProposal | null;
+};
+
+function promotionProposalFromEvent(
+  event: PromotionOverrideAuditEvent | undefined,
+): PromotionFinalDecisionProposal | null {
+  if (!event || event.row.actionType !== "PROMOTION_OVERRIDE_PROPOSED") return null;
+  const selected = event.details?.selectedOverride;
+  return {
+    eventId: event.row.id,
+    status: selected?.overrideStatus,
+    nextClass: selected?.nextClass,
+    nextSection: selected?.nextSection,
+    reason: event.details?.reason,
+    actorId: event.row.actionBy,
+    actorRole: event.row.actionByRole,
+    createdAt: event.row.createdAt,
+    originalTeacherRecommendation: event.details?.originalTeacherRecommendation,
+  };
+}
+
+async function writePromotionFinalExecutionAudit(
+  tx: any,
+  input: {
+    schoolId: number;
+    sourceSessionId: number;
+    targetSessionId: number;
+    studentId: number;
+    sourceClass: string;
+    sourceSection: string;
+    term: string;
+    targetSessionName: string;
+    evidence: PromotionExecutionDecisionEvidence;
+    executionActor: PromotionOverrideActor;
+    executedAt: Date;
+  },
+): Promise<void> {
+  await tx.insert(auditLogs).values({
+    schoolId: input.schoolId,
+    sessionId: input.sourceSessionId,
+    actionType: "PROMOTION_FINAL_DECISION_EXECUTED",
+    entityType: "promotion_execution",
+    entityId: input.studentId,
+    actionBy: input.executionActor.id,
+    actionByRole: input.executionActor.role,
+    details: JSON.stringify({
+      version: 1,
+      source: "web_exam_controller_final_decision",
+      scope: {
+        schoolId: input.schoolId,
+        sourceSessionId: input.sourceSessionId,
+        targetSessionId: input.targetSessionId,
+        studentId: input.studentId,
+        class: input.sourceClass,
+        section: input.sourceSection,
+        term: input.term,
+      },
+      teacherRecommendation: input.evidence.teacherRecommendation,
+      teacherLedgerSnapshot: input.evidence.teacherLedgerSnapshot,
+      finalDecision: input.evidence.finalDecision,
+      overrideApplied: input.evidence.overrideApplied,
+      proposal: input.evidence.proposal ? {
+        eventId: input.evidence.proposal.eventId,
+        status: input.evidence.proposal.status,
+        nextClass: input.evidence.proposal.nextClass,
+        nextSection: input.evidence.proposal.nextSection,
+        reason: input.evidence.proposal.reason,
+        actorId: input.evidence.proposal.actorId,
+        actorRole: input.evidence.proposal.actorRole,
+        createdAt: input.evidence.proposal.createdAt,
+      } : null,
+      executionActor: input.executionActor,
+      executedAt: input.executedAt.toISOString(),
+      targetSessionName: input.targetSessionName,
+    }),
+  });
+}
+
+type PromotionFinalExecutionAuditScope = {
+  schoolId: number;
+  sourceSessionId: number;
+  targetSessionId: number;
+  class: string;
+  section: string;
+  term: string;
+};
+
+type PromotionFinalExecutionAuditEvent = {
+  row: typeof auditLogs.$inferSelect;
+  details: any;
+};
+
+function parsePromotionFinalExecutionAuditEvent(
+  row: typeof auditLogs.$inferSelect,
+  scope: PromotionFinalExecutionAuditScope,
+): PromotionFinalExecutionAuditEvent | null {
+  if (
+    !row.details ||
+    row.schoolId !== scope.schoolId ||
+    row.sessionId !== scope.sourceSessionId ||
+    row.actionType !== "PROMOTION_FINAL_DECISION_EXECUTED" ||
+    row.entityType !== "promotion_execution" ||
+    !Number.isSafeInteger(row.entityId) ||
+    !Number.isSafeInteger(row.actionBy) ||
+    (row.actionBy ?? 0) <= 0 ||
+    (row.actionByRole !== "admin" && row.actionByRole !== "support_staff")
+  ) return null;
+
+  let details: any;
+  try {
+    details = JSON.parse(row.details);
+  } catch {
+    return null;
+  }
+  const eventScope = details?.scope;
+  const teacher = details?.teacherRecommendation;
+  const teacherLedger = details?.teacherLedgerSnapshot;
+  const final = details?.finalDecision;
+  const executionActor = details?.executionActor;
+  const proposal = details?.proposal;
+  if (
+    details?.version !== 1 ||
+    details?.source !== "web_exam_controller_final_decision" ||
+    eventScope?.schoolId !== scope.schoolId ||
+    eventScope?.sourceSessionId !== scope.sourceSessionId ||
+    eventScope?.targetSessionId !== scope.targetSessionId ||
+    eventScope?.studentId !== row.entityId ||
+    eventScope?.class !== scope.class ||
+    eventScope?.section !== scope.section ||
+    eventScope?.term !== scope.term ||
+    (teacher?.status !== "PROMOTE" && teacher?.status !== "RETAIN") ||
+    typeof teacher?.nextClass !== "string" ||
+    typeof teacher?.nextSection !== "string" ||
+    !teacherLedger ||
+    typeof teacherLedger !== "object" ||
+    (final?.status !== "PROMOTE" && final?.status !== "RETAIN") ||
+    typeof final?.nextClass !== "string" ||
+    typeof final?.nextSection !== "string" ||
+    typeof details?.overrideApplied !== "boolean" ||
+    executionActor?.id !== row.actionBy ||
+    executionActor?.role !== row.actionByRole ||
+    typeof details?.executedAt !== "string" ||
+    Number.isNaN(new Date(details.executedAt).getTime()) ||
+    (details.overrideApplied && (
+      !proposal ||
+      !Number.isSafeInteger(proposal.eventId) ||
+      (proposal.status !== "PROMOTE" && proposal.status !== "RETAIN") ||
+      typeof proposal.nextClass !== "string" ||
+      typeof proposal.nextSection !== "string" ||
+      typeof proposal.reason !== "string" ||
+      !proposal.reason.trim() ||
+      !Number.isSafeInteger(proposal.actorId) ||
+      (proposal.actorRole !== "admin" && proposal.actorRole !== "support_staff")
+    )) ||
+    (!details.overrideApplied && proposal !== null)
+  ) return null;
+
+  return { row, details };
+}
+
+function validateWebPromotionExecutionSelection(items: PromotionExecutionItem[], term: string): void {
+  const first = items[0];
+  const studentIds = items.map(item => item.studentId);
+  if (
+    !Array.isArray(items) ||
+    items.length === 0 ||
+    typeof term !== "string" ||
+    !term.trim() ||
+    term !== term.trim() ||
+    !first ||
+    new Set(studentIds).size !== studentIds.length ||
+    items.some(item =>
+      !Number.isSafeInteger(item.studentId) ||
+      item.studentId <= 0 ||
+      !item.fromClass.trim() ||
+      !item.fromSection.trim() ||
+      item.fromClass !== first.fromClass ||
+      item.fromSection !== first.fromSection ||
+      item.examType !== term
+    )
+  ) {
+    throw new PromotionStage1Error(
+      "Select unique Students from one exact source cohort and configured examination term.",
+      400,
+      "PROMOTION_EXECUTION_BATCH_INVALID",
+    );
+  }
+}
+
 function parsePromotionOverrideAuditEvent(
   row: typeof auditLogs.$inferSelect,
   scope: PromotionOverrideAuditScope,
 ): PromotionOverrideAuditEvent | null {
   if (
     !row.details ||
+    row.schoolId !== scope.schoolId ||
+    row.sessionId !== scope.sessionId ||
     (row.actionType !== "PROMOTION_OVERRIDE_PROPOSED" &&
       row.actionType !== "PROMOTION_OVERRIDE_PROPOSAL_CLEARED") ||
     row.entityType !== "promotion_override" ||
-    !Number.isInteger(row.entityId) ||
-    !Number.isInteger(row.actionBy) ||
+    !Number.isSafeInteger(row.entityId) ||
+    !Number.isSafeInteger(row.actionBy) ||
+    (row.actionBy ?? 0) <= 0 ||
     (row.actionByRole !== "admin" && row.actionByRole !== "support_staff")
   ) {
     return null;
@@ -483,13 +685,24 @@ function parsePromotionOverrideAuditEvent(
   }
   if (row.actionType === "PROMOTION_OVERRIDE_PROPOSED") {
     const selected = details?.selectedOverride;
+    const teacher = details?.originalTeacherRecommendation;
     if (
       !selected ||
       (selected.overrideStatus !== "PROMOTE" && selected.overrideStatus !== "RETAIN") ||
       typeof selected.nextClass !== "string" ||
-      !selected.nextClass ||
+      !selected.nextClass.trim() ||
       typeof selected.nextSection !== "string" ||
-      !selected.nextSection
+      !selected.nextSection.trim() ||
+      !teacher ||
+      typeof teacher !== "object" ||
+      (teacher.decision !== "promoted" && teacher.decision !== "retained") ||
+      typeof teacher.targetClass !== "string" ||
+      typeof teacher.targetSection !== "string" ||
+      typeof teacher.locked !== "boolean" ||
+      typeof teacher.manualIntervention !== "boolean" ||
+      (teacher.autoSuggestion !== null && typeof teacher.autoSuggestion !== "string") ||
+      (teacher.processedByTeacherId !== null && !Number.isSafeInteger(teacher.processedByTeacherId)) ||
+      (teacher.lockedAt !== null && typeof teacher.lockedAt !== "string")
     ) {
       return null;
     }
@@ -523,8 +736,50 @@ async function loadLatestPromotionOverrideAuditEvents(
   const latestByStudent = new Map<number, PromotionOverrideAuditEvent>();
   for (const row of rows as Array<typeof auditLogs.$inferSelect>) {
     if (latestByStudent.has(row.entityId)) continue;
+    let details: any;
+    try {
+      details = row.details ? JSON.parse(row.details) : null;
+    } catch {
+      throw new PromotionStage1Error(
+        "The latest Promotion audit event is malformed and cannot be resolved safely.",
+        409,
+        "PROMOTION_OVERRIDE_EVENT_INVALID",
+      );
+    }
+    const eventScope = details?.scope;
+    const hasAttributableScope = eventScope &&
+      Number.isSafeInteger(eventScope.schoolId) &&
+      Number.isSafeInteger(eventScope.sessionId) &&
+      Number.isSafeInteger(eventScope.studentId) &&
+      typeof eventScope.class === "string" &&
+      typeof eventScope.section === "string" &&
+      typeof eventScope.examType === "string";
+    if (!hasAttributableScope) {
+      throw new PromotionStage1Error(
+        "The latest Promotion audit event has no valid scope and cannot be resolved safely.",
+        409,
+        "PROMOTION_OVERRIDE_EVENT_INVALID",
+      );
+    }
+    if (
+      eventScope.schoolId !== scope.schoolId ||
+      eventScope.sessionId !== scope.sessionId ||
+      eventScope.studentId !== row.entityId ||
+      eventScope.class !== scope.class ||
+      eventScope.section !== scope.section ||
+      eventScope.examType !== scope.examType
+    ) {
+      continue;
+    }
     const event = parsePromotionOverrideAuditEvent(row, scope);
-    if (event) latestByStudent.set(row.entityId, event);
+    if (!event) {
+      throw new PromotionStage1Error(
+        "The latest Promotion proposal for this exact Student cohort is incomplete and cannot be used.",
+        409,
+        "PROMOTION_OVERRIDE_EVENT_INVALID",
+      );
+    }
+    latestByStudent.set(row.entityId, event);
   }
   return latestByStudent;
 }
@@ -7455,6 +7710,385 @@ export class DatabaseStorage {
     });
   }
 
+  async getPromotionCohortFinalDecisions(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+    term: string,
+  ) {
+    return db.transaction(async tx => {
+      await tx.execute(sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`);
+      const evaluation = await loadPromotionCohortEvaluation(
+        tx,
+        schoolId,
+        sessionId,
+        cls,
+        section,
+        term,
+        true,
+        false,
+      );
+      const rosterRows = evaluation.rosterRows as Array<{ studentId: number }>;
+      const studentIds = rosterRows.map(row => row.studentId);
+      if (studentIds.length === 0) {
+        return { evaluation, ledgerDecisions: [] as PromotionDecision[], finalDecisions: [] };
+      }
+
+      const [decisionRows, metadataRows, sessionRows, legacyRows, historyRows, executionAuditRows] = await Promise.all([
+        tx.select().from(promotionDecisions).where(and(
+          eq(promotionDecisions.schoolId, schoolId),
+          eq(promotionDecisions.sessionId, sessionId),
+          eq(promotionDecisions.class, cls),
+          eq(promotionDecisions.section, section),
+          eq(promotionDecisions.term, term),
+          inArray(promotionDecisions.studentId, studentIds),
+        )).orderBy(promotionDecisions.studentId),
+        tx.select({
+          metaKey: schoolMetadata.metaKey,
+          metaValue: schoolMetadata.metaValue,
+        }).from(schoolMetadata).where(and(
+          eq(schoolMetadata.schoolId, schoolId),
+          inArray(schoolMetadata.metaKey, ["classes", "class_sections"]),
+        )),
+        tx.select({ isActive: academicSessions.isActive }).from(academicSessions).where(and(
+          eq(academicSessions.id, sessionId),
+          eq(academicSessions.schoolId, schoolId),
+        )),
+        tx.select().from(promotionOverrides).where(and(
+          eq(promotionOverrides.schoolId, schoolId),
+          eq(promotionOverrides.sessionId, sessionId),
+          eq(promotionOverrides.class, cls),
+          eq(promotionOverrides.section, section),
+          eq(promotionOverrides.examType, term),
+          inArray(promotionOverrides.studentId, studentIds),
+        )),
+        tx.select({
+          studentId: academicHistory.studentId,
+          targetSessionId: academicHistory.targetSessionId,
+          fromClass: academicHistory.fromClass,
+          fromSection: academicHistory.fromSection,
+          toClass: academicHistory.toClass,
+          toSection: academicHistory.toSection,
+          examType: academicHistory.examType,
+          snapshotJson: academicHistory.snapshotJson,
+        }).from(academicHistory).where(and(
+          eq(academicHistory.schoolId, schoolId),
+          eq(academicHistory.sessionId, sessionId),
+          eq(academicHistory.examType, term),
+          inArray(academicHistory.studentId, studentIds),
+        )).orderBy(academicHistory.studentId, academicHistory.id),
+        tx.select().from(auditLogs).where(and(
+          eq(auditLogs.schoolId, schoolId),
+          eq(auditLogs.sessionId, sessionId),
+          eq(auditLogs.actionType, "PROMOTION_FINAL_DECISION_EXECUTED"),
+          eq(auditLogs.entityType, "promotion_execution"),
+          inArray(auditLogs.entityId, studentIds),
+        )).orderBy(desc(auditLogs.createdAt), desc(auditLogs.id)),
+      ]);
+      const decisionByStudent = new Map(
+        (decisionRows as PromotionDecision[]).map(decision => [decision.studentId, decision]),
+      );
+      const teacherIds = [...new Set((decisionRows as PromotionDecision[])
+        .map(decision => decision.processedByTeacherId)
+        .filter((id): id is number => id !== null))];
+      const teacherRows = teacherIds.length ? await tx.select({ id: teachers.id })
+        .from(teachers)
+        .where(and(
+          eq(teachers.schoolId, schoolId),
+          inArray(teachers.id, teacherIds),
+        )) : [];
+      const validTeacherIds = new Set(teacherRows.map(teacher => teacher.id));
+      const metadataByKey = new Map(metadataRows.map(row => [row.metaKey, row.metaValue]));
+      let configuredClasses: string[] = [];
+      let configuredSections: Record<string, unknown> = {};
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("classes") ?? "[]");
+        if (Array.isArray(value)) configuredClasses = value.filter((item): item is string => typeof item === "string");
+      } catch {}
+      try {
+        const value: unknown = JSON.parse(metadataByKey.get("class_sections") ?? "{}");
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          configuredSections = value as Record<string, unknown>;
+        }
+      } catch {}
+      const sourceSessionIsActive = sessionRows[0]?.isActive === true;
+      const latestEvents = await loadLatestPromotionOverrideAuditEvents(
+        tx,
+        { schoolId, sessionId, class: cls, section, examType: term },
+        studentIds,
+      );
+      const legacyByStudent = new Map(
+        legacyRows.map((row: PromotionOverride) => [row.studentId, row]),
+      );
+      const historiesByStudent = new Map<number, typeof historyRows>();
+      for (const row of historyRows) {
+        const rows = historiesByStudent.get(row.studentId) ?? [];
+        rows.push(row);
+        historiesByStudent.set(row.studentId, rows);
+      }
+      const executionAuditsByStudent = new Map<number, PromotionFinalExecutionAuditEvent[]>();
+      const executionAuditFailures = new Set<number>();
+      for (const row of executionAuditRows as Array<typeof auditLogs.$inferSelect>) {
+        let details: any;
+        try {
+          details = row.details ? JSON.parse(row.details) : null;
+        } catch {
+          executionAuditFailures.add(row.entityId);
+          continue;
+        }
+        const scope = details?.scope;
+        if (
+          !scope ||
+          !Number.isSafeInteger(scope.schoolId) ||
+          !Number.isSafeInteger(scope.sourceSessionId) ||
+          !Number.isSafeInteger(scope.targetSessionId) ||
+          !Number.isSafeInteger(scope.studentId) ||
+          typeof scope.class !== "string" ||
+          typeof scope.section !== "string" ||
+          typeof scope.term !== "string"
+        ) {
+          executionAuditFailures.add(row.entityId);
+          continue;
+        }
+        if (
+          scope.schoolId !== schoolId ||
+          scope.sourceSessionId !== sessionId ||
+          scope.studentId !== row.entityId ||
+          scope.class !== cls ||
+          scope.section !== section ||
+          scope.term !== term
+        ) continue;
+        const studentHistory = historiesByStudent.get(row.entityId) ?? [];
+        if (studentHistory.length !== 1 || studentHistory[0].targetSessionId !== scope.targetSessionId) {
+          executionAuditFailures.add(row.entityId);
+          continue;
+        }
+        const parsedAudit = parsePromotionFinalExecutionAuditEvent(row, {
+          schoolId,
+          sourceSessionId: sessionId,
+          targetSessionId: scope.targetSessionId,
+          class: cls,
+          section,
+          term,
+        });
+        if (!parsedAudit) {
+          executionAuditFailures.add(row.entityId);
+          continue;
+        }
+        const rows = executionAuditsByStudent.get(row.entityId) ?? [];
+        rows.push(parsedAudit);
+        executionAuditsByStudent.set(row.entityId, rows);
+      }
+      const resultsByStudent = evaluation.resultsByStudent as Map<number, {
+        resultStatus: "complete" | "incomplete";
+        promoted: boolean | null;
+      }>;
+      const configured = (className: string, sectionName: string) =>
+        configuredClasses.includes(className)
+        && Array.isArray(configuredSections[className])
+        && (configuredSections[className] as unknown[]).includes(sectionName);
+      const finalDecisions = rosterRows.map(({ studentId }) => {
+        const decision = decisionByStudent.get(studentId);
+        const result = resultsByStudent.get(studentId);
+        const event = latestEvents.get(studentId);
+        const proposal = promotionProposalFromEvent(event);
+        const legacy = legacyByStudent.get(studentId);
+        const teacherIsValid = !!decision?.processedByTeacherId
+          && validTeacherIds.has(decision.processedByTeacherId);
+        const teacherTargetIsConfigured = !!decision && configured(decision.targetClass, decision.targetSection);
+        const teacherView = decision && (decision.decision === "promoted" || decision.decision === "retained")
+          ? {
+              status: decision.decision === "promoted" ? "PROMOTE" as const : "RETAIN" as const,
+              nextClass: decision.decision === "retained" ? cls : decision.targetClass,
+              nextSection: decision.decision === "retained" ? section : decision.targetSection,
+            }
+          : null;
+        const history = historiesByStudent.get(studentId) ?? [];
+        const common = { studentId, teacherRecommendation: teacherView, proposal };
+        if (executionAuditFailures.has(studentId) || history.length > 1) {
+          return {
+            ...common,
+            readiness: "blocked" as const,
+            code: "PROMOTION_EXECUTION_AUDIT_INVALID",
+            message: "Existing execution history is ambiguous or its audit evidence is invalid.",
+            finalDecision: null,
+            overrideApplied: null,
+            execution: null,
+          };
+        }
+        if (history.length === 1) {
+          const matchingAudits = executionAuditsByStudent.get(studentId) ?? [];
+          if (
+            !decision?.adminExecuted ||
+            (matchingAudits.length > 1)
+          ) {
+            return {
+              ...common,
+              readiness: "blocked" as const,
+              code: "PROMOTION_EXECUTION_CONFLICT",
+              message: "A historical execution exists without one matching locked final decision. Review required.",
+              finalDecision: null,
+              overrideApplied: null,
+              execution: null,
+            };
+          }
+          const savedHistory = history[0];
+          if (matchingAudits.length === 1) {
+            const audit = matchingAudits[0];
+            const details = audit.details;
+            const teacherLedgerMatches = promotionTeacherRecommendationMatchesSnapshot(
+              details.teacherLedgerSnapshot,
+              decision,
+            );
+            const auditMatchesHistory = details.finalDecision.nextClass === savedHistory.toClass
+              && details.finalDecision.nextSection === savedHistory.toSection
+              && details.teacherRecommendation.nextClass === (teacherView?.nextClass ?? "")
+              && details.teacherRecommendation.nextSection === (teacherView?.nextSection ?? "");
+            const proposalMatchesCurrent = details.overrideApplied
+              ? !!proposal
+                && details.proposal?.eventId === proposal.eventId
+                && details.proposal?.status === proposal.status
+                && details.proposal?.nextClass === proposal.nextClass
+                && details.proposal?.nextSection === proposal.nextSection
+                && details.proposal?.reason === proposal.reason
+                && details.proposal?.actorId === proposal.actorId
+                && details.proposal?.actorRole === proposal.actorRole
+                && promotionTeacherRecommendationMatchesSnapshot(
+                  proposal.originalTeacherRecommendation,
+                  decision,
+                )
+              : proposal === null;
+            if (!teacherLedgerMatches || !auditMatchesHistory || !proposalMatchesCurrent) {
+              return {
+                ...common,
+                readiness: "blocked" as const,
+                code: "PROMOTION_EXECUTION_CONFLICT",
+                message: "Stored final-decision evidence does not match the locked Teacher ledger and history.",
+                finalDecision: null,
+                overrideApplied: null,
+                execution: null,
+              };
+            }
+            const savedProposal = details.proposal;
+            return {
+              ...common,
+              readiness: "executed" as const,
+              teacherRecommendation: details.teacherRecommendation,
+              proposal: savedProposal ? {
+                eventId: savedProposal.eventId,
+                status: savedProposal.status,
+                nextClass: savedProposal.nextClass,
+                nextSection: savedProposal.nextSection,
+                reason: savedProposal.reason,
+                actorId: savedProposal.actorId,
+                actorRole: savedProposal.actorRole,
+                createdAt: savedProposal.createdAt,
+              } : null,
+              finalDecision: details.finalDecision,
+              overrideApplied: details.overrideApplied,
+              execution: {
+                targetSessionId: savedHistory.targetSessionId,
+                executedAt: details.executedAt,
+                actorId: audit.row.actionBy,
+                actorRole: audit.row.actionByRole,
+                evidenceStatus: "atomic" as const,
+              },
+            };
+          }
+          return {
+            ...common,
+            readiness: "executed" as const,
+            finalDecision: {
+              status: null,
+              nextClass: savedHistory.toClass,
+              nextSection: savedHistory.toSection,
+            },
+            overrideApplied: null,
+            execution: {
+              targetSessionId: savedHistory.targetSessionId,
+              executedAt: (savedHistory.snapshotJson as any)?.archivedAt ?? null,
+              actorId: null,
+              actorRole: null,
+              evidenceStatus: "legacy" as const,
+            },
+          };
+        }
+        if (decision?.adminExecuted) {
+          return {
+            ...common,
+            readiness: "blocked" as const,
+            code: "PROMOTION_EXECUTION_HISTORY_MISSING",
+            message: "The Teacher ledger is marked executed but its exact Academic History is missing.",
+            finalDecision: null,
+            overrideApplied: null,
+            execution: null,
+          };
+        }
+        const resolution = resolvePromotionFinalDecision({
+          sourceClass: cls,
+          sourceSection: section,
+          resultStatus: result?.resultStatus,
+          promoted: result?.promoted,
+          decision: decision ? {
+            locked: decision.locked,
+            decision: decision.decision,
+            targetClass: decision.targetClass,
+            targetSection: decision.targetSection,
+            autoSuggestion: decision.autoSuggestion,
+            manualIntervention: decision.manualIntervention,
+            lockedAt: decision.lockedAt,
+            processedByTeacherId: decision.processedByTeacherId,
+          } : undefined,
+          teacherIsValid,
+          teacherTargetIsConfigured,
+          overrideTargetIsConfigured: !!proposal && configured(proposal.nextClass, proposal.nextSection),
+          studentIsInSourceRoster: true,
+          sessionIsActive: sourceSessionIsActive,
+          adminExecuted: false,
+          proposal,
+          legacyOverride: legacy ? {
+            overrideStatus: legacy.overrideStatus,
+            nextClass: legacy.nextClass,
+            nextSection: legacy.nextSection,
+          } : null,
+        });
+        const readiness = sourceSessionIsActive ? resolution.readiness : "historical" as const;
+        return {
+          ...common,
+          readiness,
+          ...(readiness !== "ready" ? {
+            code: sourceSessionIsActive && resolution.readiness !== "ready"
+              ? resolution.code
+              : "HISTORICAL_SESSION_READ_ONLY",
+            message: sourceSessionIsActive && resolution.readiness !== "ready"
+              ? resolution.message
+              : "Archived Academic Sessions are historical and read-only.",
+          } : {}),
+          teacherRecommendation: resolution.teacherRecommendation,
+          proposal: resolution.proposal ? {
+            eventId: resolution.proposal.eventId,
+            status: resolution.proposal.status,
+            nextClass: resolution.proposal.nextClass,
+            nextSection: resolution.proposal.nextSection,
+            reason: resolution.proposal.reason,
+            actorId: resolution.proposal.actorId,
+            actorRole: resolution.proposal.actorRole,
+            createdAt: resolution.proposal.createdAt,
+          } : null,
+          finalDecision: resolution.finalDecision,
+          overrideApplied: resolution.overrideApplied,
+          execution: null,
+        };
+      });
+      return {
+        evaluation,
+        ledgerDecisions: decisionRows as PromotionDecision[],
+        finalDecisions,
+      };
+    });
+  }
+
   async getExamAggregated(schoolId: number, cls: string, section: string, examType: string, sessionId: number): Promise<{
     studentId: number; dsid: string; name: string;
     totalObtained: number; totalMax: number; percentage: number; subjects: string[];
@@ -7836,6 +8470,7 @@ export class DatabaseStorage {
     cls: string,
     section: string,
     examType: string,
+    studentIds?: number[],
   ): Promise<Array<PromotionOverride & {
     audit: {
       reason: string;
@@ -7847,7 +8482,7 @@ export class DatabaseStorage {
   }>> {
     const legacyOverrides = await this.getPromotionOverrides(schoolId, sessionId, cls, section, examType);
     const scope = { schoolId, sessionId, class: cls, section, examType };
-    const latestEvents = await loadLatestPromotionOverrideAuditEvents(db, scope);
+    const latestEvents = await loadLatestPromotionOverrideAuditEvents(db, scope, studentIds);
     const legacyAuditByStudent = new Map<number, {
       reason: string;
       actorId: number;
@@ -8051,6 +8686,7 @@ export class DatabaseStorage {
     items: PromotionExecutionItem[],
     term: string,
     actor: { id: number; role: "admin" | "support_staff" },
+    options: { mode?: "teacher-led" | "web-audited" } = {},
   ): Promise<{
     prepared: number;
     alreadyPrepared: number;
@@ -8060,7 +8696,9 @@ export class DatabaseStorage {
     targetSessionName: string;
     students: PromotionExecutionPlacement[];
   }> {
-    validatePromotionExecutionBatch(items, term);
+    const webAuditedExecution = options.mode === "web-audited";
+    if (webAuditedExecution) validateWebPromotionExecutionSelection(items, term);
+    else validatePromotionExecutionBatch(items, term);
     if (!Number.isSafeInteger(actor.id) || actor.id <= 0) {
       throw new PromotionStage1Error("A valid Promotion actor is required.", 403, "ACTOR_NOT_ACCESSIBLE");
     }
@@ -8073,6 +8711,7 @@ export class DatabaseStorage {
         items[0].fromClass,
         items[0].fromSection,
       );
+      await assertActivePromotionOverrideActor(tx, schoolId, actor);
       await lockPromotionConfiguration(tx, schoolId);
       const [sourceSession] = await tx
         .select({
@@ -8141,18 +8780,6 @@ export class DatabaseStorage {
           configuredSections = value as Record<string, unknown>;
         }
       } catch {}
-      if (items.some(item =>
-        !configuredClasses.includes(item.nextClass)
-        || !Array.isArray(configuredSections[item.nextClass])
-        || !(configuredSections[item.nextClass] as unknown[]).includes(item.nextSection)
-      )) {
-        throw new PromotionStage1Error(
-          "Every target class and section must be configured for this school.",
-          400,
-          "TARGET_PLACEMENT_NOT_CONFIGURED",
-        );
-      }
-
       const studentIds = items.map(item => item.studentId);
       const [studentRows, enrollmentRows] = await Promise.all([
         tx.select({
@@ -8211,6 +8838,9 @@ export class DatabaseStorage {
         cohort.fromSection,
         term,
       );
+      const rosterStudentIds = new Set(
+        evaluation.rosterRows.map((row: { studentId: number }) => row.studentId),
+      );
       assertPromotionGateEnabled(evaluation.policy, term);
       const resultByStudent = evaluation.resultsByStudent as Map<number, {
         resultStatus: "complete" | "incomplete";
@@ -8236,6 +8866,7 @@ export class DatabaseStorage {
         targetSection: promotionDecisions.targetSection,
         processedByTeacherId: promotionDecisions.processedByTeacherId,
         locked: promotionDecisions.locked,
+        lockedAt: promotionDecisions.lockedAt,
         autoSuggestion: promotionDecisions.autoSuggestion,
         manualIntervention: promotionDecisions.manualIntervention,
         adminExecuted: promotionDecisions.adminExecuted,
@@ -8268,32 +8899,101 @@ export class DatabaseStorage {
         ))
         .for("update") : [];
       const validTeacherIds = new Set(teacherRows.map((teacher: { id: number }) => teacher.id));
+      const overrideScope = {
+        schoolId,
+        sessionId: sourceSessionId,
+        class: cohort.fromClass,
+        section: cohort.fromSection,
+        examType: term,
+      };
+      const latestOverrideEvents = webAuditedExecution
+        ? await loadLatestPromotionOverrideAuditEvents(tx, overrideScope, studentIds, true)
+        : new Map<number, PromotionOverrideAuditEvent>();
+      const legacyOverrideRows = webAuditedExecution
+        ? await tx.select().from(promotionOverrides).where(and(
+          eq(promotionOverrides.schoolId, schoolId),
+          eq(promotionOverrides.sessionId, sourceSessionId),
+          eq(promotionOverrides.class, cohort.fromClass),
+          eq(promotionOverrides.section, cohort.fromSection),
+          eq(promotionOverrides.examType, term),
+          inArray(promotionOverrides.studentId, studentIds),
+        )).orderBy(promotionOverrides.studentId).for("update")
+        : [];
+      const legacyOverrideByStudent = new Map(
+        legacyOverrideRows.map((row: PromotionOverride) => [row.studentId, row]),
+      );
       const canonicalItems: PromotionExecutionItem[] = [];
+      const executionEvidenceByStudent = new Map<number, PromotionExecutionDecisionEvidence>();
       for (const { item, result } of selectedResultRows) {
         const decision = decisionByStudent.get(item.studentId) as PromotionDecision | undefined;
-        const decisionCheck = checkLockedPromotionDecision({
-          resultStatus: result.resultStatus,
-          promoted: result.promoted,
-          decision,
-          teacherIsValid: !!decision?.processedByTeacherId
-            && validTeacherIds.has(decision.processedByTeacherId),
-          targetPlacementIsConfigured: !!decision
-            && configuredClasses.includes(decision.targetClass)
-            && Array.isArray(configuredSections[decision.targetClass])
-            && (configuredSections[decision.targetClass] as unknown[]).includes(decision.targetSection),
-          sourceClass: cohort.fromClass,
-          sourceSection: cohort.fromSection,
-          requestedTarget: { className: item.nextClass, sectionName: item.nextSection },
-        });
-        if (!decisionCheck.ok) {
-          throw new PromotionStage1Error(decisionCheck.message, 409, decisionCheck.code);
-        }
         if (!decision) {
           throw new PromotionStage1Error(
             "Promotion requires a valid locked Teacher decision.",
             409,
             "PROMOTION_DECISION_INVALID",
           );
+        }
+        const teacherIsValid = !!decision.processedByTeacherId
+          && validTeacherIds.has(decision.processedByTeacherId);
+        const teacherTargetIsConfigured = configuredClasses.includes(decision.targetClass)
+          && Array.isArray(configuredSections[decision.targetClass])
+          && (configuredSections[decision.targetClass] as unknown[]).includes(decision.targetSection);
+        let finalClass: string;
+        let finalSection: string;
+        if (webAuditedExecution) {
+          const activeEvent = latestOverrideEvents.get(item.studentId);
+          const proposal = promotionProposalFromEvent(activeEvent);
+          const rawLegacy = legacyOverrideByStudent.get(item.studentId);
+          const resolution = resolvePromotionFinalDecision({
+            sourceClass: cohort.fromClass,
+            sourceSection: cohort.fromSection,
+            resultStatus: result.resultStatus,
+            promoted: result.promoted,
+            decision,
+            teacherIsValid,
+            teacherTargetIsConfigured,
+            overrideTargetIsConfigured: !!proposal
+              && configuredClasses.includes(proposal.nextClass)
+              && Array.isArray(configuredSections[proposal.nextClass])
+              && (configuredSections[proposal.nextClass] as unknown[]).includes(proposal.nextSection),
+            studentIsInSourceRoster: rosterStudentIds.has(item.studentId),
+            sessionIsActive: true,
+            adminExecuted: false,
+            proposal,
+            legacyOverride: rawLegacy ? {
+              overrideStatus: rawLegacy.overrideStatus,
+              nextClass: rawLegacy.nextClass,
+              nextSection: rawLegacy.nextSection,
+            } : null,
+          });
+          if (resolution.readiness !== "ready") {
+            throw new PromotionStage1Error(resolution.message, 409, resolution.code);
+          }
+          finalClass = resolution.finalDecision.nextClass;
+          finalSection = resolution.finalDecision.nextSection;
+          executionEvidenceByStudent.set(item.studentId, {
+            teacherRecommendation: resolution.teacherRecommendation,
+            teacherLedgerSnapshot: promotionTeacherRecommendationSnapshot(decision)!,
+            finalDecision: resolution.finalDecision,
+            overrideApplied: resolution.overrideApplied,
+            proposal: resolution.proposal,
+          });
+        } else {
+          const decisionCheck = checkLockedPromotionDecision({
+            resultStatus: result.resultStatus,
+            promoted: result.promoted,
+            decision,
+            teacherIsValid,
+            targetPlacementIsConfigured: teacherTargetIsConfigured,
+            sourceClass: cohort.fromClass,
+            sourceSection: cohort.fromSection,
+            requestedTarget: { className: item.nextClass, sectionName: item.nextSection },
+          });
+          if (!decisionCheck.ok) {
+            throw new PromotionStage1Error(decisionCheck.message, 409, decisionCheck.code);
+          }
+          finalClass = decision.decision === "retained" ? cohort.fromClass : decision.targetClass;
+          finalSection = decision.decision === "retained" ? cohort.fromSection : decision.targetSection;
         }
         const selectedAverage = result.termAverages[term];
         const percentage = Math.round(selectedAverage ?? 0);
@@ -8305,8 +9005,8 @@ export class DatabaseStorage {
           studentId: item.studentId,
           fromClass: cohort.fromClass,
           fromSection: cohort.fromSection,
-          nextClass: decision.targetClass,
-          nextSection: decision.targetSection,
+          nextClass: finalClass,
+          nextSection: finalSection,
           examType: term,
           totalObtained: percentage,
           totalMax: 100,
@@ -8317,6 +9017,17 @@ export class DatabaseStorage {
         });
       }
       items = canonicalItems;
+      if (items.some(item =>
+        !configuredClasses.includes(item.nextClass)
+        || !Array.isArray(configuredSections[item.nextClass])
+        || !(configuredSections[item.nextClass] as unknown[]).includes(item.nextSection)
+      )) {
+        throw new PromotionStage1Error(
+          "Every resolved final destination must be configured for this school.",
+          400,
+          "TARGET_PLACEMENT_NOT_CONFIGURED",
+        );
+      }
 
       const priorHistory = await tx
         .select({
@@ -8347,6 +9058,71 @@ export class DatabaseStorage {
         const rows = historyByStudent.get(history.studentId) ?? [];
         rows.push(history);
         historyByStudent.set(history.studentId, rows);
+      }
+
+      const executionAuditByStudent = new Map<number, PromotionFinalExecutionAuditEvent>();
+      if (webAuditedExecution) {
+        const executionAuditRows = await tx.select().from(auditLogs).where(and(
+          eq(auditLogs.schoolId, schoolId),
+          eq(auditLogs.sessionId, sourceSessionId),
+          eq(auditLogs.actionType, "PROMOTION_FINAL_DECISION_EXECUTED"),
+          eq(auditLogs.entityType, "promotion_execution"),
+          inArray(auditLogs.entityId, studentIds),
+        )).orderBy(desc(auditLogs.createdAt), desc(auditLogs.id)).for("update");
+        for (const row of executionAuditRows as Array<typeof auditLogs.$inferSelect>) {
+          let details: any;
+          try {
+            details = row.details ? JSON.parse(row.details) : null;
+          } catch {
+            throw new PromotionStage1Error(
+              "An existing final-decision audit record is malformed; execution cannot be safely repeated.",
+              409,
+              "PROMOTION_EXECUTION_AUDIT_INVALID",
+            );
+          }
+          const eventScope = details?.scope;
+          if (
+            !eventScope ||
+            !Number.isSafeInteger(eventScope.schoolId) ||
+            !Number.isSafeInteger(eventScope.sourceSessionId) ||
+            !Number.isSafeInteger(eventScope.targetSessionId) ||
+            !Number.isSafeInteger(eventScope.studentId) ||
+            typeof eventScope.class !== "string" ||
+            typeof eventScope.section !== "string" ||
+            typeof eventScope.term !== "string"
+          ) {
+            throw new PromotionStage1Error(
+              "An existing final-decision audit record has no valid scope; execution cannot be safely repeated.",
+              409,
+              "PROMOTION_EXECUTION_AUDIT_INVALID",
+            );
+          }
+          if (
+            eventScope.schoolId !== schoolId ||
+            eventScope.sourceSessionId !== sourceSessionId ||
+            eventScope.targetSessionId !== targetSessionId ||
+            eventScope.class !== cohort.fromClass ||
+            eventScope.section !== cohort.fromSection ||
+            eventScope.term !== term ||
+            eventScope.studentId !== row.entityId
+          ) continue;
+          const parsedAudit = parsePromotionFinalExecutionAuditEvent(row, {
+            schoolId,
+            sourceSessionId,
+            targetSessionId,
+            class: cohort.fromClass,
+            section: cohort.fromSection,
+            term,
+          });
+          if (!parsedAudit || executionAuditByStudent.has(row.entityId)) {
+            throw new PromotionStage1Error(
+              "More than one or an invalid final-decision audit record exists for this exact execution.",
+              409,
+              "PROMOTION_EXECUTION_AUDIT_INVALID",
+            );
+          }
+          executionAuditByStudent.set(row.entityId, parsedAudit);
+        }
       }
 
       const targetEnrollmentRows = await tx
@@ -8392,6 +9168,25 @@ export class DatabaseStorage {
           && history.gradePoint === (item.gradePoint ?? null)
           && history.remarks === (item.gradeRemarks ?? null)
         );
+        const expectedEvidence = executionEvidenceByStudent.get(item.studentId);
+        const priorAudit = executionAuditByStudent.get(item.studentId);
+        const exactDecisionEvidence = !webAuditedExecution || !expectedEvidence
+          ? true
+          : priorAudit
+            ? priorAudit.details.overrideApplied === expectedEvidence.overrideApplied
+              && priorAudit.details.teacherRecommendation.status === expectedEvidence.teacherRecommendation.status
+              && priorAudit.details.teacherRecommendation.nextClass === expectedEvidence.teacherRecommendation.nextClass
+              && priorAudit.details.teacherRecommendation.nextSection === expectedEvidence.teacherRecommendation.nextSection
+              && priorAudit.details.finalDecision.status === expectedEvidence.finalDecision.status
+              && priorAudit.details.finalDecision.nextClass === expectedEvidence.finalDecision.nextClass
+              && priorAudit.details.finalDecision.nextSection === expectedEvidence.finalDecision.nextSection
+              && (expectedEvidence.proposal
+                ? priorAudit.details.proposal?.eventId === expectedEvidence.proposal.eventId
+                  && priorAudit.details.proposal?.reason === expectedEvidence.proposal.reason
+                  && priorAudit.details.proposal?.actorId === expectedEvidence.proposal.actorId
+                  && priorAudit.details.proposal?.actorRole === expectedEvidence.proposal.actorRole
+                : priorAudit.details.proposal === null)
+            : !expectedEvidence.overrideApplied;
         const existingRows = targetEnrollmentsByStudent.get(item.studentId) ?? [];
         const matchingPreparedEnrollment =
           existingRows.length === 1
@@ -8401,7 +9196,7 @@ export class DatabaseStorage {
           && existingRows[0].className === item.nextClass
           && existingRows[0].sectionName === item.nextSection
           && existingRows[0].status === "Active";
-        if (!exactHistory || !matchingPreparedEnrollment) {
+        if (!exactHistory || !exactDecisionEvidence || !matchingPreparedEnrollment) {
           throw new PromotionStage1Error(
             "This Student already has a different or incomplete Promotion execution for the selected sessions.",
             409,
@@ -8589,6 +9384,32 @@ export class DatabaseStorage {
       });
 
       await tx.insert(academicHistory).values(historyRecords);
+
+      if (webAuditedExecution) {
+        for (const item of itemsToPrepare) {
+          const evidence = executionEvidenceByStudent.get(item.studentId);
+          if (!evidence) {
+            throw new PromotionStage1Error(
+              "Final-decision evidence could not be assembled; no Promotion changes were committed.",
+              409,
+              "PROMOTION_EXECUTION_AUDIT_INVALID",
+            );
+          }
+          await writePromotionFinalExecutionAudit(tx, {
+            schoolId,
+            sourceSessionId,
+            targetSessionId,
+            studentId: item.studentId,
+            sourceClass: item.fromClass,
+            sourceSection: item.fromSection,
+            term,
+            targetSessionName: targetSession.sessionName,
+            evidence,
+            executionActor: actor,
+            executedAt: archivedAt,
+          });
+        }
+      }
 
       await tx.update(promotionDecisions)
         .set({ adminExecuted: true, adminExecutedAt: archivedAt })

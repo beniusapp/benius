@@ -7,11 +7,19 @@ import { storage } from "./storage";
 import {
   academicHistory,
   academicSessions,
+  auditLogs,
+  examPolicyTiers,
+  examScores,
   enrollments,
+  gradingRules,
+  gradingTiers,
+  nonTeachingStaff,
   promotionDecisions,
   schoolMetadata,
+  teachers,
   schools,
   students,
+  users,
 } from "@workspace/db";
 
 const developmentDbTestEnabled = process.env.BENIUS_STAGE2B_DEV_DB_TEST === "1";
@@ -25,6 +33,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     if (schoolId === undefined) return;
     await db.transaction(async tx => {
       await tx.delete(academicHistory).where(eq(academicHistory.schoolId, schoolId!));
+      await tx.delete(auditLogs).where(eq(auditLogs.schoolId, schoolId!));
       await tx.delete(promotionDecisions).where(eq(promotionDecisions.schoolId, schoolId!));
       await tx.delete(enrollments).where(eq(enrollments.schoolId, schoolId!));
       await tx.delete(students).where(eq(students.schoolId, schoolId!));
@@ -48,6 +57,31 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       code: `F${suffix}`,
     }).returning({ id: schools.id });
     foreignSchoolId = foreignSchool.id;
+    const [promotionActor] = await tx.insert(nonTeachingStaff).values({
+      schoolId: school.id,
+      fullName: `Stage 2B Support Staff ${suffix}`,
+      designation: "Exam Controller",
+      allowedModules: ["exam-controller"],
+      isActive: true,
+    }).returning({ id: nonTeachingStaff.id });
+    const [teacherUser] = await tx.insert(users).values({
+      email: `stage2b-teacher-${suffix}@test.invalid`,
+      passwordHash: "stage2b-disposable-test-hash",
+      role: "teacher",
+      schoolId: school.id,
+      isActive: true,
+    }).returning({ id: users.id });
+    const [teacher] = await tx.insert(teachers).values({
+      userId: teacherUser.id,
+      schoolId: school.id,
+      fullName: `Stage 2B Teacher ${suffix}`,
+      phone: `71${suffix.slice(0, 8)}`,
+      subject: "Mathematics",
+      assignedClass: "5",
+      assignedSection: "A",
+      mustChangePassword: false,
+      isActive: true,
+    }).returning({ id: teachers.id });
     await tx.insert(schoolMetadata).values([
       {
         schoolId: school.id,
@@ -69,7 +103,55 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
         metaKey: "class_sections",
         metaValue: JSON.stringify({ "9": ["Z"] }),
       },
+      {
+        schoolId: school.id,
+        metaKey: "exam_types",
+        metaValue: JSON.stringify(["Stage 2B Assessment"]),
+      },
+      {
+        schoolId: school.id,
+        metaKey: "class_subjects",
+        metaValue: JSON.stringify({ "4": ["Mathematics"], "5": ["Mathematics"] }),
+      },
+      {
+        schoolId: school.id,
+        metaKey: "class_exam_types",
+        metaValue: JSON.stringify({
+          "4": ["Stage 2B Assessment"],
+          "5": ["Stage 2B Assessment"],
+        }),
+      },
     ]);
+    const examWeights = JSON.stringify({
+      "Stage 2B Year End": [{ source_exam: "Stage 2B Assessment", weight: 100 }],
+    });
+    await tx.insert(examPolicyTiers).values({
+      schoolId: school.id,
+      tierName: `Stage 2B policy ${suffix}`,
+      applicableClasses: ["4", "5"],
+      examWeights,
+      promotionFailRules: JSON.stringify({ rule_term_avg: { enabled: true, minPct: 35 } }),
+      resultsConfig: "{}",
+    });
+    const [gradingTier] = await tx.insert(gradingTiers).values({
+      schoolId: school.id,
+      name: `Stage 2B grading ${suffix}`,
+      classes: ["4", "5"],
+      passPercentage: 35,
+      gradingSystem: "percentage",
+      passingGrades: [],
+      sortOrder: 1,
+    }).returning({ id: gradingTiers.id });
+    await tx.insert(gradingRules).values({
+      schoolId: school.id,
+      tierId: gradingTier.id,
+      gradeLabel: "Pass",
+      minPercent: "0",
+      maxPercent: "100",
+      gradePoint: "4",
+      remarks: "Pass",
+      sortOrder: 1,
+    });
 
     const [sourceSession] = await tx.insert(academicSessions).values({
       schoolId: school.id,
@@ -88,12 +170,12 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       status: "draft",
     }).returning({ id: academicSessions.id });
 
-    const createdStudents = await tx.insert(students).values([1, 2, 3, 4].map(index => ({
+    const createdStudents = await tx.insert(students).values([1, 2, 3, 4, 5].map(index => ({
       schoolId: school.id,
       digitalStudentId: `P2B-${suffix}-${index}`,
       name: `Stage 2B Student ${index}`,
-      class: "5",
-      section: "A",
+      class: index === 4 ? "4" : "5",
+      section: index === 4 ? "C" : "A",
       phone: `90000000${String(index).padStart(2, "0")}`,
       dob: "2010-01-01",
       passwordHash: "stage2b-disposable-test-hash",
@@ -108,12 +190,12 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       idCardPendingReissue: students.idCardPendingReissue,
     });
 
-    await tx.insert(enrollments).values(createdStudents.map(student => ({
+    await tx.insert(enrollments).values(createdStudents.map((student, index) => ({
       schoolId: school.id,
       studentId: student.id,
       sessionId: sourceSession.id,
-      className: "5",
-      sectionName: "A",
+      className: index === 3 ? "4" : "5",
+      sectionName: index === 3 ? "C" : "A",
       rollNo: student.rollNumber,
       status: "Active",
     })));
@@ -126,6 +208,19 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       rollNo: null,
       status: "Active",
     });
+    await tx.insert(examScores).values(createdStudents.map(student => ({
+      schoolId: school.id,
+      studentId: student.id,
+      teacherId: teacher.id,
+      sessionId: sourceSession.id,
+      class: student.id === createdStudents[3].id ? "4" : "5",
+      section: student.id === createdStudents[3].id ? "C" : "A",
+      subject: "Mathematics",
+      examType: "Stage 2B Assessment",
+      marks: 80,
+      totalMarks: 100,
+      isAbsent: false,
+    })));
 
     await tx.insert(promotionDecisions).values([
       ...createdStudents.slice(0, 3).map(student => ({
@@ -134,10 +229,31 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
         section: "A",
         term: "Stage 2B Year End",
         studentId: student.id,
+        decision: "promoted",
         targetClass: "6",
         targetSection: "B",
         sessionId: sourceSession.id,
+        processedByTeacherId: teacher.id,
+        autoSuggestion: "promoted",
+        manualIntervention: false,
+        locked: true,
+        lockedAt: new Date("2035-12-01T10:00:00.000Z"),
       })),
+      {
+        schoolId: school.id,
+        class: "5",
+        section: "A",
+        term: "Stage 2B Year End",
+        studentId: createdStudents[4].id,
+        targetClass: "6",
+        targetSection: "B",
+        sessionId: sourceSession.id,
+        processedByTeacherId: teacher.id,
+        autoSuggestion: "promoted",
+        manualIntervention: false,
+        locked: true,
+        lockedAt: new Date("2035-12-01T10:00:00.000Z"),
+      },
       {
         schoolId: school.id,
         class: "5",
@@ -172,10 +288,11 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       },
     ]);
 
-    return { sourceSession, targetSession, createdStudents };
+    return { sourceSession, targetSession, createdStudents, promotionActor, teacher };
   });
   const fixtureSchoolId = schoolId;
   if (fixtureSchoolId === undefined) throw new Error("Development fixture school was not created");
+  const executionActor = { id: seeded.promotionActor.id, role: "support_staff" as const };
 
   const commonItem = {
     fromClass: "5",
@@ -201,9 +318,9 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       seeded.targetSession.id,
       [invalidClassItem],
       "Stage 2B Year End",
-      { id: 7, role: "support_staff" },
+      executionActor,
     ),
-    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+    (error: any) => error?.code === "PROMOTION_DECISION_CONFLICT",
   );
   await assert.rejects(
     storage.executePromotionTransaction(
@@ -212,9 +329,9 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       seeded.targetSession.id,
       [{ ...commonItem, studentId: seeded.createdStudents[0].id, nextSection: "Z" }],
       "Stage 2B Year End",
-      { id: 7, role: "support_staff" },
+      executionActor,
     ),
-    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+    (error: any) => error?.code === "PROMOTION_DECISION_CONFLICT",
   );
 
   await assert.rejects(
@@ -227,9 +344,9 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
         { ...commonItem, studentId: seeded.createdStudents[2].id, nextSection: "Z" },
       ],
       "Stage 2B Year End",
-      { id: 7, role: "support_staff" },
+      executionActor,
     ),
-    (error: any) => error?.code === "TARGET_PLACEMENT_NOT_CONFIGURED",
+    (error: any) => error?.code === "PROMOTION_DECISION_CONFLICT",
   );
   const afterInvalidDestination = await db.select({
     studentId: academicHistory.studentId,
@@ -255,16 +372,18 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     "Stage 2B Year End",
     true,
   );
-  assert.equal(nonExecutedLockCount, 3);
-  const nonExecutedUnlockCount = await storage.setPromotionLedgerLock(
-    fixtureSchoolId,
-    seeded.sourceSession.id,
-    "5",
-    "A",
-    "Stage 2B Year End",
-    false,
+  assert.equal(nonExecutedLockCount, 4, "the locked cohort still reports its four ledger rows");
+  await assert.rejects(
+    storage.setPromotionLedgerLock(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      "5",
+      "A",
+      "Stage 2B Year End",
+      false,
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_LOCKED",
   );
-  assert.equal(nonExecutedUnlockCount, 3);
 
   await assert.rejects(
     storage.executePromotionTransaction(
@@ -276,7 +395,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
         { ...commonItem, studentId: seeded.createdStudents[1].id },
       ],
       "Stage 2B Year End",
-      { id: 7, role: "support_staff" },
+      executionActor,
     ),
     (error: any) => error?.code === "TARGET_ENROLLMENT_CONFLICT",
   );
@@ -312,18 +431,228 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
   ));
   assert.deepEqual(conflictDecisions.map(row => row.adminExecuted), [false, false]);
 
+  const auditedProposalStudent = seeded.createdStudents[0];
+  await storage.upsertPromotionOverride({
+    schoolId: fixtureSchoolId,
+    sessionId: seeded.sourceSession.id,
+    studentId: auditedProposalStudent.id,
+    examType: "Stage 2B Year End",
+    class: "5",
+    section: "A",
+    overrideStatus: "RETAIN",
+    nextClass: "5",
+    nextSection: "A",
+    reason: "Keep the reviewed placement in the source class.",
+  }, executionActor);
+  const auditedOverrideExecutions = await Promise.all([1, 2].map(() =>
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [{ ...commonItem, studentId: auditedProposalStudent.id }],
+      "Stage 2B Year End",
+      executionActor,
+      { mode: "web-audited" },
+    ),
+  ));
+  const auditedOverrideExecution = auditedOverrideExecutions.find(result => result.prepared === 1);
+  assert.ok(auditedOverrideExecution);
+  assert.equal(auditedOverrideExecutions.reduce((sum, result) => sum + result.prepared, 0), 1);
+  assert.equal(auditedOverrideExecutions.reduce((sum, result) => sum + result.alreadyPrepared, 0), 1);
+  assert.equal(auditedOverrideExecution.prepared, 1);
+  assert.equal(auditedOverrideExecution.students[0].toClass, "5");
+  assert.equal(auditedOverrideExecution.students[0].toSection, "A");
+  const auditedOverrideHistory = await db.select({
+    toClass: academicHistory.toClass,
+    toSection: academicHistory.toSection,
+  }).from(academicHistory).where(and(
+    eq(academicHistory.schoolId, fixtureSchoolId),
+    eq(academicHistory.sessionId, seeded.sourceSession.id),
+    eq(academicHistory.targetSessionId, seeded.targetSession.id),
+    eq(academicHistory.studentId, auditedProposalStudent.id),
+  ));
+  assert.deepEqual(auditedOverrideHistory, [{ toClass: "5", toSection: "A" }]);
+  const finalDecisionAuditRows = await db.select().from(auditLogs).where(and(
+    eq(auditLogs.schoolId, fixtureSchoolId),
+    eq(auditLogs.sessionId, seeded.sourceSession.id),
+    eq(auditLogs.actionType, "PROMOTION_FINAL_DECISION_EXECUTED"),
+    eq(auditLogs.entityId, auditedProposalStudent.id),
+  ));
+  const finalDecisionAudit = finalDecisionAuditRows[0];
+  assert.ok(finalDecisionAudit?.details);
+  const finalDecisionAuditDetails = JSON.parse(finalDecisionAudit.details);
+  assert.equal(finalDecisionAuditDetails.finalDecision.status, "RETAIN");
+  assert.equal(finalDecisionAuditDetails.finalDecision.nextClass, "5");
+  assert.equal(finalDecisionAuditDetails.overrideApplied, true);
+  assert.equal(finalDecisionAuditDetails.proposal.reason, "Keep the reviewed placement in the source class.");
+  assert.equal(finalDecisionAuditDetails.executionActor.id, executionActor.id);
+  const resolvedWebCohort = await storage.getPromotionCohortFinalDecisions(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+  );
+  const resolvedWebStudent = resolvedWebCohort.finalDecisions.find(
+    row => row.studentId === auditedProposalStudent.id,
+  );
+  assert.equal(resolvedWebStudent?.readiness, "executed");
+  assert.deepEqual(resolvedWebStudent?.finalDecision, {
+    status: "RETAIN",
+    nextClass: "5",
+    nextSection: "A",
+  });
+  assert.equal(resolvedWebStudent?.overrideApplied, true);
+  const auditedOverrideReplay = await storage.executePromotionTransaction(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    seeded.targetSession.id,
+    [{ ...commonItem, studentId: auditedProposalStudent.id }],
+    "Stage 2B Year End",
+    executionActor,
+    { mode: "web-audited" },
+  );
+  assert.equal(auditedOverrideReplay.prepared, 0);
+  assert.equal(auditedOverrideReplay.alreadyPrepared, 1);
+  assert.equal(auditedOverrideReplay.idempotent, true);
+
+  const concurrentProposalStudent = seeded.createdStudents[4];
+  const proposalScope = {
+    schoolId: fixtureSchoolId,
+    sessionId: seeded.sourceSession.id,
+    studentId: concurrentProposalStudent.id,
+    examType: "Stage 2B Year End",
+    class: "5",
+    section: "A",
+  };
+  await storage.upsertPromotionOverride({
+    ...proposalScope,
+    overrideStatus: "RETAIN",
+    nextClass: "5",
+    nextSection: "A",
+    reason: "Initial reviewed proposal.",
+  }, executionActor);
+  await storage.upsertPromotionOverride({
+    ...proposalScope,
+    overrideStatus: "PROMOTE",
+    nextClass: "6",
+    nextSection: "B",
+    reason: "Replacement proposal after review.",
+  }, executionActor);
+  const editedProposal = (await storage.getPromotionOverridesWithAudit(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+    [concurrentProposalStudent.id],
+  )).find(row => row.studentId === concurrentProposalStudent.id);
+  assert.equal(editedProposal?.overrideStatus, "PROMOTE");
+  assert.equal(editedProposal?.nextClass, "6");
+  assert.equal(editedProposal?.nextSection, "B");
+  assert.equal(editedProposal?.audit?.reason, "Replacement proposal after review.");
+  assert.equal(editedProposal?.audit?.actorId, executionActor.id);
+  assert.equal(editedProposal?.isProposal, true);
+
+  await storage.deletePromotionOverride({
+    ...proposalScope,
+    reason: "Withdraw the proposal and use the locked Teacher decision.",
+  }, executionActor);
+  const overridesAfterClear = await storage.getPromotionOverridesWithAudit(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+    [concurrentProposalStudent.id],
+  );
+  assert.equal(overridesAfterClear.some(row => row.studentId === concurrentProposalStudent.id), false);
+  const finalAfterClear = (await storage.getPromotionCohortFinalDecisions(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+  )).finalDecisions.find(row => row.studentId === concurrentProposalStudent.id);
+  assert.equal(finalAfterClear?.readiness, "ready");
+  assert.deepEqual(finalAfterClear?.finalDecision, {
+    status: "PROMOTE",
+    nextClass: "6",
+    nextSection: "B",
+  });
+  assert.equal(finalAfterClear?.overrideApplied, false);
+
+  const [concurrentProposalWrite, concurrentExecution] = await Promise.allSettled([
+    storage.upsertPromotionOverride({
+      ...proposalScope,
+      overrideStatus: "RETAIN",
+      nextClass: "5",
+      nextSection: "A",
+      reason: "Proposal submitted concurrently with final execution.",
+    }, executionActor),
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [{ ...commonItem, studentId: concurrentProposalStudent.id }],
+      "Stage 2B Year End",
+      executionActor,
+      { mode: "web-audited" },
+    ),
+  ]);
+  if (concurrentExecution.status === "rejected") throw concurrentExecution.reason;
+  const concurrentFinal = (await storage.getPromotionCohortFinalDecisions(
+    fixtureSchoolId,
+    seeded.sourceSession.id,
+    "5",
+    "A",
+    "Stage 2B Year End",
+  )).finalDecisions.find(row => row.studentId === concurrentProposalStudent.id);
+  assert.equal(concurrentFinal?.readiness, "executed");
+  if (concurrentProposalWrite.status === "fulfilled") {
+    assert.deepEqual(concurrentFinal?.finalDecision, {
+      status: "RETAIN",
+      nextClass: "5",
+      nextSection: "A",
+    });
+    assert.equal(concurrentFinal?.overrideApplied, true);
+    assert.equal(concurrentFinal?.proposal?.reason, "Proposal submitted concurrently with final execution.");
+  } else {
+    assert.equal((concurrentProposalWrite.reason as any)?.code, "PROMOTION_ALREADY_EXECUTED");
+    assert.deepEqual(concurrentFinal?.finalDecision, {
+      status: "PROMOTE",
+      nextClass: "6",
+      nextSection: "B",
+    });
+    assert.equal(concurrentFinal?.overrideApplied, false);
+  }
+
   const successStudent = seeded.createdStudents[2];
+  await storage.upsertPromotionOverride({
+    schoolId: fixtureSchoolId,
+    sessionId: seeded.sourceSession.id,
+    studentId: successStudent.id,
+    examType: "Stage 2B Year End",
+    class: "5",
+    section: "A",
+    overrideStatus: "RETAIN",
+    nextClass: "5",
+    nextSection: "A",
+    reason: "Web-only proposal must not change the legacy Teacher-led execution contract.",
+  }, executionActor);
   const result = await storage.executePromotionTransaction(
     fixtureSchoolId,
     seeded.sourceSession.id,
     seeded.targetSession.id,
     [{ ...commonItem, studentId: successStudent.id }],
     "Stage 2B Year End",
-    { id: 7, role: "support_staff" },
+    executionActor,
   );
   assert.equal(result.prepared, 1);
   assert.equal(result.targetEnrollmentsCreated, 1);
   assert.equal(result.targetSessionId, seeded.targetSession.id);
+  assert.equal(result.students[0].toClass, "6");
+  assert.equal(result.students[0].toSection, "B");
 
   const [registryStudent] = await db.select({
     class: students.class,
@@ -401,7 +730,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     seeded.targetSession.id,
     [{ ...commonItem, studentId: successStudent.id }],
     "Stage 2B Year End",
-    { id: 7, role: "support_staff" },
+    executionActor,
   );
   assert.equal(executedReplay.prepared, 0);
   assert.equal(executedReplay.alreadyPrepared, 1);
@@ -431,18 +760,19 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       "5",
       "A",
       "Stage 2B Year End",
-      7,
-      true,
+      seeded.teacher.id,
+      false,
       [{
         studentId: successStudent.id,
-        decision: "retained",
-        targetClass: "5",
-        targetSection: "A",
+        decision: "promoted",
+        targetClass: "6",
+        targetSection: "B",
         editCount: 3,
+        autoSuggestion: "promoted",
       }],
       seeded.sourceSession.id,
     ),
-    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+    (error: any) => error?.code === "PROMOTION_DECISION_LOCKED",
   );
   await assert.rejects(
     storage.setPromotionLedgerLock(
@@ -453,7 +783,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
       "Stage 2B Year End",
       false,
     ),
-    (error: any) => error?.code === "PROMOTION_DECISION_EXECUTED",
+    (error: any) => error?.code === "PROMOTION_DECISION_LOCKED",
   );
   await assert.rejects(
     storage.deletePromotionDecision(
@@ -508,29 +838,25 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     eq(promotionDecisions.studentId, noLedgerStudent.id),
   ));
   assert.deepEqual(noLedgerDecisions, []);
-  const firstNoLedgerExecution = await storage.executePromotionTransaction(
-    fixtureSchoolId,
-    seeded.sourceSession.id,
-    seeded.targetSession.id,
-    [{ ...commonItem, studentId: noLedgerStudent.id }],
-    "Stage 2B Year End",
-    { id: 7, role: "support_staff" },
+  const noLedgerItem = {
+    ...commonItem,
+    studentId: noLedgerStudent.id,
+    fromClass: "4",
+    fromSection: "C",
+    nextClass: "5",
+    nextSection: "C",
+  };
+  await assert.rejects(
+    storage.executePromotionTransaction(
+      fixtureSchoolId,
+      seeded.sourceSession.id,
+      seeded.targetSession.id,
+      [noLedgerItem],
+      "Stage 2B Year End",
+      executionActor,
+    ),
+    (error: any) => error?.code === "PROMOTION_DECISION_MISSING",
   );
-  assert.equal(firstNoLedgerExecution.prepared, 1);
-  assert.equal(firstNoLedgerExecution.alreadyPrepared, 0);
-  assert.equal(firstNoLedgerExecution.targetEnrollmentsCreated, 1);
-  const secondNoLedgerExecution = await storage.executePromotionTransaction(
-    fixtureSchoolId,
-    seeded.sourceSession.id,
-    seeded.targetSession.id,
-    [{ ...commonItem, studentId: noLedgerStudent.id }],
-    "Stage 2B Year End",
-    { id: 7, role: "support_staff" },
-  );
-  assert.equal(secondNoLedgerExecution.prepared, 0);
-  assert.equal(secondNoLedgerExecution.alreadyPrepared, 1);
-  assert.equal(secondNoLedgerExecution.idempotent, true);
-  assert.equal(secondNoLedgerExecution.targetEnrollmentsCreated, 0);
   const noLedgerHistory = await db.select({
     id: academicHistory.id,
   }).from(academicHistory).where(and(
@@ -539,7 +865,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     eq(academicHistory.targetSessionId, seeded.targetSession.id),
     eq(academicHistory.studentId, noLedgerStudent.id),
   ));
-  assert.equal(noLedgerHistory.length, 1);
+  assert.deepEqual(noLedgerHistory, []);
   const noLedgerTargetEnrollments = await db.select({
     id: enrollments.id,
   }).from(enrollments).where(and(
@@ -547,7 +873,7 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     eq(enrollments.sessionId, seeded.targetSession.id),
     eq(enrollments.studentId, noLedgerStudent.id),
   ));
-  assert.equal(noLedgerTargetEnrollments.length, 1);
+  assert.deepEqual(noLedgerTargetEnrollments, []);
   const noLedgerRegistry = await db.select({
     class: students.class,
     section: students.section,
@@ -557,8 +883,8 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     eq(students.id, noLedgerStudent.id),
   ));
   assert.deepEqual(noLedgerRegistry, [{
-    class: "5",
-    section: "A",
+    class: "4",
+    section: "C",
     rollNumber: noLedgerStudent.rollNumber,
   }]);
   const noLedgerSourceEnrollment = await db.select({
@@ -572,8 +898,8 @@ test("Stage 2B keeps source placement/history scoped and rolls back target confl
     eq(enrollments.studentId, noLedgerStudent.id),
   ));
   assert.deepEqual(noLedgerSourceEnrollment, [{
-    className: "5",
-    sectionName: "A",
+    className: "4",
+    sectionName: "C",
     rollNo: noLedgerStudent.rollNumber,
     status: "Active",
   }]);

@@ -18,6 +18,7 @@ export type PromotionReadiness =
   | "ready"
   | "pending"
   | "ineligible"
+  | "blocked"
   | "historical"
   | "executed";
 
@@ -25,6 +26,7 @@ export type PromotionPreviewOutcome =
   | "promoted"
   | "retained"
   | "grace_pass"
+  | "executed"
   | "pending"
   | "review"
   | "historical";
@@ -42,6 +44,14 @@ export interface PromotionPreviewInput {
     targetClass: string;
     targetSection: string;
   } | null;
+  resolved?: {
+    readiness: "ready" | "pending" | "blocked" | "historical" | "executed";
+    finalDecision: {
+      status: "PROMOTE" | "RETAIN" | null;
+      nextClass: string;
+      nextSection: string;
+    } | null;
+  };
   sourceClass: string;
   sourceSection: string;
 }
@@ -52,10 +62,32 @@ export interface PromotionPreview {
 }
 
 export function getPromotionPreview(input: PromotionPreviewInput): PromotionPreview {
+  if (input.resolved) {
+    if (input.resolved.readiness === "historical") {
+      return { outcome: "historical", destination: null };
+    }
+    if (input.resolved.readiness === "pending" || !input.resolved.finalDecision) {
+      return {
+        outcome: input.resolved.readiness === "blocked" ? "review" : "pending",
+        destination: null,
+      };
+    }
+    const destination = {
+      className: input.resolved.finalDecision.nextClass,
+      sectionName: input.resolved.finalDecision.nextSection,
+    };
+    if (input.resolved.readiness === "executed") {
+      return { outcome: "executed", destination };
+    }
+    return {
+      outcome: input.resolved.finalDecision.status === "RETAIN" ? "retained" : "promoted",
+      destination,
+    };
+  }
   if (input.resultStatus === "incomplete" || input.readiness === "pending") {
     return { outcome: "pending", destination: null };
   }
-  if (input.readiness === "ineligible") {
+  if (input.readiness === "ineligible" || input.readiness === "blocked") {
     return { outcome: "review", destination: null };
   }
   if (input.readiness === "historical") {
@@ -111,6 +143,7 @@ export function summarizePromotionPreviews(previews: PromotionPreview[]) {
     promoted: 0,
     retained: 0,
     grace_pass: 0,
+    executed: 0,
     pending: 0,
     review: 0,
     historical: 0,

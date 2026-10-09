@@ -90,6 +90,44 @@ test("a complete eligible Admin override remains authoritative in the preview", 
   });
 });
 
+test("the server-resolved final decision overrides stale client Teacher state in the preview", () => {
+  assert.deepEqual(getPromotionPreview({
+    resultStatus: "complete",
+    readiness: "ready",
+    ledgerDecision: promotedLedger,
+    resolved: {
+      readiness: "ready",
+      finalDecision: { status: "RETAIN", nextClass: "1", nextSection: "b" },
+    },
+    sourceClass: "1",
+    sourceSection: "a",
+  }), {
+    outcome: "retained",
+    destination: { className: "1", sectionName: "b" },
+  });
+});
+
+test("a stale saved proposal remains blocked instead of falling back to the Teacher recommendation", () => {
+  assert.deepEqual(getPromotionPreview({
+    resultStatus: "complete",
+    readiness: "ready",
+    ledgerDecision: promotedLedger,
+    resolved: { readiness: "blocked", finalDecision: null },
+    sourceClass: "1",
+    sourceSection: "a",
+  }), { outcome: "review", destination: null });
+});
+
+test("archived-session decisions remain historical and read-only", () => {
+  assert.deepEqual(getPromotionPreview({
+    resultStatus: "complete",
+    readiness: "historical",
+    resolved: { readiness: "historical", finalDecision: null },
+    sourceClass: "1",
+    sourceSection: "a",
+  }), { outcome: "historical", destination: null });
+});
+
 test("a complete retained Teacher decision stays in the source placement", () => {
   assert.deepEqual(getPromotionPreview({
     resultStatus: "complete",
@@ -114,6 +152,7 @@ test("promotion summary counts Pending and Review separately from promoted and r
     promoted: 1,
     retained: 1,
     grace_pass: 0,
+    executed: 0,
     pending: 1,
     review: 1,
     historical: 0,
