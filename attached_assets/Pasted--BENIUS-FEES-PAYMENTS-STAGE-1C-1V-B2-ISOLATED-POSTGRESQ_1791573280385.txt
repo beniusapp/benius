@@ -1,0 +1,457 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B2 — ISOLATED POSTGRESQL DATABASE VERIFICATION
+### OWNER APPROVED — SYNTHETIC TESTING ONLY — NO BUSINESS LOGIC CHANGES
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner approves Stage 1C-1V-B2, limited to database-backed verification of the existing Stage 1C-1 and Stage 1C-1B implementations.
+
+The primary requirement is:
+
+**DO NOT MODIFY THE EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+This stage must verify historical enrollment placement, fee-list filtering, financial exports, invoices, receipts, and financial invariance using only synthetic data in the separately prepared disposable PostgreSQL environment.
+
+Do not begin Stage 1C-2, Stage 1C-3, or any other implementation.
+
+---
+
+## 1. APPROVED B1 ENVIRONMENT
+
+The previous Stage 1C-1V-B1 report identified:
+
+- PostgreSQL version: 16.10.
+- Database: `benius_fees_1c1v_b1`
+- Role: `benius_fees_1c1v_b1_role`
+- Port: `55432`
+- Private Unix socket directory:
+  `/home/runner/workspace/artifacts/api-server/node_modules/.cache/benius-fees-1c1v-b1/socket`
+- Data directory:
+  `/home/runner/workspace/artifacts/api-server/node_modules/.cache/benius-fees-1c1v-b1/pgdata`
+- Cluster system identifier:
+  `7694745870763171778`
+- Existing fail-closed connection guard: 14/14 tests passed.
+- Cluster status at the end of B1: STOPPED.
+- Application tables at the end of B1: ZERO.
+
+These are expected identities, not proof that the environment still exists.
+
+Before any database operation, independently verify the environment against these values.
+
+If any identity differs, the guard is missing, or the directory was removed, STOP.
+
+Do not recreate the cluster automatically.
+
+Do not substitute another PostgreSQL database.
+
+Do not use the application's existing DATABASE_URL.
+
+## 2. ABSOLUTE SAFETY RESTRICTIONS
+
+PROHIBITED:
+
+1. Connecting to existing Development or Production databases.
+2. Using real school, Student, invoice, payment, or financial records.
+3. Copying existing Development data into the test database.
+4. Modifying existing Development or Production database schemas.
+5. Modifying BENIUS application source code.
+6. Modifying fee structures or invoice-generation logic.
+7. Modifying fee calculations.
+8. Modifying payment-processing logic.
+9. Modifying gateway integrations.
+10. Modifying payment reconciliation or refunds.
+11. Modifying Student Registry or enrollment synchronization logic.
+12. Modifying Academic Session activation, promotion, or retention logic.
+13. Modifying Student Profile.
+14. Modifying Mobile code.
+15. Deploying.
+16. Restarting existing API/Web/Mobile workflows.
+17. Starting financial background jobs.
+18. Calling external payment services.
+19. Running real payment/refund transactions.
+20. Automatically fixing defects discovered during testing.
+
+Only the positively identified disposable database may receive test schema and synthetic records.
+
+## 3. PHASE A — REVALIDATE THE ISOLATED CLUSTER
+
+Perform a fail-closed preflight.
+
+Confirm:
+
+- Exact cluster system identifier.
+- Exact data directory.
+- Exact private Unix socket.
+- Exact database name.
+- Exact test role.
+- Exact non-default port.
+- Unix-socket-only listening.
+- No external TCP listener.
+- Correct filesystem ownership and permissions.
+- No use of existing application connection settings.
+- No Development or Production database connection.
+- No unexpected application tables or existing records.
+
+The isolated PostgreSQL process may be started solely for approved tests.
+
+Do not start or restart the existing BENIUS application workflows.
+
+Before any schema creation or data insertion, run the existing connection guard and confirm that it passes.
+
+Recheck database identity before destructive test cleanup as well.
+
+If any check fails, STOP immediately and report BLOCKED.
+
+## 4. PHASE B — TEST SCHEMA PREPARATION
+
+Only after Phase A passes:
+
+Prepare the minimum application-compatible PostgreSQL schema required for historical Fees & Payments testing.
+
+Use the project's existing schema definitions as the source of truth.
+
+Prefer a narrowly scoped schema setup.
+
+Do not change production schema definitions or generate new application migrations.
+
+If existing migration tooling is required, configure it explicitly for the isolated database and prove its destination before running it.
+
+Never run a migration command with an implicit/default connection.
+
+Do not alter the normal application's environment variables.
+
+Do not copy real data.
+
+All schema changes must remain inside the disposable test database.
+
+If the required schema cannot be prepared safely, STOP and report the blocker.
+
+## 5. PHASE C — SYNTHETIC TEST FIXTURES
+
+Create only synthetic records inside the disposable database.
+
+Prepare:
+
+### School isolation
+
+- School A.
+- School B.
+- Separate synthetic Principals and Students.
+- Distinct school IDs.
+
+### Academic Sessions
+
+- Session 2026–2027.
+- Session 2027–2028.
+- Appropriate active/archived test states.
+
+### Historical enrollment
+
+Student A1:
+
+Session 2026–2027:
+- Class 1.
+- Section A.
+- Roll Number 10.
+
+Session 2027–2028:
+- Class 2.
+- Section A.
+- Roll Number 15.
+
+Current Registry:
+- Class 2.
+- Section A.
+
+### Financial records
+
+Create synthetic:
+
+- Fee structures only where required by schema constraints.
+- Fee records/invoices.
+- Partial payments.
+- Fully paid invoices.
+- Unpaid invoices.
+- Outstanding balances.
+- Payment attempts.
+- Fallback payment records.
+- Refund scenarios, if safely supported.
+- Mismatched payment/invoice sessions.
+- NULL-session legacy fee records.
+
+Also prepare cases for:
+
+- Missing enrollment.
+- Incomplete enrollment.
+- Cross-school mismatches.
+- Cross-Student mismatches.
+- Cross-session mismatches.
+
+For duplicate enrollment ambiguity, use a safe mock or resolver-level test if the unique database constraint prevents duplicate rows.
+
+Do not weaken or remove uniqueness constraints.
+
+Do not run actual invoice-generation or payment-processing operations.
+
+## 6. PHASE D — DATABASE-BACKED HISTORICAL PLACEMENT TESTS
+
+Verify that historical placement resolves using:
+
+**Authenticated School ID + Fee Record Student ID + Fee Record Academic Session ID**
+
+Expected:
+
+| Scenario | Expected result |
+|---|---|
+| 2026–2027 invoice | Class 1-A |
+| 2027–2028 invoice | Class 2-A |
+| Current Registry Class 2-A | Does not override historical Class 1-A |
+| Missing enrollment | Historical placement unavailable |
+| NULL fee-record session | No guessed placement |
+| Cross-school enrollment | Rejected |
+| Cross-Student enrollment | Rejected |
+| Cross-session enrollment | Rejected |
+| Incomplete enrollment | Unavailable |
+
+Confirm that historical joins do not duplicate financial records.
+
+## 7. PHASE E — PRINCIPAL FEE LIST AND FILTERS
+
+Execute database-backed tests for:
+
+- `GET /api/admin/fees/filter-options`
+- `GET /api/admin/fees`
+
+Use synthetic authenticated school/session context.
+
+Verify:
+
+1. Class options match historical enrollment.
+2. Section options match historical enrollment.
+3. Historical Class 1 filter includes the correct invoice.
+4. Historical Class 2 filter excludes it.
+5. Current-session Class 2 filter includes the appropriate invoice.
+6. Missing enrollment remains visible unfiltered.
+7. Missing enrollment is excluded from named placement filters.
+8. No cross-school fee records are returned.
+9. No cross-session fee records are returned.
+10. Filtered counts are correct.
+11. Pagination is correct.
+12. Sorting remains unchanged.
+13. No duplicate rows occur.
+14. Financial amounts and statuses are unchanged.
+
+Use the real query implementations where safely possible.
+
+If only helper-level database queries are exercised, distinguish that from actual authenticated API route verification.
+
+## 8. PHASE F — LEDGER CSV AND PDF VERIFICATION
+
+Test actual generated outputs where safely possible.
+
+Routes:
+
+- `GET/POST /api/admin/fees/export-ledger`
+- `GET/POST /api/admin/fees/ledger/pdf`
+
+Verify:
+
+- Historical Class/Section filtering.
+- Historical placement labels.
+- Same selected Academic Session.
+- School isolation.
+- Unresolved placement handling.
+- Unchanged CSV column structure.
+- Unchanged PDF report structure.
+- Unchanged invoice amounts.
+- Unchanged paid amounts.
+- Unchanged outstanding balances.
+- Unchanged payment statuses.
+- Unchanged existing row-selection semantics.
+
+For CSV, inspect parsed output.
+
+For PDF, verify generated content using safe local inspection.
+
+If PDF text extraction is unavailable, report that limitation instead of claiming successful content verification.
+
+## 9. PHASE G — PAYMENT PDF VERIFICATION
+
+Route:
+
+`GET/POST /api/admin/fees/payments/report/pdf`
+
+Verify:
+
+- Historical placement uses the linked fee record's session.
+- Class/Section filters select the correct invoice population.
+- Payment attempts are preserved.
+- Fallback payment records are preserved.
+- Existing deduplication behavior is preserved.
+- Refund aggregation is preserved.
+- Existing transaction ordering is preserved.
+- Existing financial values are preserved.
+- Payment/fee session mismatch warnings appear.
+- NULL payment-side session warnings appear where expected.
+- No session mismatch is silently repaired.
+
+The payment PDF's transaction-row count may differ from the fee-list invoice count.
+
+Do not change the report's existing transaction-selection rules.
+
+## 10. PHASE H — STAGE 1C-1 DOCUMENT VERIFICATION
+
+Test the previously implemented document/detail corrections:
+
+- Principal invoice HTML.
+- Principal invoice PDF.
+- Principal payment receipt.
+- Principal fee-record receipt.
+- Principal transaction detail.
+- Printable transaction detail.
+- Student invoice.
+- Student receipt.
+
+Verify:
+
+- Correct historical Class/Section.
+- Missing enrollment displays unavailable.
+- No current Registry fallback.
+- Correct school/session isolation.
+- Existing document values remain unchanged.
+
+Do not change existing document authorization behavior.
+
+Stage 1C-3 remains separate.
+
+## 11. PHASE I — FINANCIAL BEFORE/AFTER COMPARISON
+
+This is mandatory for a full PASS.
+
+Use deterministic synthetic fixtures.
+
+Compare the current implementation against the relevant pre-placement-change baseline where feasible.
+
+Use a separate read-only source checkout or isolated test harness; do not reset or overwrite the current project.
+
+Verify unchanged:
+
+- Unfiltered invoice IDs and counts.
+- Unfiltered payment populations.
+- Invoice amounts.
+- Paid amounts.
+- Outstanding balances.
+- Discounts.
+- Late fees.
+- Payment statuses.
+- Payment attempts.
+- Fallback records.
+- Refund aggregation.
+- Transaction deduplication.
+- Financial totals.
+- Existing ordering.
+
+Historical placement labels and named Class/Section filter results are the expected differences.
+
+Do not compare historical filters as though their corrected populations must equal the old Registry-based populations.
+
+If full baseline comparison is unavailable, report PARTIAL PASS and list precisely what was compared.
+
+## 12. PHASE J — AUTHENTICATED UI CHECKS
+
+Only if a fully isolated local API/Web instance can be launched without restarting or altering existing workflows:
+
+Use synthetic Principal and Student accounts.
+
+Verify:
+
+- Principal selects 2026–2027.
+- Principal Fees shows Class 1-A.
+- Class 1/Section A filters work.
+- Ledger CSV downloads correctly.
+- Ledger PDF downloads correctly.
+- Payment PDF downloads correctly.
+- Principal invoices and receipts show historical placement.
+- Principal switches to 2027–2028.
+- Class 2-A appears.
+- Archived session remains read-only.
+- Student documents use the correct session placement.
+
+Do not connect the isolated application instance to existing Development or Production databases.
+
+Do not call real payment gateways.
+
+If isolated UI testing cannot be safely established, mark UI verification NOT VERIFIED.
+
+Do not claim UI PASS based only on API/helper tests.
+
+## 13. TEST FAILURE POLICY
+
+If any test fails:
+
+1. Capture the exact failing scenario.
+2. Record the affected file/function.
+3. Explain the expected and actual behavior.
+4. Determine whether the issue affects financial values, isolation, or placement only.
+5. Preserve test evidence.
+6. STOP the affected test path.
+7. Request owner approval before modifying application code.
+
+Do not automatically fix defects.
+
+Do not modify existing financial business logic.
+
+## 14. REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall result: PASS / PARTIAL PASS / FAIL / BLOCKED.
+2. Cluster revalidation result.
+3. Database identity and isolation evidence.
+4. Test schema setup result.
+5. Synthetic fixture summary.
+6. Historical placement database tests.
+7. Principal fee-list route tests.
+8. Filter-options route tests.
+9. Pagination/count/sorting tests.
+10. Ledger CSV generation results.
+11. Ledger PDF generation results.
+12. Payment PDF generation results.
+13. Payment attempts/fallback/dedup results.
+14. Refund aggregation results.
+15. Session mismatch warning results.
+16. Principal document verification.
+17. Student document verification.
+18. Financial before/after comparisons.
+19. Tenant isolation verification.
+20. Academic Session isolation verification.
+21. Archived-session verification.
+22. Authenticated UI verification.
+23. Tests passed/failed/not run.
+24. Any discovered defect.
+25. Application source files modified: expected NONE.
+26. Test-only files created, if any.
+27. Existing Development records accessed: expected NO.
+28. Existing Development records modified: expected NO.
+29. Production accessed: expected NO.
+30. Deployment performed: expected NO.
+31. Financial transactions initiated: expected NONE.
+32. Existing workflows restarted: expected NO.
+33. Remaining verification gaps.
+34. Recommendation on whether Stage 1C-1 and Stage 1C-1B are ready for acceptance.
+
+## 15. MANDATORY STOP
+
+After completing Stage 1C-1V-B2:
+
+**STOP AND WAIT FOR OWNER REVIEW.**
+
+Do not modify BENIUS application code.
+
+Do not fix discovered defects without approval.
+
+Do not start Stage 1C-2 or Stage 1C-3.
+
+Do not deploy.
+
+Do not modify existing Development or Production financial records.
