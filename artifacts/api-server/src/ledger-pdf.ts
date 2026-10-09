@@ -14,8 +14,6 @@
  */
 
 import PDFDocument from "pdfkit";
-import https from "https";
-import http from "http";
 import { normalizePaymentMethod } from "@shared/payment-method";
 import { formatDateOnly, dateOnlyParts } from "@shared/ist-time";
 
@@ -45,23 +43,6 @@ const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
 };
 function pillStyle(status: string) {
   return STATUS_STYLE[status] ?? { bg: "#e5e7eb", fg: "#374151" };
-}
-
-// ── Network helpers ───────────────────────────────────────────────────────────
-function fetchBuffer(url: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith("https") ? https : http;
-    mod.get(url, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data",  (c: Buffer) => chunks.push(c));
-      res.on("end",   ()          => resolve(Buffer.concat(chunks)));
-      res.on("error", reject);
-    }).on("error", reject);
-  });
-}
-async function safeImage(url: string | null): Promise<Buffer | null> {
-  if (!url) return null;
-  try { return await fetchBuffer(url); } catch { return null; }
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -261,7 +242,7 @@ export interface LedgerRow {
 export interface LedgerPdfInput {
   school: {
     name:         string;
-    logoUrl:      string | null;
+    logoData:     Buffer | null;
     addressLine1: string | null;
     addressLine2: string | null;
     city:         string | null;
@@ -362,7 +343,7 @@ function wrapToLines(
 
 // ── Main export ───────────────────────────────────────────────────────────────
 export async function renderLedgerPdf(input: LedgerPdfInput): Promise<Buffer> {
-  const logoBuffer = await safeImage(input.school.logoUrl);
+  const logoBuffer = input.school.logoData;
 
   const doc = new PDFDocument({ size: "A4", layout: "landscape", margin: 0, autoFirstPage: false });
   doc.registerFont("Reg",  FONT_REG);

@@ -77,6 +77,7 @@ import {
 } from "./financial-analytics-pdf";
 
 import { renderLedgerPdf, type LedgerRow } from "./ledger-pdf";
+import { resolveLedgerPdfLogo } from "./ledger-pdf-logo";
 import { renderTransactionPdf } from "./transaction-pdf";
 import { loadTransactionDetailData } from "./transaction-detail-data";
 import {
@@ -5615,15 +5616,12 @@ export function registerFeesRoutes(app: Express) {
         sessionLabel = sess?.session_name ?? null;
       }
 
-      const logoRelUrl = schoolRow?.logo_url ?? null;
-      const logoUrl = logoRelUrl
-        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
-        : null;
+      const logoData = await resolveLedgerPdfLogo(schoolRow?.logo_url ?? null, schoolId);
 
       // Backward-compatible renderer metadata: summarize first selected value or joined labels.
       const pdfBuffer = await renderLedgerPdf({
         school: {
-          name: schoolRow?.name ?? "School", logoUrl,
+          name: schoolRow?.name ?? "School", logoData,
           addressLine1: schoolRow?.address_line1 ?? null,
           addressLine2: schoolRow?.address_line2 ?? null,
           city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
@@ -5811,15 +5809,12 @@ export function registerFeesRoutes(app: Express) {
         sessionLabel = sess?.session_name ?? null;
       }
 
-      const logoRelUrl = schoolRow?.logo_url ?? null;
-      const logoUrl = logoRelUrl
-        ? (/^https?:\/\//i.test(logoRelUrl) ? logoRelUrl : `${req.protocol}://${req.get("host")}${logoRelUrl}`)
-        : null;
+      const logoData = await resolveLedgerPdfLogo(schoolRow?.logo_url ?? null, schoolId);
 
       // Backward-compatible renderer metadata: summarize first selected value or joined labels.
       const pdfBuffer = await renderLedgerPdf({
         school: {
-          name: schoolRow?.name ?? "School", logoUrl,
+          name: schoolRow?.name ?? "School", logoData,
           addressLine1: schoolRow?.address_line1 ?? null,
           addressLine2: schoolRow?.address_line2 ?? null,
           city: schoolRow?.city ?? null, state: schoolRow?.state ?? null,
