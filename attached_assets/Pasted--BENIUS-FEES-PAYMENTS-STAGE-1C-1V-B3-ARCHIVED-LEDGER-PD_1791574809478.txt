@@ -1,0 +1,355 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B3 — ARCHIVED LEDGER PDF POST AUTHORIZATION AUDIT
+### OWNER APPROVED — READ-ONLY SOURCE AUDIT ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner authorizes Stage 1C-1V-B3 strictly for a read-only investigation of the archived-session Ledger PDF POST failure discovered during Stage 1C-1V-B2.
+
+**DO NOT IMPLEMENT ANY FIXES. DO NOT CHANGE EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+## 1. BACKGROUND
+
+Stage 1C-1V-B2 performed database-backed verification using a disposable PostgreSQL environment.
+
+Results:
+
+- 16 route checks passed.
+- 1 route check failed.
+- Historical Class/Section placement passed.
+- Principal fee list and filters passed.
+- Ledger CSV GET/POST passed.
+- Ledger PDF GET passed.
+- Payment PDF GET/POST passed.
+- Principal and Student document checks passed.
+- Financial before/after projections matched.
+
+The remaining failure:
+
+`POST /api/admin/fees/ledger/pdf`
+
+When the selected Academic Session is archived, this endpoint returns:
+
+`403 ARCHIVE_READ_ONLY`
+
+However:
+
+`GET /api/admin/fees/ledger/pdf`
+
+successfully generates the archived-session Ledger PDF.
+
+The POST endpoint is used for selection-aware PDF exports.
+
+We need to determine whether the POST request is being incorrectly treated as a financial write operation.
+
+## 2. OWNER'S REQUIRED BUSINESS BEHAVIOR
+
+Archived Academic Sessions must remain read-only.
+
+Principals should be able to view and download authorized historical financial documents.
+
+Permitted archived-session operations may include:
+
+- Viewing historical invoices.
+- Viewing historical payments.
+- Viewing historical fee ledgers.
+- Downloading historical financial reports.
+- Downloading historical Ledger PDFs.
+- Exporting authorized historical financial records.
+
+Prohibited archived-session operations include:
+
+- Generating new invoices.
+- Editing invoices.
+- Modifying fee amounts.
+- Recording payments.
+- Changing payment statuses.
+- Processing refunds.
+- Modifying financial balances.
+- Modifying Student Registry or enrollments.
+- Changing archived-session financial data.
+
+**Important:** Do not assume a POST endpoint is safe merely because it generates a PDF. Verify the actual implementation and every relevant call path.
+
+## 3. PHASE A — EXACT ROUTE INSPECTION
+
+Inspect both endpoints:
+
+- `GET /api/admin/fees/ledger/pdf`
+- `POST /api/admin/fees/ledger/pdf`
+
+The previous audit identified these approximate locations:
+
+`artifacts/api-server/src/fees-routes.ts`
+
+- GET around line 5491.
+- POST around line 5656.
+
+Use the current source to establish exact line numbers.
+
+For each endpoint, identify:
+
+1. Authentication middleware.
+2. Principal/Admin authorization.
+3. School/tenant identity source.
+4. Academic Session selection.
+5. Archived-session checks.
+6. Middleware order.
+7. Request parameters.
+8. Selection-aware invoice ID handling.
+9. Financial data queries.
+10. PDF generation calls.
+11. Any database writes.
+12. Any external service calls.
+13. Error handling.
+14. Response behavior.
+
+Provide exact file, function and line references.
+
+## 4. PHASE B — TRACE THE 403 ERROR
+
+Determine precisely where:
+
+`ARCHIVE_READ_ONLY`
+
+is produced.
+
+Identify:
+
+- The middleware or function producing the response.
+- Whether it is attached directly to the POST route.
+- Whether it is inherited from a shared router.
+- Whether it checks the HTTP method rather than the operation's actual behavior.
+- Whether the POST route uses a general financial write guard.
+- Whether the GET route uses a different session guard.
+- Whether the 403 occurs before or after invoice selection validation.
+- Whether any other session-related error could be involved.
+
+Do not remove, bypass or modify the guard.
+
+## 5. PHASE C — READ-ONLY SIDE-EFFECT AUDIT
+
+Trace the complete POST route and all called helpers.
+
+Determine whether it performs:
+
+- INSERT.
+- UPDATE.
+- DELETE.
+- UPSERT.
+- Database transaction writes.
+- Audit-log writes.
+- Receipt-number generation.
+- Invoice-number generation.
+- Payment-state updates.
+- Fee-record updates.
+- Payment reconciliation.
+- Refund processing.
+- External API calls.
+- Background job dispatch.
+- Persistent file or object-storage writes.
+- Any other durable side effects.
+
+Distinguish harmless in-memory PDF rendering from persistent changes.
+
+Do not assume that a helper is read-only based on its name.
+
+If any write or external side effect exists, identify it clearly and do not recommend removing the archived-session guard without a separate design.
+
+## 6. PHASE D — SCHOOL AND SESSION ISOLATION
+
+Inspect how the POST route validates selected invoice IDs.
+
+Verify that:
+
+1. The authenticated Principal belongs to the correct school.
+2. The selected Academic Session is explicit and validated.
+3. Every selected fee record belongs to the authenticated school.
+4. Every selected fee record belongs to the selected Academic Session.
+5. A foreign-school invoice cannot be exported.
+6. An invoice from another Academic Session cannot be exported.
+7. Invalid or inaccessible invoice IDs cannot expose financial data.
+8. Missing or malformed selection parameters fail safely.
+9. Empty selections have defined behavior.
+10. The export cannot bypass existing authorization.
+
+Check whether the route validates all selected IDs or silently ignores unauthorized IDs.
+
+Record the current behavior; do not change it.
+
+## 7. PHASE E — GET VERSUS POST COMPARISON
+
+Compare the two Ledger PDF routes.
+
+Determine:
+
+- Whether they share the same report builder.
+- Whether they use the same financial queries.
+- Whether they use the same historical placement resolver.
+- Whether they apply the same school/session restrictions.
+- Whether they calculate financial totals identically.
+- Whether POST adds only selected invoice IDs.
+- Whether GET and POST have different report populations by design.
+- Whether archived-session authorization differs.
+- Whether their error behavior differs.
+
+Do not assume both endpoints should return identical rows.
+
+POST may legitimately return only the selected invoice population.
+
+## 8. PHASE F — SHARED GUARD IMPACT ANALYSIS
+
+Identify the archived-session middleware or helper used by the POST route.
+
+Determine whether it is shared with:
+
+- Invoice generation.
+- Invoice editing.
+- Payment processing.
+- Refunds.
+- Fee-structure updates.
+- Other financial mutations.
+- Other read-only export endpoints.
+
+**Never recommend weakening a shared archived-session guard globally.**
+
+If the POST endpoint is genuinely read-only, propose the smallest route-specific authorization adjustment that preserves protection for all financial write endpoints.
+
+Do not implement the adjustment.
+
+## 9. PHASE G — WEB CALLER INSPECTION
+
+Inspect the Principal Web Ledger PDF export action.
+
+Relevant source:
+
+`artifacts/benius-web/src/pages/admin-modules/fees-manager.tsx`
+
+Identify:
+
+- When GET is used.
+- When POST is used.
+- How selected fee IDs are supplied.
+- How the selected Academic Session is supplied.
+- Whether the request includes the appropriate session header.
+- Whether the Principal can select archived-session invoices.
+- Whether the UI correctly handles `403 ARCHIVE_READ_ONLY`.
+- Whether the UI could accidentally submit IDs from another session.
+
+Do not modify the Web UI.
+
+## 10. PHASE H — RECOMMENDED MINIMAL FIX DESIGN
+
+After completing the read-only investigation, provide a recommendation.
+
+If the POST endpoint is proven read-only and properly scoped, describe a minimal route-specific fix that:
+
+- Allows authorized archived-session Ledger PDF downloads.
+- Preserves authenticated Principal authorization.
+- Preserves school/tenant isolation.
+- Preserves selected Academic Session enforcement.
+- Preserves selected invoice-ID validation.
+- Preserves archived-session write protection.
+- Preserves financial calculations.
+- Preserves existing report content and structure.
+- Does not change invoice or payment records.
+- Does not affect unrelated routes.
+
+If selected-ID validation is insufficient, identify the additional protection required before archived-session access can safely be enabled.
+
+If the POST endpoint performs writes, explain why the guard must remain and propose a separate read-only design.
+
+**DESIGN ONLY. NO IMPLEMENTATION.**
+
+## 11. PROPOSED REGRESSION TESTS
+
+Recommend focused tests for:
+
+1. Active-session Ledger PDF GET.
+2. Active-session Ledger PDF POST.
+3. Archived-session Ledger PDF GET.
+4. Archived-session Ledger PDF POST.
+5. Valid selected invoice IDs.
+6. Foreign-school selected invoice IDs.
+7. Foreign-session selected invoice IDs.
+8. Invalid selected invoice IDs.
+9. Empty selections.
+10. Mixed authorized and unauthorized selections.
+11. Historical Class/Section placement.
+12. Correct financial totals.
+13. No financial database writes.
+14. No persistent side effects.
+15. Archived-session invoice edits remain blocked.
+16. Archived-session payment modifications remain blocked.
+17. Existing payment/refund guards remain unchanged.
+18. Existing Stage 1C-1B export behavior remains intact.
+
+Use the earlier isolated database findings as context, but do not run new database-backed tests in this audit.
+
+## 12. STRICT OPERATIONAL RESTRICTIONS
+
+This stage is READ-ONLY.
+
+Do not:
+
+- Modify application source files.
+- Modify tests.
+- Modify database schema.
+- Insert, update or delete records.
+- Start PostgreSQL.
+- Connect to any database.
+- Start or restart application workflows.
+- Run migrations.
+- Generate invoices.
+- Process payments or refunds.
+- Call external payment services.
+- Deploy.
+- Begin Stage 1C-2 or Stage 1C-3.
+- Implement the proposed fix.
+
+The disposable PostgreSQL environment must remain untouched.
+
+## 13. REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall audit result: SAFE TO PROPOSE FIX / NEEDS FURTHER DESIGN / BLOCKED.
+2. Exact GET route location.
+3. Exact POST route location.
+4. Exact source of `403 ARCHIVE_READ_ONLY`.
+5. Middleware execution order.
+6. Whether POST performs any persistent writes.
+7. Whether POST calls external services.
+8. School/tenant authorization assessment.
+9. Academic Session enforcement assessment.
+10. Selected invoice-ID validation assessment.
+11. GET versus POST differences.
+12. Shared archived-session guard consumers.
+13. Web caller behavior.
+14. Whether the POST route is genuinely read-only.
+15. Whether a route-specific authorization correction is safe.
+16. Minimal proposed fix with exact file/function references.
+17. Risks and edge cases.
+18. Required regression tests.
+19. Application source files modified: expected NONE.
+20. Database connections: expected NONE.
+21. Database records modified: expected NONE.
+22. Production accessed: expected NO.
+23. Workflows restarted: expected NO.
+24. Deployment performed: expected NO.
+25. Financial transactions initiated: expected NONE.
+26. Recommended next step.
+
+## 14. MANDATORY STOP
+
+After the read-only audit:
+
+**STOP AND WAIT FOR OWNER APPROVAL.**
+
+Do not implement any changes.
+
+Do not remove archived-session protections.
+
+Do not begin another stage.
+
+The owner must review and explicitly approve any proposed fix before implementation.
