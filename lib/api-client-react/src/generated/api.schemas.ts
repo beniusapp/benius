@@ -231,3 +231,138 @@ export interface HomeworkReviewResult {
   teacherComment: string | null;
 }
 
+export type ExaminationResultStatus = typeof ExaminationResultStatus[keyof typeof ExaminationResultStatus];
+
+
+export const ExaminationResultStatus = {
+  complete: 'complete',
+  incomplete: 'incomplete',
+} as const;
+
+export interface ExaminationGrade {
+  label: string;
+  /** @nullable */
+  remarks: string | null;
+}
+
+export type ExaminationComponentResultStatus = typeof ExaminationComponentResultStatus[keyof typeof ExaminationComponentResultStatus];
+
+
+export const ExaminationComponentResultStatus = {
+  scored: 'scored',
+  absent: 'absent',
+  missing: 'missing',
+} as const;
+
+export interface ExaminationComponentResult {
+  sourceExam: string;
+  weight: number;
+  /** @nullable */
+  marks: number | null;
+  /** @nullable */
+  totalMarks: number | null;
+  isAbsent: boolean;
+  /** @nullable */
+  pct: number | null;
+  /** @nullable */
+  contribution: number | null;
+  status: ExaminationComponentResultStatus;
+}
+
+export type ExaminationSubjectResultStatus = typeof ExaminationSubjectResultStatus[keyof typeof ExaminationSubjectResultStatus];
+
+
+export const ExaminationSubjectResultStatus = {
+  scored: 'scored',
+  absent: 'absent',
+  incomplete: 'incomplete',
+} as const;
+
+export interface ExaminationSubjectResult {
+  subject: string;
+  /** @nullable */
+  percentage: number | null;
+  /** @nullable */
+  passed: boolean | null;
+  grade: ExaminationGrade | null;
+  breakdown: ExaminationComponentResult[];
+  status: ExaminationSubjectResultStatus;
+}
+
+export type ExaminationResultRecordTermResults = {[key: string]: ExaminationSubjectResult[]};
+
+export type ExaminationResultRecordTermAverages = {[key: string]: number | null};
+
+export type ExaminationResultRecordTermGrades = {[key: string]: ExaminationGrade | null};
+
+export type ExaminationResultRecordAllTermFailCounts = {[key: string]: number | null};
+
+export type ExaminationResultRecordResultStatusByTerm = {[key: string]: ExaminationResultStatus};
+
+export interface ExaminationResultRecord {
+  schoolId: number;
+  /** @nullable */
+  sessionId: number | null;
+  studentId: number;
+  name: string;
+  digitalStudentId: string;
+  /** @nullable */
+  rollNumber: number | null;
+  termResults: ExaminationResultRecordTermResults;
+  termAverages: ExaminationResultRecordTermAverages;
+  termGrades: ExaminationResultRecordTermGrades;
+  /** @nullable */
+  cumulativePercentage: number | null;
+  cumulativeGrade: ExaminationGrade | null;
+  allTermFailCounts: ExaminationResultRecordAllTermFailCounts;
+  /** @nullable */
+  attendancePct: number | null;
+  resultStatus: ExaminationResultStatus;
+  resultStatusByTerm: ExaminationResultRecordResultStatusByTerm;
+  /** @nullable */
+  promoted: boolean | null;
+  promotionReason: string;
+  detentionViolations: string[];
+}
+
+export interface ClassExaminationResultsResponse {
+  schoolId: number;
+  sessionId: number;
+  className: string;
+  sectionName: string;
+  terms: string[];
+  selectedTerm: string;
+  promotionAssessmentAvailable: boolean;
+  results: ExaminationResultRecord[];
+}
+
+export type StudentExaminationResultTermResults = {[key: string]: ExaminationSubjectResult[]};
+
+export type StudentExaminationResultTermAverages = {[key: string]: number | null};
+
+export type StudentExaminationResultTermGrades = {[key: string]: ExaminationGrade | null};
+
+export type StudentExaminationResultAllTermFailCounts = {[key: string]: number | null};
+
+export type StudentExaminationResultResultStatusByTerm = {[key: string]: ExaminationResultStatus};
+
+export interface StudentExaminationResult {
+  studentId: number;
+  termResults: StudentExaminationResultTermResults;
+  termAverages: StudentExaminationResultTermAverages;
+  termGrades: StudentExaminationResultTermGrades;
+  allTermFailCounts: StudentExaminationResultAllTermFailCounts;
+  resultStatusByTerm: StudentExaminationResultResultStatusByTerm;
+  /** @nullable */
+  attendancePct: number | null;
+}
+
+export interface StudentExaminationResultsResponse {
+  schoolId: number;
+  sessionId: number;
+  className: string;
+  sectionName: string;
+  terms: string[];
+  result: StudentExaminationResult;
+}
+

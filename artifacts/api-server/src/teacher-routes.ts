@@ -1,5 +1,10 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import { storage, evaluatePromotion, AttendanceLeaveMutationError } from "./storage";
+import {
+  examinationResultsErrorMessage,
+  examinationResultsErrorStatus,
+  getClassExaminationResults,
+} from "./examination-results-service";
 import bcrypt from "bcryptjs";
 import { z } from "zod/v4";
 import multer from "multer";
@@ -6141,6 +6146,28 @@ Thank you for your prompt attention to this matter.
     } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
   });
 
+  app.get("/api/admin/analytics/examination-results/:class/:section/:term", async (req, res): Promise<void> => {
+    if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
+    const selectedSession = await requireAdminPromotionSession(req, res, "read");
+    if (!selectedSession) return;
+    const schoolId = req.session.schoolId!;
+    try {
+      const result = await getClassExaminationResults({
+        schoolId,
+        sessionId: selectedSession.sessionId,
+        className: decodeURIComponent(req.params.class),
+        sectionName: decodeURIComponent(req.params.section),
+        selectedTerm: decodeURIComponent(req.params.term),
+      }, false);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(result);
+    } catch (error) {
+      const status = examinationResultsErrorStatus(error);
+      if (status === 500) req.log.error({ err: error }, "Failed to calculate Principal examination results");
+      res.status(status).json({ message: examinationResultsErrorMessage(error) });
+    }
+  });
+
   app.get("/api/admin/analytics/exam-policy/:class", async (req, res) => {
     if (!requireAdminModuleAccess(req, res, "analytics", "Performance Analytics")) return;
     const schoolId = req.session.schoolId!;
@@ -6900,6 +6927,26 @@ Thank you for your prompt attention to this matter.
       }));
       res.json(results);
     } catch { res.status(500).json({ message: "Failed to fetch class scores" }); }
+  });
+
+  app.get("/api/teacher/examination-results/:class/:section/:term", async (req, res): Promise<void> => {
+    const context = await resolveTeacherExaminationContext(req, res);
+    if (!context) return;
+    try {
+      const result = await getClassExaminationResults({
+        schoolId: context.schoolId,
+        sessionId: context.sessionId,
+        className: decodeURIComponent(req.params.class),
+        sectionName: decodeURIComponent(req.params.section),
+        selectedTerm: decodeURIComponent(req.params.term),
+      }, true);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(result);
+    } catch (error) {
+      const status = examinationResultsErrorStatus(error);
+      if (status === 500) req.log.error({ err: error }, "Failed to calculate Teacher examination results");
+      res.status(status).json({ message: examinationResultsErrorMessage(error) });
+    }
   });
 
   app.get("/api/teacher/attendance-summary/:class/:section", async (req, res) => {

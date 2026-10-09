@@ -25,11 +25,13 @@ import type {
   AdminExamControllerContext,
   AdminNoticeboardContext,
   AdminTimetableContext,
+  ClassExaminationResultsResponse,
   HealthStatus,
   HomeworkReviewInput,
   HomeworkReviewResult,
   MobileTeacherFirstLoginPasswordChange,
   MobileTeacherFirstLoginPasswordChanged,
+  StudentExaminationResultsResponse,
   StudentHomeworkViewResult,
   StudentModuleDotStateResponse,
   StudentModuleSeenInput,
@@ -952,6 +954,260 @@ export const useMarkTeacherModuleSeen = <TError = ErrorType<void>,
       > => {
       return useMutation(getMarkTeacherModuleSeenMutationOptions(options));
     }
+
+export const getGetTeacherExaminationResultsUrl = (_class: string,
+    section: string,
+    term: string,) => {
+
+
+
+
+  return `/api/teacher/examination-results/${_class}/${section}/${term}`
+}
+
+/**
+ * Read-only. Teacher school and selected Academic Session are validated server-side; roster and marks are limited to the exact enrolled class and section.
+ * @summary Calculate Teacher Results through the authoritative examination engine
+ */
+export const getTeacherExaminationResults = async (_class: string,
+    section: string,
+    term: string, options?: Parameters<typeof customFetch>[1]): Promise<ClassExaminationResultsResponse> => {
+
+  return customFetch<ClassExaminationResultsResponse>(getGetTeacherExaminationResultsUrl(_class,section,term),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetTeacherExaminationResultsQueryKey = (_class: string,
+    section: string,
+    term: string,) => {
+    return [
+    `/api/teacher/examination-results/${_class}/${section}/${term}`
+    ] as const;
+    }
+
+
+export const getGetTeacherExaminationResultsQueryOptions = <TData = Awaited<ReturnType<typeof getTeacherExaminationResults>>, TError = ErrorType<void>>(_class: string,
+    section: string,
+    term: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTeacherExaminationResultsQueryKey(_class,section,term);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTeacherExaminationResults>>> = ({ signal }) => getTeacherExaminationResults(_class,section,term, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: _class !== null && _class !== undefined && section !== null && section !== undefined && term !== null && term !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTeacherExaminationResults>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTeacherExaminationResultsQueryResult = NonNullable<Awaited<ReturnType<typeof getTeacherExaminationResults>>>
+export type GetTeacherExaminationResultsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Calculate Teacher Results through the authoritative examination engine
+ */
+
+export function useGetTeacherExaminationResults<TData = Awaited<ReturnType<typeof getTeacherExaminationResults>>, TError = ErrorType<void>>(
+ _class: string,
+    section: string,
+    term: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getTeacherExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetTeacherExaminationResultsQueryOptions(_class,section,term,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAdminExaminationResultsUrl = (_class: string,
+    section: string,
+    term: string,) => {
+
+
+
+
+  return `/api/admin/analytics/examination-results/${_class}/${section}/${term}`
+}
+
+/**
+ * Read-only. Requires Performance Analytics access and the explicit selected Academic Session; includes unpublished marks for the exact enrolled cohort.
+ * @summary Calculate Principal Results through the authoritative examination engine
+ */
+export const getAdminExaminationResults = async (_class: string,
+    section: string,
+    term: string, options?: Parameters<typeof customFetch>[1]): Promise<ClassExaminationResultsResponse> => {
+
+  return customFetch<ClassExaminationResultsResponse>(getGetAdminExaminationResultsUrl(_class,section,term),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAdminExaminationResultsQueryKey = (_class: string,
+    section: string,
+    term: string,) => {
+    return [
+    `/api/admin/analytics/examination-results/${_class}/${section}/${term}`
+    ] as const;
+    }
+
+
+export const getGetAdminExaminationResultsQueryOptions = <TData = Awaited<ReturnType<typeof getAdminExaminationResults>>, TError = ErrorType<void>>(_class: string,
+    section: string,
+    term: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAdminExaminationResultsQueryKey(_class,section,term);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAdminExaminationResults>>> = ({ signal }) => getAdminExaminationResults(_class,section,term, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: _class !== null && _class !== undefined && section !== null && section !== undefined && term !== null && term !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAdminExaminationResults>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAdminExaminationResultsQueryResult = NonNullable<Awaited<ReturnType<typeof getAdminExaminationResults>>>
+export type GetAdminExaminationResultsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Calculate Principal Results through the authoritative examination engine
+ */
+
+export function useGetAdminExaminationResults<TData = Awaited<ReturnType<typeof getAdminExaminationResults>>, TError = ErrorType<void>>(
+ _class: string,
+    section: string,
+    term: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAdminExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAdminExaminationResultsQueryOptions(_class,section,term,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetStudentExaminationResultsUrl = () => {
+
+
+
+
+  return `/api/student/exam/results`
+}
+
+/**
+ * Student identity, school, and class/section are derived server-side from the exact selected-session Enrollment. Only published marks are included; the response excludes promotion recommendations and Principal decisions.
+ * @summary Calculate the authenticated Student's published Results
+ */
+export const getStudentExaminationResults = async ( options?: Parameters<typeof customFetch>[1]): Promise<StudentExaminationResultsResponse> => {
+
+  return customFetch<StudentExaminationResultsResponse>(getGetStudentExaminationResultsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStudentExaminationResultsQueryKey = () => {
+    return [
+    `/api/student/exam/results`
+    ] as const;
+    }
+
+
+export const getGetStudentExaminationResultsQueryOptions = <TData = Awaited<ReturnType<typeof getStudentExaminationResults>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudentExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStudentExaminationResultsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStudentExaminationResults>>> = ({ signal }) => getStudentExaminationResults({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStudentExaminationResults>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStudentExaminationResultsQueryResult = NonNullable<Awaited<ReturnType<typeof getStudentExaminationResults>>>
+export type GetStudentExaminationResultsQueryError = ErrorType<void>
+
+
+/**
+ * @summary Calculate the authenticated Student's published Results
+ */
+
+export function useGetStudentExaminationResults<TData = Awaited<ReturnType<typeof getStudentExaminationResults>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudentExaminationResults>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStudentExaminationResultsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getRecordStudentHomeworkViewUrl = (id: number,) => {
 

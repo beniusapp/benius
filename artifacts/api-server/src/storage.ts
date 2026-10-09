@@ -161,7 +161,7 @@ function normalizeStoredGradingRule(rule: StoredGradingRule): GradingRule {
   return { ...rule, minPercent, maxPercent };
 }
 
-function parseStoredPromotionRules(raw: string, rawResultsConfig: string): {
+export function parseStoredPromotionRules(raw: string, rawResultsConfig: string): {
   ruleTermAverage?: { enabled: boolean; minPct: number };
   cumulativeConfig?: {
     enabled: boolean;
@@ -1859,6 +1859,37 @@ export class DatabaseStorage {
       ))
       .orderBy(enrollments.rollNo, students.digitalStudentId);
     return rows.map(row => row.student);
+  }
+
+  async getExaminationResultsRosterForSession(
+    schoolId: number,
+    sessionId: number,
+    cls: string,
+    section: string,
+  ): Promise<Array<{ student: Student; rollNumber: number | null }>> {
+    const session = await this.getAcademicSessionForSchool(sessionId, schoolId);
+    if (!session) return [];
+
+    const rows = await db.select({
+      student: students,
+      rollNumber: enrollments.rollNo,
+    })
+      .from(enrollments)
+      .innerJoin(students, and(
+        eq(students.id, enrollments.studentId),
+        eq(students.schoolId, enrollments.schoolId),
+      ))
+      .where(and(
+        eq(enrollments.schoolId, schoolId),
+        eq(enrollments.sessionId, sessionId),
+        eq(enrollments.className, cls),
+        eq(enrollments.sectionName, section),
+        eq(enrollments.status, "Active"),
+        session.isActive ? eq(students.isActive, true) : undefined,
+      ))
+      .orderBy(enrollments.rollNo, students.digitalStudentId);
+
+    return rows.map(row => ({ student: row.student, rollNumber: row.rollNumber }));
   }
 
   async resolveAttendanceClassSectionForStudent(

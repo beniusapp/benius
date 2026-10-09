@@ -4,6 +4,14 @@ export const studentExamPolicyQueryKey = (sessionId: number | null, cls: string)
 export const studentExamScoresQueryKey = (sessionId: number | null, cls: string) =>
   ["/api/student/exam/all-scores", sessionId, cls] as const;
 
+export const studentExamResultsQueryKey = (
+  schoolId: number | null,
+  studentId: number | null,
+  sessionId: number | null,
+  cls: string,
+  section: string,
+) => ["/api/student/exam/results", schoolId, "student", studentId, sessionId, cls, section] as const;
+
 export const studentArchiveJourneyQueryKey = (sessionId: number | null) =>
   ["/api/student/archive/journey", sessionId] as const;
 

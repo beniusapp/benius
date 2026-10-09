@@ -8,10 +8,18 @@ import {
   MoreVertical, Check, History,
 } from "lucide-react";
 import { getQueryFn, sessionFetchForViewSession } from "@/lib/queryClient";
-import { studentExamPolicyQueryKey, studentExamScoresQueryKey } from "@/lib/student-exam-query-keys";
+import {
+  studentExamPolicyQueryKey,
+  studentExamScoresQueryKey,
+  studentExamResultsQueryKey,
+} from "@/lib/student-exam-query-keys";
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { useSessionView } from "@/contexts/session-view-context";
 import { selectGrade, type GradingRule } from "@shared/examination-calculation-engine";
+import {
+  useGetStudentExaminationResults,
+  type GetStudentExaminationResultsQueryResult,
+} from "@workspace/api-client-react";
 
 // ─────────────────────────── Types ─────────────────────────────────────────────
 interface AcademicSession {
@@ -48,22 +56,6 @@ interface AttendanceStatsResponse {
   overallPercent: number; workingDays: number; daysPresent: number;
 }
 
-// ─────────────────────────── Computation Types ──────────────────────────────────
-interface CompBreakdown {
-  sourceExam: string; weight: number;
-  marks: number | null; totalMarks: number | null;
-  pct: number | null; contribution: number | null;
-  isAbsent: boolean; status: "scored" | "absent" | "missing";
-}
-interface SubjectTermResult {
-  subject: string; percentage: number | null; passed: boolean | null;
-  breakdown: CompBreakdown[]; status: "scored" | "absent" | "incomplete";
-}
-interface StudentTermResults {
-  termResults: Record<string, SubjectTermResult[]>;
-  allTermFailCounts: Record<string, number>;
-}
-
 // ─────────── Enrollment-aware Session → Class/Section Resolution ────────────────
 // Checks the enrollment registry first (verified=true), falls back to arithmetic
 // class subtraction (verified=false) so the UI can flag the uncertainty.
@@ -97,79 +89,6 @@ function resolveSessionsWithEnrollments(
   return result;
 }
 
-// ─────────────────────────── Term Computation ──────────────────────────────────
-function computeStudentTermResults(
-  scores: ExamScore[], policy: ExamPolicyTier, passThreshold: number,
-): StudentTermResults {
-  let rawWeights: Record<string, { source_exam: string; weight: number }[]> = {};
-  try { rawWeights = JSON.parse(policy.examWeights || "{}"); } catch {}
-  const termNames = Object.keys(rawWeights).map(k => k.trim());
-
-  const bySubject: Record<string, ExamScore[]> = {};
-  for (const sc of scores) {
-    if (!bySubject[sc.subject]) bySubject[sc.subject] = [];
-    bySubject[sc.subject].push(sc);
-  }
-  const subjects = Object.keys(bySubject).sort();
-
-  const termResults: Record<string, SubjectTermResult[]> = {};
-  const allTermFailCounts: Record<string, number> = {};
-
-  for (const termName of termNames) {
-    const components = rawWeights[termName] || [];
-    const subjectResults: SubjectTermResult[] = subjects.map(subject => {
-      const subjectScores = bySubject[subject];
-      let weightedSum = 0, totalWeight = 0;
-      let hasAbsent = false, hasData = false;
-
-      const breakdown: CompBreakdown[] = components.map(comp => {
-        const record = subjectScores.find(s => s.examType === comp.source_exam);
-        if (!record) return {
-          sourceExam: comp.source_exam, weight: comp.weight,
-          marks: null, totalMarks: null, pct: null, contribution: null,
-          isAbsent: false, status: "missing" as const,
-        };
-        hasData = true;
-        if (record.isAbsent) {
-          hasAbsent = true;
-          return {
-            sourceExam: comp.source_exam, weight: comp.weight,
-            marks: 0, totalMarks: record.totalMarks, pct: null, contribution: null,
-            isAbsent: true, status: "absent" as const,
-          };
-        }
-        const pct = record.totalMarks > 0 ? (record.marks / record.totalMarks) * 100 : 0;
-        const contribution = pct * (comp.weight / 100);
-        weightedSum += contribution;
-        totalWeight += comp.weight;
-        return {
-          sourceExam: comp.source_exam, weight: comp.weight,
-          marks: record.marks, totalMarks: record.totalMarks, pct, contribution,
-          isAbsent: false, status: "scored" as const,
-        };
-      });
-
-      let percentage: number | null = null;
-      let status: SubjectTermResult["status"] = "incomplete";
-      if (!hasData) { status = "incomplete"; }
-      else if (hasAbsent) { status = "absent"; percentage = 0; }
-      else {
-        percentage = Math.round(((totalWeight > 0 ? (weightedSum * 100) / totalWeight : 0)) * 10) / 10;
-        status = "scored";
-      }
-      return {
-        subject, percentage,
-        passed: percentage !== null ? percentage >= passThreshold : null,
-        breakdown, status,
-      };
-    });
-
-    termResults[termName] = subjectResults;
-    allTermFailCounts[termName] = subjectResults.filter(s => s.passed === false).length;
-  }
-  return { termResults, allTermFailCounts };
-}
-
 // ─────────────────────────── Helpers ───────────────────────────────────────────
 function computeGrade(pct: number, rules: GradingRule[]) {
   const grade = selectGrade(pct, rules);
@@ -177,6 +96,14 @@ function computeGrade(pct: number, rules: GradingRule[]) {
   const color = label.startsWith("A") ? "text-emerald-400" : label.startsWith("B") ? "text-blue-400" : label.startsWith("C") ? "text-yellow-400" : label.startsWith("D") ? "text-orange-400" : "text-red-400";
   const bg = label.startsWith("A") ? "bg-emerald-500/15 border-emerald-500/30" : label.startsWith("B") ? "bg-blue-500/15 border-blue-500/30" : label.startsWith("C") ? "bg-yellow-500/15 border-yellow-500/30" : label.startsWith("D") ? "bg-orange-500/15 border-orange-500/30" : "bg-red-500/15 border-red-500/30";
   return { ...grade, remarks: grade.remarks ?? "", color, bg };
+}
+
+function gradePresentation(grade: { label: string; remarks: string | null } | null) {
+  if (!grade) return null;
+  const label = grade.label.toUpperCase();
+  const color = label.startsWith("A") ? "text-emerald-400" : label.startsWith("B") ? "text-blue-400" : label.startsWith("C") ? "text-yellow-400" : label.startsWith("D") ? "text-orange-400" : "text-red-400";
+  const bg = label.startsWith("A") ? "bg-emerald-500/15 border-emerald-500/30" : label.startsWith("B") ? "bg-blue-500/15 border-blue-500/30" : label.startsWith("C") ? "bg-yellow-500/15 border-yellow-500/30" : label.startsWith("D") ? "bg-orange-500/15 border-orange-500/30" : "bg-red-500/15 border-red-500/30";
+  return { ...grade, color, bg };
 }
 
 function PrintStyles() {
@@ -645,7 +572,7 @@ function ViewMarksPanel({
             style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
             <Trophy className="w-7 h-7 text-slate-700" />
             <p className="text-slate-400 font-semibold text-sm">No marks recorded for {viewSubject} yet</p>
-            <p className="text-slate-600 text-xs">Marks appear here the moment your teacher saves them.</p>
+            <p className="text-slate-600 text-xs">Published marks appear here after they are released by your teacher.</p>
           </div>
         )}
       </div>
@@ -788,7 +715,7 @@ function ViewMarksPanel({
             style={{ background: "#0f172a", border: "1px solid #1e293b" }}>
             <Trophy className="w-7 h-7 text-slate-700" />
             <p className="text-slate-400 font-semibold text-sm">No marks recorded for {viewExamType} yet</p>
-            <p className="text-slate-600 text-xs">Marks appear here the moment your teacher saves them.</p>
+            <p className="text-slate-600 text-xs">Published marks appear here after they are released by your teacher.</p>
           </div>
         )}
       </div>
@@ -940,10 +867,12 @@ function ViewMarksPanel({
 // RESULTS PANEL  (unchanged from previous build)
 // ══════════════════════════════════════════════════════════════════════════════
 function ResultsPanel({
-  allScores, policy, passThreshold, isLoading, attendancePct,
+  results, resultsError, policy, passThreshold, isLoading, attendancePct,
   selectedClass, section, sessionLabel, studentName, dsid, onPrint,
 }: {
-  allScores: ExamScore[]; policy: ExamPolicyTier | null; passThreshold: number | null;
+  results: GetStudentExaminationResultsQueryResult | null;
+  resultsError: string | null;
+  policy: ExamPolicyTier | null; passThreshold: number | null;
   isLoading: boolean; attendancePct: number | null; selectedClass: string;
   section: string; sessionLabel: string; studentName: string; dsid: string;
   onPrint: () => void;
@@ -968,28 +897,24 @@ function ResultsPanel({
   }, [policy, resTerm]);
 
   const termNames = useMemo(() => {
+    if (results?.terms.length) return results.terms;
     if (!policy) return [];
     try { return Object.keys(JSON.parse(policy.examWeights || "{}")).map(k => k.trim()); }
     catch { return []; }
-  }, [policy]);
+  }, [policy, results]);
 
   useEffect(() => {
     if (termNames.length > 0 && (!resTerm || !termNames.includes(resTerm)))
       setResTerm(termNames[0]);
   }, [termNames, resTerm]);
 
-  const { termResults, allTermFailCounts } = useMemo<StudentTermResults>(() => {
-    if (!policy || passThreshold === null || allScores.length === 0) return { termResults: {}, allTermFailCounts: {} };
-    return computeStudentTermResults(allScores, policy, passThreshold);
-  }, [allScores, policy, passThreshold]);
-
-  const activeTermSubjects = termResults[resTerm] ?? [];
-  const scoredSubjects = activeTermSubjects.filter(s => s.status === "scored");
-  const termAvg = scoredSubjects.length > 0
-    ? Math.round((scoredSubjects.reduce((sum, s) => sum + (s.percentage ?? 0), 0) / scoredSubjects.length) * 10) / 10
-    : null;
-  const failCount = allTermFailCounts[resTerm] ?? 0;
-  const termGrade = termAvg !== null && policy?.gradingRules?.length ? computeGrade(termAvg, policy.gradingRules) : null;
+  const result = results?.result;
+  const resultStatus = result?.resultStatusByTerm[resTerm] ?? null;
+  const isIncomplete = resultStatus === "incomplete";
+  const activeTermSubjects = result?.termResults[resTerm] ?? [];
+  const termAvg = isIncomplete ? null : result?.termAverages[resTerm] ?? null;
+  const failCount = isIncomplete ? null : result?.allTermFailCounts[resTerm] ?? null;
+  const termGrade = isIncomplete ? null : gradePresentation(result?.termGrades[resTerm] ?? null);
 
   if (isLoading) return (
     <div className="flex justify-center py-14">
@@ -1008,6 +933,22 @@ function ResultsPanel({
     </div>
   );
 
+  if (resultsError) return (
+    <div className="rounded-2xl p-8 flex flex-col items-center gap-3 text-center"
+      style={{ background: "#0f172a", border: "1px solid #1e293b" }} role="alert" data-testid="status-results-unavailable">
+      <AlertTriangle className="w-7 h-7 text-amber-500/60" />
+      <p className="text-slate-300 font-bold text-sm">Results are temporarily unavailable</p>
+      <p className="text-slate-500 text-xs max-w-md">{resultsError}</p>
+    </div>
+  );
+
+  if (!results) return (
+    <div className="rounded-2xl p-8 text-center"
+      style={{ background: "#0f172a", border: "1px solid #1e293b" }} role="status" data-testid="status-results-not-loaded">
+      <p className="text-slate-300 font-semibold text-sm">Results are not available for this session and class selection.</p>
+    </div>
+  );
+
   return (
     <div className="space-y-4" data-testid="panel-results" id="exam-print-area">
       {/* Term selector */}
@@ -1023,6 +964,16 @@ function ResultsPanel({
               {term}
             </button>
           ))}
+        </div>
+      )}
+
+      {resultStatus && (
+        <div
+          className={`rounded-xl px-4 py-3 text-sm font-semibold border ${isIncomplete ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}
+          role="status"
+          data-testid="status-student-result"
+        >
+          {isIncomplete ? "Incomplete / Pending Result" : "Complete Result"}
         </div>
       )}
 
@@ -1053,7 +1004,7 @@ function ResultsPanel({
               <div className="text-right">
                 <span className="text-slate-500 text-xs block">Overall Grade</span>
                 <span className={`inline-flex items-center justify-center px-3 py-1 rounded-xl border text-xl font-bold ${termGrade.color} ${termGrade.bg}`}
-                  title={termGrade.remarks}>{termGrade.label}</span>
+                  title={termGrade.remarks ?? ""}>{termGrade.label}</span>
               </div>
             )}
             <button onClick={onPrint}
@@ -1068,11 +1019,11 @@ function ResultsPanel({
         {/* Stats bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-px" style={{ background: "#1e293b" }}>
           {[
-            { label: "Term Avg",   value: termAvg !== null ? `${termAvg}%` : "—",
+            { label: "Term Avg",   value: isIncomplete ? "Pending" : termAvg !== null ? `${termAvg}%` : "—",
               color: termAvg !== null ? (termAvg >= 60 ? "text-emerald-400" : passThreshold !== null && termAvg >= passThreshold ? "text-yellow-400" : "text-red-400") : "text-slate-600" },
-            { label: "Grade",      value: termGrade?.label ?? "—", color: termGrade ? termGrade.color : "text-slate-600" },
-            { label: "Fails",      value: String(failCount),
-              color: promotionThresholds.failCount === null ? "text-slate-300" : failCount >= promotionThresholds.failCount ? "text-red-400" : "text-emerald-400" },
+            { label: "Grade",      value: isIncomplete ? "Pending" : termGrade?.label ?? "—", color: termGrade ? termGrade.color : "text-slate-600" },
+            { label: "Fails",      value: failCount === null ? "Pending" : String(failCount),
+              color: failCount === null ? "text-slate-500" : promotionThresholds.failCount === null ? "text-slate-300" : failCount >= promotionThresholds.failCount ? "text-red-400" : "text-emerald-400" },
             { label: "Attendance", value: attendancePct !== null ? `${attendancePct}%` : "—",
               color: attendancePct === null || promotionThresholds.attendance === null ? "text-slate-600" : attendancePct < promotionThresholds.attendance ? "text-red-400" : "text-emerald-400" },
           ].map(stat => (
@@ -1099,7 +1050,7 @@ function ResultsPanel({
               </p>
             </div>
           ) : activeTermSubjects.map(subj => {
-            const gS = subj.percentage !== null && policy?.gradingRules?.length ? computeGrade(subj.percentage, policy.gradingRules) : null;
+            const gS = subj.status === "scored" ? gradePresentation(subj.grade) : null;
             return (
               <div key={subj.subject} className="rounded-xl overflow-hidden"
                 style={{ border: "1px solid #1e293b" }} data-testid={`results-subject-${subj.subject}`}>
@@ -1111,7 +1062,7 @@ function ResultsPanel({
                       <span className="text-emerald-400 font-bold text-sm">{subj.percentage}%</span>
                     )}
                     {gS && subj.status === "scored" && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${gS.color} ${gS.bg}`} title={gS.remarks}>{gS.label}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${gS.color} ${gS.bg}`} title={gS.remarks ?? ""}>{gS.label}</span>
                     )}
                     {subj.passed === true  && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                     {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
@@ -1163,15 +1114,15 @@ function ResultsPanel({
         </div>
 
         {/* Cross-term fail summary */}
-        {Object.keys(allTermFailCounts).length > 0 && activeTermSubjects.length > 0 && (
+        {result && Object.keys(result.allTermFailCounts).length > 0 && activeTermSubjects.length > 0 && (
           <div className="px-5 pb-5" style={{ background: "#0f172a" }}>
             <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Failure Count per Term</h3>
             <div className="flex flex-wrap gap-2">
-              {Object.entries(allTermFailCounts).map(([t, n]) => (
+              {Object.entries(result.allTermFailCounts).map(([t, n]) => (
                 <button key={t} onClick={() => setResTerm(t)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all ${t === resTerm ? "ring-1 ring-slate-400" : ""} ${n > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
-                  <span className={n > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
-                  <span className={`font-bold ${n > 0 ? "text-red-300" : "text-emerald-300"}`}>{n} fail{n !== 1 ? "s" : ""}</span>
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all ${t === resTerm ? "ring-1 ring-slate-400" : ""} ${n === null ? "border-amber-500/30 bg-amber-500/10" : n > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
+                  <span className={n === null ? "text-amber-300" : n > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
+                  <span className={`font-bold ${n === null ? "text-amber-200" : n > 0 ? "text-red-300" : "text-emerald-300"}`}>{n === null ? "Pending" : `${n} fail${n !== 1 ? "s" : ""}`}</span>
                 </button>
               ))}
             </div>
@@ -1187,7 +1138,7 @@ function ResultsPanel({
               Policy: {policy?.tierName}
             </p>
             <p className="text-xs text-slate-500">
-              Marks appear in real-time — no publish step needed.
+              Only published marks are shown in the Student Portal.
             </p>
             {attendancePct !== null && (
               <p className="text-xs text-slate-500 mt-1">
@@ -1359,6 +1310,37 @@ export default function StudentExamination() {
     });
 
   const allScores = allScoresData?.scores ?? [];
+
+  const {
+    data: examinationResults,
+    isLoading: examinationResultsLoading,
+    isError: examinationResultsIsError,
+    error: examinationResultsError,
+  } = useGetStudentExaminationResults({
+    query: {
+      queryKey: studentExamResultsQueryKey(
+        student?.schoolId ?? null,
+        student?.id ?? null,
+        selectedSessionId,
+        selectedClass,
+        selectedSection,
+      ),
+      enabled: !!student &&
+        !!selectedClass &&
+        !!selectedSection &&
+        selectedSessionId !== null &&
+        selectedSession?.verified === true,
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: true,
+      refetchInterval: 30000,
+    },
+    request: {
+      headers: selectedSessionId === null
+        ? {}
+        : { "x-view-session-id": String(selectedSessionId) },
+    },
+  });
 
   // ── Attendance ───────────────────────────────────────────────────────────────
   const { data: attendanceData } = useQuery<AttendanceStatsResponse>({
@@ -1618,10 +1600,13 @@ export default function StudentExamination() {
         )}
         {tab === "results" && (
           <ResultsPanel
-            allScores={allScores}
+            results={examinationResults ?? null}
+            resultsError={examinationResultsIsError
+              ? ((examinationResultsError as Error)?.message ?? "Failed to load the authoritative result.")
+              : null}
             policy={policyData ?? null}
             passThreshold={passThreshold}
-            isLoading={isDataLoading}
+            isLoading={policyLoading || examinationResultsLoading}
             attendancePct={attPct}
             selectedClass={selectedClass}
             section={selectedSection}

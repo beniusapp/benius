@@ -57,6 +57,11 @@ import { registerFeesRoutes } from "../fees-routes";
 import { FEES_AREAS, feesAreaGuard } from "../fees-permissions";
 import { requireStudentFeeSession } from "../student-fee-session-context";
 import { resolveStudentExaminationSession } from "../student-examination-session";
+import {
+  examinationResultsErrorMessage,
+  examinationResultsErrorStatus,
+  getStudentExaminationResults,
+} from "../examination-results-service";
 import { resolveStudentAcademicSession } from "../student-academic-session";
 import { studentCanMarkNoticeIds } from "../student-notice-visibility";
 import { studentComplaintMatchesSession, validStudentPeerTarget } from "../student-complaint-scope";
@@ -2558,6 +2563,38 @@ export async function registerRoutes(
     const cls = enrollment.className;
     const scores = await storage.getStudentAllExamScores(schoolId, student.id, cls, sessionId, enrollment.sectionName);
     res.json({ scores, cls });
+  });
+
+  app.get("/api/student/exam/results", async (req, res): Promise<void> => {
+    const context = await resolveStudentExaminationSession(
+      req.session.studentId,
+      req.headers["x-view-session-id"],
+      storage,
+    );
+    if (!context.ok) {
+      res.status(context.status).json({ message: context.message });
+      return;
+    }
+    try {
+      const result = await getStudentExaminationResults({
+        schoolId: context.schoolId,
+        sessionId: context.sessionId,
+        className: context.enrollment.className,
+        sectionName: context.enrollment.sectionName,
+        student: {
+          id: context.student.id,
+          name: context.student.name,
+          digitalStudentId: context.student.digitalStudentId,
+        },
+        rollNumber: context.enrollment.rollNo,
+      });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(result);
+    } catch (error) {
+      const status = examinationResultsErrorStatus(error);
+      if (status === 500) req.log.error({ err: error }, "Failed to calculate Student examination results");
+      res.status(status).json({ message: examinationResultsErrorMessage(error) });
+    }
   });
 
   // ===== STUDENT CLASSWORK ROUTES =====

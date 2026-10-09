@@ -14,6 +14,8 @@ tags:
     description: Student Homework actions
   - name: teacher-homework-review
     description: Teacher Homework review actions
+  - name: examination-results
+    description: Read-only Web examination results
 paths:
   /healthz:
     get:
@@ -241,6 +243,126 @@ paths:
           description: Teacher Web authentication is required
         "403":
           description: The activity cursor is not visible to this Teacher in the selected session
+  /teacher/examination-results/{class}/{section}/{term}:
+    get:
+      operationId: getTeacherExaminationResults
+      tags: [examination-results]
+      summary: Calculate Teacher Results through the authoritative examination engine
+      description: Read-only. Teacher school and selected Academic Session are validated server-side; roster and marks are limited to the exact enrolled class and section.
+      parameters:
+        - in: path
+          name: class
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: path
+          name: section
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: path
+          name: term
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Calculated results for the exact selected-session cohort
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassExaminationResultsResponse"
+        "400":
+          description: Invalid or missing Academic Session or examination term
+        "401":
+          description: Teacher Web authentication is required
+        "403":
+          description: The selected session is unavailable to this Teacher
+        "409":
+          description: Examination, class-subject, or grading configuration is invalid
+  /admin/analytics/examination-results/{class}/{section}/{term}:
+    get:
+      operationId: getAdminExaminationResults
+      tags: [examination-results]
+      summary: Calculate Principal Results through the authoritative examination engine
+      description: Read-only. Requires Performance Analytics access and the explicit selected Academic Session; includes unpublished marks for the exact enrolled cohort.
+      parameters:
+        - in: path
+          name: class
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: path
+          name: section
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: path
+          name: term
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Calculated results for the exact selected-session cohort
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClassExaminationResultsResponse"
+        "400":
+          description: Invalid or missing Academic Session or examination term
+        "401":
+          description: Admin Web authentication is required
+        "403":
+          description: Performance Analytics access or selected-session access is required
+        "409":
+          description: Examination, class-subject, or grading configuration is invalid
+  /student/exam/results:
+    get:
+      operationId: getStudentExaminationResults
+      tags: [examination-results]
+      summary: Calculate the authenticated Student's published Results
+      description: Student identity, school, and class/section are derived server-side from the exact selected-session Enrollment. Only published marks are included; the response excludes promotion recommendations and Principal decisions.
+      parameters:
+        - in: header
+          name: x-view-session-id
+          required: true
+          schema:
+            type: string
+            pattern: "^[1-9][0-9]*$"
+      responses:
+        "200":
+          description: Published-only result data for the authenticated Student
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudentExaminationResultsResponse"
+        "400":
+          description: A selected Academic Session is required or invalid
+        "401":
+          description: Student Web authentication is required
+        "403":
+          description: The Student has no Enrollment in the selected session
+        "409":
+          description: Examination, class-subject, or grading configuration is invalid
   /student/homework/{id}/view:
     post:
       operationId: recordStudentHomeworkView
@@ -700,4 +822,214 @@ components:
         teacherComment:
           type: ["string", "null"]
       required: [id, status, submittedAt, reviewedAt, reviewedBy, teacherComment]
+    ExaminationResultStatus:
+      type: string
+      enum: [complete, incomplete]
+    ExaminationGrade:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+        remarks:
+          type: ["string", "null"]
+      required: [label, remarks]
+    ExaminationComponentResult:
+      type: object
+      additionalProperties: false
+      properties:
+        sourceExam:
+          type: string
+        weight:
+          type: number
+        marks:
+          type: ["number", "null"]
+        totalMarks:
+          type: ["number", "null"]
+        isAbsent:
+          type: boolean
+        pct:
+          type: ["number", "null"]
+        contribution:
+          type: ["number", "null"]
+        status:
+          type: string
+          enum: [scored, absent, missing]
+      required: [sourceExam, weight, marks, totalMarks, isAbsent, pct, contribution, status]
+    ExaminationSubjectResult:
+      type: object
+      additionalProperties: false
+      properties:
+        subject:
+          type: string
+        percentage:
+          type: ["number", "null"]
+        passed:
+          type: ["boolean", "null"]
+        grade:
+          oneOf:
+            - $ref: "#/components/schemas/ExaminationGrade"
+            - type: "null"
+        breakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExaminationComponentResult"
+        status:
+          type: string
+          enum: [scored, absent, incomplete]
+      required: [subject, percentage, passed, grade, breakdown, status]
+    ExaminationResultRecord:
+      type: object
+      additionalProperties: false
+      properties:
+        schoolId:
+          type: integer
+        sessionId:
+          type: ["integer", "null"]
+        studentId:
+          type: integer
+        name:
+          type: string
+        digitalStudentId:
+          type: string
+        rollNumber:
+          type: ["integer", "null"]
+        termResults:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/ExaminationSubjectResult"
+        termAverages:
+          type: object
+          additionalProperties:
+            type: ["number", "null"]
+        termGrades:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: "#/components/schemas/ExaminationGrade"
+              - type: "null"
+        cumulativePercentage:
+          type: ["number", "null"]
+        cumulativeGrade:
+          oneOf:
+            - $ref: "#/components/schemas/ExaminationGrade"
+            - type: "null"
+        allTermFailCounts:
+          type: object
+          additionalProperties:
+            type: ["integer", "null"]
+        attendancePct:
+          type: ["number", "null"]
+        resultStatus:
+          $ref: "#/components/schemas/ExaminationResultStatus"
+        resultStatusByTerm:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ExaminationResultStatus"
+        promoted:
+          type: ["boolean", "null"]
+        promotionReason:
+          type: string
+        detentionViolations:
+          type: array
+          items:
+            type: string
+      required:
+        - schoolId
+        - sessionId
+        - studentId
+        - name
+        - digitalStudentId
+        - rollNumber
+        - termResults
+        - termAverages
+        - termGrades
+        - cumulativePercentage
+        - cumulativeGrade
+        - allTermFailCounts
+        - attendancePct
+        - resultStatus
+        - resultStatusByTerm
+        - promoted
+        - promotionReason
+        - detentionViolations
+    ClassExaminationResultsResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        schoolId:
+          type: integer
+        sessionId:
+          type: integer
+        className:
+          type: string
+        sectionName:
+          type: string
+        terms:
+          type: array
+          items:
+            type: string
+        selectedTerm:
+          type: string
+        promotionAssessmentAvailable:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExaminationResultRecord"
+      required: [schoolId, sessionId, className, sectionName, terms, selectedTerm, promotionAssessmentAvailable, results]
+    StudentExaminationResult:
+      type: object
+      additionalProperties: false
+      properties:
+        studentId:
+          type: integer
+        termResults:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: "#/components/schemas/ExaminationSubjectResult"
+        termAverages:
+          type: object
+          additionalProperties:
+            type: ["number", "null"]
+        termGrades:
+          type: object
+          additionalProperties:
+            oneOf:
+              - $ref: "#/components/schemas/ExaminationGrade"
+              - type: "null"
+        allTermFailCounts:
+          type: object
+          additionalProperties:
+            type: ["integer", "null"]
+        resultStatusByTerm:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ExaminationResultStatus"
+        attendancePct:
+          type: ["number", "null"]
+      required: [studentId, termResults, termAverages, termGrades, allTermFailCounts, resultStatusByTerm, attendancePct]
+    StudentExaminationResultsResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        schoolId:
+          type: integer
+        sessionId:
+          type: integer
+        className:
+          type: string
+        sectionName:
+          type: string
+        terms:
+          type: array
+          items:
+            type: string
+        result:
+          $ref: "#/components/schemas/StudentExaminationResult"
+      required: [schoolId, sessionId, className, sectionName, terms, result]
 

@@ -79,6 +79,12 @@ export interface ExaminationCalculationInput {
   termAverageRule?: TermAverageRule;
   currentTerm?: string;
   cumulativeConfig?: CumulativeConfig;
+  /**
+   * Result-only readers can use the same grade and subject calculations without
+   * evaluating promotion policy. Existing callers retain promotion evaluation
+   * by default.
+   */
+  includePromotionAssessment?: boolean;
 }
 
 export interface ComponentBreakdown {
@@ -236,7 +242,11 @@ export function evaluatePromotionRules(input: PromotionRuleEvaluationInput): Pro
 
 /** Calculates all supplied students without fetching policy or tenant state. */
 export function computeAllStudentResults(input: ExaminationCalculationInput): ComputedStudentResult[] {
-  const { context, students, policy, attendance, passPercentage, gradingPolicy, termAverageRule, currentTerm, cumulativeConfig } = input;
+  const {
+    context, students, policy, attendance, passPercentage, gradingPolicy,
+    termAverageRule, currentTerm, cumulativeConfig,
+  } = input;
+  const includePromotionAssessment = input.includePromotionAssessment !== false;
   if (policy.schoolId !== context.schoolId) {
     throw new Error(`Examination policy school ${policy.schoolId} does not match calculation school ${context.schoolId}.`);
   }
@@ -340,24 +350,30 @@ export function computeAllStudentResults(input: ExaminationCalculationInput): Co
           term: String(r.term ?? "").trim(), minPercent: Number(r.min_pct),
         })) : [])
       : undefined;
-    const promotion = evaluatePromotionRules({
-      context,
-      policySchoolId: policy.schoolId,
-      maxFailedSubjectRules,
-      attendanceRules,
-      termAverageRule,
-      cumulativeRule: cumulativeConfig?.promotionEnabled ? {
-        enabled: true,
-        triggerTerm: cumulativeConfig.triggerTerm,
-        minPercent: Number(cumulativeConfig.minPercent),
-      } : undefined,
-      termFailCounts: allTermFailCounts,
-      termAverages,
-      attendancePct: attPct,
-      currentTerm,
-      cumulativePercentage,
-      termResults,
-    });
+    const promotion = includePromotionAssessment
+      ? evaluatePromotionRules({
+          context,
+          policySchoolId: policy.schoolId,
+          maxFailedSubjectRules,
+          attendanceRules,
+          termAverageRule,
+          cumulativeRule: cumulativeConfig?.promotionEnabled ? {
+            enabled: true,
+            triggerTerm: cumulativeConfig.triggerTerm,
+            minPercent: Number(cumulativeConfig.minPercent),
+          } : undefined,
+          termFailCounts: allTermFailCounts,
+          termAverages,
+          attendancePct: attPct,
+          currentTerm,
+          cumulativePercentage,
+          termResults,
+        })
+      : {
+          promoted: null,
+          promotionReason: "",
+          violations: [] as string[],
+        };
     const applicableSources = currentTerm ? weights[currentTerm.trim()] ?? [] : [];
     const selectedTermSubjects = currentTerm ? termResults[currentTerm.trim()] ?? [] : [];
     const hasApplicableMarks = !currentTerm || (

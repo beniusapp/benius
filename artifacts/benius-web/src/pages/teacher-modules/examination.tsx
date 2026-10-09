@@ -17,19 +17,13 @@ import { useArchiveMode, useTeacherSelectedSession, type TeacherMe } from "@/pag
 import { useSchoolConfigStrict } from "@/hooks/use-school-config";
 import { formatDateTimeIST, todayInIST } from "@shared/ist-time";
 import {
-  reportCardAverage,
-  reportCardFailureCount,
-} from "@/lib/examination-promotion-preview";
-import {
-  computeAllStudentResults as calculateExaminationResults,
   computeGrade as calculateExaminationGrade,
-  type ComputedStudentResult,
-  type CumulativeConfig as CumulConfigShape,
-  type ExaminationAttendance as AttendanceSummary,
-  type ExaminationPolicy,
-  type ExaminationStudent as RawStudentScore,
   type GradingRule as GradingRuleClient,
 } from "@shared/examination-calculation-engine";
+import {
+  useGetTeacherExaminationResults,
+  type GetTeacherExaminationResultsQueryResult,
+} from "@workspace/api-client-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -47,24 +41,23 @@ interface StudentExamScore {
 }
 
 // ── Results-tab policy response ───────────────────────────────────────────────
-interface ExamPolicyTier extends ExaminationPolicy {
+interface ExamPolicyTier {
   id: number; schoolId: number; tierName: string; applicableClasses: string[]; examWeights: string; promotionFailRules: string;
   resultsConfig?: string;
 }
+
+type ComputedStudentResult = GetTeacherExaminationResultsQueryResult["results"][number];
 
 // ── Four-rule suggestion engine (module-level helper) ─────────────────────────
 // Called both by runAutoSuggestion() and saveLedgerMutation() so the saved
 // autoSuggestion field always matches what the run-button would produce.
 function computeStudentSuggestion(
   s: ComputedStudentResult,
-  _resTerm: string,
-  _ruleTermAvg: { enabled: boolean; minPct: number },
-  _isCumulativeTerm: boolean,
-  _cumulConfig: CumulConfigShape,
+  promotionAssessmentAvailable: boolean,
 ): "promoted" | "retained" | null {
-  if (s.resultStatus !== "complete" || s.promoted === null) return null;
-  // All four rules are now evaluated inside computeAllStudentResults and encoded
-  // in s.promoted / s.detentionViolations. Simply reflect that result here.
+  if (!promotionAssessmentAvailable || s.resultStatus !== "complete" || s.promoted === null) return null;
+  // The server engine evaluates the configured rules; this only maps its result
+  // into the existing Teacher ledger draft.
   return s.promoted ? "promoted" : "retained";
 }
 
@@ -265,11 +258,10 @@ function buildDetentionReasons(
   return [];
 }
 
-function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict, promoEntry, onClose }: {
+function ReportCardModal({ student, term, policy, showPromoVerdict, promoEntry, onClose }: {
   student: ComputedStudentResult;
   term: string;
   policy: ExamPolicyTier;
-  gradingRules: GradingRuleClient[];
   /** Whether the active term has the Promotion Gate verdict enabled in policy config. */
   showPromoVerdict: boolean;
   /** The teacher's manually-set ledger entry for this student, if any. */
@@ -289,8 +281,11 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
     ? buildDetentionReasons(student, isManualOverride)
     : [];
 
-  const overallAvg = reportCardAverage(student.resultStatus, student.termAverages[term] ?? null);
-  const overallGrade = overallAvg !== null ? computeGrade(overallAvg, gradingRules) : null;
+  const overallAvg = student.resultStatus === "complete" ? student.termAverages[term] ?? null : null;
+  const overallGradeRecord = student.resultStatus === "complete" ? student.termGrades[term] ?? null : null;
+  const overallGrade = overallGradeRecord
+    ? { ...overallGradeRecord, color: gradeColor(overallGradeRecord.label), bg: gradeBg(overallGradeRecord.label) }
+    : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center p-3 sm:p-6 bg-black/70 backdrop-blur-sm overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -334,7 +329,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
           <div className="ml-auto flex items-end gap-4">
             <div className="text-right">
               <span className="text-slate-500 text-xs block">Term Average</span>
-              <span className="text-yellow-400 font-bold text-lg">{overallAvg !== null ? `${overallAvg}%` : "No data"}</span>
+              <span className="text-yellow-400 font-bold text-lg">{student.resultStatus !== "complete" ? "Pending" : overallAvg !== null ? `${overallAvg}%` : "—"}</span>
             </div>
             <div className="text-right">
               <span className="text-slate-500 text-xs block">Overall Grade</span>
@@ -343,7 +338,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                   title={overallGrade.remarks ?? ""}>
                   {overallGrade.label}
                 </span>
-              ) : <span className="text-slate-400 font-bold text-lg">—</span>}
+              ) : <span className="text-slate-400 font-bold text-lg">{student.resultStatus !== "complete" ? "Pending" : "—"}</span>}
             </div>
           </div>
         </div>
@@ -364,13 +359,10 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                       {subj.percentage !== null && (
                         <span className="text-yellow-400 font-bold text-sm">{subj.percentage}%</span>
                       )}
-                      {subj.status === "scored" && subj.percentage !== null && (() => {
-                        const g = computeGrade(subj.percentage, gradingRules);
-                        return (
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${g.color} ${g.bg}`}
-                            title={g.remarks ?? ""}>{g.label}</span>
-                        );
-                      })()}
+                      {subj.status === "scored" && subj.grade && (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${gradeColor(subj.grade.label)} ${gradeBg(subj.grade.label)}`}
+                          title={subj.grade.remarks ?? ""}>{subj.grade.label}</span>
+                      )}
                       {subj.passed === true && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">PASS</span>}
                       {subj.passed === false && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">FAIL</span>}
                       {subj.status === "incomplete" && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 border border-slate-500/30">INCOMPLETE</span>}
@@ -427,21 +419,13 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
             <div>
               <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Failure Count per Term</h3>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(student.allTermFailCounts).map(([t, n]) => (
-                  (() => {
-                    const count = reportCardFailureCount(
-                      t === term ? student.resultStatus : "complete",
-                      n,
-                    );
-                    return (
-                      <div key={t} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${count === null ? "border-amber-500/30 bg-amber-500/10" : count > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
-                        <span className={count === null ? "text-amber-300" : count > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
-                        <span className={`font-bold ${count === null ? "text-amber-200" : count > 0 ? "text-red-300" : "text-emerald-300"}`}>
-                          {count === null ? "Not evaluated" : `${count} fail${count !== 1 ? "s" : ""}`}
-                        </span>
-                      </div>
-                    );
-                  })()
+                {Object.entries(student.allTermFailCounts).map(([t, count]) => (
+                  <div key={t} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${count === null ? "border-amber-500/30 bg-amber-500/10" : count > 0 ? "border-red-500/30 bg-red-500/10" : "border-emerald-500/30 bg-emerald-500/10"}`}>
+                    <span className={count === null ? "text-amber-300" : count > 0 ? "text-red-400" : "text-emerald-400"}>{t}</span>
+                    <span className={`font-bold ${count === null ? "text-amber-200" : count > 0 ? "text-red-300" : "text-emerald-300"}`}>
+                      {count === null ? "Not evaluated" : `${count} fail${count !== 1 ? "s" : ""}`}
+                    </span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -449,7 +433,7 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
 
           {/* ── Promotion Verdict Block ───────────────────────────────────────
                Shown only when the active term has promotionGateVerdict enabled.
-               Reads from the teacher's manually-set Promotion Ledger entry.      ── */}
+                   Reads from the Teacher recommendation ledger.                       ── */}
           {showPromoVerdict || student.resultStatus !== "complete" ? (
             student.resultStatus !== "complete" ? (
               <div className="rounded-xl p-4 border border-amber-500/30 bg-amber-500/10 flex items-start gap-3"
@@ -457,11 +441,11 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-xs font-semibold text-amber-200">{showPromoVerdict ? "Promotion Gate" : "Promotion Assessment"}</p>
-                  <p className="text-sm font-bold text-amber-300 mt-1">Pending — No marks</p>
+                  <p className="text-sm font-bold text-amber-300 mt-1">Incomplete / Pending Result</p>
                 </div>
               </div>
             ) : promoEntry ? (
-              /* Ledger entry exists → render final verdict */
+               /* Ledger entry exists → render the Teacher recommendation. */
               <div className={`rounded-xl border overflow-hidden ${promoEntry.decision === "promoted" ? "border-emerald-500/30" : "border-red-500/30"}`}>
                 {/* Coloured verdict banner */}
                 <div className={`px-5 py-4 flex items-center gap-3 ${promoEntry.decision === "promoted" ? "bg-emerald-500/15" : "bg-red-500/15"}`}>
@@ -476,10 +460,10 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                         ? `Promoted to Class ${promoEntry.targetClass} — Section ${promoEntry.targetSection}`
                         : `Retained in Class ${promoEntry.targetClass} — Section ${promoEntry.targetSection}`}
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5">Final Academic Verdict · {term}</p>
+                     <p className="text-[11px] text-slate-400 mt-0.5">Teacher Recommendation · {term}</p>
                   </div>
                   <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold border ${promoEntry.decision === "promoted" ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-300" : "bg-red-500/20 border-red-500/30 text-red-300"}`}>
-                    {promoEntry.decision === "promoted" ? "PROMOTED" : "DETAINED"}
+                     {promoEntry.decision === "promoted" ? "RECOMMEND PROMOTION" : "RECOMMEND RETENTION"}
                   </span>
                 </div>
 
@@ -524,11 +508,11 @@ function ReportCardModal({ student, term, policy, gradingRules, showPromoVerdict
                 </div>
               </div>
             ) : (
-              /* Final term but ledger not yet filled */
+               /* Promotion term but no Teacher recommendation is saved. */
               <div className="rounded-xl p-4 border border-amber-500/20 bg-amber-500/5 flex items-start gap-3">
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-xs font-semibold text-amber-300">Promotion Verdict Not Yet Set</p>
+                  <p className="text-xs font-semibold text-amber-300">Teacher Recommendation Not Yet Set</p>
                   <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                     The Promotion Ledger has not been filled for this student yet. Go to the Results tab, run Auto-Suggestion or set decisions manually, then save the ledger.
                   </p>
@@ -778,12 +762,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
   });
   const policyError = policyIsError ? ((policyErrorRaw as Error)?.message ?? "Failed to load policy") : null;
 
-  // Grading rules fetch — same no-cache useEffect pattern
-  const [gradingRules, setGradingRules] = useState<GradingRuleClient[]>([]);
   const [gradingPassPct, setGradingPassPct] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!resClass) { setGradingRules([]); setGradingPassPct(null); return; }
+    if (!resClass) { setGradingPassPct(null); return; }
     let cancelled = false;
     fetch(`/api/teacher/grading-rules/${encodeURIComponent(resClass)}`, { credentials: "include" })
       .then(async r => {
@@ -792,11 +774,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
       })
       .then(d => {
         if (!cancelled && typeof d.passPercentage === "number") {
-          setGradingRules(d.rules ?? []);
           setGradingPassPct(d.passPercentage);
         }
       })
-      .catch(() => { if (!cancelled) { setGradingRules([]); setGradingPassPct(null); } });
+      .catch(() => { if (!cancelled) setGradingPassPct(null); });
     return () => { cancelled = true; };
   }, [teacher.schoolId, resClass]);
 
@@ -806,29 +787,32 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     setResTerm("");
   }
 
-  const { data: classScores = [], isLoading: scoresLoading } = useQuery<RawStudentScore[]>({
-    queryKey: ["/api/teacher/class-scores", teacher.schoolId, selectedSessionId, resClass, resSection],
-    queryFn: async () => {
-      const res = await sessionFetchForViewSession(`/api/teacher/class-scores/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
-      if (!res.ok) throw new Error("Failed to fetch scores");
-      return res.json();
+  const resultsQuery = useGetTeacherExaminationResults(resClass, resSection, resTerm, {
+    query: {
+      queryKey: [
+        "/api/teacher/examination-results",
+        teacher.schoolId,
+        "teacher",
+        selectedSessionId,
+        resClass,
+        resSection,
+        resTerm,
+      ],
+      enabled: !!selectedSessionId && !!resClass && !!resSection && !!resTerm,
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchOnWindowFocus: true,
+      refetchInterval: 30000,
+      retry: false,
     },
-    enabled: !!selectedSessionId && !!resClass && !!resSection,
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
-
-  const { data: attendanceSummary = [] } = useQuery<AttendanceSummary[]>({
-    queryKey: ["/api/teacher/attendance-summary", teacher.schoolId, selectedSessionId, resClass, resSection],
-    queryFn: async () => {
-      const res = await sessionFetchForViewSession(`/api/teacher/attendance-summary/${encodeURIComponent(resClass)}/${encodeURIComponent(resSection)}`, selectedSessionId);
-      if (!res.ok) return [];
-      return res.json();
+    request: {
+      headers: selectedSessionId === undefined
+        ? {}
+        : { "x-view-session-id": String(selectedSessionId) },
     },
-    enabled: !!selectedSessionId && !!resClass && !!resSection,
-    staleTime: 0,
-    refetchOnMount: "always",
   });
+  const allResults = resultsQuery.data?.results ?? [];
+  const promotionAssessmentAvailable = resultsQuery.data?.promotionAssessmentAvailable === true;
 
   // Parse term names from policy — trim to handle accidental whitespace in DB
   const termNames = useMemo(() => {
@@ -903,31 +887,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     return resTerm.trim() === cumulConfig.triggerTerm.trim();
   }, [cumulConfig, resTerm]);
 
-  // Parse Rule 3 settings once — used by both runAutoSuggestion and saveLedgerMutation
-  const ruleTermAvg = useMemo<{ enabled: boolean; minPct: number }>(() => {
-    try {
-      const pr = JSON.parse(policyTier?.promotionFailRules || "{}");
-      const rta = pr.rule_term_avg ?? {};
-      return { enabled: rta.enabled === true, minPct: Number(rta.minPct) };
-    } catch { return { enabled: false, minPct: Number.NaN }; }
-  }, [policyTier]);
-
   // Auto-select first term when policy loads
   useEffect(() => {
     if (termNames.length > 0 && !resTerm) setResTerm(termNames[0]);
   }, [termNames, resTerm]);
-
-  // Compute results — all 4 rules baked in: pass ruleTermAvg, resTerm, cumulConfig
-  const allResults = useMemo(() => {
-    if (!selectedSessionId || !policyTier || gradingPassPct === null || gradingRules.length === 0 || classScores.length === 0) return [];
-    return calculateExaminationResults({
-      context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
-      students: classScores, policy: policyTier, attendance: attendanceSummary,
-      passPercentage: gradingPassPct, gradingPolicy: { schoolId: teacher.schoolId }, gradingRules,
-      termAverageRule: ruleTermAvg, currentTerm: resTerm || undefined,
-      cumulativeConfig: cumulConfig ?? undefined,
-    });
-  }, [policyTier, classScores, attendanceSummary, gradingPassPct, gradingRules, ruleTermAvg, resTerm, cumulConfig, teacher.schoolId, selectedSessionId]);
 
   // Filter by search
   const filteredResults = useMemo(() => {
@@ -940,7 +903,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     );
   }, [allResults, resSearch]);
 
-  const isLoading = policyLoading || scoresLoading;
+  const isLoading = policyLoading || resultsQuery.isLoading;
   const ready = !!resClass && !!resSection && !!resTerm && !!policyTier;
 
   // ── Promotion Ledger state ─────────────────────────────────────────────────
@@ -956,10 +919,10 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
 
   const [promoMap, setPromoMap] = useState<Record<number, PromoEntry>>({});
   const [promoLocked, setPromoLocked] = useState(false);
-  const canSaveLedger = allResults.some(result =>
+  const canSaveLedger = promotionAssessmentAvailable && allResults.some(result =>
     result.resultStatus === "complete" && !!promoMap[result.studentId],
   );
-  const canLockLedger = allResults.length > 0 && allResults.every(result =>
+  const canLockLedger = promotionAssessmentAvailable && allResults.length > 0 && allResults.every(result =>
     result.resultStatus === "complete" && !!promoMap[result.studentId],
   );
 
@@ -1004,97 +967,67 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
     });
   }, [savedDecisions]);
 
-  /**
-   * Fills promoMap for every student using a two-layer policy engine:
-   *
-   * Four independently-toggled rules from Section B of the admin policy panel:
-   *
-   * Rule 1 — Max Failed Subjects (s.promoted encodes this via computeAllStudentResults):
-   *   Enabled/disabled by the admin's Rule 1 toggle (rule1.enabled in promotionFailRules).
-   *
-   * Rule 2 — Minimum Attendance % (s.promoted encodes this via computeAllStudentResults):
-   *   Enabled/disabled by the admin's Rule 2 toggle (rule_attendance.enabled).
-   *
-   * Rule 3 — Minimum Term Weighted Average Score (applied here directly):
-   *   Enabled/disabled by the admin's Rule 3 toggle (rule_term_avg.enabled).
-   *   Student is retained if their term weighted avg < rule_term_avg.minPct.
-   *
-   * Rule 4 — Minimum Cumulative Percentage (applied here, trigger-term only):
-   *   Enabled/disabled by the admin's Rule 4 toggle (cumulativePromotionEnabled).
-   *   Only fires when the teacher is viewing the cumulative trigger term.
-   *   Student is retained if cumulative % < cumulConfig.minPercent.
-   *
-   * A student is retained if ANY enabled rule flags them.
-   */
+  /** Refreshes the server-authoritative calculation and drafts Teacher recommendations. */
   async function runAutoSuggestion() {
-    // Always pull the latest policy from the server before computing
-    // so admin changes in school-setup are immediately reflected here
     setIsSyncingPolicy(true);
-    let freshPolicy: ExamPolicyTier | null = policyTier;
     try {
-      const result = await refetchPolicy();
-      freshPolicy = result.data ?? policyTier;
-    } catch {
-      /* use cached policyTier as fallback */
+      const policyResult = await refetchPolicy();
+      if (!policyResult.data) {
+        toast({ title: "No policy loaded", description: "Cannot run a Teacher recommendation without an examination policy.", variant: "destructive" });
+        return;
+      }
+      const resultRefresh = await resultsQuery.refetch();
+      if (resultRefresh.isError || !resultRefresh.data) {
+        toast({ title: "Results unavailable", description: "The authoritative examination results could not be refreshed.", variant: "destructive" });
+        return;
+      }
+      const freshResults = resultRefresh.data.results;
+      if (resultRefresh.data.promotionAssessmentAvailable !== true) {
+        toast({ title: "Promotion assessment unavailable", description: "No effective promotion assessment rules are configured for this class and term.", variant: "destructive" });
+        return;
+      }
+
+      const next: Record<number, PromoEntry> = {};
+      for (const s of freshResults) {
+        const decision = computeStudentSuggestion(s, true);
+        if (!decision) continue;
+        next[s.studentId] = {
+          decision,
+          targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
+          targetSection: resSection,
+          editCount: promoMap[s.studentId]?.editCount ?? 0,
+          editTrail: promoMap[s.studentId]?.editTrail ?? [],
+        };
+      }
+
+      const promoted = Object.values(next).filter(e => e.decision === "promoted").length;
+      const retained = Object.values(next).filter(e => e.decision === "retained").length;
+      const pending = freshResults.filter(result => result.resultStatus !== "complete").length;
+      setPromoMap(next);
+      toast({
+        title: "Teacher recommendations drafted",
+        description: `${freshResults.length - pending} complete result(s) assessed — ${promoted} recommended for promotion, ${retained} for retention; ${pending} pending result(s) need applicable marks.`,
+        duration: 4000,
+      });
+    } catch (error) {
+      toast({
+        title: "Recommendation refresh failed",
+        description: error instanceof Error ? error.message : "The latest policy and results could not be loaded.",
+        variant: "destructive",
+      });
     } finally {
       setIsSyncingPolicy(false);
     }
-
-    if (!freshPolicy || gradingPassPct === null || gradingRules.length === 0) {
-      toast({ title: "No policy loaded", description: "Cannot run suggestion without an exam policy.", variant: "destructive" });
-      return;
-    }
-
-    // Re-derive rule settings from the freshly fetched policy
-    let freshRuleTermAvg = ruleTermAvg;
-    let freshCumulConfig = cumulConfig;
-    try {
-      const pr = JSON.parse(freshPolicy.promotionFailRules || "{}");
-      const rta = pr.rule_term_avg ?? {};
-      freshRuleTermAvg = { enabled: rta.enabled === true, minPct: Number(rta.minPct) };
-      const rc = JSON.parse(freshPolicy.resultsConfig || "{}");
-      freshCumulConfig = rc.cumulative ?? null;
-    } catch { /* use existing derived values */ }
-
-    // Re-compute results using fresh policy + all 4 rules baked in
-    const freshResults = calculateExaminationResults({
-      context: { schoolId: teacher.schoolId, sessionId: selectedSessionId! },
-      students: classScores, policy: freshPolicy, attendance: attendanceSummary,
-      passPercentage: gradingPassPct, gradingPolicy: { schoolId: teacher.schoolId }, gradingRules,
-      termAverageRule: freshRuleTermAvg, currentTerm: resTerm || undefined,
-      cumulativeConfig: freshCumulConfig ?? undefined,
-    });
-
-    const next: Record<number, PromoEntry> = {};
-    for (const s of freshResults) {
-      const decision = computeStudentSuggestion(s, resTerm, freshRuleTermAvg, false, freshCumulConfig);
-      if (!decision) continue;
-      next[s.studentId] = {
-        decision,
-        targetClass: decision === "promoted" ? getNextClass(resClass, classes) : resClass,
-        targetSection: resSection,
-        editCount: promoMap[s.studentId]?.editCount ?? 0,
-        editTrail: promoMap[s.studentId]?.editTrail ?? [],
-      };
-    }
-
-    const promoted = Object.values(next).filter(e => e.decision === "promoted").length;
-    const retained = Object.values(next).filter(e => e.decision === "retained").length;
-    const pending = freshResults.filter(result => result.resultStatus !== "complete").length;
-
-    setPromoMap(next);
-    toast({
-      title: "Auto-suggestion applied",
-      description: `${freshResults.length - pending} complete result(s) evaluated — ${promoted} to promote, ${retained} to retain; ${pending} pending result(s) need applicable marks.`,
-      duration: 4000,
-    });
   }
 
   const saveLedgerMutation = useMutation({
     mutationFn: async (lock: boolean) => {
+      if (!promotionAssessmentAvailable) {
+        throw new Error("No effective promotion assessment rules are configured for this class and term.");
+      }
       const entries = allResults.flatMap(s => {
         const current = promoMap[s.studentId];
-        const autoSuggestion = computeStudentSuggestion(s, resTerm, ruleTermAvg, isCumulativeTerm, cumulConfig);
+        const autoSuggestion = computeStudentSuggestion(s, promotionAssessmentAvailable);
         if (!current || !autoSuggestion) return [];
         return [{
           studentId: s.studentId,
@@ -1250,8 +1183,22 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
         </div>
       )}
 
+      {ready && !isLoading && resultsQuery.isError && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300" role="alert" data-testid="status-results-error">
+          <p className="font-semibold">Could not load authoritative examination results.</p>
+          <p className="mt-1 text-xs text-red-200/80">{(resultsQuery.error as Error)?.message ?? "Please retry."}</p>
+          <button
+            onClick={() => resultsQuery.refetch()}
+            className="mt-2 text-xs font-semibold underline underline-offset-2"
+            data-testid="btn-retry-examination-results"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Results table */}
-      {ready && !isLoading && (
+      {ready && !isLoading && !resultsQuery.isError && (
         <>
           {filteredResults.length === 0 ? (
             <div className="rounded-2xl border border-[#1e293b] bg-[#0f172a] p-12 text-center">
@@ -1266,9 +1213,9 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-[#1e293b] border-b border-[#1e293b]">
                 {[
                   { label: "Total Students", value: filteredResults.length },
-                  { label: "Promoted", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "promoted").length, color: "text-emerald-400" },
-                  { label: "Retained", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "retained").length, color: "text-red-400" },
-                  { label: "Pending", value: filteredResults.filter(r => r.resultStatus !== "complete" || !promoMap[r.studentId]).length, color: "text-amber-400" },
+                  { label: "Teacher Recommended: Promoted", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "promoted").length, color: "text-emerald-400" },
+                  { label: "Teacher Recommended: Retained", value: filteredResults.filter(r => promoMap[r.studentId]?.decision === "retained").length, color: "text-red-400" },
+                  { label: "Pending Recommendation", value: filteredResults.filter(r => r.resultStatus !== "complete" || !promoMap[r.studentId]).length, color: "text-amber-400" },
                   {
                     label: "Avg Attendance",
                     value: (() => {
@@ -1308,10 +1255,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </div>
                   {isPromotionTerm && isAssignedTeacher && (
                     <div className="flex items-center gap-2 flex-wrap">
+                      {resultsQuery.data && !promotionAssessmentAvailable && (
+                        <span className="text-[11px] text-amber-300" role="status" data-testid="status-promotion-assessment-unavailable">
+                          No effective promotion assessment rules are configured.
+                        </span>
+                      )}
                       <button
                         onClick={runAutoSuggestion}
-                        disabled={isArchiveMode || promoLocked || allResults.length === 0 || isSyncingPolicy}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
+                        disabled={isArchiveMode || promoLocked || !promotionAssessmentAvailable || allResults.length === 0 || isSyncingPolicy}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed${(!promoLocked && promotionAssessmentAvailable && allResults.length > 0 && !isSyncingPolicy) ? " animate-auto-suggest-pulse" : ""}`}
                         data-testid="btn-auto-suggest">
                         {isSyncingPolicy
                           ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing Policy…</>
@@ -1364,7 +1316,7 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                         <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Attendance</th>
                       )}
                       {showCol.promotionGate && (
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Promotion Gate</th>
+                          <th className="text-center py-3 px-4 text-xs font-semibold text-slate-400">Teacher Recommendation</th>
                       )}
                       {showCol.cumulativeTotal && isCumulativeTerm && (
                         <th className="text-center py-3 px-4 text-xs font-semibold text-blue-400">
@@ -1384,12 +1336,14 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                   </thead>
                   <tbody>
                     {filteredResults.map((student, idx) => {
-                      const completeTerm = student.resultStatus === "complete";
+                      const completeTerm = student.resultStatusByTerm[resTerm] === "complete";
                       const weightedAvg = completeTerm ? student.termAverages[resTerm] ?? null : null;
-                      const failCount = completeTerm ? student.allTermFailCounts[resTerm] ?? 0 : null;
+                      const failCount = completeTerm ? student.allTermFailCounts[resTerm] ?? null : null;
+                      const termGrade = completeTerm ? student.termGrades[resTerm] ?? null : null;
                       const att = student.attendancePct;
 
                       const cumulativePct = isCumulativeTerm ? student.cumulativePercentage : null;
+                      const cumulativeGrade = isCumulativeTerm ? student.cumulativeGrade : null;
 
                       return (
                         <tr key={student.studentId} className="border-b border-[#1e293b]/60 hover:bg-[#1e293b]/30 transition-colors" data-testid={`result-row-${student.studentId}`}>
@@ -1406,6 +1360,11 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                                 <div className="min-w-0">
                                   <p className="text-white font-semibold text-sm truncate">{student.name}</p>
                                   <p className="text-slate-500 font-mono text-[10px]">{student.digitalStudentId}</p>
+                                  {!completeTerm && (
+                                    <p className="mt-1 text-[10px] font-semibold text-amber-300" data-testid={`result-status-${student.studentId}`}>
+                                      Incomplete / Pending Result
+                                    </p>
+                                  )}
                                 </div>
                               </div>
                             </td>
@@ -1424,22 +1383,22 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                                       style={{ width: `${Math.min(100, weightedAvg)}%` }} />
                                   </div>
                                 </div>
-                              ) : <span className="text-slate-600 text-xs italic">No data</span>}
+                              ) : <span className="text-amber-400 text-xs italic">{completeTerm ? "—" : "Pending"}</span>}
                             </td>
                           )}
 
                           {/* Term Grade */}
                           {showCol.termGrade && (
                             <td className="py-3 px-4 text-center">
-                              {weightedAvg !== null ? (() => {
-                                const g = computeGrade(weightedAvg, gradingRules);
+                              {termGrade ? (() => {
+                                const g = { ...termGrade, color: gradeColor(termGrade.label), bg: gradeBg(termGrade.label) };
                                 return (
                                   <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
                                     title={g.remarks ?? ""} data-testid={`grade-${student.studentId}`}>
                                     {g.label}
                                   </span>
                                 );
-                              })() : <span className="text-slate-600 text-xs">—</span>}
+                              })() : <span className="text-slate-600 text-xs">{completeTerm ? "—" : "Pending"}</span>}
                             </td>
                           )}
 
@@ -1519,15 +1478,15 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
                           {/* Final Cumulative Grade */}
                           {showCol.finalGrade && isCumulativeTerm && (
                             <td className="py-3 px-4 text-center">
-                              {cumulativePct !== null ? (() => {
-                                const g = computeGrade(cumulativePct, gradingRules);
+                              {cumulativeGrade ? (() => {
+                                const g = { ...cumulativeGrade, color: gradeColor(cumulativeGrade.label), bg: gradeBg(cumulativeGrade.label) };
                                 return (
                                   <span className={`inline-flex items-center justify-center min-w-[2.2rem] px-2 py-1 rounded-lg border text-sm font-bold ${g.color} ${g.bg}`}
                                     title={g.remarks ?? ""} data-testid={`cumul-grade-${student.studentId}`}>
                                     {g.label}
                                   </span>
                                 );
-                              })() : <span className="text-slate-600 text-xs">—</span>}
+                              })() : <span className="text-slate-600 text-xs">Pending</span>}
                             </td>
                           )}
 
@@ -1558,7 +1517,6 @@ function ResultsTab({ teacher }: { teacher: TeacherMe }) {
           student={reportStudent}
           term={resTerm}
           policy={policyTier}
-          gradingRules={gradingRules}
           showPromoVerdict={isPromotionTerm}
           promoEntry={promoMap[reportStudent.studentId]}
           onClose={() => setReportStudent(null)}
@@ -1777,6 +1735,7 @@ export default function ExaminationModule({ teacher }: { teacher: TeacherMe }) {
       toast({ title: "Scores Saved", description: data.message });
       queryClient.invalidateQueries({ queryKey: ["/api/exam-scores", teacher.schoolId, selectedSessionId, subject, examType, selectedClass, selectedSection] });
       queryClient.invalidateQueries({ queryKey: ["/api/teacher/class-scores", teacher.schoolId, selectedSessionId, selectedClass, selectedSection] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teacher/examination-results"] });
       queryClient.invalidateQueries({ queryKey: ["/api/exam-scores/class-average", teacher.schoolId, selectedSessionId, selectedClass, selectedSection, subject] });
       queryClient.invalidateQueries({ queryKey: ["/api/exam-scores/student", teacher.schoolId, selectedSessionId] });
     },

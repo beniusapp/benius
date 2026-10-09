@@ -289,6 +289,213 @@ export const MarkTeacherModuleSeenResponse = zod.object({
 
 
 /**
+ * Read-only. Teacher school and selected Academic Session are validated server-side; roster and marks are limited to the exact enrolled class and section.
+ * @summary Calculate Teacher Results through the authoritative examination engine
+ */
+
+
+
+
+
+export const GetTeacherExaminationResultsParams = zod.object({
+  "class": zod.coerce.string().min(1),
+  "section": zod.coerce.string().min(1),
+  "term": zod.coerce.string().min(1)
+})
+
+export const getTeacherExaminationResultsHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetTeacherExaminationResultsHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getTeacherExaminationResultsHeaderXViewSessionIdRegExp)
+})
+
+export const GetTeacherExaminationResultsResponse = zod.object({
+  "schoolId": zod.number().int(),
+  "sessionId": zod.number().int(),
+  "className": zod.string(),
+  "sectionName": zod.string(),
+  "terms": zod.array(zod.string()),
+  "selectedTerm": zod.string(),
+  "promotionAssessmentAvailable": zod.boolean(),
+  "results": zod.array(zod.object({
+  "schoolId": zod.number().int(),
+  "sessionId": zod.number().int().nullable(),
+  "studentId": zod.number().int(),
+  "name": zod.string(),
+  "digitalStudentId": zod.string(),
+  "rollNumber": zod.number().int().nullable(),
+  "termResults": zod.record(zod.string(), zod.array(zod.object({
+  "subject": zod.string(),
+  "percentage": zod.number().nullable(),
+  "passed": zod.boolean().nullable(),
+  "grade": zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()]),
+  "breakdown": zod.array(zod.object({
+  "sourceExam": zod.string(),
+  "weight": zod.number(),
+  "marks": zod.number().nullable(),
+  "totalMarks": zod.number().nullable(),
+  "isAbsent": zod.boolean(),
+  "pct": zod.number().nullable(),
+  "contribution": zod.number().nullable(),
+  "status": zod.enum(['scored', 'absent', 'missing'])
+})),
+  "status": zod.enum(['scored', 'absent', 'incomplete'])
+}))),
+  "termAverages": zod.record(zod.string(), zod.number().nullable()),
+  "termGrades": zod.record(zod.string(), zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()])),
+  "cumulativePercentage": zod.number().nullable(),
+  "cumulativeGrade": zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()]),
+  "allTermFailCounts": zod.record(zod.string(), zod.number().int().nullable()),
+  "attendancePct": zod.number().nullable(),
+  "resultStatus": zod.enum(['complete', 'incomplete']),
+  "resultStatusByTerm": zod.record(zod.string(), zod.enum(['complete', 'incomplete'])),
+  "promoted": zod.boolean().nullable(),
+  "promotionReason": zod.string(),
+  "detentionViolations": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * Read-only. Requires Performance Analytics access and the explicit selected Academic Session; includes unpublished marks for the exact enrolled cohort.
+ * @summary Calculate Principal Results through the authoritative examination engine
+ */
+
+
+
+
+
+export const GetAdminExaminationResultsParams = zod.object({
+  "class": zod.coerce.string().min(1),
+  "section": zod.coerce.string().min(1),
+  "term": zod.coerce.string().min(1)
+})
+
+export const getAdminExaminationResultsHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetAdminExaminationResultsHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getAdminExaminationResultsHeaderXViewSessionIdRegExp)
+})
+
+export const GetAdminExaminationResultsResponse = zod.object({
+  "schoolId": zod.number().int(),
+  "sessionId": zod.number().int(),
+  "className": zod.string(),
+  "sectionName": zod.string(),
+  "terms": zod.array(zod.string()),
+  "selectedTerm": zod.string(),
+  "promotionAssessmentAvailable": zod.boolean(),
+  "results": zod.array(zod.object({
+  "schoolId": zod.number().int(),
+  "sessionId": zod.number().int().nullable(),
+  "studentId": zod.number().int(),
+  "name": zod.string(),
+  "digitalStudentId": zod.string(),
+  "rollNumber": zod.number().int().nullable(),
+  "termResults": zod.record(zod.string(), zod.array(zod.object({
+  "subject": zod.string(),
+  "percentage": zod.number().nullable(),
+  "passed": zod.boolean().nullable(),
+  "grade": zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()]),
+  "breakdown": zod.array(zod.object({
+  "sourceExam": zod.string(),
+  "weight": zod.number(),
+  "marks": zod.number().nullable(),
+  "totalMarks": zod.number().nullable(),
+  "isAbsent": zod.boolean(),
+  "pct": zod.number().nullable(),
+  "contribution": zod.number().nullable(),
+  "status": zod.enum(['scored', 'absent', 'missing'])
+})),
+  "status": zod.enum(['scored', 'absent', 'incomplete'])
+}))),
+  "termAverages": zod.record(zod.string(), zod.number().nullable()),
+  "termGrades": zod.record(zod.string(), zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()])),
+  "cumulativePercentage": zod.number().nullable(),
+  "cumulativeGrade": zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()]),
+  "allTermFailCounts": zod.record(zod.string(), zod.number().int().nullable()),
+  "attendancePct": zod.number().nullable(),
+  "resultStatus": zod.enum(['complete', 'incomplete']),
+  "resultStatusByTerm": zod.record(zod.string(), zod.enum(['complete', 'incomplete'])),
+  "promoted": zod.boolean().nullable(),
+  "promotionReason": zod.string(),
+  "detentionViolations": zod.array(zod.string())
+}))
+})
+
+
+/**
+ * Student identity, school, and class/section are derived server-side from the exact selected-session Enrollment. Only published marks are included; the response excludes promotion recommendations and Principal decisions.
+ * @summary Calculate the authenticated Student's published Results
+ */
+export const getStudentExaminationResultsHeaderXViewSessionIdRegExp = new RegExp('^[1-9][0-9]*$');
+
+
+export const GetStudentExaminationResultsHeader = zod.object({
+  "x-view-session-id": zod.string().regex(getStudentExaminationResultsHeaderXViewSessionIdRegExp)
+})
+
+export const GetStudentExaminationResultsResponse = zod.object({
+  "schoolId": zod.number().int(),
+  "sessionId": zod.number().int(),
+  "className": zod.string(),
+  "sectionName": zod.string(),
+  "terms": zod.array(zod.string()),
+  "result": zod.object({
+  "studentId": zod.number().int(),
+  "termResults": zod.record(zod.string(), zod.array(zod.object({
+  "subject": zod.string(),
+  "percentage": zod.number().nullable(),
+  "passed": zod.boolean().nullable(),
+  "grade": zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()]),
+  "breakdown": zod.array(zod.object({
+  "sourceExam": zod.string(),
+  "weight": zod.number(),
+  "marks": zod.number().nullable(),
+  "totalMarks": zod.number().nullable(),
+  "isAbsent": zod.boolean(),
+  "pct": zod.number().nullable(),
+  "contribution": zod.number().nullable(),
+  "status": zod.enum(['scored', 'absent', 'missing'])
+})),
+  "status": zod.enum(['scored', 'absent', 'incomplete'])
+}))),
+  "termAverages": zod.record(zod.string(), zod.number().nullable()),
+  "termGrades": zod.record(zod.string(), zod.union([zod.object({
+  "label": zod.string(),
+  "remarks": zod.string().nullable()
+}),zod.null()])),
+  "allTermFailCounts": zod.record(zod.string(), zod.number().int().nullable()),
+  "resultStatusByTerm": zod.record(zod.string(), zod.enum(['complete', 'incomplete'])),
+  "attendancePct": zod.number().nullable()
+})
+})
+
+
+/**
  * The authenticated Student and school are derived server-side. The selected-session Enrollment must match the Homework class and section. Repeated opens are idempotent.
  * @summary Record an explicit open of one Homework detail panel
  */
