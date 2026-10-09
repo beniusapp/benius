@@ -1,0 +1,366 @@
+# BENIUS — EXAMINATION STAGE 3B-4
+## OPTION A — FREE ISOLATED POSTGRESQL TESTING FEASIBILITY
+### STRICT READ-ONLY RESEARCH AND ENVIRONMENT AUDIT
+
+BENIUS is currently in DEVELOPMENT.
+
+The owner wants to complete the remaining Examination promotion and Academic Session activation verification without risking existing Development records and, preferably, without additional cost.
+
+This task is RESEARCH AND READ-ONLY AUDIT ONLY.
+
+DO NOT IMPLEMENT ANY SOLUTION.
+
+## BACKGROUND
+
+Stage 3B-2 implementation reported PASS.
+
+Stage 3B-3 verification reported PARTIALLY VERIFIED:
+- 80 API tests passed, 2 database tests skipped.
+- 16 Web tests passed.
+- API and Web builds passed.
+- Mobile typecheck passed.
+- Authenticated Principal Exam Controller UI was not verified.
+- Database-backed promotion and activation tests were not executed.
+
+Stage 3B-4 Phase A identified:
+
+1. The application uses PostgreSQL through `DATABASE_URL`.
+2. The existing database tests do not prove that `DATABASE_URL` points to an isolated database.
+3. The Stage 2B promotion integration test creates synthetic academic records.
+4. The Academic Session activation integration test creates a PostgreSQL function and trigger.
+5. Interrupted tests can leave records or DDL behind.
+6. The current Development database must not be used for these tests.
+7. No isolated disposable database has been confirmed.
+8. Replit's built-in Development database may be limited to one per App.
+9. The cost of a separate Replit App or external PostgreSQL database is unknown.
+10. Existing examination history uses correlated execution audit and Academic History records rather than a direct shared execution ID.
+
+The owner has selected OPTION A: investigate no-additional-cost isolated testing solutions.
+
+# ABSOLUTE RESTRICTIONS
+
+DO NOT:
+
+- Modify application source files.
+- Modify test files or fixtures.
+- Modify package files or lockfiles.
+- Install packages or system software.
+- Start PostgreSQL or any other database service.
+- Create databases, schemas, users, tables, functions or triggers.
+- Create or modify Replit Apps.
+- Sign up for external services.
+- Create external database accounts.
+- Read, print or change secret values.
+- Change environment variables.
+- Connect to any existing database.
+- Run migrations.
+- Execute database integration tests.
+- Create test accounts.
+- Authenticate to the Principal portal.
+- Run promotion execution.
+- Activate an Academic Session.
+- Modify existing Development records.
+- Access Production.
+- Deploy anything.
+- Modify Mobile or Fees & Payments.
+- Touch the untracked uploads directory.
+
+Read source code, configuration files, package manifests, documentation and publicly available provider information only.
+
+Read-only terminal inspection is permitted, but do not execute commands that install, start, initialize, provision or mutate services.
+
+If a command could change the environment, do not run it.
+
+# PART 1 — INVESTIGATE FREE TEST DATABASE OPTIONS
+
+Investigate the following possibilities.
+
+## Option 1 — Local PostgreSQL inside the existing Replit workspace
+
+Determine whether PostgreSQL could run locally inside the current workspace without connecting to the application's Development database.
+
+Investigate:
+- Whether PostgreSQL server binaries are already installed.
+- Whether `initdb`, `postgres`, `pg_ctl` and `psql` are available.
+- Whether the workspace permits a separate local PostgreSQL process.
+- Whether a separate data directory and database socket/port are possible.
+- Whether this would require installation or Nix configuration changes.
+- Whether local data storage would be persistent or ephemeral.
+- Whether the database could be restricted to local connections.
+- Whether workspace memory/CPU limitations could affect the tests.
+- Whether any additional billing could occur from compute usage.
+
+Do not start PostgreSQL.
+
+Do not initialize a database.
+
+Do not install packages.
+
+Determine whether this option is technically feasible, not merely theoretically possible.
+
+## Option 2 — PostgreSQL in a separate free Replit App
+
+Investigate:
+- Whether the current Replit plan permits another App without additional subscription cost.
+- Whether a separate App would have its own Development database.
+- Whether the main BENIUS workspace could safely access it.
+- Whether network access between Apps is supported.
+- Whether creating or running another App would consume paid credits or billable resources.
+- Whether a second App could be deleted after testing.
+- Whether the current account's actual billing eligibility can be established without exposing private account information.
+
+Do not create an App.
+
+Do not inspect or change billing details requiring privileged account access.
+
+If the cost cannot be confirmed, state UNKNOWN.
+
+## Option 3 — External PostgreSQL free tier
+
+Investigate currently available free PostgreSQL services, such as Neon, Supabase or another reputable provider.
+
+For each credible option, identify:
+- Whether a genuine free tier exists.
+- Free storage allowance.
+- Compute/runtime limitations.
+- Whether a credit card is required, if documented.
+- Whether the free tier has inactivity/suspension limits.
+- Whether PostgreSQL functions and triggers are supported.
+- Whether temporary database fixtures and DDL are permitted.
+- Whether network access from Replit is possible.
+- Whether provider-specific connection restrictions could affect tests.
+- Whether a no-charge test can be completed within published free limits.
+- Whether usage can accidentally become billable.
+- Whether external provider credentials would be required.
+
+Use current official provider documentation where available.
+
+Do not create accounts or provision databases.
+
+Do not claim an option is free unless current published terms support it.
+
+## Option 4 — Ephemeral PostgreSQL test environment
+
+Investigate whether the existing workspace supports a temporary, isolated PostgreSQL environment that exists only during tests.
+
+Examples to assess:
+- Existing local PostgreSQL binaries.
+- Existing container runtime availability.
+- Temporary database data directory.
+- Ephemeral process on a separate local port.
+- Existing test tooling capable of creating isolated PostgreSQL instances.
+
+Do not pull container images.
+
+Do not run containers.
+
+Do not initialize temporary databases.
+
+Do not install additional tooling.
+
+Explain whether this differs meaningfully from Option 1 in cost, safety or reliability.
+
+## Option 5 — Other zero-additional-cost alternatives
+
+Identify any other practical option that:
+- Uses real PostgreSQL semantics.
+- Supports transactions, row locks, constraints, triggers and functions.
+- Can run the existing database integration tests.
+- Is isolated from the current BENIUS Development database.
+- Does not require copying existing school or Student data.
+
+Do not recommend SQLite, mocks or in-memory JavaScript databases as replacements for PostgreSQL integration testing.
+
+They may supplement unit tests, but they cannot prove the required PostgreSQL transaction and activation behavior.
+
+# PART 2 — VERIFY TECHNICAL COMPATIBILITY
+
+For every viable option, assess compatibility with:
+
+1. PostgreSQL version requirements.
+2. Drizzle ORM and the current database driver.
+3. `DATABASE_URL` connection format.
+4. Existing schema and migrations.
+5. Transactions and row locks.
+6. Concurrent database connections.
+7. Temporary PostgreSQL functions.
+8. Table-level triggers.
+9. Transaction rollback.
+10. Foreign keys and cascading deletes.
+11. Session-backed authentication.
+12. Synthetic Principal/Teacher/Student records.
+13. Browser-to-test-API connectivity.
+14. No outbound payment or notification calls.
+
+Classify each item as:
+- SUPPORTED
+- NOT SUPPORTED
+- UNKNOWN
+
+Do not assume compatibility without evidence.
+
+# PART 3 — TEST DATABASE SAFETY DESIGN
+
+Propose a fail-closed test environment.
+
+The future test setup must:
+
+- Use a dedicated test database containing only synthetic records.
+- Never reuse the existing Development or Production database.
+- Never copy real school, Student or payment data.
+- Use a dedicated test-only connection variable, for example `BENIUS_STAGE3B4_TEST_DATABASE_URL`.
+- Refuse to run if the test-only URL is missing.
+- Refuse to run if the test URL matches the main Development database URL.
+- Verify actual database identity before allowing mutations.
+- Not rely on a database name containing the word "test" as sufficient proof of isolation.
+- Avoid silently falling back to `DATABASE_URL`.
+- Use test-only credentials with minimum necessary permissions.
+- Restrict external connections where possible.
+- Prevent test credentials from accessing other databases.
+- Keep the main application and test API processes separate.
+- Disable real payment, refund, email, SMS and notification integrations.
+- Fail if an external integration is accidentally invoked.
+- Prevent startup jobs from running against unintended environments.
+- Include safe cleanup and disposal procedures.
+- Ensure interrupted tests cannot affect the existing Development database.
+
+Identify which protections require source changes later.
+
+Do not make those changes now.
+
+# PART 4 — EXISTING TEST COMPATIBILITY
+
+Inspect these tests without executing them:
+
+- `artifacts/api-server/src/promotion-stage2-database.test.ts`
+- `artifacts/api-server/src/academic-session-activation-database.test.ts`
+- Relevant Stage 3B-2 promotion integration tests.
+
+Determine:
+
+1. Whether they can run against an empty isolated PostgreSQL database.
+2. Whether schema initialization is required.
+3. Whether test-specific migrations or seed setup are required.
+4. Whether existing fixtures assume global school IDs or preexisting records.
+5. Whether their DDL requires elevated database permissions.
+6. Whether they can run sequentially.
+7. Whether parallel execution could cause interference.
+8. Whether their cleanup remains safe in the selected environment.
+9. Whether an interrupted test environment can simply be discarded.
+10. Whether test scripts must be modified to enforce isolation.
+
+Provide exact source references.
+
+# PART 5 — AUTHENTICATED PRINCIPAL UI TESTING
+
+Determine whether the same isolated database solution can support a dedicated test API/Web environment.
+
+Investigate:
+- Test-only Admin login.
+- Six-digit Admin PIN flow.
+- Synthetic Academic Sessions.
+- Synthetic Teacher and Student records.
+- Exam Controller route access.
+- Test-only session storage.
+- Unauthorized Support Staff access.
+- Browser preview access.
+- Separation from the main BENIUS application.
+
+Do not create credentials.
+
+Do not sign in.
+
+Do not bypass authentication.
+
+Do not start a test server.
+
+Determine whether UI testing can be completed with the same isolated PostgreSQL solution or whether additional infrastructure would be required.
+
+# PART 6 — COST AND PRACTICALITY
+
+Compare each option on:
+
+- Additional monetary cost.
+- Existing compute-credit usage.
+- Setup difficulty.
+- Technical compatibility.
+- Data isolation.
+- Reliability.
+- Cleanup.
+- Replit suitability.
+- Browser-testing suitability.
+
+Important:
+The owner has limited development budget.
+
+Prefer genuinely free solutions with low setup complexity.
+
+Do not recommend a paid option simply because it is easier.
+
+Distinguish:
+- CONFIRMED FREE
+- FREE TIER WITH LIMITS
+- POSSIBLE EXISTING-CREDIT COST
+- COST UNKNOWN
+- PAID
+
+If a service has a free tier but its compatibility or Replit connectivity is unknown, say so.
+
+# PART 7 — RECOMMENDATION
+
+Recommend:
+
+1. Best no-additional-cost option.
+2. Second-best fallback.
+3. Whether either option is sufficiently safe for Stage 3B-4 Phase B.
+4. Exact prerequisites.
+5. Whether any account signup is required.
+6. Whether any installation is required.
+7. Whether any additional cost is expected or still unknown.
+8. What source/configuration changes would be required after approval.
+9. What database isolation checks must pass before tests can run.
+10. Whether authenticated Principal UI testing can use the same environment.
+
+Do not implement the recommendation.
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall result: FREE OPTION FOUND / POSSIBLE BUT UNCONFIRMED / NO SUITABLE FREE OPTION.
+2. A comparison table of all investigated options.
+3. Official documentation links for external providers and relevant Replit constraints.
+4. Current local PostgreSQL binary availability.
+5. Current container runtime availability.
+6. Replit workspace limitations.
+7. Current account-cost visibility limitations.
+8. PostgreSQL compatibility assessment.
+9. Existing test compatibility assessment.
+10. Fail-closed database isolation design.
+11. Authenticated Principal UI feasibility.
+12. Recommended first choice.
+13. Recommended fallback.
+14. Estimated cost and uncertainty.
+15. Required future changes.
+16. Risks and blockers.
+17. Exact source/configuration references.
+18. Actions requiring explicit owner approval.
+19. Files modified: expected NONE.
+20. Database connections made: expected NONE.
+21. Databases created: expected NONE.
+22. Packages installed: expected NONE.
+23. Environment variables changed: expected NONE.
+24. Accounts or credentials created: expected NONE.
+25. Existing Development records changed: expected NO.
+26. Production accessed: expected NO.
+27. Deployment performed: expected NO.
+
+## STOP CONDITION
+
+Stop after producing the comparison and recommendation.
+
+Do not provision, install, initialize, configure, connect to, or run any PostgreSQL instance.
+
+Do not start Stage 3B-4 Phase B.
+
+Wait for explicit owner approval before making any changes.
