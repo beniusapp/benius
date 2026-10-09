@@ -1,0 +1,343 @@
+# BENIUS — EXAMINATION STAGE 3B-4
+## PHASE B2 — ISOLATED POSTGRESQL DATABASE INTEGRATION TESTING
+### EXPLICIT OWNER APPROVAL — LIMITED SCOPE
+
+BENIUS is in DEVELOPMENT, not Production.
+
+The owner has explicitly approved Stage 3B-4 Phase B2, limited to database integration testing against the isolated local PostgreSQL environment established in Phase B1.
+
+Do not interpret this as approval for Production, deployment, authenticated UI testing, or changes to existing Development data.
+
+## BACKGROUND
+
+Stage 3B-2 implemented audited Principal promotion execution.
+
+Stage 3B-3 reported:
+- 80 API tests passed.
+- 16 Web tests passed.
+- Two database integration tests skipped.
+- Database-backed promotion and activation were not fully verified.
+- Authenticated Principal Exam Controller UI was not verified.
+
+Stage 3B-4 Phase B1 reported PASS:
+
+- PostgreSQL 16.10 local cluster created.
+- Dedicated database: `benius_stage3b4_test`.
+- Dedicated role: `benius_stage3b4_test`.
+- Cluster directory: `/tmp/benius-stage3b4.1e446f1c807e44c19b7aa7efb28a56f0`
+- Unix-socket-only connections.
+- No TCP listener.
+- Test-owned database and cluster identity markers verified.
+- Fail-closed database identity checks passed.
+- No Development or Production database connection.
+- No BENIUS application schema created.
+- No integration tests run.
+- PostgreSQL shut down cleanly.
+
+Existing Phase B1 files:
+
+- `artifacts/api-server/test-support/stage3b4-local-identity.mjs`
+- `artifacts/api-server/test-support/stage3b4-b1-runner.mjs`
+- `artifacts/api-server/test-support/PHASE-B1-LOCAL-POSTGRES.md`
+
+The Phase B1 cluster is currently stopped.
+
+## NON-NEGOTIABLE SAFETY RULES
+
+DO NOT:
+
+1. Connect to the existing BENIUS Development database.
+2. Connect to Production.
+3. Read, print, overwrite, or use the existing Development `DATABASE_URL` value.
+4. Modify existing Development or Production records.
+5. Modify the main application's database configuration.
+6. Modify Examination business logic.
+7. Modify Teacher recommendation logic.
+8. Modify Principal override business rules.
+9. Modify Academic Session activation business logic.
+10. Modify Mobile routes or frontend.
+11. Modify Fees & Payments.
+12. Run authenticated Principal browser/UI tests.
+13. Start the normal BENIUS API server or Web application.
+14. Execute real Student promotions.
+15. Activate any real Academic Session.
+16. Run payment, refund, email, SMS or notification integrations.
+17. Run background dunning or scheduled jobs.
+18. Deploy or publish the application.
+19. Install packages or pull Docker images.
+20. Touch the untracked uploads directory.
+21. Run `drizzle-kit push --force`.
+22. Run broad database cleanup commands against any unverified target.
+23. Expose passwords, connection URLs, session secrets or credentials in logs.
+
+All database writes, schema initialization, test fixtures, triggers, functions and cleanup are permitted ONLY inside the positively verified disposable Phase B1 database.
+
+If isolation cannot be proved, STOP immediately.
+
+# PART 1 — REVALIDATE THE PHASE B1 ENVIRONMENT
+
+Before any database schema or test operation:
+
+1. Confirm that the exact Phase B1 cluster directory exists.
+2. Confirm it is the expected PostgreSQL 16 cluster.
+3. Confirm its owner and permissions.
+4. Confirm the directory is not a symlink or unexpected mount.
+5. Confirm the cluster identity metadata matches Phase B1.
+6. Confirm the test-owned identity guard files are present.
+7. Confirm no existing database service needs to be stopped or reconfigured.
+8. Start only the previously approved disposable PostgreSQL cluster.
+9. Revalidate its socket-only configuration.
+10. Verify its actual database name, role, cluster identity and test marker.
+11. Confirm that no TCP listener has been opened.
+12. Confirm that the existing Development database configuration remains untouched.
+
+Do not recreate or replace the cluster automatically if it is missing or has changed.
+
+If any identity check fails, STOP.
+
+# PART 2 — ENFORCE TEST-ONLY DATABASE ROUTING
+
+The existing tests import the application's database module, which normally uses `DATABASE_URL`.
+
+For Phase B2, establish a dedicated test-only process that safely routes database access to the verified local test database.
+
+Requirements:
+
+- Require `BENIUS_STAGE3B4_TEST_DATABASE_URL`.
+- Never use the existing Development connection value.
+- Never silently fall back to the general `DATABASE_URL`.
+- Run the test process with a deliberately constructed environment in which `DATABASE_URL` is assigned only from the verified test-only connection.
+- Ensure the test-only connection is validated before importing application database modules.
+- Ensure child processes inherit only the approved test database configuration.
+- Prevent the test process from reaching any remote PostgreSQL endpoint.
+- Prevent accidental connections to another local database.
+- Ensure database identity verification cannot be bypassed by invoking the underlying test runner directly.
+- Never log connection secrets.
+
+If a direct test invocation could still access the Development database, explain the risk and implement a narrowly scoped test-only protection before proceeding.
+
+Do not change the main application's runtime database behavior.
+
+# PART 3 — PREPARE THE ISOLATED SCHEMA
+
+After successful isolation checks:
+
+1. Inspect the existing Drizzle schema and schema initialization requirements.
+2. Initialize the required BENIUS schema only inside `benius_stage3b4_test`.
+3. Use the ordinary non-destructive schema initialization method.
+4. Do not use `push --force`.
+5. Do not use an application startup path that launches background jobs.
+6. Do not connect to or copy records from the existing Development database.
+7. Do not seed real school, Student, Teacher or payment information.
+8. Do not run any payment-provider integration.
+9. Confirm that schema creation affected only the isolated test database.
+10. Revalidate database identity after initialization.
+
+If schema initialization requests destructive operations, affects an unexpected database, or requires Production/Development data, STOP.
+
+# PART 4 — RUN THE APPROVED DATABASE TESTS
+
+Run ONLY the following database integration suites, sequentially:
+
+## Test A — Stage 2B Promotion Database Integration
+
+File:
+
+`artifacts/api-server/src/promotion-stage2-database.test.ts`
+
+Verify:
+
+- Source-session Student placement.
+- School isolation.
+- Academic Session isolation.
+- Teacher recommendation and locked-decision behavior.
+- Target-session enrollment creation.
+- Academic History creation.
+- Target-enrollment conflict rejection.
+- Transaction rollback.
+- Preservation of current Student Registry placement before activation.
+- Any audited Principal execution scenarios actually covered by this test.
+
+Record which scenarios are covered and which are not.
+
+Do not claim that a scenario passed unless the test genuinely exercises it.
+
+## Test B — Stage 3 Academic Session Activation Database Integration
+
+File:
+
+`artifacts/api-server/src/academic-session-activation-database.test.ts`
+
+Verify:
+
+- Activation uses target-session enrollment.
+- Class, section and roll number synchronization.
+- Same-school Student isolation.
+- Archived/source-session protection.
+- Conflicting enrollment rejection.
+- Activation rollback on failure.
+- Temporary PostgreSQL trigger/function cleanup.
+- No unintended Student Registry changes outside the synthetic fixtures.
+
+The activation test may create its failure-injection function and trigger only inside the isolated database.
+
+Run Test A and Test B sequentially, not in parallel.
+
+Preserve any intentional concurrency testing internal to the suites.
+
+Do not run other database integration suites without separate approval.
+
+# PART 5 — TEST FAILURE HANDLING
+
+If a test fails:
+
+1. Capture the exact test name and failure.
+2. Determine whether the cause is environment setup, fixture assumptions or application logic.
+3. Do not automatically change application business logic.
+4. Do not weaken assertions merely to obtain a passing result.
+5. Do not rerun repeatedly without understanding the failure.
+6. Do not modify existing Development data.
+7. Report the failure and the minimum proposed next step.
+
+If database isolation fails at any point:
+
+- Stop further test execution.
+- Stop the disposable PostgreSQL instance safely.
+- Do not attempt fallback to another database.
+- Report the failure immediately.
+
+# PART 6 — POST-TEST INTEGRITY CHECKS
+
+After the approved suites finish:
+
+1. Revalidate the isolated database identity.
+2. Check whether synthetic fixture records remain.
+3. Check whether the activation test's temporary function remains.
+4. Check whether its temporary trigger remains.
+5. Check for unexpected leftover audit/history/enrollment records.
+6. Confirm that no application schema changes occurred outside the disposable database.
+7. Confirm that no external integrations were invoked.
+8. Confirm that no real BENIUS records were accessed or modified.
+9. Stop the disposable PostgreSQL server cleanly.
+10. Retain the temporary cluster files for owner review unless cleanup is separately approved.
+
+If fixture cleanup is incomplete, report the remaining objects and do not perform unapproved destructive cleanup.
+
+# PART 7 — COVERAGE GAP ASSESSMENT
+
+Stage 3B-3 identified several scenarios that still need database-level proof.
+
+For each scenario below, classify:
+
+- VERIFIED BY DATABASE TEST
+- VERIFIED ONLY BY UNIT TEST
+- SOURCE INSPECTED ONLY
+- NOT VERIFIED
+
+Scenarios:
+
+A. Teacher Promote, Principal agrees.
+
+B. Teacher Promote, Principal Retain.
+
+C. Teacher Retain, Principal Promote.
+
+D. Principal proposal edited or cleared.
+
+E. Incomplete examination results block execution.
+
+F. Concurrent execution and idempotent retry.
+
+G. School and Academic Session isolation.
+
+H. Legacy Grace and legacy override behavior.
+
+I. Mobile Teacher-led execution remains unaffected.
+
+J. Target-session enrollment preparation.
+
+K. Current Student Registry unchanged before activation.
+
+L. Registry synchronization on target-session activation.
+
+M. Transaction rollback after audit or activation failure.
+
+N. Historical Teacher recommendation and executed final-decision audit correlation.
+
+Do not mark Principal audited-override scenarios as fully database-verified merely because the generic Stage 2B promotion test passed.
+
+If gaps remain, propose a separate, narrowly scoped future verification step.
+
+Do not add or execute new test suites without owner approval.
+
+# PART 8 — BUILD AND SOURCE INTEGRITY
+
+Report:
+
+- Whether only test infrastructure files were modified.
+- Whether any existing test file was modified.
+- Whether any application business logic was modified.
+- Whether any API or Web runtime configuration changed.
+- Whether any Mobile files changed.
+- Whether any Fees & Payments files changed.
+- Whether any database schema files changed.
+- Whether any existing unrelated working-tree changes were preserved.
+
+Do not repair unrelated issues.
+
+Do not modify application business logic to force test success.
+
+# REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / FAIL / BLOCKED.
+2. Database isolation preflight result.
+3. Cluster identity verification result.
+4. Confirmation of socket-only access.
+5. Test-only database routing evidence.
+6. Confirmation of no Development database fallback.
+7. Schema initialization result.
+8. Exact schema initialization method.
+9. Stage 2B test results, including counts.
+10. Stage 3 activation test results, including counts.
+11. Exact failed or skipped tests.
+12. Promotion transaction evidence.
+13. Activation and Student Registry evidence.
+14. Rollback evidence.
+15. Concurrency/idempotency evidence.
+16. School and Academic Session isolation evidence.
+17. Principal audited-override database coverage.
+18. Teacher decision preservation evidence.
+19. Historical audit and Academic History evidence.
+20. Mobile compatibility coverage.
+21. Leftover fixtures or temporary database objects.
+22. Database identity after testing.
+23. PostgreSQL shutdown status.
+24. Files created or modified.
+25. Application business logic changes: expected NONE.
+26. Existing Development database accessed: expected NO.
+27. Existing BENIUS records modified: expected NO.
+28. Production accessed: expected NO.
+29. Deployment performed: expected NO.
+30. External integrations invoked: expected NO.
+31. Remaining unverified scenarios.
+32. Recommendation for the next verification stage.
+
+## MANDATORY STOP CONDITION
+
+After the two approved database suites and integrity checks:
+
+STOP.
+
+Do not begin Principal authenticated browser testing.
+
+Do not create additional database test suites.
+
+Do not change application business logic.
+
+Do not activate a real Academic Session.
+
+Do not proceed to Phase B3 automatically.
+
+Wait for explicit owner approval.
