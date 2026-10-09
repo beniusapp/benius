@@ -1,0 +1,283 @@
+# BENIUS — EXAMINATION STAGE 3B-4
+## PHASE B1 — LOCAL POSTGRESQL ISOLATION PREPARATION
+### LIMITED IMPLEMENTATION AUTHORIZATION
+
+BENIUS is in DEVELOPMENT, not Production.
+
+The owner authorizes Stage 3B-4 Phase B1 ONLY.
+
+This authorization covers:
+1. Preparing a disposable local PostgreSQL 16 test environment.
+2. Implementing test-only database identity and safety guards.
+3. Verifying that the disposable environment is isolated.
+4. Reporting readiness for a separately approved Phase B2.
+
+It DOES NOT authorize running Examination integration tests, authenticated UI tests, promotion execution, Academic Session activation, or changing existing BENIUS records.
+
+## BACKGROUND
+
+Previous audits established:
+
+- PostgreSQL 16.10 server utilities are installed in the Replit workspace.
+- `.replit` already includes the `postgresql-16` module.
+- The existing BENIUS application uses `DATABASE_URL`.
+- Stage 2B and Stage 3 activation database tests use that general connection setting.
+- Their existing enablement flags do not establish database isolation.
+- The activation test creates a PostgreSQL function and trigger.
+- Existing Development records must not be exposed to these tests.
+- No isolated test database has previously been confirmed.
+- `/tmp` is available for disposable storage, but local PostgreSQL startup has not yet been tested.
+
+## NON-NEGOTIABLE RESTRICTIONS
+
+DO NOT:
+
+1. Connect to the existing BENIUS Development database.
+2. Connect to Production.
+3. Read or print the value of the existing `DATABASE_URL`.
+4. Change the existing application `DATABASE_URL`.
+5. Change the existing Development database schema or records.
+6. Run any Examination database integration test.
+7. Run the Stage 2B promotion database test.
+8. Run the Stage 3 Academic Session activation database test.
+9. Execute promotion or activation application functions.
+10. Create or modify real school, Student, Teacher, Admin or Support Staff records.
+11. Start the existing BENIUS API server or Web application for testing.
+12. Perform authenticated Principal UI testing.
+13. Create test application users or authenticate to BENIUS.
+14. Run existing application migrations or Drizzle schema push.
+15. Run the application startup schema initialization.
+16. Modify Fees & Payments.
+17. Modify Mobile behavior.
+18. Send emails, SMS, notifications or payment-provider requests.
+19. Modify existing session-secret handling in the main application.
+20. Modify the untracked uploads directory.
+21. Deploy or publish anything.
+22. Install packages or pull Docker images without separate approval.
+
+Do not copy data from any existing database.
+
+Do not create a new Replit App or external database.
+
+If safe isolation cannot be established, STOP.
+
+# PART 1 — PRE-FLIGHT SAFETY INSPECTION
+
+Before starting PostgreSQL:
+
+- Confirm that the installed PostgreSQL utilities are available.
+- Confirm their major version is 16.
+- Confirm a suitable temporary data-directory location.
+- Confirm the intended temporary directory does not already contain another database.
+- Confirm an unused local port or isolated Unix-socket path can be selected.
+- Confirm the workspace has sufficient memory and disk space for a minimal temporary cluster.
+- Confirm that the PostgreSQL process will not use the managed Replit Development database.
+- Confirm that no existing PostgreSQL service will be stopped, restarted or reconfigured.
+
+Use only safe inspection commands.
+
+Do not inspect existing database contents or connection-string values.
+
+Record the pre-flight findings.
+
+# PART 2 — CREATE A DISPOSABLE LOCAL POSTGRESQL CLUSTER
+
+Only if Part 1 passes:
+
+1. Create a new, uniquely named temporary directory under `/tmp`.
+2. Initialize a new PostgreSQL 16 cluster in that directory using the installed PostgreSQL tools.
+3. Do not reuse an existing data directory.
+4. Configure PostgreSQL to accept connections only through a dedicated Unix-domain socket in the temporary directory, if supported.
+5. If a TCP listener is necessary, bind only to loopback and use a dedicated unused port.
+6. Never bind to `0.0.0.0` or expose PostgreSQL publicly.
+7. Do not use the existing Development database connection settings.
+8. Use a dedicated local test role with a nonblank test-only password and only the permissions needed for the disposable environment.
+9. Do not reuse existing BENIUS credentials.
+10. Keep database files, socket files and process metadata separate from the main application.
+11. Do not modify system-wide PostgreSQL configuration.
+12. Do not start or stop any existing database service.
+13. Do not enable persistent automatic startup.
+
+Use the least privileged OS account supported by the environment. Do not run the PostgreSQL server as root.
+
+If any of these conditions cannot be met, stop and report the blocker.
+
+# PART 3 — DATABASE IDENTITY AND FAIL-CLOSED GUARDS
+
+Implement a dedicated test-only isolation mechanism.
+
+Use a variable named:
+
+`BENIUS_STAGE3B4_TEST_DATABASE_URL`
+
+Requirements:
+
+- Never default it to the existing `DATABASE_URL`.
+- Never silently use the application's general database connection.
+- Never overwrite the existing Development `DATABASE_URL`.
+- Never log connection strings or passwords.
+- Reject missing or malformed test configuration.
+- Reject any test URL that is not explicitly associated with the disposable local cluster.
+- Reject nonlocal hosts and unexpected ports or socket paths.
+- Reject database identity mismatches.
+- Reject use of a non-test database role.
+- Reject missing or incorrect test-owned identity evidence.
+- Reject connections if the isolated cluster cannot be positively identified.
+- Do not rely only on the database name containing "test".
+- Do not rely only on a URL string comparison as proof of isolation.
+
+Create a test-owned identity marker only inside the disposable database.
+
+Verify identity using a dedicated local test connection, not the existing application's database pool.
+
+Use a combination of:
+- Expected database name.
+- Expected database role.
+- Expected local socket or port.
+- Test-owned identity marker.
+- A unique cluster identifier or similarly strong independent evidence.
+
+The identity check must occur before any future schema initialization, fixture insertion or integration test execution.
+
+Ensure that a future test process cannot accidentally fall back to the existing Development database.
+
+Do not read or compare secret values from the existing Development connection.
+
+# PART 4 — PREPARE TEST-ONLY CONFIGURATION
+
+Create or update only narrowly scoped test infrastructure files if necessary.
+
+Permitted examples:
+- A test-only database setup script.
+- A test-only database identity guard.
+- A test-only runner wrapper.
+- Documentation for starting and disposing of the isolated cluster.
+
+Do not modify production/runtime database connection behavior.
+
+Do not change existing application API startup behavior.
+
+Do not change existing Examination business logic.
+
+Do not change Academic Session activation logic.
+
+Do not modify the existing database integration tests to run them.
+
+If future test compatibility requires changes to those tests, document the required changes for Phase B2 instead.
+
+Keep the changes minimal and clearly separated from the application runtime.
+
+The test-only runner must default to refusal rather than execution.
+
+It must not run database tests during Phase B1.
+
+# PART 5 — SAFE ISOLATION VERIFICATION
+
+Perform only minimal checks against the new disposable PostgreSQL cluster.
+
+Allowed:
+- Confirm PostgreSQL starts successfully.
+- Confirm a connection to the disposable database succeeds.
+- Confirm expected database and role identities.
+- Confirm the test-owned identity marker.
+- Confirm the selected socket or loopback restriction.
+- Confirm the identity guard accepts the intended disposable database.
+- Confirm the guard rejects missing configuration.
+- Confirm the guard rejects deliberately invalid or mismatched test configuration without attempting connections to nonlocal or existing database endpoints.
+- Confirm no existing database service was stopped or modified.
+- Confirm the test environment can be shut down cleanly.
+
+For negative tests, use synthetic invalid values only.
+
+Do not probe or connect to the existing Development or Production databases.
+
+Do not initialize BENIUS application tables.
+
+Do not run Drizzle schema push.
+
+Do not insert any school, Student, Teacher, examination or payment records.
+
+Do not run application integration tests.
+
+# PART 6 — TEST ENVIRONMENT LIFECYCLE
+
+Document:
+
+1. How the disposable PostgreSQL instance is started.
+2. How the correct instance is identified.
+3. How it is stopped.
+4. How its temporary data is safely discarded.
+5. How to ensure cleanup cannot target another database.
+6. What happens if Replit restarts.
+7. What happens if the test process crashes.
+8. Whether the environment can be recreated without touching Development.
+9. Whether temporary credentials or process metadata could be exposed.
+10. Whether the temporary server consumes additional workspace resources or credits.
+
+Do not delete the disposable cluster automatically if it would prevent the owner from reviewing the Phase B1 results.
+
+Never use broad cleanup commands against unspecified paths.
+
+# PART 7 — COST AND RESOURCE OBSERVATIONS
+
+Record:
+- PostgreSQL startup success or failure.
+- Approximate local memory use, if safely observable.
+- Approximate temporary disk usage.
+- Any visible workspace resource constraints.
+- Whether extra Replit charges can be confirmed.
+
+Do not access privileged billing information.
+
+Do not claim zero cost if usage-based workspace resource charges remain unknown.
+
+# REQUIRED FINAL REPORT
+
+Return:
+
+1. Overall status: READY FOR PHASE B2 REVIEW / BLOCKED / FAILED.
+2. Pre-flight safety results.
+3. PostgreSQL version.
+4. Whether a separate local cluster was created.
+5. Whether the cluster started successfully.
+6. Whether only local connections are permitted.
+7. Test database name, excluding passwords.
+8. Test role name, excluding credentials.
+9. Database identity marker verification.
+10. Cluster identity verification.
+11. Fail-closed guard test results.
+12. Whether any guard can fall back to the main Development database.
+13. Whether existing Development database settings were changed.
+14. Whether any existing database was contacted.
+15. Whether BENIUS application tables were created.
+16. Whether integration tests were executed.
+17. Whether authenticated UI testing occurred.
+18. Whether promotion or activation was executed.
+19. Whether external integrations were invoked.
+20. Files created or modified, with exact paths.
+21. Temporary database directory location.
+22. PostgreSQL process status.
+23. Cleanup and disposal procedure.
+24. Observed resource usage.
+25. Cost uncertainty.
+26. Remaining risks and blockers.
+27. Exact actions required for Phase B2.
+28. Confirmation that Production was not accessed.
+29. Confirmation that no deployment occurred.
+30. Confirmation that no existing BENIUS records were changed.
+
+## MANDATORY STOP CONDITION
+
+Stop after preparing and verifying the isolated local PostgreSQL environment.
+
+Do not run Stage 2B, Stage 3 or Stage 3B-2 database integration tests.
+
+Do not run authenticated Principal UI tests.
+
+Do not run migrations or initialize BENIUS application schemas.
+
+Do not execute promotions or activate Academic Sessions.
+
+Do not proceed to Phase B2 automatically.
+
+Wait for the owner's explicit approval.
