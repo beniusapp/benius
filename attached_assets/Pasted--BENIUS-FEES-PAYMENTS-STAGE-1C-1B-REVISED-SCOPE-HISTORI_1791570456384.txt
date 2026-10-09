@@ -1,0 +1,106 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1B — REVISED SCOPE: HISTORICAL FEE LIST AND EXPORT FILTER ALIGNMENT
+### READ-ONLY IMPACT CONFIRMATION FIRST — IMPLEMENTATION REQUIRES SEPARATE OWNER APPROVAL
+
+Stage 1C-1B was paused after Phase A identified a shared-filter dependency between the Principal fee list and three financial exports.
+
+No Stage 1C-1B changes were made.
+
+The owner wants to preserve all existing Fees & Payments business logic.
+
+## OBJECTIVE
+
+Prepare a minimal, coordinated correction for:
+
+1. Principal generated-invoice list and fee ledger historical placement.
+2. Principal Class/Section filter options and matching.
+3. Ledger CSV export Class/Section filtering and placement labels.
+4. Ledger PDF export Class/Section filtering and placement labels.
+5. Payment PDF export Class/Section filtering and placement labels.
+
+All five surfaces must interpret the same Class/Section filter using the same Academic Session enrollment.
+
+## NON-NEGOTIABLE RULES
+
+- Do not modify invoice generation.
+- Do not modify fee structure eligibility.
+- Do not modify fee calculations.
+- Do not modify payment processing.
+- Do not modify payment allocations or reconciliation.
+- Do not modify financial totals or balances.
+- Do not modify existing financial records.
+- Do not modify Student Registry or enrollment synchronization.
+- Do not modify database schemas.
+- Do not modify Student Profile.
+- Do not modify Mobile code.
+- Do not modify financial analytics.
+- Do not modify document authorization.
+- Do not access Production or deploy.
+- Do not run financial transactions.
+- Do not query or modify existing Development financial data.
+
+## PHASE A — READ-ONLY CONFIRMATION
+
+Inspect the shared Class/Section filter flow from the Principal Web screen to:
+
+- Fee list endpoint.
+- Filter-options endpoint.
+- Ledger CSV endpoint.
+- Ledger PDF endpoint.
+- Payment PDF endpoint.
+
+For each, identify:
+
+- Exact file/function/line references.
+- School and Academic Session enforcement.
+- Current placement source.
+- Proposed exact enrollment join.
+- Shared parameters and callers.
+- Whether the financial row population changes only as expected under a Class/Section filter.
+- Whether unfiltered financial totals remain identical.
+- Whether paid/outstanding values and payment allocation remain untouched.
+- Whether export row counts and pagination remain correct.
+- Whether unresolved historical placement can be represented without losing financial rows.
+- Whether changing shared helpers would affect invoice generation, Mobile or analytics.
+
+For linked payments, check that historical placement uses the linked fee record's own Session ID and that mismatched payment/fee sessions are flagged rather than silently repaired.
+
+If any export relies on different financial-record selection rules, document those differences. Do not force identical populations where the existing reports intentionally represent different financial transactions.
+
+## REQUIRED DESIGN
+
+Use the exact school ID + Student ID + fee record Session ID enrollment.
+
+Never substitute current Registry placement.
+
+Preserve financial record selection, calculations, amounts, balances, status, dates, sorting and existing authorization.
+
+For unfiltered results, retain financial records with unresolved placement.
+
+For Class/Section-filtered results, apply the historical placement filter consistently across the list and exports.
+
+Do not silently include unresolved placement in a named class.
+
+Preserve existing financial report meanings and totals.
+
+## REQUIRED OUTPUT
+
+Return:
+
+1. Whether the revised scope can be implemented safely without changing financial business logic.
+2. Exact affected files and endpoints.
+3. Shared filter dependency map.
+4. Minimal proposed code changes.
+5. Risks to existing financial calculations.
+6. Expected behavior for unresolved placement.
+7. Test plan covering list/export consistency, tenant/session isolation and unchanged financial amounts.
+8. Whether any additional shared consumers would be affected.
+9. Files modified: NONE.
+10. Database records modified: NONE.
+11. Production accessed: NO.
+12. Deployment performed: NO.
+13. Financial actions: NONE.
+
+STOP after the read-only report.
+
+Do not implement until the owner separately approves the revised Stage 1C-1B scope.
