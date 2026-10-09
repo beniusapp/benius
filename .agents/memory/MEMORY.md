@@ -25,3 +25,4 @@
 - [Support Staff dashboard shell](support-staff-dashboard-shell.md) — omit the full summary bar; Removed History is read-only Teacher Registry base access inside the shell.
 - [Homework review timestamp precision](homework-review-timestamp-precision.md) — preserve PostgreSQL sub-millisecond precision in optimistic review tokens; JavaScript Date round-trips only milliseconds.
 - [Historical fee placement](historical-fee-placement.md) — approved fee lists and exports use exact-session enrollment; unresolved placement is explicit and mismatches are warned, never repaired.
+- [Disposable fee-test PostgreSQL](isolated-fee-postgres.md) — verify private cluster settings without elevating the test role; keep local startup and checks in one shell execution.
