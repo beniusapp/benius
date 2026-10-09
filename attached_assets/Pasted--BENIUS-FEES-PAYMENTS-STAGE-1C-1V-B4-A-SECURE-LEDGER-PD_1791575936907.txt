@@ -1,0 +1,308 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B4-A — SECURE LEDGER PDF LOGO LOADING
+### OWNER APPROVED — NARROW SECURITY IMPLEMENTATION ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner approves Stage 1C-1V-B4-A to secure the school-logo loading mechanism used by the Ledger PDF generator.
+
+**CRITICAL: DO NOT CHANGE ANY EXISTING FEES & PAYMENTS BUSINESS LOGIC.**
+
+This stage is limited to the Ledger PDF logo-loading security issue discovered in Stage 1C-1V-B4.
+
+Do not implement the archived-session Ledger PDF POST allowlist correction yet.
+
+Do not implement invoice-selection changes yet.
+
+Do not begin B4-B, B4-C, B4-D, Stage 1C-2 or Stage 1C-3.
+
+---
+
+## 1. BACKGROUND
+
+The previous read-only audit identified:
+
+- Normal school-logo uploads generate local paths such as `/uploads/schools/...`.
+- The Ledger PDF generator accepts persisted absolute HTTP(S) logo URLs.
+- Its `fetchBuffer` helper makes network requests without adequate destination restrictions, timeouts or response-size limits.
+- The renderer may access internal/private network destinations.
+- The renderer uses a URL assembled from the incoming request's protocol and Host header for relative logo paths.
+- These behaviors create a potential SSRF and resource-exhaustion risk.
+
+Relevant files reported by the audit:
+
+- `artifacts/api-server/src/ledger-pdf.ts`
+- `artifacts/api-server/src/fees-routes.ts`
+- `artifacts/api-server/src/storage.ts`
+
+Verify exact locations in the current source.
+
+The normal school-logo upload functionality must remain unchanged.
+
+## 2. OWNER'S REQUIRED BEHAVIOR
+
+For Ledger PDF generation:
+
+1. Display the existing school logo when it is safely available.
+2. Load only validated, application-controlled local logo files.
+3. Do not fetch arbitrary HTTP(S) URLs.
+4. Do not use the incoming Host header to determine a logo-fetch destination.
+5. Do not access internal network services.
+6. Do not modify the stored school-logo database value.
+7. Do not change the school-logo upload feature.
+8. If the logo is missing or unsafe, generate the PDF without a logo.
+9. Preserve all existing financial information, report formatting and historical placement behavior.
+
+An invalid logo must never cause a financial data modification.
+
+## 3. PHASE A — READ-ONLY PREFLIGHT
+
+Before editing, inspect:
+
+- Existing school-logo upload storage.
+- Upload directory configuration.
+- Local filesystem paths used for school logos.
+- How `/uploads/schools/...` maps to physical files.
+- How the Ledger PDF receives the logo location.
+- Whether the same renderer is used by GET and POST.
+- Whether the logo helper is shared with other PDF generators.
+- Whether any school logos are stored in object storage rather than the local filesystem.
+- Existing image processing and MIME validation.
+- Existing PDF rendering and error handling.
+
+Determine the exact filesystem root from trusted server configuration, not from a request header or user-provided path.
+
+If the application-controlled upload directory cannot be identified safely, STOP and report BLOCKED.
+
+Do not guess a filesystem location.
+
+Do not connect to Development or Production databases.
+
+## 4. PHASE B — SECURE LOCAL LOGO RESOLUTION
+
+Implement a narrowly scoped logo resolver for Ledger PDFs.
+
+Accept only the supported application-managed logo path format, such as:
+
+`/uploads/schools/<server-generated-filename>`
+
+Use the actual format confirmed in Phase A.
+
+Requirements:
+
+- Reject absolute HTTP(S) URLs.
+- Reject protocol-relative URLs.
+- Reject unsupported URL schemes.
+- Reject paths outside the approved school-logo directory.
+- Reject traversal attempts, including encoded traversal.
+- Reject unexpected path separators and malformed encodings.
+- Reject paths containing query strings or fragments unless the existing trusted format explicitly requires them.
+- Reject symbolic-link escapes.
+- Reject non-regular files.
+- Reject unsupported file types.
+- Enforce a strict maximum file size before reading.
+- Verify actual image content rather than trusting only the filename extension.
+- Avoid following symlinks during file opening, using safe filesystem primitives where supported.
+- Avoid time-of-check/time-of-use weaknesses when validating and opening files.
+
+Do not construct local paths from arbitrary URLs.
+
+Do not fetch external resources as a fallback.
+
+If validation fails, return no logo and allow PDF generation to continue.
+
+Use established project utilities where suitable.
+
+## 5. PHASE C — REMOVE OUTBOUND LOGO FETCHING FROM LEDGER PDF
+
+For Ledger PDF generation only:
+
+- Replace the current arbitrary HTTP(S) logo-fetch behavior with the validated local-file resolver.
+- Do not make network requests to retrieve school logos.
+- Do not derive a logo URL from `req.protocol`.
+- Do not derive a logo URL from `req.get("host")`.
+- Do not accept user-controlled hostnames as logo destinations.
+- Preserve the existing PDF renderer's image placement and dimensions.
+- Preserve GET and POST output behavior apart from safely omitting unsupported logos.
+
+If `fetchBuffer` is shared with unrelated features, do not alter their behavior without explicit approval.
+
+Prefer an isolated Ledger PDF-specific change.
+
+## 6. PHASE D — COMPATIBILITY
+
+Preserve the normal school-logo upload workflow.
+
+Do not:
+- Change upload endpoints.
+- Change school-logo database schema.
+- Rewrite stored logo URLs.
+- Delete existing logos.
+- Download external logos.
+- Modify school settings.
+- Modify Mobile school-logo functionality.
+- Change other PDF generators.
+
+For existing persisted external logo URLs:
+
+- Do not fetch them.
+- Do not overwrite them.
+- Omit the logo from the Ledger PDF.
+- Continue generating the PDF successfully.
+
+Document this compatibility limitation in the final report.
+
+## 7. PHASE E — SECURITY TESTS
+
+Add focused tests covering:
+
+### Valid cases
+- Valid locally uploaded school logo.
+- Supported PNG image.
+- Supported JPEG image.
+- Valid image within size limits.
+- Missing logo.
+- Missing local file.
+
+### Invalid paths
+- External HTTPS URL.
+- External HTTP URL.
+- Internal/private IP URL.
+- Localhost URL.
+- Protocol-relative URL.
+- File URL.
+- Encoded traversal.
+- Plain traversal.
+- Unexpected absolute filesystem path.
+- Unsupported directory.
+- Malformed encoding.
+- Query string injection.
+- Fragment injection.
+- Symlink escape.
+- Directory instead of file.
+- Unsupported file extension.
+- Non-image content disguised as an image.
+- Oversized image.
+- Corrupt image.
+
+### Network isolation
+- No HTTP request is made for external logo URLs.
+- No HTTP request is made for internal/private URLs.
+- No request-host-derived destination is used.
+- Invalid logo values never trigger a network fallback.
+
+### PDF behavior
+- Ledger PDF GET still renders.
+- Ledger PDF POST renderer still renders when invoked with valid test data.
+- Missing or unsafe logos do not break the PDF.
+- Valid local logos remain visible.
+- Historical Class/Section remains unchanged.
+- Financial rows remain unchanged.
+- Invoice amounts remain unchanged.
+- Paid/outstanding amounts remain unchanged.
+- Report totals remain unchanged.
+- Existing PDF layout remains unchanged except for optional logo omission.
+
+Do not bypass archived-session authorization to test POST rendering.
+
+## 8. PHASE F — VERIFICATION
+
+Run:
+
+1. Focused security tests.
+2. Focused Ledger PDF rendering tests.
+3. Existing relevant regression tests.
+4. API build.
+5. Web build if affected.
+6. Mobile typecheck if available.
+7. Source diff review.
+8. `git diff --check`.
+
+Use synthetic fixtures.
+
+Do not connect to Development or Production databases.
+
+Do not run real financial transactions.
+
+If database-backed verification is necessary, request separate approval rather than using the existing application database.
+
+## 9. STRICT CHANGE SCOPE
+
+Permitted changes:
+
+- Ledger PDF logo resolver.
+- Minimal GET/POST route adjustments needed to pass the trusted logo path.
+- Focused security and rendering tests.
+
+Not permitted:
+
+- Financial business logic changes.
+- Invoice-generation changes.
+- Payment-processing changes.
+- Refund-processing changes.
+- Fee-calculation changes.
+- Historical enrollment resolver changes.
+- Academic Session changes.
+- Student Registry changes.
+- School-logo upload workflow changes.
+- Database schema changes.
+- Existing school-logo record changes.
+- Mobile code changes.
+- Unrelated PDF generator changes.
+- Ledger PDF selection validation changes.
+- Archived-session allowlist changes.
+- Deployment.
+
+If the required correction cannot remain within this scope, STOP and request owner approval.
+
+## 10. REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall result: PASS / PARTIAL PASS / BLOCKED / FAIL.
+2. Confirmed trusted school-logo directory.
+3. Existing upload path format.
+4. Exact files modified.
+5. Logo resolver design.
+6. External URL handling.
+7. Traversal and symlink protections.
+8. Image type and size validation.
+9. Whether outbound logo fetching was eliminated.
+10. Valid-logo rendering result.
+11. Missing-logo rendering result.
+12. Unsafe-logo rendering result.
+13. Focused security test results.
+14. PDF regression test results.
+15. Financial output invariance results.
+16. Historical placement invariance results.
+17. API build result.
+18. Web build result, if run.
+19. Mobile typecheck result, if run.
+20. Existing unrelated diagnostics.
+21. Compatibility impact for existing external logo URLs.
+22. Whether any existing database was accessed.
+23. Whether any existing records were modified.
+24. Whether any application workflow was restarted.
+25. Whether any deployment occurred.
+26. Whether archived Ledger PDF POST authorization was changed.
+27. Whether Ledger PDF selection semantics were changed.
+28. Remaining limitations.
+29. Recommendation for the next separately approved stage.
+
+Do not claim a test passed unless it actually ran.
+
+## 11. MANDATORY STOP
+
+After completing B4-A:
+
+**STOP AND WAIT FOR OWNER REVIEW.**
+
+Do not implement B4-B or B4-C.
+
+Do not change archived-session authorization.
+
+Do not modify invoice-selection behavior.
+
+Do not deploy.
+
+Do not modify existing Fees & Payments business logic.
