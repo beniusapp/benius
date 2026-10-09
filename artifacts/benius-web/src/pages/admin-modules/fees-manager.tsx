@@ -306,6 +306,7 @@ interface PaymentRecord {
   cashierNotes: string | null;
   receiptNumber: string | null;
   invoiceNumber?: string | null;
+  sessionMismatchNotice?: string | null;
   // Razorpay metadata (populated for online payments)
   razorpayPaymentId?: string | null;
   razorpayOrderId?: string | null;
@@ -3356,6 +3357,15 @@ function LedgerTab({ canRecord, canViewReminders, canInitiateRefund, showRegistr
                                       <span className="font-mono text-cyan-300">{fmt(pay.amount)}</span>
                                       <span className="ml-auto text-white/30">{pay.createdAt ? fmtDateTimeIST(pay.createdAt) : fmtDate(pay.receivedDate)}</span>
                                     </div>
+                                    {pay.sessionMismatchNotice && (
+                                      <div
+                                        role="alert"
+                                        data-testid={`status-payment-session-mismatch-${pay.id}`}
+                                        className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200"
+                                      >
+                                        {pay.sessionMismatchNotice}
+                                      </div>
+                                    )}
                                     {(pay.paymentMethod === "Online" || pay.paymentMethod === "Portal Payment") ? (
                                       <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-1.5">

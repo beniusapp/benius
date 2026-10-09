@@ -7,6 +7,11 @@ import {
 } from "./late-fee-engine";
 import { formatOfflinePaymentMethod } from "@shared/offline-payment-method";
 import { isPortalPayment, normalizePaymentMethod } from "@shared/payment-method";
+import { loadHistoricalFeePlacement } from "./fee-placement-storage";
+import {
+  feePlacementForDisplay,
+  paymentFeeSessionNotice,
+} from "./historical-fee-placement";
 
 function rowsOf(result: { rows?: unknown[] }): any[] {
   return Array.isArray(result.rows) ? result.rows : [];
@@ -36,9 +41,6 @@ export async function loadTransactionDetailData(
       fr.*,
       s.name AS student_name,
       s.digital_student_id,
-      s.class,
-      s.section,
-      s.roll_number,
       s.guardian_name,
       s.phone,
       s.email AS student_email,
@@ -74,6 +76,12 @@ export async function loadTransactionDetailData(
   `);
   const feeRow = rowsOf(feeResult)[0];
   if (!feeRow) return null;
+  const placement = await loadHistoricalFeePlacement({
+    schoolId,
+    studentId: Number(feeRow.student_id),
+    sessionId: numberOrNull(feeRow.session_id),
+  });
+  const placementDisplay = feePlacementForDisplay(placement);
 
   const [
     paymentResult,
@@ -469,6 +477,12 @@ export async function loadTransactionDetailData(
       cashierNotes: row.cashier_notes ?? null,
       receiptNumber: row.receipt_number ?? null,
       invoiceNumber: feeRow.invoice_number ?? null,
+      sessionMismatchNotice: paymentFeeSessionNotice(
+        row.session_id,
+        feeRow.session_id,
+        Number(row.fee_record_id) === Number(feeRow.id)
+          && Number(row.student_id) === Number(feeRow.student_id),
+      ),
       razorpayPaymentId: row.razorpay_payment_id ?? null,
       razorpayOrderId: row.razorpay_order_id ?? null,
       razorpaySignature: row.razorpay_signature ?? null,
@@ -743,9 +757,9 @@ export async function loadTransactionDetailData(
     student: {
       name: feeRow.student_name,
       digitalStudentId: feeRow.digital_student_id,
-      class: feeRow.class,
-      section: feeRow.section,
-      rollNumber: numberOrNull(feeRow.roll_number),
+      class: placementDisplay.className,
+      section: placementDisplay.sectionName,
+      rollNumber: placementDisplay.rollNumber,
       guardianName: feeRow.guardian_name ?? null,
       phone: feeRow.phone ?? null,
       email: feeRow.student_email ?? null,

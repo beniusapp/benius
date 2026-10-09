@@ -119,6 +119,7 @@ export interface ReceiptData {
   signature: ReceiptSignature;
   academicSessionLabel: string | null; // e.g. "2025–2026"
   generatedAtIST: string;              // IST datetime of document generation
+  placementNotice?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -988,6 +989,8 @@ body {
       <span class="status-badge ${isOnline ? "status-online" : "status-offline"}" style="margin-top:5px;">${statusBadge(payment.paymentMethod)}</span>
     </div>
   </div>
+
+  ${data.placementNotice ? `<div role="alert" style="margin:12px 0;padding:10px 12px;border:1px solid #fdba74;border-left:4px solid #c2410c;background:#fff7ed;color:#7c2d12;font-size:12px;">${esc(data.placementNotice)}</div>` : ""}
 
   <!-- ── RECEIPT ID STRIP ────────────────────────────────────────────────── -->
   <div class="receipt-id-strip">

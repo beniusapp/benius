@@ -56,6 +56,11 @@ import { studentAuthenticationAttemptIsRevoked } from "../session-revocation";
 import { registerFeesRoutes } from "../fees-routes";
 import { FEES_AREAS, feesAreaGuard } from "../fees-permissions";
 import { requireStudentFeeSession } from "../student-fee-session-context";
+import { loadHistoricalFeePlacement } from "../fee-placement-storage";
+import {
+  feePlacementForDisplay,
+  paymentFeeSessionNotice,
+} from "../historical-fee-placement";
 import { resolveStudentExaminationSession } from "../student-examination-session";
 import {
   examinationResultsErrorMessage,
@@ -5567,7 +5572,7 @@ export async function registerRoutes(
       // Fetch full row with school + student joins (same query shape as admin route)
       const result = await db.execute(sql`
         SELECT fr.*,
-               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
+               s.name AS student_name, s.digital_student_id, s.guardian_name, s.phone AS student_phone,
                sch.name AS school_name, sch.logo_url AS school_logo_url,
                sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
                sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
@@ -5581,6 +5586,13 @@ export async function registerRoutes(
       `);
       const row = result.rows[0] as any;
       if (!row) return res.status(404).json({ message: "Invoice not found" });
+      const placementDisplay = feePlacementForDisplay(
+        await loadHistoricalFeePlacement({
+          schoolId: student.schoolId,
+          studentId: Number(row.student_id),
+          sessionId: row.session_id == null ? null : Number(row.session_id),
+        }),
+      );
 
       const relativeLogoUrl = row.school_logo_url as string | null;
       const logoUrl = relativeLogoUrl
@@ -5629,8 +5641,8 @@ export async function registerRoutes(
           digitalStudentId: row.digital_student_id,
           guardianName: row.guardian_name ?? null,
           phone: row.student_phone ?? null,
-          className: row.class,
-          section: row.section,
+          className: placementDisplay.className,
+          section: placementDisplay.sectionName,
         },
         school: {
           name: row.school_name,
@@ -5671,6 +5683,13 @@ export async function registerRoutes(
     const rec = records.find(r => r.id === id);
     if (!rec) return res.status(404).json({ message: "Fee record not found" });
     if (rec.status !== "Paid") return res.status(400).json({ message: "Receipt only available for paid records" });
+    const placementDisplay = feePlacementForDisplay(
+      await loadHistoricalFeePlacement({
+        schoolId: student.schoolId,
+        studentId: student.id,
+        sessionId: rec.sessionId == null ? null : Number(rec.sessionId),
+      }),
+    );
 
     // ── Fetch fee receipt signature (tenant-scoped via schoolMetadata) ────────
     const sigMeta = await storage.getSchoolMetadataRaw(student.schoolId, "fee_receipt_signature") as any;
@@ -5722,7 +5741,8 @@ export async function registerRoutes(
     // payment_records.received_date = date admin recorded offline payment
     // One-invoice = one-payment rule guarantees at most one row per fee_record_id.
     const prRows = await db.execute(sql`
-      SELECT amount, late_fee_paid, payment_method,
+      SELECT amount, late_fee_paid, payment_method, student_id, fee_record_id,
+             session_id,
              reference_number, payer_name, received_date, created_at
       FROM payment_records
       WHERE fee_record_id = ${id}
@@ -5731,6 +5751,18 @@ export async function registerRoutes(
       LIMIT 1
     `);
     const pr = (prRows as any).rows?.[0] ?? null;
+    const paymentLinkIsValid = Boolean(
+      pr
+      && Number(pr.student_id) === Number(student.id)
+      && Number(pr.fee_record_id) === Number(rec.id),
+    );
+    const placementNotice = pr
+      ? paymentFeeSessionNotice(
+          pr.session_id,
+          rec.sessionId,
+          paymentLinkIsValid,
+        )
+      : null;
     const baseFee     = rec.amount;                           // fee_records.amount — always the original base
     const lateFeePaid = Number(pr?.late_fee_paid ?? 0);      // frozen at payment time; 0 when no late fee
     const totalPaid   = baseFee + lateFeePaid;               // actual amount collected from student
@@ -6085,6 +6117,8 @@ tfoot td:last-child{text-align:right;}
     </div>
   </div>
 
+  ${placementNotice ? `<div role="alert" style="margin:10px 0;padding:9px 12px;border-left:4px solid #b45309;background:#fff7ed;color:#7c2d12;font:12px Arial,sans-serif;">${esc(placementNotice)}</div>` : ""}
+
   <!-- ── FEE PERIOD BAND ── -->
   <!-- Source: fee_records.fee_period_start / fee_period_end (immutable, set at invoice creation) -->
   ${feePeriodStartVal
@@ -6094,14 +6128,14 @@ tfoot td:last-child{text-align:right;}
   <!-- ── SECTION C: DETAILS GRID ── -->
   <div class="grid2">
 
-    <!-- Student Details — source: students table -->
+    <!-- Identity/contact from students; class, section, roll from invoice-session enrollment -->
     <div class="box">
       <p class="box-title">Student Details</p>
       <div class="brow"><span class="bl">Name</span><span class="bv plain">${esc(student?.name ?? "—")}</span></div>
       <div class="brow"><span class="bl">Student ID</span><span class="bv">${esc(student?.digitalStudentId ?? "—")}</span></div>
       <div class="brow"><span class="bl">Admission No.</span><span class="bv plain">—</span></div>
-      <div class="brow"><span class="bl">Roll No.</span><span class="bv">${esc(student?.rollNumber != null ? String(student.rollNumber) : "—")}</span></div>
-      <div class="brow"><span class="bl">Class / Sec</span><span class="bv plain">${esc(student?.class ?? "—")} / ${esc(student?.section ?? "—")}</span></div>
+      <div class="brow"><span class="bl">Roll No.</span><span class="bv">${esc(placementDisplay.rollNumber != null ? String(placementDisplay.rollNumber) : "—")}</span></div>
+      <div class="brow"><span class="bl">Class / Sec</span><span class="bv plain">${esc(placementDisplay.className)} / ${esc(placementDisplay.sectionName)}</span></div>
       <div class="brow"><span class="bl">Parent / Guardian</span><span class="bv plain">${esc(student?.guardianName ?? "—")}</span></div>
       <div class="brow"><span class="bl">Student Phone</span><span class="bv plain">${esc(student?.phone ?? "—")}</span></div>
       <div class="brow"><span class="bl">Session</span><span class="bv plain">${esc(rec.academicYear ?? "—")}</span></div>

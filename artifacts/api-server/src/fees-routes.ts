@@ -52,6 +52,11 @@ import { renderInvoiceDocument } from "./invoice-document";
 import { formatDateOnly, formatInstantIST, todayInIST } from "@shared/ist-time";
 import { renderReceiptHtml, type ReceiptData } from "./receipt-renderer";
 import { renderInvoicePdf } from "./invoice-pdf";
+import { loadHistoricalFeePlacement } from "./fee-placement-storage";
+import {
+  feePlacementForDisplay,
+  paymentFeeSessionNotice,
+} from "./historical-fee-placement";
 import {
   buildFinancialAnalytics,
   isValidDate,
@@ -4312,7 +4317,7 @@ export function registerFeesRoutes(app: Express) {
 
       // ── Student data ────────────────────────────────────────────────────────
       const studentRow = (await db.execute(sql`
-        SELECT name, digital_student_id, class, section, roll_number,
+        SELECT name, digital_student_id,
                guardian_name, phone, email
         FROM students WHERE id = ${payRow.student_id} AND school_id = ${schoolId}
         LIMIT 1
@@ -4325,12 +4330,29 @@ export function registerFeesRoutes(app: Express) {
         feeRow = (await db.execute(sql`
           SELECT fee_type, fee_name, invoice_number, academic_year, fee_period_start,
                  fee_period_end, due_date, amount, late_fee_amount, breakdown_snapshot,
-                 notes, session_id
+                 notes, session_id, student_id
           FROM fee_records
           WHERE id = ${payRow.fee_record_id} AND school_id = ${schoolId}
           LIMIT 1
         `)).rows[0] as any;
       }
+      const linkedFeeIsValid = Boolean(
+        feeRow && Number(feeRow.student_id) === Number(payRow.student_id),
+      );
+      const paymentPlacement = feePlacementForDisplay(
+        await loadHistoricalFeePlacement({
+          schoolId,
+          studentId: Number(payRow.student_id),
+          sessionId: linkedFeeIsValid && feeRow.session_id != null
+            ? Number(feeRow.session_id)
+            : null,
+        }),
+      );
+      const placementNotice = paymentFeeSessionNotice(
+        payRow.session_id,
+        feeRow?.session_id,
+        linkedFeeIsValid,
+      );
 
       // ── Offline payment details sidecar ────────────────────────────────────
       const odRow = (await db.execute(sql`
@@ -4398,9 +4420,9 @@ export function registerFeesRoutes(app: Express) {
         student: {
           name: studentRow.name,
           digitalStudentId: studentRow.digital_student_id,
-          rollNumber: studentRow.roll_number ?? null,
-          class: studentRow.class,
-          section: studentRow.section,
+          rollNumber: paymentPlacement.rollNumber,
+          class: paymentPlacement.className,
+          section: paymentPlacement.sectionName,
           guardianName: studentRow.guardian_name ?? null,
           phone: studentRow.phone ?? null,
           email: studentRow.email ?? null,
@@ -4470,6 +4492,7 @@ export function registerFeesRoutes(app: Express) {
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,
         generatedAtIST: formatInstantIST(new Date()),
+        placementNotice,
       };
 
       // ── Cash denomination integrity check ──────────────────────────────────
@@ -4775,7 +4798,7 @@ export function registerFeesRoutes(app: Express) {
     try {
       const result = await db.execute(sql`
         SELECT fr.*,
-               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
+               s.name AS student_name, s.digital_student_id, s.guardian_name, s.phone AS student_phone,
                sch.name AS school_name, sch.logo_url AS school_logo_url,
                sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
                sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
@@ -4792,6 +4815,13 @@ export function registerFeesRoutes(app: Express) {
       if (row.status !== "Due" && row.status !== "Overdue") {
         return res.status(409).type("html").send(`<!doctype html><title>Invoice unavailable</title><body style="font-family:Arial,sans-serif;padding:32px;color:#334155"><h1>Invoice unavailable</h1><p>This invoice is already paid. Use the payment receipt from the ledger instead.</p></body>`);
       }
+      const placementDisplay = feePlacementForDisplay(
+        await loadHistoricalFeePlacement({
+          schoolId,
+          studentId: Number(row.student_id),
+          sessionId: row.session_id == null ? null : Number(row.session_id),
+        }),
+      );
 
       const relativeLogoUrl = row.school_logo_url as string | null;
       const logoUrl = relativeLogoUrl
@@ -4842,8 +4872,8 @@ export function registerFeesRoutes(app: Express) {
           digitalStudentId: row.digital_student_id,
           guardianName: row.guardian_name ?? null,
           phone: row.student_phone ?? null,
-          className: row.class,
-          section: row.section,
+          className: placementDisplay.className,
+          section: placementDisplay.sectionName,
         },
         school: {
           name: row.school_name,
@@ -4881,7 +4911,7 @@ export function registerFeesRoutes(app: Express) {
     try {
       const result = await db.execute(sql`
         SELECT fr.*,
-               s.name AS student_name, s.digital_student_id, s.class, s.section, s.guardian_name, s.phone AS student_phone,
+               s.name AS student_name, s.digital_student_id, s.guardian_name, s.phone AS student_phone,
                sch.name AS school_name, sch.logo_url AS school_logo_url,
                sch.address_line1 AS school_address_line1, sch.address_line2 AS school_address_line2,
                sch.city AS school_city, sch.state AS school_state, sch.pin_code AS school_pin_code,
@@ -4898,6 +4928,13 @@ export function registerFeesRoutes(app: Express) {
       if (row.status !== "Due" && row.status !== "Overdue") {
         return res.status(409).json({ message: "Invoice PDF only available for Due/Overdue invoices. Use the payment receipt for paid records." });
       }
+      const placementDisplay = feePlacementForDisplay(
+        await loadHistoricalFeePlacement({
+          schoolId,
+          studentId: Number(row.student_id),
+          sessionId: row.session_id == null ? null : Number(row.session_id),
+        }),
+      );
 
       const relativeLogoUrl = row.school_logo_url as string | null;
       const logoUrl = relativeLogoUrl
@@ -4935,7 +4972,8 @@ export function registerFeesRoutes(app: Express) {
         student: {
           name: row.student_name, digitalStudentId: row.digital_student_id,
           guardianName: row.guardian_name ?? null, phone: row.student_phone ?? null,
-          className: row.class, section: row.section,
+          className: placementDisplay.className,
+          section: placementDisplay.sectionName,
         },
         school: {
           name: row.school_name, logoUrl,
@@ -4968,8 +5006,7 @@ export function registerFeesRoutes(app: Express) {
       // ── Fee record + student ────────────────────────────────────────────────
       const feeRow = (await db.execute(sql`
         SELECT fr.*, s.name AS student_name, s.digital_student_id,
-               s.class AS student_class, s.section AS student_section,
-               s.roll_number, s.guardian_name, s.phone AS student_phone,
+               s.guardian_name, s.phone AS student_phone,
                s.email AS student_email
         FROM fee_records fr
         JOIN students s ON s.id = fr.student_id AND s.school_id = fr.school_id
@@ -5002,6 +5039,25 @@ export function registerFeesRoutes(app: Express) {
         ORDER BY pr.created_at DESC
         LIMIT 1
       `)).rows[0] as any;
+      const linkedFeeIsValid = Boolean(
+        payRow
+        && Number(payRow.fee_record_id) === Number(feeRow.id)
+        && Number(payRow.student_id) === Number(feeRow.student_id),
+      );
+      const feePlacement = feePlacementForDisplay(
+        await loadHistoricalFeePlacement({
+          schoolId,
+          studentId: Number(feeRow.student_id),
+          sessionId: feeRow.session_id == null ? null : Number(feeRow.session_id),
+        }),
+      );
+      const placementNotice = payRow
+        ? paymentFeeSessionNotice(
+            payRow.session_id,
+            feeRow.session_id,
+            linkedFeeIsValid,
+          )
+        : null;
 
       // ── Provider timestamps from captured payment_attempt ──────────────────
       const attemptRow = (await db.execute(sql`
@@ -5074,9 +5130,9 @@ export function registerFeesRoutes(app: Express) {
         student: {
           name: feeRow.student_name,
           digitalStudentId: feeRow.digital_student_id,
-          rollNumber: feeRow.roll_number ?? null,
-          class: feeRow.student_class,
-          section: feeRow.student_section,
+          rollNumber: feePlacement.rollNumber,
+          class: feePlacement.className,
+          section: feePlacement.sectionName,
           guardianName: feeRow.guardian_name ?? null,
           phone: feeRow.student_phone ?? null,
           email: feeRow.student_email ?? null,
@@ -5146,6 +5202,7 @@ export function registerFeesRoutes(app: Express) {
         signature: { imageUrl: sigUrl, signatoryName },
         academicSessionLabel: sessionLabel,
         generatedAtIST: formatInstantIST(new Date()),
+        placementNotice,
       };
 
       // ── Cash denomination integrity check ──────────────────────────────────

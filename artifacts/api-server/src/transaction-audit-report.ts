@@ -84,6 +84,7 @@ export interface PaymentRecord {
   cashierNotes: string | null;
   receiptNumber: string | null;
   invoiceNumber?: string | null;
+  sessionMismatchNotice?: string | null;
   razorpayPaymentId?: string | null;
   razorpayOrderId?: string | null;
   razorpaySignature?: string | null; // NEVER rendered
@@ -797,6 +798,9 @@ function renderSection4(detail: TransactionAuditDetail): string {
         "Invoice Number",
         val(p.invoiceNumber ?? detail.feeRecord.invoiceNumber),
       );
+      if (p.sessionMismatchNotice) {
+        html += row("Session integrity warning", p.sessionMismatchNotice);
+      }
       html += row("Payment Record Created At", fmtInstant(p.createdAt));
       html += row("Recorded By", val(p.recordedByName));
 
