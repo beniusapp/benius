@@ -1,0 +1,336 @@
+# BENIUS EXAMINATION — STAGE 3A
+## Principal Final Promotion & Retention Authority
+### STRICT READ-ONLY ARCHITECTURE AND SECURITY AUDIT
+
+You are acting as the senior software architect and security auditor for BENIUS, a multi-tenant School Management Information System.
+
+Stage 1 marks-entry safeguards and Stage 2B unified Examination Results have been implemented.
+
+Now perform Stage 3A.
+
+**THIS IS A READ-ONLY AUDIT. DO NOT IMPLEMENT ANY CHANGES.**
+
+## 1. BUSINESS OBJECTIVE
+
+BENIUS must have a simple Examination workflow:
+
+1. Teacher enters examination marks.
+2. Students and Principal view authorized marks.
+3. BENIUS calculates examination results using the existing shared calculation engine.
+4. Teacher reviews results and locks a promotion/retention recommendation.
+5. Principal reviews the Teacher recommendation.
+6. Principal makes the final promotion/retention decision, including authorized overrides when necessary.
+7. Principal executes promotion or retention.
+8. Final executed outcomes are displayed appropriately.
+9. Academic Session history remains preserved.
+
+The Principal must have final authority.
+
+Teacher recommendations must never silently become final Principal decisions.
+
+## 2. ABSOLUTE AUDIT RESTRICTIONS
+
+- Read source code only.
+- Do not edit files.
+- Do not create migrations.
+- Do not change database records.
+- Do not execute promotion.
+- Do not run mutating tests.
+- Do not deploy.
+- Do not access Production.
+- Do not modify Mobile frontend or backend.
+- Do not alter marks, publication flags or locked Teacher ledgers.
+- Do not modify Academic Session activation.
+- Do not redesign the UI.
+
+You may inspect existing tests and configuration.
+
+If Development database inspection is genuinely needed, use SELECT-only queries after confirming the correct Development connection.
+
+## 3. AUDIT EXISTING TEACHER RECOMMENDATIONS
+
+Identify the exact code paths responsible for:
+
+- Teacher Results calculation.
+- Teacher promotion/retention recommendation.
+- Teacher ledger Save.
+- Teacher ledger Lock.
+- Teacher locked-decision reads.
+- Principal access to Teacher recommendations.
+
+Determine:
+
+1. What record stores the Teacher recommendation?
+2. Is it scoped to School ID?
+3. Is it scoped to Academic Session ID?
+4. Is it scoped to examination term?
+5. Is it scoped to Student ID and exact session enrollment?
+6. Can recommendations be changed after locking?
+7. Can incomplete Students receive a final recommendation?
+8. Does any read or write treat a Teacher recommendation as Principal-final?
+
+Provide exact file paths, function names, routes and line numbers.
+
+## 4. AUDIT PRINCIPAL EXAM CONTROLLER
+
+Inspect the existing Principal/Admin Exam Controller.
+
+Identify:
+
+- Available screens.
+- Promotion preview.
+- Promotion readiness.
+- Student-level decisions.
+- Principal overrides.
+- Override reasons.
+- Approval/confirmation behavior.
+- Promotion execution.
+- Execution history.
+- Historical session reads.
+
+Determine whether the Principal can actually:
+
+1. Accept the Teacher recommendation.
+2. Override Promoted to Retained.
+3. Override Retained to Promoted.
+4. Record a reason.
+5. Review the final decision before execution.
+6. Execute the approved decision.
+7. See the final outcome afterward.
+
+Do not assume a visible override control means the backend uses that override.
+
+Trace each UI action to its API, storage operation and execution transaction.
+
+## 5. CRITICAL — OVERRIDE TO EXECUTION TRACE
+
+This is a priority audit.
+
+Trace the entire path:
+
+Principal selects an override
+→ UI state
+→ API request
+→ backend validation
+→ database persistence
+→ promotion preview
+→ promotion readiness
+→ promotion execution transaction
+→ next-session enrollment
+→ execution history
+→ Student/Principal final outcome.
+
+For each step, classify:
+
+- IMPLEMENTED AND CONNECTED
+- IMPLEMENTED BUT DISCONNECTED
+- MISSING
+- UNSAFE
+- NOT VERIFIED
+
+Explicitly determine whether the final promotion transaction consumes the Principal override or ignores it.
+
+Identify any risk that a Student is promoted or retained according to the Teacher recommendation despite a different Principal decision.
+
+## 6. INCOMPLETE STUDENT SAFETY
+
+Audit Students with:
+
+- No marks.
+- Missing required subjects.
+- Missing examination components.
+- Partial results.
+- Legitimate zero marks.
+- Explicit Absent.
+- Locked Teacher recommendation conflicts.
+- No Teacher ledger.
+- Inactive Student status.
+- Missing or invalid target-session enrollment.
+
+Determine whether such Students can be incorrectly promoted.
+
+The intended rule is:
+
+An incomplete Student must not silently receive an automatic promotion.
+
+If Principal override of an incomplete Student is supported or proposed, identify the exact explicit authorization, reason, readiness and audit safeguards required.
+
+Do not invent a new policy without approval.
+
+## 7. SCHOOL AND ACADEMIC SESSION ISOLATION
+
+BENIUS is multi-tenant.
+
+Every Principal Exam Controller operation must be scoped to:
+
+- Authenticated School ID.
+- Selected Academic Session ID.
+- Exact examination term.
+- Exact Student/cohort where relevant.
+
+Audit all:
+
+- Reads.
+- Writes.
+- Overrides.
+- Preview.
+- Readiness.
+- Execution.
+- History.
+- Enrollment preparation.
+
+Check for:
+
+- Cross-school data exposure.
+- Cross-session data exposure.
+- Missing session parameters.
+- Implicit current-session fallback.
+- Old overrides appearing in new sessions.
+- Old promotion decisions being reused.
+- Incorrect joins to current Student Registry placement.
+- Archived-session mutations.
+
+A new Academic Session must have an isolated Exam Controller context.
+
+## 8. PROMOTION EXECUTION AND REGISTRY RULE
+
+The approved BENIUS behavior is:
+
+**Promotion execution prepares target Academic Session enrollments and promotion history. It does NOT immediately update the Student's current Registry Class, Section or Roll Number.**
+
+The Registry is synchronized atomically only when the target Academic Session is activated.
+
+Audit whether current code respects this contract.
+
+Identify any promotion code that directly changes:
+
+- `students.class`
+- `students.section`
+- `students.rollNumber`
+- Current Registry placement fields.
+
+Also audit:
+
+- Duplicate target enrollments.
+- Incorrect target class or section.
+- Missing target enrollment.
+- Transaction atomicity.
+- Idempotency.
+- Concurrent execution.
+- Rollback behavior.
+- Historical enrollment preservation.
+
+Do not change these behaviors in Stage 3A.
+
+## 9. FINAL RESULTS VISIBILITY
+
+Stage 2B distinguishes Teacher recommendations from Principal-final executed decisions.
+
+Audit whether:
+
+- Principal Performance Analytics shows the authoritative executed outcome.
+- Student Results displays only authorized Student-facing information.
+- Teacher Results keeps the Teacher recommendation separate.
+- Unexecuted decisions remain Pending Principal Decision.
+- Historical final outcomes remain tied to their original Academic Session.
+
+Do not add Student-facing promotion information without explicitly identifying the existing product contract and any missing approval.
+
+## 10. MOBILE IMPACT
+
+Mobile-specific implementation remains frozen.
+
+Identify whether any future Stage 3B change to shared backend services, schemas, API contracts or calculation functions could affect Mobile.
+
+Classify:
+
+- Web-only changes.
+- Shared backend changes.
+- Mobile-specific behavior risks.
+
+Do not modify Mobile.
+
+## 11. EXISTING TEST COVERAGE
+
+Inspect the existing tests.
+
+Report which scenarios are covered and missing:
+
+- Teacher ledger lock.
+- Principal override persistence.
+- Principal override consumption during execution.
+- Promotion and retention.
+- Incomplete marks.
+- Cross-school isolation.
+- Cross-session isolation.
+- Archived-session write rejection.
+- Concurrent execution.
+- Transaction rollback.
+- Target-session enrollment.
+- Registry synchronization timing.
+- Historical promotion audit.
+
+Do not execute tests that could mutate existing Development academic data.
+
+## 12. MINIMUM SAFE STAGE 3B PLAN
+
+Based only on confirmed findings, propose the smallest safe implementation plan for Principal final authority.
+
+Separate it into manageable steps if necessary.
+
+For each proposed change include:
+
+- Exact file/function/route.
+- Why it is necessary.
+- Security and session implications.
+- Existing behavior that must remain unchanged.
+- Required tests.
+- Mobile impact.
+
+Prefer reusing existing Teacher ledger, Principal override storage, promotion preview and promotion execution architecture.
+
+Do not introduce a new database table or schema migration unless the audit proves existing storage cannot safely support the requirement.
+
+Do not implement the plan.
+
+## 13. REQUIRED FINAL AUDIT REPORT
+
+Provide:
+
+1. Overall verdict: READY FOR IMPLEMENTATION / NEEDS DESIGN DECISION / BLOCKED.
+2. Existing Teacher recommendation workflow.
+3. Existing Principal Exam Controller workflow.
+4. Override persistence status.
+5. Override consumption during execution.
+6. Principal final decision authority status.
+7. Incomplete Student safeguards.
+8. School isolation.
+9. Academic Session isolation.
+10. Archived-session safety.
+11. Target enrollment behavior.
+12. Current Registry synchronization behavior.
+13. Final result visibility.
+14. Existing test coverage.
+15. Missing regression tests.
+16. Exact files, functions, routes and line numbers.
+17. Minimum safe Stage 3B implementation plan.
+18. Decisions requiring owner approval.
+19. Mobile impact assessment.
+20. Database records changed: YES/NO.
+21. Source files changed: YES/NO.
+22. Production accessed: YES/NO.
+23. Deployment performed: YES/NO.
+
+### FINAL INSTRUCTION
+
+This is an AUDIT ONLY.
+
+Do not fix anything yet.
+
+Do not implement Stage 3B.
+
+Do not run promotion.
+
+Do not change existing records.
+
+Return the complete audit report and wait for explicit owner approval.
