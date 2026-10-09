@@ -1,0 +1,246 @@
+# BENIUS — FEES & PAYMENTS
+## STAGE 1C-1V-B1 — DISPOSABLE POSTGRESQL ENVIRONMENT SETUP
+### OWNER APPROVED — ISOLATED TEST ENVIRONMENT ONLY
+
+BENIUS is a multi-tenant School Management Information System currently in DEVELOPMENT.
+
+The owner authorizes Stage 1C-1V-B1 strictly to prepare and verify a disposable PostgreSQL testing environment for future Fees & Payments verification.
+
+This authorization DOES NOT include Stage 1C-1V-B2 database-backed testing, financial operations, application feature development, or deployment.
+
+## 1. OBJECTIVE
+
+Prepare a completely isolated PostgreSQL environment so that future tests can verify historical fee placement without accessing or modifying existing school, Student, invoice, payment or financial records.
+
+The existing Stage 1C-1 and Stage 1C-1B changes must remain untouched.
+
+## 2. ABSOLUTE SAFETY RULES
+
+DO NOT:
+
+- Connect to the existing Development database.
+- Connect to any Production database.
+- Read, export, copy or modify real school financial data.
+- Use the application's existing DATABASE_URL as a fallback.
+- Modify existing application source code.
+- Modify existing database schema or records.
+- Run application migrations.
+- Seed financial data.
+- Execute financial tests.
+- Generate invoices.
+- Process payments or refunds.
+- Trigger payment webhooks.
+- Start financial background jobs.
+- Start or restart the existing API/Web/Mobile workflows.
+- Deploy anything.
+- Change Student Registry or enrollments.
+- Change Academic Sessions.
+- Modify Student Profile.
+- Begin Stage 1C-1V-B2, Stage 1C-2 or Stage 1C-3.
+
+No financial business logic changes are permitted.
+
+## 3. PHASE A — READ-ONLY ENVIRONMENT DISCOVERY
+
+Before installing or creating anything, inspect the local workspace environment.
+
+Determine:
+
+1. Operating system and available package managers.
+2. Whether PostgreSQL binaries are installed.
+3. Whether a PostgreSQL server process is running.
+4. Whether a local PostgreSQL listener exists.
+5. Whether an existing disposable PostgreSQL cluster is available.
+6. Whether the workspace supports a private local PostgreSQL cluster.
+7. Whether sufficient disk space is available.
+8. Whether PostgreSQL can run without privileged changes.
+9. Whether a dedicated local test directory can be used.
+10. Whether a private non-default port can be assigned.
+
+Inspect local process, filesystem and configuration metadata only.
+
+Do not query the existing Development or Production database.
+
+Do not print secrets or existing connection strings.
+
+If PostgreSQL is unavailable, identify a safe installation method.
+
+Do not modify global database services or system-wide PostgreSQL configuration.
+
+## 4. PHASE B — CREATE AN ISOLATED CLUSTER
+
+Only if the environment supports safe isolation:
+
+Create a new disposable PostgreSQL cluster dedicated to BENIUS Fees verification.
+
+Requirements:
+
+- Use a dedicated workspace-local data directory.
+- Use a separate database name.
+- Use a separate database role.
+- Use a non-default port.
+- Bind only to localhost or a private Unix socket.
+- Do not expose the database publicly.
+- Do not reuse Development/Production credentials.
+- Do not modify the existing PostgreSQL service.
+- Do not overwrite or reset any existing database directory.
+- Do not use any shared database volume.
+- Do not connect to external database hosts.
+
+Use a descriptive test-only identity such as:
+
+`benius_fees_1c1v_test`
+
+This is an example name, not permission to reuse an existing database with that name.
+
+The cluster must contain no real school data.
+
+If creating the cluster requires unsafe privileged operations or changing existing services, STOP and report the limitation.
+
+## 5. PHASE C — VERIFY ISOLATION
+
+Before declaring the environment ready, verify:
+
+1. The PostgreSQL process belongs to the dedicated test cluster.
+2. The data directory is the newly created disposable directory.
+3. The listening port is the dedicated non-default port.
+4. The listener is local/private only.
+5. The test database and role are separate.
+6. No existing application connection string was used.
+7. No Development or Production database was contacted.
+8. No external database host was contacted.
+9. The test database contains no real school records.
+10. The cluster cannot accidentally target existing financial data.
+
+Perform only harmless administrative checks against the positively identified new test cluster.
+
+Do not create financial fixtures.
+
+Do not run application migrations.
+
+Do not run fee or payment tests.
+
+## 6. PHASE D — FAIL-CLOSED TEST CONNECTION GUARD
+
+Prepare a test-only connection safety mechanism that can be used in Stage 1C-1V-B2.
+
+The guard must verify:
+
+- Explicit test database identity.
+- Expected host/socket.
+- Expected port.
+- Expected database name.
+- Expected test role.
+- Expected cluster data-directory identity where accessible.
+- Absence of Development/Production connection settings.
+- An explicit test-only authorization marker.
+
+The guard must reject:
+
+- Missing configuration.
+- Default application DATABASE_URL.
+- Unknown hosts.
+- External hosts.
+- Default PostgreSQL port unless separately authorized.
+- Unexpected database names.
+- Unexpected roles.
+- Unverified cluster identity.
+
+The guard must fail closed before any schema operation or test data write.
+
+Do not integrate this guard into normal application runtime.
+
+Keep it isolated to test tooling.
+
+## 7. PHASE E — CONNECTION VERIFICATION
+
+After isolation is proven, perform only minimal administrative connection checks.
+
+Allowed:
+
+- PostgreSQL version.
+- Current database identity.
+- Current role identity.
+- Local server address and port.
+- Read-only catalog inspection.
+- Connection success/failure.
+
+Not allowed:
+
+- Application migrations.
+- Financial table creation.
+- Financial data insertion.
+- Financial data updates.
+- Financial data deletion.
+- Invoice/payment tests.
+- Application API testing.
+- Existing Development/Production database access.
+
+Do not print passwords or secrets.
+
+## 8. SOURCE AND ENVIRONMENT PROTECTION
+
+Do not modify BENIUS application source files.
+
+Do not modify financial business logic.
+
+Do not modify existing environment variables used by the running application.
+
+Do not change the existing application's DATABASE_URL.
+
+Do not restart existing workflows.
+
+Test-only scripts and configuration may be created in a clearly isolated temporary testing directory.
+
+Do not commit secrets or test credentials.
+
+If the cluster cannot be created safely, report BLOCKED.
+
+Do not improvise by connecting to the existing database.
+
+## 9. REQUIRED FINAL REPORT
+
+Provide:
+
+1. Overall result: READY / PARTIAL / BLOCKED.
+2. Operating system.
+3. PostgreSQL version.
+4. Installation method, if needed.
+5. Dedicated cluster data directory.
+6. Dedicated test database name.
+7. Dedicated test role.
+8. Dedicated host/socket.
+9. Dedicated port.
+10. Confirmation of local/private listener.
+11. Isolation verification evidence.
+12. Test connection guard behavior.
+13. Harmless administrative checks performed.
+14. Whether the cluster contains application tables.
+15. Whether any synthetic financial records were created.
+16. Whether application migrations were run.
+17. Whether application source files were modified.
+18. Whether existing Development records were accessed.
+19. Whether existing Development records were modified.
+20. Whether Production was accessed.
+21. Whether existing application workflows were restarted.
+22. Whether financial transactions were initiated.
+23. Any setup limitations.
+24. Whether the environment is safe for separately approved Stage 1C-1V-B2 verification.
+
+Never include passwords or secret connection strings in the report.
+
+## 10. MANDATORY STOP
+
+Once the isolated PostgreSQL environment is prepared and its identity verified:
+
+STOP.
+
+Do not run financial tests.
+
+Do not seed financial fixtures.
+
+Do not run application migrations.
+
+Do not begin Stage 1C-1V-B2.
+
+Wait for explicit owner approval.
